@@ -36,6 +36,21 @@ describe("ProjectOverview", () => {
 
   afterEach(cleanup);
 
+  it("shows an explicit loading state while the runtime summary is unresolved", () => {
+    render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={null}
+        active
+        viewSwitch={null}
+      />,
+    );
+
+    expect(screen.getByText("Loading project workspace…")).toBeTruthy();
+    expect(screen.getByText("Fetching chat and workspace capabilities from this Matrix computer.")).toBeTruthy();
+  });
+
   it("shows application-owned copy instead of a raw workspace error", () => {
     useProjectWorkspaces.setState({
       entries: {

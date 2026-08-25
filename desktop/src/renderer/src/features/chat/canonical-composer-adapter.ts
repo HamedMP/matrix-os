@@ -9,6 +9,15 @@ import {
 } from "@matrix-os/contracts";
 import type { CanonicalComposerSelection } from "./canonical-composer-state";
 
+const SHARED_LEGACY_CATALOG_DRIVERS: CanonicalProviderCatalog["drivers"] = [
+  { kind: "hermes", displayName: "Hermes", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+  { kind: "openclaw", displayName: "OpenClaw", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+  { kind: "codex", displayName: "Codex", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+  { kind: "claude_code", displayName: "Claude Code", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+  { kind: "opencode", displayName: "OpenCode", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+  { kind: "pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+];
+
 export function createLegacyGlobalProviderCatalog({
   hasProject,
 }: {
@@ -211,16 +220,10 @@ export function createLegacyProjectProviderCatalog(
   });
   return CanonicalProviderCatalogSchema.parse({
     revision,
-    drivers: instances
-      .filter((instance, index, all) => (
-        all.findIndex((candidate) => candidate.driverKind === instance.driverKind) === index
-      ))
-      .map((instance) => ({
-        kind: instance.driverKind,
-        displayName: instance.driverKind === "claude_code" ? "Claude Code" : instance.displayName,
-        adapterVersion: "1.0.0",
-        capabilityClass: "coding_agent" as const,
-      })),
+    // The fallback must preserve the same product catalog shape as the
+    // canonical Gateway endpoint. Missing adapters have no Instance and are
+    // therefore visible-but-unavailable in the picker instead of disappearing.
+    drivers: SHARED_LEGACY_CATALOG_DRIVERS,
     instances,
   });
 }
@@ -229,12 +232,31 @@ export function filterCatalogForLegacyProject(
   catalog: CanonicalProviderCatalog,
   summary: RuntimeSummary,
 ): CanonicalProviderCatalog {
-  const legacyIds = createLegacyProjectProviderCatalog(summary).instances.map((instance) => instance.id);
-  const instances = catalog.instances.filter((instance) => legacyIds.includes(instance.id));
-  const kinds = instances.map((instance) => instance.driverKind);
+  const executableDriverKinds = new Set(
+    createLegacyProjectProviderCatalog(summary).instances.map((instance) => instance.driverKind),
+  );
+  // The selector is a shared product catalog, so Project Chat must not erase
+  // General agents or coding harnesses that its legacy create-thread route
+  // cannot execute. Keep them visible and fail closed until the canonical
+  // Turn/Run path owns execution; otherwise selecting Hermes can silently
+  // leave the legacy coding provider in the draft and run the wrong harness.
+  const instances = catalog.instances.map((instance) => {
+    if (executableDriverKinds.has(instance.driverKind)) return instance;
+    const { defaultSelection: _defaultSelection, ...descriptor } = instance;
+    return {
+      ...descriptor,
+      availability: "unavailable" as const,
+      models: instance.models.map((model) => ({
+        ...model,
+        availability: "unavailable" as const,
+      })),
+    };
+  });
   return {
     ...catalog,
-    drivers: catalog.drivers.filter((driver) => kinds.includes(driver.kind)),
+    drivers: SHARED_LEGACY_CATALOG_DRIVERS.map((fallbackDriver) => (
+      catalog.drivers.find((driver) => driver.kind === fallbackDriver.kind) ?? fallbackDriver
+    )),
     instances,
   };
 }

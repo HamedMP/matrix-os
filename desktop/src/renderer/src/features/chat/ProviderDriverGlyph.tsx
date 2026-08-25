@@ -1,6 +1,7 @@
 import type { CanonicalProviderDriverKind } from "@matrix-os/contracts";
 import { Cpu } from "lucide-react";
 import type { ReactNode } from "react";
+import hermesProviderIcon from "../../assets/providers/hermes-provider.png";
 
 function GlyphFrame({
   kind,
@@ -34,7 +35,22 @@ export function ProviderDriverGlyph({
   kind: CanonicalProviderDriverKind;
   size?: number;
 }) {
-  if (kind === "hermes" || kind === "openclaw") {
+  if (kind === "hermes") {
+    return (
+      <img
+        aria-hidden
+        alt=""
+        data-provider-glyph={kind}
+        src={hermesProviderIcon}
+        width={size}
+        height={size}
+        className="shrink-0 object-cover"
+        style={{ borderRadius: Math.max(3, Math.round(size * 0.2)), height: size, width: size }}
+      />
+    );
+  }
+
+  if (kind === "openclaw") {
     return (
       <span
         aria-hidden
@@ -42,7 +58,7 @@ export function ProviderDriverGlyph({
         className="inline-flex items-center justify-center leading-none"
         style={{ fontSize: size + 2, height: size, width: size }}
       >
-        {kind === "hermes" ? "☤" : "🦞"}
+        🦞
       </span>
     );
   }

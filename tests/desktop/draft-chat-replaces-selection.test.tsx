@@ -271,6 +271,7 @@ describe("draft chat replaces the selected thread", () => {
   it("deselects the current thread and shows the draft composer when the rail + is clicked", async () => {
     mockOperator();
     await renderWithSelectedThread();
+    const listedChatsBefore = screen.getAllByRole("button", { name: /^Chat / }).map((row) => row.textContent);
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
 
@@ -283,6 +284,9 @@ describe("draft chat replaces the selected thread", () => {
     expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
     // No rail row keeps the current-page marker while drafting.
     expect(screen.getByRole("button", { name: "Chat Plan the auth work" }).getAttribute("aria-current")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Chat / }).map((row) => row.textContent))
+      .toEqual(listedChatsBefore);
+    expect(screen.queryByRole("button", { name: /Chat New (chat|conversation)/i })).toBeNull();
   });
 
   it("deselects the current thread and focuses the draft composer for a compose request (⌘J)", async () => {

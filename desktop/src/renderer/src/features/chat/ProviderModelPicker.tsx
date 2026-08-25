@@ -4,6 +4,7 @@ import type {
   CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { ChevronDown, Cpu, Search } from "lucide-react";
 import { useRef, useState } from "react";
 import {
@@ -115,6 +116,7 @@ export function ProviderModelPicker({
               searchRef.current?.focus();
             }}
           >
+          <Tooltip.Provider delayDuration={300} skipDelayDuration={150}>
           <div className="flex w-16 shrink-0 flex-col border-r px-1.5 py-2" style={{ borderColor: "var(--border-subtle)" }}>
             {DRIVER_GROUPS.map((group, groupIndex) => {
               const drivers = catalog.drivers.filter((driver) => driver.capabilityClass === group.capabilityClass);
@@ -140,34 +142,63 @@ export function ProviderModelPicker({
                     const locked = instanceLocked && instance?.id !== selection?.instanceId;
                     const disabled = unavailable || locked;
                     const availability = instance ? availabilityLabel(instance) : "Unavailable";
+                    const tooltipLabel = unavailable
+                      ? `${driver.displayName} — ${availability}`
+                      : locked
+                        ? `${driver.displayName} — Locked after the first Turn`
+                        : `${driver.displayName} — ${availability}`;
                     return (
-                      <button
-                        type="button"
-                        key={driver.kind}
-                        aria-label={`${driver.displayName} harness, ${availability}`}
-                        aria-disabled={disabled}
-                        disabled={disabled}
-                        title={`${group.shortLabel} agent · ${driver.displayName} — ${availability}.${unavailable ? " Authentication or setup is required." : ""}`}
-                        className="flex h-9 w-9 items-center justify-center rounded-lg"
-                        style={{
-                          color: activeInstance?.driverKind === driver.kind ? "var(--text-primary)" : "var(--text-tertiary)",
-                          background: activeInstance?.driverKind === driver.kind ? "var(--bg-active)" : "transparent",
-                        }}
-                        onClick={() => {
-                          if (!instance || disabled) return;
-                          setActiveInstanceId(instance.id);
-                          setQuery("");
-                          window.requestAnimationFrame(() => searchRef.current?.focus());
-                        }}
-                      >
-                        <ProviderDriverGlyph kind={driver.kind} size={17} />
-                      </button>
+                      <Tooltip.Root key={driver.kind}>
+                        <Tooltip.Trigger asChild>
+                          <button
+                            type="button"
+                            aria-label={`${driver.displayName} harness, ${availability}`}
+                            aria-disabled={disabled}
+                            data-availability={instance?.availability ?? "unavailable"}
+                            title={tooltipLabel}
+                            className={`flex h-9 w-9 items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${disabled ? "cursor-not-allowed opacity-35" : ""}`}
+                            style={{
+                              color: disabled
+                                ? "var(--text-tertiary)"
+                                : activeInstance?.driverKind === driver.kind
+                                  ? "var(--text-primary)"
+                                  : "var(--text-tertiary)",
+                              background: !disabled && activeInstance?.driverKind === driver.kind
+                                ? "var(--bg-active)"
+                                : "transparent",
+                            }}
+                            onClick={() => {
+                              if (!instance || disabled) return;
+                              setActiveInstanceId(instance.id);
+                              setQuery("");
+                              window.requestAnimationFrame(() => searchRef.current?.focus());
+                            }}
+                          >
+                            <ProviderDriverGlyph kind={driver.kind} size={17} />
+                          </button>
+                        </Tooltip.Trigger>
+                        <Tooltip.Portal>
+                          <Tooltip.Content
+                            side="left"
+                            sideOffset={8}
+                            className="z-[100] rounded-md px-2 py-1 text-xs"
+                            style={{
+                              background: "var(--forest-deep)",
+                              color: "var(--forest-foreground)",
+                              boxShadow: "var(--shadow-2)",
+                            }}
+                          >
+                            {tooltipLabel}
+                          </Tooltip.Content>
+                        </Tooltip.Portal>
+                      </Tooltip.Root>
                     );
                   })}
                 </div>
               );
             })}
           </div>
+          </Tooltip.Provider>
           <div className="min-w-0 flex-1 p-2">
             <label className="flex h-8 items-center gap-2 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
               <Search size={14} aria-hidden style={{ color: "var(--text-tertiary)" }} />

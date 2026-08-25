@@ -118,6 +118,16 @@ export default function ProjectOverview({
         ) : null}
 
         <section aria-label={`${projectLabel} sessions`}>
+          {!summary && workspaceEntry?.status !== "error" ? (
+            <div role="status" className="py-6">
+              <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+                Loading project workspace…
+              </p>
+              <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+                Fetching chat and workspace capabilities from this Matrix computer.
+              </p>
+            </div>
+          ) : null}
           {workspaceEntry?.status === "loading" && threads.length === 0 ? (
             <p className="py-6 text-sm" style={{ color: "var(--text-tertiary)" }}>Loading recent sessions…</p>
           ) : null}

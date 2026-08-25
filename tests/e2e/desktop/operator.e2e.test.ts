@@ -225,6 +225,15 @@ suite("operator desktop e2e", () => {
     await providerTrigger.click();
     const providerPicker = page.locator('[data-slot="provider-model-picker"]');
     await providerPicker.waitFor();
+    const generalAgents = providerPicker.getByRole("group", { name: "General agents" });
+    await generalAgents.waitFor();
+    const hermesHarness = generalAgents.getByRole("button", { name: "Hermes harness, Unavailable" });
+    expect(await hermesHarness.getAttribute("aria-disabled")).toBe("true");
+    expect(await hermesHarness.getAttribute("class")).toContain("opacity-35");
+    await hermesHarness.locator('img[data-provider-glyph="hermes"]').waitFor();
+    await hermesHarness.hover();
+    await page.getByRole("tooltip").getByText("Hermes — Unavailable").waitFor();
+    await page.screenshot({ path: join(MAT_476_SCREENSHOT_DIR, "01a-project-chat-unavailable-hermes.png") });
     const pickerBox = await providerPicker.boundingBox();
     const providerTriggerBox = await providerTrigger.boundingBox();
     if (!pickerBox || !providerTriggerBox) throw new Error("Could not measure provider picker");

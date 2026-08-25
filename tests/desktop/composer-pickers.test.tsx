@@ -482,7 +482,8 @@ describe("composer provider/mode pickers", () => {
     expect(provider.closest(".prompt-card")).not.toBeNull();
     fireEvent.click(provider);
     expect(screen.getByText("Provider Instance is locked after the first Turn.")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Claude Code harness, Available" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Claude Code harness, Available" }).getAttribute("aria-disabled"))
+      .toBe("true");
     expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     expect(screen.getByRole("button", { name: "Reasoning" })).toBeTruthy();
     expect(composer).toBeTruthy();
@@ -497,7 +498,9 @@ describe("composer provider/mode pickers", () => {
     expect(provider.textContent).toBe("removed-provider (unavailable)");
     expect(provider.getAttribute("data-provider-instance")).toBe("");
     fireEvent.click(provider);
-    expect((screen.getByRole("button", { name: "Codex harness, Available" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "Claude Code harness, Available" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Codex harness, Available" }).getAttribute("aria-disabled"))
+      .toBe("true");
+    expect(screen.getByRole("button", { name: "Claude Code harness, Available" }).getAttribute("aria-disabled"))
+      .toBe("true");
   });
 });

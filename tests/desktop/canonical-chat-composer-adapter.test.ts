@@ -70,7 +70,14 @@ describe("canonical composer legacy Project adapter", () => {
   it("projects current coding providers into canonical Instances", () => {
     const catalog = createLegacyProjectProviderCatalog(summaryFixture());
 
-    expect(catalog.drivers.map((driver) => driver.kind)).toEqual(["codex", "claude_code"]);
+    expect(catalog.drivers.map((driver) => driver.kind)).toEqual([
+      "hermes",
+      "openclaw",
+      "codex",
+      "claude_code",
+      "opencode",
+      "pi",
+    ]);
     expect(catalog.instances).toMatchObject([
       {
         id: "codex_default",
@@ -83,15 +90,12 @@ describe("canonical composer legacy Project adapter", () => {
     ]);
   });
 
-  it("filters the full catalog to Instances the legacy create-thread API can execute", () => {
+  it("keeps the shared catalog visible in Project Chat but gates Instances the legacy API cannot execute", () => {
     const summary = summaryFixture();
     const legacy = createLegacyProjectProviderCatalog(summary);
     const full: CanonicalProviderCatalog = {
       ...legacy,
-      drivers: [
-        { kind: "hermes", displayName: "Hermes", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
-        ...legacy.drivers,
-      ],
+      drivers: legacy.drivers,
       instances: [{
         ...legacy.instances[0]!,
         id: "hermes_default",
@@ -99,8 +103,33 @@ describe("canonical composer legacy Project adapter", () => {
       }, ...legacy.instances],
     };
 
-    expect(filterCatalogForLegacyProject(full, summary).instances.map((instance) => instance.id))
-      .toEqual(["codex_default", "claude_code_default"]);
+    const projectCatalog = filterCatalogForLegacyProject(full, summary);
+
+    expect(projectCatalog.drivers.map((driver) => driver.kind))
+      .toEqual(["hermes", "openclaw", "codex", "claude_code", "opencode", "pi"]);
+    expect(projectCatalog.instances).toMatchObject([
+      {
+        id: "hermes_default",
+        availability: "unavailable",
+        models: [{ availability: "unavailable" }],
+      },
+      { id: "codex_default", availability: "available" },
+      { id: "claude_code_default", availability: "available" },
+    ]);
+  });
+
+  it("restores the shared Driver catalog when an older Gateway only returns coding harnesses", () => {
+    const summary = summaryFixture();
+    const legacy = createLegacyProjectProviderCatalog(summary);
+    const oldGatewayCatalog: CanonicalProviderCatalog = {
+      ...legacy,
+      drivers: legacy.drivers.filter((driver) => (
+        driver.kind === "codex" || driver.kind === "claude_code"
+      )),
+    };
+
+    expect(filterCatalogForLegacyProject(oldGatewayCatalog, summary).drivers.map((driver) => driver.kind))
+      .toEqual(["hermes", "openclaw", "codex", "claude_code", "opencode", "pi"]);
   });
 
   it("maps canonical mode and permissions to the existing create-thread draft", () => {

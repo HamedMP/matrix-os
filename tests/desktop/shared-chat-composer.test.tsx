@@ -274,6 +274,9 @@ describe("SharedChatComposer", () => {
     const opencode = screen.getByRole("button", { name: "OpenCode harness, Authentication required" });
 
     expect(opencode.getAttribute("aria-disabled")).toBe("true");
+    expect(opencode.hasAttribute("disabled")).toBe(false);
+    expect(opencode.className).toContain("opacity-35");
+    expect(opencode.getAttribute("title")).toContain("OpenCode — Authentication required");
     fireEvent.click(opencode);
     expect(screen.queryByRole("option", { name: /Provider default.*OpenCode/ })).toBeNull();
   });
@@ -303,6 +306,9 @@ describe("SharedChatComposer", () => {
       expect(screen.getByRole("button", { name }).querySelector(`[data-provider-glyph="${kind}"]`))
         .toBeTruthy();
     }
+    expect(screen.getByRole("button", { name: "Hermes harness, Unavailable" })
+      .querySelector('img[data-provider-glyph="hermes"]')?.getAttribute("src"))
+      .toContain("hermes-provider.png");
   });
 
   it("keeps model selection available but explains the locked Instance", () => {
