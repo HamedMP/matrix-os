@@ -917,6 +917,19 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + 600))'));
   });
 
+  it('preview VPS workflow reports only a public-safe coarse provisioning failure', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('public_provision_failure_code()');
+    expect(workflow).toContain(
+      'quota_exceeded|snapshot_quota_exceeded|provider_unavailable|provider_timeout|snapshot_clone_rejected|user_data_too_large|r2_unavailable|invalid_state|billing_required|not_found|registration_rejected|registration_timeout|retry_exhausted|unknown)',
+    );
+    expect(workflow).toContain("printf 'unknown\\n'");
+    expect(workflow).toContain('Provisioning failed for ${HANDLE} (${failure_code})');
+    expect(workflow).not.toContain('Provisioning failed for ${HANDLE} (${raw_failure_code})');
+  });
+
   it('preview VPS workflow safely resumes an existing active preview', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');

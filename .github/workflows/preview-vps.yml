@@ -279,6 +279,17 @@ jobs:
             exit 1
           fi
 
+          public_provision_failure_code() {
+            case "$1" in
+              quota_exceeded|snapshot_quota_exceeded|provider_unavailable|provider_timeout|snapshot_clone_rejected|user_data_too_large|r2_unavailable|invalid_state|billing_required|not_found|registration_rejected|registration_timeout|retry_exhausted|unknown)
+                printf '%s\n' "$1"
+                ;;
+              *)
+                printf 'unknown\n'
+                ;;
+            esac
+          }
+
           fleet_machine="$(curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
@@ -358,14 +369,18 @@ jobs:
             deadline=$((SECONDS + 600))
             while true; do
               sleep 15
-              status="$(curl -fsS --max-time 30 \
+              machine_state="$(curl -fsS --max-time 30 \
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-                jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
-                  '[.machines[] | select(.handle == $h and .machineId == $id and .deletedAt == null)] | .[0].status // "absent"')"
+                jq -c --arg h "$HANDLE" --arg id "$accepted_machine_id" \
+                  '[.machines[] | select(.handle == $h and .machineId == $id and .deletedAt == null)]
+                   | (.[0] // {status: "absent", failureCode: null})')"
+              status="$(jq -r '.status' <<< "$machine_state")"
               [ "$status" = "running" ] && break
               if [ "$status" = "failed" ]; then
-                echo "Provisioning failed for ${HANDLE}" >&2
+                raw_failure_code="$(jq -r '.failureCode // "unknown"' <<< "$machine_state")"
+                failure_code="$(public_provision_failure_code "$raw_failure_code")"
+                echo "Provisioning failed for ${HANDLE} (${failure_code})" >&2
                 exit 1
               fi
               if [ "$SECONDS" -ge "$deadline" ]; then
