@@ -5,16 +5,29 @@ import {
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatTurnAdmissionResponseSchema,
+  CanonicalCreateChatTurnRequestSchema,
+  CanonicalRetryChatTurnRequestSchema,
   CanonicalCreateChatRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
+  type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatTurnAdmissionResponse,
+  type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
+  type CanonicalCreateChatTurnRequest,
+  type CanonicalRetryChatTurnRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import type { CanonicalChatRouteService } from "./routes.js";
+import type { RequestPrincipal } from "../request-principal.js";
+import type { CanonicalChatOrchestrator } from "./orchestrator.js";
 
 const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -62,7 +75,10 @@ function decodeMessageCursor(value: string, chatId: string): number {
   return cursor.beforeSeq;
 }
 
-export function createCanonicalChatService(repository: ChatServiceRepository): CanonicalChatRouteService {
+export function createCanonicalChatService(
+  repository: ChatServiceRepository,
+  options: { orchestrator?: Pick<CanonicalChatOrchestrator, "admitTurn" | "cancelRun" | "retryTurn"> } = {},
+): CanonicalChatRouteService {
   return {
     async create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord> {
       const request = CanonicalCreateChatRequestSchema.parse(input);
@@ -121,6 +137,50 @@ export function createCanonicalChatService(repository: ChatServiceRepository): C
         }),
       });
     },
+
+    async admitTurn(
+      principal: RequestPrincipal,
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalCreateChatTurnRequest,
+    ): Promise<CanonicalChatTurnAdmissionResponse> {
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatTurnAdmissionResponseSchema.parse(await options.orchestrator.admitTurn(
+        principal,
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalCreateChatTurnRequestSchema.parse(input),
+      ));
+    },
+
+    async cancelRun(
+      owner: ChatOwner,
+      chatId: string,
+      runId: string,
+      _input: CanonicalCancelChatRunRequest,
+    ): Promise<CanonicalChatRunCancellationResponse> {
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatRunCancellationResponseSchema.parse(
+        await options.orchestrator.cancelRun(owner, CanonicalChatIdSchema.parse(chatId), runId),
+      );
+    },
+
+    async retryTurn(
+      principal: RequestPrincipal,
+      owner: ChatOwner,
+      chatId: string,
+      turnId: string,
+      input: CanonicalRetryChatTurnRequest,
+    ): Promise<CanonicalChatRunAdmissionResponse> {
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatRunAdmissionResponseSchema.parse(await options.orchestrator.retryTurn(
+        principal,
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        turnId,
+        CanonicalRetryChatTurnRequestSchema.parse(input),
+      ));
+    },
   };
 }
 
@@ -134,5 +194,8 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     create: unavailable,
     list: unavailable,
     getDetail: unavailable,
+    admitTurn: unavailable,
+    cancelRun: unavailable,
+    retryTurn: unavailable,
   };
 }

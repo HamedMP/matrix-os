@@ -68,6 +68,7 @@ describe("canonical Chat execution-root resolver", () => {
     expect(resolved).toEqual({
       ref: { kind: "project", projectId: projectRecord.id },
       primaryWorkspaceRoot: await realpath(externalFolder),
+      projectSlug: "matrix-os-renamed",
       fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(JSON.stringify(resolved)).not.toContain("user_owner");
@@ -76,7 +77,7 @@ describe("canonical Chat execution-root resolver", () => {
     await expect(resolver.revalidate(owner, {
       ref: resolved.ref,
       fingerprint: resolved.fingerprint,
-    })).resolves.toEqual(resolved);
+    })).resolves.toEqual({ ...resolved, projectSlug: "renamed-again" });
   });
 
   it("fails closed when project authority is revoked during revalidation", async () => {

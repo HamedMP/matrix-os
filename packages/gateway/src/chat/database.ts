@@ -88,6 +88,7 @@ export interface ChatRunsTable {
   id: string;
   chat_id: string;
   turn_id: string;
+  client_request_id: string;
   attempt: number;
   driver_kind: string;
   instance_id: string;
@@ -95,6 +96,7 @@ export interface ChatRunsTable {
   interaction_mode: string;
   permission_mode: string;
   execution_root: JsonValue | null;
+  execution_root_fingerprint: string | null;
   status: "accepted" | "running" | "waiting_for_approval" | "waiting_for_input" | "completed" | "failed" | "aborted";
   outcome: "completed" | "failed" | "aborted" | null;
   started_at: NullableTimestamp;
@@ -281,6 +283,7 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
       id TEXT PRIMARY KEY,
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
       turn_id TEXT NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+      client_request_id TEXT NOT NULL,
       attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 100),
       driver_kind TEXT NOT NULL,
       instance_id TEXT NOT NULL,
@@ -288,6 +291,7 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
       interaction_mode TEXT NOT NULL,
       permission_mode TEXT NOT NULL,
       execution_root JSONB,
+      execution_root_fingerprint TEXT,
       status TEXT NOT NULL CHECK (status IN ('accepted', 'running', 'waiting_for_approval', 'waiting_for_input', 'completed', 'failed', 'aborted')),
       outcome TEXT CHECK (outcome IN ('completed', 'failed', 'aborted')),
       started_at TIMESTAMPTZ,
@@ -298,6 +302,28 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
       updated_at TIMESTAMPTZ NOT NULL,
       UNIQUE (turn_id, attempt)
     )
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_runs
+    ADD COLUMN IF NOT EXISTS execution_root_fingerprint TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_runs
+    ADD COLUMN IF NOT EXISTS client_request_id TEXT
+  `.execute(db);
+  await sql`
+    UPDATE chat_runs AS runs
+    SET client_request_id = turns.client_request_id
+    FROM chat_turns AS turns
+    WHERE runs.turn_id = turns.id AND runs.client_request_id IS NULL
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_runs
+    ALTER COLUMN client_request_id SET NOT NULL
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_runs_retry_request
+    ON chat_runs(turn_id, client_request_id)
   `.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_runs_one_active

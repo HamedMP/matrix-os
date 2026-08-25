@@ -54,6 +54,8 @@ export interface ChatExecutionRootProvenance {
 export interface ResolvedChatExecutionRoot extends ChatExecutionRootProvenance {
   /** Gateway-only derived value. Never persist or project this path to a client. */
   primaryWorkspaceRoot: string;
+  /** Gateway-only legacy workspace Provider key derived from ProjectConfig. */
+  projectSlug: string;
 }
 
 export interface ChatExecutionRootResolver {
@@ -295,6 +297,7 @@ export function createChatExecutionRootResolver<
       return {
         ref,
         primaryWorkspaceRoot: projectRoot,
+        projectSlug: currentProject.slug,
         fingerprint: fingerprint({ owner, ref, project: currentProject, projectRoot }),
       };
     }
@@ -330,6 +333,7 @@ export function createChatExecutionRootResolver<
     return {
       ref,
       primaryWorkspaceRoot: worktreeRoot,
+      projectSlug: finalProject.slug,
       fingerprint: fingerprint({
         owner,
         ref,

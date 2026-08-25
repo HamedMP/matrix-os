@@ -135,6 +135,14 @@ import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
 import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import { createCanonicalChatRoutes } from "./chat/routes.js";
+import { createChatExecutionRootResolver } from "./chat/execution-root.js";
+import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
+import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
+import {
+  CanonicalChatProviderRegistry,
+  type CanonicalChatProviderAdapter,
+} from "./chat/provider-adapter.js";
+import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
@@ -857,6 +865,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let chatRepository: ChatRepository | null = null;
+  let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
 
   if (databaseUrl) {
@@ -4136,24 +4145,59 @@ export async function createGateway(config: GatewayConfig) {
     client: hermesClient,
   });
   await agentRuntimeServices.controller.reconcile();
+  const canonicalChatProviderCatalog = createChatProviderCatalogService({
+    codingProviders: codingAgentProviderRegistry,
+    agentRuntimeSource: agentRuntimeServices.source,
+    skillsSource: () => loadSkills(homePath),
+    ...(codexExecutable ? {
+      codingModelCatalogSource: createCodexModelCatalogSource({
+        executable: codexExecutable,
+        cwd: homePath,
+      }),
+    } : {}),
+  });
+  if (chatRepository) {
+    const canonicalAdapters: CanonicalChatProviderAdapter[] = [
+      createHermesChatProviderAdapter({ dispatcher }),
+    ];
+    if (codingAgentThreadStore) {
+      if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
+        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
+          providerId: "codex",
+          threads: codingAgentThreadStore,
+        }));
+      }
+      if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
+        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
+          providerId: "claude",
+          threads: codingAgentThreadStore,
+        }));
+      }
+    }
+    canonicalChatOrchestrator = new CanonicalChatOrchestrator({
+      repository: chatRepository,
+      catalog: canonicalChatProviderCatalog,
+      adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
+      executionRoots: createChatExecutionRootResolver({
+        homePath,
+        projects: codingAgentProjectManager,
+        worktrees: codingAgentWorktreeManager,
+      }),
+    });
+    for (const ownerId of new Set(codingAgentOwnerIds)) {
+      await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
+    }
+  }
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
-      ? createCanonicalChatService(chatRepository)
+      ? createCanonicalChatService(chatRepository, {
+          ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
+        })
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createChatProviderRoutes({
-    catalog: createChatProviderCatalogService({
-      codingProviders: codingAgentProviderRegistry,
-      agentRuntimeSource: agentRuntimeServices.source,
-      skillsSource: () => loadSkills(homePath),
-      ...(codexExecutable ? {
-        codingModelCatalogSource: createCodexModelCatalogSource({
-          executable: codexExecutable,
-          cwd: homePath,
-        }),
-      } : {}),
-    }),
+    catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
 
@@ -4450,6 +4494,8 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await canonicalChatOrchestrator?.close();
+      canonicalChatOrchestrator = null;
       await agentRuntimeServices.controller.close();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();

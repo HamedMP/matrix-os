@@ -225,6 +225,7 @@ export function createCanonicalChatFixture(state: CanonicalChatFixtureState): Ca
     interactionMode: "default",
     permissionMode: "supervised",
     executionRoot: { kind: "project", projectId: project.projectId },
+    executionRootFingerprint: "a".repeat(64),
     status,
     ...(status === "completed" || status === "failed" || status === "aborted" ? { outcome: status } : {}),
     ...(status === "accepted" ? {} : { startedAt: now }),

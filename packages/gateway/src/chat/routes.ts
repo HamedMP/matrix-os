@@ -1,15 +1,29 @@
 import {
+  CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatRunIdSchema,
+  CanonicalChatTurnIdSchema,
+  CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalCreateChatRequestSchema,
+  CanonicalCreateChatTurnRequestSchema,
+  CanonicalRetryChatTurnRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
+  type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatTurnAdmissionResponse,
+  type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
+  type CanonicalCreateChatTurnRequest,
+  type CanonicalRetryChatTurnRequest,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -20,8 +34,11 @@ import {
   type RequestPrincipal,
 } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
+import { CanonicalChatOrchestrationError } from "./orchestrator.js";
 
 const CHAT_CREATE_BODY_LIMIT = 96 * 1024;
+const CHAT_TURN_BODY_LIMIT = 128 * 1024;
+const CHAT_CANCEL_BODY_LIMIT = 4 * 1024;
 
 const ChatListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -47,6 +64,25 @@ export interface CanonicalChatRouteService {
     limit: number;
     cursor?: string;
   }): Promise<CanonicalChatDetailResponse | null>;
+  admitTurn(
+    principal: RequestPrincipal,
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalCreateChatTurnRequest,
+  ): Promise<CanonicalChatTurnAdmissionResponse>;
+  cancelRun(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    input: CanonicalCancelChatRunRequest,
+  ): Promise<CanonicalChatRunCancellationResponse>;
+  retryTurn(
+    principal: RequestPrincipal,
+    owner: ChatOwner,
+    chatId: string,
+    turnId: string,
+    input: CanonicalRetryChatTurnRequest,
+  ): Promise<CanonicalChatRunAdmissionResponse>;
 }
 
 function ownerFromPrincipal(principal: RequestPrincipal): ChatOwner {
@@ -80,6 +116,9 @@ function handleError(c: Context, error: unknown) {
     if (mapped.log) console.error("[chat/routes] Request principal misconfigured:", error.name);
     return c.json(mapped.body, mapped.status);
   }
+  if (error instanceof CanonicalChatOrchestrationError) {
+    return c.json({ error: error.safeError }, error.status);
+  }
   if (typeof error === "object" && error !== null && "issues" in error) {
     return validationError(c);
   }
@@ -103,6 +142,8 @@ export function createCanonicalChatRoutes(options: {
 }): Hono {
   const routes = new Hono();
   const createBodyLimit = bodyLimit({ maxSize: CHAT_CREATE_BODY_LIMIT, onError: bodyTooLarge });
+  const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
+  const cancelBodyLimit = bodyLimit({ maxSize: CHAT_CANCEL_BODY_LIMIT, onError: bodyTooLarge });
 
   routes.post("/api/chats", createBodyLimit, async (context) => {
     try {
@@ -152,6 +193,63 @@ export function createCanonicalChatRoutes(options: {
       );
       if (!result) return notFound(context);
       return context.json(CanonicalChatDetailResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/turns", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalCreateChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const principal = options.getPrincipal(context);
+      const result = await options.service.admitTurn(
+        principal,
+        ownerFromPrincipal(principal),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatTurnAdmissionResponseSchema.parse(result), 202);
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/runs/:runId/cancel", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+      const parsed = CanonicalCancelChatRunRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const principal = options.getPrincipal(context);
+      const result = await options.service.cancelRun(
+        ownerFromPrincipal(principal),
+        chatId,
+        runId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatRunCancellationResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/turns/:turnId/runs", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const turnId = CanonicalChatTurnIdSchema.parse(context.req.param("turnId"));
+      const parsed = CanonicalRetryChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const principal = options.getPrincipal(context);
+      const result = await options.service.retryTurn(
+        principal,
+        ownerFromPrincipal(principal),
+        chatId,
+        turnId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatRunAdmissionResponseSchema.parse(result), 202);
     } catch (error: unknown) {
       return handleError(context, error);
     }

@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import {
+  CanonicalChatMessagePartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatRequestIdSchema,
@@ -8,7 +9,10 @@ import {
   CanonicalChatSchema,
   CanonicalChatTurnSchema,
 } from "#canonical-chat";
-import { canonicalReferenceId } from "#canonical-chat-primitives";
+import {
+  CanonicalChatExecutionRootRefSchema,
+  canonicalReferenceId,
+} from "#canonical-chat-primitives";
 import {
   CanonicalChatActiveRunProjectionSchema,
   CanonicalChatProviderBindingSchema,
@@ -24,6 +28,37 @@ export const CanonicalCreateChatRequestSchema = z.object({
   title: CanonicalChatSchema.shape.title.optional(),
   projectId: canonicalReferenceId(160).optional(),
   currentSelection: CanonicalChatModelSelectionSchema.optional(),
+}).strict();
+
+const USER_INPUT_PART_TYPES = new Set([
+  "text",
+  "attachment_reference",
+  "invocation_reference",
+  "resource_reference",
+]);
+
+export const CanonicalChatUserInputPartSchema = CanonicalChatMessagePartSchema
+  .refine((part) => USER_INPUT_PART_TYPES.has(part.type), {
+    message: "Part is not accepted as user input",
+  });
+
+export const CanonicalCreateChatTurnRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+  selection: CanonicalChatModelSelectionSchema,
+  interactionMode: canonicalReferenceId(80),
+  permissionMode: canonicalReferenceId(80),
+  executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+}).strict();
+
+export const CanonicalCancelChatRunRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+}).strict();
+
+export const CanonicalRetryChatTurnRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 }).strict();
 
 export const CanonicalChatRecordSchema = z.object({
@@ -70,7 +105,51 @@ export const CanonicalChatDetailResponseSchema = z.object({
   }
 });
 
+export const CanonicalChatTurnAdmissionResponseSchema = z.object({
+  record: CanonicalChatRecordSchema,
+  message: CanonicalChatMessageSchema,
+  turn: CanonicalChatTurnSchema,
+  run: CanonicalChatRunSchema,
+  admission: z.enum(["accepted", "already_accepted"]),
+}).strict().superRefine((response, ctx) => {
+  const chatId = response.record.chat.id;
+  if (response.message.chatId !== chatId
+    || response.turn.chatId !== chatId
+    || response.run.chatId !== chatId) {
+    ctx.addIssue({ code: "custom", message: "Admission Chat mismatch" });
+  }
+  if (response.message.turnId !== response.turn.id
+    || response.turn.inputMessageId !== response.message.id
+    || response.run.turnId !== response.turn.id) {
+    ctx.addIssue({ code: "custom", message: "Admission relationship mismatch" });
+  }
+});
+
+export const CanonicalChatRunCancellationResponseSchema = z.object({
+  run: CanonicalChatRunSchema,
+  cancellation: z.enum(["aborted", "already_terminal"]),
+}).strict();
+
+export const CanonicalChatRunAdmissionResponseSchema = z.object({
+  record: CanonicalChatRecordSchema,
+  turn: CanonicalChatTurnSchema,
+  run: CanonicalChatRunSchema,
+  admission: z.enum(["accepted", "already_accepted"]),
+}).strict().superRefine((response, ctx) => {
+  const chatId = response.record.chat.id;
+  if (response.turn.chatId !== chatId || response.run.chatId !== chatId
+    || response.run.turnId !== response.turn.id) {
+    ctx.addIssue({ code: "custom", message: "Run admission relationship mismatch" });
+  }
+});
+
 export type CanonicalCreateChatRequest = z.infer<typeof CanonicalCreateChatRequestSchema>;
+export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
+export type CanonicalCancelChatRunRequest = z.infer<typeof CanonicalCancelChatRunRequestSchema>;
+export type CanonicalRetryChatTurnRequest = z.infer<typeof CanonicalRetryChatTurnRequestSchema>;
 export type CanonicalChatRecord = z.infer<typeof CanonicalChatRecordSchema>;
 export type CanonicalChatListResponse = z.infer<typeof CanonicalChatListResponseSchema>;
 export type CanonicalChatDetailResponse = z.infer<typeof CanonicalChatDetailResponseSchema>;
+export type CanonicalChatTurnAdmissionResponse = z.infer<typeof CanonicalChatTurnAdmissionResponseSchema>;
+export type CanonicalChatRunCancellationResponse = z.infer<typeof CanonicalChatRunCancellationResponseSchema>;
+export type CanonicalChatRunAdmissionResponse = z.infer<typeof CanonicalChatRunAdmissionResponseSchema>;

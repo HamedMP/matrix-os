@@ -199,6 +199,9 @@ export function toRun(row: Selectable<ChatRunsTable>): CanonicalChatRun {
     interactionMode: row.interaction_mode,
     permissionMode: row.permission_mode,
     ...(row.execution_root === null ? {} : { executionRoot: parseJson(row.execution_root) }),
+    ...(row.execution_root_fingerprint === null
+      ? {}
+      : { executionRootFingerprint: row.execution_root_fingerprint }),
     status: row.status,
     ...(row.outcome === null ? {} : { outcome: row.outcome }),
     ...(row.started_at === null ? {} : { startedAt: asIso(row.started_at) }),

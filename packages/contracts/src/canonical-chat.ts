@@ -154,6 +154,7 @@ export const CanonicalChatRunSchema = z.object({
   interactionMode: canonicalReferenceId(80),
   permissionMode: canonicalReferenceId(80),
   executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  executionRootFingerprint: z.string().length(64).regex(/^[a-f0-9]{64}$/).optional(),
   status: z.enum([
     "accepted",
     "running",
@@ -186,6 +187,13 @@ export const CanonicalChatRunSchema = z.object({
 }).strict().superRefine((run, ctx) => {
   if (run.instanceId !== run.selection.instanceId) {
     ctx.addIssue({ code: "custom", path: ["selection", "instanceId"], message: "Run Instance mismatch" });
+  }
+  if ((run.executionRoot === undefined) !== (run.executionRootFingerprint === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["executionRootFingerprint"],
+      message: "Execution root and fingerprint must be stored together",
+    });
   }
   if (new Set(run.capabilitySnapshot.attachments).size !== run.capabilitySnapshot.attachments.length) {
     ctx.addIssue({ code: "custom", path: ["capabilitySnapshot", "attachments"], message: "Duplicate attachment capability" });

@@ -57,6 +57,7 @@ describe("canonical Chat contracts", () => {
       interactionMode: "default",
       permissionMode: "supervised",
       executionRoot: { kind: "project", projectId: "matrix-os" },
+      executionRootFingerprint: "a".repeat(64),
       status: "completed",
       outcome: "completed",
       startedAt: now,
@@ -106,6 +107,14 @@ describe("canonical Chat contracts", () => {
     expect(CanonicalChatRunSchema.safeParse({
       ...run,
       completedAt: undefined,
+    }).success).toBe(false);
+    expect(CanonicalChatRunSchema.safeParse({
+      ...run,
+      executionRootFingerprint: undefined,
+    }).success).toBe(false);
+    expect(CanonicalChatRunSchema.safeParse({
+      ...run,
+      executionRoot: undefined,
     }).success).toBe(false);
   });
 

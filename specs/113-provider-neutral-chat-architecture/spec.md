@@ -647,6 +647,7 @@ All schemas are strict and bounded. Every mutating HTTP endpoint uses Hono
 | `PATCH /api/chats/:chatId` | Verified principal | Owner/editor | Title, compatible selection, Project binding, lifecycle with base revision; Driver/Instance mutation rejected after binding |
 | `DELETE /api/chats/:chatId` | Verified principal | Owner/org admin | Reject active Run unless an explicit cancel-and-delete flow completed |
 | `POST /api/chats/:chatId/turns` | Verified principal | Owner/editor | Transactional Turn/Run admission; idempotent request ID |
+| `POST /api/chats/:chatId/turns/:turnId/runs` | Verified principal | Owner/editor | Idempotent same-Turn retry; immutable input and bound Instance |
 | `POST /api/chats/:chatId/runs/:runId/cancel` | Verified principal | Owner/editor | Same-Instance cancellation only |
 | `POST /api/chats/:chatId/forks` | Verified principal | Owner/editor | Explicit committed message boundary and optional draft selection |
 | `POST /api/chats/:chatId/exports` | Verified principal | Owner/org admin | Bounded temp export with cleanup policy |

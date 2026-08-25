@@ -1,14 +1,28 @@
 import {
+  CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatRunIdSchema,
+  CanonicalChatTurnAdmissionResponseSchema,
+  CanonicalChatTurnIdSchema,
   CanonicalCreateChatRequestSchema,
+  CanonicalCreateChatTurnRequestSchema,
+  CanonicalRetryChatTurnRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
+  type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatTurnAdmissionResponse,
+  type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
+  type CanonicalCreateChatTurnRequest,
+  type CanonicalRetryChatTurnRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { ApiClient } from "./api";
@@ -32,6 +46,17 @@ export interface CanonicalChatClient {
     chatId: string,
     input?: z.input<typeof CanonicalChatDetailInputSchema>,
   ): Promise<CanonicalChatDetailResponse>;
+  admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
+  cancelRun(
+    chatId: string,
+    runId: string,
+    input: CanonicalCancelChatRunRequest,
+  ): Promise<CanonicalChatRunCancellationResponse>;
+  retryTurn(
+    chatId: string,
+    turnId: string,
+    input: CanonicalRetryChatTurnRequest,
+  ): Promise<CanonicalChatRunAdmissionResponse>;
 }
 
 function withQuery(path: string, values: Record<string, string | number | undefined>): string {
@@ -69,6 +94,35 @@ export function createCanonicalChatClient(api: ApiClient): CanonicalChatClient {
         cursor: parsed.cursor,
       }));
       return CanonicalChatDetailResponseSchema.parse(response);
+    },
+
+    async admitTurn(chatId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const request = CanonicalCreateChatTurnRequestSchema.parse(input);
+      return CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/turns`,
+        request,
+      ));
+    },
+
+    async cancelRun(chatId, runId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const request = CanonicalCancelChatRunRequestSchema.parse(input);
+      return CanonicalChatRunCancellationResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/cancel`,
+        request,
+      ));
+    },
+
+    async retryTurn(chatId, turnId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedTurnId = CanonicalChatTurnIdSchema.parse(turnId);
+      const request = CanonicalRetryChatTurnRequestSchema.parse(input);
+      return CanonicalChatRunAdmissionResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/turns/${encodeURIComponent(parsedTurnId)}/runs`,
+        request,
+      ));
     },
   };
 }

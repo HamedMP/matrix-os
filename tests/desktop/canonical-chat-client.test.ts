@@ -98,4 +98,136 @@ describe("canonical Chat client", () => {
     }));
     await expect(malformed.getDetail("chat_client_test")).rejects.toThrow();
   });
+
+  it("sends strict Turn and cancel commands through the shared Gateway client", async () => {
+    const turnInput = {
+      clientRequestId: "req_client_turn",
+      baseRevision: 0,
+      parts: [{ type: "text" as const, text: "ship it" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    };
+    const post = vi.fn(async (path: string) => {
+      if (path.endsWith("/cancel")) {
+        return {
+          run: {
+            id: "run_client",
+            chatId: record.chat.id,
+            turnId: "cturn_client",
+            attempt: 1,
+            driverKind: "codex",
+            instanceId: "codex_default",
+            selection: turnInput.selection,
+            interactionMode: "default",
+            permissionMode: "supervised",
+            status: "aborted",
+            outcome: "aborted",
+            startedAt: "2026-08-26T00:00:00.000Z",
+            completedAt: "2026-08-26T00:01:00.000Z",
+            historyBoundarySeq: 0,
+            capabilitySnapshot,
+            createdAt: "2026-08-26T00:00:00.000Z",
+            updatedAt: "2026-08-26T00:01:00.000Z",
+          },
+          cancellation: "aborted",
+        };
+      }
+      if (path.endsWith("/turns/cturn_client/runs")) {
+        const admitted = admissionResponse(turnInput);
+        return {
+          record: admitted.record,
+          turn: admitted.turn,
+          run: { ...admitted.run, id: "run_client_retry", attempt: 2 },
+          admission: "accepted",
+        };
+      }
+      return admissionResponse(turnInput);
+    });
+    const client = createCanonicalChatClient(api({ post }));
+
+    await client.admitTurn(record.chat.id, turnInput);
+    await client.cancelRun(record.chat.id, "run_client", { clientRequestId: "req_client_cancel" });
+    await client.retryTurn(record.chat.id, "cturn_client", {
+      clientRequestId: "req_client_retry",
+      baseRevision: 2,
+    });
+
+    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns", turnInput);
+    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel", {
+      clientRequestId: "req_client_cancel",
+    });
+    expect(post).toHaveBeenNthCalledWith(3, "/api/chats/chat_client_test/turns/cturn_client/runs", {
+      clientRequestId: "req_client_retry",
+      baseRevision: 2,
+    });
+  });
 });
+
+const capabilitySnapshot = {
+  revision: "catalog_client",
+  rootChat: true,
+  attachments: ["file" as const],
+  resources: ["file" as const, "folder" as const, "project" as const],
+  tools: [],
+  approvals: true,
+  userInput: true,
+  resume: true,
+  cancellation: true,
+  worktrees: "optional" as const,
+  interactionModes: ["default"],
+  permissionModes: ["supervised"],
+};
+
+function admissionResponse(input: {
+  clientRequestId: string;
+  selection: { instanceId: string; model: string };
+}) {
+  const currentRecord = {
+    chat: { ...record.chat, revision: 1, messageCount: 1, currentSelection: input.selection },
+    providerBinding: { driverKind: "codex", instanceId: "codex_default", lockedAtTurnId: "cturn_client" },
+    activeRun: { runId: "run_client", turnId: "cturn_client", status: "accepted" },
+  };
+  const message = {
+    id: "msg_client",
+    chatId: record.chat.id,
+    seq: 1,
+    role: "user",
+    state: "committed",
+    turnId: "cturn_client",
+    parts: [{ type: "text", text: "ship it" }],
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  const turn = {
+    id: "cturn_client",
+    chatId: record.chat.id,
+    clientRequestId: input.clientRequestId,
+    baseMessageSeq: 0,
+    inputMessageId: message.id,
+    status: "accepted",
+    createdAt: "2026-08-26T00:00:00.000Z",
+    updatedAt: "2026-08-26T00:00:00.000Z",
+  };
+  return {
+    record: currentRecord,
+    message,
+    turn,
+    run: {
+      id: "run_client",
+      chatId: record.chat.id,
+      turnId: turn.id,
+      attempt: 1,
+      driverKind: "codex",
+      instanceId: "codex_default",
+      selection: input.selection,
+      interactionMode: "default",
+      permissionMode: "supervised",
+      status: "accepted",
+      historyBoundarySeq: 0,
+      capabilitySnapshot,
+      createdAt: "2026-08-26T00:00:00.000Z",
+      updatedAt: "2026-08-26T00:00:00.000Z",
+    },
+    admission: "accepted",
+  };
+}

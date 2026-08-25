@@ -1,4 +1,7 @@
 import {
+  CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
@@ -43,6 +46,15 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
       runs: [],
       activities: [],
     })),
+    admitTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    cancelRun: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    retryTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
     ...overrides,
   };
 }
@@ -188,5 +200,146 @@ describe("canonical Chat routes", () => {
     } finally {
       await repository.kysely.destroy();
     }
+  });
+
+  it("admits and cancels a Run through strict owner-derived routes", async () => {
+    const admission = CanonicalChatTurnAdmissionResponseSchema.parse({
+      record: {
+        ...record,
+        chat: {
+          ...record.chat,
+          revision: 1,
+          messageCount: 1,
+          currentSelection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        },
+        providerBinding: {
+          driverKind: "codex",
+          instanceId: "codex_default",
+          lockedAtTurnId: "cturn_route",
+        },
+        activeRun: { runId: "run_route", turnId: "cturn_route", status: "accepted" },
+      },
+      message: {
+        id: "msg_route",
+        chatId: record.chat.id,
+        seq: 1,
+        role: "user",
+        state: "committed",
+        turnId: "cturn_route",
+        parts: [{ type: "text", text: "ship it" }],
+        createdAt: "2026-08-26T00:00:00.000Z",
+      },
+      turn: {
+        id: "cturn_route",
+        chatId: record.chat.id,
+        clientRequestId: "req_route_turn",
+        baseMessageSeq: 0,
+        inputMessageId: "msg_route",
+        status: "accepted",
+        createdAt: "2026-08-26T00:00:00.000Z",
+        updatedAt: "2026-08-26T00:00:00.000Z",
+      },
+      run: {
+        id: "run_route",
+        chatId: record.chat.id,
+        turnId: "cturn_route",
+        attempt: 1,
+        driverKind: "codex",
+        instanceId: "codex_default",
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        status: "accepted",
+        historyBoundarySeq: 0,
+        capabilitySnapshot: {
+          revision: "catalog_route",
+          rootChat: true,
+          attachments: ["file"],
+          resources: ["file", "folder", "project"],
+          tools: [],
+          approvals: true,
+          userInput: true,
+          resume: true,
+          cancellation: true,
+          worktrees: "optional",
+          interactionModes: ["default"],
+          permissionModes: ["supervised"],
+        },
+        createdAt: "2026-08-26T00:00:00.000Z",
+        updatedAt: "2026-08-26T00:00:00.000Z",
+      },
+      admission: "accepted",
+    });
+    const cancellation = CanonicalChatRunCancellationResponseSchema.parse({
+      run: {
+        ...admission.run,
+        status: "aborted",
+        outcome: "aborted",
+        startedAt: "2026-08-26T00:00:00.000Z",
+        completedAt: "2026-08-26T00:01:00.000Z",
+        updatedAt: "2026-08-26T00:01:00.000Z",
+      },
+      cancellation: "aborted",
+    });
+    const admitTurn = vi.fn(async () => admission);
+    const cancelRun = vi.fn(async () => cancellation);
+    const retryAdmission = CanonicalChatRunAdmissionResponseSchema.parse({
+      record: admission.record,
+      turn: admission.turn,
+      run: { ...admission.run, id: "run_route_retry", attempt: 2 },
+      admission: "accepted",
+    });
+    const retryTurn = vi.fn(async () => retryAdmission);
+    const app = appFor(routeService({ admitTurn, cancelRun, retryTurn }));
+
+    const accepted = await app.request("/api/chats/chat_route_test/turns", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        clientRequestId: "req_route_turn",
+        baseRevision: 0,
+        parts: [{ type: "text", text: "ship it" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      }),
+    });
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toEqual(admission);
+    expect(admitTurn).toHaveBeenCalledWith(
+      { userId: "owner_1", source: "jwt" },
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      expect.objectContaining({ clientRequestId: "req_route_turn" }),
+    );
+
+    const cancelled = await app.request("/api/chats/chat_route_test/runs/run_route/cancel", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientRequestId: "req_route_cancel" }),
+    });
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toEqual(cancellation);
+    expect(cancelRun).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route",
+      { clientRequestId: "req_route_cancel" },
+    );
+
+    const retried = await app.request("/api/chats/chat_route_test/turns/cturn_route/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientRequestId: "req_route_retry", baseRevision: 2 }),
+    });
+    expect(retried.status).toBe(202);
+    expect(await retried.json()).toEqual(retryAdmission);
+    expect(retryTurn).toHaveBeenCalledWith(
+      { userId: "owner_1", source: "jwt" },
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "cturn_route",
+      { clientRequestId: "req_route_retry", baseRevision: 2 },
+    );
   });
 });
