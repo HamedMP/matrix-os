@@ -99,7 +99,7 @@ describe("SharedChatComposer", () => {
   afterEach(cleanup);
 
   it("renders the selected model and capability-backed controls in the Figma composer", () => {
-    render(<Harness />);
+    const { container } = render(<Harness />);
 
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("GPT-5.6-Sol");
@@ -107,6 +107,8 @@ describe("SharedChatComposer", () => {
     expect(screen.getByLabelText("Reasoning")).toBeTruthy();
     expect(screen.getByLabelText("Interaction mode")).toBeTruthy();
     expect(screen.getByLabelText("Permission mode")).toBeTruthy();
+    expect(container.querySelector(".prompt-card")?.classList.contains("overflow-hidden"))
+      .toBe(false);
   });
 
   it("searches models and switches Provider Instance before the first Turn", () => {
