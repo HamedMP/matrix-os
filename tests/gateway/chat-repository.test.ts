@@ -82,6 +82,17 @@ function run(chatId: string, inputTurn: CanonicalChatTurn, attempt = 1): Canonic
   };
 }
 
+function activity(chatId: string, runId: string, index: number): CanonicalChatRunActivity {
+  return {
+    id: `activity_${index}`,
+    chatId,
+    runId,
+    occurredAt: now,
+    type: "run.status",
+    status: "running",
+  };
+}
+
 describe("ChatRepository", () => {
   let pglite: InstanceType<typeof KyselyPGlite>;
   let repository: ChatRepository;
@@ -153,6 +164,28 @@ describe("ChatRepository", () => {
       throw new Error("rollback");
     })).rejects.toThrow("rollback");
     expect(await repository.get(owner, "chat_rolled_back")).toBeNull();
+  });
+
+  it("paginates equal updated timestamps with the Chat ID tie-breaker", async () => {
+    for (const suffix of ["a", "b", "c"]) {
+      await repository.create(owner, {
+        id: `chat_page_${suffix}`,
+        clientRequestId: `req_create_page_${suffix}`,
+        title: `Page ${suffix}`,
+      });
+    }
+    const tiedAt = "2026-08-25T00:10:00.000Z";
+    await sql`UPDATE chats SET updated_at = ${tiedAt}`.execute(repository.kysely);
+
+    const firstPage = await repository.list(owner, { limit: 2 });
+    const cursorChat = firstPage.at(-1)!;
+    const secondPage = await repository.list(owner, {
+      limit: 2,
+      cursor: { updatedAt: cursorChat.chat.updatedAt, chatId: cursorChat.chat.id },
+    });
+
+    expect(firstPage.map((record) => record.chat.id)).toEqual(["chat_page_a", "chat_page_b"]);
+    expect(secondPage.map((record) => record.chat.id)).toEqual(["chat_page_c"]);
   });
 
   it("enforces optimistic revisions and blocks Project mutation during an active Run", async () => {
@@ -260,6 +293,38 @@ describe("ChatRepository", () => {
     expect(await repository.getMessages(owner, created.chat.id, { afterSeq: 0, limit: 200 })).toEqual([]);
   });
 
+  it("reports non-active-Run uniqueness failures as conflicts instead of busy", async () => {
+    const first = await repository.create(owner, {
+      id: "chat_unique_first",
+      clientRequestId: "req_create_unique_first",
+      title: "First unique Chat",
+    });
+    const firstMessage = message(first.chat.id);
+    const firstTurn = turn(first.chat.id, firstMessage);
+    await repository.admitTurn(owner, {
+      chatId: first.chat.id,
+      baseRevision: 0,
+      message: firstMessage,
+      turn: firstTurn,
+      run: run(first.chat.id, firstTurn),
+    });
+
+    const second = await repository.create(owner, {
+      id: "chat_unique_second",
+      clientRequestId: "req_create_unique_second",
+      title: "Second unique Chat",
+    });
+    const secondMessage = { ...message(second.chat.id), id: firstMessage.id };
+    const secondTurn = turn(second.chat.id, secondMessage, "req_turn_unique_second");
+    await expect(repository.admitTurn(owner, {
+      chatId: second.chat.id,
+      baseRevision: 0,
+      message: secondMessage,
+      turn: secondTurn,
+      run: run(second.chat.id, secondTurn),
+    })).rejects.toBeInstanceOf(ChatConflictError);
+  });
+
   it("backs serialized Turn admission with a database-level active Run constraint", async () => {
     const created = await repository.create(owner, {
       id: "chat_admission_race",
@@ -344,6 +409,42 @@ describe("ChatRepository", () => {
     expect((await repository.replayOutbox(owner, { afterCursor: 0, limit: 10 })).at(-1)).toMatchObject({
       eventType: "run.completed",
     });
+  });
+
+  it("charges the Run event limit only for unseen activity IDs", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_activity_retry_capacity",
+      clientRequestId: "req_create_activity_retry_capacity",
+      title: "Activity retry capacity",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    const persisted = Array.from({ length: 499 }, (_, index) => activity(created.chat.id, acceptedRun.id, index));
+    await repository.kysely.insertInto("chat_run_events").values(persisted.map((event) => ({
+      id: event.id,
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      event: sql`${JSON.stringify(event)}::jsonb`,
+      occurred_at: event.occurredAt,
+    }))).execute();
+
+    await expect(repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      persisted[0]!,
+      activity(created.chat.id, acceptedRun.id, 499),
+    ])).resolves.toBe(1);
+    const count = await repository.kysely.selectFrom("chat_run_events")
+      .select(({ fn }) => fn.countAll().as("count"))
+      .where("run_id", "=", acceptedRun.id)
+      .executeTakeFirstOrThrow();
+    expect(Number(count.count)).toBe(500);
   });
 
   it("keeps adapter state behind the exact Driver and Instance boundary", async () => {
@@ -460,8 +561,13 @@ describe("ChatRepository", () => {
       chatId: created.chat.id,
       clientRequestId: "req_delete_once",
     });
+    const repeatedWithNewRequest = await repository.hardDelete(owner, {
+      chatId: created.chat.id,
+      clientRequestId: "req_delete_again",
+    });
 
     expect(repeated).toEqual(first);
+    expect(repeatedWithNewRequest).toEqual(first);
     expect(await repository.get(owner, created.chat.id)).toBeNull();
     expect(await repository.exportChat(owner, created.chat.id)).toBeNull();
     await expect(repository.hardDelete(otherOwner, {
@@ -473,6 +579,27 @@ describe("ChatRepository", () => {
       expect.objectContaining({ chat_id: created.chat.id, owner_id: owner.ownerId, request_id: "req_delete_once" }),
     ]);
     expect(JSON.stringify(tombstones)).not.toContain("Delete me");
+  });
+
+  it("rejects owner-wide deletion request reuse for another Chat as a typed conflict", async () => {
+    const first = await repository.create(owner, {
+      id: "chat_delete_request_first",
+      clientRequestId: "req_create_delete_request_first",
+      title: "First deletion target",
+    });
+    const second = await repository.create(owner, {
+      id: "chat_delete_request_second",
+      clientRequestId: "req_create_delete_request_second",
+      title: "Second deletion target",
+    });
+    const requestId = "req_delete_owner_wide";
+    await repository.hardDelete(owner, { chatId: first.chat.id, clientRequestId: requestId });
+
+    await expect(repository.hardDelete(owner, {
+      chatId: second.chat.id,
+      clientRequestId: requestId,
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(await repository.get(owner, second.chat.id)).not.toBeNull();
   });
 
   it("records legacy import and migration checkpoints idempotently", async () => {

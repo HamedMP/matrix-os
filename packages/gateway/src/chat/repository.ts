@@ -110,6 +110,13 @@ function requireSafeRef(value: string): string {
   return SAFE_INTERNAL_REF.parse(value);
 }
 
+function postgresUniqueConstraint(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)
+    || (error as { code?: unknown }).code !== "23505") return null;
+  const constraint = "constraint" in error ? (error as { constraint?: unknown }).constraint : undefined;
+  return typeof constraint === "string" ? constraint : "";
+}
+
 function preview(message: CanonicalChatMessage): string | null {
   const text = message.parts.find((part) => part.type === "text");
   return text?.type === "text" ? text.text.slice(0, 280) : null;
@@ -301,7 +308,7 @@ export class ChatRepository {
     limit: number;
     lifecycle?: "active" | "archived";
     projectId?: string | null;
-    beforeUpdatedAt?: string;
+    cursor?: { updatedAt: string; chatId: string };
   }): Promise<ChatRecord[]> {
     const owner = validateOwner(ownerInput);
     const limit = Math.max(1, Math.min(100, Math.trunc(input.limit)));
@@ -312,7 +319,14 @@ export class ChatRepository {
     if (input.projectId !== undefined) query = input.projectId === null
       ? query.where("project_id", "is", null)
       : query.where("project_id", "=", requireSafeRef(input.projectId));
-    if (input.beforeUpdatedAt) query = query.where("updated_at", "<", new Date(input.beforeUpdatedAt));
+    if (input.cursor) {
+      const cursorAt = new Date(z.iso.datetime({ offset: true }).parse(input.cursor.updatedAt));
+      const cursorChatId = CanonicalChatIdSchema.parse(input.cursor.chatId);
+      query = query.where(({ and, eb, or }) => or([
+        eb("updated_at", "<", cursorAt),
+        and([eb("updated_at", "=", cursorAt), eb("id", ">", cursorChatId)]),
+      ]));
+    }
     const rows = await query.orderBy("updated_at", "desc").orderBy("id").limit(limit).execute();
     return Promise.all(rows.map(async (row) => toChatRecord(row, await activeRunQuery(this.kysely, row.id))));
   }
@@ -376,14 +390,13 @@ export class ChatRepository {
     }
 
     return this.transact(async (trx) => {
+      const current = await selectOwnedChat(trx, owner, input.chatId, true);
+      if (!current) throw new ChatNotFoundError(input.chatId);
       const duplicate = await trx.selectFrom("chat_turns").selectAll()
         .where("chat_id", "=", input.chatId)
         .where("client_request_id", "=", turn.clientRequestId)
         .executeTakeFirst();
       if (duplicate) return hydrateAdmission(trx, owner, toTurn(duplicate));
-
-      const current = await selectOwnedChat(trx, owner, input.chatId, true);
-      if (!current) throw new ChatNotFoundError(input.chatId);
       if (Number(current.revision) !== input.baseRevision) {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
@@ -490,9 +503,9 @@ export class ChatRepository {
     }).catch((error: unknown) => {
       if (error instanceof ChatNotFoundError || error instanceof ChatConflictError
         || error instanceof ChatBusyError || error instanceof ChatProviderInstanceLockedError) throw error;
-      if (typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "23505") {
-        throw new ChatBusyError(input.chatId);
-      }
+      const constraint = postgresUniqueConstraint(error);
+      if (constraint === "idx_chat_runs_one_active") throw new ChatBusyError(input.chatId);
+      if (constraint !== null) throw new ChatConflictError(input.chatId, input.baseRevision);
       throw error;
     });
   }
@@ -546,6 +559,7 @@ export class ChatRepository {
     if (activities.some((activity) => activity.chatId !== chatId || activity.runId !== runId)) {
       throw new ChatConflictError(chatId, 0);
     }
+    if (activities.length === 0) return 0;
     return this.transact(async (trx) => {
       const current = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(chatId), true);
       if (!current) throw new ChatNotFoundError(chatId);
@@ -554,7 +568,14 @@ export class ChatRepository {
       if (!run) throw new ChatNotFoundError(chatId);
       const count = await trx.selectFrom("chat_run_events").select(({ fn }) => fn.countAll().as("count"))
         .where("run_id", "=", runId).executeTakeFirstOrThrow();
-      if (Number(count.count) + activities.length > 500) throw new ChatConflictError(chatId, Number(current.revision));
+      const activityIds = [...new Set(activities.map((activity) => activity.id))];
+      const existing = await trx.selectFrom("chat_run_events").select(["id", "chat_id", "run_id"])
+        .where("id", "in", activityIds).execute();
+      if (existing.some((row) => row.chat_id !== chatId || row.run_id !== runId)) {
+        throw new ChatConflictError(chatId, Number(current.revision));
+      }
+      const unseenCount = activityIds.length - existing.length;
+      if (Number(count.count) + unseenCount > 500) throw new ChatConflictError(chatId, Number(current.revision));
       let inserted = 0;
       for (const activity of activities) {
         const row = await trx.insertInto("chat_run_events").values({
@@ -677,11 +698,20 @@ export class ChatRepository {
     CanonicalChatIdSchema.parse(input.chatId);
     CanonicalChatRequestIdSchema.parse(input.clientRequestId);
     return this.transact(async (trx) => {
-      const prior = await trx.selectFrom("chat_deletions").selectAll()
+      const priorRequest = await trx.selectFrom("chat_deletions").selectAll()
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
-        .where("chat_id", "=", input.chatId).where("request_id", "=", input.clientRequestId)
+        .where("request_id", "=", input.clientRequestId)
         .executeTakeFirst();
-      if (prior) return { chatId: prior.chat_id, deletedAt: asIso(prior.deleted_at) ?? new Date(0).toISOString() };
+      if (priorRequest) {
+        if (priorRequest.chat_id !== input.chatId) throw new ChatConflictError(input.chatId, 0);
+        return { chatId: priorRequest.chat_id, deletedAt: asIso(priorRequest.deleted_at) ?? new Date(0).toISOString() };
+      }
+      const priorChat = await trx.selectFrom("chat_deletions").selectAll()
+        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+        .where("chat_id", "=", input.chatId).executeTakeFirst();
+      if (priorChat) {
+        return { chatId: priorChat.chat_id, deletedAt: asIso(priorChat.deleted_at) ?? new Date(0).toISOString() };
+      }
       const chat = await selectOwnedChat(trx, owner, input.chatId, true);
       if (!chat) throw new ChatNotFoundError(input.chatId);
       if (await activeRunQuery(trx, input.chatId)) throw new ChatBusyError(input.chatId);
