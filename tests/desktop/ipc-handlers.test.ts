@@ -35,6 +35,11 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     },
     openExternal: vi.fn(),
     setBadgeCount: vi.fn(),
+    setCompanionExpanded: vi.fn(),
+    markCompanionMainReady: vi.fn(),
+    focusCompanionMain: vi.fn(),
+    hideCompanion: vi.fn(),
+    submitCompanionPrompt: vi.fn(),
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
     checkUpdate: vi.fn(async () => ({ status: "disabled" })),
@@ -1151,5 +1156,34 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("app:get-zoom", {})).resolves.toEqual({ factor: 1 });
     await expect(harness.invoke("app:set-zoom", { factor: 0.8 })).resolves.toEqual({ factor: 0.8 });
+  });
+
+  it("routes validated companion lifecycle and prompt actions through registered dependencies", async () => {
+    const setCompanionExpanded = vi.fn();
+    const markCompanionMainReady = vi.fn();
+    const focusCompanionMain = vi.fn();
+    const hideCompanion = vi.fn();
+    const submitCompanionPrompt = vi.fn();
+    const harness = makeHarness({
+      setCompanionExpanded,
+      markCompanionMainReady,
+      focusCompanionMain,
+      hideCompanion,
+      submitCompanionPrompt,
+    });
+
+    await expect(harness.invoke("companion:set-expanded", { expanded: true })).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("companion:renderer-ready", {})).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("companion:focus-main", {})).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("companion:hide", {})).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("companion:submit-prompt", { prompt: "Plan my day" })).resolves.toEqual({ ok: true });
+
+    expect(setCompanionExpanded).toHaveBeenCalledWith(true);
+    expect(markCompanionMainReady).toHaveBeenCalledOnce();
+    expect(focusCompanionMain).toHaveBeenCalledOnce();
+    expect(hideCompanion).toHaveBeenCalledOnce();
+    expect(submitCompanionPrompt).toHaveBeenCalledWith("Plan my day");
+    await expect(harness.invoke("companion:submit-prompt", { prompt: "x".repeat(4_001) }))
+      .rejects.toThrow("invalid request");
   });
 });

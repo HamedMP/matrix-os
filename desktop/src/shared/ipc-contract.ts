@@ -70,6 +70,7 @@ const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 // renderer can never push the UI outside the supported 50%–200% range.
 const ZoomFactorSchema = z.number().min(0.5).max(2);
 const ZoomFactorResultSchema = z.object({ factor: ZoomFactorSchema }).strict();
+const CompanionPromptSchema = z.string().trim().min(1).max(4_000);
 
 const ProfileSchema = z
   .object({
@@ -286,6 +287,17 @@ export const INVOKE_CHANNELS = {
     request: ZoomFactorResultSchema,
     response: ZoomFactorResultSchema,
   },
+  "companion:set-expanded": {
+    request: z.strictObject({ expanded: z.boolean() }),
+    response: Ok,
+  },
+  "companion:renderer-ready": { request: Empty, response: Ok },
+  "companion:focus-main": { request: Empty, response: Ok },
+  "companion:hide": { request: Empty, response: Ok },
+  "companion:submit-prompt": {
+    request: z.strictObject({ prompt: CompanionPromptSchema }),
+    response: Ok,
+  },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),
     response: z.object({ value: z.unknown() }).strict(),
@@ -433,6 +445,7 @@ export const EVENT_CHANNELS = {
   "update:manual-check-requested": z.strictObject({}),
   "update:state-changed": DesktopUpdateSnapshotSchema,
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
+  "companion:prompt-requested": z.strictObject({ prompt: CompanionPromptSchema }),
   "app:zoom-changed": ZoomFactorResultSchema,
   "menu:action": z
     .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open", "refresh-home"]) })

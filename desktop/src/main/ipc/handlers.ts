@@ -25,6 +25,11 @@ export interface HandlerContext {
   embeds: EmbedService;
   openExternal: (url: string) => Promise<void>;
   setBadgeCount: (count: number) => void;
+  setCompanionExpanded: (expanded: boolean) => void;
+  markCompanionMainReady: () => void;
+  focusCompanionMain: () => void;
+  hideCompanion: () => void;
+  submitCompanionPrompt: (prompt: string) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
   checkUpdate: () => Promise<DesktopUpdateSnapshot>;
@@ -224,6 +229,27 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("app:set-zoom", ({ factor }, event) => {
     zoomTarget(event)?.setZoomFactor(factor);
     return { factor };
+  });
+
+  handle("companion:set-expanded", ({ expanded }) => {
+    ctx.setCompanionExpanded(expanded);
+    return { ok: true };
+  });
+  handle("companion:renderer-ready", () => {
+    ctx.markCompanionMainReady();
+    return { ok: true };
+  });
+  handle("companion:focus-main", () => {
+    ctx.focusCompanionMain();
+    return { ok: true };
+  });
+  handle("companion:hide", () => {
+    ctx.hideCompanion();
+    return { ok: true };
+  });
+  handle("companion:submit-prompt", ({ prompt }) => {
+    ctx.submitCompanionPrompt(prompt);
+    return { ok: true };
   });
 
   handle("state:get", async ({ key }) => ({

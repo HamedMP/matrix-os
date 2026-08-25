@@ -56,10 +56,27 @@ describe("IPC contract", () => {
       "update:acknowledge-whats-new",
       "app:get-zoom",
       "app:set-zoom",
+      "companion:set-expanded",
+      "companion:renderer-ready",
+      "companion:focus-main",
+      "companion:hide",
+      "companion:submit-prompt",
     ];
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("bounds companion actions and keeps prompt handoff credential-free", () => {
+    const submit = INVOKE_CHANNELS["companion:submit-prompt"];
+
+    expect(submit.request.safeParse({ prompt: "Ask Hermes" }).success).toBe(true);
+    expect(submit.request.safeParse({ prompt: " " }).success).toBe(false);
+    expect(submit.request.safeParse({ prompt: "x".repeat(4_001) }).success).toBe(false);
+    expect(submit.request.safeParse({ prompt: "Ask Hermes", token: "secret" }).success).toBe(false);
+    expect(EVENT_CHANNELS["companion:prompt-requested"].safeParse({
+      prompt: "Ask Hermes",
+    }).success).toBe(true);
   });
 
   it("keeps Hermes setup IPC typed and credentials write-only", () => {
