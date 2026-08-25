@@ -4,9 +4,11 @@ import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:pa
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalOwnerScopeSchema,
+  WorktreeIdSchema,
   type CanonicalChatExecutionRootRef,
   type CanonicalOwnerScope,
 } from "@matrix-os/contracts";
+import { PROJECT_SLUG_REGEX } from "../project-registry.js";
 import type { OwnerScope } from "../state-ops.js";
 
 export interface ChatExecutionRootProject {
@@ -295,6 +297,10 @@ export function createChatExecutionRootResolver<
         primaryWorkspaceRoot: projectRoot,
         fingerprint: fingerprint({ owner, ref, project: currentProject, projectRoot }),
       };
+    }
+
+    if (!PROJECT_SLUG_REGEX.test(project.slug) || !WorktreeIdSchema.safeParse(ref.worktreeId).success) {
+      throw new ChatExecutionRootError("invalid_root");
     }
 
     const worktree = await loadWorktree(ownerScope, project.slug, ref.worktreeId);

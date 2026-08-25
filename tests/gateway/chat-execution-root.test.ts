@@ -312,6 +312,44 @@ describe("canonical Chat execution-root resolver", () => {
     );
   });
 
+  it.each([
+    ["project slug", "..", "wt_abc123def456"],
+    ["worktree id", "matrix-os-renamed", "worktree"],
+  ])("rejects an invalid %s returned by alternate authority sources", async (
+    _label,
+    projectSlug,
+    worktreeId,
+  ) => {
+    const homePath = await temporaryDirectory("matrix-execution-root-home-");
+    const projectPath = await temporaryDirectory("matrix-project-root-");
+    const projectRecord = project({ localPath: projectPath, slug: projectSlug });
+    const worktreesRoot = join(homePath, "worktrees");
+    const worktreePath = join(worktreesRoot, projectSlug, worktreeId);
+    await mkdir(worktreesRoot, { recursive: true });
+    await mkdir(worktreePath, { recursive: true });
+    const worktreeRecord = worktree({
+      id: worktreeId,
+      projectSlug,
+      path: worktreePath,
+    });
+    const resolver = createChatExecutionRootResolver({
+      homePath,
+      projects: {
+        getProjectById: vi.fn(async () => ({ ok: true as const, project: projectRecord })),
+        resolveProjectWorkingDirectory: vi.fn(async () => projectPath),
+      },
+      worktrees: {
+        getWorktree: vi.fn(async () => ({ ok: true as const, worktree: worktreeRecord })),
+      },
+    });
+
+    await expect(resolver.resolve(owner, {
+      kind: "worktree",
+      projectId: projectRecord.id,
+      worktreeId,
+    })).rejects.toEqual(new ChatExecutionRootError("invalid_root"));
+  });
+
   it("rejects mismatched metadata, direct or ancestor symlinks, and unavailable authority", async () => {
     const homePath = await temporaryDirectory("matrix-execution-root-home-");
     const projectPath = await temporaryDirectory("matrix-project-root-");
