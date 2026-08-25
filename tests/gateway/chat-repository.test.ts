@@ -149,7 +149,7 @@ describe("ChatRepository", () => {
 
     expect(repeated.chat.id).toBe(first.chat.id);
     expect(await repository.get(otherOwner, first.chat.id)).toBeNull();
-    expect(await repository.list(owner, { limit: 101 })).toHaveLength(1);
+    expect((await repository.list(owner, { limit: 101 })).items).toHaveLength(1);
     await expect(repository.replayOutbox(otherOwner, { afterCursor: 0, limit: 10 })).resolves.toEqual([]);
     await expect(repository.replayOutbox(owner, { afterCursor: 0, limit: 10 })).resolves.toEqual([
       expect.objectContaining({ chatId: first.chat.id, eventType: "chat.created", revision: 0 }),
@@ -166,7 +166,7 @@ describe("ChatRepository", () => {
     expect(await repository.get(owner, "chat_rolled_back")).toBeNull();
   });
 
-  it("paginates equal updated timestamps with the Chat ID tie-breaker", async () => {
+  it("paginates equal microsecond timestamps with an opaque precision-safe cursor", async () => {
     for (const suffix of ["a", "b", "c"]) {
       await repository.create(owner, {
         id: `chat_page_${suffix}`,
@@ -174,18 +174,22 @@ describe("ChatRepository", () => {
         title: `Page ${suffix}`,
       });
     }
-    const tiedAt = "2026-08-25T00:10:00.000Z";
+    const tiedAt = "2026-08-25T00:10:00.123456Z";
     await sql`UPDATE chats SET updated_at = ${tiedAt}`.execute(repository.kysely);
 
     const firstPage = await repository.list(owner, { limit: 2 });
-    const cursorChat = firstPage.at(-1)!;
+    expect(firstPage.nextCursor).toEqual({
+      updatedAt: tiedAt,
+      chatId: "chat_page_b",
+    });
     const secondPage = await repository.list(owner, {
       limit: 2,
-      cursor: { updatedAt: cursorChat.chat.updatedAt, chatId: cursorChat.chat.id },
+      cursor: firstPage.nextCursor,
     });
 
-    expect(firstPage.map((record) => record.chat.id)).toEqual(["chat_page_a", "chat_page_b"]);
-    expect(secondPage.map((record) => record.chat.id)).toEqual(["chat_page_c"]);
+    expect(firstPage.items.map((record) => record.chat.id)).toEqual(["chat_page_a", "chat_page_b"]);
+    expect(secondPage.items.map((record) => record.chat.id)).toEqual(["chat_page_c"]);
+    expect(secondPage.nextCursor).toBeUndefined();
   });
 
   it("enforces optimistic revisions and blocks Project mutation during an active Run", async () => {
@@ -602,6 +606,24 @@ describe("ChatRepository", () => {
     expect(await repository.get(owner, second.chat.id)).not.toBeNull();
   });
 
+  it("rechecks the deletion tombstone after a concurrent delete wins the Chat row lock", () => {
+    const source = readFileSync(
+      join(process.cwd(), "packages/gateway/src/chat/repository.ts"),
+      "utf8",
+    );
+    const hardDelete = source.slice(
+      source.indexOf("  async hardDelete("),
+      source.indexOf("  async upsertLegacyImport("),
+    );
+    const lockedChat = hardDelete.indexOf("selectOwnedChat(trx, owner, input.chatId, true)");
+    const tombstoneRecheck = hardDelete.indexOf("selectFrom(\"chat_deletions\")", lockedChat);
+    const notFound = hardDelete.indexOf("throw new ChatNotFoundError", lockedChat);
+
+    expect(lockedChat).toBeGreaterThan(-1);
+    expect(tombstoneRecheck).toBeGreaterThan(lockedChat);
+    expect(notFound).toBeGreaterThan(tombstoneRecheck);
+  });
+
   it("records legacy import and migration checkpoints idempotently", async () => {
     await repository.upsertLegacyImport(owner, {
       sourceKind: "hermes",
@@ -639,7 +661,7 @@ describe("ChatRepository", () => {
 
   it("never destroys the shared Gateway Kysely instance", async () => {
     await repository.release();
-    await expect(repository.list(owner, { limit: 1 })).resolves.toEqual([]);
+    await expect(repository.list(owner, { limit: 1 })).resolves.toEqual({ items: [] });
   });
 
   it("wires Chat bootstrap and release around the Gateway-owned Kysely lifecycle", () => {

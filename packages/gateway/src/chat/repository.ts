@@ -74,6 +74,16 @@ export interface AdmittedTurn {
   run: CanonicalChatRun;
 }
 
+export interface ChatListCursor {
+  updatedAt: string;
+  chatId: string;
+}
+
+export interface ChatListPage {
+  items: ChatRecord[];
+  nextCursor?: ChatListCursor;
+}
+
 export class ChatNotFoundError extends Error {
   constructor(readonly chatId: string) {
     super("Chat not found");
@@ -308,11 +318,13 @@ export class ChatRepository {
     limit: number;
     lifecycle?: "active" | "archived";
     projectId?: string | null;
-    cursor?: { updatedAt: string; chatId: string };
-  }): Promise<ChatRecord[]> {
+    cursor?: ChatListCursor;
+  }): Promise<ChatListPage> {
     const owner = validateOwner(ownerInput);
     const limit = Math.max(1, Math.min(100, Math.trunc(input.limit)));
     let query = this.kysely.selectFrom("chats").selectAll()
+      .select(sql<string>`to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+        .as("cursor_updated_at"))
       .where("owner_type", "=", owner.type)
       .where("owner_id", "=", owner.ownerId);
     if (input.lifecycle) query = query.where("lifecycle", "=", input.lifecycle);
@@ -320,15 +332,24 @@ export class ChatRepository {
       ? query.where("project_id", "is", null)
       : query.where("project_id", "=", requireSafeRef(input.projectId));
     if (input.cursor) {
-      const cursorAt = new Date(z.iso.datetime({ offset: true }).parse(input.cursor.updatedAt));
+      const cursorTimestamp = z.iso.datetime({ offset: true }).parse(input.cursor.updatedAt);
+      const cursorAt = sql<Date>`${cursorTimestamp}::timestamptz`;
       const cursorChatId = CanonicalChatIdSchema.parse(input.cursor.chatId);
       query = query.where(({ and, eb, or }) => or([
         eb("updated_at", "<", cursorAt),
         and([eb("updated_at", "=", cursorAt), eb("id", ">", cursorChatId)]),
       ]));
     }
-    const rows = await query.orderBy("updated_at", "desc").orderBy("id").limit(limit).execute();
-    return Promise.all(rows.map(async (row) => toChatRecord(row, await activeRunQuery(this.kysely, row.id))));
+    const rows = await query.orderBy("updated_at", "desc").orderBy("id").limit(limit + 1).execute();
+    const pageRows = rows.slice(0, limit);
+    const items = await Promise.all(pageRows.map(async (row) => (
+      toChatRecord(row, await activeRunQuery(this.kysely, row.id))
+    )));
+    const last = rows.length > limit ? pageRows.at(-1) : undefined;
+    return {
+      items,
+      ...(last ? { nextCursor: { updatedAt: last.cursor_updated_at, chatId: last.id } } : {}),
+    };
   }
 
   async update(ownerInput: ChatOwner, chatId: string, input: UpdateChatInput): Promise<ChatRecord> {
@@ -713,7 +734,18 @@ export class ChatRepository {
         return { chatId: priorChat.chat_id, deletedAt: asIso(priorChat.deleted_at) ?? new Date(0).toISOString() };
       }
       const chat = await selectOwnedChat(trx, owner, input.chatId, true);
-      if (!chat) throw new ChatNotFoundError(input.chatId);
+      if (!chat) {
+        const committedDeletion = await trx.selectFrom("chat_deletions").selectAll()
+          .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+          .where("chat_id", "=", input.chatId).executeTakeFirst();
+        if (committedDeletion) {
+          return {
+            chatId: committedDeletion.chat_id,
+            deletedAt: asIso(committedDeletion.deleted_at) ?? new Date(0).toISOString(),
+          };
+        }
+        throw new ChatNotFoundError(input.chatId);
+      }
       if (await activeRunQuery(trx, input.chatId)) throw new ChatBusyError(input.chatId);
       const deletion = await trx.insertInto("chat_deletions").values({
         owner_type: owner.type,
