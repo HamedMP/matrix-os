@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
@@ -45,6 +45,7 @@ import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
+import { CompanionController } from "./companion/companion-controller";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
@@ -58,6 +59,10 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let openMainWindow: (() => Promise<void>) | null = null;
+let companionController: CompanionController | null = null;
+let pendingCompanionPrompt: string | null = null;
+let mainRendererReady = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
 let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
@@ -72,11 +77,31 @@ function isMatrixOsDeepLink(value: string): boolean {
 }
 
 function focusMainWindow(): void {
-  const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-  if (!win) return;
+  const win = mainWindow;
+  if (!win) {
+    void openMainWindow?.().catch((err: unknown) => {
+      logMainError("failed to reopen main window", err);
+    });
+    return;
+  }
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+}
+
+function flushPendingCompanionPrompt(): void {
+  if (!mainRendererReady || !mainWindow || mainWindow.isDestroyed() || !pendingCompanionPrompt) return;
+  const prompt = pendingCompanionPrompt;
+  pendingCompanionPrompt = null;
+  sendEvent("companion:prompt-requested", { prompt });
+}
+
+function submitCompanionPrompt(prompt: string): void {
+  // Keep at most one bounded pending handoff while a closed main renderer is
+  // recreated. The IPC schema already trims and caps this at 4,000 chars.
+  pendingCompanionPrompt = prompt;
+  focusMainWindow();
+  flushPendingCompanionPrompt();
 }
 
 function handleDeepLink(url: string): void {
@@ -273,6 +298,13 @@ if (!gotLock) {
       });
       closeCodingAgentThreadEvents = () => codingAgentThreadEvents.closeAll();
 
+      companionController = new CompanionController({
+        rendererUrl: process.env.ELECTRON_RENDERER_URL,
+        preloadPath: join(__dirname, "../preload/index.cjs"),
+        rendererFile: join(__dirname, "../renderer/index.html"),
+        reportError: logMainError,
+      });
+
       registerIpcHandlers(ipcMain, {
         auth,
         store,
@@ -281,6 +313,14 @@ if (!gotLock) {
         setBadgeCount: (count) => {
           app.setBadgeCount(count);
         },
+        setCompanionExpanded: (expanded) => companionController?.setExpanded(expanded),
+        markCompanionMainReady: () => {
+          mainRendererReady = true;
+          flushPendingCompanionPrompt();
+        },
+        focusCompanionMain: focusMainWindow,
+        hideCompanion: () => companionController?.hide(),
+        submitCompanionPrompt,
         notify: ({ threadId, title, body }) => {
           if (!Notification.isSupported()) return;
           const notification = new Notification({ title, body, silent: false });
@@ -369,27 +409,47 @@ if (!gotLock) {
             });
         }, 500);
       };
-      const openMainWindow = async () => {
-        const savedBounds = await store.get("windowBounds");
-        const requestedBounds: WindowBounds = savedBounds ?? { width: 1280, height: 820 };
-        const display = screen.getDisplayMatching({
-          x: requestedBounds.x ?? 0,
-          y: requestedBounds.y ?? 0,
-          width: requestedBounds.width,
-          height: requestedBounds.height,
-        });
-        mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
-        mainWindow.on("resize", persistBounds);
-        mainWindow.on("move", persistBounds);
-        mainWindow.on("closed", () => {
-          if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
-          embeds.closeAll();
-          codingAgentThreadEvents.closeAll();
-          mainWindow = null;
-        });
+      let openingMainWindow: Promise<void> | null = null;
+      const openMain = async (): Promise<void> => {
+        if (mainWindow && !mainWindow.isDestroyed()) return;
+        if (openingMainWindow) return openingMainWindow;
+
+        openingMainWindow = (async () => {
+          mainRendererReady = false;
+          const savedBounds = await store.get("windowBounds");
+          const requestedBounds: WindowBounds = savedBounds ?? { width: 1280, height: 820 };
+          const display = screen.getDisplayMatching({
+            x: requestedBounds.x ?? 0,
+            y: requestedBounds.y ?? 0,
+            width: requestedBounds.width,
+            height: requestedBounds.height,
+          });
+          mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
+          mainWindow.on("resize", persistBounds);
+          mainWindow.on("move", persistBounds);
+          mainWindow.on("closed", () => {
+            if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
+            embeds.closeAll();
+            codingAgentThreadEvents.closeAll();
+            mainRendererReady = false;
+            mainWindow = null;
+          });
+        })();
+
+        try {
+          await openingMainWindow;
+        } finally {
+          openingMainWindow = null;
+        }
       };
 
-      await openMainWindow();
+      openMainWindow = openMain;
+
+      await openMain();
+      companionController.show();
+      if (!globalShortcut.register("CommandOrControl+Shift+Space", () => companionController?.toggle())) {
+        console.warn("[main] could not register companion shortcut");
+      }
       installAppMenu(
         () => mainWindow,
         () => {
@@ -404,8 +464,8 @@ if (!gotLock) {
       }, 60 * 60 * 1000);
 
       app.on("activate", () => {
-        if (BrowserWindow.getAllWindows().length === 0) {
-          void openMainWindow();
+        if (!mainWindow) {
+          void openMain();
         }
       });
     })
@@ -420,6 +480,9 @@ if (!gotLock) {
     }
     closeCodingAgentThreadEvents?.();
     closeCodingAgentThreadEvents = null;
+    globalShortcut.unregister("CommandOrControl+Shift+Space");
+    companionController?.close();
+    companionController = null;
     handleUpdateBeforeQuit?.(event);
   });
 

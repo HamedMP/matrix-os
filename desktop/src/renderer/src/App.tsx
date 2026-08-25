@@ -7,6 +7,8 @@ import DesktopUpdateExperience from "./features/updates/DesktopUpdateExperience"
 import { useAppearance } from "./stores/appearance";
 import { useTerminalAppearance } from "./stores/terminal-appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
+import { wireCompanionPromptEvents } from "./features/companion/companion-handoff";
+import { invoke } from "./lib/operator";
 
 export default function App() {
   const status = useConnection((s) => s.status);
@@ -16,11 +18,19 @@ export default function App() {
 
   useEffect(() => {
     wireConnectionEvents();
+    const unwireCompanion = wireCompanionPromptEvents();
+    void invoke("companion:renderer-ready", {}).catch((error: unknown) => {
+      console.warn(
+        "[companion] main renderer readiness handshake failed",
+        error instanceof Error ? error.name : typeof error,
+      );
+    });
     void refresh();
     // Apply the persisted theme once at boot; tokens.css keeps the first paint
     // on the Matrix palette until this resolves.
     void loadAppearance();
     void loadTerminalAppearance();
+    return unwireCompanion;
   }, [loadAppearance, loadTerminalAppearance, refresh]);
 
   return (
