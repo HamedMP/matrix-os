@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSummary, RuntimeSummary } from "@matrix-os/contracts";
 import ProjectOverview from "../../desktop/src/renderer/src/features/project/ProjectOverview";
+import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
@@ -34,6 +35,7 @@ function summaryWithThreads(items: AgentThreadSummary[]): RuntimeSummary {
 
 describe("ProjectOverview", () => {
   beforeEach(() => {
+    useCodingAgentWorkspace.setState({ createdThreadHandles: [] });
     useProjectWorkspaces.setState({ entries: {}, runtimeScope: null });
     useHermesChat.setState(useHermesChat.getInitialState(), true);
     useConnection.setState({ api: null });
@@ -127,6 +129,25 @@ describe("ProjectOverview", () => {
     );
 
     expect(screen.getByRole("button", { name: "Open chat Project launch plan" })).toBeTruthy();
+    expect(screen.queryByText("No sessions yet. Start one above.")).toBeNull();
+  });
+
+  it("keeps a newly created Project Chat visible while server projections catch up", () => {
+    const created = thread(121);
+    created.title = "New project chat";
+    useCodingAgentWorkspace.setState({ createdThreadHandles: [created] });
+
+    render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryWithThreads([])}
+        active={false}
+        viewSwitch={null}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Open session New project chat" })).toBeTruthy();
     expect(screen.queryByText("No sessions yet. Start one above.")).toBeNull();
   });
 

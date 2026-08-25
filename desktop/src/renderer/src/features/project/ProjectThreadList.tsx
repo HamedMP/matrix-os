@@ -128,6 +128,7 @@ export function ProjectThreadList({
   projectLabel,
   summary,
   workspace,
+  createdThreadHandles = [],
   status,
   error,
   selectedThreadId,
@@ -144,6 +145,7 @@ export function ProjectThreadList({
   projectLabel: string;
   summary: RuntimeSummary;
   workspace: ProjectAgentWorkspace | null;
+  createdThreadHandles?: AgentThreadSummary[];
   status: ProjectWorkspaceStatus | "absent";
   error: string | null;
   selectedThreadId: string | null;
@@ -159,8 +161,8 @@ export function ProjectThreadList({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ThreadRailFilter>("all");
   const baseModel = useMemo(
-    () => buildProjectThreadListModel(workspace, summary, projectId),
-    [projectId, summary, workspace],
+    () => buildProjectThreadListModel(workspace, summary, projectId, createdThreadHandles),
+    [createdThreadHandles, projectId, summary, workspace],
   );
   const model = useMemo(
     () => filterProjectThreadListModel(baseModel, query, statusFilter),

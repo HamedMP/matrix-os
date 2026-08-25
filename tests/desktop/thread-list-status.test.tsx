@@ -135,6 +135,30 @@ function workspaceFixture(): ProjectAgentWorkspace {
 describe("ProjectThreadList status rail", () => {
   afterEach(cleanup);
 
+  it("lists a locally confirmed Project Chat while server projections catch up", () => {
+    const workspace = workspaceFixture();
+    workspace.projectThreads.items = [];
+    workspace.taskThreads.items = [];
+    render(
+      <ProjectThreadList
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryFixture()}
+        workspace={workspace}
+        createdThreadHandles={[thread({ id: "thread-new", title: "New project chat", projectId: "matrix-os" })]}
+        status="ready"
+        error={null}
+        selectedThreadId={null}
+        canCreate
+        onSelectThread={() => {}}
+        onNewChat={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Chat New project chat" })).toBeTruthy();
+  });
+
   it("renders a status pill and relative timestamp per row, none for archived", () => {
     render(
       <ProjectThreadList

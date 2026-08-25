@@ -69,6 +69,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const consumeReviewFocusRequest = useCodingAgentWorkspace((s) => s.consumeReviewFocusRequest);
   const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const composerFocusRequestId = useCodingAgentWorkspace((s) => s.composerFocusRequestId);
+  const createdThreadHandles = useCodingAgentWorkspace((s) => s.createdThreadHandles);
   const workspaceEntry = useProjectWorkspaces((s) => s.entries[projectId]);
   const ensureWorkspace = useProjectWorkspaces((s) => s.ensure);
   const refreshWorkspace = useProjectWorkspaces((s) => s.refresh);
@@ -626,6 +627,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         projectLabel={projectLabel}
         summary={summary}
         workspace={workspace}
+        createdThreadHandles={createdThreadHandles}
         status={projectWorkspaceEnabled ? (workspaceEntry?.status ?? "idle") : "absent"}
         error={workspaceEntry?.error ?? null}
         selectedThreadId={selectedThreadId}

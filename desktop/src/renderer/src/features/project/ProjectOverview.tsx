@@ -29,8 +29,13 @@ const STATUS_COLORS: Record<ThreadRailTone, { background: string; color: string 
 
 const PROJECT_OVERVIEW_THREAD_LIMIT = 100;
 
-function allThreads(summary: RuntimeSummary, projectId: string, workspace: ProjectAgentWorkspace | null): AgentThreadSummary[] {
-  const model = buildProjectThreadListModel(workspace ?? null, summary, projectId);
+function allThreads(
+  summary: RuntimeSummary,
+  projectId: string,
+  workspace: ProjectAgentWorkspace | null,
+  createdThreadHandles: AgentThreadSummary[],
+): AgentThreadSummary[] {
+  const model = buildProjectThreadListModel(workspace ?? null, summary, projectId, createdThreadHandles);
   const combined = [
     ...model.projectThreads,
     ...model.taskGroups.flatMap((group) => group.threads),
@@ -95,11 +100,14 @@ export default function ProjectOverview({
   const setSelectedThread = useProjectView((state) => state.setSelectedThread);
   const setView = useProjectView((state) => state.setView);
   const composerFocusRequestId = useCodingAgentWorkspace((state) => state.composerFocusRequestId);
+  const createdThreadHandles = useCodingAgentWorkspace((state) => state.createdThreadHandles);
   const hermesConversations = useHermesChat((state) => state.conversations);
   const refreshHermesConversations = useHermesChat((state) => state.refreshConversations);
   const threads = useMemo(
-    () => summary ? allThreads(summary, projectId, workspaceEntry?.workspace ?? null) : [],
-    [projectId, summary, workspaceEntry?.workspace],
+    () => summary
+      ? allThreads(summary, projectId, workspaceEntry?.workspace ?? null, createdThreadHandles)
+      : [],
+    [createdThreadHandles, projectId, summary, workspaceEntry?.workspace],
   );
   const projectHermesConversations = useMemo(() => hermesConversations.filter((conversation) => (
     conversation.context?.projectId === projectId
