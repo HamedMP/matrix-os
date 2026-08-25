@@ -113,6 +113,9 @@ describe("canonical Chat Provider catalog", () => {
         ["hermes", "system_agent"],
         ["openclaw", "system_agent"],
         ["codex", "coding_agent"],
+        ["claude_code", "coding_agent"],
+        ["opencode", "coding_agent"],
+        ["pi", "coding_agent"],
       ]);
     expect(catalog.instances.find((instance) => instance.id === "hermes_default"))
       .toMatchObject({
@@ -133,6 +136,25 @@ describe("canonical Chat Provider catalog", () => {
       });
     expect(catalog.instances.find((instance) => instance.id === "openclaw_default"))
       .toMatchObject({ availability: "unavailable", models: [] });
+    expect(catalog.instances.filter((instance) =>
+      ["claude_code", "opencode", "pi"].includes(instance.driverKind)
+    )).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "claude_code_default",
+        availability: "unavailable",
+        models: [],
+      }),
+      expect.objectContaining({
+        id: "opencode_default",
+        availability: "unavailable",
+        models: [],
+      }),
+      expect.objectContaining({
+        id: "pi_default",
+        availability: "unavailable",
+        models: [],
+      }),
+    ]));
     expect(new Set(catalog.instances.map((instance) => instance.catalogRevision)))
       .toEqual(new Set([catalog.revision]));
   });
@@ -210,8 +232,13 @@ describe("canonical Chat Provider catalog", () => {
 
     expect(catalog.instances.find((instance) => instance.id === "hermes_default")?.availability)
       .toBe("available");
-    expect(catalog.drivers.some((driver) => driver.capabilityClass === "coding_agent"))
-      .toBe(false);
+    expect(catalog.drivers.filter((driver) => driver.capabilityClass === "coding_agent")
+      .map((driver) => driver.kind)).toEqual(["codex", "claude_code", "opencode", "pi"]);
+    expect(catalog.instances.filter((instance) => instance.driverKind === "codex"
+      || instance.driverKind === "claude_code"
+      || instance.driverKind === "opencode"
+      || instance.driverKind === "pi")
+      .every((instance) => instance.availability === "unavailable")).toBe(true);
     expect(JSON.stringify(catalog)).not.toContain("secret coding inventory failure");
   });
 

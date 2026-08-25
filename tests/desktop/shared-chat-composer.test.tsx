@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { useState } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import {
@@ -282,6 +282,14 @@ describe("SharedChatComposer", () => {
     render(<Harness />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    const generalAgents = screen.getByRole("group", { name: "General agents" });
+    const codingAgents = screen.getByRole("group", { name: "Coding agents" });
+    expect(within(generalAgents).getByRole("button", { name: "Hermes harness, Unavailable" })).toBeTruthy();
+    expect(within(generalAgents).getByRole("button", { name: "OpenClaw harness, Unavailable" })).toBeTruthy();
+    expect(within(codingAgents).getByRole("button", { name: "Codex harness, Available" })).toBeTruthy();
+    expect(within(codingAgents).getByRole("button", { name: "Claude Code harness, Available" })).toBeTruthy();
+    expect(within(codingAgents).getByRole("button", { name: "OpenCode harness, Authentication required" })).toBeTruthy();
+    expect(within(codingAgents).getByRole("button", { name: "Pi harness, Unavailable" })).toBeTruthy();
     const harnesses = [
       ["Hermes harness, Unavailable", "hermes"],
       ["OpenClaw harness, Unavailable", "openclaw"],

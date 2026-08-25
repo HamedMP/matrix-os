@@ -22,6 +22,15 @@ const DRIVER_LABEL: Record<CanonicalProviderDriverKind, string> = {
   pi: "Pi",
 };
 
+const DRIVER_GROUPS: Array<{
+  capabilityClass: CanonicalProviderCatalog["drivers"][number]["capabilityClass"];
+  label: string;
+  shortLabel: string;
+}> = [
+  { capabilityClass: "system_agent", label: "General agents", shortLabel: "General" },
+  { capabilityClass: "coding_agent", label: "Coding agents", shortLabel: "Coding" },
+];
+
 function availabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
   if (instance.availability === "setup_required") return "Setup required";
   if (instance.availability === "auth_required") return "Authentication required";
@@ -97,7 +106,7 @@ export function ProviderModelPicker({
             align="end"
             sideOffset={10}
             collisionPadding={16}
-            className="z-50 flex w-[352px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border shadow-xl"
+            className="z-50 flex w-[376px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border shadow-xl"
             style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
             data-slot="provider-model-picker"
             data-preferred-side={menuSide}
@@ -106,35 +115,56 @@ export function ProviderModelPicker({
               searchRef.current?.focus();
             }}
           >
-          <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-r px-1.5 py-2" style={{ borderColor: "var(--border-subtle)" }}>
-            {catalog.drivers.map((driver) => {
-              const instance = catalog.instances.find((candidate) => candidate.driverKind === driver.kind);
-              const unavailable = !instance || instance.availability !== "available";
-              const locked = instanceLocked && instance?.id !== selection?.instanceId;
-              const disabled = unavailable || locked;
-              const availability = instance ? availabilityLabel(instance) : "Unavailable";
+          <div className="flex w-16 shrink-0 flex-col border-r px-1.5 py-2" style={{ borderColor: "var(--border-subtle)" }}>
+            {DRIVER_GROUPS.map((group, groupIndex) => {
+              const drivers = catalog.drivers.filter((driver) => driver.capabilityClass === group.capabilityClass);
+              if (drivers.length === 0) return null;
               return (
-              <button
-                type="button"
-                key={driver.kind}
-                aria-label={`${driver.displayName} harness, ${availability}`}
-                aria-disabled={disabled}
-                disabled={disabled}
-                title={`${driver.displayName} — ${availability}.${unavailable ? " Authentication or setup is required." : ""}`}
-                className="flex h-9 w-9 items-center justify-center rounded-lg"
-                style={{
-                  color: activeInstance?.driverKind === driver.kind ? "var(--text-primary)" : "var(--text-tertiary)",
-                  background: activeInstance?.driverKind === driver.kind ? "var(--bg-active)" : "transparent",
-                }}
-                onClick={() => {
-                  if (!instance || disabled) return;
-                  setActiveInstanceId(instance.id);
-                  setQuery("");
-                  window.requestAnimationFrame(() => searchRef.current?.focus());
-                }}
-              >
-                <ProviderDriverGlyph kind={driver.kind} size={17} />
-              </button>
+                <div
+                  key={group.capabilityClass}
+                  role="group"
+                  aria-label={group.label}
+                  className={groupIndex === 0 ? "flex flex-col items-center gap-1" : "mt-2 flex flex-col items-center gap-1 border-t pt-2"}
+                  style={{ borderColor: "var(--border-subtle)" }}
+                >
+                  <span
+                    aria-hidden
+                    className="text-[8px] font-semibold uppercase tracking-[0.06em]"
+                    style={{ color: "var(--text-tertiary)" }}
+                  >
+                    {group.shortLabel}
+                  </span>
+                  {drivers.map((driver) => {
+                    const instance = catalog.instances.find((candidate) => candidate.driverKind === driver.kind);
+                    const unavailable = !instance || instance.availability !== "available";
+                    const locked = instanceLocked && instance?.id !== selection?.instanceId;
+                    const disabled = unavailable || locked;
+                    const availability = instance ? availabilityLabel(instance) : "Unavailable";
+                    return (
+                      <button
+                        type="button"
+                        key={driver.kind}
+                        aria-label={`${driver.displayName} harness, ${availability}`}
+                        aria-disabled={disabled}
+                        disabled={disabled}
+                        title={`${group.shortLabel} agent · ${driver.displayName} — ${availability}.${unavailable ? " Authentication or setup is required." : ""}`}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg"
+                        style={{
+                          color: activeInstance?.driverKind === driver.kind ? "var(--text-primary)" : "var(--text-tertiary)",
+                          background: activeInstance?.driverKind === driver.kind ? "var(--bg-active)" : "transparent",
+                        }}
+                        onClick={() => {
+                          if (!instance || disabled) return;
+                          setActiveInstanceId(instance.id);
+                          setQuery("");
+                          window.requestAnimationFrame(() => searchRef.current?.focus());
+                        }}
+                      >
+                        <ProviderDriverGlyph kind={driver.kind} size={17} />
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
           </div>

@@ -25,11 +25,12 @@ import type { RequestPrincipal } from "../request-principal.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
-const MAX_CODING_DRIVERS = 4;
+const CODING_DRIVERS = ["codex", "claude_code", "opencode", "pi"] as const;
 const MAX_EFFORTS = 4;
 const MAX_SKILLS = 64;
 
 type InstanceDraft = Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">;
+type CodingDriverKind = typeof CODING_DRIVERS[number];
 
 export interface CodingModelCatalogProjection {
   models: Array<Omit<CanonicalModelDescriptor, "availability">>;
@@ -56,7 +57,7 @@ function driverDisplayName(kind: CanonicalProviderDriverKind): string {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
-function codingDriverKind(provider: AgentProviderSummary): CanonicalProviderDriverKind | null {
+function codingDriverKind(provider: AgentProviderSummary): CodingDriverKind | null {
   if (provider.kind === "claude" || provider.id === "claude") return "claude_code";
   if (provider.kind === "codex" || provider.id === "codex") return "codex";
   if (provider.kind === "opencode" || provider.id === "opencode") return "opencode";
@@ -73,8 +74,10 @@ function canonicalAvailability(
   return "unavailable";
 }
 
-function codingSupports(provider: AgentProviderSummary): CanonicalProviderSupport {
-  const driverKind = codingDriverKind(provider);
+function codingSupports(
+  driverKind: CodingDriverKind,
+  supportedModes: string[],
+): CanonicalProviderSupport {
   const isCodex = driverKind === "codex";
   return {
     rootChat: true,
@@ -88,7 +91,7 @@ function codingSupports(provider: AgentProviderSummary): CanonicalProviderSuppor
     userInput: isCodex,
     worktrees: "optional",
     resources: ["file", "folder", "project", "task", "app", "terminal_session"],
-    interactionModes: provider.supportedModes,
+    interactionModes: supportedModes,
     permissionModes: ["supervised", "auto_accept_edits", "auto", "full_access"],
   };
 }
@@ -156,13 +159,32 @@ function codingInstance(
     skills,
     commands: [],
     setupActions: provider.setupActions,
-    supports: codingSupports(provider),
+    supports: codingSupports(driverKind, provider.supportedModes),
     ...(availability === "available" && models.length > 0 ? {
       defaultSelection: {
         instanceId: id,
         model: models.some((model) => model.id === defaultModel) ? defaultModel! : models[0]!.id,
       },
     } : {}),
+  };
+}
+
+function unavailableCodingInstance(
+  driverKind: CodingDriverKind,
+  skills: CanonicalChatSkillDescriptor[],
+): InstanceDraft {
+  return {
+    id: `${driverKind}_default`,
+    driverKind,
+    displayName: driverDisplayName(driverKind),
+    availability: "unavailable",
+    workspaceRequirement: "project_optional",
+    models: [],
+    options: [],
+    skills,
+    commands: [],
+    setupActions: [],
+    supports: codingSupports(driverKind, []),
   };
 }
 
@@ -342,8 +364,7 @@ export function createChatProviderCatalogService(options: {
         }
         const instance = codingInstance(provider, skills, projectedCatalog);
         if (instance === null) continue;
-        if (seenCodingDrivers.includes(instance.driverKind)
-          || seenCodingDrivers.length === MAX_CODING_DRIVERS) {
+        if (seenCodingDrivers.includes(instance.driverKind)) {
           throw new ProviderCatalogUnavailableError(false);
         }
         seenCodingDrivers.push(instance.driverKind);
@@ -359,8 +380,12 @@ export function createChatProviderCatalogService(options: {
         selectedModel: snapshot?.messaging.runtime === kind ? snapshot.messaging.model : null,
         skills,
       }));
-      const instances = [...systemInstances, ...codingInstances];
-      const driverKinds = [...SYSTEM_DRIVERS, ...seenCodingDrivers];
+      const completeCodingInstances = CODING_DRIVERS.map((kind) =>
+        codingInstances.find((instance) => instance.driverKind === kind)
+          ?? unavailableCodingInstance(kind, skills)
+      );
+      const instances = [...systemInstances, ...completeCodingInstances];
+      const driverKinds = [...SYSTEM_DRIVERS, ...CODING_DRIVERS];
       const drivers = driverKinds.map((kind) => ({
         kind,
         displayName: driverDisplayName(kind),
