@@ -9,14 +9,19 @@ export function ComposerReferenceTokenRow({
   tokens,
   attachments,
   onChange,
+  layout = "row",
 }: {
   tokens: ComposerReferenceToken[];
   attachments?: ReactNode;
   onChange?: (tokens: ComposerReferenceToken[]) => void;
+  layout?: "row" | "inline";
 }) {
   if (tokens.length === 0 && !attachments) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3" data-slot="composer-context-row">
+    <div
+      className={layout === "inline" ? "contents" : "flex flex-wrap items-center gap-1.5 px-3 pt-3"}
+      data-slot={layout === "inline" ? "composer-context-inline" : "composer-context-row"}
+    >
       {tokens.map((token) => {
         const key = composerReferenceTokenKey(token);
         const kind = token.type === "invocation" ? token.invocation.kind : token.resource.kind;

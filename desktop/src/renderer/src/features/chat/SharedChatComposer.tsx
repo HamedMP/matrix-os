@@ -372,6 +372,8 @@ export function SharedChatComposer({
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
   const hasEffortOption = composerOptions.some((option) => option.id === "effort");
+  const invocationTokens = referenceTokens.filter((token) => token.type === "invocation");
+  const resourceTokens = referenceTokens.filter((token) => token.type === "resource");
 
   return (
     <div className="relative" data-slot="shared-chat-composer">
@@ -424,13 +426,26 @@ export function SharedChatComposer({
         placeholder={placeholder}
         ariaLabel={ariaLabel}
         onTextareaKeyDown={onSuggestionKeyDown}
-        attachments={(
+        attachments={attachments ? (
           <ComposerReferenceTokenRow
-            tokens={referenceTokens}
+            tokens={[]}
             attachments={attachments}
-            onChange={onReferenceTokensChange}
           />
-        )}
+        ) : null}
+        inlineLeadingContext={invocationTokens.length > 0 ? (
+          <ComposerReferenceTokenRow
+            tokens={invocationTokens}
+            layout="inline"
+            onChange={(tokens) => onReferenceTokensChange?.([...tokens, ...resourceTokens])}
+          />
+        ) : null}
+        inlineTrailingContext={resourceTokens.length > 0 ? (
+          <ComposerReferenceTokenRow
+            tokens={resourceTokens}
+            layout="inline"
+            onChange={(tokens) => onReferenceTokensChange?.([...invocationTokens, ...tokens])}
+          />
+        ) : null}
         footer={footer}
         controls={(
           <>

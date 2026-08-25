@@ -466,6 +466,27 @@ describe("SharedChatComposer", () => {
     expect(screen.queryByTestId("composer-reference-token-skill-review")).toBeNull();
   });
 
+  it("keeps slash and resource tokens inside the editable prompt flow", () => {
+    render(<Harness />);
+    const input = screen.getByLabelText("Message chat");
+
+    fireEvent.change(input, { target: { value: "/rev" } });
+    fireEvent.click(screen.getByRole("option", { name: /Review/ }));
+    fireEvent.change(input, { target: { value: "Inspect @ind" } });
+    fireEvent.click(screen.getByRole("option", { name: /src\/index.ts/ }));
+
+    const promptFlow = document.querySelector('[data-slot="prompt-input-content"]');
+    const skill = screen.getByTestId("composer-reference-token-skill-review");
+    const resource = screen.getByTestId("composer-reference-token-file-src-index");
+
+    expect(promptFlow).toBeTruthy();
+    expect(promptFlow?.contains(skill)).toBe(true);
+    expect(promptFlow?.contains(resource)).toBe(true);
+    expect(skill.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(input.compareDocumentPosition(resource) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelector('[data-slot="composer-context-row"]')).toBeNull();
+  });
+
   it("submits selected invocations and resources as structured agent-readable context", () => {
     const onSubmit = vi.fn();
     render(<Harness onSubmit={onSubmit} />);
