@@ -516,7 +516,10 @@ describe("native desktop shell", () => {
     expect(dock.style.padding).toBe("6px 6px 0px");
     expect(dock.style.gap).toBe("6px");
     const launcher = dock.querySelector<HTMLElement>("[aria-label='Open App Launcher']");
-    expect(launcher?.style.background).toBe("var(--surface-inverse, #0D0C0C)");
+    expect(launcher?.style.background).toBe("");
+    const launcherAppIcon = launcher?.querySelector<HTMLElement>("[data-desktop-app-icon]");
+    expect(launcherAppIcon?.style.background).toBe("var(--surface-inverse, #0D0C0C)");
+    expect(launcherAppIcon?.className).toContain("group-hover:-translate-y-0.5");
     expect(launcher?.querySelector("[data-desktop-app-icon-shine]")).toBeTruthy();
     expect(dock.querySelector("[data-testid='desktop-taskbar-files'] [data-desktop-app-icon-shine]")).toBeTruthy();
     expect(dock.style.minWidth).toBe("");

@@ -14,7 +14,6 @@ function DockAppButton({
   icon,
   color,
   iconColor,
-  tileBackground,
   active,
   minimized,
   running,
@@ -27,7 +26,6 @@ function DockAppButton({
   icon: ReactNode;
   color?: string;
   iconColor?: string;
-  tileBackground?: string;
   active?: boolean;
   minimized?: boolean;
   running?: boolean;
@@ -46,7 +44,6 @@ function DockAppButton({
         data-active={active || undefined}
         data-minimized={minimized || undefined}
         className="group relative flex size-11 items-center justify-center rounded-[13px] text-[var(--text-secondary)] data-[active]:text-[var(--accent)] data-[minimized]:opacity-70"
-        style={tileBackground ? { background: tileBackground } : undefined}
         onClick={onClick}
       >
         <DesktopAppIcon
@@ -116,8 +113,8 @@ export default function DesktopTaskbar({
           label={launcherOpen ? "Close App Launcher" : "Open App Launcher"}
           title="App Launcher"
           icon={<LayoutGrid size={21} aria-hidden="true" />}
+          color="var(--surface-inverse, #0D0C0C)"
           iconColor="var(--text-on-accent)"
-          tileBackground="var(--surface-inverse, #0D0C0C)"
           pressed={launcherOpen}
           onClick={onOpenApps}
         />
