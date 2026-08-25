@@ -149,6 +149,16 @@ describe("Desktop sidebar geometry tokens", () => {
   });
 });
 
+describe("composer focus presentation", () => {
+  it("suppresses the global focus ring inside the rich prompt editor", () => {
+    const indexCss = readRendererFile("design", "index.css");
+
+    expect(indexCss).toMatch(
+      /\.prompt-card \[data-slot="prompt-input-content"\]:focus-visible\s*\{[^}]*box-shadow:\s*none;/,
+    );
+  });
+});
+
 describe("tertiary text contrast (WCAG AA)", () => {
   const MIN_AA_CONTRAST = 4.5;
   const tokensCss = readRendererFile("design", "tokens.css");

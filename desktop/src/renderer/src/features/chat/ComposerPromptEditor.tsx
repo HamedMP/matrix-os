@@ -10,7 +10,6 @@ import {
   $createParagraphNode,
   $createTextNode,
   $getRoot,
-  $getNodeByKey,
   $getSelection,
   $isElementNode,
   $isRangeSelection,
@@ -22,7 +21,7 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from "lexical";
-import { Box, SquareTerminal, X } from "lucide-react";
+import { Box, SquareTerminal } from "lucide-react";
 import {
   forwardRef,
   useCallback,
@@ -47,8 +46,7 @@ type SerializedComposerTokenNode = Spread<{
   version: 1;
 }, SerializedLexicalNode>;
 
-function ComposerToken({ token, nodeKey }: { token: ComposerReferenceToken; nodeKey: NodeKey }) {
-  const [editor] = useLexicalComposerContext();
+function ComposerToken({ token }: { token: ComposerReferenceToken }) {
   const kind = token.type === "invocation" ? token.invocation.kind : token.resource.kind;
   const id = token.type === "invocation" ? token.invocation.descriptorId : token.resource.id;
   const label = token.type === "invocation" ? token.invocation.invocation : token.resource.label;
@@ -60,7 +58,7 @@ function ComposerToken({ token, nodeKey }: { token: ComposerReferenceToken; node
       data-slot="composer-reference-token"
       data-reference-kind={kind}
       data-testid={`composer-reference-token-${kind}-${id}`}
-      className="group relative mx-px inline-flex max-w-64 select-none items-center gap-1 align-[-0.08em] text-[0.92em] font-medium"
+      className="relative mx-px inline-flex max-w-64 select-none items-center gap-1 align-[-0.08em] text-md leading-relaxed font-medium"
       style={{ color: "var(--accent)" }}
     >
       <span data-slot="composer-reference-token-icon" className="inline-flex shrink-0 items-center justify-center">
@@ -69,19 +67,6 @@ function ComposerToken({ token, nodeKey }: { token: ComposerReferenceToken; node
           : <ComposerResourceGlyph resource={token.resource} />}
       </span>
       <span className="truncate">{label}</span>
-      <button
-        type="button"
-        aria-label={`Remove ${kind} ${label}`}
-        tabIndex={-1}
-        className="absolute -right-3 top-1/2 inline-flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full bg-[var(--bg-surface)] opacity-0 shadow-sm transition-opacity hover:bg-[var(--bg-hover)] group-hover:opacity-100 group-focus-within:opacity-100"
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => {
-          editor.update(() => $getNodeByKey(nodeKey)?.remove());
-          editor.focus();
-        }}
-      >
-        <X size={11} aria-hidden />
-      </button>
     </span>
   );
 }
@@ -134,7 +119,7 @@ class ComposerTokenNode extends DecoratorNode<ReactElement> {
   }
 
   override decorate(): ReactElement {
-    return <ComposerToken token={this.__token} nodeKey={this.__key} />;
+    return <ComposerToken token={this.__token} />;
   }
 }
 
@@ -306,12 +291,12 @@ function ComposerPromptEditorInner({
             aria-placeholder={placeholder}
             placeholder={<span />}
             data-slot="prompt-input-content"
-            className="block max-h-[220px] min-h-11 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-4 pt-3 pb-1.5 text-md leading-relaxed outline-none disabled:opacity-60"
+            className="block max-h-[220px] min-h-9 w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent px-4 pt-1 pb-1 text-md leading-relaxed shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 [&_p]:m-0 disabled:opacity-60"
             onKeyDown={(event) => { onKeyDown(event); }}
           />
         )}
         placeholder={(
-          <div className="pointer-events-none absolute inset-x-4 top-3 text-md leading-relaxed" style={{ color: "var(--text-tertiary)" }}>
+          <div className="pointer-events-none absolute inset-x-4 top-1 text-md leading-relaxed" style={{ color: "var(--text-tertiary)" }}>
             {placeholder}
           </div>
         )}

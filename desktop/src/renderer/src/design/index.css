@@ -140,7 +140,8 @@ textarea,
     0 0 0 3px var(--accent-muted),
     var(--shadow-2);
 }
-.prompt-card textarea:focus-visible {
+.prompt-card textarea:focus-visible,
+.prompt-card [data-slot="prompt-input-content"]:focus-visible {
   box-shadow: none;
 }
 

@@ -448,7 +448,7 @@ describe("SharedChatComposer", () => {
       .toContain("GPT-5.6-Terra");
   });
 
-  it("turns a selected slash entry into a distinct removable invocation token", async () => {
+  it("turns a selected slash entry into an inline invocation token without an X control", async () => {
     render(<Harness initialValue="/" />);
     const input = screen.getByLabelText("Message chat");
 
@@ -463,8 +463,33 @@ describe("SharedChatComposer", () => {
     const token = await screen.findByTestId("composer-reference-token-skill-review");
     expect(token.textContent).toContain("/review");
     expect(token.querySelector('[data-slot="composer-reference-token-icon"]')).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove skill /review" })).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove skill /review" }));
+  it("removes an inline invocation token with Backspace at its trailing edge", async () => {
+    render(<Harness
+      initialValue="/review "
+      initialReferenceTokens={[{
+        type: "invocation",
+        label: "Review",
+        invocation: { kind: "skill", descriptorId: "review", invocation: "/review" },
+      }]}
+    />);
+
+    const input = screen.getByRole("textbox", { name: "Message chat" });
+    const token = screen.getByTestId("composer-reference-token-skill-review");
+    const decorator = token.closest('[data-lexical-decorator="true"]');
+    expect(decorator).toBeTruthy();
+
+    const range = document.createRange();
+    range.setStartAfter(decorator!);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+    fireEvent.keyDown(input, { key: "Backspace", code: "Backspace" });
+
     await waitFor(() => expect(screen.queryByTestId("composer-reference-token-skill-review")).toBeNull());
   });
 
@@ -492,11 +517,18 @@ describe("SharedChatComposer", () => {
     expect(resource.compareDocumentPosition(skill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(resource.className).not.toContain("border");
     expect(skill.className).not.toContain("border");
-    expect(screen.getByRole("button", { name: "Remove file src/index.ts" }).className)
-      .toContain("absolute");
+    expect(resource.className).toContain("text-md");
+    expect(skill.className).toContain("text-md");
+    expect(resource.className).not.toContain("text-[0.92em]");
+    expect(screen.queryByRole("button", { name: "Remove file src/index.ts" })).toBeNull();
     expect(resource.querySelector('[data-file-kind="code"]')).toBeTruthy();
     expect(screen.queryByText("How can I help you today?")).toBeNull();
     expect(document.querySelector('[data-slot="composer-context-row"]')).toBeNull();
+
+    expect(promptFlow.className).toContain("border-0");
+    expect(promptFlow.className).toContain("ring-0");
+    expect(promptFlow.className).toContain("pt-1");
+    expect(promptFlow.className).not.toContain("pt-3");
   });
 
   it("submits selected invocations and resources as structured agent-readable context", () => {
