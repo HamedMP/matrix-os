@@ -2,6 +2,7 @@ import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
   CanonicalProviderInstanceDescriptor,
+  CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
 import * as Tooltip from "@radix-ui/react-tooltip";
@@ -39,12 +40,31 @@ function availabilityLabel(instance: CanonicalProviderInstanceDescriptor): strin
   return "Available";
 }
 
+function modelProviderPresentation(
+  instance: CanonicalProviderInstanceDescriptor,
+  modelId: string,
+): { label: string; glyph: CanonicalProviderDriverKind | null } {
+  const separator = modelId.indexOf(":");
+  if (separator < 1) return { label: instance.displayName, glyph: instance.driverKind };
+  const providerId = modelId.slice(0, separator).toLocaleLowerCase();
+  if (providerId === "openai" || providerId === "openai-codex") {
+    return { label: "OpenAI Codex", glyph: "codex" };
+  }
+  if (providerId === "anthropic") return { label: "Anthropic", glyph: "claude_code" };
+  if (providerId === "openrouter") return { label: "OpenRouter", glyph: null };
+  return {
+    label: providerId.split(/[-_]/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "),
+    glyph: null,
+  };
+}
+
 export function ProviderModelPicker({
   catalog,
   selection,
   instanceLocked,
   unavailableProviderLabel,
   menuSide = "top",
+  onSetupAction,
   onChange,
 }: {
   catalog: CanonicalProviderCatalog;
@@ -52,6 +72,10 @@ export function ProviderModelPicker({
   instanceLocked: boolean;
   unavailableProviderLabel?: string;
   menuSide?: "top" | "bottom";
+  onSetupAction?: (
+    instance: CanonicalProviderInstanceDescriptor,
+    action: CanonicalProviderSetupAction,
+  ) => void;
   onChange: (selection: CanonicalComposerSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -140,7 +164,9 @@ export function ProviderModelPicker({
                     const instance = catalog.instances.find((candidate) => candidate.driverKind === driver.kind);
                     const unavailable = !instance || instance.availability !== "available";
                     const locked = instanceLocked && instance?.id !== selection?.instanceId;
-                    const disabled = unavailable || locked;
+                    const disabled = !instance
+                      || locked
+                      || (unavailable && instance.setupActions.length === 0);
                     const availability = instance ? availabilityLabel(instance) : "Unavailable";
                     const tooltipLabel = unavailable
                       ? `${driver.displayName} — ${availability}`
@@ -156,7 +182,7 @@ export function ProviderModelPicker({
                             aria-disabled={disabled}
                             data-availability={instance?.availability ?? "unavailable"}
                             title={tooltipLabel}
-                            className={`flex h-9 w-9 items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${disabled ? "cursor-not-allowed opacity-35" : ""}`}
+                            className={`flex h-9 w-9 items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${unavailable || locked ? "opacity-35" : ""} ${disabled ? "cursor-not-allowed" : ""}`}
                             style={{
                               color: disabled
                                 ? "var(--text-tertiary)"
@@ -168,7 +194,7 @@ export function ProviderModelPicker({
                                 : "transparent",
                             }}
                             onClick={() => {
-                              if (!instance || disabled) return;
+                              if (!instance || locked) return;
                               setActiveInstanceId(instance.id);
                               setQuery("");
                               window.requestAnimationFrame(() => searchRef.current?.focus());
@@ -232,6 +258,7 @@ export function ProviderModelPicker({
                 <div key={activeInstance.id} className="py-1">
                   {visibleModels.map((model) => {
                     const instance = activeInstance;
+                    const provider = modelProviderPresentation(instance, model.id);
                     const instanceChangeBlocked = instanceLocked && instance.id !== selection?.instanceId;
                     const disabled = instance.availability !== "available"
                       || model.availability !== "available"
@@ -277,13 +304,15 @@ export function ProviderModelPicker({
                           options[(index + direction + options.length) % options.length]?.focus();
                         }}
                       >
-                        <span className="flex size-7 shrink-0 items-center justify-center rounded-md" style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)" }}>
-                          <ProviderDriverGlyph kind={instance.driverKind} />
+                        <span data-slot="model-provider-glyph" className="flex size-4 shrink-0 items-center justify-center" style={{ color: "var(--text-secondary)" }}>
+                          {provider.glyph
+                            ? <ProviderDriverGlyph kind={provider.glyph} size={13} />
+                            : <Cpu size={13} aria-hidden />}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{model.displayName}</span>
                           <span className="block truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                            {instance.displayName} · {availabilityLabel(instance)}
+                            {provider.label} · {availabilityLabel(instance)}
                           </span>
                         </span>
                       </button>
@@ -295,6 +324,24 @@ export function ProviderModelPicker({
                 <p className="px-2 py-6 text-center text-xs" style={{ color: "var(--text-tertiary)" }}>No models found.</p>
               ) : null}
             </div>
+            {activeInstance && activeInstance.availability !== "available" ? (
+              <div className="mt-1 border-t px-2 pt-2" style={{ borderColor: "var(--border-subtle)" }}>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {availabilityLabel(activeInstance)}
+                </p>
+                {onSetupAction ? activeInstance.setupActions.map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    className="mt-1 flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm font-medium hover:bg-[var(--bg-hover)]"
+                    style={{ color: "var(--text-primary)" }}
+                    onClick={() => onSetupAction(activeInstance, action)}
+                  >
+                    {action.label}
+                  </button>
+                )) : null}
+              </div>
+            ) : null}
           </div>
           </Popover.Content>
         </Popover.Portal>

@@ -1,6 +1,8 @@
 import type {
   CanonicalChatResourceReference,
   CanonicalProviderCatalog,
+  CanonicalProviderInstanceDescriptor,
+  CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
 import { ChevronDown, FolderOpen, Paperclip } from "lucide-react";
@@ -166,6 +168,7 @@ export function SharedChatComposer({
   resources = [],
   resourceSearch,
   onAttach,
+  onProviderSetup,
   attachments,
   leadingControls,
   footer,
@@ -191,6 +194,10 @@ export function SharedChatComposer({
   resources?: CanonicalChatResourceReference[];
   resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
+  onProviderSetup?: (
+    instance: CanonicalProviderInstanceDescriptor,
+    action: CanonicalProviderSetupAction,
+  ) => void;
   attachments?: ReactNode;
   leadingControls?: ReactNode;
   footer?: ReactNode;
@@ -201,6 +208,7 @@ export function SharedChatComposer({
   unavailableProviderLabel?: string;
   menuSide?: "top" | "bottom";
 }) {
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
   const slashMatch = value.match(/(?:^|\s)(\/[a-z0-9_-]*)$/i);
   const resourceMatch = value.match(/(?:^|\s)@([^\s]*)$/);
@@ -263,7 +271,7 @@ export function SharedChatComposer({
     }
     return false;
   };
-  const canAttach = Boolean(onAttach && instance?.supports.attachments.length);
+  const canAttach = Boolean(onAttach && (!instance || instance.supports.attachments.length));
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
@@ -328,15 +336,47 @@ export function SharedChatComposer({
         controls={(
           <>
             {canAttach ? (
-              <button
-                type="button"
-                aria-label="Attach files"
-                onClick={onAttach}
-                className="flex h-8 w-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                <Paperclip size={15} aria-hidden />
-              </button>
+              <Popover.Root open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
+                <Popover.Trigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Add files and more"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    <Paperclip size={15} aria-hidden />
+                  </button>
+                </Popover.Trigger>
+                {attachmentMenuOpen ? (
+                  <Popover.Portal>
+                    <Popover.Content
+                      role="menu"
+                      aria-label="Add"
+                      side={menuSide}
+                      align="start"
+                      sideOffset={8}
+                      collisionPadding={16}
+                      className="z-50 min-w-64 rounded-xl border p-1.5 shadow-xl"
+                      style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
+                    >
+                      <span className="block px-2 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>Add</span>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)]"
+                        style={{ color: "var(--text-primary)" }}
+                        onClick={() => {
+                          setAttachmentMenuOpen(false);
+                          onAttach?.();
+                        }}
+                      >
+                        <Paperclip size={15} aria-hidden style={{ color: "var(--text-secondary)" }} />
+                        <span>Files and folders</span>
+                      </button>
+                    </Popover.Content>
+                  </Popover.Portal>
+                ) : null}
+              </Popover.Root>
             ) : null}
             {leadingControls}
           </>
@@ -349,6 +389,7 @@ export function SharedChatComposer({
               instanceLocked={instanceLocked}
               unavailableProviderLabel={unavailableProviderLabel}
               menuSide={menuSide}
+              onSetupAction={onProviderSetup}
               onChange={onSelectionChange}
             />
             {selection && !hasEffortOption ? (

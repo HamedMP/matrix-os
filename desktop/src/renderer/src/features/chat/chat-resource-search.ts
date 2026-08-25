@@ -11,7 +11,20 @@ export async function searchHomeChatResources(
   api: Pick<ApiClient, "get">,
   query: string,
 ): Promise<CanonicalChatResourceReference[]> {
-  if (!query.trim()) return [];
+  if (!query.trim()) {
+    const response = await api.get<{ entries?: unknown }>("/api/files/list?path=");
+    const entries = Array.isArray(response.entries) ? response.entries : [];
+    return entries.slice(0, MAX_RESULTS).flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const { name, type } = entry as { name?: unknown; type?: unknown };
+      if (typeof name !== "string" || (type !== "file" && type !== "directory")) return [];
+      return [{
+        kind: type === "directory" ? "folder" as const : "file" as const,
+        id: name,
+        label: name,
+      }];
+    });
+  }
   const response = await api.get<{ results?: unknown; entries?: unknown }>(
     `/api/files/search?q=${encodeURIComponent(query.trim())}&limit=${MAX_RESULTS}`,
   );

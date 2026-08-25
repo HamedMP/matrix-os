@@ -81,7 +81,7 @@ function catalogFixture(): CanonicalProviderCatalog {
         options: [],
         skills: [],
         commands: [],
-        setupActions: [],
+        setupActions: [{ id: "opencode_connect", kind: "open_settings", label: "Connect OpenCode" }],
         supports: support,
       },
     ],
@@ -139,11 +139,15 @@ function Harness({
   onSubmit = vi.fn(),
   resourceSearch,
   menuSide,
+  onAttach = vi.fn(),
+  onProviderSetup = vi.fn(),
 }: {
   locked?: boolean;
   onSubmit?: () => void;
   resourceSearch?: (query: string) => Promise<Array<{ kind: "file" | "folder"; id: string; label: string }>>;
   menuSide?: "top" | "bottom";
+  onAttach?: () => void;
+  onProviderSetup?: (instanceId: string, actionId: string) => void;
 }) {
   const catalog = catalogFixture();
   const [value, setValue] = useState("");
@@ -165,7 +169,8 @@ function Harness({
         { kind: "folder", id: "src", label: "src" },
       ]}
       resourceSearch={resourceSearch}
-      onAttach={() => undefined}
+      onAttach={onAttach}
+      onProviderSetup={(instance, action) => onProviderSetup(instance.id, action.id)}
       menuSide={menuSide}
     />
   );
@@ -179,7 +184,7 @@ describe("SharedChatComposer", () => {
 
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("GPT-5.6-Sol");
-    expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add files and more" })).toBeTruthy();
     expect(screen.getByLabelText("Reasoning")).toBeTruthy();
     expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     expect(screen.getByLabelText("Permission mode")).toBeTruthy();
@@ -194,6 +199,28 @@ describe("SharedChatComposer", () => {
 
     expect(screen.getByRole("listbox", { name: "Models and providers" }).closest(".prompt-card"))
       .toBeNull();
+  });
+
+  it("uses a compact inline harness glyph for each model row", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    const option = screen.getByRole("option", { name: /GPT-5.6-Sol/ });
+    const glyph = option.querySelector<HTMLElement>('[data-provider-glyph="codex"]');
+
+    expect(glyph?.getAttribute("width")).toBe("13");
+    expect(glyph?.parentElement?.getAttribute("data-slot")).toBe("model-provider-glyph");
+  });
+
+  it("opens a Codex-style attachment menu before choosing files and folders", () => {
+    const onAttach = vi.fn();
+    render(<Harness onAttach={onAttach} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files and more" }));
+    expect(onAttach).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Files and folders" }));
+
+    expect(onAttach).toHaveBeenCalledOnce();
   });
 
   it("changes effort and permission through in-app menus", () => {
@@ -251,6 +278,30 @@ describe("SharedChatComposer", () => {
     expect(permission.hasAttribute("disabled")).toBe(true);
   });
 
+  it("labels a system-harness model with its actual model provider", () => {
+    const catalog = fixedHermesCatalogFixture();
+    const selection = createCanonicalComposerSelection(catalog)!;
+    render(
+      <SharedChatComposer
+        value=""
+        onChange={() => undefined}
+        onSubmit={() => undefined}
+        busy={false}
+        catalog={catalog}
+        selection={selection}
+        onSelectionChange={() => undefined}
+        instanceLocked={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    const model = screen.getByRole("option", { name: /gpt-5.3-codex-spark/ });
+
+    expect(model.textContent).toContain("OpenAI Codex");
+    expect(model.querySelector('[data-provider-glyph="codex"]')).toBeTruthy();
+    expect(model.querySelector('[data-provider-glyph="hermes"]')).toBeNull();
+  });
+
   it("searches models and switches Provider Instance before the first Turn", () => {
     render(<Harness />);
 
@@ -264,21 +315,25 @@ describe("SharedChatComposer", () => {
 
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("Claude Opus 4.6");
-    expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add files and more" })).toBeNull();
   });
 
-  it("keeps unauthenticated harnesses visible but disabled", () => {
-    render(<Harness />);
+  it("keeps unauthenticated harnesses dimmed but exposes setup inside the selector", () => {
+    const onProviderSetup = vi.fn();
+    render(<Harness onProviderSetup={onProviderSetup} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     const opencode = screen.getByRole("button", { name: "OpenCode harness, Authentication required" });
 
-    expect(opencode.getAttribute("aria-disabled")).toBe("true");
+    expect(opencode.getAttribute("aria-disabled")).toBe("false");
     expect(opencode.hasAttribute("disabled")).toBe(false);
     expect(opencode.className).toContain("opacity-35");
     expect(opencode.getAttribute("title")).toContain("OpenCode — Authentication required");
     fireEvent.click(opencode);
-    expect(screen.queryByRole("option", { name: /Provider default.*OpenCode/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /Provider default.*OpenCode/ }).getAttribute("aria-disabled"))
+      .toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
+    expect(onProviderSetup).toHaveBeenCalledWith("opencode_default", "opencode_connect");
   });
 
   it("uses a recognizable product glyph for every Harness rail item", () => {
@@ -358,6 +413,19 @@ describe("SharedChatComposer", () => {
     await waitFor(() => expect(resourceSearch).toHaveBeenCalledWith("read"));
     fireEvent.click(await screen.findByRole("option", { name: /README.md/ }));
     expect((input as HTMLTextAreaElement).value).toBe("Inspect @README.md ");
+  });
+
+  it("browses workspace files and folders immediately when @ opens", async () => {
+    const resourceSearch = vi.fn(async (query: string) => query === ""
+      ? [{ kind: "file" as const, id: "readme", label: "README.md" }]
+      : []);
+    render(<Harness resourceSearch={resourceSearch} />);
+    const input = screen.getByLabelText("Message chat");
+
+    fireEvent.change(input, { target: { value: "@" } });
+
+    await waitFor(() => expect(resourceSearch).toHaveBeenCalledWith(""));
+    expect(await screen.findByRole("option", { name: /README.md/ })).toBeTruthy();
   });
 
   it("navigates slash suggestions with arrows and Enter", () => {

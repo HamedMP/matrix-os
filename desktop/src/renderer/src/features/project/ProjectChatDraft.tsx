@@ -30,9 +30,8 @@ import {
   type CanonicalComposerSelection,
 } from "../chat/canonical-composer-state";
 import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
+import { useProviderSetup } from "../chat/use-provider-setup";
 import { capabilityEnabled } from "../coding-agents/capabilities";
-import { ProviderReadinessNotice } from "../coding-agents/ProviderReadinessNotice";
-import { deriveProviderReadiness } from "../coding-agents/provider-readiness";
 import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
 import {
   clearComposerLaunchContext,
@@ -121,7 +120,6 @@ export function ProjectChatDraft({
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);
   const createThread = useCodingAgentWorkspace((s) => s.createThread);
-  const workspaceStatus = useCodingAgentWorkspace((s) => s.status);
   const refreshSummary = useCodingAgentWorkspace((s) => s.refresh);
   const resolveNewChatTarget = useProjectWorkspaces((s) => s.resolveNewChatTarget);
   const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
@@ -212,13 +210,15 @@ export function ProjectChatDraft({
         : next;
     });
   }, [effectiveDraft.mode, preferredInstanceId, projectCatalog]);
-  const selectedProvider = summary.providers.find((provider) => provider.id === effectiveDraft.providerId)
-    ?? summary.providers[0];
-  const readiness = deriveProviderReadiness({
-    summary,
-    providerId: effectiveDraft.providerId ?? selectedProvider?.id,
-    loading: workspaceStatus === "loading",
-  });
+  const selectedInstance = projectCatalog.instances.find((instance) => (
+    instance.id === canonicalSelection?.instanceId
+  ));
+  const canonicalBlocked = !canonicalSelection
+    || selectedInstance?.availability !== "available"
+    || !selectedInstance.models.some((model) => (
+      model.id === canonicalSelection.model && model.availability === "available"
+    ));
+  const handleProviderSetup = useProviderSetup(summary.providers, refreshSummary);
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -242,8 +242,15 @@ export function ProjectChatDraft({
   }, [active, typeToStartEnabled, canCreate]);
 
   async function submit() {
-    if (readiness.blocked || submitting || submitInFlightRef.current) return;
-    let effective = effectiveDraft;
+    if (canonicalBlocked || submitting || submitInFlightRef.current) return;
+    let effective = canonicalSelection
+      ? applyCanonicalSelectionToAgentDraft(
+          summary,
+          projectCatalog,
+          effectiveDraft,
+          canonicalSelection,
+        )
+      : effectiveDraft;
     if (!effective.prompt.trim() && attachments.items.length === 0) return;
     submitInFlightRef.current = true;
     setResolvingTarget(true);
@@ -326,20 +333,13 @@ export function ProjectChatDraft({
                   event.currentTarget.value = "";
                 }}
               />
-              <div className="mb-2">
-                <ProviderReadinessNotice
-                  readiness={readiness}
-                  providers={summary.providers}
-                  onRefresh={refreshSummary}
-                />
-              </div>
               <SharedChatComposer
                   value={effectiveDraft.prompt}
                   onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
                   onSubmit={() => void submit()}
                   busy={busy}
                   disabled={busy}
-                  canSubmit={!busy && !readiness.blocked && (effectiveDraft.prompt.trim().length > 0 || attachments.items.length > 0)}
+                  canSubmit={!busy && !canonicalBlocked && (effectiveDraft.prompt.trim().length > 0 || attachments.items.length > 0)}
                   catalog={projectCatalog}
                   selection={canonicalSelection}
                   onSelectionChange={(selection) => {
@@ -353,6 +353,7 @@ export function ProjectChatDraft({
                     );
                     setDraft(nextDraft);
                   }}
+                  onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
                   instanceLocked={false}
                   menuSide="bottom"
                   resources={[{ kind: "project", id: projectId, label: projectLabel }]}

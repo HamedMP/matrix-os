@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
+import { createLegacyGlobalProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
 import {
   conversationMessageDisplay,
   sharedConversationResources,
@@ -359,7 +360,7 @@ describe("ChatTab", () => {
 
     expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add files and more" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Choose project for chat" }).closest(".prompt-card"))
       .not.toBeNull();
     expect(screen.queryByRole("button", { name: "Resources" })).toBeNull();
@@ -369,7 +370,7 @@ describe("ChatTab", () => {
     expect(screen.getByRole("button", { name: "Build a new feature, app, or tool" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-provider-instance")).toBe("hermes_default");
+    expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-provider-instance")).toBe("");
     expect(screen.queryByTestId("chat-empty-logo")).toBeNull();
     expect(screen.getByTestId("chat-empty-content").className).toContain("justify-center");
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
@@ -509,11 +510,29 @@ describe("ChatTab", () => {
   });
 
   it("changes the draft harness without navigating away from Global Chat", async () => {
+    const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
+    const availableCatalog = {
+      ...catalog,
+      instances: catalog.instances.map((instance) => ({
+        ...instance,
+        availability: "available" as const,
+        models: instance.models.map((model) => ({ ...model, availability: "available" as const })),
+        defaultSelection: { instanceId: instance.id, model: instance.models[0]!.id, options: [] },
+      })),
+    };
+    useConnection.setState({
+      api: {
+        get: vi.fn(async (path: string) => {
+          if (path === "/api/chat-providers") return availableCatalog;
+          throw new Error(`unexpected GET ${path}`);
+        }),
+      } as never,
+    });
     useHermesChat.setState({ messages: [], status: "idle" });
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(screen.getByRole("button", { name: "Codex harness, Available" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Codex harness, Available" }));
     fireEvent.click(screen.getByRole("option", { name: /Codex · Available/ }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)

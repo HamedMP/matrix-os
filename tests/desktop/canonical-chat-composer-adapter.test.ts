@@ -58,13 +58,13 @@ function summaryFixture(): RuntimeSummary {
 }
 
 describe("canonical composer legacy Project adapter", () => {
-  it("keeps Global Chat on its current Hermes harness while catalog loading", () => {
+  it("fails Global Chat closed while the canonical catalog is loading", () => {
     const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
     expect(catalog.instances).toMatchObject([
-      { id: "hermes_default", driverKind: "hermes", availability: "available" },
-      { id: "codex_default", driverKind: "codex", availability: "available" },
+      { id: "hermes_default", driverKind: "hermes", availability: "unavailable" },
+      { id: "codex_default", driverKind: "codex", availability: "unavailable" },
     ]);
-    expect(createCanonicalComposerSelection(catalog)?.instanceId).toBe("hermes_default");
+    expect(createCanonicalComposerSelection(catalog)).toBeNull();
   });
 
   it("projects current coding providers into canonical Instances", () => {
@@ -118,6 +118,22 @@ describe("canonical composer legacy Project adapter", () => {
     ]);
   });
 
+  it("does not let a stale legacy summary disable an available canonical Codex Instance", () => {
+    const summary = { ...summaryFixture(), providers: summaryFixture().providers.slice(1) };
+    const legacy = createLegacyProjectProviderCatalog(summaryFixture());
+    const canonical: CanonicalProviderCatalog = {
+      ...legacy,
+      instances: legacy.instances.map((instance) => instance.driverKind === "codex"
+        ? { ...instance, availability: "available" as const }
+        : instance),
+    };
+
+    const projectCatalog = filterCatalogForLegacyProject(canonical, summary);
+
+    expect(projectCatalog.instances.find((instance) => instance.driverKind === "codex"))
+      .toMatchObject({ availability: "available", models: [{ availability: "available" }] });
+  });
+
   it("restores the shared Driver catalog when an older Gateway only returns coding harnesses", () => {
     const summary = summaryFixture();
     const legacy = createLegacyProjectProviderCatalog(summary);
@@ -149,6 +165,19 @@ describe("canonical composer legacy Project adapter", () => {
       approvalPolicy: "never",
       sandboxMode: "full_access",
     });
+  });
+
+  it("maps a canonical coding Driver even when the legacy summary has not caught up", () => {
+    const summary = { ...summaryFixture(), providers: summaryFixture().providers.slice(1) };
+    const catalog = createLegacyProjectProviderCatalog(summaryFixture());
+    const selection = createCanonicalComposerSelection(catalog, "codex_default")!;
+
+    expect(applyCanonicalSelectionToAgentDraft(
+      summary,
+      catalog,
+      { providerId: "claude", prompt: "Use Codex" },
+      selection,
+    )).toMatchObject({ providerId: "codex", prompt: "Use Codex" });
   });
 
   it("restores the canonical permission mode from an existing create-thread draft", () => {

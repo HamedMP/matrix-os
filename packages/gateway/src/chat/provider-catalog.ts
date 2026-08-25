@@ -264,10 +264,12 @@ function systemSetupActions(runtime: AgentRuntimeDescriptor | undefined): Canoni
 function systemAvailability(
   runtime: AgentRuntimeDescriptor | undefined,
   models: CanonicalModelDescriptor[],
+  messagingConfigured: boolean,
 ): CanonicalProviderInstanceDescriptor["availability"] {
   if (runtime === undefined) return "unavailable";
   if (runtime.installState === "missing" || runtime.installState === "installing") return "setup_required";
   if (runtime.selectionState !== "active") return "unavailable";
+  if (!messagingConfigured) return "auth_required";
   if (models.some((model) => model.availability === "available")) return "available";
   if (!runtime.configured || models.some((model) => model.availability === "auth_required")) {
     return "auth_required";
@@ -281,11 +283,19 @@ function systemInstance(input: {
   providers: AgentProviderDescriptor[];
   selectedProvider: string | null;
   selectedModel: string | null;
+  messagingConfigured: boolean;
   skills: CanonicalChatSkillDescriptor[];
 }): InstanceDraft {
   const id = `${input.kind}_default`;
-  const models = systemModels(input.kind, input.providers);
-  const availability = systemAvailability(input.runtime, models);
+  const harnessConfigured = input.messagingConfigured
+    && input.selectedProvider !== null
+    && input.selectedModel !== null;
+  const models = systemModels(input.kind, input.providers).map((model) => (
+    harnessConfigured || model.availability === "unavailable"
+      ? model
+      : { ...model, availability: "auth_required" as const }
+  ));
+  const availability = systemAvailability(input.runtime, models, harnessConfigured);
   const selectedModel = input.selectedProvider && input.selectedModel
     ? `${input.selectedProvider}:${input.selectedModel}`
     : null;
@@ -378,6 +388,8 @@ export function createChatProviderCatalogService(options: {
         providers: snapshot?.providers ?? [],
         selectedProvider: snapshot?.messaging.runtime === kind ? snapshot.messaging.provider : null,
         selectedModel: snapshot?.messaging.runtime === kind ? snapshot.messaging.model : null,
+        messagingConfigured: snapshot?.messaging.runtime === kind
+          && snapshot.messaging.configured,
         skills,
       }));
       const completeCodingInstances = CODING_DRIVERS.map((kind) =>

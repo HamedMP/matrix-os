@@ -62,7 +62,7 @@ import {
 } from "../chat/canonical-composer-state";
 import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
 import { searchProjectChatResources } from "../chat/chat-resource-search";
-import { ProviderReadinessNotice } from "./ProviderReadinessNotice";
+import { useProviderSetup } from "../chat/use-provider-setup";
 import {
   deriveProviderReadiness,
   type ProviderReadinessPresentation,
@@ -681,6 +681,7 @@ function ConversationComposer({
   const turnThreadId = useCodingAgentWorkspace((state) => state.turnThreadId);
   const turnError = useCodingAgentWorkspace((state) => state.turnError);
   const send = useCodingAgentWorkspace((state) => state.sendThreadMessage);
+  const refreshSummary = useCodingAgentWorkspace((state) => state.refresh);
   const submitting = turnStatus === "submitting" && turnThreadId === threadId;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fallbackCatalog = useMemo(() => summary
@@ -699,6 +700,7 @@ function ConversationComposer({
       ? createCanonicalComposerSelection(fallbackCatalog, preferredInstanceId)
       : null,
   );
+  const handleProviderSetup = useProviderSetup(summary?.providers ?? [], refreshSummary);
 
   useEffect(() => {
     setSelection((current) => {
@@ -759,15 +761,6 @@ function ConversationComposer({
       {/* Floating composer card: same centered column as the transcript; the
           rounded/shadowed surface itself lives on PromptInput's prompt-card. */}
       <div className="mx-auto w-full max-w-[46rem]" data-slot="conversation-composer">
-        {readiness ? (
-          <div className="mb-2">
-            <ProviderReadinessNotice
-              readiness={readiness}
-              providers={summary?.providers ?? []}
-              onRefresh={() => useCodingAgentWorkspace.getState().refresh()}
-            />
-          </div>
-        ) : null}
         {turnThreadId === threadId && turnError ? (
           <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
         ) : null}
@@ -800,6 +793,7 @@ function ConversationComposer({
           catalog={projectCatalog}
           selection={selection}
           onSelectionChange={setSelection}
+          onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
           instanceLocked
           unavailableProviderLabel={selection ? undefined : `${providerId} (unavailable)`}
           resources={projectId ? [{ kind: "project", id: projectId, label: projectId }] : []}

@@ -159,6 +159,32 @@ describe("canonical Chat Provider catalog", () => {
       .toEqual(new Set([catalog.revision]));
   });
 
+  it("fails a system harness closed until its own messaging authentication is configured", async () => {
+    const source: AgentRuntimeSource = async () => {
+      const snapshot = await runtimeSource()();
+      return {
+        ...snapshot,
+        messaging: {
+          ...snapshot.messaging,
+          configured: false,
+        },
+      };
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: source,
+    });
+
+    const hermes = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "hermes_default")!;
+
+    expect(hermes.availability).toBe("auth_required");
+    expect(hermes.defaultSelection).toBeUndefined();
+    expect(hermes.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ availability: "auth_required" }),
+    ]));
+  });
+
   it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),

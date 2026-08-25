@@ -1403,8 +1403,8 @@ describe("ProjectChatsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     fireEvent.keyDown(composer, { key: "Enter" });
 
-    expect(screen.getByText(notice)).toBeTruthy();
-    expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    expect(screen.queryByText(notice)).toBeNull();
+    expect(screen.queryByRole("button", { name: action })).toBeNull();
     expect(composer.disabled).toBe(false);
     expect(composer.value).toBe(draft);
     expect(vi.mocked(window.operator.invoke).mock.calls.filter(([channel]) => channel === "runtime:create-turn")).toHaveLength(0);
@@ -1465,7 +1465,7 @@ describe("ProjectChatsView", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     const alphaComposer = await screen.findByLabelText("Message conversation") as HTMLTextAreaElement;
     fireEvent.change(alphaComposer, { target: { value: "Alpha-only blocked draft" } });
-    expect(screen.getByText("Connect Codex to continue")).toBeTruthy();
+    expect(screen.queryByText("Connect Codex to continue")).toBeNull();
 
     act(() => useProjectView.getState().setSelectedThread("matrix-os", "thread_beta"));
 

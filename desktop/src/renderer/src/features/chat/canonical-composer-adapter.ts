@@ -19,7 +19,7 @@ const SHARED_LEGACY_CATALOG_DRIVERS: CanonicalProviderCatalog["drivers"] = [
 ];
 
 export function createLegacyGlobalProviderCatalog({
-  hasProject,
+  hasProject: _hasProject,
 }: {
   hasProject: boolean;
 }): CanonicalProviderCatalog {
@@ -36,13 +36,13 @@ export function createLegacyGlobalProviderCatalog({
         id: "hermes_default",
         driverKind: "hermes",
         displayName: "Hermes",
-        availability: "available",
+        availability: "unavailable",
         workspaceRequirement: "none",
         catalogRevision: revision,
         models: [{
           id: "provider-default",
           displayName: "Current model",
-          availability: "available",
+          availability: "unavailable",
           capabilities: ["reasoning", "tools"],
           supportsVision: false,
           supportsToolUse: true,
@@ -71,19 +71,18 @@ export function createLegacyGlobalProviderCatalog({
           interactionModes: ["default"],
           permissionModes: ["supervised", "auto_accept_edits", "auto", "full_access"],
         },
-        defaultSelection: { instanceId: "hermes_default", model: "provider-default" },
       },
       {
         id: "codex_default",
         driverKind: "codex",
         displayName: "Codex",
-        availability: hasProject ? "available" : "unavailable",
+        availability: "unavailable",
         workspaceRequirement: "project_required",
         catalogRevision: revision,
         models: [{
           id: "provider-default",
           displayName: "Provider default",
-          availability: hasProject ? "available" : "unavailable",
+          availability: "unavailable",
           capabilities: ["reasoning", "tools"],
           supportsVision: false,
           supportsToolUse: true,
@@ -105,7 +104,6 @@ export function createLegacyGlobalProviderCatalog({
           interactionModes: ["default", "plan"],
           permissionModes: ["supervised", "auto_accept_edits", "auto", "full_access"],
         },
-        ...(hasProject ? { defaultSelection: { instanceId: "codex_default", model: "provider-default" } } : {}),
       },
     ],
   });
@@ -126,6 +124,16 @@ function providerForDriver(
   driverKind: CanonicalProviderDriverKind,
 ): AgentProviderSummary | undefined {
   return summary.providers.find((provider) => driverKindForLegacyProvider(provider) === driverKind);
+}
+
+function legacyProviderIdForDriver(
+  driverKind: CanonicalProviderDriverKind,
+): string | null {
+  if (driverKind === "claude_code") return "claude";
+  if (driverKind === "codex" || driverKind === "opencode" || driverKind === "pi") {
+    return driverKind;
+  }
+  return null;
 }
 
 function availabilityForLegacyProvider(
@@ -241,7 +249,9 @@ export function filterCatalogForLegacyProject(
   // Turn/Run path owns execution; otherwise selecting Hermes can silently
   // leave the legacy coding provider in the draft and run the wrong harness.
   const instances = catalog.instances.map((instance) => {
-    if (executableDriverKinds.has(instance.driverKind)) return instance;
+    const driver = catalog.drivers.find((candidate) => candidate.kind === instance.driverKind);
+    if (executableDriverKinds.has(instance.driverKind)
+      || driver?.capabilityClass === "coding_agent") return instance;
     const { defaultSelection: _defaultSelection, ...descriptor } = instance;
     return {
       ...descriptor,
@@ -286,6 +296,20 @@ function permissionDraft(permissionMode: string): Pick<
   return { approvalPolicy: "on_request", sandboxMode: "workspace_write" };
 }
 
+function legacyAgentMode(
+  mode: string | undefined,
+): AgentThreadComposerDraft["mode"] {
+  switch (mode) {
+    case "default":
+    case "plan":
+    case "review":
+    case "full_access":
+      return mode;
+    default:
+      return undefined;
+  }
+}
+
 export function permissionModeForAgentDraft(
   draft: AgentThreadComposerDraft,
 ): "supervised" | "auto" | "full_access" {
@@ -306,12 +330,17 @@ export function applyCanonicalSelectionToAgentDraft(
 ): AgentThreadComposerDraft {
   const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
   const provider = instance ? providerForDriver(summary, instance.driverKind) : undefined;
-  if (!provider) return current;
-  const mode = provider.supportedModes.find((candidate) => candidate === selection.interactionMode)
-    ?? provider.defaultMode;
+  if (!instance) return current;
+  const providerId = provider?.id ?? legacyProviderIdForDriver(instance.driverKind);
+  if (!providerId) return current;
+  const selectedMode = provider
+    ? provider.supportedModes.find((candidate) => candidate === selection.interactionMode)
+      ?? provider.defaultMode
+    : selection.interactionMode;
+  const mode = legacyAgentMode(selectedMode) ?? current.mode;
   return {
     ...current,
-    providerId: provider.id,
+    providerId,
     mode,
     ...permissionDraft(selection.permissionMode),
   };

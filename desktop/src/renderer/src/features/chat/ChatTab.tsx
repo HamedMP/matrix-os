@@ -18,6 +18,7 @@ import {
 } from "./canonical-composer-state";
 import { useChatProviderCatalog } from "./chat-provider-catalog";
 import { searchHomeChatResources, searchProjectChatResources } from "./chat-resource-search";
+import { useProviderSetup } from "./use-provider-setup";
 import { ConversationContextFeedback } from "./ConversationContextComposer";
 import ConversationContextPicker from "./ConversationContextPicker";
 import { hermesConversationPresentation } from "./hermes-presentation";
@@ -62,6 +63,7 @@ export function HermesPane() {
   const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
     () => createCanonicalComposerSelection(fallbackCatalog, "hermes_default"),
   );
+  const handleProviderSetup = useProviderSetup([]);
 
   useEffect(() => {
     setCanonicalSelection((current) => {
@@ -179,6 +181,7 @@ export function HermesPane() {
             if (providerId) setDefaultProvider(providerId);
             setCanonicalSelection(selection);
           }}
+          onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
           instanceLocked={!empty}
           resources={projects.map((project) => ({
             kind: "project" as const,
