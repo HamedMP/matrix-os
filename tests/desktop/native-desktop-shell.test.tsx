@@ -98,6 +98,12 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("button", { name: "Projects" })
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
       .toBe("var(--surface-error-emphasis, #BA5236)");
+    expect(screen.getByRole("button", { name: "Plugins" })
+      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
+      .toBe("rgb(124, 109, 180)");
+    expect(screen.getByRole("button", { name: "Settings" })
+      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
+      .toBe("var(--surface-neutral-emphasis, #6B7280)");
     const filesDockIcon = screen.getByTestId("desktop-taskbar-files")
       .querySelector<HTMLElement>("[data-desktop-app-icon]");
     expect(filesDockIcon?.classList.contains("absolute")).toBe(true);
