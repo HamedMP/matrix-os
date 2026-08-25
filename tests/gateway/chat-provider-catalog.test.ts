@@ -376,10 +376,10 @@ describe("GET /api/chat-providers", () => {
     warning.mockRestore();
   });
 
-  it("marks a known inventory failure as retryable", async () => {
+  it("marks an explicitly transient catalog failure as retryable", async () => {
     const app = new Hono().route("/", createChatProviderRoutes({
       catalog: { getCatalog: async () => {
-        throw new ProviderCatalogUnavailableError();
+        throw new ProviderCatalogUnavailableError(true);
       } },
       getPrincipal: () => principal,
     }));
@@ -390,5 +390,27 @@ describe("GET /api/chat-providers", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "service_unavailable", retryable: true },
     });
+  });
+
+  it("does not recommend retrying a deterministic projection failure", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: { getCatalog: async () => {
+        throw new ProviderCatalogUnavailableError(false);
+      } },
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers");
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "service_unavailable",
+        safeMessage: "Provider catalog is temporarily unavailable.",
+        retryable: false,
+      },
+    });
+    warning.mockRestore();
   });
 });

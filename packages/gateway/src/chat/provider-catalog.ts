@@ -34,7 +34,7 @@ export interface ChatProviderCatalogService {
 }
 
 export class ProviderCatalogUnavailableError extends Error {
-  constructor() {
+  constructor(readonly retryable: boolean) {
     super("Provider catalog unavailable");
     this.name = "ProviderCatalogUnavailableError";
   }
@@ -283,7 +283,7 @@ export function createChatProviderCatalogService(options: {
         if (instance === null) continue;
         if (seenCodingDrivers.includes(instance.driverKind)
           || seenCodingDrivers.length === MAX_CODING_DRIVERS) {
-          throw new ProviderCatalogUnavailableError();
+          throw new ProviderCatalogUnavailableError(false);
         }
         seenCodingDrivers.push(instance.driverKind);
         codingInstances.push(instance);
@@ -315,7 +315,7 @@ export function createChatProviderCatalogService(options: {
       });
       if (!parsed.success) {
         console.warn("[chat-providers] Canonical Provider projection failed validation");
-        throw new ProviderCatalogUnavailableError();
+        throw new ProviderCatalogUnavailableError(false);
       }
       return parsed.data;
     },

@@ -16,7 +16,7 @@ export function createChatProviderRoutes(options: {
     try {
       return context.json(await options.catalog.getCatalog(principal));
     } catch (error: unknown) {
-      const retryable = error instanceof ProviderCatalogUnavailableError;
+      const retryable = error instanceof ProviderCatalogUnavailableError && error.retryable;
       console.warn(
         "[chat-providers] Provider catalog request failed:",
         error instanceof Error ? error.name : "UnknownError",
