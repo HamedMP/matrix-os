@@ -268,6 +268,12 @@ describe("canonical Chat contracts", () => {
         invocation: "/review",
       }],
       commands: [],
+      setupActions: [{
+        id: "codex_connect",
+        kind: "foreground_terminal",
+        label: "Connect Codex",
+        command: "codex login --device-auth",
+      }],
       supports: {
         rootChat: true,
         resume: true,
@@ -289,6 +295,7 @@ describe("canonical Chat contracts", () => {
     });
 
     expect(instance.supports.interactionModes).toEqual(["default", "plan"]);
+    expect(instance.setupActions[0]?.kind).toBe("foreground_terminal");
     expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
       ...instance,
       defaultSelection: { ...instance.defaultSelection, instanceId: "claude_primary" },
@@ -331,6 +338,15 @@ describe("canonical Chat contracts", () => {
     expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
       ...instance,
       credentials: { token: "secret" },
+    }).success).toBe(false);
+    expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
+      ...instance,
+      setupActions: [{
+        id: "oversized",
+        kind: "foreground_terminal",
+        label: "Run setup",
+        command: "界".repeat(280),
+      }],
     }).success).toBe(false);
 
     const slashDescriptor = (index: number) => ({

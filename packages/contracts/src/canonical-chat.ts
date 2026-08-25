@@ -474,6 +474,8 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
 
 export type CanonicalOwnerScope = z.infer<typeof CanonicalOwnerScopeSchema>;
 export type CanonicalChatModelSelection = z.infer<typeof CanonicalChatModelSelectionSchema>;
+export type CanonicalChatAttachmentKind = z.infer<typeof CanonicalChatAttachmentKindSchema>;
+export type CanonicalChatResourceKind = z.infer<typeof CanonicalChatResourceKindSchema>;
 export type CanonicalChatInvocation = z.infer<typeof CanonicalChatInvocationSchema>;
 export type CanonicalChatResourceReference = z.infer<typeof CanonicalChatResourceReferenceSchema>;
 export type CanonicalChatCollaboration = z.infer<typeof CanonicalChatCollaborationSchema>;

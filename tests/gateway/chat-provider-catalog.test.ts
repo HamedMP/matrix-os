@@ -1,0 +1,349 @@
+import {
+  CanonicalProviderCatalogSchema,
+  type AgentProviderSummary,
+  type CanonicalProviderCatalog,
+} from "@matrix-os/contracts";
+import { Hono } from "hono";
+import { describe, expect, it, vi } from "vitest";
+import type { AgentRuntimeSource } from "../../packages/gateway/src/agent-config/service.js";
+import {
+  ProviderCatalogUnavailableError,
+  createChatProviderCatalogService,
+  validateChatProviderSelection,
+} from "../../packages/gateway/src/chat/provider-catalog.js";
+import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provider-routes.js";
+import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+
+const principal: RequestPrincipal = { userId: "owner_1", source: "jwt" };
+
+function codingProvider(
+  overrides: Partial<AgentProviderSummary> = {},
+): AgentProviderSummary {
+  return {
+    id: "codex",
+    displayName: "Codex",
+    kind: "codex",
+    availability: "available",
+    installStatus: "installed",
+    authStatus: "authenticated",
+    supportedModes: ["default", "review"],
+    defaultMode: "default",
+    defaultModel: "gpt-5.4",
+    setupActions: [{
+      id: "codex_connect",
+      kind: "foreground_terminal",
+      label: "Connect Codex",
+      command: "codex login --device-auth",
+    }],
+    ...overrides,
+  };
+}
+
+function runtimeSource(): AgentRuntimeSource {
+  return async () => ({
+    runtime: {
+      selected: "hermes",
+      options: [{
+        id: "hermes",
+        displayName: "Hermes",
+        installState: "installed",
+        health: "healthy",
+        selectionState: "active",
+        configured: true,
+        capabilities: ["provider_catalog", "model_selection", "authentication"],
+      }, {
+        id: "openclaw",
+        displayName: "OpenClaw",
+        installState: "installed",
+        health: "stopped",
+        selectionState: "available",
+        configured: false,
+        capabilities: ["provider_catalog", "model_selection", "authentication"],
+      }],
+      transition: null,
+    },
+    providers: [{
+      id: "anthropic",
+      displayName: "Anthropic",
+      runtime: "hermes",
+      scopes: ["messaging"],
+      authKind: "api_key",
+      supportedAuthKinds: ["api_key"],
+      models: [{
+        id: "claude-opus-4-6",
+        displayName: "Claude Opus 4.6",
+        capabilities: ["tools", "vision", "reasoning"],
+        efforts: ["low", "high"],
+        available: true,
+      }],
+      authStatus: { state: "ready", authenticated: true, action: "none" },
+    }],
+    messaging: {
+      runtime: "hermes",
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      configured: true,
+    },
+  });
+}
+
+function codingRegistry(
+  providers: AgentProviderSummary[] = [codingProvider()],
+): CodingAgentProviderRegistry {
+  return {
+    listProviders: vi.fn(async () => providers),
+    invalidate: vi.fn(),
+  };
+}
+
+describe("canonical Chat Provider catalog", () => {
+  it("projects system and coding runtimes through one bounded catalog", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    const catalog = await service.getCatalog(principal);
+
+    expect(CanonicalProviderCatalogSchema.parse(catalog)).toEqual(catalog);
+    expect(catalog.drivers.map((driver) => [driver.kind, driver.capabilityClass]))
+      .toEqual([
+        ["hermes", "system_agent"],
+        ["openclaw", "system_agent"],
+        ["codex", "coding_agent"],
+      ]);
+    expect(catalog.instances.find((instance) => instance.id === "hermes_default"))
+      .toMatchObject({
+        driverKind: "hermes",
+        availability: "available",
+        defaultSelection: {
+          instanceId: "hermes_default",
+          model: "anthropic:claude-opus-4-6",
+        },
+      });
+    expect(catalog.instances.find((instance) => instance.id === "codex_default"))
+      .toMatchObject({
+        driverKind: "codex",
+        availability: "available",
+        models: [{ id: "gpt-5.4" }],
+        setupActions: [{ id: "codex_connect" }],
+      });
+    expect(catalog.instances.find((instance) => instance.id === "openclaw_default"))
+      .toMatchObject({ availability: "unavailable", models: [] });
+    expect(new Set(catalog.instances.map((instance) => instance.catalogRevision)))
+      .toEqual(new Set([catalog.revision]));
+  });
+
+  it("fails closed per readiness source without hiding the healthy domain", async () => {
+    const failingRuntime: AgentRuntimeSource = async () => {
+      throw new Error("secret runtime endpoint failed");
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: failingRuntime,
+    });
+
+    const catalog = await service.getCatalog(principal);
+
+    expect(catalog.instances.find((instance) => instance.id === "codex_default")?.availability)
+      .toBe("available");
+    expect(catalog.instances.filter((instance) =>
+      instance.driverKind === "hermes" || instance.driverKind === "openclaw"
+    ).every((instance) => instance.availability === "unavailable")).toBe(true);
+    expect(JSON.stringify(catalog)).not.toContain("secret runtime endpoint");
+  });
+
+  it("keeps the active system runtime when coding inventory fails", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: {
+        listProviders: async () => {
+          throw new Error("secret coding inventory failure");
+        },
+      },
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    const catalog = await service.getCatalog(principal);
+
+    expect(catalog.instances.find((instance) => instance.id === "hermes_default")?.availability)
+      .toBe("available");
+    expect(catalog.drivers.some((driver) => driver.capabilityClass === "coding_agent"))
+      .toBe(false);
+    expect(JSON.stringify(catalog)).not.toContain("secret coding inventory failure");
+  });
+
+  it("falls back to the Provider default when a legacy summary has no safe model id", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({ defaultModel: "GPT 5 default" })]),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    const catalog = await service.getCatalog(principal);
+
+    expect(catalog.instances.find((instance) => instance.id === "codex_default")?.models)
+      .toMatchObject([{ id: "provider-default", displayName: "Provider default" }]);
+  });
+
+  it("rejects duplicate Driver projections instead of choosing one silently", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider(),
+        codingProvider({ displayName: "Second Codex" }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    await expect(service.getCatalog(principal)).rejects
+      .toBeInstanceOf(ProviderCatalogUnavailableError);
+  });
+});
+
+function selectionCatalog(): CanonicalProviderCatalog {
+  return CanonicalProviderCatalogSchema.parse({
+    revision: "catalog_test",
+    drivers: [{
+      kind: "codex",
+      displayName: "Codex",
+      adapterVersion: "1.0.0",
+      capabilityClass: "coding_agent",
+    }],
+    instances: [{
+      id: "codex_default",
+      driverKind: "codex",
+      displayName: "Codex",
+      availability: "available",
+      workspaceRequirement: "project_optional",
+      catalogRevision: "catalog_test",
+      models: ["gpt-5.4", "gpt-5.6-sol"].map((id) => ({
+        id,
+        displayName: id,
+        availability: "available",
+        capabilities: ["reasoning", "tools"],
+        supportsVision: false,
+        supportsToolUse: true,
+      })),
+      options: [{
+        id: "effort",
+        label: "Reasoning",
+        kind: "enum",
+        values: [{ value: "low", label: "Low" }, { value: "high", label: "High" }],
+        defaultValue: "low",
+        placement: "composer",
+      }],
+      skills: [],
+      commands: [],
+      setupActions: [],
+      supports: {
+        rootChat: true,
+        resume: true,
+        cancellation: true,
+        attachments: ["file"],
+        tools: [],
+        approvals: true,
+        userInput: true,
+        worktrees: "optional",
+        resources: ["file", "folder", "project"],
+        interactionModes: ["default", "review"],
+        permissionModes: ["supervised", "full_access"],
+      },
+    }],
+  });
+}
+
+describe("canonical Provider selection policy", () => {
+  it("allows model and option changes inside the bound Instance", () => {
+    const result = validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      boundInstanceId: "codex_default",
+      selection: {
+        instanceId: "codex_default",
+        model: "gpt-5.6-sol",
+        options: [{ id: "effort", value: "high" }],
+      },
+      requirements: {
+        attachments: ["file"],
+        interactionMode: "review",
+        permissionMode: "supervised",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns the canonical locked error for a cross-Instance change", () => {
+    const result = validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      boundInstanceId: "another_instance",
+      selection: { instanceId: "codex_default", model: "gpt-5.4" },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "provider_instance_locked",
+        safeMessage: "This Chat is already bound to another Provider instance.",
+        retryable: false,
+        recoveryActions: ["fork_chat", "start_new_chat"],
+      },
+    });
+  });
+
+  it("rejects unknown models, option values, and unsupported capabilities", () => {
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection: { instanceId: "codex_default", model: "unknown" },
+    })).toMatchObject({ ok: false, error: { code: "model_unavailable" } });
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection: {
+        instanceId: "codex_default",
+        model: "gpt-5.4",
+        options: [{ id: "effort", value: "ultra" }],
+      },
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection: { instanceId: "codex_default", model: "gpt-5.4" },
+      requirements: { attachments: ["image"] },
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+  });
+});
+
+describe("GET /api/chat-providers", () => {
+  it("returns the safe catalog for the verified principal", async () => {
+    const catalog = selectionCatalog();
+    const getCatalog = vi.fn(async () => catalog);
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: { getCatalog },
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(catalog);
+    expect(getCatalog).toHaveBeenCalledWith(principal);
+  });
+
+  it("returns a generic service error when catalog projection fails", async () => {
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: { getCatalog: async () => {
+        throw new Error("postgres://secret-provider-catalog");
+      } },
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers");
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "service_unavailable",
+        safeMessage: "Provider catalog is temporarily unavailable.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+  });
+});

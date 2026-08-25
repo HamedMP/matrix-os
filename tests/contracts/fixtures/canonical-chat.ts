@@ -99,6 +99,7 @@ export function createCanonicalProviderCatalogFixture(
       options: [],
       skills: [],
       commands: [],
+      setupActions: [],
       supports: {
         rootChat: true,
         resume: true,

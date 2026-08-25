@@ -7,6 +7,7 @@ import {
 } from "#canonical-chat";
 import {
   CanonicalProviderDriverKindSchema,
+  canonicalBoundedText,
   canonicalReferenceId,
   canonicalSafeLabel,
 } from "#canonical-chat-primitives";
@@ -99,6 +100,22 @@ const CanonicalSlashDescriptorSchema = z.object({
 
 export const CanonicalChatSkillDescriptorSchema = CanonicalSlashDescriptorSchema;
 export const CanonicalChatCommandDescriptorSchema = CanonicalSlashDescriptorSchema;
+export const CanonicalProviderSetupActionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    id: canonicalReferenceId(80),
+    kind: z.literal("open_settings"),
+    label: canonicalSafeLabel(120, 480),
+  }).strict(),
+  z.object({
+    id: canonicalReferenceId(80),
+    kind: z.literal("foreground_terminal"),
+    label: canonicalSafeLabel(120, 480),
+    command: canonicalBoundedText(280, 720).refine(
+      (value) => !/[\u0000\r\n]/.test(value),
+      { message: "Setup command must be one line" },
+    ),
+  }).strict(),
+]);
 export const CanonicalProviderSupportSchema = z.object({
   rootChat: z.boolean(),
   resume: z.boolean(),
@@ -130,6 +147,7 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
   options: z.array(CanonicalProviderOptionDescriptorSchema).max(32),
   skills: z.array(CanonicalChatSkillDescriptorSchema).max(64),
   commands: z.array(CanonicalChatCommandDescriptorSchema).max(64),
+  setupActions: z.array(CanonicalProviderSetupActionSchema).max(6),
   supports: CanonicalProviderSupportSchema,
   defaultSelection: CanonicalChatModelSelectionSchema.optional(),
 }).strict().superRefine((instance, ctx) => {
@@ -203,6 +221,7 @@ export type { CanonicalProviderDriverKind } from "#canonical-chat-primitives";
 export type CanonicalProviderDriverDescriptor = z.infer<typeof CanonicalProviderDriverDescriptorSchema>;
 export type CanonicalModelDescriptor = z.infer<typeof CanonicalModelDescriptorSchema>;
 export type CanonicalProviderOptionDescriptor = z.infer<typeof CanonicalProviderOptionDescriptorSchema>;
+export type CanonicalProviderSetupAction = z.infer<typeof CanonicalProviderSetupActionSchema>;
 export type CanonicalProviderSupport = z.infer<typeof CanonicalProviderSupportSchema>;
 export type CanonicalProviderInstanceDescriptor = z.infer<typeof CanonicalProviderInstanceDescriptorSchema>;
 export type CanonicalProviderCatalog = z.infer<typeof CanonicalProviderCatalogSchema>;

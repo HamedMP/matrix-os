@@ -130,6 +130,8 @@ import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/proje
 import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
+import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
+import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -4123,6 +4125,13 @@ export async function createGateway(config: GatewayConfig) {
     client: hermesClient,
   });
   await agentRuntimeServices.controller.reconcile();
+  app.route("/", createChatProviderRoutes({
+    catalog: createChatProviderCatalogService({
+      codingProviders: codingAgentProviderRegistry,
+      agentRuntimeSource: agentRuntimeServices.source,
+    }),
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
 
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
