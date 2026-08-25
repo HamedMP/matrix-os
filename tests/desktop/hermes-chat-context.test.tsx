@@ -76,7 +76,7 @@ describe("Hermes chat project context", () => {
       { projectId: "matrix-os" },
     ));
     expect(await screen.findByRole("button", { name: "Project Matrix OS" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Repository FinnaAI/matrix-os" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Repository FinnaAI/matrix-os" })).toBeNull();
   });
 
   it("uses persisted context instead of the first project and disables controls during a turn", () => {
@@ -92,7 +92,7 @@ describe("Hermes chat project context", () => {
 
     expect(screen.queryByText("Wrong Project")).toBeNull();
     expect(screen.getByRole("button", { name: "Project Matrix OS" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByRole("button", { name: "Repository FinnaAI/matrix-os" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Repository FinnaAI/matrix-os" })).toBeNull();
   });
 
   it("blocks send for stale context and exposes explicit recovery without clearing the transcript", async () => {

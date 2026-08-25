@@ -94,6 +94,7 @@ import {
   generateIconBatch,
   createUsageTracker,
   createMemoryStore,
+  loadSkills,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import {
@@ -131,6 +132,7 @@ import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/pro
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
+import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
@@ -4133,6 +4135,13 @@ export async function createGateway(config: GatewayConfig) {
     catalog: createChatProviderCatalogService({
       codingProviders: codingAgentProviderRegistry,
       agentRuntimeSource: agentRuntimeServices.source,
+      skillsSource: () => loadSkills(homePath),
+      ...(codexExecutable ? {
+        codingModelCatalogSource: createCodexModelCatalogSource({
+          executable: codexExecutable,
+          cwd: homePath,
+        }),
+      } : {}),
     }),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));

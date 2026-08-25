@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { useState } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import {
@@ -31,6 +31,7 @@ function catalogFixture(): CanonicalProviderCatalog {
     drivers: [
       { kind: "codex", displayName: "Codex", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
       { kind: "claude_code", displayName: "Claude Code", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+      { kind: "opencode", displayName: "OpenCode", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
     ],
     instances: [
       {
@@ -66,11 +67,33 @@ function catalogFixture(): CanonicalProviderCatalog {
         supports: { ...support, attachments: [], resources: [] },
         defaultSelection: { instanceId: "claude_personal", model: "claude-opus-4-6" },
       },
+      {
+        id: "opencode_default",
+        driverKind: "opencode",
+        displayName: "OpenCode",
+        availability: "auth_required",
+        workspaceRequirement: "project_optional",
+        catalogRevision: "catalog_fixture",
+        models: [{ id: "provider-default", displayName: "Provider default", availability: "auth_required", capabilities: ["reasoning", "tools"], supportsVision: false, supportsToolUse: true }],
+        options: [],
+        skills: [],
+        commands: [],
+        setupActions: [],
+        supports: support,
+      },
     ],
   };
 }
 
-function Harness({ locked = false, onSubmit = vi.fn() }: { locked?: boolean; onSubmit?: () => void }) {
+function Harness({
+  locked = false,
+  onSubmit = vi.fn(),
+  resourceSearch,
+}: {
+  locked?: boolean;
+  onSubmit?: () => void;
+  resourceSearch?: (query: string) => Promise<Array<{ kind: "file" | "folder"; id: string; label: string }>>;
+}) {
   const catalog = catalogFixture();
   const [value, setValue] = useState("");
   const [selection, setSelection] = useState<CanonicalComposerSelection>(
@@ -90,6 +113,7 @@ function Harness({ locked = false, onSubmit = vi.fn() }: { locked?: boolean; onS
         { kind: "file", id: "src-index", label: "src/index.ts" },
         { kind: "folder", id: "src", label: "src" },
       ]}
+      resourceSearch={resourceSearch}
       onAttach={() => undefined}
     />
   );
@@ -105,16 +129,30 @@ describe("SharedChatComposer", () => {
       .toContain("GPT-5.6-Sol");
     expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByLabelText("Reasoning")).toBeTruthy();
-    expect(screen.getByLabelText("Interaction mode")).toBeTruthy();
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     expect(screen.getByLabelText("Permission mode")).toBeTruthy();
     expect(container.querySelector(".prompt-card")?.classList.contains("overflow-hidden"))
       .toBe(false);
+  });
+
+  it("changes effort and permission through in-app menus", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
+
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
   });
 
   it("searches models and switches Provider Instance before the first Turn", () => {
     render(<Harness />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    expect(screen.queryByRole("option", { name: /Claude Opus 4.6/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code harness, Available" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Search models" }), {
       target: { value: "opus" },
     });
@@ -125,12 +163,23 @@ describe("SharedChatComposer", () => {
     expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
   });
 
+  it("keeps unauthenticated harnesses visible but disabled", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    const opencode = screen.getByRole("button", { name: "OpenCode harness, Authentication required" });
+
+    expect(opencode.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(opencode);
+    expect(screen.queryByRole("option", { name: /Provider default.*OpenCode/ })).toBeNull();
+  });
+
   it("keeps model selection available but explains the locked Instance", () => {
     render(<Harness locked />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     expect(screen.getByText("Provider Instance is locked after the first Turn.")).toBeTruthy();
-    expect(screen.getByRole("option", { name: /Claude Opus 4.6/ }).getAttribute("aria-disabled"))
+    expect(screen.getByRole("button", { name: "Claude Code harness, Available" }).getAttribute("aria-disabled"))
       .toBe("true");
     fireEvent.click(screen.getByRole("option", { name: /GPT-5.6-Terra/ }));
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
@@ -158,6 +207,20 @@ describe("SharedChatComposer", () => {
     expect((input as HTMLTextAreaElement).value).toBe("Inspect @src/index.ts ");
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("searches workspace files and folders for @ mentions", async () => {
+    const resourceSearch = vi.fn(async (query: string) => query === "read"
+      ? [{ kind: "file" as const, id: "readme", label: "README.md" }]
+      : []);
+    render(<Harness resourceSearch={resourceSearch} />);
+    const input = screen.getByLabelText("Message chat");
+
+    fireEvent.change(input, { target: { value: "Inspect @read" } });
+
+    await waitFor(() => expect(resourceSearch).toHaveBeenCalledWith("read"));
+    fireEvent.click(await screen.findByRole("option", { name: /README.md/ }));
+    expect((input as HTMLTextAreaElement).value).toBe("Inspect @README.md ");
   });
 
   it("navigates slash suggestions with arrows and Enter", () => {

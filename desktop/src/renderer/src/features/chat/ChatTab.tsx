@@ -2,6 +2,7 @@ import { FolderOpen, GitBranch } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { useConnection } from "../../stores/connection";
+import { useBoard } from "../../stores/board";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useTabs } from "../../stores/tabs";
 import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
@@ -19,6 +20,7 @@ import {
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
 import { useChatProviderCatalog } from "./chat-provider-catalog";
+import { searchHomeChatResources, searchProjectChatResources } from "./chat-resource-search";
 import {
   ConversationContextControls,
   ConversationContextFeedback,
@@ -37,7 +39,7 @@ export function canSubmitChatDraft(
     && !contextBlocksSend;
 }
 
-function HermesPane() {
+export function HermesPane() {
   const api = useConnection((state) => state.api);
   const messages = useHermesChat((state) => state.messages);
   const sessionId = useHermesChat((state) => state.sessionId);
@@ -59,6 +61,7 @@ function HermesPane() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
+  const projects = useBoard((state) => state.projects);
   const codexProjectId = defaultProjectId();
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: Boolean(codexProjectId) }),
@@ -160,6 +163,13 @@ function HermesPane() {
     attachments.items.length,
     contextPreventsSend,
   );
+  const resourceSearch = useCallback((query: string) => {
+    if (!api) return Promise.resolve([]);
+    const projectId = conversationContext?.status === "ready" ? conversationContext.projectId : null;
+    return projectId
+      ? searchProjectChatResources(api, projectId, query)
+      : searchHomeChatResources(api, query);
+  }, [api, conversationContext]);
   const composerControls = (
     <>
       <button
@@ -228,18 +238,17 @@ function HermesPane() {
           selection={canonicalSelection}
           onSelectionChange={(selection) => {
             const instance = providerCatalog.instances.find((candidate) => candidate.id === selection.instanceId);
-            const driver = providerCatalog.drivers.find((candidate) => candidate.kind === instance?.driverKind);
-            if (driver?.capabilityClass === "coding_agent") {
-              void startProjectChat(driver.kind === "claude_code" ? "claude" : driver.kind);
-              return;
-            }
-            setDefaultProvider("hermes");
+            const providerId = instance?.driverKind === "claude_code" ? "claude" : instance?.driverKind;
+            if (providerId) setDefaultProvider(providerId);
             setCanonicalSelection(selection);
           }}
           instanceLocked={!empty}
-          resources={codexProjectId
-            ? [{ kind: "project", id: codexProjectId, label: "Current project" }]
-            : []}
+          resources={projects.map((project) => ({
+            kind: "project" as const,
+            id: project.slug,
+            label: project.name,
+          }))}
+          resourceSearch={resourceSearch}
           onAttach={() => fileInputRef.current?.click()}
           attachments={attachmentPreviews}
           autoFocus={autoFocus}

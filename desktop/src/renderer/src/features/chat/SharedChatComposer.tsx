@@ -37,19 +37,59 @@ function CompactSelect({
   options: Array<{ value: string; label: string }>;
   onChange: (value: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
   if (options.length <= 1) return null;
+  const selected = options.find((option) => option.value === value) ?? options[0]!;
   return (
-    <span className="relative inline-flex min-w-0 items-center">
-      <select
+    <span
+      className="relative inline-flex min-w-0 items-center"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <button
+        type="button"
         aria-label={label}
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        className="h-8 max-w-[9rem] appearance-none truncate rounded-lg border-0 bg-transparent pl-2 pr-6 text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex h-8 max-w-[9rem] items-center gap-1.5 truncate rounded-lg px-2 text-sm capitalize outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         style={{ color: "var(--text-secondary)" }}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
       >
-        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-      <ChevronDown size={12} aria-hidden className="pointer-events-none absolute right-2" style={{ color: "var(--text-tertiary)" }} />
+        <span className="truncate">{selected.label}</span>
+        <ChevronDown size={12} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
+      </button>
+      {open ? (
+        <span
+          role="menu"
+          aria-label={`${label} options`}
+          className="absolute bottom-[calc(100%+8px)] right-0 z-50 min-w-48 rounded-xl border p-1.5 shadow-xl"
+          style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
+        >
+          <span className="block px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
+            {label}
+          </span>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={option.value === selected.value}
+              className="flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] aria-checked:bg-[var(--bg-active)]"
+              style={{ color: "var(--text-primary)" }}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -87,6 +127,7 @@ export function SharedChatComposer({
   onSelectionChange,
   instanceLocked,
   resources = [],
+  resourceSearch,
   onAttach,
   attachments,
   leadingControls,
@@ -110,6 +151,7 @@ export function SharedChatComposer({
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
   instanceLocked: boolean;
   resources?: CanonicalChatResourceReference[];
+  resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
   attachments?: ReactNode;
   leadingControls?: ReactNode;
@@ -126,13 +168,29 @@ export function SharedChatComposer({
   const slashQuery = slashMatch?.[1]?.slice(1).toLocaleLowerCase() ?? null;
   const resourceQuery = resourceMatch?.[1]?.toLocaleLowerCase() ?? null;
   const slashEntries = useMemo(() => listCanonicalSlashEntries(instance), [instance]);
+  const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (resourceQuery === null || !resourceSearch) {
+      setRemoteResources([]);
+      return () => { cancelled = true; };
+    }
+    void resourceSearch(resourceQuery).then((results) => {
+      if (!cancelled) setRemoteResources(results.slice(0, 50));
+    }).catch(() => {
+      if (!cancelled) setRemoteResources([]);
+    });
+    return () => { cancelled = true; };
+  }, [resourceQuery, resourceSearch]);
   const filteredSlashEntries = slashQuery === null ? [] : slashEntries.filter((entry) => (
     entry.invocation.slice(1).toLocaleLowerCase().includes(slashQuery)
     || entry.displayName.toLocaleLowerCase().includes(slashQuery)
   ));
-  const filteredResources = resourceQuery === null ? [] : resources.filter((resource) => (
-    resource.label.toLocaleLowerCase().includes(resourceQuery)
-  ));
+  const filteredResources = resourceQuery === null ? [] : [...resources, ...remoteResources]
+    .filter((resource, index, all) => all.findIndex((candidate) => (
+      candidate.kind === resource.kind && candidate.id === resource.id
+    )) === index)
+    .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
   const suggestionCount = slashQuery !== null
     ? filteredSlashEntries.length
     : resourceQuery !== null
@@ -263,12 +321,6 @@ export function SharedChatComposer({
             ) : null) : null}
             {selection ? (
               <>
-                <CompactSelect
-                  label="Interaction mode"
-                  value={selection.interactionMode}
-                  options={(instance?.supports.interactionModes ?? []).map((mode) => ({ value: mode, label: mode.replace(/_/g, " ") }))}
-                  onChange={(interactionMode) => onSelectionChange({ ...selection, interactionMode })}
-                />
                 <CompactSelect
                   label="Permission mode"
                   value={selection.permissionMode}

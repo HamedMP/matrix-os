@@ -71,7 +71,13 @@ describe("canonical composer legacy Project adapter", () => {
 
     expect(catalog.drivers.map((driver) => driver.kind)).toEqual(["codex", "claude_code"]);
     expect(catalog.instances).toMatchObject([
-      { id: "codex_default", driverKind: "codex", availability: "available", models: [{ id: "gpt-5.6-sol" }] },
+      {
+        id: "codex_default",
+        driverKind: "codex",
+        availability: "available",
+        models: [{ id: "gpt-5.6-sol" }],
+        options: [{ id: "effort", label: "Reasoning" }],
+      },
       { id: "claude_code_default", driverKind: "claude_code", availability: "available", models: [{ id: "claude-opus-4-6" }] },
     ]);
   });

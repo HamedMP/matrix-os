@@ -33,6 +33,7 @@ import {
   useCodingAgentWorkspace,
 } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
+import { useConnection } from "../../stores/connection";
 import { safeUrlTransform } from "../editor/MarkdownPreview";
 import {
   Attachment,
@@ -60,6 +61,7 @@ import {
   type CanonicalComposerSelection,
 } from "../chat/canonical-composer-state";
 import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
+import { searchProjectChatResources } from "../chat/chat-resource-search";
 import { ProviderReadinessNotice } from "./ProviderReadinessNotice";
 import {
   deriveProviderReadiness,
@@ -653,6 +655,7 @@ function TranscriptItem({
 
 function ConversationComposer({
   threadId,
+  projectId,
   threadLabel,
   providerId,
   waitingForAction,
@@ -662,6 +665,7 @@ function ConversationComposer({
   summary,
 }: {
   threadId: string;
+  projectId?: string;
   threadLabel: string;
   providerId: string;
   waitingForAction: boolean;
@@ -671,6 +675,7 @@ function ConversationComposer({
   summary?: RuntimeSummary;
 }) {
   const [message, setMessage] = useState("");
+  const api = useConnection((state) => state.api);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const turnStatus = useCodingAgentWorkspace((state) => state.turnStatus);
   const turnThreadId = useCodingAgentWorkspace((state) => state.turnThreadId);
@@ -797,6 +802,10 @@ function ConversationComposer({
           onSelectionChange={setSelection}
           instanceLocked
           unavailableProviderLabel={selection ? undefined : `${providerId} (unavailable)`}
+          resources={projectId ? [{ kind: "project", id: projectId, label: projectId }] : []}
+          resourceSearch={(query) => api && projectId
+            ? searchProjectChatResources(api, projectId, query)
+            : Promise.resolve([])}
           onAttach={() => fileInputRef.current?.click()}
           attachments={(
             <AttachmentPreviewRow
@@ -984,6 +993,7 @@ export function AgentConversationView({
         <ConversationComposer
           key={`composer:${snapshot.thread.id}`}
           threadId={snapshot.thread.id}
+          projectId={snapshot.thread.projectId}
           threadLabel={snapshot.thread.title}
           providerId={snapshot.thread.providerId}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}

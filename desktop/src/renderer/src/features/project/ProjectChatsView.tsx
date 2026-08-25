@@ -1,5 +1,5 @@
 import { Maximize2, MessageSquare, Minimize2, PanelRightOpen, Server, X } from "lucide-react";
-import { useCallback, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { Group, Panel, Separator, type Layout as SplitLayout } from "react-resizable-panels";
 import { defaultAgentThreadComposerDraft } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
@@ -10,6 +10,7 @@ import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useTabs } from "../../stores/tabs";
+import { useHermesChat } from "../../stores/hermes-chat";
 import {
   DEFAULT_INSPECTOR_WIDTH_PCT,
   MAX_INSPECTOR_WIDTH_PCT,
@@ -39,6 +40,7 @@ import { loadCodingAgentConversation, openCodingAgentThread } from "../../lib/pr
 import { ProjectChatDraft } from "./ProjectChatDraft";
 import { buildProjectInspectorContext } from "./project-inspector-context";
 import { ProjectThreadList } from "./ProjectThreadList";
+import { HermesPane } from "../chat/ChatTab";
 
 export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/composer-seed";
 
@@ -76,13 +78,27 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const setSelectedThread = useProjectView((s) => s.setSelectedThread);
   const composerRequest = useProjectChatLauncher((s) => s.composerRequest);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const api = useConnection((state) => state.api);
+  const hermesConversations = useHermesChat((state) => state.conversations);
+  const hermesIndexStatus = useHermesChat((state) => state.indexStatus);
+  const refreshHermesConversations = useHermesChat((state) => state.refreshConversations);
   const inspectorEntry = useInspectorLayout((s) => s.entries[projectId]);
   const inspectorHydrated = useInspectorLayout((s) => s.hydratedScope === runtimeScope);
   const narrowInspectorLayout = useNarrowInspectorLayout();
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
+  const [selectedHermesConversationId, setSelectedHermesConversationId] = useState<string | null>(null);
   const [inspectorTabOverride, setInspectorTabOverride] = useState<AgentConversationInspectorTab | null>(null);
   const newChatRequestIdRef = useRef(0);
   const draftReadinessRefreshedRef = useRef(false);
+  const projectHermesConversations = useMemo(() => hermesConversations.filter((conversation) => (
+    conversation.context?.projectId === projectId
+  )), [hermesConversations, projectId]);
+
+  useEffect(() => {
+    if (active && api && hermesIndexStatus === "idle") {
+      void refreshHermesConversations(api);
+    }
+  }, [active, api, hermesIndexStatus, refreshHermesConversations]);
 
   // Runtime-scope reconciliation + self-sufficiency bootstrap: the first
   // mounted view claims the scope (clearing the previous account's data),
@@ -167,7 +183,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   // selection is dropped instead of resurrecting a vanished conversation.
   const boundThreadRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!active || !selectedThreadId) return;
+    if (!active || !selectedThreadId || selectedHermesConversationId) return;
     const workspace = useCodingAgentWorkspace.getState();
     if (workspace.activeThreadId === selectedThreadId) {
       if (workspace.threadSnapshot?.thread.id === selectedThreadId) {
@@ -196,7 +212,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       return;
     }
     void workspace.loadThreadSnapshot(selectedThreadId);
-  }, [active, selectedThreadId, activeThreadId, threadSnapshot?.thread.id, projectId, setSelectedThread]);
+  }, [active, selectedThreadId, selectedHermesConversationId, activeThreadId, threadSnapshot?.thread.id, projectId, setSelectedThread]);
 
   // Starting a new chat DESELECTS the current thread: the draft conversation
   // (hero + the same floating composer threads use) replaces it in place,
@@ -208,6 +224,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     onReady: () => void = () => undefined,
   ): Promise<boolean> => {
     if (!summary) return false;
+    setSelectedHermesConversationId(null);
     const requestId = ++newChatRequestIdRef.current;
     const relation = await resolveNewChatTarget(projectId, taskId);
     if (cancelled()) return false;
@@ -368,6 +385,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     threadProjectId?: string,
   ): Promise<void> => {
     newChatRequestIdRef.current += 1;
+    setSelectedHermesConversationId(null);
     setComposerSeed(null);
     if (threadProjectId && threadProjectId !== projectId) {
       await openCodingAgentThread(threadId);
@@ -375,6 +393,16 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     }
     setSelectedThread(projectId, threadId);
     await loadCodingAgentConversation(projectId, threadId);
+  };
+
+  const openHermesConversation = async (conversationId: string): Promise<void> => {
+    if (!api) return;
+    newChatRequestIdRef.current += 1;
+    setComposerSeed(null);
+    setSelectedThread(projectId, null);
+    setSelectedHermesConversationId(conversationId);
+    const opened = await useHermesChat.getState().openConversation(api, conversationId);
+    if (!opened) setSelectedHermesConversationId(null);
   };
 
   // Slice 2 hero layout: the conversation and the tools inspector sit in a
@@ -424,7 +452,9 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
 
   const conversationColumn = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      {selectedThreadId ? (
+      {selectedHermesConversationId ? (
+        <HermesPane />
+      ) : selectedThreadId ? (
         <AgentConversationView
           status={activeThreadId === selectedThreadId ? threadSnapshotStatus : "loading"}
           snapshot={snapshotMatches ? threadSnapshot : null}
@@ -590,13 +620,16 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         status={projectWorkspaceEnabled ? (workspaceEntry?.status ?? "idle") : "absent"}
         error={workspaceEntry?.error ?? null}
         selectedThreadId={selectedThreadId}
+        hermesConversations={projectHermesConversations}
+        selectedHermesConversationId={selectedHermesConversationId}
         canCreate={canCreate && projectWorkspaceEnabled}
         onSelectThread={(threadId) => openListedThread(threadId)}
+        onSelectHermesConversation={(conversationId) => void openHermesConversation(conversationId)}
         onNewChat={(taskId) => void openNewChat(taskId)}
         onRetry={() => void refreshWorkspace(projectId)}
         onLoadMore={() => void loadMoreWorkspace(projectId)}
       />
-      {draftVisible ? (
+      {draftVisible || selectedHermesConversationId ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {conversationColumn}
         </div>

@@ -57,20 +57,21 @@ export function ProviderModelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [activeInstanceId, setActiveInstanceId] = useState(selection?.instanceId ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
   const listboxRef = useRef<HTMLDivElement>(null);
   const selectedInstance = catalog.instances.find((instance) => instance.id === selection?.instanceId);
   const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
+  const activeInstance = catalog.instances.find((instance) => instance.id === activeInstanceId)
+    ?? selectedInstance
+    ?? catalog.instances[0];
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleInstances = catalog.instances.map((instance) => ({
-    instance,
-    models: instance.models.filter((model) => (
+  const visibleModels = activeInstance?.models.filter((model) => (
       normalizedQuery.length === 0
       || model.displayName.toLocaleLowerCase().includes(normalizedQuery)
-      || instance.displayName.toLocaleLowerCase().includes(normalizedQuery)
-      || DRIVER_LABEL[instance.driverKind].toLocaleLowerCase().includes(normalizedQuery)
-    )),
-  })).filter(({ models }) => models.length > 0);
+      || activeInstance.displayName.toLocaleLowerCase().includes(normalizedQuery)
+      || DRIVER_LABEL[activeInstance.driverKind].toLocaleLowerCase().includes(normalizedQuery)
+    )) ?? [];
 
   return (
     <div className="relative shrink-0">
@@ -87,6 +88,7 @@ export function ProviderModelPicker({
         style={{ color: "var(--text-secondary)" }}
         onClick={() => {
           setOpen((current) => !current);
+          setActiveInstanceId(selectedInstance?.id ?? catalog.instances[0]?.id ?? "");
           window.requestAnimationFrame(() => searchRef.current?.focus());
         }}
       >
@@ -101,19 +103,36 @@ export function ProviderModelPicker({
           data-slot="provider-model-picker"
         >
           <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-r px-1.5 py-2" style={{ borderColor: "var(--border-subtle)" }}>
-            {catalog.drivers.map((driver) => (
-              <span
+            {catalog.drivers.map((driver) => {
+              const instance = catalog.instances.find((candidate) => candidate.driverKind === driver.kind);
+              const unavailable = !instance || instance.availability !== "available";
+              const locked = instanceLocked && instance?.id !== selection?.instanceId;
+              const disabled = unavailable || locked;
+              const availability = instance ? availabilityLabel(instance) : "Unavailable";
+              return (
+              <button
+                type="button"
                 key={driver.kind}
-                title={driver.displayName}
+                aria-label={`${driver.displayName} harness, ${availability}`}
+                aria-disabled={disabled}
+                disabled={disabled}
+                title={`${driver.displayName} — ${availability}.${unavailable ? " Authentication or setup is required." : ""}`}
                 className="flex h-9 w-9 items-center justify-center rounded-lg"
                 style={{
-                  color: selectedInstance?.driverKind === driver.kind ? "var(--text-primary)" : "var(--text-tertiary)",
-                  background: selectedInstance?.driverKind === driver.kind ? "var(--bg-active)" : "transparent",
+                  color: activeInstance?.driverKind === driver.kind ? "var(--text-primary)" : "var(--text-tertiary)",
+                  background: activeInstance?.driverKind === driver.kind ? "var(--bg-active)" : "transparent",
+                }}
+                onClick={() => {
+                  if (!instance || disabled) return;
+                  setActiveInstanceId(instance.id);
+                  setQuery("");
+                  window.requestAnimationFrame(() => searchRef.current?.focus());
                 }}
               >
                 <DriverIcon kind={driver.kind} size={17} />
-              </span>
-            ))}
+              </button>
+              );
+            })}
           </div>
           <div className="min-w-0 flex-1 p-2">
             <label className="flex h-8 items-center gap-2 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
@@ -144,9 +163,10 @@ export function ProviderModelPicker({
               </p>
             ) : null}
             <div ref={listboxRef} role="listbox" aria-label="Models and providers" className="mt-1 max-h-72 overflow-y-auto">
-              {visibleInstances.map(({ instance, models }) => (
-                <div key={instance.id} className="py-1">
-                  {models.map((model) => {
+              {activeInstance ? (
+                <div key={activeInstance.id} className="py-1">
+                  {visibleModels.map((model) => {
+                    const instance = activeInstance;
                     const instanceChangeBlocked = instanceLocked && instance.id !== selection?.instanceId;
                     const disabled = instance.availability !== "available"
                       || model.availability !== "available"
@@ -205,8 +225,8 @@ export function ProviderModelPicker({
                     );
                   })}
                 </div>
-              ))}
-              {visibleInstances.length === 0 ? (
+              ) : null}
+              {visibleModels.length === 0 ? (
                 <p className="px-2 py-6 text-center text-xs" style={{ color: "var(--text-tertiary)" }}>No models found.</p>
               ) : null}
             </div>

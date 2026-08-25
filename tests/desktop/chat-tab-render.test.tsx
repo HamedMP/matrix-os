@@ -575,17 +575,17 @@ describe("ChatTab", () => {
     });
   });
 
-  it("routes the Codex harness to a project-bound durable chat", async () => {
+  it("changes the draft harness without navigating away from Global Chat", async () => {
     useHermesChat.setState({ messages: [], status: "idle" });
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Codex harness, Available" }));
     fireEvent.click(screen.getByRole("option", { name: /Codex · Available/ }));
 
-    await waitFor(() => expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
-      kind: "project",
-      projectSlug: "matrix-os",
-    })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
+      .toContain("Provider default"));
+    expect(useTabs.getState().tabs).not.toContainEqual(expect.objectContaining({ kind: "project" }));
   });
 
   it("explains when a coding harness cannot open without a project", () => {
@@ -595,7 +595,7 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const codex = screen.getByRole("option", { name: /Codex · Unavailable/ });
+    const codex = screen.getByRole("button", { name: "Codex harness, Unavailable" });
     expect(codex.getAttribute("aria-disabled")).toBe("true");
   });
 

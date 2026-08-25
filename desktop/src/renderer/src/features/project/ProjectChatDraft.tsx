@@ -9,6 +9,7 @@ import {
   type RuntimeSummary,
 } from "@matrix-os/contracts";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useConnection } from "../../stores/connection";
 import { useDraftChat } from "../../stores/draft-chat";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useProviderPreferences } from "../settings/provider-preferences";
@@ -16,6 +17,7 @@ import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
 import { SharedChatComposer } from "../chat/SharedChatComposer";
 import { SharedChatSurface } from "../chat/SharedChatSurface";
+import { searchProjectChatResources } from "../chat/chat-resource-search";
 import {
   applyCanonicalSelectionToAgentDraft,
   createLegacyProjectProviderCatalog,
@@ -69,6 +71,7 @@ export function ProjectChatDraft({
   presentation?: "hero" | "landing";
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
+  const api = useConnection((state) => state.api);
   const initialDraft = useMemo(() => {
     const base = defaultAgentThreadComposerDraft(summary);
     const preferred = preferredProviderId
@@ -338,6 +341,9 @@ export function ProjectChatDraft({
                   }}
                   instanceLocked={false}
                   resources={[{ kind: "project", id: projectId, label: projectLabel }]}
+                  resourceSearch={(query) => api
+                    ? searchProjectChatResources(api, projectId, query)
+                    : Promise.resolve([])}
                   onAttach={() => fileInputRef.current?.click()}
                   attachments={(
                     <AttachmentPreviewRow

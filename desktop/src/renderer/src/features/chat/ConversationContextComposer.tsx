@@ -25,15 +25,6 @@ export function ConversationContextControls({
         onSelect={onUpdate}
         onRemove={() => onUpdate(null)}
       />
-      {context?.repositoryLabel ? (
-        <ConversationContextPicker
-          context={context}
-          disabled={disabled}
-          kind="repository"
-          onSelect={onUpdate}
-          onRemove={() => onUpdate(null)}
-        />
-      ) : null}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { AlertCircle, MessageSquare, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import type { ProjectWorkspaceStatus } from "../../stores/project-workspaces";
+import type { HermesConversationSummary } from "../../stores/hermes-chat";
 import {
   buildProjectThreadListModel,
   canLoadMoreProjectThreads,
@@ -85,6 +86,43 @@ function ThreadRow({
   );
 }
 
+function HermesRow({
+  conversation,
+  selected,
+  nowMs,
+  onSelect,
+}: {
+  conversation: HermesConversationSummary;
+  selected: boolean;
+  nowMs: number;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`Chat ${conversation.title}`}
+      aria-current={selected ? "page" : undefined}
+      onClick={onSelect}
+      className="group relative flex w-full min-w-0 items-center gap-2 rounded-md py-1.5 pl-6 pr-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      style={{
+        background: selected ? "var(--accent-muted)" : "transparent",
+        color: selected ? "var(--text-primary)" : "var(--text-secondary)",
+      }}
+    >
+      <span aria-hidden="true" className="absolute bottom-1.5 left-2 top-1.5 w-0.5 rounded-full" style={{ background: selected ? "var(--accent)" : "var(--border-subtle)" }} />
+      <MessageSquare size={13} className="shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-medium">{conversation.title}</span>
+        <span className="flex items-center gap-1 truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+          <span>Hermes</span>
+          <span aria-hidden="true">·</span>
+          <span>{formatRelativeTime(new Date(conversation.updatedAt).toISOString(), nowMs)}</span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
 export function ProjectThreadList({
   projectId,
   projectLabel,
@@ -93,8 +131,11 @@ export function ProjectThreadList({
   status,
   error,
   selectedThreadId,
+  hermesConversations = [],
+  selectedHermesConversationId = null,
   canCreate,
   onSelectThread,
+  onSelectHermesConversation,
   onNewChat,
   onRetry,
   onLoadMore,
@@ -106,8 +147,11 @@ export function ProjectThreadList({
   status: ProjectWorkspaceStatus | "absent";
   error: string | null;
   selectedThreadId: string | null;
+  hermesConversations?: HermesConversationSummary[];
+  selectedHermesConversationId?: string | null;
   canCreate: boolean;
   onSelectThread: (threadId: string) => void;
+  onSelectHermesConversation?: (conversationId: string) => void;
   onNewChat: (taskId?: string) => void;
   onRetry: () => void;
   onLoadMore?: () => void;
@@ -124,9 +168,18 @@ export function ProjectThreadList({
   );
   const canLoadMore = canLoadMoreProjectThreads(workspace);
   const canContinueFilteredSearch = canLoadMore && Boolean(onLoadMore);
+  const visibleHermesConversations = statusFilter === "all"
+    ? hermesConversations.filter((conversation) => {
+        const normalized = query.trim().toLocaleLowerCase();
+        return !normalized
+          || conversation.title.toLocaleLowerCase().includes(normalized)
+          || conversation.preview.toLocaleLowerCase().includes(normalized);
+      })
+    : [];
   const providerLabel = (thread: AgentThreadSummary) =>
     summary.providers.find((provider) => provider.id === thread.providerId)?.displayName ?? "Agent";
-  const isEmpty = model.projectThreads.length === 0
+  const isEmpty = visibleHermesConversations.length === 0
+    && model.projectThreads.length === 0
     && model.taskGroups.every((group) => group.threads.length === 0)
     && model.otherThreads.length === 0;
   // Relative timestamps tick once a minute so "2m ago" ages while the rail
@@ -215,6 +268,15 @@ export function ProjectThreadList({
         ) : null}
 
         <div role="group" aria-label="Project chats" className="space-y-0.5">
+          {visibleHermesConversations.map((conversation) => (
+            <HermesRow
+              key={conversation.id}
+              conversation={conversation}
+              selected={conversation.id === selectedHermesConversationId}
+              nowMs={nowMs}
+              onSelect={() => onSelectHermesConversation?.(conversation.id)}
+            />
+          ))}
           {model.projectThreads.map((thread) => (
             <ThreadRow
               key={thread.id}

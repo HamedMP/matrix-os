@@ -221,6 +221,7 @@ export type { CanonicalProviderDriverKind } from "#canonical-chat-primitives";
 export type CanonicalProviderDriverDescriptor = z.infer<typeof CanonicalProviderDriverDescriptorSchema>;
 export type CanonicalModelDescriptor = z.infer<typeof CanonicalModelDescriptorSchema>;
 export type CanonicalProviderOptionDescriptor = z.infer<typeof CanonicalProviderOptionDescriptorSchema>;
+export type CanonicalChatSkillDescriptor = z.infer<typeof CanonicalChatSkillDescriptorSchema>;
 export type CanonicalProviderSetupAction = z.infer<typeof CanonicalProviderSetupActionSchema>;
 export type CanonicalProviderSupport = z.infer<typeof CanonicalProviderSupportSchema>;
 export type CanonicalProviderInstanceDescriptor = z.infer<typeof CanonicalProviderInstanceDescriptorSchema>;

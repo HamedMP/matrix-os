@@ -7,6 +7,7 @@ import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import {
   taskKeyFor,
   useInspectorLayout,
@@ -206,6 +207,7 @@ function resetStores() {
     runtimeSlot: "primary",
     api: null,
   });
+  useHermesChat.setState(useHermesChat.getInitialState(), true);
 }
 
 async function openInspector(): Promise<void> {
@@ -304,6 +306,55 @@ describe("ProjectChatsView hero layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
 
     expect(await screen.findByRole("button", { name: "Show conversation tools" })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Conversation tools" })).toBeNull();
+  });
+
+  it("shows project-bound Global Chats in the same rail and opens the shared chat surface", async () => {
+    mockOperator();
+    const get = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/conversations/conversation-project")) {
+        return {
+          id: "conversation-project",
+          createdAt: 10,
+          updatedAt: 20,
+          context: {
+            projectId: "matrix-os",
+            projectName: "Matrix OS",
+            projectKind: "github",
+            status: "ready",
+          },
+          totalCount: 1,
+          messages: [{ index: 0, role: "user", content: "Project launch plan", contentTruncated: false, timestamp: 10 }],
+          hasMore: false,
+          limit: 50,
+        };
+      }
+      throw new Error(`unexpected api path ${path}`);
+    });
+    useConnection.setState({ api: { get } as never });
+    useHermesChat.setState({
+      indexStatus: "ready",
+      conversations: [{
+        id: "conversation-project",
+        title: "Release plan",
+        preview: "Project launch plan",
+        messageCount: 1,
+        createdAt: 10,
+        updatedAt: 20,
+        context: {
+          projectId: "matrix-os",
+          projectName: "Matrix OS",
+          projectKind: "github",
+          status: "ready",
+        },
+      }],
+    });
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Chat Release plan" }));
+
+    expect(await screen.findByRole("region", { name: "Hermes conversation" })).toBeTruthy();
+    expect(await screen.findByText("Project launch plan")).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Conversation tools" })).toBeNull();
   });
 

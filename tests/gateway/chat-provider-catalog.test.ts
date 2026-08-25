@@ -102,6 +102,7 @@ describe("canonical Chat Provider catalog", () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry(),
       agentRuntimeSource: runtimeSource(),
+      skillsSource: () => [{ name: "matrix-review", description: "Review Matrix changes" }],
     });
 
     const catalog = await service.getCatalog(principal);
@@ -128,11 +129,52 @@ describe("canonical Chat Provider catalog", () => {
         availability: "available",
         models: [{ id: "gpt-5.4" }],
         setupActions: [{ id: "codex_connect" }],
+        skills: [{ id: "matrix-review", invocation: "/matrix-review" }],
       });
     expect(catalog.instances.find((instance) => instance.id === "openclaw_default"))
       .toMatchObject({ availability: "unavailable", models: [] });
     expect(new Set(catalog.instances.map((instance) => instance.catalogRevision)))
       .toEqual(new Set([catalog.revision]));
+  });
+
+  it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),
+      agentRuntimeSource: runtimeSource(),
+      codingModelCatalogSource: vi.fn(async (provider) => provider.id === "codex" ? {
+        models: [{
+          id: "gpt-5.6-sol",
+          displayName: "GPT-5.6-Sol",
+          description: "Frontier coding model",
+          capabilities: ["reasoning", "tools", "vision"],
+          supportsVision: true,
+          supportsToolUse: true,
+        }, {
+          id: "gpt-5.6-terra",
+          displayName: "GPT-5.6-Terra",
+          capabilities: ["reasoning", "tools", "vision"],
+          supportsVision: true,
+          supportsToolUse: true,
+        }],
+        options: [{
+          id: "effort",
+          label: "Reasoning",
+          kind: "enum",
+          values: [{ value: "low", label: "Low" }, { value: "high", label: "High" }],
+          defaultValue: "low",
+          placement: "composer",
+        }],
+        defaultModel: "gpt-5.6-sol",
+      } : null),
+    });
+
+    const codex = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "codex_default")!;
+
+    expect(codex.models.map((model) => model.displayName))
+      .toEqual(["GPT-5.6-Sol", "GPT-5.6-Terra"]);
+    expect(codex.defaultSelection?.model).toBe("gpt-5.6-sol");
+    expect(codex.options[0]).toMatchObject({ id: "effort", values: [{ value: "low" }, { value: "high" }] });
   });
 
   it("fails closed per readiness source without hiding the healthy domain", async () => {
@@ -173,7 +215,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(JSON.stringify(catalog)).not.toContain("secret coding inventory failure");
   });
 
-  it("falls back to the Provider default when a legacy summary has no safe model id", async () => {
+  it("names an unenumerated legacy model after its harness", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({ defaultModel: "GPT 5 default" })]),
       agentRuntimeSource: runtimeSource(),
@@ -182,7 +224,7 @@ describe("canonical Chat Provider catalog", () => {
     const catalog = await service.getCatalog(principal);
 
     expect(catalog.instances.find((instance) => instance.id === "codex_default")?.models)
-      .toMatchObject([{ id: "provider-default", displayName: "Provider default" }]);
+      .toMatchObject([{ id: "provider-default", displayName: "Codex default" }]);
   });
 
   it("advertises only attachment kinds the Pi adapter forwards", async () => {
