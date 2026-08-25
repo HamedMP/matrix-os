@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalOwnerScopeSchema,
@@ -102,6 +103,62 @@ async function canonicalDirectory(candidatePath: string): Promise<string> {
   }
 }
 
+function isWithin(basePath: string, candidatePath: string): boolean {
+  const rel = relative(basePath, candidatePath);
+  return rel !== ""
+    && rel !== ".."
+    && !rel.startsWith(`..${sep}`)
+    && !isAbsolute(rel);
+}
+
+async function canonicalManagedWorktreeDirectory(input: {
+  homePath: string;
+  projectSlug: string;
+  worktreeId: string;
+  candidatePath: string;
+}): Promise<string> {
+  const candidate = resolvePath(input.candidatePath);
+  const variants = [
+    ["worktrees", input.projectSlug, input.worktreeId],
+    ["projects", input.projectSlug, "worktrees", input.worktreeId],
+  ];
+  const segments = variants.find((variant) => join(input.homePath, ...variant) === candidate);
+  if (!segments) throw new ChatExecutionRootError("invalid_root");
+
+  const validateChain = async () => {
+    let current = input.homePath;
+    for (const segment of segments) {
+      current = join(current, segment);
+      const stats = await lstat(current);
+      if (!stats.isDirectory() || stats.isSymbolicLink()) {
+        throw new ChatExecutionRootError("invalid_root");
+      }
+    }
+  };
+
+  try {
+    await validateChain();
+    const [canonicalHome, canonicalWorktree] = await Promise.all([
+      canonicalDirectory(input.homePath),
+      realpath(candidate),
+    ]);
+    await validateChain();
+    if (!isWithin(canonicalHome, canonicalWorktree)) {
+      throw new ChatExecutionRootError("invalid_root");
+    }
+    return canonicalWorktree;
+  } catch (error: unknown) {
+    if (error instanceof ChatExecutionRootError) throw error;
+    if (error instanceof Error && "code" in error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") {
+        throw new ChatExecutionRootError("invalid_root");
+      }
+    }
+    throw new ChatExecutionRootError("validation_unavailable");
+  }
+}
+
 function fingerprint(value: {
   owner: CanonicalOwnerScope;
   ref: CanonicalChatExecutionRootRef;
@@ -109,31 +166,23 @@ function fingerprint(value: {
   projectRoot: string;
   worktree?: ChatExecutionRootWorktree & { root: string };
 }): string {
-  const payload = value.worktree
-    ? {
-        version: 1,
-        owner: value.owner,
-        ref: value.ref,
-        project: {
-          id: value.project.id,
-          root: value.projectRoot,
-        },
-        worktree: {
-          id: value.worktree.id,
-          projectSlug: value.worktree.projectSlug,
-          root: value.worktree.root,
-          createdAt: value.worktree.createdAt,
-        },
-      }
-    : {
-        version: 1,
-        owner: value.owner,
-        ref: value.ref,
-        project: {
-          id: value.project.id,
-          root: value.projectRoot,
-        },
-      };
+  const payload = {
+    version: 1,
+    owner: value.owner,
+    ref: value.ref,
+    project: {
+      id: value.project.id,
+      root: value.projectRoot,
+    },
+    ...(value.worktree ? {
+      worktree: {
+        id: value.worktree.id,
+        projectSlug: value.worktree.projectSlug,
+        root: value.worktree.root,
+        createdAt: value.worktree.createdAt,
+      },
+    } : {}),
+  };
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
@@ -141,6 +190,7 @@ export function createChatExecutionRootResolver<
   Project extends ChatExecutionRootProject,
   Worktree extends ChatExecutionRootWorktree,
 >(options: {
+  homePath: string;
   projects: ChatExecutionRootProjectSource<Project>;
   worktrees?: ChatExecutionRootWorktreeSource<Worktree>;
 }): ChatExecutionRootResolver {
@@ -148,8 +198,9 @@ export function createChatExecutionRootResolver<
     throw new Error("Chat execution-root dependencies are unavailable");
   }
   const worktrees = options.worktrees;
+  const homePath = resolvePath(options.homePath);
 
-  async function resolve(
+  async function resolveRoot(
     ownerInput: CanonicalOwnerScope,
     refInput: CanonicalChatExecutionRootRef,
   ): Promise<ResolvedChatExecutionRoot> {
@@ -207,7 +258,12 @@ export function createChatExecutionRootResolver<
     ) {
       throw new ChatExecutionRootError("invalid_root");
     }
-    const worktreeRoot = await canonicalDirectory(worktree.path);
+    const worktreeRoot = await canonicalManagedWorktreeDirectory({
+      homePath,
+      projectSlug: project.slug,
+      worktreeId: worktree.id,
+      candidatePath: worktree.path,
+    });
     return {
       ref,
       primaryWorkspaceRoot: worktreeRoot,
@@ -222,12 +278,12 @@ export function createChatExecutionRootResolver<
   }
 
   return {
-    resolve,
+    resolve: resolveRoot,
     async revalidate(ownerScope, provenance) {
       if (!/^[a-f0-9]{64}$/.test(provenance.fingerprint)) {
         throw new ChatExecutionRootError("invalid_root");
       }
-      const resolved = await resolve(ownerScope, provenance.ref);
+      const resolved = await resolveRoot(ownerScope, provenance.ref);
       if (resolved.fingerprint !== provenance.fingerprint) {
         throw new ChatExecutionRootError("root_changed");
       }

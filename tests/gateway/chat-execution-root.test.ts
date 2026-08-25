@@ -46,10 +46,12 @@ function worktree(input: Partial<ChatExecutionRootWorktree> & Pick<ChatExecution
 
 describe("canonical Chat execution-root resolver", () => {
   it("resolves a project by immutable ID and supports an approved folder root", async () => {
+    const homePath = await temporaryDirectory("matrix-execution-root-home-");
     const externalFolder = await temporaryDirectory("matrix-owner-folder-");
     let projectRecord = project({ localPath: externalFolder });
     const getProjectById = vi.fn(async () => ({ ok: true as const, project: projectRecord }));
     const resolver = createChatExecutionRootResolver({
+      homePath,
       projects: {
         getProjectById,
         resolveProjectWorkingDirectory: vi.fn(async () => externalFolder),
@@ -107,6 +109,7 @@ describe("canonical Chat execution-root resolver", () => {
     expect(createdWorktree.ok).toBe(true);
     if (!createdWorktree.ok) return;
     const resolver = createChatExecutionRootResolver({
+      homePath,
       projects: projectManager,
       worktrees: worktreeManager,
     });
@@ -127,13 +130,15 @@ describe("canonical Chat execution-root resolver", () => {
   });
 
   it("binds worktree fingerprints to exact project and WorktreeRecord provenance", async () => {
+    const homePath = await temporaryDirectory("matrix-execution-root-home-");
     const projectPath = await temporaryDirectory("matrix-project-root-");
-    const firstWorktreePath = await temporaryDirectory("matrix-worktree-root-");
-    const secondWorktreePath = await temporaryDirectory("matrix-worktree-moved-");
     const projectRecord = project({ localPath: projectPath });
+    const firstWorktreePath = join(homePath, "worktrees", projectRecord.slug, "wt_abc123def456");
+    await mkdir(firstWorktreePath, { recursive: true });
     let worktreeRecord = worktree({ path: firstWorktreePath });
     const getWorktree = vi.fn(async () => ({ ok: true as const, worktree: worktreeRecord }));
     const resolver = createChatExecutionRootResolver({
+      homePath,
       projects: {
         getProjectById: vi.fn(async () => ({ ok: true as const, project: projectRecord })),
         resolveProjectWorkingDirectory: vi.fn(async () => projectPath),
@@ -158,7 +163,7 @@ describe("canonical Chat execution-root resolver", () => {
     })).resolves.toEqual(first);
 
     worktreeRecord = worktree({
-      path: secondWorktreePath,
+      path: firstWorktreePath,
       createdAt: "2026-08-25T10:00:00.000Z",
     });
     await expect(resolver.revalidate(owner, {
@@ -167,12 +172,17 @@ describe("canonical Chat execution-root resolver", () => {
     })).rejects.toEqual(new ChatExecutionRootError("root_changed"));
   });
 
-  it("rejects mismatched metadata, symlink roots, and unavailable authority with safe errors", async () => {
+  it("rejects mismatched metadata, direct or ancestor symlinks, and unavailable authority", async () => {
+    const homePath = await temporaryDirectory("matrix-execution-root-home-");
     const projectPath = await temporaryDirectory("matrix-project-root-");
     const targetPath = await temporaryDirectory("matrix-worktree-target-");
-    const symlinkRoot = join(await temporaryDirectory("matrix-worktree-parent-"), "linked");
-    await symlink(targetPath, symlinkRoot);
+    const insideTargetPath = join(homePath, "system", "redirected-worktree");
+    await mkdir(join(insideTargetPath, "wt_abc123def456"), { recursive: true });
     const projectRecord = project({ localPath: projectPath });
+    const managedParent = join(homePath, "worktrees", projectRecord.slug);
+    const symlinkRoot = join(managedParent, "wt_abc123def456");
+    await mkdir(managedParent, { recursive: true });
+    await symlink(targetPath, symlinkRoot);
     let response:
       | { ok: true; worktree: ChatExecutionRootWorktree }
       | { ok: false; status: number; error: unknown } = {
@@ -180,6 +190,7 @@ describe("canonical Chat execution-root resolver", () => {
         worktree: worktree({ path: symlinkRoot, projectSlug: "wrong-project" }),
       };
     const resolver = createChatExecutionRootResolver({
+      homePath,
       projects: {
         getProjectById: vi.fn(async () => ({ ok: true as const, project: projectRecord })),
         resolveProjectWorkingDirectory: vi.fn(async () => projectPath),
@@ -194,6 +205,18 @@ describe("canonical Chat execution-root resolver", () => {
       worktree: worktree({ path: symlinkRoot }),
     };
     await expect(resolver.resolve(owner, ref)).rejects.toEqual(new ChatExecutionRootError("invalid_root"));
+    await rm(symlinkRoot);
+    await rm(managedParent, { recursive: true });
+    await mkdir(join(targetPath, "wt_abc123def456"));
+    await symlink(targetPath, managedParent);
+    response = {
+      ok: true,
+      worktree: worktree({ path: symlinkRoot }),
+    };
+    await expect(resolver.resolve(owner, ref)).rejects.toEqual(new ChatExecutionRootError("invalid_root"));
+    await rm(managedParent);
+    await symlink(insideTargetPath, managedParent);
+    await expect(resolver.resolve(owner, ref)).rejects.toEqual(new ChatExecutionRootError("invalid_root"));
     response = { ok: false, status: 503, error: new Error("secret upstream detail") };
     await expect(resolver.resolve(owner, ref)).rejects.toEqual(
       new ChatExecutionRootError("validation_unavailable"),
@@ -203,6 +226,7 @@ describe("canonical Chat execution-root resolver", () => {
       fingerprint: "not-a-fingerprint",
     })).rejects.toEqual(new ChatExecutionRootError("invalid_root"));
     expect(() => createChatExecutionRootResolver({
+      homePath,
       projects: {
         getProjectById: vi.fn(),
         resolveProjectWorkingDirectory: vi.fn(),

@@ -11,6 +11,7 @@ import { isMatrixManagedProjectSource } from "./project-registry-layout.js";
 import { createProjectRegistry, PROJECT_SLUG_REGEX } from "./project-registry.js";
 import { removeValidatedLegacyProjectState } from "./legacy-project-state.js";
 import { projectStateRecoveryDir } from "./bounded-json-file.js";
+import { reconcileProjectIdentityIndex } from "./project-identity-index.js";
 
 export { PROJECT_SLUG_REGEX } from "./project-registry.js";
 
@@ -96,6 +97,7 @@ type CreateProjectMode = ProjectKind;
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
+const MAX_PROJECT_ID_INDEX_ENTRIES = 10_000;
 
 const GitHubUrlSchema = z.string().trim().min(1).max(512);
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
@@ -708,31 +710,21 @@ export function createProjectManager(options: {
       if (!ProjectIdSchema.safeParse(projectId).success) {
         return genericError(400, "invalid_project_id", "Project reference is invalid");
       }
-      // ponytail: reconcile the bounded file registry on each lookup; add a
-      // cache only if real project counts make this scan measurable.
-      const matches: ProjectConfig[] = [];
-      for (const slug of await registry.listSlugs()) {
-        const project = await readProjectConfig(homePath, slug);
-        if (
-          project?.id !== projectId
-          || !ownerScopeMatches(project.ownerScope, ownerScope)
-          || project.archivedAt
-          || project.deletingAt
-        ) {
-          continue;
-        }
-        matches.push(project);
-        if (matches.length > 1) {
-          return genericError(
-            409,
-            "project_identity_conflict",
-            "Project identity requires repair",
-          );
-        }
+      const result = await reconcileProjectIdentityIndex({
+        ownerScope,
+        projectId,
+        maxEntries: MAX_PROJECT_ID_INDEX_ENTRIES,
+        listSlugs: () => registry.listSlugs(),
+        readProject: (slug) => readProjectConfig(homePath, slug),
+      });
+      if (result.kind === "found") return { ok: true, project: result.project };
+      if (result.kind === "conflict") {
+        return genericError(409, "project_identity_conflict", "Project identity requires repair");
       }
-      return matches[0]
-        ? { ok: true, project: matches[0] }
-        : genericError(404, "not_found", "Project was not found");
+      if (result.kind === "capacity") {
+        return genericError(503, "project_index_unavailable", "Project lookup is unavailable");
+      }
+      return genericError(404, "not_found", "Project was not found");
     },
 
     async getProject(

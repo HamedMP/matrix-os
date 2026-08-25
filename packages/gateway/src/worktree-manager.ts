@@ -352,8 +352,12 @@ export function createWorktreeManager(options: {
         return failure(400, "invalid_ref", "Worktree reference is invalid");
       }
       const project = await readProject(homePath, projectSlug);
-      const worktree = project && !project.archivedAt && !project.deletingAt && (!ownerScope
-        || (project.ownerScope.type === ownerScope.type && project.ownerScope.id === ownerScope.id))
+      const worktree = project && (!ownerScope || (
+        !project.archivedAt
+        && !project.deletingAt
+        && project.ownerScope.type === ownerScope.type
+        && project.ownerScope.id === ownerScope.id
+      ))
         ? await readWorktree(homePath, projectSlug, id)
         : null;
       return worktree
