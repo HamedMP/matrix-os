@@ -191,6 +191,28 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
+  it("offers Settings as a native app in Desktop and Canvas and maximizes it into tabs", () => {
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    const settingsIcon = screen.getByRole("button", { name: "Settings" });
+    fireEvent.doubleClick(settingsIcon);
+
+    const settingsTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "settings");
+    expect(settingsTab).toBeTruthy();
+    expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]?.mode).toBe("window");
+    expect(screen.getByRole("dialog", { name: "Settings window" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Settings into tabs" }));
+
+    expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]?.mode).toBe("tab");
+    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Canvas mode" }));
+    expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
+  });
+
   it("switches the same running window between Desktop and Canvas without remounting it", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));

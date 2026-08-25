@@ -158,6 +158,11 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       open: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
     },
     {
+      kind: "settings",
+      label: "Settings",
+      open: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
+    },
+    {
       kind: "projects",
       label: "Projects",
       open: () => desktopMode === "canvas"
