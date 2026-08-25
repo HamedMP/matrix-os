@@ -6,6 +6,7 @@ import {
 import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
 import { openChatIndex, openProjectsIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
+import { FIXED_DESKTOP_APPS, type DesktopAppId } from "./desktop-apps";
 import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
 import DesktopTaskbar from "./DesktopTaskbar";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
@@ -139,37 +140,20 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     }
   }, [closeTab, tabs]);
 
-  const destinations = useMemo<DesktopDestination[]>(() => [
-    {
-      kind: "home",
-      label: "Browser",
-      open: () => openRoot(() => openTab(HOSTED_SHELL_TAB_SPEC)),
-    },
-    { kind: "chat", label: "Chat", open: () => openRoot(openChatIndex) },
-    { kind: "terminals", label: "Terminal", open: () => openRoot(openTerminalIndex) },
-    {
-      kind: "files",
-      label: "Files",
-      open: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
-    },
-    {
-      kind: "plugins",
-      label: "Plugins",
-      open: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
-    },
-    {
-      kind: "settings",
-      label: "Settings",
-      open: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
-    },
-    {
-      kind: "projects",
-      label: "Projects",
-      open: () => desktopMode === "canvas"
+  const destinations = useMemo<DesktopDestination[]>(() => {
+    const openers: Record<DesktopAppId, () => void> = {
+      browser: () => openRoot(() => openTab(HOSTED_SHELL_TAB_SPEC)),
+      chat: () => openRoot(openChatIndex),
+      terminal: () => openRoot(openTerminalIndex),
+      files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
+      plugins: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
+      settings: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
+      projects: () => desktopMode === "canvas"
         ? openRoot(openProjectsIndex)
         : openRootAsTab(openProjectsIndex),
-    },
-  ], [desktopMode, openRoot, openRootAsTab, openTab]);
+    };
+    return FIXED_DESKTOP_APPS.map((app) => ({ ...app, open: openers[app.id] }));
+  }, [desktopMode, openRoot, openRootAsTab, openTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
     const surfaceState = useDesktopSurfaces.getState().surfaces;

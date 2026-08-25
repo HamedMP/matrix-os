@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { TabKind } from "../../stores/tabs";
-import SurfaceIcon, { surfaceIconTab } from "./SurfaceIcon";
+import DesktopAppIcon from "./DesktopAppIcon";
+import type { DesktopAppConfig } from "./desktop-apps";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
-export interface DesktopDestination {
-  kind: TabKind;
-  label: string;
+export interface DesktopDestination extends DesktopAppConfig {
   open: () => void;
 }
 
@@ -36,7 +35,7 @@ export default function DesktopIconGrid({ destinations }: { destinations: Deskto
           <button
             key={destination.kind}
             type="button"
-            aria-label={destination.label}
+            aria-label={destination.name}
             data-selected={selected || undefined}
             className="group flex w-[76px] flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] data-[selected]:bg-[var(--bg-selected)]"
             onClick={() => setSelectedKind(destination.kind)}
@@ -50,23 +49,23 @@ export default function DesktopIconGrid({ destinations }: { destinations: Deskto
               }
             }}
           >
-            <span
-              className="flex size-12 items-center justify-center rounded-[14px] border bg-[var(--bg-surface)] text-[var(--accent)] shadow-[var(--shadow-2)] transition-transform duration-150 group-hover:-translate-y-0.5"
+            <DesktopAppIcon
+              name={destination.name}
+              icon={<destination.icon size={24} aria-hidden="true" />}
+              color={destination.color ?? "var(--bg-surface)"}
+              iconColor={destination.iconColor ?? "var(--accent)"}
+              className="relative size-12 rounded-[14px] border shadow-[var(--shadow-2)] transition-transform duration-150 group-hover:-translate-y-0.5"
               style={{ borderColor: "var(--border-subtle)" }}
-            >
-              <SurfaceIcon tab={surfaceIconTab(destination.kind, destination.label)} size={24} />
-            </span>
+            />
             <span
               data-desktop-icon-label
-              className="max-w-full truncate rounded-md px-1.5 py-0.5 text-[12px] font-medium"
+              className="max-w-full truncate text-[12px] font-medium"
               style={{
                 color: "#fff",
-                background: "rgba(0, 0, 0, 0.46)",
                 textShadow: "0 1px 2px rgba(0, 0, 0, 0.95), 0 0 3px rgba(0, 0, 0, 0.8)",
-                boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.08)",
               }}
             >
-              {destination.label}
+              {destination.name}
             </span>
           </button>
         );

@@ -78,8 +78,33 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
     const browserLabel = browserIcon.querySelector<HTMLElement>("[data-desktop-icon-label]");
     expect(browserLabel?.style.color).toBe("rgb(255, 255, 255)");
-    expect(browserLabel?.style.background).toContain("rgba(0, 0, 0");
+    expect(browserLabel?.style.background).toBe("");
     expect(browserLabel?.style.textShadow).toContain("rgba(0, 0, 0");
+    const browserGlow = browserIcon.querySelector<HTMLElement>("[data-desktop-app-icon-shine]");
+    expect(browserGlow?.style.background).toContain("linear-gradient(180deg");
+    expect(browserGlow?.style.height).toBe("50%");
+    const browserAppIcon = browserIcon.querySelector<HTMLElement>("[data-desktop-app-icon]");
+    expect(browserAppIcon?.style.background).toBe("var(--surface-info-emphasis, #3B85BA)");
+    expect(browserAppIcon?.style.color).toBe("white");
+    expect(screen.getByRole("button", { name: "Chat" })
+      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
+      .toBe("var(--surface-success-emphasis, #288A5B)");
+    expect(screen.getByRole("button", { name: "Terminal" })
+      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
+      .toBe("var(--surface-warning-emphasis, #E0AA52)");
+    expect(screen.getByRole("button", { name: "Files" })
+      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
+      .toBe("var(--surface-brand-emphasis, #748E59)");
+    expect(screen.getByRole("button", { name: "Projects" })
+      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
+      .toBe("var(--surface-error-emphasis, #BA5236)");
+    const filesDockIcon = screen.getByTestId("desktop-taskbar-files")
+      .querySelector<HTMLElement>("[data-desktop-app-icon]");
+    expect(filesDockIcon?.classList.contains("absolute")).toBe(true);
+    expect(filesDockIcon?.classList.contains("relative")).toBe(false);
+    const filesDockButton = screen.getByTestId("desktop-taskbar-files");
+    expect(filesDockButton.classList.contains("bg-[var(--bg-surface)]")).toBe(false);
+    expect(filesDockButton.classList.contains("border")).toBe(false);
     const background = screen.getByTestId("desktop-background");
     expect(background.style.background).toContain("--bg-app");
     expect(background.style.zIndex).toBe(String(DESKTOP_Z_INDEX.nativeDesktopBackground));
@@ -460,16 +485,37 @@ describe("native desktop shell", () => {
     const runningApps = screen.getByTestId("desktop-taskbar-running-apps");
     expect(runningApps.className).toContain("[scrollbar-width:none]");
     expect(runningApps.className).toContain("[&::-webkit-scrollbar]:hidden");
+    expect(runningApps.className).not.toContain("pb-2");
+    const chatButton = screen.getByRole("button", { name: "Focus Hermes" });
+    expect(chatButton.className).not.toContain("hover:-translate-y-0.5");
+    expect(chatButton.querySelector("[data-desktop-app-icon]")?.className)
+      .toContain("group-hover:-translate-y-0.5");
+    expect(chatButton.parentElement?.className).toContain("flex-col");
+    expect(chatButton.parentElement?.className).toContain("gap-0.5");
+    expect(chatButton.parentElement?.querySelector("[data-taskbar-running-indicator]"))
+      .toBeTruthy();
   });
 
   it("does not reserve an empty dock slot when no apps are running", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
 
     const dock = screen.getByRole("navigation", { name: "Running apps" });
+    expect(dock.style.borderRadius).toBe("16px");
+    expect(dock.style.border).toBe("1px solid rgba(255, 255, 255, 0.15)");
+    expect(dock.style.background).toBe("rgba(255, 255, 255, 0.3)");
+    expect(dock.style.boxShadow).toContain("rgba(0, 0, 0, 0.05)");
+    expect(dock.style.backdropFilter).toBe("blur(67.95704650878906px)");
+    expect(dock.style.padding).toBe("6px 6px 0px");
+    expect(dock.style.gap).toBe("6px");
+    const launcher = dock.querySelector<HTMLElement>("[aria-label='Open App Launcher']");
+    expect(launcher?.style.background).toBe("var(--surface-inverse, #0D0C0C)");
+    expect(launcher?.querySelector("[data-desktop-app-icon-shine]")).toBeTruthy();
+    expect(dock.querySelector("[data-testid='desktop-taskbar-files'] [data-desktop-app-icon-shine]")).toBeTruthy();
     expect(dock.style.minWidth).toBe("");
     expect(dock.querySelector("[data-testid='desktop-taskbar-running-apps']"))
       .toBeNull();
-    expect(dock.querySelectorAll("span.h-8.w-px")).toHaveLength(0);
+    expect([...dock.querySelectorAll("span")].filter((element) => element.classList.contains("h-[50px]")
+      && element.classList.contains("w-px"))).toHaveLength(0);
   });
 
   it("keeps Files pinned in the static Dock section and marks it when the surface is open", () => {
@@ -478,16 +524,16 @@ describe("native desktop shell", () => {
     const dock = screen.getByRole("navigation", { name: "Running apps" });
     const filesButton = dock.querySelector<HTMLButtonElement>("[data-testid='desktop-taskbar-files']");
     expect(filesButton).toBeTruthy();
-    expect(filesButton?.querySelector("[data-taskbar-running-indicator]")).toBeNull();
+    expect(filesButton?.parentElement?.querySelector("[data-taskbar-running-indicator]")).toBeNull();
     expect(dock.querySelector("[data-testid='desktop-taskbar-running-apps']")).toBeNull();
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
 
-    expect(filesButton?.querySelector("[data-taskbar-running-indicator]")).toBeTruthy();
+    expect(filesButton?.parentElement?.querySelector("[data-taskbar-running-indicator]")).toBeTruthy();
     expect(dock.querySelector("[data-testid='desktop-taskbar-running-apps']")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Close Files" }));
-    expect(filesButton?.querySelector("[data-taskbar-running-indicator]")).toBeNull();
+    expect(filesButton?.parentElement?.querySelector("[data-taskbar-running-indicator]")).toBeNull();
     expect(filesButton?.isConnected).toBe(true);
   });
 
@@ -508,6 +554,7 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     const terminalTabId = useTabs.getState().activeTabId!;
     const dock = screen.getByRole("navigation", { name: "Running apps" });
+    expect(dock.querySelector("[title='Terminal'] [data-desktop-app-icon-shine]")).toBeTruthy();
     fireEvent.click(dock.querySelector<HTMLButtonElement>("[title='Terminal']")!);
     expect(useDesktopSurfaces.getState().surfaces[terminalTabId]?.mode).toBe("window");
     expect(useTabs.getState().activeTabId).toBe(terminalTabId);
