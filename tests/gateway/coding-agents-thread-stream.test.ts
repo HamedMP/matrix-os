@@ -287,7 +287,7 @@ describe("coding agent thread stream", () => {
   it("rejects extra stream sink registrations instead of detaching existing streams silently", async () => {
     const { threads } = await createHarness();
 
-    for (let index = 0; index < 7; index += 1) {
+    for (let index = 0; index < 71; index += 1) {
       createCodingAgentThreadStream({ threads });
     }
 
