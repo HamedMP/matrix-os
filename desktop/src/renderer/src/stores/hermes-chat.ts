@@ -348,9 +348,20 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
           !contextMutationActiveAtStart
           && state.contextSequence === contextSequenceAtStart
           && state.contextStatus !== "loading";
+        const conversations = canApplySelectedContext || !state.sessionId
+          ? snapshot.conversations
+          : snapshot.conversations.map((conversation) => {
+              if (conversation.id !== state.sessionId) return conversation;
+              if (state.conversationContext) {
+                return { ...conversation, context: state.conversationContext };
+              }
+              const withoutContext = { ...conversation };
+              delete withoutContext.context;
+              return withoutContext;
+            });
 
         return {
-          conversations: snapshot.conversations,
+          conversations,
           isConversationIndexComplete: snapshot.complete,
           indexStatus: "ready",
           indexError: null,

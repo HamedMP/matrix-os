@@ -80,25 +80,34 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const api = useConnection((state) => state.api);
   const hermesConversations = useHermesChat((state) => state.conversations);
-  const hermesIndexStatus = useHermesChat((state) => state.indexStatus);
   const refreshHermesConversations = useHermesChat((state) => state.refreshConversations);
   const inspectorEntry = useInspectorLayout((s) => s.entries[projectId]);
   const inspectorHydrated = useInspectorLayout((s) => s.hydratedScope === runtimeScope);
   const narrowInspectorLayout = useNarrowInspectorLayout();
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
-  const [selectedHermesConversationId, setSelectedHermesConversationId] = useState<string | null>(null);
+  const [selectedHermesConversationId, setSelectedHermesConversationId] = useState<string | null>(() => {
+    const chat = useHermesChat.getState();
+    return chat.sessionId && chat.conversationContext?.projectId === projectId ? chat.sessionId : null;
+  });
   const [inspectorTabOverride, setInspectorTabOverride] = useState<AgentConversationInspectorTab | null>(null);
   const newChatRequestIdRef = useRef(0);
   const draftReadinessRefreshedRef = useRef(false);
+  const hermesRefreshScopeRef = useRef<string | null>(null);
   const projectHermesConversations = useMemo(() => hermesConversations.filter((conversation) => (
     conversation.context?.projectId === projectId
   )), [hermesConversations, projectId]);
 
   useEffect(() => {
-    if (active && api && hermesIndexStatus === "idle") {
-      void refreshHermesConversations(api);
+    if (!active) {
+      hermesRefreshScopeRef.current = null;
+      return;
     }
-  }, [active, api, hermesIndexStatus, refreshHermesConversations]);
+    if (!api) return;
+    const refreshScope = `${runtimeScope}:${projectId}`;
+    if (hermesRefreshScopeRef.current === refreshScope) return;
+    hermesRefreshScopeRef.current = refreshScope;
+    void refreshHermesConversations(api);
+  }, [active, api, projectId, refreshHermesConversations, runtimeScope]);
 
   // Runtime-scope reconciliation + self-sufficiency bootstrap: the first
   // mounted view claims the scope (clearing the previous account's data),

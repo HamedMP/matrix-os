@@ -1,15 +1,17 @@
 import { AlertCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useHermesChat, type HermesConversationSummary } from "../../stores/hermes-chat";
 import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useTabs } from "../../stores/tabs";
 import { capabilityEnabled } from "../coding-agents/capabilities";
 import { ProviderGlyph } from "../settings/provider-glyph";
+import { ProviderDriverGlyph } from "../chat/ProviderDriverGlyph";
 import { ProjectChatDraft } from "./ProjectChatDraft";
 import {
   buildProjectThreadListModel,
@@ -37,10 +39,35 @@ function allThreads(summary: RuntimeSummary, projectId: string, workspace: Proje
   const deduped = new Map<string, AgentThreadSummary>();
   for (const thread of combined) {
     if (deduped.has(thread.id)) continue;
-    if (deduped.size >= PROJECT_OVERVIEW_THREAD_LIMIT) break;
     deduped.set(thread.id, thread);
   }
   return [...deduped.values()];
+}
+
+type ProjectOverviewSession =
+  | { kind: "coding"; id: string; updatedAt: number; thread: AgentThreadSummary }
+  | { kind: "chat"; id: string; updatedAt: number; conversation: HermesConversationSummary };
+
+function projectSessions(
+  threads: AgentThreadSummary[],
+  conversations: HermesConversationSummary[],
+): ProjectOverviewSession[] {
+  return [
+    ...threads.map((thread): ProjectOverviewSession => ({
+      kind: "coding",
+      id: thread.id,
+      updatedAt: Date.parse(thread.updatedAt),
+      thread,
+    })),
+    ...conversations.map((conversation): ProjectOverviewSession => ({
+      kind: "chat",
+      id: conversation.id,
+      updatedAt: conversation.updatedAt,
+      conversation,
+    })),
+  ]
+    .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+    .slice(0, PROJECT_OVERVIEW_THREAD_LIMIT);
 }
 
 export default function ProjectOverview({
@@ -59,6 +86,7 @@ export default function ProjectOverview({
   viewSwitch: ReactNode;
 }) {
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const api = useConnection((state) => state.api);
   const workspaceEntry = useProjectWorkspaces((state) => state.entries[projectId]);
   const ensureWorkspace = useProjectWorkspaces((state) => state.ensure);
   const refreshWorkspace = useProjectWorkspaces((state) => state.refresh);
@@ -67,11 +95,33 @@ export default function ProjectOverview({
   const setSelectedThread = useProjectView((state) => state.setSelectedThread);
   const setView = useProjectView((state) => state.setView);
   const composerFocusRequestId = useCodingAgentWorkspace((state) => state.composerFocusRequestId);
+  const hermesConversations = useHermesChat((state) => state.conversations);
+  const refreshHermesConversations = useHermesChat((state) => state.refreshConversations);
   const threads = useMemo(
     () => summary ? allThreads(summary, projectId, workspaceEntry?.workspace ?? null) : [],
     [projectId, summary, workspaceEntry?.workspace],
   );
+  const projectHermesConversations = useMemo(() => hermesConversations.filter((conversation) => (
+    conversation.context?.projectId === projectId
+  )), [hermesConversations, projectId]);
+  const sessions = useMemo(
+    () => projectSessions(threads, projectHermesConversations),
+    [projectHermesConversations, threads],
+  );
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const hermesRefreshScopeRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!active) {
+      hermesRefreshScopeRef.current = null;
+      return;
+    }
+    if (!api) return;
+    const refreshScope = `${runtimeScope}:${projectId}`;
+    if (hermesRefreshScopeRef.current === refreshScope) return;
+    hermesRefreshScopeRef.current = refreshScope;
+    void refreshHermesConversations(api);
+  }, [active, api, projectId, refreshHermesConversations, runtimeScope]);
 
   useEffect(() => {
     if (!active || !workspaceEnabled) return;
@@ -128,10 +178,10 @@ export default function ProjectOverview({
               </p>
             </div>
           ) : null}
-          {workspaceEntry?.status === "loading" && threads.length === 0 ? (
+          {workspaceEntry?.status === "loading" && sessions.length === 0 ? (
             <p className="py-6 text-sm" style={{ color: "var(--text-tertiary)" }}>Loading recent sessions…</p>
           ) : null}
-          {workspaceEntry?.status === "error" && threads.length === 0 ? (
+          {workspaceEntry?.status === "error" && sessions.length === 0 ? (
             <div className="flex items-center gap-3 py-6 text-sm" style={{ color: "var(--text-secondary)" }}>
               <AlertCircle size={15} style={{ color: "var(--warning)" }} />
               <span>Project sessions are unavailable.</span>
@@ -145,19 +195,47 @@ export default function ProjectOverview({
               </button>
             </div>
           ) : null}
-          {summary && workspaceEntry?.status !== "loading" && workspaceEntry?.status !== "error" && threads.length === 0 ? (
+          {summary && workspaceEntry?.status !== "loading" && workspaceEntry?.status !== "error" && sessions.length === 0 ? (
             <p className="py-6 text-sm" style={{ color: "var(--text-tertiary)" }}>No sessions yet. Start one above.</p>
           ) : null}
 
           <div>
-            {threads.map((thread) => {
+            {sessions.map((session) => {
+              if (session.kind === "chat") {
+                const conversation = session.conversation;
+                const relative = formatRelativeTime(new Date(conversation.updatedAt).toISOString(), nowMs);
+                return (
+                  <button
+                    key={`chat:${conversation.id}`}
+                    type="button"
+                    aria-label={`Open chat ${conversation.title}`}
+                    onClick={() => {
+                      if (!api) return;
+                      void useHermesChat.getState().openConversation(api, conversation.id).then((opened) => {
+                        if (!opened) return;
+                        setSelectedThread(projectId, null);
+                        setView(projectId, "chats");
+                      });
+                    }}
+                    className="group flex w-full items-center gap-3 border-b px-3 py-3.5 text-left outline-none transition-colors last:border-b-0 hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    style={{ borderColor: "var(--border-subtle)" }}
+                  >
+                    <span aria-label="Hermes provider" title="Hermes" className="shrink-0">
+                      <ProviderDriverGlyph kind="hermes" size={15} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{conversation.title}</span>
+                    {relative ? <span className="w-16 shrink-0 text-right text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relative}</span> : null}
+                  </button>
+                );
+              }
+              const thread = session.thread;
               const status = threadRailStatus(thread);
               const relative = formatRelativeTime(thread.updatedAt, nowMs);
               const provider = summary?.providers.find((candidate) => candidate.id === thread.providerId);
               const providerLabel = provider?.displayName ?? thread.providerId;
               return (
                 <button
-                  key={thread.id}
+                  key={`coding:${thread.id}`}
                   type="button"
                   aria-label={`Open session ${thread.title}`}
                   onClick={() => {
