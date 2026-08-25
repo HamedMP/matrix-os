@@ -624,6 +624,22 @@ describe("ChatRepository", () => {
     expect(notFound).toBeGreaterThan(tombstoneRecheck);
   });
 
+  it("handles concurrent owner-wide deletion request conflicts at the insert boundary", () => {
+    const source = readFileSync(
+      join(process.cwd(), "packages/gateway/src/chat/repository.ts"),
+      "utf8",
+    );
+    const hardDelete = source.slice(
+      source.indexOf("  async hardDelete("),
+      source.indexOf("  async upsertLegacyImport("),
+    );
+
+    expect(hardDelete).toContain(
+      '.onConflict((oc) => oc.columns(["owner_type", "owner_id", "request_id"]).doNothing())',
+    );
+    expect(hardDelete).toMatch(/if \(!deletion\)[\s\S]*request_id[\s\S]*ChatConflictError/);
+  });
+
   it("records legacy import and migration checkpoints idempotently", async () => {
     await repository.upsertLegacyImport(owner, {
       sourceKind: "hermes",

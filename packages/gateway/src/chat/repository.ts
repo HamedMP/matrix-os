@@ -752,7 +752,20 @@ export class ChatRepository {
         owner_id: owner.ownerId,
         chat_id: input.chatId,
         request_id: input.clientRequestId,
-      }).returningAll().executeTakeFirstOrThrow();
+      }).onConflict((oc) => oc.columns(["owner_type", "owner_id", "request_id"]).doNothing())
+        .returningAll().executeTakeFirst();
+      if (!deletion) {
+        const conflictingRequest = await trx.selectFrom("chat_deletions").selectAll()
+          .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+          .where("request_id", "=", input.clientRequestId).executeTakeFirst();
+        if (conflictingRequest?.chat_id === input.chatId) {
+          return {
+            chatId: conflictingRequest.chat_id,
+            deletedAt: asIso(conflictingRequest.deleted_at) ?? new Date(0).toISOString(),
+          };
+        }
+        throw new ChatConflictError(input.chatId, Number(chat.revision));
+      }
       await insertOutbox(trx, owner, input.chatId, Number(chat.revision) + 1, "chat.deleted");
       await trx.deleteFrom("chats").where("id", "=", input.chatId)
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).execute();
