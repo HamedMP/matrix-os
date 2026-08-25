@@ -84,6 +84,25 @@ function dependencyError(status: number): ChatExecutionRootError {
   return new ChatExecutionRootError(status >= 500 ? "validation_unavailable" : "invalid_root");
 }
 
+function sameProjectAuthority(
+  left: ChatExecutionRootProject,
+  right: ChatExecutionRootProject,
+): boolean {
+  return left.id === right.id
+    && left.slug === right.slug
+    && left.localPath === right.localPath;
+}
+
+function sameWorktreeAuthority(
+  left: ChatExecutionRootWorktree,
+  right: ChatExecutionRootWorktree,
+): boolean {
+  return left.id === right.id
+    && left.projectSlug === right.projectSlug
+    && left.path === right.path
+    && left.createdAt === right.createdAt;
+}
+
 async function canonicalDirectory(candidatePath: string): Promise<string> {
   try {
     const stats = await lstat(candidatePath);
@@ -200,6 +219,45 @@ export function createChatExecutionRootResolver<
   const worktrees = options.worktrees;
   const homePath = resolvePath(options.homePath);
 
+  async function loadProject(ownerScope: OwnerScope, projectId: string): Promise<Project> {
+    let projectResult: Awaited<ReturnType<typeof options.projects.getProjectById>>;
+    try {
+      projectResult = await options.projects.getProjectById(ownerScope, projectId);
+    } catch (error: unknown) {
+      if (error instanceof ChatExecutionRootError) throw error;
+      throw new ChatExecutionRootError("validation_unavailable");
+    }
+    if (!projectResult.ok) throw dependencyError(projectResult.status);
+    if (projectResult.project.id !== projectId) {
+      throw new ChatExecutionRootError("invalid_root");
+    }
+    return projectResult.project;
+  }
+
+  async function loadWorktree(
+    ownerScope: OwnerScope,
+    projectSlug: string,
+    worktreeId: string,
+  ): Promise<Worktree> {
+    let worktreeResult: Awaited<ReturnType<typeof worktrees.getWorktree>>;
+    try {
+      worktreeResult = await worktrees.getWorktree(projectSlug, worktreeId, ownerScope);
+    } catch (error: unknown) {
+      if (error instanceof ChatExecutionRootError) throw error;
+      throw new ChatExecutionRootError("validation_unavailable");
+    }
+    if (!worktreeResult.ok) throw dependencyError(worktreeResult.status);
+    const worktree = worktreeResult.worktree;
+    if (
+      worktree.id !== worktreeId
+      || worktree.projectSlug !== projectSlug
+      || !Number.isFinite(Date.parse(worktree.createdAt))
+    ) {
+      throw new ChatExecutionRootError("invalid_root");
+    }
+    return worktree;
+  }
+
   async function resolveRoot(
     ownerInput: CanonicalOwnerScope,
     refInput: CanonicalChatExecutionRootRef,
@@ -212,16 +270,7 @@ export function createChatExecutionRootResolver<
     const owner = parsedOwner.data;
     const ref = parsedRef.data;
     const ownerScope = projectOwnerScope(owner);
-    let projectResult: Awaited<ReturnType<typeof options.projects.getProjectById>>;
-    try {
-      projectResult = await options.projects.getProjectById(ownerScope, ref.projectId);
-    } catch (error: unknown) {
-      if (error instanceof ChatExecutionRootError) throw error;
-      throw new ChatExecutionRootError("validation_unavailable");
-    }
-    if (!projectResult.ok) throw dependencyError(projectResult.status);
-    const project = projectResult.project;
-    if (project.id !== ref.projectId) throw new ChatExecutionRootError("invalid_root");
+    const project = await loadProject(ownerScope, ref.projectId);
 
     let resolvedProjectRoot: string | null;
     try {
@@ -237,44 +286,45 @@ export function createChatExecutionRootResolver<
     }
 
     if (ref.kind === "project") {
+      const currentProject = await loadProject(ownerScope, ref.projectId);
+      if (!sameProjectAuthority(project, currentProject)) {
+        throw new ChatExecutionRootError("invalid_root");
+      }
       return {
         ref,
         primaryWorkspaceRoot: projectRoot,
-        fingerprint: fingerprint({ owner, ref, project, projectRoot }),
+        fingerprint: fingerprint({ owner, ref, project: currentProject, projectRoot }),
       };
     }
 
-    let worktreeResult: Awaited<ReturnType<typeof worktrees.getWorktree>>;
-    try {
-      worktreeResult = await worktrees.getWorktree(project.slug, ref.worktreeId, ownerScope);
-    } catch (error: unknown) {
-      if (error instanceof ChatExecutionRootError) throw error;
-      throw new ChatExecutionRootError("validation_unavailable");
-    }
-    if (!worktreeResult.ok) throw dependencyError(worktreeResult.status);
-    const worktree = worktreeResult.worktree;
-    if (
-      worktree.id !== ref.worktreeId
-      || worktree.projectSlug !== project.slug
-      || !Number.isFinite(Date.parse(worktree.createdAt))
-    ) {
-      throw new ChatExecutionRootError("invalid_root");
-    }
+    const worktree = await loadWorktree(ownerScope, project.slug, ref.worktreeId);
     const worktreeRoot = await canonicalManagedWorktreeDirectory({
       homePath,
       projectSlug: project.slug,
       worktreeId: worktree.id,
       candidatePath: worktree.path,
     });
+    const currentProject = await loadProject(ownerScope, ref.projectId);
+    if (!sameProjectAuthority(project, currentProject)) {
+      throw new ChatExecutionRootError("invalid_root");
+    }
+    const currentWorktree = await loadWorktree(
+      ownerScope,
+      currentProject.slug,
+      ref.worktreeId,
+    );
+    if (!sameWorktreeAuthority(worktree, currentWorktree)) {
+      throw new ChatExecutionRootError("invalid_root");
+    }
     return {
       ref,
       primaryWorkspaceRoot: worktreeRoot,
       fingerprint: fingerprint({
         owner,
         ref,
-        project,
+        project: currentProject,
         projectRoot,
-        worktree: { ...worktree, root: worktreeRoot },
+        worktree: { ...currentWorktree, root: worktreeRoot },
       }),
     };
   }

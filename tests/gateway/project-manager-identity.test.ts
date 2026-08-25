@@ -63,6 +63,16 @@ describe("project-manager immutable identity", () => {
       status: 409,
       error: { code: "project_identity_conflict" },
     });
+
+    await atomicWriteJson(secondConfigPath, {
+      ...secondConfig,
+      id: second.project.id,
+      archivedAt: "2026-08-25T15:00:00.000Z",
+    });
+    await expect(manager.getProjectById(ownerScope, first.project.id)).resolves.toMatchObject({
+      ok: true,
+      project: { id: first.project.id, slug: first.project.slug },
+    });
   });
 
   it("bounds index reconciliation before reading excess project configs", async () => {
