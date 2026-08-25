@@ -57,6 +57,8 @@ describe("IPC contract", () => {
       "app:get-zoom",
       "app:set-zoom",
       "companion:set-expanded",
+      "companion:get-preferences",
+      "companion:set-preferences",
       "companion:renderer-ready",
       "companion:focus-main",
       "companion:hide",
@@ -77,6 +79,17 @@ describe("IPC contract", () => {
     expect(EVENT_CHANNELS["companion:prompt-requested"].safeParse({
       prompt: "Ask Hermes",
     }).success).toBe(true);
+    expect(INVOKE_CHANNELS["companion:set-expanded"].request.safeParse({
+      host: "notch",
+      expanded: true,
+    }).success).toBe(true);
+    expect(INVOKE_CHANNELS["companion:hide"].request.safeParse({ host: "menu-bar" }).success).toBe(false);
+    expect(INVOKE_CHANNELS["companion:set-preferences"].request.safeParse({
+      preferences: { rabbitEnabled: false, notchEnabled: true },
+    }).success).toBe(true);
+    expect(INVOKE_CHANNELS["companion:set-preferences"].request.safeParse({
+      preferences: { rabbitEnabled: false, notchEnabled: false },
+    }).success).toBe(false);
   });
 
   it("keeps Hermes setup IPC typed and credentials write-only", () => {

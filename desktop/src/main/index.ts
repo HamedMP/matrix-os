@@ -45,7 +45,7 @@ import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
-import { CompanionController } from "./companion/companion-controller";
+import { CompanionCoordinator } from "./companion/companion-coordinator";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
@@ -60,7 +60,7 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 
 let mainWindow: BrowserWindow | null = null;
 let openMainWindow: (() => Promise<void>) | null = null;
-let companionController: CompanionController | null = null;
+let companionCoordinator: CompanionCoordinator | null = null;
 let pendingCompanionPrompt: string | null = null;
 let mainRendererReady = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -298,10 +298,12 @@ if (!gotLock) {
       });
       closeCodingAgentThreadEvents = () => codingAgentThreadEvents.closeAll();
 
-      companionController = new CompanionController({
+      companionCoordinator = await CompanionCoordinator.create({
+        platform: process.platform,
         rendererUrl: process.env.ELECTRON_RENDERER_URL,
         preloadPath: join(__dirname, "../preload/index.cjs"),
         rendererFile: join(__dirname, "../renderer/index.html"),
+        store,
         reportError: logMainError,
       });
 
@@ -313,13 +315,15 @@ if (!gotLock) {
         setBadgeCount: (count) => {
           app.setBadgeCount(count);
         },
-        setCompanionExpanded: (expanded) => companionController?.setExpanded(expanded),
+        setCompanionExpanded: (host, expanded) => companionCoordinator?.setExpanded(host, expanded),
+        getCompanionPreferences: async () => companionCoordinator!.snapshot(),
+        setCompanionPreferences: (preferences) => companionCoordinator!.setPreferences(preferences),
         markCompanionMainReady: () => {
           mainRendererReady = true;
           flushPendingCompanionPrompt();
         },
         focusCompanionMain: focusMainWindow,
-        hideCompanion: () => companionController?.hide(),
+        hideCompanion: (host) => companionCoordinator?.hide(host),
         submitCompanionPrompt,
         notify: ({ threadId, title, body }) => {
           if (!Notification.isSupported()) return;
@@ -446,8 +450,8 @@ if (!gotLock) {
       openMainWindow = openMain;
 
       await openMain();
-      companionController.show();
-      if (!globalShortcut.register("CommandOrControl+Shift+Space", () => companionController?.toggle())) {
+      companionCoordinator.showEnabled();
+      if (!globalShortcut.register("CommandOrControl+Shift+Space", () => companionCoordinator?.toggleEnabled())) {
         console.warn("[main] could not register companion shortcut");
       }
       installAppMenu(
@@ -481,8 +485,8 @@ if (!gotLock) {
     closeCodingAgentThreadEvents?.();
     closeCodingAgentThreadEvents = null;
     globalShortcut.unregister("CommandOrControl+Shift+Space");
-    companionController?.close();
-    companionController = null;
+    companionCoordinator?.close();
+    companionCoordinator = null;
     handleUpdateBeforeQuit?.(event);
   });
 

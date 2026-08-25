@@ -25,8 +25,9 @@ describe("CompanionSurface", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Ask Hermes" }));
 
-    expect(await screen.findByRole("textbox", { name: "Message Hermes" })).toBeTruthy();
-    expect(invoke).toHaveBeenCalledWith("companion:set-expanded", { expanded: true });
+    const composer = await screen.findByRole("textbox", { name: "Message Hermes" });
+    await waitFor(() => expect(document.activeElement).toBe(composer));
+    expect(invoke).toHaveBeenCalledWith("companion:set-expanded", { host: "rabbit", expanded: true });
   });
 
   it("hands a bounded prompt to the trusted main process and collapses", async () => {
@@ -53,6 +54,15 @@ describe("CompanionSurface", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide rabbit" }));
 
     expect(invoke).toHaveBeenCalledWith("companion:focus-main", {});
-    expect(invoke).toHaveBeenCalledWith("companion:hide", {});
+    expect(invoke).toHaveBeenCalledWith("companion:hide", { host: "rabbit" });
+  });
+
+  it("renders the same Hermes actions in the top-center notch host", async () => {
+    render(<CompanionSurface host="notch" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ask Hermes from the notch" }));
+
+    expect(await screen.findByRole("textbox", { name: "Message Hermes" })).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith("companion:set-expanded", { host: "notch", expanded: true });
   });
 });

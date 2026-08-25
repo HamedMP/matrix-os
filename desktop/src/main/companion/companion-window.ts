@@ -14,6 +14,8 @@ export interface CompanionBounds extends CompanionWorkArea {}
 
 export const RABBIT_COLLAPSED_SIZE = { width: 96, height: 96 } as const;
 export const RABBIT_EXPANDED_SIZE = { width: 360, height: 168 } as const;
+export const NOTCH_COLLAPSED_SIZE = { width: 264, height: 44 } as const;
+export const NOTCH_EXPANDED_SIZE = { width: 360, height: 168 } as const;
 export const COMPANION_WORK_AREA_INSET = 20;
 
 export function companionWindowBounds(
@@ -23,6 +25,18 @@ export function companionWindowBounds(
   return {
     x: workArea.x + workArea.width - size.width - COMPANION_WORK_AREA_INSET,
     y: workArea.y + workArea.height - size.height - COMPANION_WORK_AREA_INSET,
+    width: size.width,
+    height: size.height,
+  };
+}
+
+export function notchWindowBounds(
+  displayBounds: CompanionWorkArea,
+  size: CompanionSize,
+): CompanionBounds {
+  return {
+    x: Math.round(displayBounds.x + (displayBounds.width - size.width) / 2),
+    y: displayBounds.y,
     width: size.width,
     height: size.height,
   };

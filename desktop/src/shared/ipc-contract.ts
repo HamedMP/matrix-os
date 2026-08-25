@@ -51,6 +51,7 @@ import {
   DesktopUpdateSnapshotSchema,
   DesktopUpdateVersionSchema,
 } from "./desktop-update";
+import { CompanionHostSchema, CompanionPreferencesSchema } from "./companion";
 
 const Empty = z.object({}).strict();
 
@@ -288,12 +289,26 @@ export const INVOKE_CHANNELS = {
     response: ZoomFactorResultSchema,
   },
   "companion:set-expanded": {
-    request: z.strictObject({ expanded: z.boolean() }),
+    request: z.strictObject({ host: CompanionHostSchema, expanded: z.boolean() }),
+    response: Ok,
+  },
+  "companion:get-preferences": {
+    request: Empty,
+    response: z.strictObject({
+      preferences: CompanionPreferencesSchema,
+      supportsNotch: z.boolean(),
+    }),
+  },
+  "companion:set-preferences": {
+    request: z.strictObject({ preferences: CompanionPreferencesSchema }),
     response: Ok,
   },
   "companion:renderer-ready": { request: Empty, response: Ok },
   "companion:focus-main": { request: Empty, response: Ok },
-  "companion:hide": { request: Empty, response: Ok },
+  "companion:hide": {
+    request: z.strictObject({ host: CompanionHostSchema }),
+    response: Ok,
+  },
   "companion:submit-prompt": {
     request: z.strictObject({ prompt: CompanionPromptSchema }),
     response: Ok,
