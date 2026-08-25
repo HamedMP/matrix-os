@@ -551,6 +551,41 @@ describe("ChatRepository", () => {
     await expect(repository.search(otherOwner, "message", 200)).resolves.toEqual([]);
   });
 
+  it("returns the latest bounded detail page with an owner-isolated older-message cursor", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_detail_page",
+      clientRequestId: "req_create_detail_page",
+      title: "Detail page",
+    });
+    await repository.kysely.insertInto("chat_messages").values(
+      [1, 2, 3].map((seq) => ({
+        id: `msg_detail_${seq}`,
+        chat_id: created.chat.id,
+        seq,
+        role: "assistant" as const,
+        state: "committed" as const,
+        turn_id: null,
+        run_id: null,
+        parts: sql`${JSON.stringify([{ type: "text", text: `detail ${seq}` }])}::jsonb`,
+        byte_count: 32,
+        search_text: `detail ${seq}`,
+        created_at: now,
+      })),
+    ).execute();
+
+    const latest = await repository.getDetailPage(owner, created.chat.id, { limit: 2 });
+    expect(latest?.messages.map((entry) => entry.seq)).toEqual([2, 3]);
+    expect(latest?.nextBeforeSeq).toBe(2);
+    const older = await repository.getDetailPage(owner, created.chat.id, {
+      limit: 2,
+      beforeSeq: latest?.nextBeforeSeq,
+    });
+    expect(older?.messages.map((entry) => entry.seq)).toEqual([1]);
+    expect(older?.nextBeforeSeq).toBeUndefined();
+    await expect(repository.getDetailPage(otherOwner, created.chat.id, { limit: 2 }))
+      .resolves.toBeNull();
+  });
+
   it("hard-deletes all content once and preserves only a content-free tombstone", async () => {
     const created = await repository.create(owner, {
       id: "chat_delete",

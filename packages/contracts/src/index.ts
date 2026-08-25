@@ -26,6 +26,7 @@ export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSIO
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
+export * from "#canonical-chat-api";
 export {
   CanonicalChatCompatibilityProjectionSchema,
 } from "#canonical-chat-compatibility";

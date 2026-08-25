@@ -134,6 +134,11 @@ import { createCodingAgentProviderRegistry } from "./coding-agents/provider-regi
 import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
 import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
+import { createCanonicalChatRoutes } from "./chat/routes.js";
+import {
+  createCanonicalChatService,
+  createUnavailableCanonicalChatService,
+} from "./chat/service.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -4131,6 +4136,12 @@ export async function createGateway(config: GatewayConfig) {
     client: hermesClient,
   });
   await agentRuntimeServices.controller.reconcile();
+  app.route("/", createCanonicalChatRoutes({
+    service: chatRepository
+      ? createCanonicalChatService(chatRepository)
+      : createUnavailableCanonicalChatService(),
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
   app.route("/", createChatProviderRoutes({
     catalog: createChatProviderCatalogService({
       codingProviders: codingAgentProviderRegistry,
