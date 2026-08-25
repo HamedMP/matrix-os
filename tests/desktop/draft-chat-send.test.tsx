@@ -151,7 +151,7 @@ function resetStores() {
   useProjectChatLauncher.setState({ composerRequest: null });
   useTabs.setState(useTabs.getInitialState(), true);
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
-  useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
+  useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,
@@ -257,8 +257,7 @@ describe("draft chat implicit thread creation", () => {
     {
       name: "no provider",
       providers: [],
-      notice: "No coding agent provider is configured",
-      action: "Open provider settings",
+      availability: "Unavailable",
     },
     {
       name: "missing provider install",
@@ -274,7 +273,7 @@ describe("draft chat implicit thread creation", () => {
           command: "npm install -g @openai/codex",
         }],
       }],
-      notice: "Codex is not installed",
+      availability: "Setup required",
       action: "Install Codex",
     },
     {
@@ -290,7 +289,7 @@ describe("draft chat implicit thread creation", () => {
           command: "codex login",
         }],
       }],
-      notice: "Connect Codex to continue",
+      availability: "Authentication required",
       action: "Connect Codex",
     },
     {
@@ -306,7 +305,7 @@ describe("draft chat implicit thread creation", () => {
           command: "codex login",
         }],
       }],
-      notice: "Codex needs to be reconnected",
+      availability: "Authentication required",
       action: "Reconnect Codex",
     },
     {
@@ -317,8 +316,7 @@ describe("draft chat implicit thread creation", () => {
         installStatus: "installing" as const,
         authStatus: "unknown" as const,
       }],
-      notice: "Installing Codex",
-      action: "Refresh provider status",
+      availability: "Setup required",
     },
     {
       name: "unverified provider",
@@ -328,20 +326,24 @@ describe("draft chat implicit thread creation", () => {
         installStatus: "unknown" as const,
         authStatus: "unknown" as const,
       }],
-      notice: "Matrix could not verify Codex",
-      action: "Refresh provider status",
+      availability: "Unavailable",
     },
-  ])("blocks $name without losing the editable draft", async ({ providers, notice, action }) => {
+  ])("blocks $name in the canonical picker without losing the editable draft", async ({ name, providers, availability, action }) => {
     const { invoke } = mockOperator({ summary: summaryFixture(providers) });
     const composer = await openDraft();
-    const prompt = `Preserve this ${notice}`;
+    const prompt = `Preserve this ${name}`;
 
     fireEvent.change(composer, { target: { value: prompt } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     fireEvent.keyDown(composer, { key: "Enter" });
 
-    expect(screen.getByText(notice)).toBeTruthy();
-    expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    const harness = screen.getByRole("button", { name: `Codex harness, ${availability}` });
+    expect(harness.className).toContain("opacity-35");
+    if (action) {
+      fireEvent.click(harness);
+      expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    }
     expect(composer.disabled).toBe(false);
     expect(composer.value).toBe(prompt);
     expect(useDraftChat.getState().draftFor("matrix-os")?.prompt).toBe(prompt);
@@ -448,6 +450,15 @@ describe("draft chat implicit thread creation", () => {
     expect(composer.value).toBe("Keep this draft text");
     expect(screen.getByLabelText("Message new chat")).toBeTruthy();
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+  });
+
+  it("keeps downward Project Chat composer menus outside the draft clipping boundary", async () => {
+    mockOperator();
+    await openDraft();
+
+    const pane = screen.getByRole("region", { name: "New chat in Matrix OS" });
+    expect(pane.className).toContain("overflow-visible");
+    expect(pane.className).not.toContain("overflow-hidden");
   });
 
   it("uploads dropped files and creates a project chat with existing structured refs", async () => {

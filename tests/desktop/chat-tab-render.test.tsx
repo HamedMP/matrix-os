@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
 import { createLegacyGlobalProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
+import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
 import {
   conversationMessageDisplay,
   sharedConversationResources,
@@ -60,6 +61,11 @@ describe("ChatTab", () => {
     });
     useThreads.setState({ threads: [], activeThreadId: null });
     useTabs.setState(useTabs.getInitialState(), true);
+    useProviderPreferences.setState({
+      defaultProviderId: null,
+      composerSelections: {},
+      hydrated: true,
+    });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -72,6 +78,7 @@ describe("ChatTab", () => {
       configurable: true,
       value: {
         invoke: vi.fn(async (channel: string) => {
+          if (channel === "state:get") return { value: null };
           if (channel === "state:set") return { ok: true };
           throw new Error(`unexpected channel ${channel}`);
         }),
@@ -538,6 +545,40 @@ describe("ChatTab", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("Provider default"));
     expect(useTabs.getState().tabs).not.toContainEqual(expect.objectContaining({ kind: "project" }));
+  });
+
+  it("persists Global Chat effort and permission selections", async () => {
+    const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
+    const availableCatalog = {
+      ...catalog,
+      instances: catalog.instances.map((instance) => ({
+        ...instance,
+        availability: "available" as const,
+        models: instance.models.map((model) => ({ ...model, availability: "available" as const })),
+        defaultSelection: { instanceId: instance.id, model: instance.models[0]!.id, options: [] },
+      })),
+    };
+    useConnection.setState({
+      api: {
+        get: vi.fn(async (path: string) => {
+          if (path === "/api/chat-providers") return availableCatalog;
+          throw new Error(`unexpected GET ${path}`);
+        }),
+      } as never,
+    });
+    useHermesChat.setState({ messages: [], status: "idle" });
+    render(<ChatTab />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reasoning" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
+
+    expect(useProviderPreferences.getState().composerSelections.hermes_default).toEqual({
+      options: [{ id: "effort", value: "high" }],
+      permissionMode: "full_access",
+    });
   });
 
   it("explains when a coding harness cannot open without a project", () => {

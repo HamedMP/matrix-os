@@ -18,6 +18,32 @@ describe("local store", () => {
     expect(await store.get("lastProjectSlug")).toBe("matrix-os");
   });
 
+  it("persists only bounded canonical composer preferences", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const preferences = {
+      defaultProviderId: "codex",
+      composerSelections: {
+        codex_default: {
+          options: [{ id: "effort", value: "high" }],
+          permissionMode: "full_access",
+        },
+      },
+    };
+
+    await store.set("providerPreferences", preferences);
+
+    expect(await store.get("providerPreferences")).toEqual(preferences);
+    await expect(store.setUnknown("providerPreferences", {
+      ...preferences,
+      composerSelections: {
+        "../escape": {
+          options: [{ id: "effort", value: "high" }],
+          permissionMode: "full_access",
+        },
+      },
+    })).rejects.toThrow();
+  });
+
   it("persists bounded desktop release notes for the post-update What's New dialog", async () => {
     const store = createLocalStore({ dir: await makeDir() });
     const release = {

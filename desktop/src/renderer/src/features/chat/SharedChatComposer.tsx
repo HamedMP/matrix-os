@@ -5,7 +5,7 @@ import type {
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
-import { ChevronDown, FolderOpen, Paperclip } from "lucide-react";
+import { Box, ChevronDown, FolderOpen, Paperclip, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import {
@@ -135,20 +135,74 @@ function CompactSelect({
 
 function SuggestionMenu({
   label,
+  menuSide,
   children,
 }: {
   label: string;
+  menuSide: "top" | "bottom";
   children: ReactNode;
 }) {
   return (
     <div
       role="listbox"
       aria-label={label}
-      className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-30 max-h-80 overflow-y-auto rounded-xl border p-2 shadow-xl"
+      data-preferred-side={menuSide}
+      className={`absolute left-0 right-0 z-30 max-h-80 overflow-y-auto rounded-xl border p-2 shadow-xl ${
+        menuSide === "bottom" ? "top-[calc(100%+8px)]" : "bottom-[calc(100%+8px)]"
+      }`}
       style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
     >
       {children}
     </div>
+  );
+}
+
+function ResourceRows({
+  role,
+  canAttach,
+  resources,
+  selectedIndex,
+  onAttach,
+  onResource,
+}: {
+  role: "menuitem" | "option";
+  canAttach: boolean;
+  resources: CanonicalChatResourceReference[];
+  selectedIndex?: number;
+  onAttach: () => void;
+  onResource: (resource: CanonicalChatResourceReference) => void;
+}) {
+  const offset = canAttach ? 1 : 0;
+  return (
+    <>
+      {canAttach ? (
+        <button
+          type="button"
+          role={role}
+          {...(role === "option" ? { "aria-selected": selectedIndex === 0 } : {})}
+          className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
+          style={{ color: "var(--text-primary)" }}
+          onClick={onAttach}
+        >
+          <Paperclip size={15} aria-hidden style={{ color: "var(--text-secondary)" }} />
+          <span>Files and folders</span>
+        </button>
+      ) : null}
+      {resources.map((resource, index) => (
+        <button
+          key={`${resource.kind}:${resource.id}`}
+          type="button"
+          role={role}
+          {...(role === "option" ? { "aria-selected": selectedIndex === index + offset } : {})}
+          className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
+          onClick={() => onResource(resource)}
+        >
+          <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
+          <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>{resource.label}</span>
+          <span className="ml-auto shrink-0 text-[11px] capitalize" style={{ color: "var(--text-tertiary)" }}>{resource.kind.replace("_", " ")}</span>
+        </button>
+      ))}
+    </>
   );
 }
 
@@ -215,33 +269,36 @@ export function SharedChatComposer({
   const slashQuery = slashMatch?.[1]?.slice(1).toLocaleLowerCase() ?? null;
   const resourceQuery = resourceMatch?.[1]?.toLocaleLowerCase() ?? null;
   const slashEntries = useMemo(() => listCanonicalSlashEntries(instance), [instance]);
+  const canAttach = Boolean(onAttach && (!instance || instance.supports.attachments.length));
   const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
   useEffect(() => {
     let cancelled = false;
-    if (resourceQuery === null || !resourceSearch) {
+    const query = resourceQuery ?? (attachmentMenuOpen ? "" : null);
+    if (query === null || !resourceSearch) {
       setRemoteResources([]);
       return () => { cancelled = true; };
     }
-    void resourceSearch(resourceQuery).then((results) => {
+    void resourceSearch(query).then((results) => {
       if (!cancelled) setRemoteResources(results.slice(0, 50));
     }).catch(() => {
       if (!cancelled) setRemoteResources([]);
     });
     return () => { cancelled = true; };
-  }, [resourceQuery, resourceSearch]);
+  }, [attachmentMenuOpen, resourceQuery, resourceSearch]);
   const filteredSlashEntries = slashQuery === null ? [] : slashEntries.filter((entry) => (
     entry.invocation.slice(1).toLocaleLowerCase().includes(slashQuery)
     || entry.displayName.toLocaleLowerCase().includes(slashQuery)
   ));
-  const filteredResources = resourceQuery === null ? [] : [...resources, ...remoteResources]
+  const availableResources = [...resources, ...remoteResources]
     .filter((resource, index, all) => all.findIndex((candidate) => (
       candidate.kind === resource.kind && candidate.id === resource.id
-    )) === index)
+    )) === index);
+  const filteredResources = resourceQuery === null ? [] : availableResources
     .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
   const suggestionCount = slashQuery !== null
     ? filteredSlashEntries.length
     : resourceQuery !== null
-      ? filteredResources.length
+      ? filteredResources.length + (canAttach ? 1 : 0)
       : 0;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   useEffect(() => setSuggestionIndex(0), [resourceQuery, slashQuery]);
@@ -251,7 +308,12 @@ export function SharedChatComposer({
       if (entry) onChange(replaceActiveToken(value, slashMatch?.[1] ?? "", `${entry.invocation} `));
       return;
     }
-    const resource = filteredResources[index];
+    if (resourceQuery !== null && canAttach && index === 0) {
+      setAttachmentMenuOpen(false);
+      onAttach?.();
+      return;
+    }
+    const resource = filteredResources[index - (canAttach ? 1 : 0)];
     if (resourceQuery !== null && resource) {
       onChange(replaceActiveToken(value, `@${resourceMatch?.[1] ?? ""}`, `@${resource.label} `));
     }
@@ -271,7 +333,15 @@ export function SharedChatComposer({
     }
     return false;
   };
-  const canAttach = Boolean(onAttach && (!instance || instance.supports.attachments.length));
+  const insertResource = (resource: CanonicalChatResourceReference) => {
+    if (resourceQuery !== null) {
+      onChange(replaceActiveToken(value, `@${resourceMatch?.[1] ?? ""}`, `@${resource.label} `));
+    } else {
+      const separator = value.length === 0 || /\s$/.test(value) ? "" : " ";
+      onChange(`${value}${separator}@${resource.label} `);
+    }
+    setAttachmentMenuOpen(false);
+  };
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
@@ -280,7 +350,7 @@ export function SharedChatComposer({
   return (
     <div className="relative" data-slot="shared-chat-composer">
       {slashQuery !== null && filteredSlashEntries.length > 0 ? (
-        <SuggestionMenu label="Skills and commands">
+        <SuggestionMenu label="Skills and commands" menuSide={menuSide}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>
             Skills &amp; commands
           </p>
@@ -290,31 +360,28 @@ export function SharedChatComposer({
               type="button"
               role="option"
               aria-selected={suggestionIndex === index}
-              className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
+              className="grid min-h-10 w-full grid-cols-[1rem_minmax(12rem,16rem)_minmax(0,1fr)] items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
               onClick={() => applySuggestion(index)}
             >
-              <span className="font-medium" style={{ color: "var(--text-primary)" }}>{entry.invocation}</span>
+              <span data-slot="skill-command-icon" className="flex items-center justify-center" style={{ color: "var(--text-tertiary)" }}>
+                {entry.kind === "skill" ? <Box size={15} aria-hidden /> : <SquareTerminal size={15} aria-hidden />}
+              </span>
+              <span data-slot="skill-command-name" className="truncate whitespace-nowrap font-medium" style={{ color: "var(--text-primary)" }}>{entry.invocation}</span>
               <span className="truncate text-sm" style={{ color: "var(--text-tertiary)" }}>{entry.description}</span>
             </button>
           ))}
         </SuggestionMenu>
-      ) : resourceQuery !== null && filteredResources.length > 0 ? (
-        <SuggestionMenu label="Resources">
-          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Resources</p>
-          {filteredResources.map((resource, index) => (
-            <button
-              key={`${resource.kind}:${resource.id}`}
-              type="button"
-              role="option"
-              aria-selected={suggestionIndex === index}
-              className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
-              onClick={() => applySuggestion(index)}
-            >
-              <FolderOpen size={15} aria-hidden style={{ color: "var(--text-tertiary)" }} />
-              <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>{resource.label}</span>
-              <span className="ml-auto text-[11px] capitalize" style={{ color: "var(--text-tertiary)" }}>{resource.kind.replace("_", " ")}</span>
-            </button>
-          ))}
+      ) : resourceQuery !== null && (canAttach || filteredResources.length > 0) ? (
+        <SuggestionMenu label="Add" menuSide={menuSide}>
+          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
+          <ResourceRows
+            role="option"
+            canAttach={canAttach}
+            resources={filteredResources}
+            selectedIndex={suggestionIndex}
+            onAttach={() => onAttach?.()}
+            onResource={insertResource}
+          />
         </SuggestionMenu>
       ) : null}
       <PromptInput
@@ -360,19 +427,16 @@ export function SharedChatComposer({
                       style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
                     >
                       <span className="block px-2 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>Add</span>
-                      <button
-                        type="button"
+                      <ResourceRows
                         role="menuitem"
-                        className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)]"
-                        style={{ color: "var(--text-primary)" }}
-                        onClick={() => {
+                        canAttach={canAttach}
+                        resources={availableResources}
+                        onAttach={() => {
                           setAttachmentMenuOpen(false);
                           onAttach?.();
                         }}
-                      >
-                        <Paperclip size={15} aria-hidden style={{ color: "var(--text-secondary)" }} />
-                        <span>Files and folders</span>
-                      </button>
+                        onResource={insertResource}
+                      />
                     </Popover.Content>
                   </Popover.Portal>
                 ) : null}

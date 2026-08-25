@@ -223,6 +223,24 @@ describe("SharedChatComposer", () => {
     expect(onAttach).toHaveBeenCalledOnce();
   });
 
+  it("uses the same Add palette for @ and the paperclip", async () => {
+    const resourceSearch = vi.fn(async (query: string) => query === ""
+      ? [{ kind: "file" as const, id: "readme", label: "README.md" }]
+      : []);
+    render(<Harness resourceSearch={resourceSearch} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files and more" }));
+    expect(await screen.findByRole("menu", { name: "Add" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /README.md/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files and more" }));
+    fireEvent.change(screen.getByLabelText("Message chat"), { target: { value: "@" } });
+
+    expect(await screen.findByRole("listbox", { name: "Add" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Files and folders" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
+  });
+
   it("changes effort and permission through in-app menus", () => {
     render(<Harness />);
 
@@ -251,6 +269,10 @@ describe("SharedChatComposer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
     expect(screen.getByRole("menu", { name: "Permission mode options" }).getAttribute("data-preferred-side"))
+      .toBe("bottom");
+
+    fireEvent.change(screen.getByLabelText("Message chat"), { target: { value: "/" } });
+    expect(screen.getByRole("listbox", { name: "Skills and commands" }).getAttribute("data-preferred-side"))
       .toBe("bottom");
   });
 
@@ -383,8 +405,13 @@ describe("SharedChatComposer", () => {
     const input = screen.getByLabelText("Message chat");
 
     fireEvent.change(input, { target: { value: "/" } });
-    expect(screen.getByRole("listbox", { name: "Skills and commands" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("option", { name: /Review/ }));
+    const menu = screen.getByRole("listbox", { name: "Skills and commands" });
+    expect(menu).toBeTruthy();
+    const review = screen.getByRole("option", { name: /Review/ });
+    expect(review.querySelector('[data-slot="skill-command-icon"]')).toBeTruthy();
+    expect(review.querySelector('[data-slot="skill-command-name"]')?.className)
+      .toContain("whitespace-nowrap");
+    fireEvent.click(review);
     expect((input as HTMLTextAreaElement).value).toBe("/review ");
   });
 
@@ -394,7 +421,7 @@ describe("SharedChatComposer", () => {
     const input = screen.getByLabelText("Message chat");
 
     fireEvent.change(input, { target: { value: "Inspect @ind" } });
-    expect(screen.getByRole("listbox", { name: "Resources" })).toBeTruthy();
+    expect(screen.getByRole("listbox", { name: "Add" })).toBeTruthy();
     fireEvent.click(screen.getByRole("option", { name: /src\/index.ts/ }));
     expect((input as HTMLTextAreaElement).value).toBe("Inspect @src/index.ts ");
     fireEvent.keyDown(input, { key: "Enter" });

@@ -90,7 +90,7 @@ describe("ProvidersSection", () => {
       activeTabId: "home",
       tabs: [{ id: "home", kind: "home", title: "Home", closable: false }],
     });
-    useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
+    useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "runtime:get-summary") return summaryResult();
@@ -232,7 +232,7 @@ describe("ProvidersSection", () => {
   });
 
   it("resets the default provider back to automatic", async () => {
-    useProviderPreferences.setState({ defaultProviderId: "codex", hydrated: true });
+    useProviderPreferences.setState({ defaultProviderId: "codex", composerSelections: {}, hydrated: true });
     render(<ProvidersSection />);
     expect((await screen.findAllByText("Codex")).length).toBeGreaterThan(0);
 

@@ -221,7 +221,7 @@ function resetStores() {
     runtimeScope: RUNTIME_SCOPE,
     hydratedScope: RUNTIME_SCOPE,
   });
-  useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
+  useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,

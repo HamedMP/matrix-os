@@ -127,11 +127,16 @@ function createdThreadSnapshot(prompt: string, providerId: string) {
 
 function mockOperator({
   preferredProviderId,
+  preferredComposerSelections,
   loadPreferredProviderId,
   threadProviderId = "codex",
   summary = summaryFixture(),
 }: {
   preferredProviderId?: string;
+  preferredComposerSelections?: Record<string, {
+    options: Array<{ id: string; value: string | boolean }>;
+    permissionMode: string;
+  }>;
   loadPreferredProviderId?: () => Promise<string | null>;
   threadProviderId?: string;
   summary?: RuntimeSummary;
@@ -169,7 +174,14 @@ function mockOperator({
         const providerId = loadPreferredProviderId
           ? await loadPreferredProviderId()
           : preferredProviderId ?? null;
-        return { value: providerId ? { defaultProviderId: providerId } : null };
+        return {
+          value: providerId || preferredComposerSelections
+            ? {
+                defaultProviderId: providerId,
+                ...(preferredComposerSelections ? { composerSelections: preferredComposerSelections } : {}),
+              }
+            : null,
+        };
       }
       return { value: null };
     }
@@ -198,7 +210,7 @@ function resetStores() {
   useProjectWorkspaces.setState({ entries: {} });
   useProjectChatLauncher.setState({ composerRequest: null });
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
-  useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
+  useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,
@@ -273,6 +285,48 @@ describe("composer provider/mode pickers", () => {
     expect(provider.getAttribute("aria-expanded")).toBe("false");
     expect(effort.getAttribute("aria-expanded")).toBe("false");
     expect(permission.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("restores effort and permission when opening another new Project Chat", async () => {
+    mockOperator();
+    await openDraftComposer();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
+    expect(useProviderPreferences.getState().composerSelections.codex_default).toEqual({
+      options: [{ id: "effort", value: "high" }],
+      permissionMode: "full_access",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
+    await screen.findByRole("region", { name: "Conversation Plan the auth work" });
+    expect(useProviderPreferences.getState().composerSelections.codex_default?.options)
+      .toEqual([{ id: "effort", value: "high" }]);
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    await screen.findByLabelText("Message new chat");
+
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
+  });
+
+  it("hydrates effort and permission after a Desktop restart", async () => {
+    mockOperator({
+      preferredProviderId: "codex",
+      preferredComposerSelections: {
+        codex_default: {
+          options: [{ id: "effort", value: "high" }],
+          permissionMode: "full_access",
+        },
+      },
+    });
+    await openDraftComposer();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
+      expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
+    });
   });
 
   it("defaults the draft provider to the persisted provider preference", async () => {

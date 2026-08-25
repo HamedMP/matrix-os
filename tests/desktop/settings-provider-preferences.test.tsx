@@ -8,7 +8,7 @@ import {
 
 describe("provider preferences store", () => {
   beforeEach(() => {
-    useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
+    useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "state:get") return Promise.resolve({ value: null });
@@ -70,6 +70,91 @@ describe("provider preferences store", () => {
 
     expect(useProviderPreferences.getState().defaultProviderId).toBe("codex");
     expect(useProviderPreferences.getState().hydrated).toBe(true);
+  });
+
+  it("persists bounded effort and permission preferences per Provider Instance", () => {
+    useProviderPreferences.getState().setComposerSelection({
+      instanceId: "codex_default",
+      model: "gpt-5.6-sol",
+      options: [{ id: "effort", value: "high" }],
+      interactionMode: "default",
+      permissionMode: "full_access",
+    });
+
+    expect(useProviderPreferences.getState().composerSelections.codex_default).toEqual({
+      options: [{ id: "effort", value: "high" }],
+      permissionMode: "full_access",
+    });
+    expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
+      key: PROVIDER_PREFERENCES_STATE_KEY,
+      value: {
+        defaultProviderId: null,
+        composerSelections: {
+          codex_default: {
+            options: [{ id: "effort", value: "high" }],
+            permissionMode: "full_access",
+          },
+        },
+      },
+    });
+  });
+
+  it("hydrates effort and permission preferences without trusting malformed entries", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "state:get") {
+        return Promise.resolve({
+          value: {
+            defaultProviderId: "codex",
+            composerSelections: {
+              codex_default: {
+                options: [{ id: "effort", value: "high" }],
+                permissionMode: "full_access",
+              },
+              "../escape": {
+                options: [{ id: "effort", value: "ultra" }],
+                permissionMode: "never",
+              },
+            },
+          },
+        });
+      }
+      return Promise.resolve({ ok: true });
+    });
+
+    await useProviderPreferences.getState().hydrate();
+
+    expect(useProviderPreferences.getState().composerSelections).toEqual({
+      codex_default: {
+        options: [{ id: "effort", value: "high" }],
+        permissionMode: "full_access",
+      },
+    });
+  });
+
+  it("does not overwrite a picker change made while hydration is in flight", async () => {
+    let resolveHydration!: (value: { value: null }) => void;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "state:get") {
+        return new Promise((resolve) => { resolveHydration = resolve; });
+      }
+      return Promise.resolve({ ok: true });
+    });
+
+    const hydration = useProviderPreferences.getState().hydrate();
+    useProviderPreferences.getState().setComposerSelection({
+      instanceId: "codex_default",
+      model: "gpt-5.6-sol",
+      options: [{ id: "effort", value: "high" }],
+      interactionMode: "default",
+      permissionMode: "full_access",
+    });
+    resolveHydration({ value: null });
+    await hydration;
+
+    expect(useProviderPreferences.getState().composerSelections.codex_default).toEqual({
+      options: [{ id: "effort", value: "high" }],
+      permissionMode: "full_access",
+    });
   });
 
   it("hydrate falls back to automatic when the persisted value is malformed", async () => {

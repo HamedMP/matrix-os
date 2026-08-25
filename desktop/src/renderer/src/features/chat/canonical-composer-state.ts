@@ -21,6 +21,11 @@ export interface CanonicalSlashEntry {
   invocation: string;
 }
 
+export interface CanonicalComposerPreference {
+  options: Array<{ id: string; value: string | boolean }>;
+  permissionMode: string;
+}
+
 function defaultOptionValue(
   option: CanonicalProviderOptionDescriptor,
 ): string | boolean | undefined {
@@ -103,6 +108,23 @@ export function updateCanonicalComposerOption(
       option.id === optionId ? { id: option.id, value } : option
     )),
   };
+}
+
+export function applyCanonicalComposerPreference(
+  catalog: CanonicalProviderCatalog,
+  current: CanonicalComposerSelection,
+  preference: CanonicalComposerPreference | undefined,
+): CanonicalComposerSelection {
+  if (!preference) return current;
+  const instance = catalog.instances.find((candidate) => candidate.id === current.instanceId);
+  if (!instance) return current;
+  let next = current;
+  for (const option of preference.options) {
+    next = updateCanonicalComposerOption(catalog, next, option.id, option.value);
+  }
+  return instance.supports.permissionModes.includes(preference.permissionMode)
+    ? { ...next, permissionMode: preference.permissionMode }
+    : next;
 }
 
 export function listCanonicalSlashEntries(

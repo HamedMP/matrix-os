@@ -26,6 +26,7 @@ import {
   permissionModeForAgentDraft,
 } from "../chat/canonical-composer-adapter";
 import {
+  applyCanonicalComposerPreference,
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "../chat/canonical-composer-state";
@@ -71,6 +72,8 @@ export function ProjectChatDraft({
   presentation?: "hero" | "landing";
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
+  const composerSelections = useProviderPreferences((s) => s.composerSelections);
+  const setComposerSelectionPreference = useProviderPreferences((s) => s.setComposerSelection);
   const api = useConnection((state) => state.api);
   const initialDraft = useMemo(() => {
     const base = defaultAgentThreadComposerDraft(summary);
@@ -160,11 +163,18 @@ export function ProjectChatDraft({
   );
   const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
     () => {
-      const selection = createCanonicalComposerSelection(fallbackCatalog, instanceIdForLegacyProvider(
+      let selection = createCanonicalComposerSelection(fallbackCatalog, instanceIdForLegacyProvider(
         fallbackCatalog,
         summary,
         restoredDraft?.providerId ?? initialDraft.providerId,
       ));
+      if (selection) {
+        selection = applyCanonicalComposerPreference(
+          fallbackCatalog,
+          selection,
+          useProviderPreferences.getState().composerSelections[selection.instanceId],
+        );
+      }
       if (selection && restoredDraft?.mode && fallbackCatalog.instances
         .find((instance) => instance.id === selection.instanceId)
         ?.supports.interactionModes.includes(restoredDraft.mode)) {
@@ -188,8 +198,9 @@ export function ProjectChatDraft({
           && instance.models.some((model) => model.id === current.model && model.availability === "available")
         ));
       if (providerSelectionTouchedRef.current && currentStillValid) return current;
-      const next = createCanonicalComposerSelection(projectCatalog, preferredInstanceId);
-      if (!next) return null;
+      const created = createCanonicalComposerSelection(projectCatalog, preferredInstanceId);
+      if (!created) return null;
+      let next = created;
       if (effectiveDraft.mode && projectCatalog.instances
         .find((instance) => instance.id === next.instanceId)
         ?.supports.interactionModes.includes(effectiveDraft.mode)) {
@@ -201,6 +212,11 @@ export function ProjectChatDraft({
         ?.supports.permissionModes.includes(restoredPermissionMode)) {
         next.permissionMode = restoredPermissionMode;
       }
+      next = applyCanonicalComposerPreference(
+        projectCatalog,
+        next,
+        composerSelections[next.instanceId],
+      );
       return current
         && current.instanceId === next.instanceId
         && current.model === next.model
@@ -209,7 +225,7 @@ export function ProjectChatDraft({
         ? current
         : next;
     });
-  }, [effectiveDraft.mode, preferredInstanceId, projectCatalog]);
+  }, [composerSelections, effectiveDraft.mode, preferredInstanceId, projectCatalog]);
   const selectedInstance = projectCatalog.instances.find((instance) => (
     instance.id === canonicalSelection?.instanceId
   ));
@@ -299,7 +315,7 @@ export function ProjectChatDraft({
     <SharedChatSurface
       ariaLabel={`New chat in ${projectLabel}`}
       project={{ projectId, label: projectLabel }}
-      className={`ph-no-capture flex min-w-0 flex-col overflow-hidden ${presentation === "landing" ? "shrink-0" : "min-h-[460px] flex-1"}`}
+      className={`ph-no-capture flex min-w-0 flex-col overflow-visible ${presentation === "landing" ? "shrink-0" : "min-h-[460px] flex-1"}`}
       style={{ background: "var(--bg-app)" }}
       data-slot="project-chat-draft"
       {...attachments.paneProps}
@@ -344,6 +360,7 @@ export function ProjectChatDraft({
                   selection={canonicalSelection}
                   onSelectionChange={(selection) => {
                     providerSelectionTouchedRef.current = true;
+                    setComposerSelectionPreference(selection);
                     setCanonicalSelection(selection);
                     const nextDraft = applyCanonicalSelectionToAgentDraft(
                       summary,

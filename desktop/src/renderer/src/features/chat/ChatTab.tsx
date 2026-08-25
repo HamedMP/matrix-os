@@ -13,6 +13,7 @@ import { SharedChatComposer } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
 import {
+  applyCanonicalComposerPreference,
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
@@ -50,6 +51,8 @@ export function HermesPane() {
   const updateConversationContext = useHermesChat((state) => state.updateConversationContext);
   const recordRecentHermesConversation = useTabs((state) => state.recordRecentHermesConversation);
   const setDefaultProvider = useProviderPreferences((state) => state.setDefaultProvider);
+  const composerSelections = useProviderPreferences((state) => state.composerSelections);
+  const setComposerSelection = useProviderPreferences((state) => state.setComposerSelection);
   const [draft, setDraft] = useState("");
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,10 +73,21 @@ export function HermesPane() {
       if (current && providerCatalog.instances.some((instance) => (
         instance.id === current.instanceId
         && instance.models.some((model) => model.id === current.model && model.availability === "available")
-      ))) return current;
-      return createCanonicalComposerSelection(providerCatalog);
+      ))) return applyCanonicalComposerPreference(
+        providerCatalog,
+        current,
+        composerSelections[current.instanceId],
+      );
+      const next = createCanonicalComposerSelection(providerCatalog);
+      return next
+        ? applyCanonicalComposerPreference(providerCatalog, next, composerSelections[next.instanceId])
+        : null;
     });
-  }, [providerCatalog]);
+  }, [composerSelections, providerCatalog]);
+
+  useEffect(() => {
+    void useProviderPreferences.getState().hydrate();
+  }, []);
 
   const turns = hermesConversationPresentation(messages, status, activeRequestId);
   const copyText = useCallback(async (text: string) => {
@@ -179,6 +193,7 @@ export function HermesPane() {
             const instance = providerCatalog.instances.find((candidate) => candidate.id === selection.instanceId);
             const providerId = instance?.driverKind === "claude_code" ? "claude" : instance?.driverKind;
             if (providerId) setDefaultProvider(providerId);
+            setComposerSelection(selection);
             setCanonicalSelection(selection);
           }}
           onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}

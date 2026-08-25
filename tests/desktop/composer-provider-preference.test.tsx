@@ -56,7 +56,7 @@ describe("AgentComposer default provider preference", () => {
         on: vi.fn(() => () => undefined),
       },
     });
-    useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
+    useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
     useCodingAgentWorkspace.setState({ createStatus: "idle", createError: null });
   });
 
@@ -66,7 +66,7 @@ describe("AgentComposer default provider preference", () => {
   });
 
   it("keeps the ready provider when the saved preference is not runnable", () => {
-    useProviderPreferences.setState({ defaultProviderId: "claude", hydrated: true });
+    useProviderPreferences.setState({ defaultProviderId: "claude", composerSelections: {}, hydrated: true });
     render(
       <AgentComposer
         summary={summaryWith([provider("codex", true), provider("claude", false)])}
@@ -81,7 +81,7 @@ describe("AgentComposer default provider preference", () => {
   });
 
   it("uses the saved preference when that provider is runnable", () => {
-    useProviderPreferences.setState({ defaultProviderId: "claude", hydrated: true });
+    useProviderPreferences.setState({ defaultProviderId: "claude", composerSelections: {}, hydrated: true });
     render(
       <AgentComposer
         summary={summaryWith([provider("codex", true), provider("claude", true)])}
