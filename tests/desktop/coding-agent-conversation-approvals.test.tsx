@@ -105,10 +105,10 @@ describe("AgentConversationView approvals", () => {
       />,
     );
 
-    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
-    expect(input.disabled).toBe(true);
+    const input = screen.getByLabelText("Message conversation");
+    expect(input.getAttribute("contenteditable")).toBe("false");
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(input.placeholder).toMatch(/respond to the pending request/i);
+    expect(input.getAttribute("aria-placeholder")).toMatch(/respond to the pending request/i);
   });
 
   it("keeps the follow-up composer enabled once the thread is running again", () => {
@@ -121,8 +121,8 @@ describe("AgentConversationView approvals", () => {
       />,
     );
 
-    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
-    expect(input.disabled).toBe(false);
+    const input = screen.getByLabelText("Message conversation");
+    expect(input.getAttribute("contenteditable")).toBe("true");
   });
 
   it("suppresses decision buttons for approvals already resolved in the snapshot", () => {

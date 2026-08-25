@@ -258,7 +258,10 @@ describe("ProjectTab", () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
     const input = await screen.findByLabelText("Message new chat");
-    fireEvent.change(input, { target: { value: "Review the auth flow" } });
+    for (const key of "Review the auth flow") {
+      fireEvent.keyDown(window, { key });
+    }
+    await waitFor(() => expect(input.textContent).toBe("Review the auth flow"));
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats"));
