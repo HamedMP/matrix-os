@@ -16,7 +16,6 @@ export default function DesktopHeaderTabs() {
   const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
   const showDesktop = useDesktopSurfaces((state) => state.showDesktop);
-  const setLauncherOpen = useUi((state) => state.setAppLauncherOpen);
   const requestBackgroundRefresh = useUi((state) => state.requestDesktopBackgroundRefresh);
 
   const showDesktopWithRefresh = useCallback(() => {
@@ -77,7 +76,6 @@ export default function DesktopHeaderTabs() {
       onClose={close}
       workspaceView={workspaceView}
       onShowDesktop={showDesktopWithRefresh}
-      onOpenApps={() => setLauncherOpen(true)}
     />
   );
 }

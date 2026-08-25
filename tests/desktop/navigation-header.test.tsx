@@ -398,6 +398,16 @@ describe("Desktop navigation header", () => {
     expect(screen.queryByRole("button", { name: "Actions for Browser" })).toBeNull();
   });
 
+  it("uses Figma-style native top-bar controls without a mode switcher", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    const desktopTab = screen.getByRole("tab", { name: "Desktop" });
+    expect(desktopTab.textContent).toBe("");
+    expect(screen.getByRole("tab", { name: "Sidebar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
+    expect(screen.queryByLabelText("Workspace mode")).toBeNull();
+  });
+
   it("shows the current Terminal session in the breadcrumb and returns through the shared root", () => {
     useTabs.getState().openTab({
       kind: "terminals",

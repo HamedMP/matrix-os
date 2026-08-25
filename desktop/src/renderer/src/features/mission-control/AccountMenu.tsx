@@ -51,7 +51,7 @@ function MenuRow({
 }) {
   return (
     <DropdownMenu.Item
-      className="flex h-9 cursor-default items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+      className="flex h-9 cursor-default items-center gap-2 px-2 text-left text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]"
       style={{ color: danger ? "var(--danger)" : "var(--text-primary)" }}
       onSelect={onSelect}
     >
@@ -128,20 +128,31 @@ export default function AccountMenu({
             side="top"
             align="start"
             sideOffset={4}
-            className="rounded-xl border p-1 outline-none"
+            className="border p-1 outline-none"
             style={{
               zIndex: DESKTOP_Z_INDEX.popover,
               width: "var(--sidebar-account-menu-width)",
               borderColor: "var(--border-default)",
               background: "var(--bg-overlay)",
               boxShadow: "var(--shadow-2)",
+              borderRadius: "12px",
+              overflow: "hidden",
             }}
           >
             <DropdownMenu.Label className="px-2 py-2">
-              <span className="block text-[10px] font-semibold uppercase tracking-[0.1em]" style={{ color: "var(--text-tertiary)" }}>
+              <span
+                className="block text-secondary"
+                style={{
+                  color: "var(--text-subtle, #96968F)",
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  letterSpacing: "0.005px",
+                  textTransform: "uppercase",
+                }}
+              >
                 Personal account
               </span>
-              <span className="block truncate text-xs" style={{ color: "var(--text-secondary)" }}>
+              <span className="block truncate">
                 {secondaryLabel ?? primaryLabel}
               </span>
             </DropdownMenu.Label>
@@ -157,11 +168,11 @@ export default function AccountMenu({
               }}
             />
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
-            <MenuRow icon={<CreditCard size={14} />} label="View all plans" onSelect={() => openSettings("billing")} />
+            <MenuRow icon={<CreditCard size={14} />} label="View plans" onSelect={() => openSettings("billing")} />
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
             <MenuRow
               icon={<LogOut size={14} />}
-              label="Log out"
+              label="Logout"
               danger
               onSelect={() => {
                 setOpen(false);

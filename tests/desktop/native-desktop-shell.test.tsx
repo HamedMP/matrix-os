@@ -344,7 +344,7 @@ describe("native desktop shell", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     expect(screen.queryByRole("button", { name: "Apps" })).toBeNull();
-    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
 
     const launcher = screen.getByRole("dialog", { name: "App launcher" });
     expect(launcher.className).toContain("h-full");
@@ -360,7 +360,7 @@ describe("native desktop shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close App Launcher" }));
     expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
   });
@@ -375,7 +375,7 @@ describe("native desktop shell", () => {
     });
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
     const firstIcon = screen.getByRole("button", { name: "Notes" }).querySelector("img");
     expect(firstIcon).toBeTruthy();
 
@@ -383,12 +383,12 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
     expect(firstIcon?.isConnected).toBe(true);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
     const reopenedIcon = screen.getByRole("button", { name: "Notes" }).querySelector("img");
     expect(reopenedIcon).toBe(firstIcon);
   });
 
-  it("opens launcher apps beside the current maximized workspace as header tabs", () => {
+  it("keeps the fixed header sidebar tab inert beside maximized workspace tabs", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
     useApps.setState({
       apps: [{ slug: "notes", name: "Notes" }],
@@ -400,15 +400,13 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
-    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
 
     const terminalTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "terminals")!;
-    const notesTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "app")!;
     expect(useDesktopSurfaces.getState().surfaces[terminalTab.id]?.mode).toBe("tab");
-    expect(useDesktopSurfaces.getState().surfaces[notesTab.id]?.mode).toBe("tab");
     expect(screen.getByRole("tab", { name: "Terminal" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Notes" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "app")).toBe(false);
   });
 
   it("opens launcher apps as windows after returning from retained tabs to the Desktop", () => {
@@ -490,11 +488,11 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("window");
   });
 
-  it("keeps the launcher in the tab bar and windowed dock while moving the profile to the top bar", () => {
+  it("keeps the inert sidebar tab and windowed-dock launcher while moving the profile to the top bar", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     const header = screen.getByRole("banner");
-    expect(header.querySelector('[aria-label="Open App Launcher"]')).toBeTruthy();
+    expect(header.querySelector('[aria-label="Sidebar"]')).toBeTruthy();
     const dock = screen.getByRole("navigation", { name: "Running apps" });
     expect(dock.querySelector('[aria-label="Open App Launcher"]')).toBeTruthy();
     expect(header.textContent).toContain("Account");

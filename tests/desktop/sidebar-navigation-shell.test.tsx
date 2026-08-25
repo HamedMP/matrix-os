@@ -364,12 +364,16 @@ describe("Desktop sidebar navigation shell", () => {
     const trigger = screen.getByRole("button", { name: "Open account menu" });
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const menu = await screen.findByRole("menu", { name: "Account" });
+    expect(menu.style.borderRadius).toBe("12px");
+    expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(3);
+    expect(screen.getByText("Personal account")).toBeTruthy();
     expect(await screen.findByText("ada operator", { exact: false })).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)).toMatchObject({ kind: "settings" });
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "View all plans" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "View plans" }));
     expect(useUi.getState().requestedSettingsSection).toBe("billing");
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
@@ -377,7 +381,7 @@ describe("Desktop sidebar navigation shell", () => {
     expect(invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://matrix-os.com/docs" });
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Log out" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Logout" }));
     expect(signOut).toHaveBeenCalledOnce();
   });
 });

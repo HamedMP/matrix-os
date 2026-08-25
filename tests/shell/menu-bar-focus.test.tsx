@@ -83,6 +83,30 @@ describe("MenuBar focus display", () => {
     expect(screen.queryByRole("button", { name: "Matrix OS" })).toBeNull();
   });
 
+  it("keeps focused-window controls in the top-bar traffic lights", () => {
+    const onMinimizeWindow = vi.fn();
+    useWindowManager.getState().openWindow("Whiteboard", "apps/whiteboard", 80);
+    const windowId = useWindowManager.getState().windows[0]!.id;
+    const toggleFullscreen = vi.spyOn(useWindowManager.getState(), "toggleFullscreen");
+
+    render(
+      <MenuBar
+        onOpenCommandPalette={() => {}}
+        onNewWindow={() => {}}
+        onMinimizeWindow={onMinimizeWindow}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Minimize" }));
+    expect(onMinimizeWindow).toHaveBeenCalledWith(windowId);
+
+    fireEvent.click(screen.getByRole("button", { name: "Fullscreen" }));
+    expect(toggleFullscreen).toHaveBeenCalledWith(windowId);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(useWindowManager.getState().windows).toHaveLength(0);
+  });
+
   it("puts switch-computer under the account menu instead of the top menu", async () => {
     render(
       <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}}>
@@ -163,7 +187,7 @@ describe("MenuBar macOS-glass variant", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Window" }));
-    fireEvent.click(screen.getByRole("button", { name: /Minimize/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Minimize/ }).at(-1)!);
     expect(onMinimizeWindow).toHaveBeenCalledWith(windowId);
   });
 

@@ -202,7 +202,8 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
         gridTemplateColumns: nativeDesktop
           ? "96px minmax(0, 1fr)"
           : "var(--sidebar-expanded-width) minmax(0, 1fr)",
-        background: "var(--bg-sunken)",
+        background: "color-mix(in srgb, var(--bg-sunken) 82%, transparent)",
+        backdropFilter: "blur(68px)",
       }}
     >
       <div
@@ -239,7 +240,7 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
         ) : null}
       </div>
 
-      <div className="flex min-w-0 items-center gap-1 px-2">
+      <div className="flex h-full min-w-0 items-center gap-1 px-2">
         {nativeDesktop ? (
           <DesktopHeaderTabs />
         ) : (
