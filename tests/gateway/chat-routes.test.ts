@@ -1,16 +1,22 @@
-import type {
-  CanonicalChatDetailResponse,
-  CanonicalChatListResponse,
-  CanonicalChatRecord,
-  CanonicalCreateChatRequest,
+import {
+  CanonicalChatDetailResponseSchema,
+  CanonicalChatListResponseSchema,
+  CanonicalChatRecordSchema,
+  type CanonicalChatDetailResponse,
+  type CanonicalChatListResponse,
+  type CanonicalChatRecord,
+  type CanonicalCreateChatRequest,
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
+import { KyselyPGlite } from "kysely-pglite";
 import { describe, expect, it, vi } from "vitest";
+import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import {
   createCanonicalChatRoutes,
   type CanonicalChatRouteService,
 } from "../../packages/gateway/src/chat/routes.js";
 import type { ChatOwner } from "../../packages/gateway/src/chat/records.js";
+import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
 
 const record: CanonicalChatRecord = {
   chat: {
@@ -139,5 +145,48 @@ describe("canonical Chat routes", () => {
         retryable: false,
       },
     });
+  });
+
+  it("runs create, list, and detail through the real repository while isolating owners", async () => {
+    const pglite = await KyselyPGlite.create();
+    const repository = new ChatRepository(pglite.dialect);
+    await repository.bootstrap();
+
+    const service = createCanonicalChatService(repository);
+    const ownerApp = new Hono().route("/", createCanonicalChatRoutes({
+      service,
+      getPrincipal: () => ({ userId: "owner_integration", source: "jwt" }),
+    }));
+    const otherOwnerApp = new Hono().route("/", createCanonicalChatRoutes({
+      service,
+      getPrincipal: () => ({ userId: "other_owner", source: "jwt" }),
+    }));
+
+    try {
+      const createdResponse = await ownerApp.request("/api/chats", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_gateway_integration",
+          title: "Gateway integration",
+        }),
+      });
+      expect(createdResponse.status).toBe(201);
+      const created = CanonicalChatRecordSchema.parse(await createdResponse.json());
+      expect(created.chat.id).toMatch(/^chat_[a-f0-9]{32}$/);
+      expect(created.chat.ownerScope).toEqual({ type: "personal", ownerId: "owner_integration" });
+
+      const listResponse = await ownerApp.request("/api/chats");
+      expect(listResponse.status).toBe(200);
+      expect(CanonicalChatListResponseSchema.parse(await listResponse.json()).items).toEqual([created]);
+
+      const detailResponse = await ownerApp.request(`/api/chats/${created.chat.id}`);
+      expect(detailResponse.status).toBe(200);
+      expect(CanonicalChatDetailResponseSchema.parse(await detailResponse.json()).record).toEqual(created);
+
+      expect((await otherOwnerApp.request(`/api/chats/${created.chat.id}`)).status).toBe(404);
+    } finally {
+      await repository.kysely.destroy();
+    }
   });
 });
