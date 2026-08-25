@@ -1,5 +1,5 @@
 import { LayoutGrid, MessageCircle, RefreshCw } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
@@ -73,6 +73,7 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
   const api = useConnection((s) => s.api);
   const createTaskOpen = useUi((s) => s.createTaskOpen);
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
+  const projectChatEntryRef = useRef<string | null>(null);
 
   // The active project owns global task creation in both Board and Chats.
   // Keeping this context at the project-shell level prevents a view switch
@@ -99,6 +100,27 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
       }
     });
   }, []);
+
+  // Provider authentication can finish in a visible Terminal while the
+  // Desktop runtime summary remains cached. Treat every deliberate entry into
+  // this project's Chat surface as a readiness boundary: opening/reopening the
+  // project, reactivating its tab, or returning from Board checks the provider
+  // again. A cold start already owns a fresh bootstrap request above, and the
+  // transition guard prevents this from becoming a render-driven polling loop.
+  const projectChatEntry = active && view !== "board"
+    ? `${runtimeScope}:${projectSlug}`
+    : null;
+  useEffect(() => {
+    if (!projectChatEntry) {
+      projectChatEntryRef.current = null;
+      return;
+    }
+    if (projectChatEntryRef.current === projectChatEntry) return;
+    projectChatEntryRef.current = projectChatEntry;
+    const workspace = useCodingAgentWorkspace.getState();
+    if (!workspace.summary || workspace.status === "loading") return;
+    void workspace.refresh();
+  }, [projectChatEntry]);
 
   const summaryProject = summary?.projects.items.find((project) => project.id === projectSlug);
   const name = boardProject?.name || summaryProject?.label || projectSlug;

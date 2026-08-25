@@ -405,7 +405,7 @@ exit 99
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
     expect(cloudInit).toContain('systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
     expect(cloudInit).toContain('messaging runtimes not installed; units installed but not enabled');
-    expect(cloudInit).toContain('for optional_bin in matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
+    expect(cloudInit).toContain('for optional_bin in matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
@@ -753,7 +753,8 @@ exit 99
     expect(gateway).toContain('Requires=matrix-restore.service');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/bin/matrix-gateway');
-    expect(gateway).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
+    expect(gateway).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex');
+    expect(gateway).not.toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(shell).toContain('After=matrix-gateway.service');
     expect(shell).toContain('ConditionPathExists=/opt/matrix/bin/matrix-shell');
     expect(readFileSync(join(root, 'distro/customer-vps/systemd/matrix-sync-agent.service'), 'utf8')).toContain(

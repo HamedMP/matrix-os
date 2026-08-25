@@ -357,6 +357,8 @@ describe("RuntimeManager", () => {
             planSlug: "matrix_starter",
             interval: "annual",
             regionSlug: "region_hil",
+            serverType: "cpx22",
+            developerTools: ["codex", "claude-code", "opencode", "pi"],
             runtimeSlot: "research-lab",
             returnPath: "/?billing=setup&handoff=add-computer",
           }),

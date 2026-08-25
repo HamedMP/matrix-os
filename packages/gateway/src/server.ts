@@ -130,6 +130,8 @@ import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/proje
 import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
+import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
+import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -190,6 +192,7 @@ import {
   IntegrationActionNotImplementedError,
 } from "./integrations/routes.js";
 import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
+import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
 import {
   createPluginRegistry,
@@ -231,6 +234,7 @@ import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+import { ChatRepository } from "./chat/repository.js";
 import { MessagingKyselyRepository } from "./messages/repository.js";
 import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
@@ -845,6 +849,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  let chatRepository: ChatRepository | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
 
   if (databaseUrl) {
@@ -858,6 +863,8 @@ export async function createGateway(config: GatewayConfig) {
       appRegistry = createAppRegistry(appDb, kysely);
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
+      chatRepository = new ChatRepository(kysely as Kysely<any>);
+      await chatRepository.bootstrap();
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       await messagingRepository.bootstrap();
@@ -1184,10 +1191,7 @@ export async function createGateway(config: GatewayConfig) {
       body: ["GET", "HEAD"].includes(c.req.method) ? undefined : await c.req.blob(),
     });
 
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: upstream.headers,
-    });
+    return createIntegrationProxyResponse(upstream);
   }
 
   // Platform DB + Integrations (Pipedream Connect)
@@ -4125,6 +4129,13 @@ export async function createGateway(config: GatewayConfig) {
     client: hermesClient,
   });
   await agentRuntimeServices.controller.reconcile();
+  app.route("/", createChatProviderRoutes({
+    catalog: createChatProviderCatalogService({
+      codingProviders: codingAgentProviderRegistry,
+      agentRuntimeSource: agentRuntimeServices.source,
+    }),
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
 
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
@@ -4441,6 +4452,8 @@ export async function createGateway(config: GatewayConfig) {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
       });
       syncR2?.destroy();
+      await chatRepository?.release();
+      chatRepository = null;
       await canvasRepository?.destroy();
       await socialRoutes?.shutdownPostHog();
       await appDb?.destroy();

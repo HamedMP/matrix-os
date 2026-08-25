@@ -34,6 +34,12 @@ import type {
 } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsStep";
+import {
+  defaultDeveloperTools,
+  nextDeveloperToolsSelection,
+  type DeveloperToolId,
+} from "@/components/onboarding/developer-tools";
 
 function preselectedFeatureSlug(selectedPlan: unknown): string | null {
   if (typeof selectedPlan !== "string") return null;
@@ -141,6 +147,7 @@ function CheckoutPanel({
   selectedProfile,
   selectedRegion,
   billingInterval,
+  developerTools,
   onBillingIntervalChange,
   trialDurationDays,
 }: {
@@ -154,6 +161,7 @@ function CheckoutPanel({
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
   billingInterval: BillingInterval;
+  developerTools: DeveloperToolId[];
   onBillingIntervalChange: (interval: BillingInterval) => void;
   trialDurationDays: number | null;
 }) {
@@ -217,6 +225,8 @@ function CheckoutPanel({
           planSlug,
           interval: billingInterval,
           regionSlug,
+          serverType: selection.serverType,
+          developerTools,
           ...(checkoutRuntimeSlot ? { runtimeSlot: checkoutRuntimeSlot } : {}),
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),
@@ -1165,6 +1175,7 @@ function BillingPanelInner({
   );
   const [selectedRegionSlug, setSelectedRegionSlug] = useState(getNearestRegionSlug);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
+  const [developerTools, setDeveloperTools] = useState<DeveloperToolId[]>(defaultDeveloperTools);
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
   const checkoutBypassed = mode === "add-computer" && entitlement?.source === "override";
   const trialDurationDays = trialOffer?.eligible === true
@@ -1296,29 +1307,32 @@ function BillingPanelInner({
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-forest/55">
-          {mode === "provisioning"
-            ? "Provisioning"
-            : mode === "add-computer"
-            ? "New computer"
-            : "Billing"}
-        </p>
-        <h3 className="mt-1.5 text-xl font-semibold tracking-tight text-deep sm:text-2xl">
-          {mode === "device-setup"
-            ? "Finish billing to approve CLI login"
-            : mode === "provisioning" || mode === "add-computer"
-            ? "Pick the cloud computer Matrix boots on"
-            : "Manage your hosted Matrix computer"}
-        </h3>
-        <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
-          Choose the plan for your hosted runtime. Billing starts in Stripe before Matrix
-          attaches a dedicated VPS.
-        </p>
-      </div>
+    <div
+      className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start"
+      data-testid="billing-configurator-layout"
+    >
+      <div className="space-y-4" data-testid="billing-configurator-main">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-forest/55">
+            {mode === "provisioning"
+              ? "Provisioning"
+              : mode === "add-computer"
+              ? "New computer"
+              : "Billing"}
+          </p>
+          <h3 className="mt-1.5 text-xl font-semibold tracking-tight text-deep sm:text-2xl">
+            {mode === "device-setup"
+              ? "Finish billing to approve CLI login"
+              : mode === "provisioning" || mode === "add-computer"
+              ? "Pick the cloud computer Matrix boots on"
+              : "Manage your hosted Matrix computer"}
+          </h3>
+          <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
+            Choose the plan for your hosted runtime. Billing starts in Stripe before Matrix
+            attaches a dedicated VPS.
+          </p>
+        </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="rounded-3xl border border-forest/12 bg-white p-4 sm:p-5">
           <SelectionTriggerCards
             profiles={allowedProfiles}
@@ -1333,6 +1347,12 @@ function BillingPanelInner({
             onSelectProfile={handleProfileSelect}
             onSelectRegion={handleRegionSelect}
           />
+          <div className="mt-4 border-t border-forest/8 pt-4">
+            <DeveloperToolsSelector
+              selectedTools={developerTools}
+              onToggle={(tool) => setDeveloperTools((current) => nextDeveloperToolsSelection(current, tool))}
+            />
+          </div>
           <ul className="mt-4 space-y-2 border-t border-forest/8 pt-4">
             {includedHighlights.map((item) => (
               <li
@@ -1345,21 +1365,22 @@ function BillingPanelInner({
             ))}
           </ul>
         </div>
-        <CheckoutPanel
-          mode={mode}
-          onCheckoutIntent={onCheckoutIntent}
-          onCheckoutNavigate={onCheckoutNavigate}
-          checkoutReturnPath={checkoutReturnPath}
-          checkoutRuntimeSlot={checkoutRuntimeSlot}
-          checkoutBypassed={checkoutBypassed}
-          telemetryProperties={telemetryProperties}
-          selectedProfile={selectedProfile}
-          selectedRegion={selectedRegion}
-          billingInterval={billingInterval}
-          onBillingIntervalChange={handleBillingIntervalChange}
-          trialDurationDays={trialDurationDays}
-        />
       </div>
+      <CheckoutPanel
+        mode={mode}
+        onCheckoutIntent={onCheckoutIntent}
+        onCheckoutNavigate={onCheckoutNavigate}
+        checkoutReturnPath={checkoutReturnPath}
+        checkoutRuntimeSlot={checkoutRuntimeSlot}
+        checkoutBypassed={checkoutBypassed}
+        telemetryProperties={telemetryProperties}
+        selectedProfile={selectedProfile}
+        selectedRegion={selectedRegion}
+        billingInterval={billingInterval}
+        developerTools={developerTools}
+        onBillingIntervalChange={handleBillingIntervalChange}
+        trialDurationDays={trialDurationDays}
+      />
     </div>
   );
 }

@@ -31,6 +31,7 @@ export function createStripeBillingClient(options: {
         cancel_url: input.cancelUrl,
         allow_promotion_codes: input.allowPromotionCodes,
         automatic_tax: { enabled: input.automaticTax },
+        ...(input.expiresAt ? { expires_at: Math.floor(Date.parse(input.expiresAt) / 1_000) } : {}),
         ...(input.paymentMethodMode === 'card_required'
           ? {
             payment_method_types: ['card'] as const,
@@ -41,6 +42,9 @@ export function createStripeBillingClient(options: {
           clerk_user_id: input.clerkUserId,
           matrix_region_slug: input.regionSlug,
           matrix_runtime_slot: input.runtimeSlot,
+          ...(input.prebillingIntentId
+            ? { matrix_prebilling_intent_id: input.prebillingIntentId }
+            : {}),
         },
         subscription_data: {
           ...(input.trialPeriodDays
@@ -55,6 +59,9 @@ export function createStripeBillingClient(options: {
             clerk_user_id: input.clerkUserId,
             matrix_region_slug: input.regionSlug,
             matrix_runtime_slot: input.runtimeSlot,
+            ...(input.prebillingIntentId
+              ? { matrix_prebilling_intent_id: input.prebillingIntentId }
+              : {}),
           },
         },
         tax_id_collection: { enabled: true },
@@ -70,7 +77,13 @@ export function createStripeBillingClient(options: {
       if (!session.url) {
         throw new Error('Stripe checkout session missing redirect URL');
       }
-      return { url: session.url, id: session.id };
+      return {
+        url: session.url,
+        id: session.id,
+        ...(session.expires_at
+          ? { expiresAt: new Date(session.expires_at * 1_000).toISOString() }
+          : {}),
+      };
     },
 
     async retrieveCheckoutSession(id) {

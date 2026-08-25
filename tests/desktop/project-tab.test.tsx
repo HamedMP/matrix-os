@@ -114,6 +114,22 @@ function workspaceFixture(): ProjectAgentWorkspace {
   };
 }
 
+function emptyWorkspaceFixture(): ProjectAgentWorkspace {
+  const workspace = workspaceFixture();
+  return {
+    ...workspace,
+    project: {
+      ...workspace.project,
+      taskCount: 0,
+      threadCount: 0,
+      attentionCount: 0,
+    },
+    tasks: { ...workspace.tasks, items: [] },
+    projectThreads: { ...workspace.projectThreads, items: [] },
+    taskThreads: { ...workspace.taskThreads, items: [] },
+  };
+}
+
 function threadSnapshot(threadId: string) {
   return {
     thread: {
@@ -281,6 +297,42 @@ describe("ProjectTab", () => {
     expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
   });
 
+  it("refreshes provider readiness whenever a zero-history Project Chat is reactivated", async () => {
+    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
+    useCodingAgentWorkspace.setState({ status: "ready", summary: summaryFixture() });
+    useProjectWorkspaces.setState({
+      runtimeScope: "operator|https://platform.test|primary",
+      entries: {
+        "matrix-os": {
+          status: "ready",
+          workspace: emptyWorkspaceFixture(),
+          error: null,
+          fetchedAt: Date.now(),
+        },
+      },
+    });
+
+    const { rerender } = render(<ProjectTab projectSlug="matrix-os" active={false} />);
+    expect(await screen.findByText("No sessions yet. Start one above.")).toBeTruthy();
+    const summaryCallsBeforeEntry = invoke.mock.calls.filter(
+      ([channel]) => channel === "runtime:get-summary",
+    ).length;
+
+    rerender(<ProjectTab projectSlug="matrix-os" active />);
+    await waitFor(() => {
+      expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-summary").length)
+        .toBe(summaryCallsBeforeEntry + 1);
+    });
+
+    rerender(<ProjectTab projectSlug="matrix-os" active={false} />);
+    rerender(<ProjectTab projectSlug="matrix-os" active />);
+    await waitFor(() => {
+      expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-summary").length)
+        .toBe(summaryCallsBeforeEntry + 2);
+    });
+    expect(screen.getByLabelText("Message new chat")).toBeTruthy();
+  });
+
   it("keeps global task creation available when the active project opens in Chats", async () => {
     const api = { get: vi.fn() };
     const selectProject = vi.fn(async (_api: unknown, projectSlug: string) => {
@@ -430,6 +482,11 @@ describe("ProjectTab", () => {
   it("keeps a new chat selected while the provider refresh is pending", async () => {
     const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
     const originalImplementation = invoke.getMockImplementation()!;
+    useCodingAgentWorkspace.setState({ status: "ready", summary: summaryFixture() });
+
+    render(<ProjectTab projectSlug="matrix-os" active />);
+    await waitFor(() => expect(useCodingAgentWorkspace.getState().status).toBe("ready"));
+
     let resolveProviderRefresh!: (summary: RuntimeSummary) => void;
     let deferNextSummary = true;
     invoke.mockImplementation((channel: string, payload: unknown) => {
@@ -441,10 +498,8 @@ describe("ProjectTab", () => {
       }
       return originalImplementation(channel, payload);
     });
-    useCodingAgentWorkspace.setState({ status: "ready", summary: summaryFixture() });
 
     try {
-      render(<ProjectTab projectSlug="matrix-os" active />);
       fireEvent.click(await screen.findByRole("button", { name: "Open session Plan the auth work" }));
       fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
       await waitFor(() => expect(deferNextSummary).toBe(false));

@@ -1,21 +1,20 @@
-import type { AgentProviderSummary, SafeSetupAction } from "@matrix-os/contracts";
+import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { executeProviderSetupAction } from "./provider-setup-terminal";
-import type { ProviderReadinessPresentation } from "./provider-readiness";
+import {
+  findProviderForSetupAction,
+  type ProviderReadinessPresentation,
+} from "./provider-readiness";
 
 const SETUP_ERROR = "Could not open provider setup. Open Providers settings to continue.";
 const REFRESH_ERROR = "Provider status is unavailable right now.";
-
-function sameSetupAction(left: SafeSetupAction, right: SafeSetupAction): boolean {
-  if (left.kind !== right.kind || left.id !== right.id || left.label !== right.label) return false;
-  return left.kind === "open_settings" ||
-    (right.kind === "foreground_terminal" && left.command === right.command);
-}
+const PROVIDER_RECHECK_INTERVAL_MS = 6_000;
+const MAX_PROVIDER_RECHECK_ATTEMPTS = 50;
 
 export function ProviderReadinessNotice(props: {
   readiness: ProviderReadinessPresentation;
@@ -25,18 +24,59 @@ export function ProviderReadinessNotice(props: {
   const api = useConnection((state) => state.api);
   const openTab = useTabs((state) => state.openTab);
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
-  const [pending, setPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"primary" | "refresh" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoRecheckCycle, setAutoRecheckCycle] = useState(0);
+  const recheckAttemptsRef = useRef(0);
+  const refreshRef = useRef(props.onRefresh);
+
+  useEffect(() => {
+    refreshRef.current = props.onRefresh;
+  }, [props.onRefresh]);
+
+  useEffect(() => {
+    if (!props.readiness.blocked || props.readiness.state === "ready") {
+      recheckAttemptsRef.current = 0;
+      if (autoRecheckCycle !== 0) setAutoRecheckCycle(0);
+      return;
+    }
+    if (autoRecheckCycle === 0) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+    const schedule = () => {
+      if (cancelled || recheckAttemptsRef.current >= MAX_PROVIDER_RECHECK_ATTEMPTS) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        if (cancelled) return;
+        recheckAttemptsRef.current += 1;
+        void refreshRef.current()
+          .catch((err: unknown) => {
+            console.warn(
+              "[provider-readiness] Automatic status refresh failed:",
+              err instanceof Error ? err.name : typeof err,
+            );
+          })
+          .finally(() => schedule());
+      }, PROVIDER_RECHECK_INTERVAL_MS);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [autoRecheckCycle, props.readiness.blocked, props.readiness.state]);
 
   if (!props.readiness.blocked || props.readiness.state === "ready") return null;
 
-  const runAction = async () => {
+  const runAction = async (requestedAction: "primary" | "refresh") => {
     const readinessAction = props.readiness.action;
-    if (!readinessAction || pending) return;
-    setPending(true);
+    if (!readinessAction || pendingAction) return;
+    const refreshing = requestedAction === "refresh" || readinessAction.kind === "refresh";
+    setPendingAction(requestedAction);
     setError(null);
     try {
-      if (readinessAction.kind === "refresh") {
+      if (refreshing) {
         await props.onRefresh();
         return;
       }
@@ -45,9 +85,7 @@ export function ProviderReadinessNotice(props: {
         openTab({ kind: "settings", title: "Settings" });
         return;
       }
-      const provider = props.providers.find((candidate) =>
-        candidate.setupActions.some((action) => sameSetupAction(action, readinessAction.action))
-      );
+      const provider = findProviderForSetupAction(props.providers, readinessAction.action);
       const opened = provider
         ? await executeProviderSetupAction({
             provider,
@@ -57,22 +95,28 @@ export function ProviderReadinessNotice(props: {
             requestSettingsSection,
           })
         : false;
-      if (!opened) setError(SETUP_ERROR);
+      if (!opened) {
+        setError(SETUP_ERROR);
+      } else {
+        recheckAttemptsRef.current = 0;
+        setAutoRecheckCycle((cycle) => cycle + 1);
+      }
     } catch (err: unknown) {
       console.error(
         "[provider-readiness] Recovery action failed:",
         err instanceof Error ? err.name : typeof err,
       );
-      setError(readinessAction.kind === "refresh" ? REFRESH_ERROR : SETUP_ERROR);
+      setError(refreshing ? REFRESH_ERROR : SETUP_ERROR);
     } finally {
-      setPending(false);
+      setPendingAction(null);
     }
   };
 
   const actionLabel = props.readiness.action?.kind === "setup"
     ? props.readiness.action.action.label
     : "Refresh status";
-  const pendingLabel = props.readiness.action?.kind === "refresh" ? "Refreshing…" : "Opening…";
+  const primaryPendingLabel = props.readiness.action?.kind === "refresh" ? "Refreshing…" : "Opening…";
+  const showSecondaryRefresh = props.readiness.action?.kind === "setup";
 
   return (
     <div
@@ -104,14 +148,26 @@ export function ProviderReadinessNotice(props: {
         ) : null}
       </div>
       {props.readiness.action ? (
-        <Button
-          variant="subtle"
-          disabled={pending}
-          aria-label={props.readiness.action.kind === "refresh" ? "Refresh provider status" : actionLabel}
-          onClick={() => void runAction()}
-        >
-          {pending ? pendingLabel : actionLabel}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {showSecondaryRefresh ? (
+            <Button
+              variant="ghost"
+              disabled={pendingAction !== null}
+              aria-label="Refresh provider status"
+              onClick={() => void runAction("refresh")}
+            >
+              {pendingAction === "refresh" ? "Refreshing…" : "Refresh status"}
+            </Button>
+          ) : null}
+          <Button
+            variant="subtle"
+            disabled={pendingAction !== null}
+            aria-label={props.readiness.action.kind === "refresh" ? "Refresh provider status" : actionLabel}
+            onClick={() => void runAction("primary")}
+          >
+            {pendingAction === "primary" ? primaryPendingLabel : actionLabel}
+          </Button>
+        </div>
       ) : null}
     </div>
   );

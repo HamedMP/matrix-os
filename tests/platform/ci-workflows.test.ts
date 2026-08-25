@@ -33,6 +33,20 @@ describe('CI workflows', () => {
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
+  it('keeps CI change detection within its bounded checkout budget', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const changesJob = workflow.slice(
+      workflow.indexOf('  changes:'),
+      workflow.indexOf('  # ── Gate 1: Mechanical checks'),
+    );
+
+    expect(changesJob).toContain('timeout-minutes: 2');
+    expect(changesJob).toContain('fetch-depth: 1');
+    expect(changesJob).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
+    expect(changesJob).not.toContain('fetch-depth: 0');
+  });
+
   it('runs lightweight docs contract tests for docs-only CI changes', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
@@ -306,8 +320,18 @@ describe('CI workflows', () => {
 
     expect(production).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
     expect(production).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
+    expect(production).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '7' }}");
+    expect(production).toContain('MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}');
+    expect(production).toContain('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30.');
+    expect(production).toContain('[[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]');
+    expect(production).not.toContain('10#$MATRIX_CARD_TRIAL_DAYS');
     expect(preview).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
     expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
+    expect(preview).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '7' }}");
+    expect(preview).toContain('MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}');
+    expect(preview).toContain('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30.');
+    expect(preview).toContain('[[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]');
+    expect(preview).not.toContain('10#$MATRIX_CARD_TRIAL_DAYS');
     expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED must be true or false.');
     for (const eventType of [
       'customer.subscription.trial_will_end',

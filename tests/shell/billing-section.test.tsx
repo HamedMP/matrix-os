@@ -84,12 +84,12 @@ describe("BillingSection", () => {
     expect(screen.getByText("Mastercard")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByText("Developer tools")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it("explains the card-required seven-day trial before opening Checkout", async () => {
-    const trialEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  it.each([1, 7])("explains the card-required %i-day trial before opening Checkout", async (durationDays) => {
+    const trialEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
     const formattedTrialEnd = new Intl.DateTimeFormat(undefined, {
       month: "short",
       day: "numeric",
@@ -98,7 +98,7 @@ describe("BillingSection", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         access: { runtimeProxyAllowed: false },
-        trialOffer: { eligible: true, durationDays: 7 },
+        trialOffer: { eligible: true, durationDays },
       }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -108,13 +108,13 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText("Start your 7-day free trial")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(`Start your ${durationDays}-day free trial`)).toBeTruthy());
     expect(screen.getByText("Card required")).toBeTruthy();
     expect(screen.getByText("$0 today").classList.contains("text-cream")).toBe(true);
     expect(screen.getByText(`First charge ${formattedTrialEnd}`)).toBeTruthy();
     expect(screen.getByText(`Cancel before ${formattedTrialEnd} to avoid being charged.`)).toBeTruthy();
     expect(screen.getByText("$19/month after your trial")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Start 7-day trial" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy();
   });
 
   it("keeps immediate-payment language for additional computers", async () => {
@@ -339,6 +339,8 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "annual",
             regionSlug: "region_nbg1",
+            serverType: "cpx32",
+            developerTools: ["codex", "claude-code", "opencode", "pi"],
           }),
         }),
       ),
@@ -400,6 +402,8 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
+            serverType: "cpx32",
+            developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
           }),
         }),
@@ -480,8 +484,34 @@ describe("BillingSection", () => {
     expect(screen.getByText("ash")).toBeTruthy();
     expect(screen.queryByText("sin")).toBeNull();
     expect(screen.getByText("Start checkout & provision")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("aligns the provisioning intro and checkout summary in the same layout row", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    const layout = screen.getByTestId("billing-configurator-layout");
+    const mainColumn = screen.getByTestId("billing-configurator-main");
+    const heading = screen.getByRole("heading", {
+      name: "Pick the cloud computer Matrix boots on",
+    });
+    const summary = screen.getByRole("complementary");
+
+    expect(layout.children).toHaveLength(2);
+    expect(layout.children[0]).toBe(mainColumn);
+    expect(layout.children[1]).toBe(summary);
+    expect(layout.className).toContain("lg:grid-cols-[minmax(0,1fr)_360px]");
+    expect(layout.className).toContain("lg:items-start");
+    expect(mainColumn.contains(heading)).toBe(true);
   });
 
   it("uses device setup copy when billing is opened from CLI login", async () => {

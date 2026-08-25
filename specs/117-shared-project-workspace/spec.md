@@ -2,7 +2,7 @@
 
 **Feature Branch**: `codex/shared-project-workspace-spec`
 **Created**: 2026-08-25
-**Status**: Draft for review
+**Status**: Draft — under review
 **Input**: Share one Matrix project between users so they work from the same authoritative folder and can share project chats, apps, and live terminal sessions with explicit read-only or read/write access.
 
 ## Product Decision Under Review

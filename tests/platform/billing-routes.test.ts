@@ -107,6 +107,69 @@ describe('platform billing routes', () => {
     );
   });
 
+  it('starts admitted preparation after Stripe opens and before checkout returns', async () => {
+    const order: string[] = [];
+    const prebilling = {
+      createIntent: vi.fn(async () => {
+        order.push('intent');
+        return { intentId: 'intent_123', expiresAt: '2026-05-30T00:30:00.000Z' };
+      }),
+      startPreparation: vi.fn(async () => {
+        order.push('preparation');
+      }),
+      authorizeSubscription: vi.fn(),
+      ensureFallback: vi.fn(),
+      expireCheckout: vi.fn(),
+    };
+    vi.mocked(stripe.createCheckoutSession).mockImplementation(async () => {
+      order.push('stripe');
+      return {
+        url: 'https://checkout.stripe.test/session',
+        id: 'cs_test_session',
+        expiresAt: '2026-05-30T00:30:00.000Z',
+      };
+    });
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve('user_123'),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      prebilling,
+    }));
+
+    const response = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+        developerTools: ['codex', 'pi'],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(order).toEqual(['intent', 'stripe', 'preparation']);
+    expect(prebilling.createIntent).toHaveBeenCalledWith(expect.objectContaining({
+      checkoutAttemptId: expect.any(String),
+      clerkUserId: 'user_123',
+      serverType: 'cpx32',
+      developerTools: ['codex', 'pi'],
+    }));
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      prebillingIntentId: 'intent_123',
+      expiresAt: '2026-05-30T00:30:00.000Z',
+    }));
+    expect(prebilling.startPreparation).toHaveBeenCalledWith({
+      intentId: 'intent_123',
+      stripeSessionId: 'cs_test_session',
+      stripeSessionExpiresAt: '2026-05-30T00:30:00.000Z',
+    });
+  });
+
   it('captures checkout growth funnel events with low-cardinality properties', async () => {
     const captureEvent = vi.fn();
     const app = createApp('user_123', env, captureEvent);
@@ -192,6 +255,150 @@ describe('platform billing routes', () => {
       trialPeriodDays: 7,
     });
   });
+
+  it('offers and persists the configured card-trial duration', async () => {
+    const trialEnv = {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'true',
+      MATRIX_CARD_TRIAL_DAYS: '1',
+    };
+    const app = createApp('user_123', trialEnv);
+
+    const status = await app.request('/billing/status?runtimeSlot=primary');
+    await expect(status.json()).resolves.toMatchObject({
+      trialOffer: { eligible: true, durationDays: 1 },
+    });
+
+    const checkout = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+
+    expect(checkout.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      trialPeriodDays: 1,
+      paymentMethodMode: 'card_required',
+    }));
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+      runtimeSlot: 'primary',
+      trialPeriodDays: 1,
+    });
+  });
+
+  it.each(['open', 'creating'] as const)(
+    'keeps status copy aligned with a reserved trial in %s state after the configured duration changes',
+    async (attemptStatus) => {
+      if (attemptStatus === 'creating') {
+        stripe.createCheckoutSession = vi.fn().mockRejectedValue(new Error('stripe response timeout'));
+      }
+      const sevenDayApp = createApp('user_123', {
+        ...env,
+        MATRIX_CARD_TRIALS_ENABLED: 'true',
+        MATRIX_CARD_TRIAL_DAYS: '7',
+      });
+      const checkout = await sevenDayApp.request('/billing/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug: 'region_fsn1',
+          runtimeSlot: 'primary',
+        }),
+      });
+      expect(checkout.status).toBe(attemptStatus === 'open' ? 200 : 503);
+      await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+        status: attemptStatus,
+        trialPeriodDays: 7,
+      });
+
+      const oneDayApp = createApp('user_123', {
+        ...env,
+        MATRIX_CARD_TRIALS_ENABLED: 'true',
+        MATRIX_CARD_TRIAL_DAYS: '1',
+      });
+      const status = await oneDayApp.request('/billing/status?runtimeSlot=primary');
+
+      await expect(status.json()).resolves.toMatchObject({
+        trialOffer: { eligible: true, durationDays: 7 },
+      });
+    },
+  );
+
+  it('keeps status copy aligned with a reserved trial after the rollout flag is disabled', async () => {
+    const trialApp = createApp('user_123', {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'true',
+      MATRIX_CARD_TRIAL_DAYS: '7',
+    });
+    const checkout = await trialApp.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+    expect(checkout.status).toBe(200);
+
+    const disabledApp = createApp('user_123', {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'false',
+      MATRIX_CARD_TRIAL_DAYS: '1',
+    });
+    const status = await disabledApp.request('/billing/status?runtimeSlot=primary');
+
+    await expect(status.json()).resolves.toMatchObject({
+      trialOffer: { eligible: true, durationDays: 7 },
+    });
+  });
+
+  it('keeps an active immediate-payment Checkout ineligible when trials are later enabled', async () => {
+    const immediateApp = createApp('user_123', {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'false',
+    });
+    const checkout = await immediateApp.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+    expect(checkout.status).toBe(200);
+
+    const trialApp = createApp('user_123', {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'true',
+      MATRIX_CARD_TRIAL_DAYS: '1',
+    });
+    const status = await trialApp.request('/billing/status?runtimeSlot=primary');
+
+    await expect(status.json()).resolves.toMatchObject({
+      trialOffer: { eligible: false, durationDays: 1 },
+    });
+  });
+
+  it.each(['0', '31', '1e1', '0x0a', ' 1 ', '18446744073709551623'])(
+    'rejects invalid card-trial duration %j during route startup',
+    (trialDays) => {
+      expect(() => createApp('user_123', {
+        ...env,
+        MATRIX_CARD_TRIAL_DAYS: trialDays,
+      })).toThrow('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30');
+    },
+  );
 
   it('does not offer a trial for additional computers or accounts with subscription history', async () => {
     const trialEnv = { ...env, MATRIX_CARD_TRIALS_ENABLED: 'true' };
@@ -1011,6 +1218,57 @@ describe('platform billing routes', () => {
     });
   });
 
+  it('authorizes the exact preparation and retries durable fallback after a signed active projection', async () => {
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_prebilling', {
+      runtimeSlot: 'primary',
+      prebillingIntentId: 'intent_123',
+    }));
+    const authorizeSubscription = vi.fn().mockResolvedValue({
+      authorized: true,
+      machineId: null,
+      needsFallback: true,
+    });
+    const ensureFallback = vi.fn()
+      .mockRejectedValueOnce(new Error('fallback enqueue unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve(null),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      prebilling: {
+        createIntent: vi.fn(),
+        startPreparation: vi.fn(),
+        authorizeSubscription,
+        ensureFallback,
+        expireCheckout: vi.fn(),
+      },
+    }));
+
+    const response = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(500);
+    expect(authorizeSubscription).toHaveBeenCalledWith(expect.objectContaining({ executor: expect.anything() }), {
+      intentId: 'intent_123',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      now: '2026-05-30T00:00:00.000Z',
+    });
+    expect(ensureFallback).toHaveBeenCalledWith({ intentId: 'intent_123' });
+
+    const retry = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    expect(retry.status).toBe(200);
+    expect(ensureFallback).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps subscriptions independent when one additional computer is canceled', async () => {
     vi.mocked(stripe.constructWebhookEvent)
       .mockReturnValueOnce(subscriptionEvent('evt_primary', {
@@ -1113,6 +1371,42 @@ describe('platform billing routes', () => {
       properties: { stripe_event_type: 'checkout.session.expired' },
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_growth_test');
+  });
+
+  it('passes server-written intent metadata to signed checkout-expiry cleanup', async () => {
+    const expireCheckout = vi.fn().mockResolvedValue({ cleaned: true, intentId: 'intent_123' });
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(
+      checkoutSessionEvent('evt_checkout_expired', 'checkout.session.expired', 'intent_123'),
+    );
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve(null),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      prebilling: {
+        createIntent: vi.fn(),
+        startPreparation: vi.fn(),
+        authorizeSubscription: vi.fn(),
+        ensureFallback: vi.fn(),
+        expireCheckout,
+      },
+    }));
+
+    const response = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(200);
+    expect(expireCheckout).toHaveBeenCalledWith(expect.objectContaining({ executor: expect.anything() }), {
+      stripeSessionId: 'cs_growth_test',
+      intentId: 'intent_123',
+      clerkUserId: 'user_123',
+      now: '2026-05-30T00:00:00.000Z',
+    });
   });
 
   it('links Stripe-created checkout customers from subscription metadata', async () => {
@@ -1982,6 +2276,7 @@ function subscriptionEvent(id: string, overrides: {
   itemCurrentPeriodEnd?: number;
   trialStart?: number;
   trialEnd?: number;
+  prebillingIntentId?: string;
 } = {}): StripeWebhookEvent {
   return {
     id,
@@ -2001,6 +2296,9 @@ function subscriptionEvent(id: string, overrides: {
           clerk_user_id: 'user_123',
           matrix_region_slug: 'region_fsn1',
           matrix_runtime_slot: overrides.runtimeSlot ?? 'studio',
+          ...(overrides.prebillingIntentId
+            ? { matrix_prebilling_intent_id: overrides.prebillingIntentId }
+            : {}),
         },
         items: {
           data: [
@@ -2041,6 +2339,7 @@ function invoiceEvent(
 function checkoutSessionEvent(
   id: string,
   type: 'checkout.session.completed' | 'checkout.session.expired',
+  prebillingIntentId?: string,
 ): StripeWebhookEvent {
   return {
     id,
@@ -2052,6 +2351,7 @@ function checkoutSessionEvent(
         client_reference_id: 'user_123',
         metadata: {
           clerk_user_id: 'user_123',
+          ...(prebillingIntentId ? { matrix_prebilling_intent_id: prebillingIntentId } : {}),
         },
       },
     },
