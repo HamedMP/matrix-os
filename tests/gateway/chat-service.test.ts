@@ -81,6 +81,19 @@ describe("canonical Chat service", () => {
     });
   });
 
+  it("normalizes malformed opaque cursor payloads as validation errors", async () => {
+    const repository = {
+      create: vi.fn(),
+      list: vi.fn(),
+      getDetailPage: vi.fn(),
+    };
+    const service = createCanonicalChatService(repository as never);
+
+    await expect(service.list(owner, { limit: 25, cursor: "chatcur_ew" }))
+      .rejects.toMatchObject({ issues: expect.any(Array) });
+    expect(repository.list).not.toHaveBeenCalled();
+  });
+
   it("binds older-message cursors to the requested Chat", async () => {
     const getDetailPage = vi.fn()
       .mockResolvedValueOnce({

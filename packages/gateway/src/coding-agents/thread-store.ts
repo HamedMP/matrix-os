@@ -224,6 +224,8 @@ export interface CodingAgentTurnStore {
   shutdownTurns(): Promise<void>;
 }
 
+const MAX_THREAD_EVENT_SINKS = 72;
+
 export class CodingAgentThreadError extends Error {
   constructor(
     readonly code: "provider_unavailable" | "thread_not_found" | "thread_store_unavailable",
@@ -1777,7 +1779,7 @@ export function createCodingAgentThreadStore(
       return result.snapshots;
     },
     registerEventSink(sink) {
-      if (eventSinks.length >= 8) {
+      if (eventSinks.length >= MAX_THREAD_EVENT_SINKS) {
         throw new CodingAgentThreadError("thread_store_unavailable", "Too many thread event sinks");
       }
       eventSinks.push(sink);

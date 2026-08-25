@@ -81,6 +81,14 @@ function workspaceSessionIdForThread(threadId: string): string {
 }
 
 describe("coding agent thread lifecycle", () => {
+  it("reserves enough bounded event sinks for canonical Chat Runs", async () => {
+    const { threads } = await createHarness();
+    const subscriptions = Array.from({ length: 72 }, () => threads.registerEventSink(() => undefined));
+
+    expect(() => threads.registerEventSink(() => undefined)).toThrow("Too many thread event sinks");
+    for (const subscription of subscriptions) subscription.dispose();
+  });
+
   it("blocks project cleanup on active threads and deletes only the owner's terminal project history", async () => {
     const { threads } = await createHarness();
     const owner = await threads.createThread(ownerPrincipal, createBody);

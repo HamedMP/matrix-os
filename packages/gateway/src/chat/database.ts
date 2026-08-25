@@ -313,7 +313,7 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
   `.execute(db);
   await sql`
     UPDATE chat_runs AS runs
-    SET client_request_id = turns.client_request_id
+    SET client_request_id = 'req_migrated_' || md5(runs.id)
     FROM chat_turns AS turns
     WHERE runs.turn_id = turns.id AND runs.client_request_id IS NULL
   `.execute(db);
@@ -407,6 +407,7 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_updated ON chats(owner_type, owner_id, lifecycle, updated_at DESC, id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_project ON chats(owner_type, owner_id, project_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_page ON chat_messages(chat_id, seq)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_run_events_run_occurred ON chat_run_events(run_id, occurred_at, id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_search ON chat_messages USING GIN (to_tsvector('simple', search_text)) WHERE state = 'committed'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
 }

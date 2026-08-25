@@ -131,6 +131,11 @@ describe("ChatRepository", () => {
       "chat_user_state",
       "chats",
     ]);
+    const activityIndex = await sql<{ indexname: string }>`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'idx_chat_run_events_run_occurred'
+    `.execute(repository.kysely);
+    expect(activityIndex.rows).toEqual([{ indexname: "idx_chat_run_events_run_occurred" }]);
   });
 
   it("creates idempotently, isolates owners, and commits the outbox atomically", async () => {
@@ -312,6 +317,7 @@ describe("ChatRepository", () => {
       clientRequestId: "req_retry_attempt_2",
       baseRevision: beforeRetry!.chat.revision,
       run: retryRun,
+      adapterState: { schemaVersion: 1, state: { sessionId: "native_retry" } },
     });
     expect(admitted).toMatchObject({
       alreadyAccepted: false,
@@ -332,6 +338,59 @@ describe("ChatRepository", () => {
       run: { id: retryRun.id, attempt: 2 },
     });
     expect((await repository.exportChat(owner, chatId))?.messages).toHaveLength(1);
+    expect(await repository.getAdapterState(owner, {
+      runId: retryRun.id,
+      driverKind: retryRun.driverKind,
+      instanceId: retryRun.instanceId,
+    })).toEqual({ schemaVersion: 1, state: { sessionId: "native_retry" } });
+  });
+
+  it("rejects new Turn and retry admissions after a Chat is archived", async () => {
+    const chatId = "chat_archived_admission";
+    await repository.create(owner, {
+      id: chatId,
+      clientRequestId: "req_create_archived_admission",
+      title: "Archived admission",
+    });
+    const inputMessage = message(chatId);
+    const inputTurn = turn(chatId, inputMessage, "req_archived_seed");
+    const firstRun = run(chatId, inputTurn);
+    await repository.admitTurn(owner, {
+      chatId,
+      baseRevision: 0,
+      message: inputMessage,
+      turn: inputTurn,
+      run: firstRun,
+    });
+    await repository.finishRun(owner, {
+      chatId,
+      runId: firstRun.id,
+      outcome: "failed",
+      completedAt: now,
+    });
+    const beforeArchive = await repository.get(owner, chatId);
+    expect(beforeArchive).not.toBeNull();
+    const archived = await repository.update(owner, chatId, {
+      baseRevision: beforeArchive!.chat.revision,
+      lifecycle: "archived",
+    });
+
+    const nextMessage = message(chatId, 2);
+    const nextTurn = turn(chatId, nextMessage, "req_archived_new_turn");
+    await expect(repository.admitTurn(owner, {
+      chatId,
+      baseRevision: archived.chat.revision,
+      message: nextMessage,
+      turn: nextTurn,
+      run: run(chatId, nextTurn, 1),
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    await expect(repository.admitRetry(owner, {
+      chatId,
+      turnId: inputTurn.id,
+      clientRequestId: "req_archived_retry",
+      baseRevision: archived.chat.revision,
+      run: run(chatId, inputTurn, 2),
+    })).rejects.toBeInstanceOf(ChatConflictError);
   });
 
   it("rejects a Turn whose input message does not belong to that Turn", async () => {

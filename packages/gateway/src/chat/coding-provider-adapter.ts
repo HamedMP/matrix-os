@@ -222,7 +222,9 @@ function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string):
   const index = snapshot.events.items.findIndex((event) =>
     event.type === "turn.accepted" && event.clientRequestId === requestId
   );
-  if (index < 0) throw new Error("Canonical coding Provider Turn was not persisted");
+  // The live sink is registered before admission and remains authoritative when
+  // the bounded snapshot has already evicted this Turn's accepted marker.
+  if (index < 0) return [];
   return snapshot.events.items.slice(index);
 }
 

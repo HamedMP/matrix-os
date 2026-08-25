@@ -97,6 +97,7 @@ export interface AdmitRetryInput {
   clientRequestId: string;
   baseRevision: number;
   run: CanonicalChatRun;
+  adapterState?: { schemaVersion: number; state: unknown };
 }
 
 export interface AdmittedRun {
@@ -439,6 +440,9 @@ export class ChatRepository {
         .where("client_request_id", "=", turn.clientRequestId)
         .executeTakeFirst();
       if (duplicate) return hydrateAdmission(trx, owner, toTurn(duplicate));
+      if (current.lifecycle !== "active") {
+        throw new ChatConflictError(input.chatId, Number(current.revision));
+      }
       if (Number(current.revision) !== input.baseRevision) {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
@@ -561,7 +565,12 @@ export class ChatRepository {
     const turnId = requireSafeRef(input.turnId);
     const clientRequestId = CanonicalChatRequestIdSchema.parse(input.clientRequestId);
     const run = CanonicalChatRunSchema.parse(input.run);
+    const stateBytes = input.adapterState ? encoded.encode(JSON.stringify(input.adapterState.state)).byteLength : 0;
     if (run.chatId !== chatId || run.turnId !== turnId || run.status !== "accepted" || run.attempt < 2) {
+      throw new ChatConflictError(chatId, input.baseRevision);
+    }
+    if (input.adapterState && (!Number.isInteger(input.adapterState.schemaVersion)
+      || input.adapterState.schemaVersion < 1 || stateBytes > 64 * 1024)) {
       throw new ChatConflictError(chatId, input.baseRevision);
     }
     return this.transact(async (trx) => {
@@ -581,6 +590,9 @@ export class ChatRepository {
           run: toRun(existing),
           alreadyAccepted: true,
         };
+      }
+      if (current.lifecycle !== "active") {
+        throw new ChatConflictError(chatId, Number(current.revision));
       }
       if (Number(current.revision) !== input.baseRevision) {
         throw new ChatConflictError(chatId, Number(current.revision));
@@ -621,6 +633,16 @@ export class ChatRepository {
         created_at: run.createdAt,
         updated_at: run.updatedAt,
       }).execute();
+      if (input.adapterState) {
+        await trx.insertInto("chat_run_adapter_state").values({
+          run_id: run.id,
+          driver_kind: run.driverKind,
+          instance_id: run.instanceId,
+          schema_version: input.adapterState.schemaVersion,
+          state: jsonb(input.adapterState.state),
+          byte_count: stateBytes,
+        }).execute();
+      }
       await trx.updateTable("chat_turns").set({ status: "accepted", updated_at: run.updatedAt })
         .where("id", "=", turnId).execute();
       const revision = input.baseRevision + 1;
@@ -737,7 +759,7 @@ export class ChatRepository {
     chatId: string;
     driverKind: string;
     instanceId: string;
-  }): Promise<{ schemaVersion: number; state: unknown } | null> {
+  }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     return this.runLifecycle.getLatestAdapterStateForChat(ownerInput, input);
   }
 

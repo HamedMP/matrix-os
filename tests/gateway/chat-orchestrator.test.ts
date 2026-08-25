@@ -171,6 +171,99 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("rejects an execution root from another Project before resolution", async () => {
+    await repository.create(owner, {
+      id: "chat_wrong_project_root",
+      clientRequestId: "req_create_wrong_project_root",
+      title: "Wrong Project root",
+      projectId: "project_matrix",
+    });
+    const resolve = vi.fn(async () => {
+      throw new Error("wrong Project root must not resolve");
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([adapter(async function* () {
+        yield { type: "run.completed", outcome: "completed" };
+      })]),
+      executionRoots: { resolve, revalidate: vi.fn() },
+    });
+
+    await expect(orchestrator.admitTurn(principal, owner, "chat_wrong_project_root", {
+      clientRequestId: "req_wrong_project_root_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "wrong root" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project", projectId: "project_other" },
+    })).rejects.toMatchObject({ safeError: { code: "project_unavailable" }, status: 400 });
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("starts a fresh Provider session when execution-root provenance changes", async () => {
+    await repository.create(owner, {
+      id: "chat_changed_root",
+      clientRequestId: "req_create_changed_root",
+      title: "Changed root",
+      projectId: "project_matrix",
+    });
+    let fingerprint = "a".repeat(64);
+    const roots: ChatExecutionRootResolver = {
+      resolve: async (_owner, ref) => ({
+        ref,
+        fingerprint,
+        primaryWorkspaceRoot: "/safe/project",
+        projectSlug: "matrix-os",
+      }),
+      revalidate: async (_owner, provenance) => ({
+        ref: provenance.ref,
+        fingerprint: provenance.fingerprint,
+        primaryWorkspaceRoot: "/safe/project",
+        projectSlug: "matrix-os",
+      }),
+    };
+    const start = vi.fn(async function* () {
+      yield { type: "state.updated" as const, state: { sessionId: "native_root" } };
+      yield { type: "run.completed" as const, outcome: "completed" as const };
+    });
+    const resume = vi.fn(async function* () {
+      yield { type: "run.completed" as const, outcome: "completed" as const };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([{ ...adapter(start), resume }]),
+      executionRoots: roots,
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_changed_root", {
+      clientRequestId: "req_changed_root_first",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "first" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+    const first = await repository.get(owner, "chat_changed_root");
+    expect(first).not.toBeNull();
+    fingerprint = "b".repeat(64);
+    await orchestrator.admitTurn(principal, owner, "chat_changed_root", {
+      clientRequestId: "req_changed_root_second",
+      baseRevision: first!.chat.revision,
+      parts: [{ type: "text", text: "second" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(resume).not.toHaveBeenCalled();
+  });
+
   it("aborts an active Run idempotently and does not persist late Provider output", async () => {
     await repository.create(owner, {
       id: "chat_cancelled",
@@ -435,16 +528,53 @@ describe("CanonicalChatOrchestrator", () => {
     expect(rejected?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
   });
 
+  it("terminalizes a Run when normalized activity exceeds the persisted limit", async () => {
+    await repository.create(owner, {
+      id: "chat_activity_overflow",
+      clientRequestId: "req_create_activity_overflow",
+      title: "Activity overflow",
+    });
+    const provider = adapter(async function* () {
+      for (let index = 0; index < 501; index += 1) {
+        yield { type: "assistant.delta", delta: "x" };
+      }
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_activity_overflow", {
+      clientRequestId: "req_activity_overflow_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "overflow" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const snapshot = await repository.exportChat(owner, "chat_activity_overflow");
+    expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+    expect(orchestrator.activeCount).toBe(0);
+  });
+
   it("bounds shutdown even when a Provider ignores cancellation", async () => {
     await repository.create(owner, {
       id: "chat_shutdown",
       clientRequestId: "req_create_shutdown",
       title: "Shutdown",
     });
-    const provider = adapter(async function* () {
-      await new Promise<void>(() => undefined);
-      yield { type: "run.completed", outcome: "completed" };
-    });
+    const provider = {
+      ...adapter(async function* () {
+        await new Promise<void>(() => undefined);
+        yield { type: "run.completed", outcome: "completed" };
+      }),
+      cancel: vi.fn(async () => new Promise<void>(() => undefined)),
+    };
     const orchestrator = new CanonicalChatOrchestrator({
       repository,
       catalog: { getCatalog: async () => catalog() },
@@ -462,7 +592,11 @@ describe("CanonicalChatOrchestrator", () => {
     });
 
     const startedAt = Date.now();
-    await orchestrator.close();
+    const closed = await Promise.race([
+      orchestrator.close().then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    expect(closed).toBe(true);
     expect(Date.now() - startedAt).toBeLessThan(500);
     const snapshot = await repository.exportChat(owner, "chat_shutdown");
     expect(snapshot?.runs[0]).toMatchObject({ status: "aborted", outcome: "aborted" });

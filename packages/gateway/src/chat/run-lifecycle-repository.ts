@@ -111,13 +111,17 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     driverKind: string;
     instanceId: string;
-  }): Promise<{ schemaVersion: number; state: unknown } | null> {
+  }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     const owner = validateOwner(ownerInput);
     [input.driverKind, input.instanceId].forEach(requireSafeRef);
     if (!await selectOwnedChat(this.kysely, owner, CanonicalChatIdSchema.parse(input.chatId))) return null;
     const row = await this.kysely.selectFrom("chat_run_adapter_state")
       .innerJoin("chat_runs", "chat_runs.id", "chat_run_adapter_state.run_id")
-      .select(["chat_run_adapter_state.schema_version", "chat_run_adapter_state.state"])
+      .select([
+        "chat_run_adapter_state.schema_version",
+        "chat_run_adapter_state.state",
+        "chat_runs.execution_root_fingerprint",
+      ])
       .where("chat_runs.chat_id", "=", input.chatId)
       .where("chat_runs.driver_kind", "=", input.driverKind)
       .where("chat_runs.instance_id", "=", input.instanceId)
@@ -130,6 +134,9 @@ export class ChatRunLifecycleRepository {
     return {
       schemaVersion: row.schema_version,
       state: typeof row.state === "string" ? JSON.parse(row.state) : row.state,
+      ...(row.execution_root_fingerprint === null ? {} : {
+        executionRootFingerprint: row.execution_root_fingerprint,
+      }),
     };
   }
 

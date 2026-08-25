@@ -142,6 +142,7 @@ export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
   private readonly reconciliation = new Map<string, Promise<number>>();
   private readonly shutdownDrainMs: number;
+  private closing = false;
 
   constructor(private readonly options: {
     repository: Pick<ChatRepository,
@@ -182,12 +183,22 @@ export class CanonicalChatOrchestrator {
     return ownerActive >= MAX_ACTIVE_RUNS_PER_OWNER;
   }
 
+  private assertOpen(): void {
+    if (this.closing) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "Chat execution is shutting down.", true, ["retry"]),
+        503,
+      );
+    }
+  }
+
   async admitTurn(
     principal: RequestPrincipal,
     owner: ChatOwner,
     chatId: string,
     inputValue: CanonicalCreateChatTurnRequest,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
+    this.assertOpen();
     await this.reconcileActiveRuns(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
     const record = await this.options.repository.get(owner, chatId);
@@ -214,11 +225,14 @@ export class CanonicalChatOrchestrator {
       driverKind: validated.instance.driverKind,
       instanceId: validated.instance.id,
     });
-    const resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
-      ? adapter.parseState(previousState.state)
-      : undefined;
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
+    if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
+        400,
+      );
+    }
     if (validated.instance.workspaceRequirement === "project_required" && rootRef === undefined) {
       throw new CanonicalChatOrchestrationError(
         safeError("project_required", "This Provider requires a Project.", false, ["return_to_project"]),
@@ -243,6 +257,14 @@ export class CanonicalChatOrchestrator {
         );
       }
     }
+    const resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
+      && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
+      ? adapter.parseState(previousState.state)
+      : undefined;
+    const adapterState = resumeState === undefined ? undefined : {
+      schemaVersion: adapter.stateSchemaVersion,
+      state: adapter.serializeState(resumeState),
+    };
 
     const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
     const turnId = id("cturn_");
@@ -301,12 +323,14 @@ export class CanonicalChatOrchestrator {
     });
     let admitted;
     try {
+      this.assertOpen();
       admitted = await this.options.repository.admitTurn(owner, {
         chatId,
         baseRevision: input.baseRevision,
         message,
         turn,
         run,
+        ...(adapterState ? { adapterState } : {}),
       });
     } catch (error: unknown) {
       return mapRepositoryError(error);
@@ -324,16 +348,6 @@ export class CanonicalChatOrchestrator {
           safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
           503,
         );
-      }
-      if (resumeState !== undefined) {
-        await this.options.repository.updateAdapterState(owner, {
-          chatId,
-          runId: admitted.run.id,
-          driverKind: admitted.run.driverKind,
-          instanceId: admitted.run.instanceId,
-          schemaVersion: adapter.stateSchemaVersion,
-          state: adapter.serializeState(resumeState),
-        });
       }
       this.startDispatch(
         owner,
@@ -361,6 +375,7 @@ export class CanonicalChatOrchestrator {
     turnId: string,
     inputValue: CanonicalRetryChatTurnRequest,
   ): Promise<CanonicalChatRunAdmissionResponse> {
+    this.assertOpen();
     await this.reconcileActiveRuns(owner);
     const input = CanonicalRetryChatTurnRequestSchema.parse(inputValue);
     const context = await this.options.repository.getTurnRunContext(owner, chatId, turnId);
@@ -410,8 +425,13 @@ export class CanonicalChatOrchestrator {
       instanceId: context.latestRun.instanceId,
     });
     const resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
+      && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
       ? adapter.parseState(previousState.state)
       : undefined;
+    const adapterState = resumeState === undefined ? undefined : {
+      schemaVersion: adapter.stateSchemaVersion,
+      state: adapter.serializeState(resumeState),
+    };
     const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
     const run = CanonicalChatRunSchema.parse({
       id: id("run_"),
@@ -448,12 +468,14 @@ export class CanonicalChatOrchestrator {
     });
     let admitted;
     try {
+      this.assertOpen();
       admitted = await this.options.repository.admitRetry(owner, {
         chatId,
         turnId,
         clientRequestId: input.clientRequestId,
         baseRevision: input.baseRevision,
         run,
+        ...(adapterState ? { adapterState } : {}),
       });
     } catch (error: unknown) {
       return mapRepositoryError(error);
@@ -626,7 +648,14 @@ export class CanonicalChatOrchestrator {
         outcome === "aborted" ? undefined : ["retry"],
       );
       try {
-        await this.persistActivities(owner, run, [{ type: "run.error", error: canonicalError }], completedAt);
+        try {
+          await this.persistActivities(owner, run, [{ type: "run.error", error: canonicalError }], completedAt);
+        } catch (activityError: unknown) {
+          console.warn(
+            "[chat/orchestrator] Terminal Run activity could not be persisted:",
+            activityError instanceof Error ? activityError.name : "UnknownError",
+          );
+        }
         await this.options.repository.finishRun(owner, {
           chatId: run.chatId,
           runId: run.id,
@@ -661,10 +690,11 @@ export class CanonicalChatOrchestrator {
     runId: string,
   ): Promise<CanonicalChatRunCancellationResponse> {
     const active = this.active.get(runId);
+    let providerCancellation: Promise<void> | undefined;
     if (active && active.chatId === chatId && active.owner.type === owner.type
       && active.owner.ownerId === owner.ownerId) {
       active.controller.abort();
-      try {
+      providerCancellation = (async () => {
         const state = await this.options.repository.getAdapterState(owner, {
           runId,
           driverKind: active.adapter.driverKind,
@@ -676,9 +706,9 @@ export class CanonicalChatOrchestrator {
           runId,
           ...(state ? { state: active.adapter.parseState(state.state) } : {}),
         });
-      } catch (error: unknown) {
+      })().catch((error: unknown) => {
         console.warn("[chat/orchestrator] Provider cancel callback failed:", error instanceof Error ? error.name : "UnknownError");
-      }
+      });
     }
     try {
       const finished = await this.options.repository.finishRun(owner, {
@@ -687,6 +717,20 @@ export class CanonicalChatOrchestrator {
         outcome: "aborted",
         completedAt: (this.options.now ?? (() => new Date()))().toISOString(),
       });
+      if (providerCancellation) {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            providerCancellation,
+            new Promise<void>((resolve) => {
+              timeout = setTimeout(resolve, this.shutdownDrainMs);
+              timeout.unref?.();
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      }
       return {
         run: finished.run,
         cancellation: finished.transitioned ? "aborted" : "already_terminal",
@@ -745,12 +789,13 @@ export class CanonicalChatOrchestrator {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     const active = [...this.active.values()];
-    await Promise.allSettled(active.map((entry) => this.cancelRun(entry.owner, entry.chatId, entry.runId)));
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        this.drain(),
+        Promise.allSettled(active.map((entry) => this.cancelRun(entry.owner, entry.chatId, entry.runId)))
+          .then(() => this.drain()),
         new Promise<void>((resolve) => {
           timeout = setTimeout(resolve, this.shutdownDrainMs);
           timeout.unref?.();

@@ -167,6 +167,51 @@ describe("canonical coding Chat Provider adapter", () => {
     );
   });
 
+  it("uses live sink events when the bounded snapshot no longer contains the accepted marker", async () => {
+    let sink: Sink | undefined;
+    const accepted = event({
+      type: "turn.accepted",
+      eventId: "evt_live_accepted",
+      turnId: "turn_native",
+      clientRequestId: "req_coding",
+      acceptedAt: occurredAt,
+    });
+    const completed = event({ type: "thread.completed", eventId: "evt_live_complete", outcome: "completed" });
+    const stale = event({
+      type: "assistant.text.delta",
+      eventId: "evt_stale_delta",
+      messageId: "msg_stale",
+      delta: "stale",
+    });
+    const store = {
+      createThread: vi.fn(),
+      acceptTurn: vi.fn(async () => {
+        sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: [accepted, completed] });
+        return {
+          threadId: "thread_native",
+          turnId: "turn_native",
+          status: "accepted" as const,
+          acceptedAt: occurredAt,
+        };
+      }),
+      getThread: vi.fn(async () => snapshot([stale])),
+      abortThread: vi.fn(),
+      registerEventSink: vi.fn((candidate: Sink) => {
+        sink = candidate;
+        return { dispose: vi.fn() };
+      }),
+    } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store });
+
+    const events = [];
+    for await (const candidate of adapter.resume!({
+      ...input(),
+      resumeState: { conversationId: "thread_native" },
+    })) events.push(candidate);
+
+    expect(events).toEqual([{ type: "run.completed", outcome: "completed" }]);
+  });
+
   it("surfaces event overflow even when the shared thread store isolates sink failures", async () => {
     let sink: Sink | undefined;
     const overflow = Array.from({ length: 501 }, (_, index) => event({
@@ -178,11 +223,7 @@ describe("canonical coding Chat Provider adapter", () => {
     const store = {
       createThread: vi.fn(async () => {
         setTimeout(() => {
-          try {
-            sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: overflow });
-          } catch {
-            // The production store isolates sink failures from other subscribers.
-          }
+          sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: overflow });
         }, 0);
         return { snapshot: snapshot([]), existing: false };
       }),

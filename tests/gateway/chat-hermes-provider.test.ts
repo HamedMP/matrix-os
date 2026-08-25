@@ -84,7 +84,9 @@ describe("Hermes canonical Chat Provider adapter", () => {
   });
 
   it("fails safely when the Matrix kernel outpaces the bounded event buffer", async () => {
-    const dispatch = vi.fn<Dispatcher["dispatch"]>(async (_message, _sessionId, onEvent) => {
+    let providerSignal: AbortSignal | undefined;
+    const dispatch = vi.fn<Dispatcher["dispatch"]>(async (_message, _sessionId, onEvent, _context, abort) => {
+      providerSignal = abort.signal;
       for (let index = 0; index < 501; index += 1) {
         void onEvent({ type: "text", text: "x" });
       }
@@ -96,5 +98,6 @@ describe("Hermes canonical Chat Provider adapter", () => {
         // consume
       }
     }).rejects.toThrow("event buffer exceeded");
+    expect(providerSignal?.aborted).toBe(true);
   });
 });

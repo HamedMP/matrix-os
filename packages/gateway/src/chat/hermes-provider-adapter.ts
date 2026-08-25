@@ -27,7 +27,7 @@ interface AsyncEventQueue {
   values(): AsyncGenerator<CanonicalProviderRunEvent>;
 }
 
-function createAsyncEventQueue(): AsyncEventQueue {
+function createAsyncEventQueue(onOverflow: () => void): AsyncEventQueue {
   const values: CanonicalProviderRunEvent[] = [];
   let done = false;
   let failure: Error | undefined;
@@ -38,6 +38,7 @@ function createAsyncEventQueue(): AsyncEventQueue {
       if (values.length >= MAX_BUFFERED_EVENTS) {
         done = true;
         failure = new Error("Canonical Hermes Provider event buffer exceeded");
+        onOverflow();
         wake?.();
         wake = undefined;
         return;
@@ -109,8 +110,8 @@ export function createHermesChatProviderAdapter(options: {
     if (input.interactionMode !== "default" || input.permissionMode !== "supervised") {
       throw new Error("Unsupported Matrix kernel mode");
     }
-    const queue = createAsyncEventQueue();
     const controller = new AbortController();
+    const queue = createAsyncEventQueue(() => controller.abort());
     const abort = () => controller.abort();
     input.signal.addEventListener("abort", abort, { once: true });
     const timeout = setTimeout(abort, timeoutMs);

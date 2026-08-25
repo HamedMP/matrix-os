@@ -55,8 +55,15 @@ function encodeCursor(value: CursorEnvelope): string {
 
 function decodeCursor(value: string): CursorEnvelope {
   const parsed = CanonicalChatApiCursorSchema.parse(value);
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(Buffer.from(parsed.slice("chatcur_".length), "base64url").toString("utf8"));
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) throw error;
+    decoded = undefined;
+  }
   return CursorEnvelopeSchema.parse(
-    JSON.parse(Buffer.from(parsed.slice("chatcur_".length), "base64url").toString("utf8")),
+    decoded,
   );
 }
 
