@@ -128,21 +128,35 @@ export interface MenuItem {
 }
 
 // Right-click context menu: wrap the trigger content; pass the items.
-export function ContextMenu({ items, children }: { items: MenuItem[]; children: ReactNode }) {
+export function ContextMenu({
+  items,
+  children,
+  onOpenChange,
+}: {
+  items: MenuItem[];
+  children: ReactNode;
+  onOpenChange?: (open: boolean) => void;
+}) {
   return (
-    <RadixContextMenu.Root>
+    <RadixContextMenu.Root onOpenChange={onOpenChange}>
       <RadixContextMenu.Trigger asChild>{children}</RadixContextMenu.Trigger>
       <RadixContextMenu.Portal>
         <RadixContextMenu.Content
-          className="fade-in z-[100] min-w-[180px] rounded-lg border p-1"
-          style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
+          className="fade-in z-[100] min-w-[180px] overflow-hidden border p-1"
+          style={{
+            background: "var(--bg-overlay)",
+            borderColor: "var(--border-default)",
+            borderRadius: "12px",
+            boxShadow: "var(--shadow-2)",
+            overflow: "hidden",
+          }}
         >
           {items.map((item) => (
             <RadixContextMenu.Item
               key={item.label}
               disabled={item.disabled}
               onSelect={item.onSelect}
-              className="flex cursor-default items-center rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)] data-[disabled]:opacity-40"
+              className="flex cursor-default items-center px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)] data-[disabled]:opacity-40"
               style={{ color: item.danger ? "var(--danger)" : "var(--text-primary)" }}
             >
               {item.label}

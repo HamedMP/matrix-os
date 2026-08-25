@@ -110,6 +110,14 @@ describe("native desktop shell", () => {
     expect(background.style.zIndex).toBe(String(DESKTOP_Z_INDEX.nativeDesktopBackground));
   });
 
+  it("opens the background menu from an empty desktop right-click", async () => {
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    fireEvent.contextMenu(screen.getByTestId("native-desktop-workspace"));
+
+    expect(await screen.findByText("Change background…")).toBeTruthy();
+  });
+
   it("loads the configured wallpaper through the authenticated API and revokes it on runtime change", async () => {
     const createObjectURL = vi.fn(() => "blob:desktop-wallpaper");
     const revokeObjectURL = vi.fn();

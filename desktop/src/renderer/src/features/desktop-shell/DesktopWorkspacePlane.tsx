@@ -1,4 +1,12 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useRef,
+  type ComponentPropsWithoutRef,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type WheelEvent,
+} from "react";
 import { useNativeDesktopMode, type NativeDesktopMode } from "../../stores/native-desktop-mode";
 
 function isInsideCanvasSurface(target: EventTarget | null): boolean {
@@ -6,13 +14,16 @@ function isInsideCanvasSurface(target: EventTarget | null): boolean {
     && target.closest("[data-desktop-surface],button,input,a") !== null;
 }
 
-export default function DesktopWorkspacePlane({
-  mode,
-  children,
-}: {
+type DesktopWorkspacePlaneProps = {
   mode: NativeDesktopMode;
   children: ReactNode;
-}) {
+} & Omit<ComponentPropsWithoutRef<"div">, "children">;
+
+const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlaneProps>(function DesktopWorkspacePlane({
+  mode,
+  children,
+  ...triggerProps
+}, ref) {
   const panX = useNativeDesktopMode((state) => state.panX);
   const panY = useNativeDesktopMode((state) => state.panY);
   const zoom = useNativeDesktopMode((state) => state.zoom);
@@ -70,6 +81,8 @@ export default function DesktopWorkspacePlane({
   const canvas = mode === "canvas";
   return (
     <div
+      {...triggerProps}
+      ref={ref}
       data-testid={canvas ? "native-desktop-canvas" : "native-desktop-workspace"}
       className="absolute inset-0 overflow-hidden"
       style={canvas ? {
@@ -94,4 +107,6 @@ export default function DesktopWorkspacePlane({
       </div>
     </div>
   );
-}
+});
+
+export default DesktopWorkspacePlane;
