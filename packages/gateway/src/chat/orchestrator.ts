@@ -140,6 +140,7 @@ function mapRepositoryError(error: unknown): never {
 
 export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
+  private readonly pendingDispatch = new Set<string>();
   private readonly reconciliation = new Map<string, Promise<number>>();
   private readonly shutdownDrainMs: number;
   private closing = false;
@@ -190,6 +191,16 @@ export class CanonicalChatOrchestrator {
         503,
       );
     }
+  }
+
+  private reservePendingDispatch(runId: string): void {
+    if (!this.pendingDispatch.has(runId) && this.pendingDispatch.size >= MAX_ACTIVE_RUNS_GLOBAL) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
+        503,
+      );
+    }
+    this.pendingDispatch.add(runId);
   }
 
   async admitTurn(
@@ -322,6 +333,7 @@ export class CanonicalChatOrchestrator {
       updatedAt: timestamp,
     });
     let admitted;
+    this.reservePendingDispatch(run.id);
     try {
       this.assertOpen();
       admitted = await this.options.repository.admitTurn(owner, {
@@ -333,39 +345,44 @@ export class CanonicalChatOrchestrator {
         ...(adapterState ? { adapterState } : {}),
       });
     } catch (error: unknown) {
+      this.pendingDispatch.delete(run.id);
       return mapRepositoryError(error);
     }
 
-    if (!admitted.alreadyAccepted) {
-      if (this.atCapacity(owner)) {
-        await this.options.repository.finishRun(owner, {
-          chatId,
-          runId: admitted.run.id,
-          outcome: "failed",
-          completedAt: timestamp,
-        });
-        throw new CanonicalChatOrchestrationError(
-          safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
-          503,
+    try {
+      if (!admitted.alreadyAccepted) {
+        if (this.atCapacity(owner)) {
+          await this.options.repository.finishRun(owner, {
+            chatId,
+            runId: admitted.run.id,
+            outcome: "failed",
+            completedAt: timestamp,
+          });
+          throw new CanonicalChatOrchestrationError(
+            safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
+            503,
+          );
+        }
+        this.startDispatch(
+          owner,
+          admitted.message,
+          admitted.run,
+          adapter,
+          admitted.chat.chat.messageCount + 1,
+          resolvedRoot,
+          resumeState,
         );
       }
-      this.startDispatch(
-        owner,
-        admitted.message,
-        admitted.run,
-        adapter,
-        admitted.chat.chat.messageCount + 1,
-        resolvedRoot,
-        resumeState,
-      );
+      return CanonicalChatTurnAdmissionResponseSchema.parse({
+        record: admitted.chat,
+        message: admitted.message,
+        turn: admitted.turn,
+        run: admitted.run,
+        admission: admitted.alreadyAccepted ? "already_accepted" : "accepted",
+      });
+    } finally {
+      this.pendingDispatch.delete(run.id);
     }
-    return CanonicalChatTurnAdmissionResponseSchema.parse({
-      record: admitted.chat,
-      message: admitted.message,
-      turn: admitted.turn,
-      run: admitted.run,
-      admission: admitted.alreadyAccepted ? "already_accepted" : "accepted",
-    });
   }
 
   async retryTurn(
@@ -467,6 +484,7 @@ export class CanonicalChatOrchestrator {
       updatedAt: timestamp,
     });
     let admitted;
+    this.reservePendingDispatch(run.id);
     try {
       this.assertOpen();
       admitted = await this.options.repository.admitRetry(owner, {
@@ -478,37 +496,42 @@ export class CanonicalChatOrchestrator {
         ...(adapterState ? { adapterState } : {}),
       });
     } catch (error: unknown) {
+      this.pendingDispatch.delete(run.id);
       return mapRepositoryError(error);
     }
-    if (!admitted.alreadyAccepted) {
-      if (this.atCapacity(owner)) {
-        await this.options.repository.finishRun(owner, {
-          chatId,
-          runId: admitted.run.id,
-          outcome: "failed",
-          completedAt: timestamp,
-        });
-        throw new CanonicalChatOrchestrationError(
-          safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
-          503,
+    try {
+      if (!admitted.alreadyAccepted) {
+        if (this.atCapacity(owner)) {
+          await this.options.repository.finishRun(owner, {
+            chatId,
+            runId: admitted.run.id,
+            outcome: "failed",
+            completedAt: timestamp,
+          });
+          throw new CanonicalChatOrchestrationError(
+            safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
+            503,
+          );
+        }
+        this.startDispatch(
+          owner,
+          context.message,
+          admitted.run,
+          adapter,
+          admitted.chat.chat.messageCount + 1,
+          resolvedRoot,
+          resumeState,
         );
       }
-      this.startDispatch(
-        owner,
-        context.message,
-        admitted.run,
-        adapter,
-        admitted.chat.chat.messageCount + 1,
-        resolvedRoot,
-        resumeState,
-      );
+      return CanonicalChatRunAdmissionResponseSchema.parse({
+        record: admitted.chat,
+        turn: admitted.turn,
+        run: admitted.run,
+        admission: admitted.alreadyAccepted ? "already_accepted" : "accepted",
+      });
+    } finally {
+      this.pendingDispatch.delete(run.id);
     }
-    return CanonicalChatRunAdmissionResponseSchema.parse({
-      record: admitted.chat,
-      turn: admitted.turn,
-      run: admitted.run,
-      admission: admitted.alreadyAccepted ? "already_accepted" : "accepted",
-    });
   }
 
   private startDispatch(
@@ -760,7 +783,7 @@ export class CanonicalChatOrchestrator {
     const contexts = await this.options.repository.listActiveRunContexts(owner, MAX_ACTIVE_RUNS_GLOBAL);
     let reconciled = 0;
     for (const context of contexts) {
-      if (this.active.has(context.latestRun.id)) continue;
+      if (this.active.has(context.latestRun.id) || this.pendingDispatch.has(context.latestRun.id)) continue;
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
       const error = safeError(
         "run_unavailable",

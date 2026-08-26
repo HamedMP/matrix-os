@@ -171,6 +171,68 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("does not reconcile a committed Run while its dispatch registration is pending", async () => {
+    await repository.create(owner, {
+      id: "chat_pending_dispatch",
+      clientRequestId: "req_create_pending_dispatch",
+      title: "Pending dispatch",
+    });
+    let releaseAdmission!: () => void;
+    let admissionCommitted!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    const committed = new Promise<void>((resolve) => {
+      admissionCommitted = resolve;
+    });
+    const delayedRepository = new Proxy(repository, {
+      get(target, property, receiver) {
+        if (property === "admitTurn") {
+          return async (...args: Parameters<ChatRepository["admitTurn"]>) => {
+            const admitted = await target.admitTurn(...args);
+            admissionCommitted();
+            await release;
+            return admitted;
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const start = vi.fn(async function* () {
+      yield { type: "run.completed" as const, outcome: "completed" as const };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository: delayedRepository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([adapter(start)]),
+    });
+
+    await orchestrator.reconcileActiveRuns(owner);
+    for (let index = 1; index < 64; index += 1) {
+      await orchestrator.reconcileActiveRuns({ type: "personal", ownerId: `owner_cache_${index}` });
+    }
+
+    const admission = orchestrator.admitTurn(principal, owner, "chat_pending_dispatch", {
+      clientRequestId: "req_pending_dispatch_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "run safely" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await committed;
+    await orchestrator.reconcileActiveRuns({ type: "personal", ownerId: "owner_cache_64" });
+    expect(await orchestrator.reconcileActiveRuns(owner)).toBe(0);
+    releaseAdmission();
+    await admission;
+    await orchestrator.drain();
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect((await repository.exportChat(owner, "chat_pending_dispatch"))?.runs[0])
+      .toMatchObject({ status: "completed", outcome: "completed" });
+  });
+
   it("rejects an execution root from another Project before resolution", async () => {
     await repository.create(owner, {
       id: "chat_wrong_project_root",
