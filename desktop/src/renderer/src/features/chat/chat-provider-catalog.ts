@@ -14,11 +14,13 @@ export async function fetchCanonicalProviderCatalog(
 
 export function useChatProviderCatalog(
   fallback: CanonicalProviderCatalog,
+  apiOverride?: Pick<ApiClient, "get"> | null,
 ): {
   catalog: CanonicalProviderCatalog;
   status: "fallback" | "loading" | "ready" | "error";
 } {
-  const api = useConnection((state) => state.api);
+  const connectionApi = useConnection((state) => state.api);
+  const api = apiOverride === undefined ? connectionApi : apiOverride;
   const [state, setState] = useState<{
     catalog: CanonicalProviderCatalog;
     status: "fallback" | "loading" | "ready" | "error";

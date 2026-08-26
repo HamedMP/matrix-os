@@ -145,6 +145,37 @@ describe("workspace session orchestrator", () => {
     expect(d.agentSessionManager.startSession.mock.calls[0]?.[0].worktreeId).toBeUndefined();
   });
 
+  it("runs a root Chat in a dedicated bounded workspace instead of rejecting it", async () => {
+    const rootChatWorkspace = join(homePath, "temporary", "root-chat-workspaces", "sess_fixed");
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      homePath,
+      prepareRootChatWorkspace: vi.fn(async () => rootChatWorkspace),
+      idGenerator: () => "sess_fixed",
+    });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        kind: "agent",
+        agent: "codex",
+        prompt: "answer without a project",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, status: 201 });
+    expect(d.projectManager.getProject).not.toHaveBeenCalled();
+    expect(d.agentSandbox.preflight).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "sess_fixed",
+      worktreePath: rootChatWorkspace,
+    }));
+    expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceRoot: rootChatWorkspace,
+      ownerId: "user_workspace",
+    }));
+  });
+
   it("rejects legacy local primary checkouts when the authenticated owner does not match", async () => {
     const d = deps({
       projectManager: {

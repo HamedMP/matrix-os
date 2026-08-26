@@ -23,12 +23,13 @@ export function canonicalResourceReferenceForPath(
   kind: "file" | "folder",
   path: string,
 ): CanonicalChatResourceReference {
-  const direct = CanonicalChatResourceReferenceSchema.safeParse({ kind, id: path, label: path });
+  const direct = CanonicalChatResourceReferenceSchema.safeParse({ kind, id: path, label: path, path });
   if (direct.success) return direct.data;
   return CanonicalChatResourceReferenceSchema.parse({
     kind,
     id: `${kind}_${stablePathHash(path)}`,
     label: path,
+    path,
   });
 }
 

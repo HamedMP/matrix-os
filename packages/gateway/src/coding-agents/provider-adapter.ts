@@ -77,6 +77,8 @@ export interface CodingAgentProviderAdapter {
       turnId: string;
       message: string;
       attachments?: CreateAgentTurnRequest["attachments"];
+      model?: CreateAgentTurnRequest["model"];
+      modelOptions?: CreateAgentTurnRequest["modelOptions"];
     };
     resumeState: CodingAgentProviderResumeState;
     signal: AbortSignal;

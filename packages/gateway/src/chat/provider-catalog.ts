@@ -22,7 +22,6 @@ import { createHash } from "node:crypto";
 import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/service.js";
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../request-principal.js";
-import { KERNEL_DEFAULTS, KERNEL_EFFORTS, KERNEL_MODELS } from "../kernel-settings.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -209,17 +208,6 @@ function systemModels(
   runtime: CanonicalProviderDriverKind,
   providers: AgentProviderDescriptor[],
 ): CanonicalModelDescriptor[] {
-  if (runtime === "hermes") {
-    return KERNEL_MODELS.map((model) => ({
-      id: `anthropic:${model.id}`,
-      displayName: model.label,
-      description: model.tier,
-      availability: "available" as const,
-      capabilities: ["tools", "vision", "reasoning"],
-      supportsVision: true,
-      supportsToolUse: true,
-    }));
-  }
   return providers
     .filter((provider) => provider.runtime === runtime)
     .flatMap((provider) => provider.models.map((model) => ({
@@ -240,18 +228,6 @@ function systemOptions(
   runtime: CanonicalProviderDriverKind,
   providers: AgentProviderDescriptor[],
 ): CanonicalProviderOptionDescriptor[] {
-  if (runtime === "hermes") {
-    return [{
-      id: "effort",
-      label: "Reasoning",
-      kind: "enum",
-      values: KERNEL_EFFORTS.map((effort) => ({
-        value: effort,
-        label: effort.charAt(0).toUpperCase() + effort.slice(1),
-      })),
-      placement: "composer",
-    }];
-  }
   const efforts: string[] = [];
   for (const provider of providers) {
     if (provider.runtime !== runtime) continue;
@@ -285,12 +261,10 @@ function systemSetupActions(runtime: AgentRuntimeDescriptor | undefined): Canoni
 }
 
 function systemAvailability(
-  kind: typeof SYSTEM_DRIVERS[number],
   runtime: AgentRuntimeDescriptor | undefined,
   models: CanonicalModelDescriptor[],
   messagingConfigured: boolean,
 ): CanonicalProviderInstanceDescriptor["availability"] {
-  if (kind === "hermes") return "available";
   if (runtime === undefined) return "unavailable";
   if (runtime.installState === "missing" || runtime.installState === "installing") return "setup_required";
   if (runtime.selectionState !== "active") return "unavailable";
@@ -316,14 +290,12 @@ function systemInstance(input: {
     && input.selectedProvider !== null
     && input.selectedModel !== null;
   const models = systemModels(input.kind, input.providers).map((model) => (
-    input.kind === "hermes" || harnessConfigured || model.availability === "unavailable"
+    harnessConfigured || model.availability === "unavailable"
       ? model
       : { ...model, availability: "auth_required" as const }
   ));
-  const availability = systemAvailability(input.kind, input.runtime, models, harnessConfigured);
-  const selectedModel = input.kind === "hermes"
-    ? `anthropic:${KERNEL_DEFAULTS.model}`
-    : input.selectedProvider && input.selectedModel
+  const availability = systemAvailability(input.runtime, models, harnessConfigured);
+  const selectedModel = input.selectedProvider && input.selectedModel
     ? `${input.selectedProvider}:${input.selectedModel}`
     : null;
   const hasSelectedModel = selectedModel !== null
@@ -338,7 +310,7 @@ function systemInstance(input: {
     options: systemOptions(input.kind, input.providers),
     skills: input.skills,
     commands: [],
-    setupActions: input.kind === "hermes" ? [] : systemSetupActions(input.runtime),
+    setupActions: systemSetupActions(input.runtime),
     supports: systemSupports(),
     ...(availability === "available" && hasSelectedModel ? {
       defaultSelection: { instanceId: id, model: selectedModel! },

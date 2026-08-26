@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore, type ClipboardEvent, type DragEvent } from "react";
+import type { ApiClient } from "../../../lib/api";
 import { useConnection } from "../../../stores/connection";
 import { createLocalAttachmentController } from "./local-attachment-controller";
 
-export function useConversationAttachments(scopeKey?: string | null) {
-  const api = useConnection((state) => state.api);
+export function useConversationAttachments(
+  scopeKey?: string | null,
+  apiOverride?: ApiClient | null,
+) {
+  const connectionApi = useConnection((state) => state.api);
+  const api = apiOverride === undefined ? connectionApi : apiOverride;
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const controller = useMemo(

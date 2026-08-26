@@ -2,16 +2,21 @@ import type {
   CanonicalChatClient,
 } from "../../lib/canonical-chat-client";
 import type {
+  AgentProviderSummary,
   CanonicalChatMessagePart,
   CanonicalProviderCatalog,
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
 import { MessageSquare, Plus, Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
+import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { ChatStarterCards } from "./ChatStarterCards";
+import { CanonicalChatIndex } from "./CanonicalChatIndex";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
 import {
@@ -19,15 +24,45 @@ import {
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
 import { useChatProviderCatalog } from "./chat-provider-catalog";
-import { searchGlobalChatResources } from "./chat-resource-search";
+import { canonicalResourceReferenceForPath, searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
 import {
   SharedChatComposer,
+  supportsNativeFileAttachments,
   type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
 import { useCanonicalChatRouteController } from "./use-canonical-chat-route-controller";
+import { useProviderSetup } from "./use-provider-setup";
+
+const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
+
+function failClosedCatalog(catalog: CanonicalProviderCatalog): CanonicalProviderCatalog {
+  return {
+    ...catalog,
+    instances: catalog.instances.map(({ defaultSelection: _selection, ...instance }) => ({
+      ...instance,
+      availability: "unavailable",
+      models: instance.models.map((model) => ({ ...model, availability: "unavailable" })),
+    })),
+  };
+}
+
+function rememberedOptions(
+  catalog: CanonicalProviderCatalog,
+  selection: CanonicalComposerSelection,
+) {
+  const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
+  if (!instance) return [];
+  return selection.options.filter((selected) => {
+    const descriptor = instance.options.find((candidate) => candidate.id === selected.id);
+    if (!descriptor) return false;
+    if (descriptor.kind === "boolean") return typeof selected.value === "boolean";
+    return typeof selected.value === "string"
+      && descriptor.values?.some((candidate) => candidate.value === selected.value) === true;
+  });
+}
 
 function projectContext(
   projectId: string | undefined,
@@ -91,18 +126,56 @@ export function CanonicalChatWorkspace({
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const liveCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
-  const providerCatalog = catalog ?? liveCatalog;
-  const controller = useCanonicalChatRouteController({ client, projectId, active, initialChatId });
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog, api ?? null);
+  const unavailableCatalog = useMemo(() => failClosedCatalog(fallbackCatalog), [fallbackCatalog]);
+  const providerCatalog = catalog ?? (
+    liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
+  );
+  const controller = useCanonicalChatRouteController({
+    client,
+    projectId,
+    active,
+    initialChatId,
+    autoSelectFirst: projectId !== null,
+  });
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
+    initialChatId ? "conversation" : "index",
+  );
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
+  const runtimeSummary = useCodingAgentWorkspace((state) => state.summary);
+  const runtimeStatus = useCodingAgentWorkspace((state) => state.status);
+  const refreshRuntimeSummary = useCodingAgentWorkspace((state) => state.refresh);
+  const handleProviderSetup = useProviderSetup(
+    runtimeSummary?.providers ?? EMPTY_PROVIDER_SUMMARIES,
+    refreshRuntimeSummary,
+    api ?? null,
+  );
   const [selection, setSelection] = useState<CanonicalComposerSelection | null>(() => (
-    createCanonicalComposerSelection(providerCatalog)
+    catalog ? createCanonicalComposerSelection(providerCatalog) : null
   ));
 
   useEffect(() => {
+    if (!api || runtimeStatus !== "idle") return;
+    void refreshRuntimeSummary();
+  }, [api, refreshRuntimeSummary, runtimeStatus]);
+
+  useEffect(() => {
+    if (projectId !== null) return;
+    setGlobalView(initialChatId ? "conversation" : "index");
+  }, [initialChatId, projectId]);
+
+  useEffect(() => {
+    if (projectId === null && controller.detail) setGlobalView("conversation");
+  }, [controller.detail, projectId]);
+
+  useEffect(() => {
     setSelection((current) => {
+      if (!catalog && liveCatalog.status !== "ready") return null;
       const boundInstance = controller.detail?.record.providerBinding?.instanceId;
       const currentInstance = providerCatalog.instances.find((instance) => instance.id === current?.instanceId);
       const requiredInstance = boundInstance
@@ -113,15 +186,23 @@ export function CanonicalChatWorkspace({
         : createCanonicalComposerSelection(providerCatalog);
       if (!next) return null;
       const currentSelection = controller.detail?.record.chat.currentSelection;
-      return currentSelection && currentSelection.instanceId === next.instanceId
+      const rememberedModel = currentSelection && currentSelection.instanceId === next.instanceId
+        ? requiredInstance?.models.find((model) => (
+            model.id === currentSelection.model && model.availability === "available"
+          ))
+        : undefined;
+      return currentSelection && rememberedModel
         ? {
             ...next,
             model: currentSelection.model,
-            options: currentSelection.options ?? next.options,
+            options: rememberedOptions(providerCatalog, {
+              ...next,
+              options: currentSelection.options ?? next.options,
+            }),
           }
         : next;
     });
-  }, [controller.detail?.record.chat.currentSelection, controller.detail?.record.providerBinding, providerCatalog]);
+  }, [catalog, controller.detail?.record.chat.currentSelection, controller.detail?.record.providerBinding, liveCatalog.status, providerCatalog]);
 
   const context = projectContext(controller.detail?.record.projectId, projects);
   const activeRun = controller.detail?.record.activeRun;
@@ -151,80 +232,160 @@ export function CanonicalChatWorkspace({
   };
 
   const submit = async (submission: SharedChatComposerSubmission) => {
-    if (!selection || activeRun) return;
-    const parts = inputParts(submission);
-    if (parts.length === 0) return;
-    const admitted = await controller.submitTurn({
-      parts,
-      selection: {
-        instanceId: selection.instanceId,
-        model: selection.model,
-        ...(selection.options.length > 0 ? { options: selection.options } : {}),
-      },
-      interactionMode: selection.interactionMode,
-      permissionMode: selection.permissionMode,
-    }, titleFor(submission));
-    if (!admitted) return;
-    setDraft("");
-    setReferenceTokens([]);
+    const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
+    if (
+      !selection
+      || activeRun
+      || uploadingAttachments
+      || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
+    ) return;
+    setUploadingAttachments(true);
+    const uploaded = await attachments.uploadAll();
+    if (!uploaded.ok) {
+      setUploadingAttachments(false);
+      return;
+    }
+    const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
+      attachment.path
+        ? [{
+            type: "resource_reference" as const,
+            resource: canonicalResourceReferenceForPath("file", attachment.path),
+          }]
+        : []
+    ));
+    const parts = [...inputParts(submission), ...uploadedParts];
+    if (parts.length === 0) {
+      setUploadingAttachments(false);
+      return;
+    }
+    try {
+      const admitted = await controller.submitTurn({
+        parts,
+        selection: {
+          instanceId: selection.instanceId,
+          model: selection.model,
+          ...(selection.options.length > 0 ? { options: selection.options } : {}),
+        },
+        interactionMode: selection.interactionMode,
+        permissionMode: selection.permissionMode,
+      }, titleFor(submission));
+      if (!admitted) return;
+      setDraft("");
+      setReferenceTokens([]);
+      attachments.clear();
+    } finally {
+      setUploadingAttachments(false);
+    }
+  };
+
+  const startNewChat = () => {
+    controller.startNewChat();
+    if (projectId === null) setGlobalView("draft");
+  };
+
+  const selectChat = (chatId: string) => {
+    controller.selectChat(chatId);
+    if (projectId === null) setGlobalView("conversation");
   };
 
   const composer = (
-    <SharedChatComposer
-      value={draft}
-      onChange={setDraft}
-      referenceTokens={referenceTokens}
-      onReferenceTokensChange={setReferenceTokens}
-      onSubmit={(submission) => void submit(submission)}
-      onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
-      busy={Boolean(activeRun)}
-      disabled={controller.status === "loading"}
-      canSubmit={Boolean(selection && !activeRun && (draft.trim() || referenceTokens.length > 0))}
-      catalog={providerCatalog}
-      selection={selection}
-      onSelectionChange={setSelection}
-      instanceLocked={controller.detail?.record.providerBinding !== undefined}
-      resources={resources}
-      resourceSearch={resourceSearch}
-      onNewChat={controller.startNewChat}
-      placeholder={controller.detail ? "Reply to chat…" : "How can I help you today?"}
-      ariaLabel={controller.detail ? "Reply to chat" : "Start a chat"}
-      leadingControls={(
-        <ConversationContextPicker
-          context={context}
-          compact={!context}
-          disabled={!controller.detail || Boolean(activeRun)}
-          onSelect={(targetProjectSlug) => {
-            const target = projects.find((project) => project.slug === targetProjectSlug);
-            void moveProject(target?.id ?? targetProjectSlug);
-          }}
-          onRemove={() => void moveProject(null)}
-        />
-      )}
-    />
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        aria-label="Choose files"
+        className="sr-only"
+        onChange={(event) => {
+          attachments.add(Array.from(event.currentTarget.files ?? []));
+          event.currentTarget.value = "";
+        }}
+      />
+      <SharedChatComposer
+        value={draft}
+        onChange={setDraft}
+        referenceTokens={referenceTokens}
+        onReferenceTokensChange={setReferenceTokens}
+        onSubmit={(submission) => void submit(submission)}
+        onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
+        busy={Boolean(activeRun) || uploadingAttachments}
+        disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
+        canSubmit={Boolean(selection && !activeRun && !uploadingAttachments && (
+          draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
+        ))}
+        catalog={providerCatalog}
+        selection={selection}
+        onSelectionChange={setSelection}
+        onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
+        instanceLocked={controller.detail?.record.providerBinding !== undefined}
+        resources={resources}
+        resourceSearch={resourceSearch}
+        onAttach={() => fileInputRef.current?.click()}
+        attachments={(
+          <AttachmentPreviewRow
+            items={attachments.items}
+            disabled={uploadingAttachments}
+            onRemove={attachments.remove}
+            onRetry={(localId) => void attachments.retry(localId)}
+          />
+        )}
+        onNewChat={startNewChat}
+        placeholder={controller.detail ? "Reply to chat…" : "How can I help you today?"}
+        ariaLabel={controller.detail ? "Reply to chat" : "Start a chat"}
+        leadingControls={(
+          <ConversationContextPicker
+            context={context}
+            compact={!context}
+            disabled={!controller.detail || Boolean(activeRun)}
+            onSelect={(targetProjectSlug) => {
+              const target = projects.find((project) => project.slug === targetProjectSlug);
+              void moveProject(target?.id ?? targetProjectSlug);
+            }}
+            onRemove={() => void moveProject(null)}
+          />
+        )}
+      />
+    </>
   );
+
+  if (projectId === null && globalView === "index") {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-slot="canonical-chat-workspace">
+        <CanonicalChatIndex
+          items={controller.items}
+          query={query}
+          status={controller.status}
+          error={controller.error}
+          onQueryChange={setQuery}
+          onSearch={(value) => void controller.search(value)}
+          onSelect={selectChat}
+          onNewChat={startNewChat}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-slot="canonical-chat-workspace">
-      <aside
-        aria-label={projectId ? "Project chats" : "Global chats"}
+      {projectId ? <aside
+        aria-label="Project chats"
         className="flex w-[260px] shrink-0 flex-col border-r p-3"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
       >
         <div className="flex items-center justify-between gap-2 px-1 pb-3">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              {projectId ? projectLabel ?? "Project chats" : "Chats"}
+              {projectLabel ?? "Project chats"}
             </h2>
             <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-              {projectId ? "Project" : "Global"}
+              Project
             </p>
           </div>
           <button
             type="button"
             aria-label="New chat"
             className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)]"
-            onClick={controller.startNewChat}
+            onClick={startNewChat}
           >
             <Plus size={15} aria-hidden />
           </button>
@@ -258,7 +419,7 @@ export function CanonicalChatWorkspace({
               aria-label={record.chat.title}
               aria-pressed={record.chat.id === controller.activeChatId}
               className="w-full rounded-lg px-2.5 py-2 text-left hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)]"
-              onClick={() => controller.selectChat(record.chat.id)}
+              onClick={() => selectChat(record.chat.id)}
             >
               <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
                 {record.chat.title}
@@ -272,11 +433,12 @@ export function CanonicalChatWorkspace({
             <p className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
           ) : null}
         </div>
-      </aside>
+      </aside> : null}
       <SharedChatSurface
         ariaLabel={projectId ? "Project Chat" : "Global Chat"}
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        {...attachments.paneProps}
       >
         {controller.error ? (
           <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[868px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>

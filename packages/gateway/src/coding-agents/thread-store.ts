@@ -97,6 +97,8 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
 const StoredTurnSchema = z.object({
   message: CreateAgentTurnRequestSchema.shape.message.optional(),
   attachments: CreateAgentTurnRequestSchema.shape.attachments,
+  model: CreateAgentTurnRequestSchema.shape.model,
+  modelOptions: CreateAgentTurnRequestSchema.shape.modelOptions,
   clientRequestId: CreateAgentTurnRequestSchema.shape.clientRequestId,
   ownerId: OwnerIdSchema,
   threadId: AgentThreadSummarySchema.shape.id,
@@ -1318,6 +1320,8 @@ export function createCodingAgentThreadStore(
               ...(result.dispatch.turn.attachments
                 ? { attachments: result.dispatch.turn.attachments }
                 : {}),
+              ...(result.dispatch.turn.model ? { model: result.dispatch.turn.model } : {}),
+              ...(result.dispatch.turn.modelOptions ? { modelOptions: result.dispatch.turn.modelOptions } : {}),
             },
           });
         } else {

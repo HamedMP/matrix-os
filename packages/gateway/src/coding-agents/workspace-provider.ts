@@ -144,6 +144,8 @@ function runningStatusFor(session: { runtime?: { status?: unknown } | null }): "
 function workspaceTurnInput(
   message: string,
   attachments: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["attachments"],
+  model: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["model"],
+  modelOptions: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["modelOptions"],
 ): string {
   const references = (attachments ?? [])
     .filter((attachment) => attachment.kind === "structured_ref")
@@ -154,7 +156,11 @@ function workspaceTurnInput(
   if (Buffer.byteLength(body, "utf-8") > 64 * 1024) {
     throw new Error("Workspace provider input is too large");
   }
-  return `matrix-turn-v1:${Buffer.from(body, "utf-8").toString("base64")}\r`;
+  const payload = JSON.stringify({ prompt: body, model, modelOptions: modelOptions ?? [] });
+  if (Buffer.byteLength(payload, "utf-8") > 66 * 1024) {
+    throw new Error("Workspace provider input is too large");
+  }
+  return `matrix-turn-v2:${Buffer.from(payload, "utf-8").toString("base64")}\r`;
 }
 
 function statusEvent(input: {
@@ -243,6 +249,8 @@ export function createWorkspaceCodingAgentProvider(
             agent,
             prompt: request.prompt,
             attachments: request.attachments,
+            model: request.model,
+            modelOptions: request.modelOptions,
             projectSlug: request.projectId,
             taskId: request.taskId,
             worktreeId: request.worktreeId,
@@ -292,7 +300,7 @@ export function createWorkspaceCodingAgentProvider(
       signal.throwIfAborted();
       const result = await options.runtime.sendInput(
         sessionId,
-        workspaceTurnInput(turn.message, turn.attachments),
+        workspaceTurnInput(turn.message, turn.attachments, turn.model, turn.modelOptions),
         signal,
       );
       if (!result.ok) throw new Error("Workspace provider turn resume failed");

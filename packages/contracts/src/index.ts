@@ -360,6 +360,13 @@ export const AgentProviderSummarySchema = z.object({
 
 export type AgentProviderSummary = z.infer<typeof AgentProviderSummarySchema>;
 
+export const AgentModelOptionSchema = z.object({
+  id: referenceId(80),
+  value: z.union([referenceId(160), z.boolean()]),
+}).strict();
+
+export type AgentModelOption = z.infer<typeof AgentModelOptionSchema>;
+
 export const CreateAgentThreadRequestSchema = z.object({
   providerId: ProviderIdSchema,
   prompt: boundedText(24_000, 96 * 1024),
@@ -370,6 +377,8 @@ export const CreateAgentThreadRequestSchema = z.object({
   mode: AgentModeSchema.optional(),
   approvalPolicy: ApprovalPolicySchema.optional(),
   sandboxMode: SandboxModeSchema.optional(),
+  model: referenceId(160).optional(),
+  modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
   clientRequestId: RequestIdSchema,
 }).strict();
@@ -387,6 +396,8 @@ export type AdoptAgentThreadRequest = z.infer<typeof AdoptAgentThreadRequestSche
 export const CreateAgentTurnRequestSchema = z.object({
   message: boundedText(24_000, 96 * 1024),
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
+  model: referenceId(160).optional(),
+  modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
   clientRequestId: RequestIdSchema,
 }).strict();
 

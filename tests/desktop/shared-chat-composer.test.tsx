@@ -615,8 +615,8 @@ describe("SharedChatComposer", () => {
 
     expect(promptFlow.className).toContain("border-0");
     expect(promptFlow.className).toContain("ring-0");
-    expect(promptFlow.className).toContain("pt-1");
-    expect(promptFlow.className).not.toContain("pt-3");
+    expect(promptFlow.className).toContain("pt-4");
+    expect(promptFlow.className).not.toContain("pt-1");
   });
 
   it("renders distinct T3-style file type glyphs for TypeScript and JSON references", () => {

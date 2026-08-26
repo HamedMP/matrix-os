@@ -39,7 +39,7 @@ describe("CanonicalChatRoute", () => {
       />,
     );
 
-    expect(await screen.findByRole("region", { name: "Global Chat" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Chats" })).toBeTruthy();
     rerender(
       <CanonicalChatRoute
         api={routeApi}
@@ -48,7 +48,7 @@ describe("CanonicalChatRoute", () => {
         fallback={<div>legacy chat</div>}
       />,
     );
-    expect(screen.getByRole("region", { name: "Global Chat" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Chats" })).toBeTruthy();
   });
 
   it("keeps the legacy route on an older Gateway instead of showing a broken surface", async () => {

@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
+import { AgentModelOptionSchema, CODEX_VERIFIED_VERSION, type AgentModelOption } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 
@@ -38,6 +38,8 @@ export interface AgentLaunchInput {
   agent: SupportedAgent;
   cwd: string;
   prompt?: string;
+  model?: string;
+  modelOptions?: AgentModelOption[];
   mode?: "default" | "plan" | "review" | "full_access";
   sandbox?: AgentLaunchSandbox;
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
@@ -76,7 +78,17 @@ const CodexAppServerConfigSchema = z.object({
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
+  model: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
+  serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
 }).strict();
+
+function modelOption(input: AgentLaunchInput, id: string): string | undefined {
+  const parsed = z.array(AgentModelOptionSchema).max(32).safeParse(input.modelOptions ?? []);
+  if (!parsed.success) throw new Error("Model options are invalid");
+  const value = parsed.data.find((option) => option.id === id)?.value;
+  return typeof value === "string" ? value : undefined;
+}
 
 const AGENTS: Record<SupportedAgent, { command: string; displayName: string }> = {
   claude: { command: "claude", displayName: "Claude" },
@@ -271,6 +283,7 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     permissionMode,
     "--strict-mcp-config",
     "--no-chrome",
+    ...(input.model ? ["--model", input.model] : []),
     ...(input.prompt ? ["--print"] : []),
     ...promptArgs(input.prompt),
   ];
@@ -340,6 +353,9 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
       : input.approvalPolicy ?? "never",
     sandbox: mode,
     writableRoots: mode === "workspace-write" ? sandbox?.writableRoots ?? [] : [],
+    ...(input.model ? { model: input.model } : {}),
+    ...(modelOption(input, "effort") ? { effort: modelOption(input, "effort") } : {}),
+    ...(modelOption(input, "service_tier") ? { serviceTier: modelOption(input, "service_tier") } : {}),
   });
 }
 

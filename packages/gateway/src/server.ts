@@ -663,6 +663,7 @@ export async function createGateway(config: GatewayConfig) {
         workspaceZellijRuntime.sendInput(sessionId, input, signal),
     });
     const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+      homePath,
       projectManager: codingAgentProjectManager,
       worktreeManager: codingAgentWorktreeManager,
       agentSessionManager: codingAgentSessionManager,

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, readdir, unlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { access, lstat, readdir, realpath, unlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   AgentAttachmentSchema,
+  AgentModelOptionSchema,
   type AgentAttachment,
 } from "@matrix-os/contracts";
 import {
@@ -97,12 +98,15 @@ const StartSessionSchema = z.object({
   kind: z.enum(["shell", "agent"]),
   ownerId: z.string().trim().min(1).max(200),
   projectSlug: SlugSchema.optional(),
+  workspaceRoot: z.string().trim().min(1).max(4096).refine(isAbsolute).optional(),
   taskId: TaskIdSchema.optional(),
   worktreeId: WorktreeIdSchema.optional(),
   pr: z.number().int().positive().optional(),
   agent: SupportedAgentSchema.optional(),
   prompt: PromptContentSchema.optional(),
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
+  model: z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
   mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
   approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "never"]).optional(),
   sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
@@ -223,7 +227,33 @@ function sanitizeStartupInput(input: unknown):
   if (parsed.data.worktreeId && !parsed.data.projectSlug) {
     return failure(400, "invalid_session_request", "Worktree sessions require a project");
   }
+  if (parsed.data.workspaceRoot && (parsed.data.projectSlug || parsed.data.worktreeId)) {
+    return failure(400, "invalid_session_request", "Session workspace is invalid");
+  }
   return { ok: true, value: parsed.data };
+}
+
+async function resolveInternalWorkspaceRoot(homePath: string, requestedRoot: string): Promise<string | null> {
+  try {
+    const [homeReal, stats, rootReal] = await Promise.all([
+      realpath(homePath),
+      lstat(requestedRoot),
+      realpath(requestedRoot),
+    ]);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return null;
+    const rel = relative(homeReal, rootReal);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+    return rootReal;
+  } catch (error: unknown) {
+    if (
+      error instanceof Error
+      && "code" in error
+      && ["EACCES", "ENOENT", "ENOTDIR"].includes(String((error as NodeJS.ErrnoException).code))
+    ) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function readAllSessions(homePath: string): Promise<WorkspaceSession[]> {
@@ -298,6 +328,11 @@ export function createAgentSessionManager(options: {
       let cwd = homePath;
       let worktree: WorktreeRecord | null = null;
       let leaseAcquired = false;
+      if (request.workspaceRoot) {
+        const workspaceRoot = await resolveInternalWorkspaceRoot(homePath, request.workspaceRoot);
+        if (!workspaceRoot) return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
+        cwd = workspaceRoot;
+      }
       if (request.projectSlug) {
         const project = await readProject(homePath, request.projectSlug);
         if (!project) return failure(404, "not_found", "Project was not found");
@@ -330,6 +365,8 @@ export function createAgentSessionManager(options: {
             agent: request.agent!,
             cwd,
             prompt: launchPromptWithReferences(request.prompt, request.attachments),
+            model: request.model,
+            modelOptions: request.modelOptions,
             mode: request.mode,
             sandbox: request.sandbox,
             approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),

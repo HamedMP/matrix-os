@@ -5,6 +5,7 @@ import type {
 } from "@matrix-os/contracts";
 import { useCallback } from "react";
 import { toast } from "sonner";
+import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
@@ -24,8 +25,10 @@ function settingsSectionForInstance(
 export function useProviderSetup(
   providers: AgentProviderSummary[],
   onRefresh?: () => Promise<void>,
+  apiOverride?: ApiClient | null,
 ) {
-  const api = useConnection((state) => state.api);
+  const connectionApi = useConnection((state) => state.api);
+  const api = apiOverride === undefined ? connectionApi : apiOverride;
   const openTab = useTabs((state) => state.openTab);
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
 

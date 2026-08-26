@@ -16,8 +16,8 @@ describe("Global Chat resource search", () => {
     }));
 
     await expect(searchHomeChatResources({ get }, "")).resolves.toEqual([
-      { kind: "folder", id: "projects", label: "projects" },
-      { kind: "file", id: "README.md", label: "README.md" },
+      { kind: "folder", id: "projects", label: "projects", path: "projects" },
+      { kind: "file", id: "README.md", label: "README.md", path: "README.md" },
     ]);
     expect(get).toHaveBeenCalledWith("/api/files/list?path=");
   });
@@ -37,6 +37,7 @@ describe("Global Chat resource search", () => {
         kind: "file",
         id: expect.stringMatching(/^file_[a-f0-9]{16}$/),
         label: "apps/games/tetris/src/main.tsx",
+        path: "apps/games/tetris/src/main.tsx",
       },
     ]);
     expect(get).toHaveBeenNthCalledWith(
@@ -56,7 +57,7 @@ describe("Global Chat resource search", () => {
     }));
 
     await expect(searchProjectChatResources({ get }, "matrix-os", "main")).resolves.toEqual([
-      { kind: "file", id: expect.stringMatching(/^file_[a-f0-9]{16}$/), label: "src/main.tsx" },
+      { kind: "file", id: expect.stringMatching(/^file_[a-f0-9]{16}$/), label: "src/main.tsx", path: "src/main.tsx" },
     ]);
     expect(get).toHaveBeenCalledOnce();
     expect(get).toHaveBeenCalledWith(
@@ -70,6 +71,7 @@ describe("Global Chat resource search", () => {
         kind: "folder",
         id: expect.stringMatching(/^folder_[a-f0-9]{16}$/),
         label: "src/features/chat",
+        path: "src/features/chat",
       });
 
     const get = vi.fn(async () => ({
@@ -80,6 +82,7 @@ describe("Global Chat resource search", () => {
         kind: "folder",
         id: expect.stringMatching(/^folder_[a-f0-9]{16}$/),
         label: "src/features/chat",
+        path: "src/features/chat",
       },
     ]);
   });

@@ -24,11 +24,13 @@ export function useCanonicalChatRouteController({
   projectId,
   active,
   initialChatId = null,
+  autoSelectFirst = true,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
   active: boolean;
   initialChatId?: string | null;
+  autoSelectFirst?: boolean;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -63,7 +65,7 @@ export function useCanonicalChatRouteController({
       setStatus("ready");
       setActiveChatId((current) => {
         if (current && page.items.some((record) => record.chat.id === current)) return current;
-        return page.items[0]?.chat.id ?? null;
+        return autoSelectFirst ? page.items[0]?.chat.id ?? null : null;
       });
       if (page.items.length === 0) setDetail(null);
     } catch {
@@ -71,7 +73,7 @@ export function useCanonicalChatRouteController({
       setStatus("error");
       setError("Chats could not be loaded. Try again.");
     }
-  }, [client, projectId]);
+  }, [autoSelectFirst, client, projectId]);
 
   useEffect(() => {
     requestSequence.current += 1;
@@ -84,9 +86,9 @@ export function useCanonicalChatRouteController({
   }, [active, initialChatId, load, projectId]);
 
   useEffect(() => {
-    if (!active || !activeChatId) return;
+    if (!active || !activeChatId || detail?.record.chat.id === activeChatId) return;
     void loadDetail(activeChatId);
-  }, [active, activeChatId, loadDetail]);
+  }, [active, activeChatId, detail?.record.chat.id, loadDetail]);
 
   useEffect(() => {
     if (!active || !activeChatId || !detail?.record.activeRun) return;
@@ -138,7 +140,6 @@ export function useCanonicalChatRouteController({
           ...(projectId === null ? {} : { projectId }),
           currentSelection: input.selection,
         });
-        setActiveChatId(record.chat.id);
         current = {
           record,
           messages: [],
@@ -159,6 +160,7 @@ export function useCanonicalChatRouteController({
         turns: [...current.turns, admitted.turn],
         runs: [...current.runs, admitted.run],
       };
+      setActiveChatId(admitted.record.chat.id);
       setDetail(next);
       setItems((existing) => [
         admitted.record,

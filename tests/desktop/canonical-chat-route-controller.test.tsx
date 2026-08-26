@@ -138,4 +138,87 @@ describe("canonical Chat route controller", () => {
     await waitFor(() => expect(result.current.detail?.record.chat.id).toBe("chat_moved"));
     expect(getDetail).toHaveBeenCalledWith("chat_moved", { limit: 200 });
   });
+
+  it("admits the first Project turn before opening its detail so the optimistic message cannot be replaced by an empty Chat", async () => {
+    const projectRecord = {
+      ...globalRecord,
+      projectId: "project_1",
+      chat: { ...globalRecord.chat, id: "chat_project_new", title: "First project message" },
+    };
+    const admittedRecord = {
+      ...projectRecord,
+      chat: {
+        ...projectRecord.chat,
+        revision: 2,
+        messageCount: 1,
+        lastMessagePreview: "First project message",
+      },
+      activeRun: { runId: "run_project_1", turnId: "turn_project_1", status: "queued" as const },
+    };
+    const message = {
+      id: "message_project_1",
+      chatId: projectRecord.chat.id,
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "First project message" }],
+      createdAt: "2026-08-26T00:00:01.000Z",
+    };
+    const turn = {
+      id: "turn_project_1",
+      chatId: projectRecord.chat.id,
+      messageId: message.id,
+      sequence: 1,
+      status: "queued" as const,
+      createdAt: "2026-08-26T00:00:01.000Z",
+    };
+    const run = {
+      id: "run_project_1",
+      chatId: projectRecord.chat.id,
+      turnId: turn.id,
+      attempt: 1,
+      status: "queued" as const,
+      providerInstanceId: "codex_default",
+      createdAt: "2026-08-26T00:00:01.000Z",
+    };
+    let resolveAdmission!: (value: unknown) => void;
+    const admitTurn = vi.fn(() => new Promise((resolve) => { resolveAdmission = resolve; }));
+    const getDetail = vi.fn(async () => ({
+      record: projectRecord,
+      messages: [],
+      turns: [],
+      runs: [],
+      activities: [],
+    }));
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [] })),
+      create: vi.fn(async () => projectRecord),
+      admitTurn,
+      getDetail,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: "project_1",
+      active: true,
+    }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    let submission!: Promise<unknown>;
+    act(() => {
+      submission = result.current.submitTurn({
+        parts: [{ type: "text", text: "First project message" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      }, "First project message");
+    });
+    await waitFor(() => expect(admitTurn).toHaveBeenCalledTimes(1));
+    expect(getDetail).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveAdmission({ record: admittedRecord, message, turn, run });
+      await submission;
+    });
+    expect(result.current.detail?.messages).toEqual([message]);
+    expect(result.current.detail?.runs).toEqual([run]);
+    expect(result.current.activeChatId).toBe(projectRecord.chat.id);
+  });
 });

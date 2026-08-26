@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, isAbsolute } from "node:path";
+import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
@@ -24,12 +25,16 @@ const MAX_PENDING_REQUESTS = 20;
 const MAX_COMPLETED_REQUESTS = 100;
 const MAX_CONTROL_SOCKETS = 20;
 const MAX_TRACKED_ITEMS = 500;
+const MAX_PENDING_TURNS = 20;
+const MAX_TURN_FRAME_BYTES = 128 * 1024;
 const ASSISTANT_DELTA_FLUSH_CHARS = 256;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const RPC_TIMEOUT_MS = 30 * 1000;
 const CONTROL_SOCKET_TIMEOUT_MS = 2_000;
 const PROVIDER_STOP_TIMEOUT_MS = 5_000;
 const SHUTDOWN_REPLAY_GRACE_MS = 250;
+const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
+const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
 const NativeRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
 const NativeReferenceSchema = z.string().min(1).max(512);
@@ -65,7 +70,24 @@ const RunnerConfigSchema = z.object({
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
+  model: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
+  serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
 }).strict();
+const ModelOptionSchema = z.object({
+  id: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/),
+  value: z.union([
+    z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/),
+    z.boolean(),
+  ]),
+}).strict();
+const PendingTurnSchema = z.object({
+  prompt: z.string().trim().min(1).max(64 * 1024),
+  model: RunnerConfigSchema.shape.model,
+  modelOptions: z.array(ModelOptionSchema).max(32).default([]),
+}).strict();
+const EffortSchema = RunnerConfigSchema.shape.effort;
+const ServiceTierSchema = RunnerConfigSchema.shape.serviceTier;
 const ApprovalRequestSchema = z.object({
   id: NativeRequestIdSchema,
   method: ApprovalMethodSchema,
@@ -256,7 +278,11 @@ const eventFile = await open(
 let transcriptBytes = (await eventFile.stat()).size;
 let stopping = false;
 let activeTurn = false;
-let terminalOutcome;
+let activeTurnOutcome;
+let terminalEventCount = 0;
+let stdinClosed = false;
+let wakeTurn;
+const pendingTurns = [];
 let stopTimer;
 let nextRpcId = 1;
 const pendingRpc = new Map();
@@ -788,16 +814,92 @@ const childExit = new Promise((resolve) => {
   });
 });
 
+function decodeTurnFrame(line) {
+  if (Buffer.byteLength(line, "utf8") > MAX_TURN_FRAME_BYTES) return undefined;
+  const prefix = line.startsWith(TURN_FRAME_V2_PREFIX)
+    ? TURN_FRAME_V2_PREFIX
+    : line.startsWith(TURN_FRAME_V1_PREFIX)
+      ? TURN_FRAME_V1_PREFIX
+      : undefined;
+  if (!prefix) return undefined;
+  const encoded = line.slice(prefix.length);
+  if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return undefined;
+  try {
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.toString("base64") !== encoded) return undefined;
+    const decoded = new TextDecoder("utf8", { fatal: true }).decode(bytes);
+    return prefix === TURN_FRAME_V1_PREFIX
+      ? PendingTurnSchema.safeParse({ prompt: decoded, modelOptions: [] }).data
+      : PendingTurnSchema.safeParse(JSON.parse(decoded)).data;
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function enqueueTurn(line) {
+  const turn = decodeTurnFrame(line);
+  if (!turn || pendingTurns.length >= MAX_PENDING_TURNS) return;
+  pendingTurns.push(turn);
+  wakeTurn?.();
+  wakeTurn = undefined;
+}
+
+function nextTurn() {
+  if (pendingTurns.length > 0) return Promise.resolve(pendingTurns.shift());
+  if (stdinClosed || stopping) return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    wakeTurn = () => resolve(pendingTurns.shift());
+  });
+}
+
+function turnOption(turn, id) {
+  const value = turn.modelOptions.find((option) => option.id === id)?.value;
+  return typeof value === "string" ? value : undefined;
+}
+
+function turnStartParams(threadId, turn) {
+  const effort = EffortSchema.parse(turnOption(turn, "effort"));
+  const serviceTier = ServiceTierSchema.parse(turnOption(turn, "service_tier"));
+  return {
+    threadId,
+    input: [{ type: "text", text: turn.prompt, text_elements: [] }],
+    model: turn.model,
+    effort,
+    serviceTier,
+  };
+}
+
+const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+input.on("line", enqueueTurn);
+input.on("close", () => {
+  stdinClosed = true;
+  wakeTurn?.();
+  wakeTurn = undefined;
+});
+
 function stop() {
   if (stopping) return;
   stopping = true;
+  input.close();
+  wakeTurn?.();
+  wakeTurn = undefined;
   child.kill("SIGTERM");
   stopTimer = setTimeout(() => child.kill("SIGKILL"), PROVIDER_STOP_TIMEOUT_MS);
   stopTimer.unref();
 }
 
 async function finishTurn(outcome) {
-  if (terminalOutcome) return;
+  const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
+    assistantDeltaBuffers.size > 0 ||
+    startedToolItems.size > 0 ||
+    toolItemsWithOutput.size > 0;
+  if (!activeTurn && !hasUnsettledItems) {
+    if (outcome === "failed" && terminalEventCount === 0) {
+      await persist({ type: "turn.failed" });
+      terminalEventCount += 1;
+    }
+    return;
+  }
   activeTurn = false;
   for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
@@ -815,12 +917,34 @@ async function finishTurn(outcome) {
   }
   assistantDeltaBuffers.clear();
   toolItemsWithOutput.clear();
+  await persist({ type: outcome === "completed" ? "turn.completed" : "turn.failed" });
+  terminalEventCount += 1;
+  activeTurnOutcome?.(outcome);
+  activeTurnOutcome = undefined;
+}
+
+async function runTurn(threadId, turn) {
+  if (activeTurn || activeTurnOutcome) throw new Error("provider_turn_overlap");
+  const outcome = new Promise((resolve) => {
+    activeTurnOutcome = resolve;
+  });
+  activeTurn = true;
   try {
-    await persist({ type: outcome === "completed" ? "turn.completed" : "turn.failed" });
-    terminalOutcome = outcome;
-  } finally {
-    stop();
+    await request("turn/start", turnStartParams(threadId, turn));
+  } catch (error) {
+    activeTurn = false;
+    activeTurnOutcome = undefined;
+    throw error;
   }
+  return Promise.race([
+    outcome,
+    childExit.then(async () => {
+      const output = await providerOutput;
+      if (!output.ok) throw output.error;
+      if (!activeTurn) return outcome;
+      throw new Error("provider_stopped_during_turn");
+    }),
+  ]);
 }
 
 const providerOutput = consumeProviderOutput(child.stdout).then(
@@ -840,7 +964,7 @@ const providerErrors = discardProviderErrors(child.stderr).then(
 process.once("SIGTERM", stop);
 process.once("SIGINT", stop);
 
-let exitCode = 1;
+let exitCode = 0;
 try {
   await request("initialize", {
     clientInfo: { name: "matrix-os", title: "Matrix OS", version: "1" },
@@ -848,6 +972,8 @@ try {
   });
   sendProvider({ method: "initialized", params: {} });
   const started = await request("thread/start", {
+    model: config.model,
+    serviceTier: config.serviceTier,
     cwd: process.cwd(),
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
@@ -856,28 +982,51 @@ try {
   });
   const threadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
-  activeTurn = true;
-  await request("turn/start", {
-    threadId,
-    input: [{ type: "text", text: config.prompt, text_elements: [] }],
+  let turn = PendingTurnSchema.parse({
+    prompt: config.prompt,
+    model: config.model,
+    modelOptions: [
+      ...(config.effort ? [{ id: "effort", value: config.effort }] : []),
+      ...(config.serviceTier ? [{ id: "service_tier", value: config.serviceTier }] : []),
+    ],
   });
-  const first = await Promise.race([
-    childExit.then((exit) => ({ type: "exit", exit })),
-    providerOutput.then((result) => ({ type: "output", result })),
-  ]);
-  if (first.type === "output" && !first.result.ok) throw first.result.error;
-  const exit = first.type === "exit" ? first.exit : await childExit;
+  while (turn && !stopping) {
+    const outcome = await runTurn(threadId, turn);
+    if (outcome !== "completed") exitCode = 1;
+    const next = await Promise.race([
+      nextTurn().then((value) => ({ type: "turn", value })),
+      childExit.then((exit) => ({ type: "exit", exit })),
+      providerOutput.then((result) => ({ type: "output", result })),
+    ]);
+    if (next.type === "output") {
+      if (!next.result.ok) throw next.result.error;
+      if (stdinClosed) {
+        stop();
+        break;
+      }
+      throw new Error("provider_transport_closed");
+    }
+    if (next.type === "exit") {
+      if (next.exit.error || next.exit.code !== 0) throw new Error("provider_stopped");
+      break;
+    }
+    turn = next.value;
+    if (!turn) stop();
+  }
+  const exit = await childExit;
   const [outputResult, errorResult] = await Promise.all([providerOutput, providerErrors]);
   if (!outputResult.ok) throw outputResult.error;
   if (!errorResult.ok) throw errorResult.error;
-  if (!terminalOutcome) await finishTurn("failed");
+  if (exit.error) throw exit.error;
   await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_REPLAY_GRACE_MS));
-  exitCode = terminalOutcome === "completed" && !activeTurn && !exit.error ? 0 : 1;
+  if (activeTurn || terminalEventCount === 0) exitCode = 1;
 } catch (_error) {
+  exitCode = 1;
   await finishTurn("failed").catch(() => undefined);
   stop();
   await Promise.allSettled([childExit, providerOutput, providerErrors]);
 } finally {
+  input.close();
   clearInterval(cleanupTimer);
   if (stopTimer) clearTimeout(stopTimer);
   for (const pending of pendingRpc.values()) {

@@ -121,7 +121,11 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({
         driverKind: "hermes",
         availability: "available",
-        setupActions: [],
+        setupActions: [{
+          id: "hermes_settings",
+          kind: "open_settings",
+          label: "Configure Hermes",
+        }],
         defaultSelection: {
           instanceId: "hermes_default",
           model: "anthropic:claude-opus-4-6",
@@ -168,7 +172,7 @@ describe("canonical Chat Provider catalog", () => {
       .toEqual(new Set([catalog.revision]));
   });
 
-  it("keeps Matrix Chat kernel readiness independent from messaging authentication", async () => {
+  it("fails a system harness closed until its own provider authentication is configured", async () => {
     const source: AgentRuntimeSource = async () => {
       const snapshot = await runtimeSource()();
       return {
@@ -187,10 +191,10 @@ describe("canonical Chat Provider catalog", () => {
     const hermes = (await service.getCatalog(principal)).instances
       .find((instance) => instance.id === "hermes_default")!;
 
-    expect(hermes.availability).toBe("available");
-    expect(hermes.defaultSelection?.model).toBe("anthropic:claude-opus-4-6");
+    expect(hermes.availability).toBe("auth_required");
+    expect(hermes.defaultSelection).toBeUndefined();
     expect(hermes.models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ availability: "available" }),
+      expect.objectContaining({ availability: "auth_required" }),
     ]));
   });
 
@@ -247,17 +251,14 @@ describe("canonical Chat Provider catalog", () => {
 
     expect(catalog.instances.find((instance) => instance.id === "codex_default")?.availability)
       .toBe("available");
-    expect(catalog.instances.find((instance) => instance.driverKind === "hermes"))
-      .toMatchObject({
-        availability: "available",
-        models: expect.arrayContaining([expect.objectContaining({ id: "anthropic:claude-opus-4-6" })]),
-      });
+    expect(catalog.instances.find((instance) => instance.driverKind === "hermes")?.availability)
+      .toBe("unavailable");
     expect(catalog.instances.find((instance) => instance.driverKind === "openclaw")?.availability)
       .toBe("unavailable");
     expect(JSON.stringify(catalog)).not.toContain("secret runtime endpoint");
   });
 
-  it("keeps the Matrix Chat kernel catalog separate from external Hermes messaging models", async () => {
+  it("uses only the authenticated Hermes provider/model inventory", async () => {
     const messagingOnly: AgentRuntimeSource = async () => {
       const snapshot = await runtimeSource()(AbortSignal.timeout(1_000));
       return {
@@ -289,13 +290,8 @@ describe("canonical Chat Provider catalog", () => {
     const hermes = (await service.getCatalog(principal)).instances
       .find((instance) => instance.id === "hermes_default")!;
 
-    expect(hermes.models.map((model) => model.id)).toEqual([
-      "anthropic:claude-opus-4-6",
-      "anthropic:claude-sonnet-4-5",
-      "anthropic:claude-haiku-4-5",
-    ]);
-    expect(hermes.defaultSelection?.model).toBe("anthropic:claude-opus-4-6");
-    expect(JSON.stringify(hermes)).not.toContain("gpt-5");
+    expect(hermes.models.map((model) => model.id)).toEqual(["openai:gpt-5"]);
+    expect(hermes.defaultSelection?.model).toBe("openai:gpt-5");
   });
 
   it("keeps the active system runtime when coding inventory fails", async () => {

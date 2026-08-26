@@ -144,7 +144,12 @@ function attachments(input: CanonicalProviderRunInput) {
       }];
     }
     if (part.type === "resource_reference") {
-      return [{ id: part.resource.id, kind: "structured_ref" as const, label: part.resource.label }];
+      return [{
+        id: part.resource.id,
+        kind: "structured_ref" as const,
+        label: part.resource.label,
+        ...(part.resource.path ? { path: part.resource.path } : {}),
+      }];
     }
     return [];
   });
@@ -272,6 +277,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           ...(input.projectSlug ? { projectId: input.projectSlug } : {}),
           ...(input.worktreeId ? { worktreeId: input.worktreeId } : {}),
           mode,
+          model: input.selection.model,
+          modelOptions: input.selection.options ?? [],
           ...permissions(input.permissionMode),
           attachments: attachments(input),
           clientRequestId: legacyRequestId(input.runId),
@@ -301,6 +308,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         await options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
           message: input.prompt,
           attachments: attachments(input),
+          model: input.selection.model,
+          modelOptions: input.selection.options ?? [],
           clientRequestId: requestId,
         });
         const current = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId);

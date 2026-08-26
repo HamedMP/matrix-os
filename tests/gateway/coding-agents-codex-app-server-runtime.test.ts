@@ -388,6 +388,89 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
+  it("keeps one provider thread alive for queued Matrix turns and applies each turn selection", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-turns-"));
+    const fakeCodexPath = join(homePath, "fake-codex-turns.mjs");
+    const requestsPath = join(homePath, "turn-requests.jsonl");
+    const eventPath = codexProviderEventPath(homePath, "sess_turns_1");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { appendFile } from 'node:fs/promises';",
+      "import { createInterface } from 'node:readline';",
+      `const requestsPath = ${JSON.stringify(requestsPath)};`,
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "let turn = 0;",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-turns' }, model: message.params.model, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    turn += 1;",
+      "    await appendFile(requestsPath, JSON.stringify(message.params) + '\\n');",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: `native-turn-${turn}` } } }));",
+      "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: `native-turn-${turn}`, itemId: `native-message-${turn}`, delta: `answer-${turn}` } }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: `native-turn-${turn}`, status: 'completed', items: [] } } }));",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "First turn.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+      model: "gpt-5.6-sol",
+      effort: "low",
+      serviceTier: "fast",
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["pipe", "pipe", "pipe"] });
+    const secondTurn = Buffer.from(JSON.stringify({
+      prompt: "Second turn.",
+      model: "gpt-5.6-terra",
+      modelOptions: [
+        { id: "effort", value: "high" },
+        { id: "service_tier", value: "standard" },
+      ],
+    }), "utf8").toString("base64");
+    child.stdin?.end(`matrix-turn-v2:${secondTurn}\n`);
+
+    try {
+      await expect(waitForExit(child)).resolves.toBe(0);
+      const requests = (await readFile(requestsPath, "utf8"))
+        .trim().split("\n").map((line) => JSON.parse(line));
+      expect(requests).toHaveLength(2);
+      expect(requests[0]).toMatchObject({
+        threadId: "native-thread-turns",
+        input: [{ type: "text", text: "First turn.", text_elements: [] }],
+        model: "gpt-5.6-sol",
+        effort: "low",
+        serviceTier: "fast",
+      });
+      expect(requests[1]).toMatchObject({
+        threadId: "native-thread-turns",
+        input: [{ type: "text", text: "Second turn.", text_elements: [] }],
+        model: "gpt-5.6-terra",
+        effort: "high",
+        serviceTier: "standard",
+      });
+      const transcript = await readFile(eventPath, "utf8");
+      expect(transcript.match(/"type":"turn.completed"/g)).toHaveLength(2);
+      expect(transcript).toContain("answer-1");
+      expect(transcript).toContain("answer-2");
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("persists a generic failure and removes the control socket when the provider exits", async () => {
     const homePath = await mkdtemp(join("/tmp", "codex-exit-"));
     const fakeCodexPath = join(homePath, "fake-codex-exit.mjs");

@@ -68,6 +68,8 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
       providerId: "codex",
       projectId: "matrix-os",
       worktreeId: "wt_feature",
+      model: "gpt-5.6-sol",
+      modelOptions: [],
       mode: "default",
       approvalPolicy: "on_request",
       sandboxMode: "workspace_write",

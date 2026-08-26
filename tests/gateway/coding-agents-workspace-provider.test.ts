@@ -164,10 +164,14 @@ printf 'bash-args=%s\\n' "$*" >> "$MATRIX_TEST_TRACE"
 printf 'bash-prompt=%s\\n' "\${MATRIX_TERMINAL_PROMPT:-}" >> "$MATRIX_TEST_TRACE"
 exit 0
 `);
+      await writeFile(join(runtimeBin, "sh"), `#!/bin/sh
+exec /bin/sh "$@"
+`);
       await Promise.all([
         chmod(wrapperPath, 0o700),
         chmod(join(runtimeBin, "codex"), 0o700),
         chmod(join(runtimeBin, "bash"), 0o700),
+        chmod(join(runtimeBin, "sh"), 0o700),
       ]);
 
       await execFileAsync("/bin/bash", [
@@ -181,6 +185,7 @@ exit 0
           MATRIX_NODE_PREFIX: join(testDir, "runtime"),
           MATRIX_TERMINAL_PROMPT: "owner-handle:\\w$ ",
           MATRIX_TEST_TRACE: tracePath,
+          PATH: runtimeBin,
           SHELL: join(runtimeBin, "bash"),
         },
       });
@@ -557,7 +562,10 @@ exit 0
     expect(resumeState).toEqual({ conversationId: "sess_workspace_1" });
     expect(sendInput).toHaveBeenCalledWith(
       "sess_workspace_1",
-      `matrix-turn-v1:${Buffer.from("Continue with the tests.", "utf-8").toString("base64")}\r`,
+      `matrix-turn-v2:${Buffer.from(JSON.stringify({
+        prompt: "Continue with the tests.",
+        modelOptions: [],
+      }), "utf-8").toString("base64")}\r`,
       signal,
     );
     expect(resumed).toMatchObject({

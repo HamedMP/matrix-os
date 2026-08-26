@@ -30,6 +30,10 @@ export const CanonicalChatMessageIdSchema = prefixedId("msg_");
 export const CanonicalChatRequestIdSchema = prefixedId("req_");
 export const CanonicalProviderInstanceIdSchema = canonicalReferenceId(128);
 export const CanonicalChatAttachmentKindSchema = z.enum(["file", "image", "diff", "structured_ref"]);
+const CanonicalChatRelativePathSchema = z.string()
+  .min(1)
+  .max(4096)
+  .regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\\\u0000\r\n]+$/);
 
 export const CanonicalOwnerScopeSchema = z.discriminatedUnion("type", [
   z.object({
@@ -83,8 +87,13 @@ export const CanonicalChatResourceReferenceSchema = z.object({
   kind: CanonicalChatResourceKindSchema,
   id: canonicalReferenceId(160),
   label: canonicalSafeLabel(280, 1_120),
+  path: CanonicalChatRelativePathSchema.optional(),
   revision: canonicalReferenceId(160).optional(),
-}).strict();
+}).strict().superRefine((resource, context) => {
+  if (resource.path && resource.kind !== "file" && resource.kind !== "folder") {
+    context.addIssue({ code: "custom", path: ["path"], message: "Only file and folder resources may include a path" });
+  }
+});
 
 export const CanonicalChatCollaborationSchema = z.object({
   mode: z.enum(["private", "shared"]),

@@ -506,6 +506,7 @@ describe("agent-launcher", () => {
       agent: "claude",
       cwd,
       prompt: "fix the tests",
+      model: "claude-sonnet-4-5",
       approvalPolicy: "on-request",
       sandbox: { enabled: true, mode: "workspace-write", writableRoots: [cwd, scratch] },
     });
@@ -519,6 +520,8 @@ describe("agent-launcher", () => {
       "dontAsk",
       "--strict-mcp-config",
       "--no-chrome",
+      "--model",
+      "claude-sonnet-4-5",
       "--print",
       "--",
       "fix the tests",
