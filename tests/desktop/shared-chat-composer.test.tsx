@@ -705,7 +705,22 @@ describe("SharedChatComposer", () => {
 
     const token = screen.getByTestId("composer-reference-token-file-src-index");
     fireEvent.doubleClick(token);
-    expect(window.getSelection()?.toString()).toBe("src/index.ts");
+    await waitFor(() => expect(token.getAttribute("data-selected")).toBe("true"));
+
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Message chat" }), {
+      key: "c",
+      code: "KeyC",
+      metaKey: true,
+    });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("src/index.ts"));
+    if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
 
     const clipboard = new Map<string, string>();
     const setData = vi.fn((type: string, value: string) => clipboard.set(type, value));
@@ -720,7 +735,7 @@ describe("SharedChatComposer", () => {
     render(<Harness initialValue="" />);
     const target = screen.getByRole("textbox", { name: "Message chat" });
     fireEvent.paste(target, {
-      clipboardData: { getData: (type: string) => clipboard.get(type) ?? "" },
+      clipboardData: { getData: (type: string) => type === "text/plain" ? "src/index.ts" : "" },
     });
 
     await waitFor(() => expect(target.textContent).toBe("src/index.ts"));

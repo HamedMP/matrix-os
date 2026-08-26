@@ -5,6 +5,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
+import { useLexicalNodeSelection } from "@lexical/react/useLexicalNodeSelection";
 import {
   $applyNodeReplacement,
   $createNodeSelection,
@@ -24,6 +25,7 @@ import {
   KEY_ARROW_UP_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
+  KEY_MODIFIER_COMMAND,
   PASTE_COMMAND,
   SKIP_SCROLL_INTO_VIEW_TAG,
   type EditorState,
@@ -65,6 +67,16 @@ const COMPOSER_CLIPBOARD_MIME = "application/x-matrix-chat-composer+json";
 const MAX_CLIPBOARD_VALUE_LENGTH = 100_000;
 const MAX_CLIPBOARD_TOKENS = 100;
 
+type ComposerClipboardPayload = {
+  value: string;
+  tokens: ComposerReferenceToken[];
+};
+
+let recentStructuredComposerClipboard: {
+  plainText: string;
+  payload: ComposerClipboardPayload;
+} | null = null;
+
 function visibleComposerReferenceToken(token: ComposerReferenceToken): string {
   return token.type === "invocation" ? token.invocation.invocation : token.resource.label;
 }
@@ -104,8 +116,39 @@ function parseComposerClipboardPayload(raw: string): {
   }
 }
 
+function $selectedComposerClipboard(): {
+  plainText: string;
+  payload?: ComposerClipboardPayload;
+} | null {
+  const selection = $getSelection();
+  if ($isNodeSelection(selection)) {
+    const tokenNodes = selection.getNodes().filter(
+      (node): node is ComposerTokenNode => node instanceof ComposerTokenNode,
+    );
+    if (tokenNodes.length === 0) return null;
+    const selectedTokens = tokenNodes.map((node) => node.__token);
+    return {
+      plainText: selectedTokens.map(visibleComposerReferenceToken).join(""),
+      payload: {
+        value: selectedTokens.map(serializeComposerReferenceToken).join(""),
+        tokens: selectedTokens,
+      },
+    };
+  }
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) return null;
+  const plainText = selection.getTextContent();
+  if (!plainText) return null;
+  return {
+    plainText,
+    payload: plainText === $getRoot().getTextContent()
+      ? { value: $serializePrompt(), tokens: collectTokens($getRoot()) }
+      : undefined,
+  };
+}
+
 function ComposerToken({ token, nodeKey }: { token: ComposerReferenceToken; nodeKey: NodeKey }) {
   const [editor] = useLexicalComposerContext();
+  const [isSelected] = useLexicalNodeSelection(nodeKey);
   const kind = token.type === "invocation" ? token.invocation.kind : token.resource.kind;
   const id = token.type === "invocation" ? token.invocation.descriptorId : token.resource.id;
   const label = token.type === "invocation" ? token.invocation.invocation : token.resource.label;
@@ -116,8 +159,9 @@ function ComposerToken({ token, nodeKey }: { token: ComposerReferenceToken; node
       aria-label={label}
       data-slot="composer-reference-token"
       data-reference-kind={kind}
+      data-selected={isSelected ? "true" : undefined}
       data-testid={`composer-reference-token-${kind}-${id}`}
-      className="relative mx-px inline-flex max-w-64 select-text items-baseline gap-1 align-baseline text-md leading-relaxed font-medium"
+      className={`relative mx-px inline-flex max-w-64 select-text items-baseline gap-1 rounded-[3px] align-baseline text-md leading-relaxed font-medium ${isSelected ? "bg-[var(--bg-hover)]" : ""}`}
       style={{ color: "var(--accent)" }}
       onDoubleClick={(event) => {
         event.preventDefault();
@@ -126,12 +170,6 @@ function ComposerToken({ token, nodeKey }: { token: ComposerReferenceToken; node
           nodeSelection.add(nodeKey);
           $setSelection(nodeSelection);
         });
-        const selection = window.getSelection();
-        if (!selection) return;
-        const range = document.createRange();
-        range.selectNodeContents(event.currentTarget);
-        selection.removeAllRanges();
-        selection.addRange(range);
       }}
     >
       <span data-slot="composer-reference-token-icon" className="inline-flex shrink-0 self-center items-center justify-center">
@@ -435,40 +473,49 @@ function ComposerPromptEditorInner({
   useEffect(() => {
     const unregisterCopy = editor.registerCommand(COPY_COMMAND, (event) => {
       if (!event || !("clipboardData" in event) || !event.clipboardData) return false;
-      const selection = $getSelection();
-      if ($isNodeSelection(selection)) {
-        const tokenNodes = selection.getNodes().filter(
-          (node): node is ComposerTokenNode => node instanceof ComposerTokenNode,
-        );
-        if (tokenNodes.length === 0) return false;
-        const selectedTokens = tokenNodes.map((node) => node.__token);
-        const visibleText = selectedTokens.map(visibleComposerReferenceToken).join("");
-        event.preventDefault();
-        event.clipboardData.setData("text/plain", visibleText);
-        event.clipboardData.setData(COMPOSER_CLIPBOARD_MIME, JSON.stringify({
-          version: 1,
-          value: selectedTokens.map(serializeComposerReferenceToken).join(""),
-          tokens: selectedTokens,
-        }));
-        return true;
-      }
-      if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-      const text = selection.getTextContent();
-      if (!text) return false;
+      const selected = $selectedComposerClipboard();
+      if (!selected) return false;
       event.preventDefault();
-      event.clipboardData.setData("text/plain", text);
-      if (text === $getRoot().getTextContent()) {
+      event.clipboardData.setData("text/plain", selected.plainText);
+      if (selected.payload) {
+        recentStructuredComposerClipboard = {
+          plainText: selected.plainText,
+          payload: selected.payload,
+        };
         event.clipboardData.setData(COMPOSER_CLIPBOARD_MIME, JSON.stringify({
           version: 1,
-          value: $serializePrompt(),
-          tokens: collectTokens($getRoot()),
+          ...selected.payload,
         }));
+      } else {
+        recentStructuredComposerClipboard = null;
       }
+      return true;
+    }, COMMAND_PRIORITY_HIGH);
+    const unregisterModifier = editor.registerCommand(KEY_MODIFIER_COMMAND, (event) => {
+      if (
+        event.altKey
+        || (!event.metaKey && !event.ctrlKey)
+        || event.key.toLowerCase() !== "c"
+        || !navigator.clipboard?.writeText
+      ) return false;
+      const selected = $selectedComposerClipboard();
+      if (!selected) return false;
+      event.preventDefault();
+      recentStructuredComposerClipboard = selected.payload
+        ? { plainText: selected.plainText, payload: selected.payload }
+        : null;
+      void navigator.clipboard.writeText(selected.plainText).catch(() => {
+        recentStructuredComposerClipboard = null;
+      });
       return true;
     }, COMMAND_PRIORITY_HIGH);
     const unregisterPaste = editor.registerCommand(PASTE_COMMAND, (event) => {
       if (!("clipboardData" in event) || !event.clipboardData) return false;
-      const payload = parseComposerClipboardPayload(event.clipboardData.getData(COMPOSER_CLIPBOARD_MIME));
+      const plainText = event.clipboardData.getData("text/plain");
+      const payload = parseComposerClipboardPayload(event.clipboardData.getData(COMPOSER_CLIPBOARD_MIME))
+        ?? (recentStructuredComposerClipboard?.plainText === plainText
+          ? recentStructuredComposerClipboard.payload
+          : null);
       if (!payload) return false;
       event.preventDefault();
       let selection = $getSelection();
@@ -484,6 +531,7 @@ function ComposerPromptEditorInner({
     }, COMMAND_PRIORITY_HIGH);
     return () => {
       unregisterPaste();
+      unregisterModifier();
       unregisterCopy();
     };
   }, [editor]);
