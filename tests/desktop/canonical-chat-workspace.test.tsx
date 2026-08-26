@@ -41,6 +41,7 @@ function client(): CanonicalChatClient {
     })),
     create: vi.fn(),
     updateProject: vi.fn(),
+    delete: vi.fn(),
     admitTurn: vi.fn(),
     cancelRun: vi.fn(),
     retryTurn: vi.fn(),
@@ -103,6 +104,33 @@ describe("CanonicalChatWorkspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(await screen.findByRole("button", { name: "Add files and more" })).toBeTruthy();
+  });
+
+  it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
+    const chatClient = client();
+    vi.mocked(chatClient.delete).mockResolvedValue({
+      chatId: record.chat.id,
+      deletedAt: "2026-08-26T12:00:00.000Z",
+    });
+    render(
+      <CanonicalChatWorkspace
+        client={chatClient}
+        projectId={null}
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const row = await screen.findByRole("button", { name: snapshot.chat.title });
+    fireEvent.mouseEnter(row.parentElement!);
+    fireEvent.click(screen.getByRole("button", { name: `Delete ${snapshot.chat.title}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
+
+    await waitFor(() => expect(chatClient.delete).toHaveBeenCalledWith(
+      record.chat.id,
+      expect.stringMatching(/^req_/),
+    ));
+    await waitFor(() => expect(screen.queryByRole("button", { name: snapshot.chat.title })).toBeNull());
   });
 
   it("shows a compact loading status without an empty outlined Chat-list panel", async () => {

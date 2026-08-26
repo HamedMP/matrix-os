@@ -74,6 +74,7 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalUpdateChatProjectRequest,
   ): Promise<CanonicalChatRecord>;
+  delete(owner: ChatOwner, chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   list(owner: ChatOwner, input: {
     limit: number;
     lifecycle?: "active" | "archived";
@@ -177,6 +178,20 @@ export function createCanonicalChatRoutes(options: {
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
   const cancelBodyLimit = bodyLimit({ maxSize: CHAT_CANCEL_BODY_LIMIT, onError: bodyTooLarge });
   const updateBodyLimit = bodyLimit({ maxSize: CHAT_UPDATE_BODY_LIMIT, onError: bodyTooLarge });
+
+  routes.delete("/api/chats/:chatId", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const clientRequestId = z.string().trim().min(1).max(128).parse(context.req.query("clientRequestId"));
+      return context.json(await options.service.delete(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        clientRequestId,
+      ));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
 
   routes.post("/api/chats", createBodyLimit, async (context) => {
     try {

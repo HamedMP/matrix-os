@@ -65,6 +65,7 @@ export interface CodingModelCatalogProjection {
 
 export interface ChatProviderCatalogService {
   getCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
+  refresh(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
 }
 
 export class ProviderCatalogUnavailableError extends Error {
@@ -122,6 +123,25 @@ function codingSupports(
 }
 
 function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[] {
+  if (codingDriverKind(provider) === "claude_code") {
+    const availability = provider.availability === "available"
+      ? "available" as const
+      : provider.availability === "auth_required"
+        ? "auth_required" as const
+        : "unavailable" as const;
+    return [
+      ["default", "Claude default"],
+      ["opus", "Claude Opus"],
+      ["sonnet", "Claude Sonnet"],
+    ].map(([id, displayName]) => ({
+      id: id!,
+      displayName: displayName!,
+      availability,
+      capabilities: ["reasoning", "tools", "vision"],
+      supportsVision: true,
+      supportsToolUse: true,
+    }));
+  }
   const parsedModel = provider.defaultModel === undefined
     ? null
     : CanonicalChatModelSelectionSchema.shape.model.safeParse(provider.defaultModel);
@@ -142,12 +162,16 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
 }
 
 function codingOptions(provider: AgentProviderSummary): CanonicalProviderOptionDescriptor[] {
-  if (codingDriverKind(provider) !== "codex") return [];
+  const driverKind = codingDriverKind(provider);
+  if (driverKind !== "codex" && driverKind !== "claude_code") return [];
+  const efforts = driverKind === "claude_code"
+    ? ["low", "medium", "high", "max"]
+    : ["low", "medium", "high", "xhigh", "max", "ultra"];
   return [{
     id: "effort",
     label: "Reasoning",
     kind: "enum",
-    values: ["low", "medium", "high", "xhigh", "max", "ultra"].map((value) => ({
+    values: efforts.map((value) => ({
       value,
       label: value === "xhigh" ? "Extra high" : value.charAt(0).toUpperCase() + value.slice(1),
     })),
@@ -267,7 +291,7 @@ function systemSupports(): CanonicalProviderSupport {
     worktrees: "none",
     resources: ["file", "folder", "project", "task", "app", "terminal_session"],
     interactionModes: ["default"],
-    permissionModes: ["supervised", "auto_accept_edits", "auto", "full_access"],
+    permissionModes: ["full_access"],
   };
 }
 
@@ -375,7 +399,7 @@ function systemInstance(input: {
     availability,
     workspaceRequirement: "none",
     models,
-    options: availability === "available" ? systemOptions(input.kind, input.providers) : [],
+    options: [],
     skills: input.skills,
     commands: [],
     setupActions: systemSetupActions(input.runtime),
@@ -395,8 +419,9 @@ function catalogRevision(drivers: unknown, instances: unknown): string {
 }
 
 export function createChatProviderCatalogService(options: {
-  codingProviders: Pick<CodingAgentProviderRegistry, "listProviders">;
+  codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
+  executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   runtimeTimeoutMs?: number;
   skillsSource?: () => Array<{ name: string; description: string }>;
   codingModelCatalogSource?: (
@@ -404,7 +429,12 @@ export function createChatProviderCatalogService(options: {
     principal: RequestPrincipal,
   ) => Promise<CodingModelCatalogProjection | null>;
 }): ChatProviderCatalogService {
-  return {
+  const service: ChatProviderCatalogService = {
+    async refresh(principal) {
+      options.codingProviders.invalidate(principal.userId);
+      options.agentRuntimeSource.invalidate?.();
+      return service.getCatalog(principal);
+    },
     async getCatalog(principal) {
       const [codingResult, runtimeResult] = await Promise.allSettled([
         options.codingProviders.listProviders(principal),
@@ -463,7 +493,19 @@ export function createChatProviderCatalogService(options: {
         codingInstances.find((instance) => instance.driverKind === kind)
           ?? unavailableCodingInstance(kind, skills, codingResult.status === "fulfilled")
       );
-      const instances = [...systemInstances, ...completeCodingInstances];
+      const executableDriverKinds = options.executableDriverKinds;
+      const instances = [...systemInstances, ...completeCodingInstances].map((instance) => (
+        executableDriverKinds === undefined || executableDriverKinds.includes(instance.driverKind)
+          ? instance
+          : {
+              ...instance,
+              availability: "unavailable" as const,
+              models: [],
+              options: [],
+              setupActions: [],
+              defaultSelection: undefined,
+            }
+      ));
       const driverKinds = [...SYSTEM_DRIVERS, ...CODING_DRIVERS];
       const drivers = driverKinds.map((kind) => ({
         kind,
@@ -486,6 +528,7 @@ export function createChatProviderCatalogService(options: {
       return parsed.data;
     },
   };
+  return service;
 }
 
 interface ProviderSelectionRequirements {

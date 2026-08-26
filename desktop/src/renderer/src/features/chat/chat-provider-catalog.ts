@@ -21,13 +21,17 @@ export function failClosedProviderCatalog(
 
 export async function fetchCanonicalProviderCatalog(
   api: Pick<ApiClient, "get">,
+  refresh = false,
 ): Promise<CanonicalProviderCatalog> {
-  return CanonicalProviderCatalogSchema.parse(await api.get<unknown>("/api/chat-providers"));
+  return CanonicalProviderCatalogSchema.parse(await api.get<unknown>(
+    refresh ? "/api/chat-providers?refresh=true" : "/api/chat-providers",
+  ));
 }
 
 export function useChatProviderCatalog(
   fallback: CanonicalProviderCatalog,
   apiOverride?: Pick<ApiClient, "get"> | null,
+  refreshKey?: unknown,
 ): {
   catalog: CanonicalProviderCatalog;
   status: "fallback" | "loading" | "ready" | "error";
@@ -48,7 +52,7 @@ export function useChatProviderCatalog(
       };
     }
     setState({ catalog: fallback, status: "loading" });
-    void fetchCanonicalProviderCatalog(api).then((catalog) => {
+    const update = (refresh = false) => void fetchCanonicalProviderCatalog(api, refresh).then((catalog) => {
       if (!cancelled) setState({ catalog, status: "ready" });
     }).catch((error: unknown) => {
       console.warn(
@@ -57,10 +61,19 @@ export function useChatProviderCatalog(
       );
       if (!cancelled) setState({ catalog: fallback, status: "error" });
     });
+    update(refreshKey !== undefined);
+    const refresh = () => update(true);
+    window.addEventListener("focus", refresh);
+    const visibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", visibility);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visibility);
     };
-  }, [api, fallback]);
+  }, [api, fallback, refreshKey]);
 
   return state;
 }

@@ -1,5 +1,5 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { MessageSquare, Search, X } from "lucide-react";
+import { MessageSquare, Search, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
 function activityLabel(timestamp: string): string {
@@ -21,6 +21,7 @@ export function CanonicalChatIndex({
   onQueryChange,
   onSearch,
   onSelect,
+  onDelete,
   onNewChat,
 }: {
   items: CanonicalChatRecord[];
@@ -30,6 +31,7 @@ export function CanonicalChatIndex({
   onQueryChange: (query: string) => void;
   onSearch: (query: string) => void;
   onSelect: (chatId: string) => void;
+  onDelete: (record: CanonicalChatRecord) => void;
   onNewChat: () => void;
 }) {
   const [searchOpen, setSearchOpen] = useState(query.length > 0);
@@ -88,13 +90,18 @@ export function CanonicalChatIndex({
         {items.length > 0 ? (
           <div data-chat-index-list className="pb-4">
             {items.map((record) => (
-              <button key={record.chat.id} type="button" aria-label={record.chat.title} className="flex h-16 w-full items-center gap-6 border-b px-4 text-left last:border-b-0 hover:bg-[var(--bg-hover)]" style={{ borderColor: "var(--border-subtle)" }} onClick={() => onSelect(record.chat.id)}>
-                <span className="min-w-0 flex-1 truncate text-base font-medium" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
-                <span className="flex shrink-0 items-center gap-4">
-                  <span className="rounded-full border px-2 py-1 text-xs font-medium capitalize" style={{ borderColor: "var(--border-default)", color: "var(--text-tertiary)" }}>{record.providerBinding?.driverKind?.replace("_", " ") ?? "Chat"}</span>
-                  <time className="w-[110px] shrink-0 text-right text-[13px]" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>{activityLabel(record.chat.updatedAt)}</time>
-                </span>
-              </button>
+              <div key={record.chat.id} className="group flex h-16 w-full items-center border-b last:border-b-0 hover:bg-[var(--bg-hover)]" style={{ borderColor: "var(--border-subtle)" }}>
+                <button type="button" aria-label={record.chat.title} className="flex min-w-0 flex-1 items-center gap-6 self-stretch px-4 text-left last:border-b-0" onClick={() => onSelect(record.chat.id)}>
+                  <span className="min-w-0 flex-1 truncate text-base font-medium" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
+                  <span className="flex shrink-0 items-center gap-4">
+                    <span className="rounded-full border px-2 py-1 text-xs font-medium capitalize" style={{ borderColor: "var(--border-default)", color: "var(--text-tertiary)" }}>{record.providerBinding?.driverKind?.replace("_", " ") ?? "Chat"}</span>
+                    <time className="w-[110px] shrink-0 text-right text-[13px]" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>{activityLabel(record.chat.updatedAt)}</time>
+                  </span>
+                </button>
+                <button type="button" aria-label={`Delete ${record.chat.title}`} className="mr-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-0 focus-visible:opacity-100 group-hover:opacity-100 hover:bg-[var(--danger-muted)]" style={{ color: "var(--danger)" }} onClick={() => onDelete(record)}>
+                  <Trash2 size={15} aria-hidden />
+                </button>
+              </div>
             ))}
           </div>
         ) : null}

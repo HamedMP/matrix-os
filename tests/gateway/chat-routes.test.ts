@@ -40,6 +40,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
   return {
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
+    delete: vi.fn(async () => ({ chatId: record.chat.id, deletedAt: record.chat.updatedAt })),
     list: vi.fn(async () => ({ items: [record] })),
     search: vi.fn(async () => ({ items: [record] })),
     getDetail: vi.fn(async () => ({
@@ -140,6 +141,24 @@ describe("canonical Chat routes", () => {
       body: JSON.stringify({ baseRevision: 0, projectId: null, ownerId: "other" }),
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("deletes an owned Chat with an idempotency key", async () => {
+    const remove = vi.fn(async () => ({
+      chatId: record.chat.id,
+      deletedAt: "2026-08-26T12:00:00.000Z",
+    }));
+    const response = await appFor(routeService({ delete: remove })).request(
+      "/api/chats/chat_route_test?clientRequestId=req_route_delete",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(remove).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "req_route_delete",
+    );
   });
 
   it("returns safe conflict semantics for stale revisions and active Runs", async () => {

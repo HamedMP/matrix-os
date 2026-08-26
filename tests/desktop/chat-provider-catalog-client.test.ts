@@ -23,6 +23,19 @@ describe("Desktop canonical Provider catalog client", () => {
     expect(api.get).toHaveBeenCalledWith("/api/chat-providers");
   });
 
+  it("can force a live provider refresh after terminal configuration", async () => {
+    const catalog = CanonicalProviderCatalogSchema.parse({
+      revision: "catalog_refreshed",
+      drivers: [],
+      instances: [],
+    });
+    const api = apiReturning(catalog);
+
+    await fetchCanonicalProviderCatalog(api, true);
+
+    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true");
+  });
+
   it("rejects malformed gateway data instead of projecting it into controls", async () => {
     const api = apiReturning({ revision: "catalog_bad", drivers: [], instances: "secret" });
     await expect(fetchCanonicalProviderCatalog(api)).rejects.toThrow();

@@ -1,103 +1,107 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
-import type { Dispatcher } from "../../packages/gateway/src/dispatcher.js";
 
-const owner = { type: "personal" as const, ownerId: "owner_hermes" };
+class FakeStream extends EventEmitter {}
 
-function input(overrides: Record<string, unknown> = {}) {
-  return {
-    owner,
-    chatId: "chat_hermes",
-    turnId: "cturn_hermes",
-    runId: "run_hermes",
-    prompt: "hello",
-    parts: [{ type: "text" as const, text: "hello" }],
-    selection: {
-      instanceId: "hermes_default",
-      model: "anthropic:claude-opus-4-6",
-      options: [{ id: "effort", value: "high" }],
-    },
-    interactionMode: "default",
-    permissionMode: "supervised",
-    executionRoot: "/safe/project",
-    signal: new AbortController().signal,
-    ...overrides,
+function child(stdoutText: string, exitCode = 0) {
+  const stdout = new FakeStream();
+  const stderr = new FakeStream();
+  const process = new EventEmitter() as EventEmitter & {
+    stdout: FakeStream;
+    stderr: FakeStream;
+    kill: ReturnType<typeof vi.fn>;
   };
+  process.stdout = stdout;
+  process.stderr = stderr;
+  process.kill = vi.fn();
+  queueMicrotask(() => {
+    stdout.emit("data", Buffer.from(stdoutText));
+    process.emit("exit", exitCode, null);
+  });
+  return process;
 }
 
+const baseInput = {
+  owner: { type: "personal" as const, ownerId: "owner_hermes" },
+  chatId: "chat_hermes",
+  turnId: "cturn_hermes",
+  runId: "run_hermes",
+  prompt: "hello",
+  parts: [{ type: "text" as const, text: "hello" }],
+  selection: { instanceId: "hermes_default", model: "openai-codex:gpt-5.6-luna" },
+  interactionMode: "default",
+  permissionMode: "full_access",
+  executionRoot: "/safe/project",
+  signal: new AbortController().signal,
+};
+
 describe("Hermes canonical Chat Provider adapter", () => {
-  it("normalizes Matrix kernel events and persists only opaque resume state", async () => {
-    const dispatch = vi.fn<Dispatcher["dispatch"]>(async (_message, _sessionId, onEvent, context, _abort, overrides) => {
-      expect(context).toEqual({ chatId: "chat_hermes" });
-      expect(overrides).toEqual({
-        model: "claude-opus-4-6",
-        effort: "high",
-        workingDirectory: "/safe/project",
-      });
-      await onEvent({ type: "init", sessionId: "native_session" });
-      await onEvent({ type: "text", text: "hello" });
-      await onEvent({ type: "tool_start", tool: "Read" });
-      await onEvent({ type: "tool_end" });
-      await onEvent({
-        type: "result",
-        data: { sessionId: "native_session", result: "hello", cost: 0, turns: 1, tokensIn: 1, tokensOut: 1 },
-      });
+  it("runs the actual configured Hermes provider/model instead of Matrix kernel", async () => {
+    const spawnFn = vi.fn(() => child("hello from hermes"));
+    const readUsageFile = vi.fn(async () => ({ session_id: "hermes_session" }));
+    const cleanupUsageFile = vi.fn(async () => undefined);
+    const adapter = createHermesChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn,
+      createUsageFile: vi.fn(async () => ({ directory: "/tmp/hermes-run", path: "/tmp/hermes-run/usage.json" })),
+      readUsageFile,
+      cleanupUsageFile,
     });
-    const adapter = createHermesChatProviderAdapter({ dispatcher: { dispatch } as Pick<Dispatcher, "dispatch"> });
 
     const events = [];
-    for await (const event of adapter.start(input())) events.push(event);
+    for await (const event of adapter.start(baseInput)) events.push(event);
 
+    const [command, args, options] = spawnFn.mock.calls[0]!;
+    expect(command).toBe("hermes");
+    expect(args).toEqual(expect.arrayContaining([
+      "-z", "hello",
+      "--provider", "openai-codex",
+      "--model", "gpt-5.6-luna",
+      "--usage-file", "/tmp/hermes-run/usage.json",
+      "--yolo",
+    ]));
+    expect(options).toMatchObject({ cwd: "/safe/project" });
     expect(events).toEqual([
-      { type: "state.updated", state: { sessionId: "native_session" } },
-      { type: "assistant.delta", delta: "hello" },
-      { type: "tool.progress", toolCallId: "kernel_tool_1", label: "Read", status: "running" },
-      { type: "tool.progress", toolCallId: "kernel_tool_1", label: "Read", status: "completed" },
+      { type: "assistant.delta", delta: "hello from hermes" },
+      { type: "state.updated", state: { sessionId: "hermes_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
-    expect(adapter.parseState(adapter.serializeState({ sessionId: "native_session" })))
-      .toEqual({ sessionId: "native_session" });
+    expect(cleanupUsageFile).toHaveBeenCalledWith("/tmp/hermes-run");
   });
 
-  it("resumes only the same bounded session and rejects non-kernel model selections", async () => {
-    const dispatch = vi.fn<Dispatcher["dispatch"]>(async (_message, sessionId, onEvent) => {
-      expect(sessionId).toBe("native_resume");
-      await onEvent({ type: "aborted" });
+  it("resumes only the persisted Hermes session", async () => {
+    const spawnFn = vi.fn(() => child("continued"));
+    const adapter = createHermesChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn,
+      createUsageFile: vi.fn(async () => ({ directory: "/tmp/hermes-run", path: "/tmp/hermes-run/usage.json" })),
+      readUsageFile: vi.fn(async () => ({ session_id: "hermes_session" })),
+      cleanupUsageFile: vi.fn(async () => undefined),
     });
-    const adapter = createHermesChatProviderAdapter({ dispatcher: { dispatch } as Pick<Dispatcher, "dispatch"> });
-
     const events = [];
     for await (const event of adapter.resume!({
-      ...input(),
-      resumeState: { sessionId: "native_resume" },
+      ...baseInput,
+      resumeState: { sessionId: "hermes_session" },
     })) events.push(event);
-    expect(events).toEqual([{ type: "run.completed", outcome: "aborted" }]);
 
-    await expect(async () => {
-      for await (const _event of adapter.start(input({
-        selection: { instanceId: "hermes_default", model: "openai:gpt-5" },
-      }))) {
-        // consume
-      }
-    }).rejects.toThrow("Unsupported Matrix kernel selection");
-    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(spawnFn.mock.calls[0]![1]).toEqual(expect.arrayContaining(["--resume", "hermes_session"]));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
   });
 
-  it("fails safely when the Matrix kernel outpaces the bounded event buffer", async () => {
-    let providerSignal: AbortSignal | undefined;
-    const dispatch = vi.fn<Dispatcher["dispatch"]>(async (_message, _sessionId, onEvent, _context, abort) => {
-      providerSignal = abort.signal;
-      for (let index = 0; index < 501; index += 1) {
-        void onEvent({ type: "text", text: "x" });
-      }
-    });
-    const adapter = createHermesChatProviderAdapter({ dispatcher: { dispatch } as Pick<Dispatcher, "dispatch"> });
+  it("rejects unsupported permission and malformed provider selections before spawn", async () => {
+    const spawnFn = vi.fn(() => child("ignored"));
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
 
     await expect(async () => {
-      for await (const _event of adapter.start(input())) {
-        // consume
-      }
-    }).rejects.toThrow("event buffer exceeded");
-    expect(providerSignal?.aborted).toBe(true);
+      for await (const _event of adapter.start({ ...baseInput, permissionMode: "supervised" })) {}
+    }).rejects.toThrow("Unsupported Hermes permission mode");
+    await expect(async () => {
+      for await (const _event of adapter.start({
+        ...baseInput,
+        selection: { instanceId: "hermes_default", model: "missing-separator" },
+      })) {}
+    }).rejects.toThrow("Unsupported Hermes model selection");
+    expect(spawnFn).not.toHaveBeenCalled();
   });
 });

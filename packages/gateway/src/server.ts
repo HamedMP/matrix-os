@@ -137,6 +137,7 @@ import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import { createCanonicalChatRoutes } from "./chat/routes.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
+import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import {
   CanonicalChatProviderRegistry,
@@ -4147,9 +4148,20 @@ export async function createGateway(config: GatewayConfig) {
     client: hermesClient,
   });
   await agentRuntimeServices.controller.reconcile();
+  const canonicalExecutableDriverKinds = [
+    "hermes" as const,
+    ...(codingAgentProviders.some((provider) => provider.providerId === "claude")
+      ? ["claude_code" as const]
+      : []),
+    ...(codingAgentThreadStore
+      && codingAgentProviders.some((provider) => provider.providerId === "codex")
+      ? ["codex" as const]
+      : []),
+  ];
   const canonicalChatProviderCatalog = createChatProviderCatalogService({
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
+    executableDriverKinds: canonicalExecutableDriverKinds,
     skillsSource: () => loadSkills(homePath),
     ...(codexExecutable ? {
       codingModelCatalogSource: createCodexModelCatalogSource({
@@ -4165,18 +4177,15 @@ export async function createGateway(config: GatewayConfig) {
       worktrees: codingAgentWorktreeManager,
     });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
-      createHermesChatProviderAdapter({ dispatcher }),
+      createHermesChatProviderAdapter({ homePath }),
     ];
+    if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
+      canonicalAdapters.push(createClaudeChatProviderAdapter({ homePath }));
+    }
     if (codingAgentThreadStore) {
       if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
-          threads: codingAgentThreadStore,
-        }));
-      }
-      if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
-        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
-          providerId: "claude",
           threads: codingAgentThreadStore,
         }));
       }

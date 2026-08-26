@@ -201,6 +201,19 @@ export function useCanonicalChatRouteController({
     }
   }, [client, detail, loadDetail]);
 
+  const deleteChat = useCallback(async (chatId: string) => {
+    try {
+      await client.delete(chatId, canonicalChatRequestId());
+      setItems((current) => current.filter((item) => item.chat.id !== chatId));
+      if (activeChatIdRef.current === chatId) selectChat(null);
+      setError(null);
+      return true;
+    } catch {
+      setError("The Chat could not be deleted. Try again.");
+      return false;
+    }
+  }, [client, selectChat]);
+
   return {
     items,
     activeChatId,
@@ -213,6 +226,7 @@ export function useCanonicalChatRouteController({
     moveProject,
     submitTurn,
     cancelActiveRun,
+    deleteChat,
     startNewChat: () => selectChat(null),
   };
 }

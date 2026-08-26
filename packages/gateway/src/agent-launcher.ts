@@ -46,6 +46,9 @@ export interface AgentLaunchInput {
   runtimeHome?: string;
   providerEventPath?: string;
   codexExecutable?: string;
+  claudePermissionMode?: "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
+  claudeOutputFormat?: "stream-json";
+  claudeIncludePartialMessages?: boolean;
 }
 
 export interface AgentLaunchSpec {
@@ -138,7 +141,7 @@ function pathWithMatrixAgentBins(runtimeHome: string, nodePrefix = matrixNodePre
   ].join(":");
 }
 
-function agentRuntimeEnv(runtimeHome?: string): Record<string, string> {
+export function buildAgentRuntimeEnvironment(runtimeHome?: string): Record<string, string> {
   if (!runtimeHome) return {};
   const nodePrefix = matrixNodePrefix();
   return {
@@ -169,7 +172,7 @@ function codexSandboxArgs(sandbox?: AgentLaunchSandbox): string[] {
   return args;
 }
 
-const ClaudePermissionModeSchema = z.enum(["default", "dontAsk", "plan", "bypassPermissions"]);
+const ClaudePermissionModeSchema = z.enum(["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"]);
 const ClaudeEditPermissionRuleSchema = z.string()
   .trim()
   .min(1)
@@ -205,6 +208,7 @@ function claudeEditPermissionRule(root: string): string {
 }
 
 function claudePermissionMode(input: AgentLaunchInput): z.infer<typeof ClaudePermissionModeSchema> {
+  if (input.claudePermissionMode) return ClaudePermissionModeSchema.parse(input.claudePermissionMode);
   if (input.mode === "plan" || input.mode === "review") return "plan";
   if (input.approvalPolicy === "on-failure") {
     throw new Error("Claude approval policy is unavailable");
@@ -284,7 +288,10 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     "--strict-mcp-config",
     "--no-chrome",
     ...(input.model ? ["--model", input.model] : []),
+    ...(modelOption(input, "effort") ? ["--effort", modelOption(input, "effort")!] : []),
     ...(input.prompt ? ["--print"] : []),
+    ...(input.claudeOutputFormat ? ["--output-format", input.claudeOutputFormat, "--verbose"] : []),
+    ...(input.claudeIncludePartialMessages ? ["--include-partial-messages"] : []),
     ...promptArgs(input.prompt),
   ];
 }
@@ -364,7 +371,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const command = parsed === "codex" && input.codexExecutable
     ? CodexExecutableSchema.parse(input.codexExecutable)
     : AGENTS[parsed].command;
-  const env = agentRuntimeEnv(input.runtimeHome);
+  const env = buildAgentRuntimeEnvironment(input.runtimeHome);
   switch (parsed) {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
@@ -414,7 +421,7 @@ export function createAgentLauncher(options: {
 } = {}) {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const cwd = options.cwd ?? process.cwd();
-  const detectEnv = agentRuntimeEnv(options.runtimeHome);
+  const detectEnv = buildAgentRuntimeEnvironment(options.runtimeHome);
   const now = options.now ?? Date.now;
   type DetectionResult = { agents: AgentStatus[] };
   let installationScanInFlight: Promise<DetectionResult> | null = null;

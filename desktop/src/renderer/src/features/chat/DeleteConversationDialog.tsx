@@ -1,6 +1,4 @@
 import { Button, Dialog } from "../../design/primitives";
-import type { HermesConversationSummary } from "../../stores/hermes-chat";
-
 export function DeleteConversationDialog({
   conversation,
   deleting,
@@ -8,7 +6,7 @@ export function DeleteConversationDialog({
   onCancel,
   onConfirm,
 }: {
-  conversation: HermesConversationSummary | null;
+  conversation: { id: string; title: string } | null;
   deleting: boolean;
   error: string | null;
   onCancel: () => void;

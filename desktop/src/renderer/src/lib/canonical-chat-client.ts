@@ -54,6 +54,7 @@ export interface CanonicalChatClient {
   ): Promise<CanonicalChatListResponse>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
+  delete(chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   getDetail(
     chatId: string,
     input?: z.input<typeof CanonicalChatDetailInputSchema>,
@@ -81,7 +82,7 @@ function withQuery(path: string, values: Record<string, string | number | undefi
 }
 
 export function createCanonicalChatClient(
-  api: Pick<ApiClient, "get" | "post" | "patch">,
+  api: Pick<ApiClient, "get" | "post" | "patch" | "delete">,
 ): CanonicalChatClient {
   return {
     async list(input = {}) {
@@ -120,6 +121,14 @@ export function createCanonicalChatClient(
         `/api/chats/${encodeURIComponent(parsedChatId)}/project`,
         request,
       ));
+    },
+
+    async delete(chatId, clientRequestId) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const requestId = z.string().trim().min(1).max(128).parse(clientRequestId);
+      return api.delete(withQuery(`/api/chats/${encodeURIComponent(parsedChatId)}`, {
+        clientRequestId: requestId,
+      }));
     },
 
     async getDetail(chatId, input = {}) {

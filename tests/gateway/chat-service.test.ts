@@ -26,7 +26,7 @@ function record(id = "chat_service_test"): CanonicalChatRecord {
   };
 }
 
-function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update">> = {}) {
+function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update" | "hardDelete">> = {}) {
   return {
     create: vi.fn(async () => record()),
     list: vi.fn(async () => ({ items: [record()] } satisfies ChatListPage)),
@@ -39,8 +39,9 @@ function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | 
       activities: [],
     } satisfies ChatDetailPage)),
     update: vi.fn(async () => ({ ...record(), projectId: "project_1" })),
+    hardDelete: vi.fn(async () => ({ chatId: "chat_service_test", deletedAt: "2026-08-26T12:00:00.000Z" })),
     ...overrides,
-  } as Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update">;
+  } as Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update" | "hardDelete">;
 }
 
 describe("canonical Chat service", () => {
@@ -86,6 +87,21 @@ describe("canonical Chat service", () => {
     });
     expect(moved.chat.id).toBe("chat_service_test");
     expect(moved.projectId).toBe("project_1");
+  });
+
+  it("delegates canonical deletion to the existing atomic repository tombstone flow", async () => {
+    const hardDelete = vi.fn(async () => ({
+      chatId: "chat_service_test",
+      deletedAt: "2026-08-26T12:00:00.000Z",
+    }));
+    const service = createCanonicalChatService(repository({ hardDelete }));
+
+    await service.delete(owner, "chat_service_test", "req_service_delete");
+
+    expect(hardDelete).toHaveBeenCalledWith(owner, {
+      chatId: "chat_service_test",
+      clientRequestId: "req_service_delete",
+    });
   });
 
   it("fails closed before mutation when the target Project is stale", async () => {

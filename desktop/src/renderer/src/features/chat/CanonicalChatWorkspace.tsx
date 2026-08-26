@@ -17,6 +17,7 @@ import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { ChatStarterCards } from "./ChatStarterCards";
 import { CanonicalChatIndex } from "./CanonicalChatIndex";
+import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
 import { canonicalChatInputParts, canonicalChatTitle } from "./canonical-chat-submission";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
@@ -100,7 +101,7 @@ export function CanonicalChatWorkspace({
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const liveCatalog = useChatProviderCatalog(fallbackCatalog, api ?? null);
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog, api ?? null, active);
   const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
   const providerCatalog = catalog ?? (
     liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
@@ -135,6 +136,9 @@ export function CanonicalChatWorkspace({
   const [selection, setSelection] = useState<CanonicalComposerSelection | null>(() => (
     catalog ? createCanonicalComposerSelection(providerCatalog) : null
   ));
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api || runtimeStatus !== "idle") return;
@@ -371,7 +375,33 @@ export function CanonicalChatWorkspace({
           onQueryChange={setQuery}
           onSearch={(value) => void controller.search(value)}
           onSelect={selectChat}
+          onDelete={(record) => {
+            setDeleteError(null);
+            setDeleteTarget({ id: record.chat.id, title: record.chat.title });
+          }}
           onNewChat={startNewChat}
+        />
+        <DeleteConversationDialog
+          conversation={deleteTarget}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={() => {
+            if (deleting) return;
+            setDeleteTarget(null);
+            setDeleteError(null);
+          }}
+          onConfirm={() => {
+            if (!deleteTarget || deleting) return;
+            setDeleting(true);
+            void controller.deleteChat(deleteTarget.id).then((deleted) => {
+              if (deleted) {
+                setDeleteTarget(null);
+                setDeleteError(null);
+              } else {
+                setDeleteError("The Chat could not be deleted. Try again.");
+              }
+            }).finally(() => setDeleting(false));
+          }}
         />
       </div>
     );

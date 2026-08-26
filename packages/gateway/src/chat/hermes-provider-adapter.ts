@@ -1,11 +1,8 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { z } from "zod/v4";
-import type { KernelEvent } from "@matrix-os/kernel";
-import type { Dispatcher } from "../dispatcher.js";
-import {
-  KERNEL_DEFAULTS,
-  KernelEffortSchema,
-  KernelModelSchema,
-} from "../kernel-settings.js";
+import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -13,179 +10,147 @@ import {
   type CanonicalProviderRunEvent,
   type CanonicalProviderRunInput,
 } from "./provider-adapter.js";
+import {
+  createCanonicalCliEventQueue,
+  runCanonicalCli,
+  type CanonicalCliSpawn,
+} from "./cli-process.js";
 
 const HermesChatStateSchema = z.object({
   sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/),
 }).strict();
-const MAX_BUFFERED_EVENTS = 500;
+const HermesUsageSchema = z.object({
+  session_id: HermesChatStateSchema.shape.sessionId,
+}).passthrough();
 
 export type HermesChatState = z.infer<typeof HermesChatStateSchema>;
+const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+const MAX_OUTPUT_BYTES = 96 * 1024;
 
-interface AsyncEventQueue {
-  push(event: CanonicalProviderRunEvent): void;
-  finish(error?: Error): void;
-  values(): AsyncGenerator<CanonicalProviderRunEvent>;
-}
-
-function createAsyncEventQueue(onOverflow: () => void): AsyncEventQueue {
-  const values: CanonicalProviderRunEvent[] = [];
-  let done = false;
-  let failure: Error | undefined;
-  let wake: (() => void) | undefined;
-  return {
-    push(event) {
-      if (done) return;
-      if (values.length >= MAX_BUFFERED_EVENTS) {
-        done = true;
-        failure = new Error("Canonical Hermes Provider event buffer exceeded");
-        onOverflow();
-        wake?.();
-        wake = undefined;
-        return;
-      }
-      values.push(CanonicalProviderRunEventSchema.parse(event));
-      wake?.();
-      wake = undefined;
-    },
-    finish(error) {
-      if (done) {
-        if (error && !failure) failure = error;
-        return;
-      }
-      done = true;
-      failure = error;
-      wake?.();
-      wake = undefined;
-    },
-    async *values() {
-      while (!done || values.length > 0) {
-        const next = values.shift();
-        if (next) {
-          yield next;
-          continue;
-        }
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-      }
-      if (failure) throw failure;
-    },
-  };
-}
-
-function kernelSelection(input: CanonicalProviderRunInput) {
-  const [provider, modelId, extra] = input.selection.model.split(":");
-  if (provider !== "anthropic" || !modelId || extra !== undefined) {
-    throw new Error("Unsupported Matrix kernel selection");
+function selection(value: string): { provider: string; model: string } {
+  const separator = value.indexOf(":");
+  if (separator < 1 || separator === value.length - 1) {
+    throw new Error("Unsupported Hermes model selection");
   }
-  const model = KernelModelSchema.safeParse(modelId);
-  if (!model.success) throw new Error("Unsupported Matrix kernel selection");
-  const selectedEffort = input.selection.options?.find((option) => option.id === "effort")?.value
-    ?? KERNEL_DEFAULTS.effort;
-  const effort = KernelEffortSchema.safeParse(selectedEffort);
-  if (!effort.success) throw new Error("Unsupported Matrix kernel selection");
-  return { model: model.data, effort: effort.data };
+  const provider = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/).parse(value.slice(0, separator));
+  const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).parse(value.slice(separator + 1));
+  return { provider, model };
 }
 
-function safeToolLabel(value: string): string {
-  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 240);
-  return normalized || "Tool";
+async function createUsageFile() {
+  const directory = await mkdtemp(join(tmpdir(), "matrix-hermes-run-"));
+  return { directory, path: join(directory, "usage.json") };
+}
+
+async function readUsageFile(path: string): Promise<unknown> {
+  return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function cleanupUsageFile(directory: string): Promise<void> {
+  await rm(directory, { recursive: true, force: true });
+}
+
+function outputChunks(text: string): string[] {
+  const chunks: string[] = [];
+  for (let index = 0; index < text.length; index += 4_000) {
+    const chunk = text.slice(index, index + 4_000);
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
 }
 
 export function createHermesChatProviderAdapter(options: {
-  dispatcher: Pick<Dispatcher, "dispatch">;
+  homePath: string;
+  spawnFn?: CanonicalCliSpawn;
   timeoutMs?: number;
+  createUsageFile?: () => Promise<{ directory: string; path: string }>;
+  readUsageFile?: (path: string) => Promise<unknown>;
+  cleanupUsageFile?: (directory: string) => Promise<void>;
 }): CanonicalChatProviderAdapter<HermesChatState> {
-  const timeoutMs = options.timeoutMs ?? 30 * 60 * 1_000;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 60 * 60 * 1_000) {
-    throw new RangeError("Invalid Matrix kernel Run timeout");
-  }
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  function execute(
+  async function* execute(
     inputValue: CanonicalProviderRunInput<HermesChatState>,
-    sessionId?: string,
-  ): AsyncIterable<CanonicalProviderRunEvent> {
+    resumeState?: HermesChatState,
+  ): AsyncGenerator<CanonicalProviderRunEvent> {
     const input = parseCanonicalProviderRunInput(inputValue);
-    const selection = kernelSelection(input);
-    if (input.interactionMode !== "default" || input.permissionMode !== "supervised") {
-      throw new Error("Unsupported Matrix kernel mode");
+    if (input.permissionMode !== "full_access") {
+      throw new Error("Unsupported Hermes permission mode");
     }
-    const controller = new AbortController();
-    const queue = createAsyncEventQueue(() => controller.abort());
-    const abort = () => controller.abort();
-    input.signal.addEventListener("abort", abort, { once: true });
-    const timeout = setTimeout(abort, timeoutMs);
-    let toolIndex = 0;
-    let activeTool: { id: string; label: string } | undefined;
-    let terminal = false;
+    if (input.interactionMode !== "default") {
+      throw new Error("Unsupported Hermes interaction mode");
+    }
+    const selected = selection(input.selection.model);
+    const usage = await (options.createUsageFile ?? createUsageFile)();
+    const cleanup = options.cleanupUsageFile ?? cleanupUsageFile;
+    const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
+    let output = "";
+    const args = [
+      "-z", input.prompt,
+      "--provider", selected.provider,
+      "--model", selected.model,
+      "--usage-file", usage.path,
+      "--source", "tool",
+      "--yolo",
+      ...(resumeState ? ["--resume", resumeState.sessionId] : []),
+    ];
 
-    const onEvent = (event: KernelEvent) => {
-      if (terminal) return;
-      if (event.type === "init") {
-        queue.push({ type: "state.updated", state: { sessionId: event.sessionId } });
-      } else if (event.type === "text" && event.text) {
-        queue.push({ type: "assistant.delta", delta: event.text });
-      } else if (event.type === "tool_start") {
-        toolIndex += 1;
-        activeTool = { id: `kernel_tool_${toolIndex}`, label: safeToolLabel(event.tool) };
-        queue.push({
-          type: "tool.progress",
-          toolCallId: activeTool.id,
-          label: activeTool.label,
-          status: "running",
+    void (async () => {
+      try {
+        await runCanonicalCli({
+          command: "hermes",
+          args,
+          cwd: input.executionRoot ?? options.homePath,
+          env: buildAgentRuntimeEnvironment(options.homePath),
+          signal: input.signal,
+          timeoutMs,
+          maxStdoutBytes: MAX_OUTPUT_BYTES,
+          spawnFn: options.spawnFn,
+          onStdout(chunk) {
+            output += chunk.toString("utf8");
+          },
         });
-      } else if (event.type === "tool_end" && activeTool) {
-        queue.push({
-          type: "tool.progress",
-          toolCallId: activeTool.id,
-          label: activeTool.label,
-          status: "completed",
-        });
-        activeTool = undefined;
-      } else if (event.type === "aborted") {
-        terminal = true;
-        queue.push({ type: "run.completed", outcome: "aborted" });
-      } else if (event.type === "result") {
-        terminal = true;
-        queue.push(event.data.errors && event.data.errors.length > 0
-          ? {
-              type: "run.completed",
-              outcome: "failed",
-              error: {
-                code: "run_failed",
-                safeMessage: "The Matrix agent Run failed.",
-                retryable: true,
-                recoveryActions: ["retry"],
-              },
-            }
-          : { type: "run.completed", outcome: "completed" });
+        for (const delta of outputChunks(output)) {
+          queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+        }
+        try {
+          const usageReport = HermesUsageSchema.parse(
+            await (options.readUsageFile ?? readUsageFile)(usage.path),
+          );
+          if (usageReport.session_id !== resumeState?.sessionId) {
+            queue.push(CanonicalProviderRunEventSchema.parse({
+              type: "state.updated",
+              state: { sessionId: usageReport.session_id },
+            }));
+          }
+        } catch {
+          console.warn("[chat/hermes] Usage report unavailable");
+        }
+        queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "completed" }));
+      } catch {
+        queue.push(CanonicalProviderRunEventSchema.parse({
+          type: "run.completed",
+          outcome: input.signal.aborted ? "aborted" : "failed",
+          ...(input.signal.aborted ? {} : {
+            error: {
+              code: "run_failed",
+              safeMessage: "Hermes could not complete this Run. Check its provider connection and retry.",
+              retryable: true,
+              recoveryActions: ["retry"],
+            },
+          }),
+        }));
+      } finally {
+        try {
+          await cleanup(usage.directory);
+        } catch (error: unknown) {
+          console.warn("[chat/hermes] Temporary usage cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+        }
+        queue.finish();
       }
-    };
+    })();
 
-    void options.dispatcher.dispatch(
-      input.prompt,
-      sessionId,
-      onEvent,
-      { chatId: input.chatId },
-      controller,
-      {
-        ...selection,
-        ...(input.executionRoot ? { workingDirectory: input.executionRoot } : {}),
-      },
-    ).then(() => {
-      if (!terminal) queue.push({ type: "run.completed", outcome: controller.signal.aborted ? "aborted" : "completed" });
-      queue.finish();
-    }).catch((error: unknown) => {
-      queue.finish(new Error(
-        controller.signal.aborted ? "Matrix kernel Run aborted" : "Matrix kernel dispatch failed",
-        { cause: error },
-      ));
-    }).finally(() => {
-      clearTimeout(timeout);
-      input.signal.removeEventListener("abort", abort);
-    });
-
-    return { [Symbol.asyncIterator]: () => queue.values() };
+    yield* queue.values();
   }
 
   return {
@@ -194,6 +159,6 @@ export function createHermesChatProviderAdapter(options: {
     parseState: (value) => HermesChatStateSchema.parse(value),
     serializeState: (value) => HermesChatStateSchema.parse(value),
     start: (input) => execute(input),
-    resume: (input) => execute(input, HermesChatStateSchema.parse(input.resumeState).sessionId),
+    resume: (input) => execute(input, HermesChatStateSchema.parse(input.resumeState)),
   };
 }

@@ -119,6 +119,22 @@ describe("canonical Chat client", () => {
     })).resolves.toEqual(movedRecord);
   });
 
+  it("deletes a Chat through the canonical Gateway endpoint", async () => {
+    const remove = vi.fn(async () => ({
+      chatId: record.chat.id,
+      deletedAt: "2026-08-26T12:00:00.000Z",
+    }));
+    const client = createCanonicalChatClient(api({ delete: remove }));
+
+    await expect(client.delete(record.chat.id, "req_client_delete")).resolves.toEqual({
+      chatId: record.chat.id,
+      deletedAt: "2026-08-26T12:00:00.000Z",
+    });
+    expect(remove).toHaveBeenCalledWith(
+      "/api/chats/chat_client_test?clientRequestId=req_client_delete",
+    );
+  });
+
   it("loads a bounded message page and rejects malformed Gateway projections", async () => {
     const get = vi.fn(async () => ({
       record,

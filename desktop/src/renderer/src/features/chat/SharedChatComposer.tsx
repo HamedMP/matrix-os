@@ -560,7 +560,7 @@ export function SharedChatComposer({
                 onChange={(next) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next))}
               />
             ) : null) : null}
-            {selection ? (
+            {selection && (instance?.supports.permissionModes.length ?? 0) > 1 ? (
               <>
                 <CompactSelect
                   label="Permission mode"

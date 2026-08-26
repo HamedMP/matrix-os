@@ -49,7 +49,7 @@ const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
 ]);
 
 type CursorEnvelope = z.infer<typeof CursorEnvelopeSchema>;
-type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "list" | "search" | "getDetailPage">;
+type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "hardDelete" | "list" | "search" | "getDetailPage">;
 
 function encodeCursor(value: CursorEnvelope): string {
   return CanonicalChatApiCursorSchema.parse(
@@ -142,6 +142,13 @@ export function createCanonicalChatService(
         CanonicalChatIdSchema.parse(chatId),
         request,
       ));
+    },
+
+    async delete(owner, chatId, clientRequestId) {
+      return repository.hardDelete(owner, {
+        chatId: CanonicalChatIdSchema.parse(chatId),
+        clientRequestId: z.string().trim().min(1).max(128).parse(clientRequestId),
+      });
     },
 
     async list(owner, input): Promise<CanonicalChatListResponse> {
@@ -256,6 +263,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
   return {
     create: unavailable,
     updateProject: unavailable,
+    delete: unavailable,
     list: unavailable,
     search: unavailable,
     getDetail: unavailable,

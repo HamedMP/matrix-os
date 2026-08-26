@@ -49,6 +49,9 @@ export function CanonicalChatRoute({
       patch<T>(path: string, body: unknown) {
         return currentApi().patch<T>(path, body);
       },
+      delete<T>(path: string) {
+        return currentApi().delete<T>(path);
+      },
     });
   }, [clientIdentity]);
   const canonicalProjectId = useBoard((state) => {

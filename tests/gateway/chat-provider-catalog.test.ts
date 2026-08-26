@@ -234,6 +234,36 @@ describe("canonical Chat Provider catalog", () => {
     ]));
   });
 
+  it("does not advertise an installed harness without a canonical execution adapter", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "opencode",
+        displayName: "OpenCode",
+        kind: "opencode",
+        defaultModel: "provider-model",
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      executableDriverKinds: ["hermes", "codex", "claude_code"],
+    });
+
+    const catalog = await service.getCatalog(principal);
+    const opencode = catalog.instances.find((instance) => instance.id === "opencode_default")!;
+    const openclaw = catalog.instances.find((instance) => instance.id === "openclaw_default")!;
+
+    expect(opencode).toMatchObject({
+      availability: "unavailable",
+      models: [],
+      options: [],
+      setupActions: [],
+    });
+    expect(openclaw).toMatchObject({
+      availability: "unavailable",
+      models: [],
+      options: [],
+      setupActions: [],
+    });
+  });
+
   it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),
@@ -272,6 +302,76 @@ describe("canonical Chat Provider catalog", () => {
       .toEqual(["GPT-5.6-Sol", "GPT-5.6-Terra"]);
     expect(codex.defaultSelection?.model).toBe("gpt-5.6-sol");
     expect(codex.options[0]).toMatchObject({ id: "effort", values: [{ value: "low" }, { value: "high" }] });
+  });
+
+  it("publishes real Claude models and only options the Claude runner accepts", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "claude",
+        displayName: "Claude",
+        kind: "claude",
+        defaultModel: undefined,
+      })]),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    const claude = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "claude_code_default")!;
+
+    expect(claude.models.map((model) => model.id)).toEqual([
+      "default",
+      "opus",
+      "sonnet",
+    ]);
+    expect(claude.models.map((model) => model.displayName)).toEqual([
+      "Claude default",
+      "Claude Opus",
+      "Claude Sonnet",
+    ]);
+    expect(claude.models.some((model) => model.id === "provider-default")).toBe(false);
+    expect(claude.options).toMatchObject([{
+      id: "effort",
+      values: [
+        { value: "low" },
+        { value: "medium" },
+        { value: "high" },
+        { value: "max" },
+      ],
+    }]);
+    expect(claude.supports.permissionModes).toEqual([
+      "supervised",
+      "auto_accept_edits",
+      "auto",
+      "full_access",
+    ]);
+  });
+
+  it("hides unsupported Hermes effort and permission choices", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    const hermes = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "hermes_default")!;
+
+    expect(hermes.options).toEqual([]);
+    expect(hermes.supports.permissionModes).toEqual(["full_access"]);
+  });
+
+  it("invalidates both live inventories before an explicit refresh", async () => {
+    const registry = codingRegistry();
+    const source = runtimeSource();
+    source.invalidate = vi.fn();
+    const service = createChatProviderCatalogService({
+      codingProviders: registry,
+      agentRuntimeSource: source,
+    });
+
+    await service.refresh(principal);
+
+    expect(registry.invalidate).toHaveBeenCalledWith(principal.userId);
+    expect(source.invalidate).toHaveBeenCalledOnce();
   });
 
   it("fails closed per readiness source without hiding the healthy domain", async () => {
@@ -534,6 +634,20 @@ describe("GET /api/chat-providers", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(catalog);
     expect(getCatalog).toHaveBeenCalledWith(principal);
+  });
+
+  it("refreshes cached provider auth when requested", async () => {
+    const catalog = selectionCatalog();
+    const refresh = vi.fn(async () => catalog);
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: { getCatalog: vi.fn(async () => catalog), refresh },
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers?refresh=true");
+
+    expect(response.status).toBe(200);
+    expect(refresh).toHaveBeenCalledWith(principal);
   });
 
   it("returns a generic service error when catalog projection fails", async () => {
