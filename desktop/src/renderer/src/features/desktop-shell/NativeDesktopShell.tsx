@@ -17,6 +17,8 @@ import { useUi } from "../../stores/ui";
 import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
 import DesktopWorkspacePlane from "./DesktopWorkspacePlane";
 import DesktopBackgroundMenu from "./DesktopBackgroundMenu";
+import DesktopAppDrawer from "./DesktopAppDrawer";
+import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
@@ -55,6 +57,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const canvasPanX = useNativeDesktopMode((state) => state.panX);
   const canvasPanY = useNativeDesktopMode((state) => state.panY);
   const setDesktopMode = useNativeDesktopMode((state) => state.setMode);
+  const drawerOpen = useDesktopAppDrawer((state) => state.open);
+  const setDrawerOpen = useDesktopAppDrawer((state) => state.setOpen);
   // Mount on first use, then retain the image nodes so reopening can reuse the
   // browser's decoded icon resources instead of issuing another request set.
   const [launcherMounted, setLauncherMounted] = useState(launcherOpen);
@@ -190,6 +194,15 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     if (tab.kind === "home") requestBackgroundRefresh();
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
 
+  const activateFromDrawer = useCallback((tabId: string) => {
+    activate(tabId);
+    setDrawerOpen(false);
+  }, [activate, setDrawerOpen]);
+
+  const closeFromDrawer = useCallback((tab: Tab) => {
+    close(tab);
+  }, [close]);
+
   const tabWorkspaceActive = desktopMode === "desktop"
     && workspaceView === "tabs"
     && activeSurface?.mode === "tab";
@@ -201,6 +214,15 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       style={{ top: "var(--titlebar-height)", background: "inherit" }}
     >
       <DesktopBackground />
+      {drawerOpen ? (
+        <DesktopAppDrawer
+          tabs={tabs}
+          surfaces={surfaces}
+          onClose={() => setDrawerOpen(false)}
+          onActivate={activateFromDrawer}
+          onCloseTab={closeFromDrawer}
+        />
+      ) : null}
       {desktopModeHydrated ? (
         <>
       {desktopMode === "desktop" && !tabWorkspaceActive ? (

@@ -5,6 +5,8 @@ export const DESKTOP_Z_INDEX = {
   nativeDesktopTabStrip: 4,
   nativeDesktopWindowStart: 10,
   nativeDesktopWindowMax: 40,
+  nativeDesktopDrawerBackdrop: 41,
+  nativeDesktopDrawer: 42,
   nativeDesktopLaunchpad: 44,
   nativeDesktopTaskbar: 45,
   dialog: 50,

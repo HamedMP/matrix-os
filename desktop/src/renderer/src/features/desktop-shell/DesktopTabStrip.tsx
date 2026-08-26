@@ -15,6 +15,8 @@ export default function DesktopTabStrip({
   onClose,
   workspaceView,
   onShowDesktop,
+  onToggleSidebar,
+  sidebarOpen,
 }: {
   tabs: Tab[];
   surfaces: Record<string, DesktopSurface>;
@@ -25,6 +27,8 @@ export default function DesktopTabStrip({
   onClose: (tab: Tab) => void;
   workspaceView: "desktop" | "tabs";
   onShowDesktop: () => void;
+  onToggleSidebar: () => void;
+  sidebarOpen: boolean;
 }) {
   const tabbed = tabs.filter((tab) => surfaces[tab.id]?.mode === "tab");
   return (
@@ -33,7 +37,8 @@ export default function DesktopTabStrip({
         mode="iconOnly"
         label="Sidebar"
         icon={<PanelLeft />}
-        onClick={() => {}}
+        selected={sidebarOpen}
+        onClick={onToggleSidebar}
       />
       <DesktopTab
         mode="iconOnly"

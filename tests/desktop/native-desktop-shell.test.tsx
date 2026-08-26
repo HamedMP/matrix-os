@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NativeDesktopShell from "@desktop/renderer/src/features/desktop-shell/NativeDesktopShell";
 import NavigationHeader from "@desktop/renderer/src/features/mission-control/NavigationHeader";
@@ -12,6 +12,7 @@ import { useApps } from "@desktop/renderer/src/stores/apps";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
+import { useDesktopAppDrawer } from "@desktop/renderer/src/stores/desktop-app-drawer";
 
 const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
@@ -54,6 +55,7 @@ beforeEach(() => {
   useApps.setState(useApps.getInitialState(), true);
   useUi.setState(useUi.getInitialState(), true);
   useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
+  useDesktopAppDrawer.setState(useDesktopAppDrawer.getInitialState(), true);
   useNativeDesktopMode.setState({ hydrated: true });
   window.operator = {
     invoke: vi.fn(async (channel: string) => channel === "state:get"
@@ -398,6 +400,75 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Terminal" })).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
     expect(useTabs.getState().tabs.some((tab) => tab.kind === "app")).toBe(false);
+  });
+
+  it("opens the all-open-apps drawer from Sidebar and dismisses it by close, Escape, and backdrop", () => {
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
+    expect(screen.getByRole("dialog", { name: "All open apps" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close all open apps" }));
+    expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
+    fireEvent.pointerDown(screen.getByTestId("desktop-app-drawer-backdrop"));
+    expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull();
+  });
+
+  it("routes preview tiles to minimized, tabbed, and windowed apps without activating a close action", () => {
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
+    const settingsId = useTabs.getState().activeTabId!;
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Settings window" })).getByRole("button", { name: "Minimize" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+    const terminalId = useTabs.getState().activeTabId!;
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Terminal window" })).getByRole("button", { name: "Maximize" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview Settings" }));
+    expect(useDesktopSurfaces.getState().surfaces[settingsId]?.mode).toBe("window");
+    expect(useTabs.getState().activeTabId).toBe(settingsId);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview Terminal" }));
+    expect(useDesktopSurfaces.getState().surfaces[terminalId]?.mode).toBe("tab");
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("tabs");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings preview" }));
+    expect(useTabs.getState().tabs.some((tab) => tab.id === settingsId)).toBe(false);
+    expect(useTabs.getState().activeTabId).toBe(terminalId);
+    expect(screen.getByRole("dialog", { name: "All open apps" })).toBeTruthy();
+    const terminalPreviewClose = screen.getByRole("button", { name: "Close Terminal preview" });
+    expect(terminalPreviewClose.classList.contains("size-5")).toBe(true);
+    expect(terminalPreviewClose.classList.contains("rounded-[4.8px]")).toBe(true);
+    expect(terminalPreviewClose.style.border).toContain("var(--border-default");
+  });
+
+  it("uses the same icon-and-name tile treatment for first-party and user apps", () => {
+    useConnection.setState({ platformHost: "https://runtime.example.com" });
+    useApps.setState({
+      apps: [{ slug: "notes", name: "Notes" }],
+      loaded: true,
+      loading: false,
+      error: null,
+    });
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
+
+    expect(screen.getAllByTestId("desktop-preview-icon-tile").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "Preview Terminal" }).textContent).toContain("Terminal");
+    expect(screen.getByRole("button", { name: "Preview Notes" }).textContent).toContain("Notes");
+    expect(within(screen.getByRole("button", { name: "Preview Terminal" })).getByLabelText("Terminal")
+      .classList.contains("rounded-[24px]")).toBe(true);
   });
 
   it("opens launcher apps as windows after returning from retained tabs to the Desktop", () => {

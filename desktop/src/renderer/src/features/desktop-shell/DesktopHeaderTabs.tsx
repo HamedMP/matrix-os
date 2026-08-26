@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
+import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import DesktopTabStrip from "./DesktopTabStrip";
 
 export default function DesktopHeaderTabs() {
@@ -17,6 +18,8 @@ export default function DesktopHeaderTabs() {
   const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
   const showDesktop = useDesktopSurfaces((state) => state.showDesktop);
   const requestBackgroundRefresh = useUi((state) => state.requestDesktopBackgroundRefresh);
+  const drawerOpen = useDesktopAppDrawer((state) => state.open);
+  const toggleDrawer = useDesktopAppDrawer((state) => state.toggle);
 
   const showDesktopWithRefresh = useCallback(() => {
     showDesktop();
@@ -76,6 +79,8 @@ export default function DesktopHeaderTabs() {
       onClose={close}
       workspaceView={workspaceView}
       onShowDesktop={showDesktopWithRefresh}
+      onToggleSidebar={toggleDrawer}
+      sidebarOpen={drawerOpen}
     />
   );
 }
