@@ -15,11 +15,17 @@ describe("native desktop mode store", () => {
     };
   });
 
-  it("loads the persisted Canvas mode", async () => {
+  it("migrates persisted Canvas mode to Desktop", async () => {
     await useNativeDesktopMode.getState().load();
 
-    expect(useNativeDesktopMode.getState()).toMatchObject({ mode: "canvas", hydrated: true });
+    expect(useNativeDesktopMode.getState()).toMatchObject({ mode: "desktop", hydrated: true });
     expect(window.operator.invoke).toHaveBeenCalledWith("state:get", { key: "desktopShell" });
+    await vi.waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
+        key: "desktopShell",
+        value: { mode: "desktop" },
+      });
+    });
   });
 
   it("falls back to Desktop for invalid persisted state", async () => {
@@ -30,19 +36,13 @@ describe("native desktop mode store", () => {
     expect(useNativeDesktopMode.getState()).toMatchObject({ mode: "desktop", hydrated: true });
   });
 
-  it("persists mode changes without replacing the shared canvas transform", async () => {
+  it("prevents legacy Canvas selections from replacing Desktop mode", async () => {
     useNativeDesktopMode.getState().setCanvasTransform({ panX: 42, panY: -18, zoom: 1.25 });
 
     useNativeDesktopMode.getState().setMode("canvas");
-    await vi.waitFor(() => {
-      expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
-        key: "desktopShell",
-        value: { mode: "canvas" },
-      });
-    });
 
     expect(useNativeDesktopMode.getState()).toMatchObject({
-      mode: "canvas",
+      mode: "desktop",
       panX: 42,
       panY: -18,
       zoom: 1.25,
@@ -58,7 +58,7 @@ describe("native desktop mode store", () => {
     expect(useNativeDesktopMode.getState()).toMatchObject({ panX: 0, panY: 0, zoom: 1 });
   });
 
-  it("does not overwrite a user selection when hydration finishes late", async () => {
+  it("does not restore Canvas when hydration finishes after a legacy selection", async () => {
     let resolveLoad: ((value: { value: { mode: "desktop" } }) => void) | undefined;
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "state:get") {
@@ -74,6 +74,6 @@ describe("native desktop mode store", () => {
     resolveLoad?.({ value: { mode: "desktop" } });
     await loading;
 
-    expect(useNativeDesktopMode.getState()).toMatchObject({ mode: "canvas", hydrated: true });
+    expect(useNativeDesktopMode.getState()).toMatchObject({ mode: "desktop", hydrated: true });
   });
 });

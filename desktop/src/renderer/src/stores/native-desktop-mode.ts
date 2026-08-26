@@ -25,10 +25,6 @@ interface NativeDesktopModeState {
   resetCanvasTransform: () => void;
 }
 
-function isNativeDesktopMode(value: unknown): value is NativeDesktopMode {
-  return value === "desktop" || value === "canvas";
-}
-
 function finiteOr(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) ? value : fallback;
 }
@@ -62,12 +58,14 @@ export const useNativeDesktopMode = create<NativeDesktopModeState>()((set, get) 
       try {
         const result = await invoke("state:get", { key: "desktopShell" });
         const persisted = result.value as { mode?: unknown } | null;
+        const migrateLegacyCanvasMode = persisted?.mode === "canvas";
         set(modeRevision === startingRevision
           ? {
-              mode: isNativeDesktopMode(persisted?.mode) ? persisted.mode : "desktop",
+              mode: "desktop",
               hydrated: true,
             }
           : { hydrated: true });
+        if (migrateLegacyCanvasMode) persistMode("desktop");
       } catch (error: unknown) {
         console.warn(
           "[native-desktop] mode load failed:",
@@ -77,11 +75,11 @@ export const useNativeDesktopMode = create<NativeDesktopModeState>()((set, get) 
       }
     },
 
-    setMode: (mode) => {
-      if (get().mode === mode) return;
+    setMode: () => {
+      if (get().mode === "desktop") return;
       modeRevision += 1;
-      set({ mode });
-      persistMode(mode);
+      set({ mode: "desktop" });
+      persistMode("desktop");
     },
 
     setCanvasTransform: (patch) => set((state) => ({

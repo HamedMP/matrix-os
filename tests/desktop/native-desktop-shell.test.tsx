@@ -16,6 +16,21 @@ import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-deskto
 const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
 
+function mockLoadedWallpaperImage(): void {
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    queueMicrotask(() => callback(0));
+    return 0;
+  });
+  vi.stubGlobal("Image", class {
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    set src(_value: string) {
+      queueMicrotask(() => this.onload?.());
+    }
+  });
+}
+
 vi.mock("@desktop/renderer/src/features/mission-control/TabContent", () => ({
   TabPane: ({ tab, layoutRevision }: { tab: { title: string }; layoutRevision?: string }) => (
     <div data-layout-revision={layoutRevision}>{tab.title} content</div>
@@ -53,6 +68,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   if (createObjectURLDescriptor) Object.defineProperty(URL, "createObjectURL", createObjectURLDescriptor);
   else Reflect.deleteProperty(URL, "createObjectURL");
   if (revokeObjectURLDescriptor) Object.defineProperty(URL, "revokeObjectURL", revokeObjectURLDescriptor);
@@ -125,6 +141,7 @@ describe("native desktop shell", () => {
   });
 
   it("loads the configured wallpaper through the authenticated API and revokes it on runtime change", async () => {
+    mockLoadedWallpaperImage();
     const createObjectURL = vi.fn(() => "blob:desktop-wallpaper");
     const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
@@ -158,6 +175,7 @@ describe("native desktop shell", () => {
   });
 
   it("refreshes the wallpaper when the desktop regains focus", async () => {
+    mockLoadedWallpaperImage();
     const createObjectURL = vi.fn(() => "blob:first-wallpaper");
     const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
@@ -230,7 +248,7 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
-  it("offers Settings as a native app in Desktop and Canvas and maximizes it into tabs", () => {
+  it("offers Settings as a native app and maximizes it into tabs", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     const settingsIcon = screen.getByRole("button", { name: "Settings" });
@@ -248,73 +266,7 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
 
     fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
-    fireEvent.click(screen.getByRole("button", { name: "Canvas mode" }));
     expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
-  });
-
-  it("switches the same running window between Desktop and Canvas without remounting it", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
-    const tabId = useTabs.getState().activeTabId!;
-    const bounds = useDesktopSurfaces.getState().surfaces[tabId]!.bounds;
-    const originalSurface = document.querySelector(`[data-desktop-surface="${tabId}"]`);
-
-    fireEvent.click(screen.getByRole("button", { name: "Canvas mode" }));
-
-    expect(useNativeDesktopMode.getState().mode).toBe("canvas");
-    expect(screen.getByTestId("native-desktop-canvas")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Browser" })).toBeTruthy();
-    expect(document.querySelector(`[data-desktop-surface="${tabId}"]`)).toBe(originalSurface);
-    expect(useDesktopSurfaces.getState().surfaces[tabId]!.bounds).toEqual(bounds);
-    expect(screen.getByRole("dialog", { name: "Hermes window" })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Desktop mode" }));
-
-    expect(useNativeDesktopMode.getState().mode).toBe("desktop");
-    expect(screen.queryByTestId("native-desktop-canvas")).toBeNull();
-    expect(document.querySelector(`[data-desktop-surface="${tabId}"]`)).toBe(originalSurface);
-    expect(screen.getByRole("button", { name: "Browser" })).toBeTruthy();
-  });
-
-  it("zooms, pans, resets, and fits the Canvas from the unified window bar", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
-    fireEvent.click(screen.getByRole("button", { name: "Canvas mode" }));
-
-    fireEvent.click(screen.getByRole("button", { name: "Zoom Canvas in" }));
-    expect(useNativeDesktopMode.getState().zoom).toBeGreaterThan(1);
-
-    fireEvent.pointerDown(screen.getByTestId("native-desktop-canvas"), {
-      button: 0,
-      clientX: 500,
-      clientY: 300,
-      pointerId: 4,
-    });
-    fireEvent.pointerMove(window, { clientX: 560, clientY: 345, pointerId: 4 });
-    fireEvent.pointerUp(window, { pointerId: 4 });
-    expect(useNativeDesktopMode.getState()).toMatchObject({ panX: 60, panY: 45 });
-
-    fireEvent.click(screen.getByRole("button", { name: "Reset Canvas view" }));
-    expect(useNativeDesktopMode.getState()).toMatchObject({ panX: 0, panY: 0, zoom: 1 });
-
-    fireEvent.click(screen.getByRole("button", { name: "Fit Canvas apps" }));
-    expect(useNativeDesktopMode.getState().zoom).toBeLessThanOrEqual(1.5);
-  });
-
-  it("does not zoom the Canvas from a wheel gesture inside an app window", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
-    fireEvent.click(screen.getByRole("button", { name: "Canvas mode" }));
-    const before = useNativeDesktopMode.getState().zoom;
-
-    fireEvent.wheel(screen.getByRole("dialog", { name: "Files window" }), {
-      ctrlKey: true,
-      deltaY: -100,
-      clientX: 500,
-      clientY: 300,
-    });
-
-    expect(useNativeDesktopMode.getState().zoom).toBe(before);
   });
 
   it("opens Terminal as its own window and only adds it to the main tab strip when maximized", () => {

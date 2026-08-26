@@ -45,6 +45,7 @@
   --text-secondary: #5b5f53;
   /* WCAG AA: 4.99:1 on --bg-surface, 4.86:1 on --bg-app. */
   --text-tertiary: #73705f;
+  --text-subtle: #96968f;
   --text-disabled: #b5b1a3;
   --text-on-accent: #fafaf5;
 
@@ -62,6 +63,13 @@
   --danger-muted: rgba(200, 85, 61, 0.12);
   --info: #4a7c92;
   --info-muted: rgba(74, 124, 146, 0.12);
+  --surface-brand-emphasis: #748e59;
+  --surface-error-emphasis: #ba5236;
+  --surface-info-emphasis: #3b85ba;
+  --surface-inverse: #0d0c0c;
+  --surface-neutral-emphasis: #6b7280;
+  --surface-success-emphasis: #288a5b;
+  --surface-warning-emphasis: #e0aa52;
   --update-action: #2f9bff;
   --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.12);
@@ -155,6 +163,7 @@
   --text-primary: #eaecea;
   --text-secondary: #aab4ac;
   --text-tertiary: #7a8a80;
+  --text-subtle: #96968f;
   --text-disabled: #55605a;
   --text-on-accent: #141614;
 
@@ -163,6 +172,13 @@
   --accent-muted: rgba(140, 199, 190, 0.16);
   --highlight: #d8853f;
   --highlight-muted: rgba(216, 133, 63, 0.18);
+  --surface-brand-emphasis: #748e59;
+  --surface-error-emphasis: #ba5236;
+  --surface-info-emphasis: #3b85ba;
+  --surface-inverse: #0d0c0c;
+  --surface-neutral-emphasis: #6b7280;
+  --surface-success-emphasis: #288a5b;
+  --surface-warning-emphasis: #e0aa52;
   --update-action: #2f9bff;
   --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.18);
