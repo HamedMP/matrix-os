@@ -1,8 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { access, mkdir, mkdtemp, rm, symlink, utimes } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createWorkspaceSessionOrchestrator } from "../../packages/gateway/src/workspace-session-orchestrator.js";
+import {
+  cleanupExpiredRootChatWorkspaces,
+  createWorkspaceSessionOrchestrator,
+} from "../../packages/gateway/src/workspace-session-orchestrator.js";
 
 describe("workspace session orchestrator", () => {
+  const tempHomes: string[] = [];
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await Promise.all(tempHomes.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  });
   const homePath = "/matrix/home";
   const worktree = {
     id: "wt_abc123def456",
@@ -174,6 +185,92 @@ describe("workspace session orchestrator", () => {
       workspaceRoot: rootChatWorkspace,
       ownerId: "user_workspace",
     }));
+  });
+
+  it("periodically protects every active root Chat status and stops the timer on close", async () => {
+    vi.useFakeTimers();
+    const d = deps();
+    const sweepRootChatWorkspaces = vi.fn(async () => undefined);
+    vi.mocked(d.agentSessionManager.listSessions).mockResolvedValue({
+      ok: true,
+      sessions: ["starting", "running", "idle", "waiting", "exited"].map((status) => ({
+        ...session,
+        id: `sess_${status}`,
+        projectSlug: undefined,
+        runtime: { ...session.runtime, status },
+      })),
+      nextCursor: null,
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      homePath,
+      sweepRootChatWorkspaces,
+      rootWorkspaceSweepIntervalMs: 1_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sweepRootChatWorkspaces).toHaveBeenCalledWith(new Set([
+      "sess_starting",
+      "sess_running",
+      "sess_idle",
+      "sess_waiting",
+    ]));
+
+    await orchestrator.close();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sweepRootChatWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for an in-flight root Chat workspace sweep during close", async () => {
+    vi.useFakeTimers();
+    const d = deps();
+    let finishSweep!: () => void;
+    const sweepRootChatWorkspaces = vi.fn(() => new Promise<void>((resolve) => {
+      finishSweep = resolve;
+    }));
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      homePath,
+      sweepRootChatWorkspaces,
+      rootWorkspaceSweepIntervalMs: 1_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    let closed = false;
+    const closing = orchestrator.close().then(() => { closed = true; });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+
+    finishSweep();
+    await closing;
+    expect(closed).toBe(true);
+  });
+
+  it("removes only expired inactive root Chat workspaces and skips symlinks", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-root-chat-"));
+    tempHomes.push(home);
+    const root = join(home, "temporary", "root-chat-workspaces");
+    const expired = join(root, "sess_expired");
+    const active = join(root, "sess_active");
+    const external = join(home, "external");
+    const linked = join(root, "sess_linked");
+    await mkdir(expired, { recursive: true });
+    await mkdir(active);
+    await mkdir(external);
+    await symlink(external, linked);
+    await utimes(expired, 1, 1);
+    await utimes(active, 1, 1);
+
+    await cleanupExpiredRootChatWorkspaces(
+      home,
+      new Set(["sess_active"]),
+      { nowMs: 10_000, ttlMs: 1_000 },
+    );
+
+    await expect(access(expired)).rejects.toThrow();
+    await expect(access(active)).resolves.toBeUndefined();
+    await expect(access(linked)).resolves.toBeUndefined();
+    await expect(access(external)).resolves.toBeUndefined();
   });
 
   it("rejects legacy local primary checkouts when the authenticated owner does not match", async () => {

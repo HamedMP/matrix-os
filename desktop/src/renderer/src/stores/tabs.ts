@@ -36,7 +36,7 @@ export interface Tab {
 
 export type RecentViewKind = "conversation" | "terminal" | "project";
 export type RecentViewFilter = "all" | RecentViewKind;
-export type RecentConversationType = "hermes" | "coding-agent";
+export type RecentConversationType = "hermes" | "coding-agent" | "canonical";
 
 export interface RecentView {
   kind: RecentViewKind;
@@ -44,6 +44,7 @@ export interface RecentView {
   label: string;
   visitedAt: number;
   conversationType?: RecentConversationType;
+  projectId?: string | null;
 }
 
 export interface TerminalSessionRequest {
@@ -137,6 +138,7 @@ interface TabsState {
   ensureNavigationScope(scope: string): void;
   recordRecentProject(id: string, label: string): void;
   recordRecentConversation(id: string, label: string): void;
+  recordRecentCanonicalChat(id: string, label: string, projectId: string | null): void;
   recordRecentHermesConversation(id: string, label: string): void;
   recordRecentTerminal(id: string, label: string): void;
   removeRecentView(kind: RecentViewKind, id: string): void;
@@ -344,6 +346,17 @@ export const useTabs = create<TabsState>()((set, get) => ({
     }),
   })),
 
+  recordRecentCanonicalChat: (id, label, projectId) => set((state) => ({
+    recentViews: recordRecent(state.recentViews, {
+      kind: "conversation",
+      id,
+      label,
+      visitedAt: Date.now(),
+      conversationType: "canonical",
+      projectId,
+    }),
+  })),
+
   recordRecentHermesConversation: (id, label) => set((state) => ({
     recentViews: recordRecent(state.recentViews, {
       kind: "conversation",
@@ -373,6 +386,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
       recentViews: state.recentViews.filter((recent) =>
         recent.kind !== "conversation"
         || recent.conversationType === "coding-agent"
+        || recent.conversationType === "canonical"
         || authoritativeIds.has(recent.id),
       ),
     };

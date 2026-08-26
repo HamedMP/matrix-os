@@ -110,6 +110,7 @@ describe("CanonicalChatWorkspace", () => {
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
     const chatClient = client();
+    const onChatDeleted = vi.fn();
     vi.mocked(chatClient.delete).mockResolvedValue({
       chatId: record.chat.id,
       deletedAt: "2026-08-26T12:00:00.000Z",
@@ -120,6 +121,7 @@ describe("CanonicalChatWorkspace", () => {
         projectId={null}
         active
         catalog={providerCatalog}
+        onChatDeleted={onChatDeleted}
       />,
     );
 
@@ -132,6 +134,7 @@ describe("CanonicalChatWorkspace", () => {
       record.chat.id,
       expect.stringMatching(/^req_/),
     ));
+    expect(onChatDeleted).toHaveBeenCalledWith(record.chat.id);
     await waitFor(() => expect(screen.queryByRole("button", { name: snapshot.chat.title })).toBeNull());
   });
 
@@ -248,6 +251,86 @@ describe("CanonicalChatWorkspace", () => {
     fireEvent.click(await screen.findByRole("option", { name: "Matrix OS, Folder" }));
 
     expect(await screen.findByRole("button", { name: "Project Matrix OS" })).toBeTruthy();
+  });
+
+  it("opens a Global draft in its selected Project after the first Turn is admitted", async () => {
+    const emptyClient = client();
+    vi.mocked(emptyClient.list).mockResolvedValue({ items: [] });
+    const createdRecord = {
+      ...record,
+      chat: { ...record.chat, revision: 0, messageCount: 0 },
+      projectId: "project_1",
+      providerBinding: undefined,
+    };
+    const admittedRecord = { ...record, projectId: "project_1" };
+    vi.mocked(emptyClient.create).mockResolvedValue(createdRecord);
+    vi.mocked(emptyClient.admitTurn).mockResolvedValue({
+      record: admittedRecord,
+      message: snapshot.messages[0],
+      turn: snapshot.turns[0],
+      run: snapshot.runs[0],
+      admission: "accepted",
+    });
+    useBoard.setState({
+      projects: [{ id: "project_1", slug: "matrix-os", name: "Matrix OS", kind: "folder" }],
+    });
+    const api = {
+      baseUrl: "https://matrix.test",
+      get: vi.fn(),
+      getText: vi.fn(),
+      getBlob: vi.fn(),
+      post: vi.fn(),
+      postBytes: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      putBytes: vi.fn(),
+      delete: vi.fn(),
+      putText: vi.fn(),
+    } as never;
+    useConnection.setState({ api });
+    const onProjectChanged = vi.fn();
+    const onActiveChatChanged = vi.fn();
+
+    render(
+      <CanonicalChatWorkspace
+        api={api}
+        client={emptyClient}
+        projectId={null}
+        active
+        catalog={providerCatalog}
+        onProjectChanged={onProjectChanged}
+        onActiveChatChanged={onActiveChatChanged}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to project" }));
+    fireEvent.click(screen.getByRole("option", { name: "Matrix OS, Folder" }));
+    await setSharedComposerText(screen.getByRole("textbox", { name: "Start a chat" }), "Inspect Matrix OS");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onProjectChanged).toHaveBeenCalledWith(
+      snapshot.chat.id,
+      "project_1",
+      snapshot.chat.title,
+    ));
+    expect(onActiveChatChanged).not.toHaveBeenCalledWith(snapshot.chat.id, expect.anything());
+  });
+
+  it("renders the shared inspector slot beside the canonical Chat surface", async () => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        active
+        catalog={providerCatalog}
+        inspector={<aside aria-label="Conversation tools">Inspector</aside>}
+      />,
+    );
+
+    expect(await screen.findByRole("region", { name: "Project Chat" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
   });
 
   it("shows a conversation loading state instead of flashing the New Chat hero", async () => {

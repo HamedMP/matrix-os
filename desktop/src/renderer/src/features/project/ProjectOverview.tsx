@@ -9,6 +9,7 @@ import type {
 } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
+import { AppError, diagnosticErrorKind } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -120,10 +121,11 @@ export default function ProjectOverview({
     () => api?.baseUrl ? createCanonicalChatClient(api) : null,
     [api],
   );
-  const [canonicalStatus, setCanonicalStatus] = useState<"unavailable" | "loading" | "ready">(
+  const [canonicalStatus, setCanonicalStatus] = useState<"unavailable" | "loading" | "ready" | "error">(
     canonicalClient ? "loading" : "unavailable",
   );
   const [canonicalChats, setCanonicalChats] = useState<CanonicalChatRecord[]>([]);
+  const [canonicalLoadRevision, setCanonicalLoadRevision] = useState(0);
   const workspaceEntry = useProjectWorkspaces((state) => state.entries[projectId]);
   const ensureWorkspace = useProjectWorkspaces((state) => state.ensure);
   const refreshWorkspace = useProjectWorkspaces((state) => state.refresh);
@@ -151,7 +153,7 @@ export default function ProjectOverview({
   const sessions = useMemo(() => (
     canonicalStatus === "ready"
       ? canonicalProjectSessions(canonicalChats)
-      : canonicalStatus === "loading" && canonicalClient && active
+      : (canonicalStatus === "loading" || canonicalStatus === "error") && canonicalClient && active
         ? []
         : legacySessions
   ), [active, canonicalChats, canonicalClient, canonicalStatus, legacySessions]);
@@ -170,13 +172,16 @@ export default function ProjectOverview({
       if (!current) return;
       setCanonicalChats(page.items);
       setCanonicalStatus("ready");
-    }).catch(() => {
+    }).catch((error: unknown) => {
       if (!current) return;
+      console.warn("[project-overview] canonical chat list failed:", diagnosticErrorKind(error));
       setCanonicalChats([]);
-      setCanonicalStatus("unavailable");
+      setCanonicalStatus(error instanceof AppError && error.category === "notFound"
+        ? "unavailable"
+        : "error");
     });
     return () => { current = false; };
-  }, [active, canonicalClient, canonicalProjectId]);
+  }, [active, canonicalClient, canonicalLoadRevision, canonicalProjectId]);
 
   useEffect(() => {
     if (!active) {
@@ -214,7 +219,7 @@ export default function ProjectOverview({
           {viewSwitch}
         </div>
 
-        {summary && workspaceEnabled && canonicalStatus !== "loading" ? (
+        {summary && workspaceEnabled && (canonicalStatus === "ready" || canonicalStatus === "unavailable") ? (
           <div className="mb-6">
             <ProjectChatDraft
               summary={summary}
@@ -235,7 +240,7 @@ export default function ProjectOverview({
                   chatId,
                   title: projectLabel,
                 });
-                useTabs.getState().recordRecentConversation(chatId, label);
+                useTabs.getState().recordRecentCanonicalChat(chatId, label, canonicalProjectId);
               }}
               onCreated={(threadId, label) => {
                 setSelectedThread(projectId, threadId);
@@ -244,11 +249,25 @@ export default function ProjectOverview({
               }}
             />
           </div>
-        ) : summary && workspaceEnabled ? (
+        ) : summary && workspaceEnabled && canonicalStatus === "loading" ? (
           <div className="mb-6 h-[126px] animate-pulse rounded-[var(--radius-xl)] border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }} aria-label="Loading Chat composer" />
         ) : null}
 
         <section aria-label={`${projectLabel} sessions`}>
+          {canonicalStatus === "error" ? (
+            <div role="alert" className="flex items-center gap-3 py-6 text-sm" style={{ color: "var(--text-secondary)" }}>
+              <AlertCircle size={15} style={{ color: "var(--warning)" }} />
+              <span>Project chats are temporarily unavailable.</span>
+              <button
+                type="button"
+                onClick={() => setCanonicalLoadRevision((revision) => revision + 1)}
+                className="rounded-md border px-2 py-1 text-xs font-medium"
+                style={{ borderColor: "var(--border-default)" }}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
           {!summary && workspaceEntry?.status !== "error" ? (
             <div role="status" className="py-6">
               <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
@@ -276,7 +295,7 @@ export default function ProjectOverview({
               </button>
             </div>
           ) : null}
-          {summary && canonicalStatus !== "loading" && workspaceEntry?.status !== "loading" && workspaceEntry?.status !== "error" && sessions.length === 0 ? (
+          {summary && canonicalStatus !== "loading" && canonicalStatus !== "error" && workspaceEntry?.status !== "loading" && workspaceEntry?.status !== "error" && sessions.length === 0 ? (
             <p className="py-6 text-sm" style={{ color: "var(--text-tertiary)" }}>No sessions yet. Start one above.</p>
           ) : null}
 
@@ -302,6 +321,11 @@ export default function ProjectOverview({
                         chatId: record.chat.id,
                         title: projectLabel,
                       });
+                      useTabs.getState().recordRecentCanonicalChat(
+                        record.chat.id,
+                        record.chat.title,
+                        canonicalProjectId,
+                      );
                     }}
                     className="group flex w-full items-center gap-3 border-b px-3 py-3.5 text-left outline-none transition-colors last:border-b-0 hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                     style={{ borderColor: "var(--border-subtle)" }}

@@ -11,6 +11,7 @@ import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
 function thread(index: number): AgentThreadSummary {
@@ -240,6 +241,36 @@ describe("ProjectOverview", () => {
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useTabs.getState().tabs.find((tab) => tab.projectSlug === "matrix-os")?.chatId)
       .toBe(snapshot.chat.id);
+  });
+
+  it("shows a safe canonical-list error instead of silently falling back to legacy sessions", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useConnection.setState({
+      status: "signed-in",
+      api: {
+        baseUrl: "https://matrix.test",
+        get: vi.fn(async (path: string) => {
+          if (path.startsWith("/api/chats?")) throw new AppError("offline");
+          if (path === "/api/conversations") return { conversations: [] };
+          throw new Error(`unexpected api path ${path}`);
+        }),
+      } as never,
+    });
+
+    render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryWithThreads([{ ...thread(1), title: "Legacy session" }])}
+        active
+        viewSwitch={null}
+      />,
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Project chats are temporarily unavailable.");
+    expect(screen.queryByRole("button", { name: "Open session Legacy session" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "New chat in Matrix OS" })).toBeNull();
+    expect(warning).toHaveBeenCalledWith("[project-overview] canonical chat list failed:", "offline");
   });
 
   it("opens a moved Chat in the shared Project Chats surface", async () => {

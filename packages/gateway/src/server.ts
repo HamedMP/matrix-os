@@ -55,7 +55,10 @@ import { resolveAgentCredentialProbe } from "./onboarding/agent-credential-probe
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createWorktreeManager } from "./worktree-manager.js";
-import { createWorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
+import {
+  createWorkspaceSessionOrchestrator,
+  type WorkspaceSessionOrchestrator,
+} from "./workspace-session-orchestrator.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
@@ -599,6 +602,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
   let codexEventBridge: CodexEventBridge | undefined;
+  let codingAgentWorkspaceRuntime: WorkspaceSessionOrchestrator | null = null;
   let codingAgentApprovalsEnabled = false;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
@@ -651,7 +655,7 @@ export async function createGateway(config: GatewayConfig) {
       inputWriter: (sessionId, input, signal) =>
         workspaceZellijRuntime.sendInput(sessionId, input, signal),
     });
-    const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+    codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       homePath,
       projectManager: codingAgentProjectManager,
       worktreeManager: codingAgentWorktreeManager,
@@ -4497,6 +4501,8 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await codingAgentWorkspaceRuntime?.close();
+      codingAgentWorkspaceRuntime = null;
       await agentRuntimeServices.controller.close();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();

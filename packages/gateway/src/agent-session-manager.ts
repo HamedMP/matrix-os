@@ -119,7 +119,7 @@ const ListSessionsSchema = z.object({
   pr: z.number().int().positive().optional(),
   status: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]).optional(),
   limit: z.number().int().min(1).max(100).optional(),
-  cursor: z.string().optional(),
+  cursor: SessionIdSchema.optional(),
 });
 const SessionInputSchema = z.string().min(1).max(64 * 1024);
 
@@ -445,7 +445,7 @@ export function createAgentSessionManager(options: {
     },
 
     async listSessions(input: unknown = {}): Promise<
-      { ok: true; sessions: WorkspaceSessionView[]; nextCursor: null } | Failure
+      { ok: true; sessions: WorkspaceSessionView[]; nextCursor: string | null } | Failure
     > {
       const parsed = ListSessionsSchema.safeParse(input);
       if (!parsed.success) {
@@ -458,10 +458,25 @@ export function createAgentSessionManager(options: {
         .filter((session) => !query.taskId || session.taskId === query.taskId)
         .filter((session) => typeof query.pr !== "number" || session.pr === query.pr)
         .filter((session) => !query.status || session.runtime.status === query.status)
-        .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))
-        .slice(0, limit)
-        .map((session) => decorateSession(session, options.zellijRuntime));
-      return { ok: true, sessions, nextCursor: null };
+        .sort((a, b) => (
+          b.lastActivityAt.localeCompare(a.lastActivityAt) || a.id.localeCompare(b.id)
+        ));
+      const cursorIndex = query.cursor
+        ? sessions.findIndex((session) => session.id === query.cursor)
+        : -1;
+      if (query.cursor && cursorIndex < 0) {
+        return failure(400, "invalid_session_cursor", "Session cursor is invalid");
+      }
+      const start = cursorIndex + 1;
+      const page = sessions.slice(start, start + limit);
+      const nextCursor = start + page.length < sessions.length
+        ? page.at(-1)?.id ?? null
+        : null;
+      return {
+        ok: true,
+        sessions: page.map((session) => decorateSession(session, options.zellijRuntime)),
+        nextCursor,
+      };
     },
 
     async getProjectLifecycleState(input: {

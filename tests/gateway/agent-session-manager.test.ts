@@ -376,6 +376,40 @@ describe("agent-session-manager", () => {
     });
   });
 
+  it("paginates the complete session list with stable opaque cursors", async () => {
+    const { manager } = createManager();
+    const baseSession = {
+      kind: "agent" as const,
+      runtime: { type: "zellij" as const, status: "running" as const },
+      attachedClients: 0,
+      writeMode: "owner" as const,
+      ownerId: "user_a",
+      startedAt: "2026-04-26T00:00:00.000Z",
+    };
+    for (const [index, id] of ["sess_first", "sess_second", "sess_third"].entries()) {
+      await atomicWriteJson(join(homePath, "system", "sessions", `${id}.json`), {
+        ...baseSession,
+        id,
+        terminalSessionId: `term_${id}`,
+        transcriptPath: join(homePath, "system", "session-output", `${id}.jsonl`),
+        lastActivityAt: `2026-04-26T00:00:0${3 - index}.000Z`,
+      });
+    }
+
+    const firstPage = await manager.listSessions({ limit: 2 });
+    expect(firstPage).toMatchObject({
+      ok: true,
+      sessions: [{ id: "sess_first" }, { id: "sess_second" }],
+      nextCursor: "sess_second",
+    });
+    if (!firstPage.ok || !firstPage.nextCursor) throw new Error("expected next cursor");
+    await expect(manager.listSessions({ limit: 2, cursor: firstPage.nextCursor })).resolves.toMatchObject({
+      ok: true,
+      sessions: [{ id: "sess_third" }],
+      nextCursor: null,
+    });
+  });
+
   it("marks active sessions degraded during startup reconciliation without exposing runtime errors", async () => {
     const { manager } = createManager({
       zellijRuntime: {

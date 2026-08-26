@@ -15,6 +15,8 @@ export type CanonicalCliSpawn = (
 ) => CanonicalCliProcess;
 
 const defaultSpawn: CanonicalCliSpawn = (command, args, options) => spawn(command, args, options);
+const CLI_TERMINATION_GRACE_MS = 1_000;
+const CLI_FORCE_SETTLE_MS = 250;
 
 export async function runCanonicalCli(options: {
   command: string;
@@ -42,22 +44,34 @@ export async function runCanonicalCli(options: {
   });
 
   await new Promise<void>((resolve, reject) => {
+    let timeout: NodeJS.Timeout | undefined;
+    let forceKillTimer: NodeJS.Timeout | undefined;
+    let forceSettleTimer: NodeJS.Timeout | undefined;
+    let terminationError: Error | undefined;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      if (forceSettleTimer) clearTimeout(forceSettleTimer);
       options.signal.removeEventListener("abort", abort);
       if (error) reject(error);
       else resolve();
     };
-    const abort = () => {
+    const terminate = (error: Error) => {
+      if (settled || terminationError) return;
+      terminationError = error;
       child.kill("SIGTERM");
-      finish(new Error("Provider CLI Run aborted"));
+      forceKillTimer = setTimeout(() => {
+        if (settled) return;
+        child.kill("SIGKILL");
+        forceSettleTimer = setTimeout(() => finish(terminationError), CLI_FORCE_SETTLE_MS);
+        forceSettleTimer.unref?.();
+      }, CLI_TERMINATION_GRACE_MS);
+      forceKillTimer.unref?.();
     };
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish(new Error("Provider CLI Run timed out"));
-    }, options.timeoutMs);
+    const abort = () => terminate(new Error("Provider CLI Run aborted"));
+    timeout = setTimeout(() => terminate(new Error("Provider CLI Run timed out")), options.timeoutMs);
     timeout.unref?.();
 
     if (options.signal.aborted) {
@@ -66,25 +80,27 @@ export async function runCanonicalCli(options: {
     }
     options.signal.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk) => {
-      if (settled) return;
+      if (settled || terminationError) return;
       stdoutBytes += chunk.byteLength;
       if (stdoutBytes > options.maxStdoutBytes) {
-        child.kill("SIGTERM");
-        finish(new Error("Provider CLI output exceeded limit"));
+        terminate(new Error("Provider CLI output exceeded limit"));
         return;
       }
       try {
         options.onStdout(chunk);
       } catch (error: unknown) {
-        child.kill("SIGTERM");
-        finish(new Error("Provider CLI output was invalid", { cause: error }));
+        terminate(new Error("Provider CLI output was invalid", { cause: error }));
       }
     });
     child.stderr.on("data", (chunk) => {
       stderrBytes = Math.min(maxStderrBytes, stderrBytes + chunk.byteLength);
     });
-    child.once("error", (error) => finish(new Error("Provider CLI could not start", { cause: error })));
+    child.once("error", (error) => finish(terminationError ?? new Error("Provider CLI could not start", { cause: error })));
     child.once("exit", (code, signal) => {
+      if (terminationError) {
+        finish(terminationError);
+        return;
+      }
       if (code === 0 && signal === null) finish();
       else finish(new Error("Provider CLI exited unsuccessfully"));
     });

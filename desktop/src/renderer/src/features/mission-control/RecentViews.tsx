@@ -19,6 +19,8 @@ import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat } from "../../stores/hermes-chat";
 import { useThreads } from "../../stores/threads";
+import { useBoard } from "../../stores/board";
+import { useProjectView } from "../../stores/project-view";
 import { SidebarIcon, sidebarNavRowStyle } from "./SidebarPrimitives";
 
 const FILTER_OPTIONS: Array<{ filter: RecentViewFilter; label: string }> = [
@@ -76,6 +78,30 @@ export default function RecentViews() {
       openTab({ kind: "terminal", sessionName: recent.id, title: recent.label });
       return;
     }
+    if (recent.conversationType === "canonical") {
+      if (recent.projectId === null || recent.projectId === undefined) {
+        openTab({
+          kind: "chat",
+          title: recent.label,
+          chatId: recent.id,
+          chatView: "conversation",
+          closable: false,
+        });
+        return;
+      }
+      const project = useBoard.getState().projects.find((candidate) => (
+        candidate.id === recent.projectId || candidate.slug === recent.projectId
+      ));
+      const projectSlug = project?.slug ?? recent.projectId;
+      useProjectView.getState().setView(projectSlug, "chats");
+      openTab({
+        kind: "project",
+        projectSlug,
+        title: project?.name ?? projectSlug,
+        chatId: recent.id,
+      });
+      return;
+    }
     const legacyThread = threads.find((candidate) => candidate.id === recent.id);
     if (recent.conversationType === "coding-agent") {
       void openCodingAgentThread(recent.id);
@@ -104,6 +130,17 @@ export default function RecentViews() {
     }
     if (recent.conversationType === "coding-agent") {
       return activeTab?.kind === "project" && recent.id === activeCodingAgentThreadId;
+    }
+    if (recent.conversationType === "canonical") {
+      if (recent.projectId === null || recent.projectId === undefined) {
+        return activeTab?.kind === "chat" && activeTab.chatId === recent.id;
+      }
+      const project = useBoard.getState().projects.find((candidate) => (
+        candidate.id === recent.projectId || candidate.slug === recent.projectId
+      ));
+      return activeTab?.kind === "project"
+        && activeTab.projectSlug === (project?.slug ?? recent.projectId)
+        && activeTab.chatId === recent.id;
     }
     if (recent.conversationType === "hermes") {
       return activeTab?.kind === "chat" && activeThreadId === null && recent.id === hermesSessionId;

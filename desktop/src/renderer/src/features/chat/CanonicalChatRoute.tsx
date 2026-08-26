@@ -18,6 +18,7 @@ export function CanonicalChatRoute({
   projectLabel,
   active,
   fallback,
+  inspector,
 }: {
   api: ApiClient | null;
   projectId: string | null;
@@ -26,6 +27,7 @@ export function CanonicalChatRoute({
   projectLabel?: string;
   active: boolean;
   fallback: ReactNode;
+  inspector?: ReactNode;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -129,7 +131,15 @@ export function CanonicalChatRoute({
       initialView={initialView}
       projectLabel={projectLabel}
       active={active}
+      inspector={inspector}
       onActiveChatChanged={(chatId, title) => {
+        if (chatId) {
+          useTabs.getState().recordRecentCanonicalChat(
+            chatId,
+            title ?? "Chat",
+            canonicalProjectId,
+          );
+        }
         if (projectId === null) {
           useTabs.getState().openTab({
             kind: "chat",
@@ -147,7 +157,8 @@ export function CanonicalChatRoute({
           ...(chatId ? { chatId } : {}),
         });
       }}
-      onProjectChanged={(chatId, targetProjectId) => {
+      onProjectChanged={(chatId, targetProjectId, title) => {
+        useTabs.getState().recordRecentCanonicalChat(chatId, title, targetProjectId);
         if (targetProjectId === null) {
           useTabs.getState().openTab({ kind: "chat", title: "Chat", chatId, closable: false });
           return;
@@ -164,6 +175,7 @@ export function CanonicalChatRoute({
           title: project?.name ?? projectSlug,
         });
       }}
+      onChatDeleted={(chatId) => useTabs.getState().removeRecentView("conversation", chatId)}
     />
   );
 }

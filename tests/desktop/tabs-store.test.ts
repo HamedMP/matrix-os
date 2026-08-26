@@ -145,11 +145,17 @@ describe("tabs store", () => {
     }
     useTabs.getState().recordRecentTerminal("dev", "dev");
     useTabs.getState().recordRecentConversation("thread-1", "Fix navigation");
+    useTabs.getState().recordRecentCanonicalChat("chat-1", "Canonical chat", "matrix-os");
 
     const state = useTabs.getState();
     expect(state.recentViews.length).toBeLessThanOrEqual(12);
     expect(() => JSON.stringify(state.recentViews)).not.toThrow();
-    expect(state.recentViews[0]).toMatchObject({ kind: "conversation", id: "thread-1" });
+    expect(state.recentViews[0]).toMatchObject({
+      kind: "conversation",
+      id: "chat-1",
+      conversationType: "canonical",
+      projectId: "matrix-os",
+    });
 
     state.setRecentFilter("terminal");
     expect(useTabs.getState().recentFilter).toBe("terminal");

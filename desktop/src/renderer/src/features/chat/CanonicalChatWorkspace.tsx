@@ -8,7 +8,7 @@ import type {
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
 import { MessageSquare, Plus, Search } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
@@ -83,8 +83,10 @@ export function CanonicalChatWorkspace({
   projectLabel,
   active,
   catalog,
+  inspector,
   onProjectChanged,
   onActiveChatChanged,
+  onChatDeleted,
 }: {
   api?: ApiClient;
   client: CanonicalChatClient;
@@ -94,8 +96,10 @@ export function CanonicalChatWorkspace({
   projectLabel?: string;
   active: boolean;
   catalog?: CanonicalProviderCatalog;
-  onProjectChanged?: (chatId: string, projectId: string | null) => void;
+  inspector?: ReactNode;
+  onProjectChanged?: (chatId: string, projectId: string | null, title: string) => void;
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
+  onChatDeleted?: (chatId: string) => void;
 }) {
   const projects = useBoard((state) => state.projects);
   const fallbackCatalog = useMemo(
@@ -235,7 +239,7 @@ export function CanonicalChatWorkspace({
       moved
       && isCurrentRuntimeGeneration(runtimeGeneration)
       && targetProjectId !== projectId
-    ) onProjectChanged?.(moved.chat.id, targetProjectId);
+    ) onProjectChanged?.(moved.chat.id, targetProjectId, moved.chat.title);
   };
 
   const submit = async (submission: SharedChatComposerSubmission) => {
@@ -278,9 +282,14 @@ export function CanonicalChatWorkspace({
       }, canonicalChatTitle(submission), draftProjectId ?? projectId);
       if (!admitted || !isCurrentSubmission()) return;
       reportedChatId.current = admitted.record.chat.id;
-      onActiveChatChanged?.(admitted.record.chat.id, admitted.record.chat.title);
+      const admittedProjectId = admitted.record.projectId ?? null;
+      if (admittedProjectId !== projectId && onProjectChanged) {
+        onProjectChanged(admitted.record.chat.id, admittedProjectId, admitted.record.chat.title);
+      } else {
+        onActiveChatChanged?.(admitted.record.chat.id, admitted.record.chat.title);
+      }
       setGlobalView("conversation");
-      setDraftProjectId(admitted.record.projectId ?? null);
+      setDraftProjectId(admittedProjectId);
       setDraft("");
       setReferenceTokens([]);
       attachments.clear();
@@ -407,6 +416,7 @@ export function CanonicalChatWorkspace({
             setDeleting(true);
             void controller.deleteChat(deleteTarget.id).then((deleted) => {
               if (deleted) {
+                onChatDeleted?.(deleteTarget.id);
                 setDeleteTarget(null);
                 setDeleteError(null);
               } else {
@@ -420,7 +430,7 @@ export function CanonicalChatWorkspace({
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-slot="canonical-chat-workspace">
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-slot="canonical-chat-workspace">
       {projectId ? <aside
         aria-label="Project chats"
         className="flex w-[260px] shrink-0 flex-col border-r p-3"
@@ -526,6 +536,7 @@ export function CanonicalChatWorkspace({
           </div>
         )}
       </SharedChatSurface>
+      {inspector}
     </div>
   );
 }
