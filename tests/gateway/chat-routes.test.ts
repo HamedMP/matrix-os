@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { ChatBusyError, ChatConflictError } from "../../packages/gateway/src/chat/errors.js";
 import {
   createCanonicalChatRoutes,
   type CanonicalChatRouteService,
@@ -38,6 +39,7 @@ const record: CanonicalChatRecord = {
 function routeService(overrides: Partial<CanonicalChatRouteService> = {}): CanonicalChatRouteService {
   return {
     create: vi.fn(async () => record),
+    updateProject: vi.fn(async () => record),
     list: vi.fn(async () => ({ items: [record] })),
     getDetail: vi.fn(async () => ({
       record,
@@ -110,6 +112,74 @@ describe("canonical Chat routes", () => {
       }),
     });
     expect(oversized.status).toBe(413);
+  });
+
+  it("moves a Chat with owner-derived identity and a strict revision-guarded body", async () => {
+    const moved = { ...record, projectId: "project_1" };
+    const updateProject = vi.fn(async () => moved);
+    const app = appFor(routeService({ updateProject }));
+
+    const response = await app.request("/api/chats/chat_route_test/project", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 0, projectId: "project_1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(moved);
+    expect(updateProject).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      { baseRevision: 0, projectId: "project_1" },
+    );
+
+    const invalid = await app.request("/api/chats/chat_route_test/project", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 0, projectId: null, ownerId: "other" }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
+  it("returns safe conflict semantics for stale revisions and active Runs", async () => {
+    const stale = appFor(routeService({
+      updateProject: vi.fn(async () => {
+        throw new ChatConflictError("chat_route_test", 2);
+      }),
+    }));
+    const staleResponse = await stale.request("/api/chats/chat_route_test/project", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 1, projectId: "project_1" }),
+    });
+    expect(staleResponse.status).toBe(409);
+    expect(await staleResponse.json()).toEqual({
+      error: {
+        code: "chat_conflict",
+        safeMessage: "Chat changed. Refresh and try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+
+    const busy = appFor(routeService({
+      updateProject: vi.fn(async () => {
+        throw new ChatBusyError("chat_route_test");
+      }),
+    }));
+    const busyResponse = await busy.request("/api/chats/chat_route_test/project", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 1, projectId: null }),
+    });
+    expect(busyResponse.status).toBe(409);
+    expect(await busyResponse.json()).toEqual({
+      error: {
+        code: "chat_busy",
+        safeMessage: "This Chat already has an active Run.",
+        retryable: false,
+      },
+    });
   });
 
   it("passes bounded filters to list and returns an opaque cursor page", async () => {

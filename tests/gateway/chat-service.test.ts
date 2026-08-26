@@ -25,7 +25,7 @@ function record(id = "chat_service_test"): CanonicalChatRecord {
   };
 }
 
-function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "getDetailPage">> = {}) {
+function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "getDetailPage" | "update">> = {}) {
   return {
     create: vi.fn(async () => record()),
     list: vi.fn(async () => ({ items: [record()] } satisfies ChatListPage)),
@@ -36,8 +36,9 @@ function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | 
       runs: [],
       activities: [],
     } satisfies ChatDetailPage)),
+    update: vi.fn(async () => ({ ...record(), projectId: "project_1" })),
     ...overrides,
-  } as Pick<ChatRepository, "create" | "list" | "getDetailPage">;
+  } as Pick<ChatRepository, "create" | "list" | "getDetailPage" | "update">;
 }
 
 describe("canonical Chat service", () => {
@@ -54,6 +55,23 @@ describe("canonical Chat service", () => {
       clientRequestId: "req_service_create",
       title: "New chat",
     }));
+  });
+
+  it("moves a Chat without changing its identity or bypassing revision guards", async () => {
+    const update = vi.fn(async () => ({ ...record(), projectId: "project_1" }));
+    const service = createCanonicalChatService(repository({ update }));
+
+    const moved = await service.updateProject(owner, "chat_service_test", {
+      baseRevision: 0,
+      projectId: "project_1",
+    });
+
+    expect(update).toHaveBeenCalledWith(owner, "chat_service_test", {
+      baseRevision: 0,
+      projectId: "project_1",
+    });
+    expect(moved.chat.id).toBe("chat_service_test");
+    expect(moved.projectId).toBe("project_1");
   });
 
   it("round-trips opaque list cursors without exposing repository cursor fields", async () => {

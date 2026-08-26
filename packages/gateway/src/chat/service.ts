@@ -10,6 +10,7 @@ import {
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalUpdateChatProjectRequestSchema,
   CanonicalCreateChatRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
@@ -21,6 +22,7 @@ import {
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalUpdateChatProjectRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { ChatOwner } from "./records.js";
@@ -45,7 +47,7 @@ const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
 ]);
 
 type CursorEnvelope = z.infer<typeof CursorEnvelopeSchema>;
-type ChatServiceRepository = Pick<ChatRepository, "create" | "list" | "getDetailPage">;
+type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "list" | "getDetailPage">;
 
 function encodeCursor(value: CursorEnvelope): string {
   return CanonicalChatApiCursorSchema.parse(
@@ -97,6 +99,19 @@ export function createCanonicalChatService(
         ...(request.currentSelection === undefined ? {} : { currentSelection: request.currentSelection }),
       });
       return CanonicalChatRecordSchema.parse(created);
+    },
+
+    async updateProject(
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalUpdateChatProjectRequest,
+    ): Promise<CanonicalChatRecord> {
+      const request = CanonicalUpdateChatProjectRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await repository.update(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        request,
+      ));
     },
 
     async list(owner, input): Promise<CanonicalChatListResponse> {
@@ -199,6 +214,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
   };
   return {
     create: unavailable,
+    updateProject: unavailable,
     list: unavailable,
     getDetail: unavailable,
     admitTurn: unavailable,

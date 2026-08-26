@@ -14,6 +14,7 @@ import {
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalUpdateChatProjectRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
@@ -24,6 +25,7 @@ import {
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalUpdateChatProjectRequest,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -34,11 +36,12 @@ import {
   type RequestPrincipal,
 } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
-import { CanonicalChatOrchestrationError } from "./orchestrator.js";
+import { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestrator.js";
 
 const CHAT_CREATE_BODY_LIMIT = 96 * 1024;
 const CHAT_TURN_BODY_LIMIT = 128 * 1024;
 const CHAT_CANCEL_BODY_LIMIT = 4 * 1024;
+const CHAT_UPDATE_BODY_LIMIT = 4 * 1024;
 
 const ChatListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -54,6 +57,11 @@ const ChatDetailQuerySchema = z.object({
 
 export interface CanonicalChatRouteService {
   create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
+  updateProject(
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalUpdateChatProjectRequest,
+  ): Promise<CanonicalChatRecord>;
   list(owner: ChatOwner, input: {
     limit: number;
     lifecycle?: "active" | "archived";
@@ -119,6 +127,13 @@ function handleError(c: Context, error: unknown) {
   if (error instanceof CanonicalChatOrchestrationError) {
     return c.json({ error: error.safeError }, error.status);
   }
+  try {
+    mapRepositoryError(error);
+  } catch (mapped: unknown) {
+    if (mapped instanceof CanonicalChatOrchestrationError) {
+      return c.json({ error: mapped.safeError }, mapped.status);
+    }
+  }
   if (typeof error === "object" && error !== null && "issues" in error) {
     return validationError(c);
   }
@@ -144,6 +159,7 @@ export function createCanonicalChatRoutes(options: {
   const createBodyLimit = bodyLimit({ maxSize: CHAT_CREATE_BODY_LIMIT, onError: bodyTooLarge });
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
   const cancelBodyLimit = bodyLimit({ maxSize: CHAT_CANCEL_BODY_LIMIT, onError: bodyTooLarge });
+  const updateBodyLimit = bodyLimit({ maxSize: CHAT_UPDATE_BODY_LIMIT, onError: bodyTooLarge });
 
   routes.post("/api/chats", createBodyLimit, async (context) => {
     try {
@@ -173,6 +189,22 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       return context.json(CanonicalChatListResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/project", updateBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalUpdateChatProjectRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.updateProject(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatRecordSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }

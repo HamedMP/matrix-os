@@ -117,7 +117,7 @@ function requirementsFor(input: CanonicalCreateChatTurnRequest) {
   };
 }
 
-function mapRepositoryError(error: unknown): never {
+export function mapRepositoryError(error: unknown): never {
   if (error instanceof ChatNotFoundError) {
     throw new CanonicalChatOrchestrationError(safeError("chat_not_found", "Chat not found."), 404);
   }

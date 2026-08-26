@@ -30,6 +30,11 @@ export const CanonicalCreateChatRequestSchema = z.object({
   currentSelection: CanonicalChatModelSelectionSchema.optional(),
 }).strict();
 
+export const CanonicalUpdateChatProjectRequestSchema = z.object({
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  projectId: canonicalReferenceId(160).nullable(),
+}).strict();
+
 const USER_INPUT_PART_TYPES = new Set([
   "text",
   "attachment_reference",
@@ -144,6 +149,7 @@ export const CanonicalChatRunAdmissionResponseSchema = z.object({
 });
 
 export type CanonicalCreateChatRequest = z.infer<typeof CanonicalCreateChatRequestSchema>;
+export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateChatProjectRequestSchema>;
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
 export type CanonicalCancelChatRunRequest = z.infer<typeof CanonicalCancelChatRunRequestSchema>;
 export type CanonicalRetryChatTurnRequest = z.infer<typeof CanonicalRetryChatTurnRequestSchema>;

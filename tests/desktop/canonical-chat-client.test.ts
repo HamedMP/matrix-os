@@ -73,6 +73,26 @@ describe("canonical Chat client", () => {
     } as never)).rejects.toThrow();
   });
 
+  it("moves a Chat between Global and Project scopes through one guarded mutation", async () => {
+    const movedRecord = { ...record, projectId: "project_1" };
+    const patch = vi.fn(async () => movedRecord);
+    const client = createCanonicalChatClient(api({ patch }));
+
+    await expect(client.updateProject(record.chat.id, {
+      baseRevision: 0,
+      projectId: "project_1",
+    })).resolves.toEqual(movedRecord);
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/project", {
+      baseRevision: 0,
+      projectId: "project_1",
+    });
+
+    await expect(client.updateProject(record.chat.id, {
+      baseRevision: 1,
+      projectId: null,
+    })).resolves.toEqual(movedRecord);
+  });
+
   it("loads a bounded message page and rejects malformed Gateway projections", async () => {
     const get = vi.fn(async () => ({
       record,
