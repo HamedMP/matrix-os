@@ -523,6 +523,12 @@ exec /bin/sh "$@"
       providerId: "codex",
       agent: "codex",
       runtime,
+      codexEvents: {
+        healthCheck: vi.fn(async () => ({ ok: true })),
+        watch: vi.fn(async () => ({ path: "/tmp/provider-events.jsonl" })),
+        unwatch: vi.fn(),
+        markStopped: vi.fn(),
+      },
       codexControl: {
         submitTurn,
         submitApproval: vi.fn(),
@@ -592,6 +598,58 @@ exec /bin/sh "$@"
       outcome: "delivered",
       resumeState,
     });
+  });
+
+  it("restores Codex event ingestion before resuming a persisted workspace thread", async () => {
+    const watch = vi.fn(async () => ({ path: "/tmp/provider-events.jsonl" }));
+    const submitTurn = vi.fn(async () => undefined);
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime: {
+        startSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+      codexEvents: {
+        healthCheck: vi.fn(async () => ({ ok: true })),
+        watch,
+        unwatch: vi.fn(),
+        markStopped: vi.fn(),
+      },
+      codexControl: {
+        submitTurn,
+        submitApproval: vi.fn(),
+        submitInput: vi.fn(),
+      },
+    });
+
+    await provider.resumeTurn?.({
+      principal: ownerPrincipal,
+      thread: AgentThreadSummarySchema.parse({
+        id: "thread_workspace_restarted_1",
+        providerId: "codex",
+        title: "Coding agent run",
+        status: "running",
+        attention: "none",
+        createdAt: baseNow.toISOString(),
+        updatedAt: baseNow.toISOString(),
+      }),
+      turn: {
+        turnId: "turn_workspace_restarted_1",
+        message: "Continue after the gateway restart.",
+      },
+      resumeState: { conversationId: "sess_workspace_restarted_1" },
+      signal: AbortSignal.timeout(1_000),
+      now: () => baseNow,
+      nextEventId: () => "evt_workspace_restarted_1",
+    });
+
+    expect(watch).toHaveBeenCalledWith({
+      principal: ownerPrincipal,
+      threadId: "thread_workspace_restarted_1",
+      sessionId: "sess_workspace_restarted_1",
+    });
+    expect(watch.mock.invocationCallOrder[0]).toBeLessThan(submitTurn.mock.invocationCallOrder[0]!);
   });
 
   it("accepts a same-thread turn while the canonical workspace session remains running", async () => {

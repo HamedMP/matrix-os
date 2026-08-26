@@ -297,7 +297,7 @@ export function createWorkspaceCodingAgentProvider(
         resumeState: { conversationId: sessionId },
       };
     },
-    async resumeTurn({ thread, turn, resumeState, signal }) {
+    async resumeTurn({ principal, thread, turn, resumeState, signal }) {
       if (!runnable) {
         throw new Error("Workspace provider turn resume unavailable");
       }
@@ -307,6 +307,14 @@ export function createWorkspaceCodingAgentProvider(
       }
       signal.throwIfAborted();
       if (agent === "codex" && options.codexControl) {
+        if (!options.codexEvents) {
+          throw new Error("Codex structured events are unavailable");
+        }
+        await options.codexEvents.watch({
+          principal,
+          threadId: thread.id,
+          sessionId,
+        });
         await options.codexControl.submitTurn({
           sessionId,
           turnId: turn.turnId,
