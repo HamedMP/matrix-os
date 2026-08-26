@@ -5,6 +5,7 @@ import type {
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
+import { diagnosticErrorKind } from "../../lib/errors";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
@@ -46,7 +47,8 @@ export function useCanonicalChatRouteController({
       if (sequence !== detailRequestSequence.current) return;
       setDetail(loaded);
       setError(null);
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] detail load failed:", diagnosticErrorKind(error));
       if (sequence !== detailRequestSequence.current) return;
       setError("Chat could not be loaded. Try again.");
     }
@@ -71,7 +73,8 @@ export function useCanonicalChatRouteController({
         return next;
       });
       if (page.items.length === 0) setDetail(null);
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] list load failed:", diagnosticErrorKind(error));
       if (sequence !== listRequestSequence.current) return;
       setStatus("error");
       setError("Chats could not be loaded. Try again.");
@@ -121,18 +124,23 @@ export function useCanonicalChatRouteController({
 
   const moveProject = useCallback(async (targetProjectId: string | null) => {
     if (!detail) return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
     try {
       const record = await client.updateProject(detail.record.chat.id, {
         baseRevision: detail.record.chat.revision,
         projectId: targetProjectId,
       });
+      if (!isCurrentScope()) return null;
       setDetail((current) => current ? detailWithRecord(current, record) : current);
       setItems((current) => current.map((item) => (
         item.chat.id === record.chat.id ? record : item
       )));
       setError(null);
       return record;
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] project move failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
       setError("The Chat could not be moved. Refresh and try again.");
       await loadDetail(detail.record.chat.id);
       return null;
@@ -144,6 +152,9 @@ export function useCanonicalChatRouteController({
     title: string,
     initialProjectId: string | null = projectId,
   ) => {
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    if (!isCurrentScope()) return null;
     try {
       let current = detail;
       if (!current) {
@@ -153,6 +164,7 @@ export function useCanonicalChatRouteController({
           ...(initialProjectId === null ? {} : { projectId: initialProjectId }),
           currentSelection: input.selection,
         });
+        if (!isCurrentScope()) return null;
         current = {
           record,
           messages: [],
@@ -166,6 +178,7 @@ export function useCanonicalChatRouteController({
         clientRequestId: canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       });
+      if (!isCurrentScope()) return null;
       const next: CanonicalChatDetailResponse = {
         ...current,
         record: admitted.record,
@@ -182,7 +195,9 @@ export function useCanonicalChatRouteController({
       ]);
       setError(null);
       return admitted;
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
       setError("The message could not be sent. Try again.");
       return null;
     }
@@ -191,24 +206,34 @@ export function useCanonicalChatRouteController({
   const cancelActiveRun = useCallback(async () => {
     const activeRun = detail?.record.activeRun;
     if (!detail || !activeRun) return;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
     try {
       await client.cancelRun(detail.record.chat.id, activeRun.runId, {
         clientRequestId: canonicalChatRequestId(),
       });
+      if (!isCurrentScope()) return;
       await loadDetail(detail.record.chat.id);
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] cancel failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return;
       setError("The active Run could not be stopped. Try again.");
     }
   }, [client, detail, loadDetail]);
 
   const deleteChat = useCallback(async (chatId: string) => {
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
     try {
       await client.delete(chatId, canonicalChatRequestId());
+      if (!isCurrentScope()) return false;
       setItems((current) => current.filter((item) => item.chat.id !== chatId));
       if (activeChatIdRef.current === chatId) selectChat(null);
       setError(null);
       return true;
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] delete failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return false;
       setError("The Chat could not be deleted. Try again.");
       return false;
     }

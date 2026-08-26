@@ -46,6 +46,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from "react";
+import { diagnosticErrorKind } from "../../lib/errors";
 import { ComposerResourceGlyph } from "./ComposerResourceGlyph";
 import {
   CanonicalChatInvocationSchema,
@@ -111,7 +112,8 @@ function parseComposerClipboardPayload(raw: string): {
       || !parsed.tokens.every(isComposerReferenceToken)
     ) return null;
     return { value: parsed.value, tokens: parsed.tokens };
-  } catch {
+  } catch (error: unknown) {
+    console.warn("[chat-composer] ignored invalid clipboard payload:", diagnosticErrorKind(error));
     return null;
   }
 }
@@ -509,7 +511,8 @@ function ComposerPromptEditorInner({
       recentStructuredComposerClipboard = selected.payload
         ? { plainText: selected.plainText, payload: selected.payload }
         : null;
-      void navigator.clipboard.writeText(selected.plainText).catch(() => {
+      void navigator.clipboard.writeText(selected.plainText).catch((error: unknown) => {
+        console.warn("[chat-composer] clipboard write failed:", diagnosticErrorKind(error));
         recentStructuredComposerClipboard = null;
       });
       return true;

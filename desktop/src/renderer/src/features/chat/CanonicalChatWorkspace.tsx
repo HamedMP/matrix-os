@@ -13,6 +13,7 @@ import { ConversationTranscript } from "../../components/conversation/transcript
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { ChatStarterCards } from "./ChatStarterCards";
@@ -123,6 +124,7 @@ export function CanonicalChatWorkspace({
   );
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
+  const submissionSequence = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
   const runtimeSummary = useCodingAgentWorkspace((state) => state.summary);
@@ -156,6 +158,11 @@ export function CanonicalChatWorkspace({
     if (projectId !== null) return;
     setGlobalView(initialView ?? (initialChatId ? "conversation" : "index"));
   }, [initialChatId, initialView, projectId]);
+
+  useLayoutEffect(() => {
+    submissionSequence.current += 1;
+    setUploadingAttachments(false);
+  }, [client]);
 
   useEffect(() => {
     setSelection((current) => {
@@ -222,8 +229,13 @@ export function CanonicalChatWorkspace({
   }));
 
   const moveProject = async (targetProjectId: string | null) => {
+    const runtimeGeneration = captureRuntimeGeneration();
     const moved = await controller.moveProject(targetProjectId);
-    if (moved && targetProjectId !== projectId) onProjectChanged?.(moved.chat.id, targetProjectId);
+    if (
+      moved
+      && isCurrentRuntimeGeneration(runtimeGeneration)
+      && targetProjectId !== projectId
+    ) onProjectChanged?.(moved.chat.id, targetProjectId);
   };
 
   const submit = async (submission: SharedChatComposerSubmission) => {
@@ -234,26 +246,26 @@ export function CanonicalChatWorkspace({
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
     ) return;
+    const runtimeGeneration = captureRuntimeGeneration();
+    const sequence = ++submissionSequence.current;
+    const isCurrentSubmission = () => (
+      sequence === submissionSequence.current
+      && isCurrentRuntimeGeneration(runtimeGeneration)
+    );
     setUploadingAttachments(true);
-    const uploaded = await attachments.uploadAll();
-    if (!uploaded.ok) {
-      setUploadingAttachments(false);
-      return;
-    }
-    const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
-      attachment.path
-        ? [{
-            type: "resource_reference" as const,
-            resource: canonicalResourceReferenceForPath("file", attachment.path),
-          }]
-        : []
-    ));
-    const parts = [...canonicalChatInputParts(submission), ...uploadedParts];
-    if (parts.length === 0) {
-      setUploadingAttachments(false);
-      return;
-    }
     try {
+      const uploaded = await attachments.uploadAll();
+      if (!uploaded.ok || !isCurrentSubmission()) return;
+      const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
+        attachment.path
+          ? [{
+              type: "resource_reference" as const,
+              resource: canonicalResourceReferenceForPath("file", attachment.path),
+            }]
+          : []
+      ));
+      const parts = [...canonicalChatInputParts(submission), ...uploadedParts];
+      if (parts.length === 0) return;
       const admitted = await controller.submitTurn({
         parts,
         selection: {
@@ -264,7 +276,7 @@ export function CanonicalChatWorkspace({
         interactionMode: selection.interactionMode,
         permissionMode: selection.permissionMode,
       }, canonicalChatTitle(submission), draftProjectId ?? projectId);
-      if (!admitted) return;
+      if (!admitted || !isCurrentSubmission()) return;
       reportedChatId.current = admitted.record.chat.id;
       onActiveChatChanged?.(admitted.record.chat.id, admitted.record.chat.title);
       setGlobalView("conversation");
@@ -273,7 +285,7 @@ export function CanonicalChatWorkspace({
       setReferenceTokens([]);
       attachments.clear();
     } finally {
-      setUploadingAttachments(false);
+      if (sequence === submissionSequence.current) setUploadingAttachments(false);
     }
   };
 

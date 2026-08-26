@@ -403,4 +403,107 @@ describe("canonical Chat route controller", () => {
 
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ projectId: "project_1" }));
   });
+
+  it("ignores a Turn admitted by the previous runtime scope", async () => {
+    const createdRecord = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, id: "chat_previous_runtime" },
+    };
+    let resolveAdmission!: (value: Awaited<ReturnType<CanonicalChatClient["admitTurn"]>>) => void;
+    const previousClient = client({
+      list: vi.fn(async () => ({ items: [] })),
+      create: vi.fn(async () => createdRecord),
+      admitTurn: vi.fn(() => new Promise((resolve) => { resolveAdmission = resolve; })),
+    });
+    const nextClient = client({ list: vi.fn(async () => ({ items: [] })) });
+    const { result, rerender } = renderHook(
+      ({ scopedClient }) => useCanonicalChatRouteController({
+        client: scopedClient,
+        projectId: null,
+        active: true,
+        autoSelectFirst: false,
+      }),
+      { initialProps: { scopedClient: previousClient } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    let submission!: Promise<unknown>;
+    act(() => {
+      submission = result.current.submitTurn({
+        parts: [{ type: "text", text: "Old runtime message" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      }, "Old runtime message");
+    });
+    await waitFor(() => expect(previousClient.admitTurn).toHaveBeenCalledTimes(1));
+
+    rerender({ scopedClient: nextClient });
+    await waitFor(() => expect(nextClient.list).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      resolveAdmission({
+        record: createdRecord,
+        message: {
+          id: "message_old_runtime",
+          chatId: createdRecord.chat.id,
+          role: "user",
+          parts: [{ type: "text", text: "Old runtime message" }],
+          createdAt: "2026-08-26T00:00:01.000Z",
+        },
+        turn: {
+          id: "turn_old_runtime",
+          chatId: createdRecord.chat.id,
+          messageId: "message_old_runtime",
+          sequence: 1,
+          status: "queued",
+          createdAt: "2026-08-26T00:00:01.000Z",
+        },
+        run: {
+          id: "run_old_runtime",
+          chatId: createdRecord.chat.id,
+          turnId: "turn_old_runtime",
+          attempt: 1,
+          status: "queued",
+          providerInstanceId: "codex_default",
+          createdAt: "2026-08-26T00:00:01.000Z",
+        },
+      });
+      await submission;
+    });
+
+    expect(result.current.activeChatId).toBeNull();
+    expect(result.current.detail).toBeNull();
+    expect(result.current.items).toEqual([]);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("keeps the user error generic while recording a diagnostic category", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failedClient = client({
+      list: vi.fn(async () => ({ items: [] })),
+      create: vi.fn(async () => globalRecord),
+      admitTurn: vi.fn(async () => { throw new TypeError("provider secret detail"); }),
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: failedClient,
+      projectId: null,
+      active: true,
+      autoSelectFirst: false,
+    }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    await act(async () => {
+      await result.current.submitTurn({
+        parts: [{ type: "text", text: "Fail safely" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      }, "Fail safely");
+    });
+
+    expect(result.current.error).toBe("The message could not be sent. Try again.");
+    expect(warn).toHaveBeenCalledWith("[canonical-chat] submit failed:", "TypeError");
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("provider secret detail"));
+    warn.mockRestore();
+  });
 });

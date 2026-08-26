@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
+import { diagnosticErrorKind } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
@@ -97,7 +98,8 @@ export function CanonicalChatRoute({
       if (!current) return;
       provenRoute.current = { client, projectId: canonicalProjectId };
       setAvailability({ routeKey, value: "available" });
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      console.warn("[canonical-chat] route probe failed:", diagnosticErrorKind(error));
       if (!current) return;
       provenRoute.current = null;
       setAvailability({ routeKey, value: "unavailable" });

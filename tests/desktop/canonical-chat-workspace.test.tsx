@@ -6,7 +6,9 @@ import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-ch
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { snapshot, providerCatalog } = createCanonicalChatFixture("completed");
@@ -347,5 +349,58 @@ describe("CanonicalChatWorkspace", () => {
 
     expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
     expect(reportedIds).toEqual([null]);
+  });
+
+  it("does not submit uploaded attachments after the selected runtime changes", async () => {
+    let resolveUpload!: (value: { ok: true; path: string; size: number }) => void;
+    const api = {
+      baseUrl: "https://matrix.test",
+      get: vi.fn(),
+      getText: vi.fn(),
+      getBlob: vi.fn(),
+      post: vi.fn(),
+      postBytes: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      putBytes: vi.fn(() => new Promise((resolve) => { resolveUpload = resolve; })),
+      delete: vi.fn(),
+      putText: vi.fn(),
+    } as never;
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [] });
+    const onActiveChatChanged = vi.fn();
+    render(
+      <CanonicalChatWorkspace
+        api={api}
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        active
+        catalog={providerCatalog}
+        onActiveChatChanged={onActiveChatChanged}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Start a chat" });
+    await setSharedComposerText(editor, "Inspect the attachment");
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.putBytes).toHaveBeenCalledTimes(1));
+
+    advanceRuntimeGeneration();
+    await act(async () => {
+      const uploadPath = vi.mocked(api.putBytes).mock.calls[0]?.[0] as string;
+      const path = decodeURIComponent(uploadPath.split("path=")[1] ?? "");
+      resolveUpload({
+        ok: true,
+        path,
+        size: file.size,
+      });
+    });
+
+    await waitFor(() => expect(routeClient.admitTurn).not.toHaveBeenCalled());
+    expect(routeClient.create).not.toHaveBeenCalled();
+    expect(onActiveChatChanged).not.toHaveBeenCalled();
   });
 });
