@@ -320,7 +320,7 @@ function systemInstance(input: {
       ? model
       : { ...model, availability: "auth_required" as const }
   ));
-  const availability = systemAvailability(input.kind, input.runtime, models);
+  const availability = systemAvailability(input.kind, input.runtime, models, harnessConfigured);
   const selectedModel = input.kind === "hermes"
     ? `anthropic:${KERNEL_DEFAULTS.model}`
     : input.selectedProvider && input.selectedModel
