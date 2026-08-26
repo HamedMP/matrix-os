@@ -1,4 +1,3 @@
-import { Maximize2, Minus, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -13,12 +12,8 @@ import type {
 } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import { TabErrorBoundary, TabPane } from "../mission-control/TabContent";
-import SurfaceIcon from "./SurfaceIcon";
 import type { NativeDesktopMode } from "../../stores/native-desktop-mode";
-
-function windowControlClass(): string {
-  return "no-drag flex size-3 items-center justify-center rounded-full border-0 text-transparent transition-colors hover:text-black/55 focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
-}
+import { OSWindow, TopBar } from "./OSWindow";
 
 export default function DesktopSurfaceFrame({
   tab,
@@ -59,6 +54,7 @@ export default function DesktopSurfaceFrame({
     : (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app";
+  const terminalOwnsChrome = tab.kind === "terminal" || tab.kind === "terminals";
   const paneActive = interactive && !(isNativeEmbed && overlayOpen);
   const interactionCleanupRef = useRef<(() => void) | null>(null);
 
@@ -143,41 +139,26 @@ export default function DesktopSurfaceFrame({
   };
 
   return (
-    <section
+    <OSWindow
+      surfaceId={tab.id}
       role={isWindow && visible ? "dialog" : undefined}
       aria-label={isWindow && visible ? `${tab.title} window` : undefined}
       aria-hidden={!visible}
-      data-desktop-surface={tab.id}
       onContextMenu={(event) => event.stopPropagation()}
       data-surface-mode={surface.mode}
       data-active={active || undefined}
-      className="pointer-events-auto absolute min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--bg-app)] transition-[box-shadow,border-color] duration-150"
+      className="pointer-events-auto absolute min-h-0 min-w-0 flex-col overflow-hidden transition-[box-shadow,border-color] duration-150"
       style={frameStyle}
       onPointerDown={isWindow ? onFocus : undefined}
     >
       {isWindow ? (
-        <header
-          data-testid="desktop-window-drag-handle"
-          className="no-drag flex h-[38px] shrink-0 cursor-default items-center border-b px-3"
-          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
-          onPointerDown={(event) => startPointerInteraction(event, "move")}
-          onDoubleClick={(event) => {
-            const target = event.target;
-            if (target instanceof Element && target.closest("button,[role='button'],input,a")) return;
-            onMaximize();
-          }}
-        >
-          <div className="no-drag flex w-[78px] items-center gap-2">
-            <button type="button" aria-label={`Close ${tab.title}`} className={windowControlClass()} style={{ background: "var(--matrix-window-close)" }} onClick={onClose}><X size={8} /></button>
-            <button type="button" aria-label={`Minimize ${tab.title}`} className={windowControlClass()} style={{ background: "var(--matrix-window-minimize)" }} onClick={onMinimize}><Minus size={8} /></button>
-            <button type="button" aria-label={`Maximize ${tab.title} into tabs`} className={windowControlClass()} style={{ background: "var(--matrix-window-maximize)" }} onClick={onMaximize}><Maximize2 size={7} /></button>
-          </div>
-          <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
-            <SurfaceIcon tab={tab} size={14} />
-            <span className="truncate">{tab.title}</span>
-          </div>
-          <div className="w-[78px]" aria-hidden="true" />
-        </header>
+        <TopBar
+          chromePlacement={terminalOwnsChrome ? "sidebar" : "full-width"}
+          onClose={onClose}
+          onMinimize={onMinimize}
+          onMaximize={onMaximize}
+          onDragStart={(event) => startPointerInteraction(event, "move")}
+        />
       ) : null}
       <div
         key="surface-content"
@@ -213,6 +194,6 @@ export default function DesktopSurfaceFrame({
           <span className="absolute bottom-1 right-1 block size-2 border-b border-r" style={{ borderColor: "var(--border-strong)" }} />
         </div>
       ) : null}
-    </section>
+    </OSWindow>
   );
 }

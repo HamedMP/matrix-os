@@ -33,6 +33,7 @@ import {
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
+import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 const RECENT_ACTIVITY_THROTTLE_MS = 30_000;
@@ -77,7 +78,6 @@ export default function TerminalView({
   const persistedThemeMode = useTerminalAppearance((state) => state.mode);
   const resolvedThemeMode = themeMode ?? persistedThemeMode;
   const terminalTheme = getDesktopTerminalXtermTheme(resolvedThemeMode);
-  const terminalBackground = terminalTheme.background;
   const latestThemeModeRef = useRef(resolvedThemeMode);
   latestThemeModeRef.current = resolvedThemeMode;
   const hostRef = useRef<HTMLDivElement>(null);
@@ -412,7 +412,7 @@ export default function TerminalView({
     <div
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4"
       data-terminal-surface
-      style={{ backgroundColor: terminalBackground }}
+      style={{ backgroundColor: SURFACE_BASE_BACKGROUND }}
     >
       <div
         ref={hostRef}

@@ -102,7 +102,9 @@ async function openExternalHttpUrl(url: string): Promise<void> {
 function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const win = new BrowserWindow({
     ...bounds,
-    titleBarStyle: "hiddenInset",
+    // Let the renderer's active surface continue beneath the macOS controls
+    // instead of retaining an opaque native title-bar material.
+    titleBarStyle: "hidden",
     trafficLightPosition: { x: 14, y: 13 },
     backgroundColor: "#0e0e13",
     show: false,

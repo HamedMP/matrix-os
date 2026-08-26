@@ -16,6 +16,7 @@ import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";
 import ProjectsIndex from "../project/ProjectsIndex";
+import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -133,7 +134,7 @@ export default function TabContent() {
             key={tab.id}
             active={active}
             className="absolute inset-0 flex min-h-0 flex-col"
-            background="var(--bg-app)"
+            background={SURFACE_BASE_BACKGROUND}
             data-tab-id={tab.id}
             data-tab-kind={tab.kind}
           >

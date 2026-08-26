@@ -42,6 +42,7 @@ import {
   getTerminalAppearanceTokens,
   type TerminalAppearanceTokens,
 } from "./terminal-appearance";
+import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
 const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
 const SESSION_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
@@ -502,7 +503,7 @@ export default function TerminalsTab({
   const overviewSelected = selectedName === null;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-surface)" }}>
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: SURFACE_BASE_BACKGROUND }}>
       <TerminalAppTabs
         openedSessionNames={openedSessionNames}
         selectedName={selectedName}
@@ -522,7 +523,7 @@ export default function TerminalsTab({
           active={active && overviewSelected}
           visible={visible && overviewSelected}
           className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
-          background="var(--bg-surface)"
+          background={SURFACE_BASE_BACKGROUND}
           style={{ borderRadius: 8 }}
         >
         <div className="flex min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
@@ -660,12 +661,12 @@ export default function TerminalsTab({
               active={active && selected}
               visible={visible && selected}
               className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
-              background={terminalAppearance.surface}
+              background={SURFACE_BASE_BACKGROUND}
               style={{ borderRadius: 8 }}
             >
             <header
               className="flex h-[70px] shrink-0 items-center gap-3 border-b px-4 py-4"
-              style={{ borderColor: terminalAppearance.border, background: terminalAppearance.surface }}
+              style={{ borderColor: terminalAppearance.border, background: SURFACE_BASE_BACKGROUND }}
             >
               <div className="min-w-0 flex-1">
                 <h1 className="truncate text-[13px] font-normal leading-4" style={{ color: terminalAppearance.text }}>{shellTitle(shell)}</h1>
@@ -693,7 +694,7 @@ export default function TerminalsTab({
               <div
                 data-terminal-viewport
                 className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
-                style={{ background: terminalAppearance.surface }}
+                style={{ background: SURFACE_BASE_BACKGROUND }}
               >
                 <TerminalView
                   sessionName={sessionName}
