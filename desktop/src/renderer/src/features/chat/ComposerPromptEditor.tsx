@@ -20,6 +20,10 @@ import {
   COMMAND_PRIORITY_HIGH,
   COPY_COMMAND,
   DecoratorNode,
+  KEY_ARROW_DOWN_COMMAND,
+  KEY_ARROW_UP_COMMAND,
+  KEY_ENTER_COMMAND,
+  KEY_ESCAPE_COMMAND,
   PASTE_COMMAND,
   SKIP_SCROLL_INTO_VIEW_TAG,
   type EditorState,
@@ -37,7 +41,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  type KeyboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from "react";
 import { ComposerResourceGlyph } from "./ComposerResourceGlyph";
@@ -309,7 +313,7 @@ interface ComposerPromptEditorProps {
   value: string;
   tokens: ComposerReferenceToken[];
   onChange: (value: string, tokens: ComposerReferenceToken[], cursor: number) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => boolean | void;
+  onKeyDown: (event: Pick<globalThis.KeyboardEvent, "key" | "shiftKey" | "preventDefault">) => boolean | void;
   placeholder: string;
   ariaLabel: string;
   disabled?: boolean;
@@ -343,6 +347,38 @@ function ComposerPromptEditorInner({
   }, [editor]);
 
   useEffect(() => editor.setEditable(!disabled), [disabled, editor]);
+  useEffect(() => {
+    const handleKeyCommand = (event: globalThis.KeyboardEvent | null): boolean => (
+      event ? Boolean(onKeyDown(event)) : false
+    );
+    const unregisterEnter = editor.registerCommand(
+      KEY_ENTER_COMMAND,
+      handleKeyCommand,
+      COMMAND_PRIORITY_HIGH,
+    );
+    const unregisterArrowDown = editor.registerCommand(
+      KEY_ARROW_DOWN_COMMAND,
+      handleKeyCommand,
+      COMMAND_PRIORITY_HIGH,
+    );
+    const unregisterArrowUp = editor.registerCommand(
+      KEY_ARROW_UP_COMMAND,
+      handleKeyCommand,
+      COMMAND_PRIORITY_HIGH,
+    );
+    const unregisterEscape = editor.registerCommand(
+      KEY_ESCAPE_COMMAND,
+      handleKeyCommand,
+      COMMAND_PRIORITY_HIGH,
+    );
+    return () => {
+      unregisterEscape();
+      unregisterArrowUp();
+      unregisterArrowDown();
+      unregisterEnter();
+    };
+  }, [editor, onKeyDown]);
+
   useEffect(() => {
     if (autoFocus) focusEditor();
   }, [autoFocus, focusEditor]);
@@ -464,7 +500,9 @@ function ComposerPromptEditorInner({
             data-slot="prompt-input-content"
             data-max-length={maxLength}
             className="block max-h-[220px] min-h-9 w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent px-4 pb-1 pt-1 text-md leading-relaxed shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 [&_p]:m-0 disabled:opacity-60"
-            onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => { onKeyDown(event); }}
+            onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
+              if (!event.defaultPrevented) onKeyDown(event);
+            }}
           />
         )}
         placeholder={(

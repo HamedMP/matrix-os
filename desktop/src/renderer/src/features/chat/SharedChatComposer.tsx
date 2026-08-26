@@ -6,7 +6,7 @@ import type {
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
 import { Box, ChevronDown, Paperclip, SquareTerminal } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { ComposerResourceGlyph } from "./ComposerResourceGlyph";
@@ -344,7 +344,9 @@ export function SharedChatComposer({
       editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`, cursor);
     }
   };
-  const onSuggestionKeyDown = (event: KeyboardEvent<HTMLDivElement>): boolean => {
+  const onSuggestionKeyDown = (
+    event: Pick<globalThis.KeyboardEvent, "key" | "shiftKey" | "preventDefault">,
+  ): boolean => {
     if (event.key === "Escape" && (slashMenuOpen || resourceMenuOpen || attachmentMenuOpen)) {
       event.preventDefault();
       setAttachmentMenuOpen(false);
