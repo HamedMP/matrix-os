@@ -13,7 +13,11 @@ import type {
 import type { Tab } from "../../stores/tabs";
 import { TabErrorBoundary, TabPane } from "../mission-control/TabContent";
 import type { NativeDesktopMode } from "../../stores/native-desktop-mode";
-import { OSWindow, OS_WINDOW_SIDEBAR_WIDTH, TopBar } from "./OSWindow";
+import {
+  OSWindow,
+  OS_WINDOW_SIDEBAR_WIDTH,
+  TopBar,
+} from "./OSWindow";
 
 export default function DesktopSurfaceFrame({
   tab,
@@ -142,6 +146,7 @@ export default function DesktopSurfaceFrame({
     <OSWindow
       surfaceId={tab.id}
       sidebarWidth={undefined}
+      safeAreaLayout={terminalOwnsChrome ? "sidebar" : "pane"}
       topBar={isWindow ? (
         <TopBar
           chromePlacement={terminalOwnsChrome ? "sidebar" : "full-width"}

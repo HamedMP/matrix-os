@@ -1,9 +1,11 @@
 import { Maximize2, Minus, X } from "lucide-react";
 import {
+  createContext,
   type ComponentProps,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  useContext,
 } from "react";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
@@ -11,6 +13,30 @@ export const OS_WINDOW_GESTURE_HEIGHT = 38;
 export const OS_WINDOW_SIDEBAR_MIN_WIDTH = 200;
 export const OS_WINDOW_SIDEBAR_WIDTH = 280;
 export type OSWindowChromePlacement = "full-width" | "sidebar";
+export type OSWindowSafeArea = "pane" | "sidebar";
+
+const OSWindowSafeAreaContext = createContext({
+  layout: "pane" as OSWindowSafeArea,
+  topInset: 0,
+});
+
+/** Reserves OS chrome space for the matching area of an OS window. */
+export function OSWindowSafeView({
+  area = "pane",
+  className,
+  style,
+  children,
+  ...props
+}: ComponentProps<"div"> & { area?: OSWindowSafeArea }) {
+  const { layout, topInset } = useContext(OSWindowSafeAreaContext);
+  const paddingTop = layout === area && topInset > 0 ? `${topInset}px` : undefined;
+
+  return (
+    <div className={className} style={{ paddingTop, ...style }} {...props}>
+      {children}
+    </div>
+  );
+}
 
 export function TrafficLights({
   title,
@@ -103,6 +129,7 @@ export function OSWindow({
   sidebarWidth,
   sidebar,
   topBar,
+  safeAreaLayout = "pane",
   className,
   style,
   children,
@@ -112,6 +139,7 @@ export function OSWindow({
   sidebarWidth?: number;
   sidebar?: ReactNode;
   topBar?: ReactNode;
+  safeAreaLayout?: OSWindowSafeArea;
 }) {
   const paneSurface = {
     background: SURFACE_BASE_BACKGROUND,
@@ -121,7 +149,13 @@ export function OSWindow({
     "--bg-sunken": SURFACE_BASE_BACKGROUND,
   } as CSSProperties;
 
+  const safeArea = {
+    layout: safeAreaLayout,
+    topInset: topBar ? OS_WINDOW_GESTURE_HEIGHT : 0,
+  };
+
   return (
+    <OSWindowSafeAreaContext.Provider value={safeArea}>
     <section
       data-os-window
       data-desktop-surface={surfaceId}
@@ -142,11 +176,17 @@ export function OSWindow({
               borderRight: "1px solid var(--border-default, #F3F2F2)",
             }}
           >
-            {sidebar}
+            <OSWindowSafeView area="sidebar" data-os-window-safe-view="sidebar" className="h-full min-h-0 w-full">
+              {sidebar}
+            </OSWindowSafeView>
           </aside>
         ) : null}
         <main data-os-window-main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {children}
+          {safeAreaLayout === "pane" ? (
+            <OSWindowSafeView area="pane" data-os-window-safe-view="pane" className="flex min-h-0 flex-1 flex-col">
+              {children}
+            </OSWindowSafeView>
+          ) : children}
         </main>
       </div>
       {topBar ? (
@@ -155,5 +195,6 @@ export function OSWindow({
         </div>
       ) : null}
     </section>
+    </OSWindowSafeAreaContext.Provider>
   );
 }

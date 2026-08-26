@@ -1,6 +1,7 @@
 import { Plus, SquareTerminal, Trash2 } from "lucide-react";
 
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
+import { OSWindowSafeView } from "../desktop-shell/OSWindow";
 import { relativeSessionActivity } from "./terminal-session-activity";
 
 function isActive(shell: ShellSessionSummary): boolean {
@@ -25,7 +26,12 @@ export function TerminalSessionSidebar({
   onDelete: (session: ShellSessionSummary) => void;
 }) {
   return (
-    <aside data-terminal-session-sidebar className="flex h-full min-h-0 w-full flex-col pt-[38px]">
+    <OSWindowSafeView
+      area="sidebar"
+      data-terminal-session-sidebar
+      className="flex h-full min-h-0 w-full flex-col"
+    >
+      <aside className="flex h-full min-h-0 w-full flex-col">
       <div className="flex shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
         <div className="flex min-w-0 items-center gap-1">
           <SquareTerminal size={16} aria-hidden="true" />
@@ -79,6 +85,7 @@ export function TerminalSessionSidebar({
           );
         })}
       </ul>
-    </aside>
+      </aside>
+    </OSWindowSafeView>
   );
 }

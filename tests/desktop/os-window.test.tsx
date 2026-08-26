@@ -3,7 +3,7 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { OSWindow, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow.js";
+import { OSWindow, OSWindowSafeView, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow.js";
 
 describe("Electron OS window chrome", () => {
   it("uses the shared base surface for every OS window", () => {
@@ -54,5 +54,39 @@ describe("Electron OS window chrome", () => {
 
     fireEvent.click(closeButton);
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("applies topbar clearance only to the safe area for each window layout", () => {
+    const { container, rerender } = render(
+      <OSWindow
+        surfaceId="terminal-window"
+        sidebarWidth={280}
+        safeAreaLayout="sidebar"
+        topBar={<div />}
+        sidebar={<OSWindowSafeView area="sidebar" data-testid="sidebar-safe-view" />}
+      >
+        <OSWindowSafeView area="pane" data-testid="pane-safe-view" />
+      </OSWindow>,
+    );
+
+    expect((screen.getByTestId("sidebar-safe-view") as HTMLElement).style.paddingTop).toBe("38px");
+    expect((screen.getByTestId("pane-safe-view") as HTMLElement).style.paddingTop).toBe("");
+
+    rerender(
+      <OSWindow surfaceId="project-window" safeAreaLayout="pane" topBar={<div />}>
+        <div />
+      </OSWindow>,
+    );
+
+    expect((container.querySelector('[data-os-window-safe-view="pane"]') as HTMLElement).style.paddingTop).toBe("38px");
+
+    rerender(
+      <OSWindow surfaceId="project-tab" safeAreaLayout="pane">
+        <div />
+      </OSWindow>,
+    );
+
+    expect((container.querySelector('[data-os-window-safe-view="pane"]') as HTMLElement).style.paddingTop).toBe("");
+    expect(container.querySelector("[data-os-window-top-bar-overlay]")).toBeNull();
   });
 });
