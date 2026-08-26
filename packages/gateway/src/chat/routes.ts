@@ -47,8 +47,20 @@ const ChatListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   lifecycle: z.enum(["active", "archived"]).optional(),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId.optional(),
+  scope: z.enum(["global"]).optional(),
   cursor: CanonicalChatApiCursorSchema.optional(),
-}).strict();
+}).strict().refine((input) => input.scope === undefined || input.projectId === undefined, {
+  message: "Global scope cannot include a Project",
+});
+
+const ChatSearchQuerySchema = z.object({
+  query: z.string().trim().min(1).max(200),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  projectId: CanonicalCreateChatRequestSchema.shape.projectId.optional(),
+  scope: z.enum(["global"]).optional(),
+}).strict().refine((input) => input.scope === undefined || input.projectId === undefined, {
+  message: "Global scope cannot include a Project",
+});
 
 const ChatDetailQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(200),
@@ -65,8 +77,13 @@ export interface CanonicalChatRouteService {
   list(owner: ChatOwner, input: {
     limit: number;
     lifecycle?: "active" | "archived";
-    projectId?: string;
+    projectId?: string | null;
     cursor?: string;
+  }): Promise<CanonicalChatListResponse>;
+  search(owner: ChatOwner, input: {
+    query: string;
+    limit: number;
+    projectId?: string | null;
   }): Promise<CanonicalChatListResponse>;
   getDetail(owner: ChatOwner, chatId: string, input: {
     limit: number;
@@ -181,12 +198,45 @@ export function createCanonicalChatRoutes(options: {
         limit: context.req.query("limit"),
         lifecycle: context.req.query("lifecycle"),
         projectId: context.req.query("projectId"),
+        scope: context.req.query("scope"),
         cursor: context.req.query("cursor"),
       });
       if (!parsed.success) return validationError(context);
       const result = await options.service.list(
         ownerFromPrincipal(options.getPrincipal(context)),
-        parsed.data,
+        {
+          limit: parsed.data.limit,
+          ...(parsed.data.lifecycle === undefined ? {} : { lifecycle: parsed.data.lifecycle }),
+          ...(parsed.data.scope === "global"
+            ? { projectId: null }
+            : parsed.data.projectId === undefined ? {} : { projectId: parsed.data.projectId }),
+          ...(parsed.data.cursor === undefined ? {} : { cursor: parsed.data.cursor }),
+        },
+      );
+      return context.json(CanonicalChatListResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.get("/api/chats/search", async (context) => {
+    try {
+      const parsed = ChatSearchQuerySchema.safeParse({
+        query: context.req.query("query"),
+        limit: context.req.query("limit"),
+        projectId: context.req.query("projectId"),
+        scope: context.req.query("scope"),
+      });
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.search(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        {
+          query: parsed.data.query,
+          limit: parsed.data.limit,
+          ...(parsed.data.scope === "global"
+            ? { projectId: null }
+            : parsed.data.projectId === undefined ? {} : { projectId: parsed.data.projectId }),
+        },
       );
       return context.json(CanonicalChatListResponseSchema.parse(result));
     } catch (error: unknown) {

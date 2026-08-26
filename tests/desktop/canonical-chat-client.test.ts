@@ -53,6 +53,32 @@ describe("canonical Chat client", () => {
     expect(page.items[0]?.chat.id).toBe("chat_client_test");
   });
 
+  it("lists Global Chats without mixing in Project-bound Chats", async () => {
+    const get = vi.fn(async () => ({ items: [record] }));
+    const client = createCanonicalChatClient(api({ get }));
+
+    await client.list({ projectId: null });
+
+    expect(get).toHaveBeenCalledWith("/api/chats?scope=global");
+  });
+
+  it("searches the same Chat identity within Global or Project scope", async () => {
+    const get = vi.fn(async () => ({ items: [record] }));
+    const client = createCanonicalChatClient(api({ get }));
+
+    await client.search("release plan", { projectId: "project_1", limit: 10 });
+    await client.search("release plan", { projectId: null });
+
+    expect(get).toHaveBeenNthCalledWith(
+      1,
+      "/api/chats/search?query=release+plan&limit=10&projectId=project_1",
+    );
+    expect(get).toHaveBeenNthCalledWith(
+      2,
+      "/api/chats/search?query=release+plan&scope=global",
+    );
+  });
+
   it("creates a Chat without accepting client-owned identity fields", async () => {
     const post = vi.fn(async () => record);
     const client = createCanonicalChatClient(api({ post }));

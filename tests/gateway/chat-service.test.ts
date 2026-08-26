@@ -26,10 +26,11 @@ function record(id = "chat_service_test"): CanonicalChatRecord {
   };
 }
 
-function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "getDetailPage" | "update">> = {}) {
+function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update">> = {}) {
   return {
     create: vi.fn(async () => record()),
     list: vi.fn(async () => ({ items: [record()] } satisfies ChatListPage)),
+    search: vi.fn(async () => [record()]),
     getDetailPage: vi.fn(async () => ({
       record: record(),
       messages: [],
@@ -39,7 +40,7 @@ function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | 
     } satisfies ChatDetailPage)),
     update: vi.fn(async () => ({ ...record(), projectId: "project_1" })),
     ...overrides,
-  } as Pick<ChatRepository, "create" | "list" | "getDetailPage" | "update">;
+  } as Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update">;
 }
 
 describe("canonical Chat service", () => {
@@ -134,6 +135,29 @@ describe("canonical Chat service", () => {
         chatId: "chat_service_test",
       },
     });
+  });
+
+  it("preserves the explicit Global scope as a null Project filter", async () => {
+    const list = vi.fn(async () => ({ items: [record()] } satisfies ChatListPage));
+    const service = createCanonicalChatService(repository({ list }));
+
+    await service.list(owner, { limit: 50, scope: "global", projectId: null });
+
+    expect(list).toHaveBeenCalledWith(owner, { limit: 50, projectId: null });
+  });
+
+  it("searches the same owner-local index with a Project scope", async () => {
+    const search = vi.fn(async () => [{ ...record(), projectId: "project_1" }]);
+    const service = createCanonicalChatService(repository({ search }));
+
+    const result = await service.search(owner, {
+      query: "release plan",
+      limit: 10,
+      projectId: "project_1",
+    });
+
+    expect(search).toHaveBeenCalledWith(owner, "release plan", 10, "project_1");
+    expect(result.items[0]?.projectId).toBe("project_1");
   });
 
   it("normalizes malformed opaque cursor payloads as validation errors", async () => {

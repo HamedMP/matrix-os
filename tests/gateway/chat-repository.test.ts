@@ -730,6 +730,29 @@ describe("ChatRepository", () => {
       expect.objectContaining({ chat: expect.objectContaining({ id: created.chat.id }) }),
     ]);
     await expect(repository.search(otherOwner, "message", 200)).resolves.toEqual([]);
+
+    const projectChat = await repository.create(owner, {
+      id: "chat_search_project",
+      clientRequestId: "req_create_search_project",
+      title: "Project search",
+      projectId: "project_search",
+    });
+    const projectInput = message(projectChat.chat.id);
+    const projectTurn = turn(projectChat.chat.id, projectInput);
+    await repository.admitTurn(owner, {
+      chatId: projectChat.chat.id,
+      baseRevision: 0,
+      message: projectInput,
+      turn: projectTurn,
+      run: run(projectChat.chat.id, projectTurn),
+    });
+
+    await expect(repository.search(owner, "message", 20, null)).resolves.toEqual([
+      expect.objectContaining({ chat: expect.objectContaining({ id: created.chat.id }) }),
+    ]);
+    await expect(repository.search(owner, "message", 20, "project_search")).resolves.toEqual([
+      expect.objectContaining({ chat: expect.objectContaining({ id: projectChat.chat.id }) }),
+    ]);
   });
 
   it("returns the latest bounded detail page with an owner-isolated older-message cursor", async () => {

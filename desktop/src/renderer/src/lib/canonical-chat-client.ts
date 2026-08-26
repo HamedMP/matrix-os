@@ -32,8 +32,13 @@ import type { ApiClient } from "./api";
 const CanonicalChatListInputSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
   lifecycle: z.enum(["active", "archived"]).optional(),
-  projectId: CanonicalCreateChatRequestSchema.shape.projectId.optional(),
+  projectId: CanonicalCreateChatRequestSchema.shape.projectId.nullable().optional(),
   cursor: CanonicalChatApiCursorSchema.optional(),
+}).strict();
+
+const CanonicalChatSearchInputSchema = z.object({
+  limit: z.number().int().min(1).max(100).optional(),
+  projectId: CanonicalCreateChatRequestSchema.shape.projectId.nullable().optional(),
 }).strict();
 
 const CanonicalChatDetailInputSchema = z.object({
@@ -43,6 +48,10 @@ const CanonicalChatDetailInputSchema = z.object({
 
 export interface CanonicalChatClient {
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
+  search(
+    query: string,
+    input?: z.input<typeof CanonicalChatSearchInputSchema>,
+  ): Promise<CanonicalChatListResponse>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
   getDetail(
@@ -78,8 +87,21 @@ export function createCanonicalChatClient(api: ApiClient): CanonicalChatClient {
       const response = await api.get(withQuery("/api/chats", {
         limit: parsed.limit,
         lifecycle: parsed.lifecycle,
-        projectId: parsed.projectId,
+        projectId: parsed.projectId ?? undefined,
+        scope: parsed.projectId === null ? "global" : undefined,
         cursor: parsed.cursor,
+      }));
+      return CanonicalChatListResponseSchema.parse(response);
+    },
+
+    async search(query, input = {}) {
+      const parsedQuery = z.string().trim().min(1).max(200).parse(query);
+      const parsed = CanonicalChatSearchInputSchema.parse(input);
+      const response = await api.get(withQuery("/api/chats/search", {
+        query: parsedQuery,
+        limit: parsed.limit,
+        projectId: parsed.projectId ?? undefined,
+        scope: parsed.projectId === null ? "global" : undefined,
       }));
       return CanonicalChatListResponseSchema.parse(response);
     },

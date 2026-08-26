@@ -41,6 +41,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
     list: vi.fn(async () => ({ items: [record] })),
+    search: vi.fn(async () => ({ items: [record] })),
     getDetail: vi.fn(async () => ({
       record,
       messages: [],
@@ -194,6 +195,34 @@ describe("canonical Chat routes", () => {
     expect(list).toHaveBeenCalledWith(
       { type: "personal", ownerId: "owner_1" },
       { limit: 25, lifecycle: "active", projectId: "project_1", cursor: "chatcur_prev" },
+    );
+  });
+
+  it("projects only root Chats for the Global route", async () => {
+    const list = vi.fn(async () => ({ items: [record] }));
+    const response = await appFor(routeService({ list })).request(
+      "/api/chats?scope=global",
+    );
+
+    expect(response.status).toBe(200);
+    expect(list).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      { limit: 50, projectId: null },
+    );
+  });
+
+  it("searches canonical Chats within the selected route scope", async () => {
+    const search = vi.fn(async () => ({ items: [record] }));
+    const app = appFor(routeService({ search }));
+
+    const response = await app.request(
+      "/api/chats/search?query=release%20plan&limit=10&projectId=project_1",
+    );
+
+    expect(response.status).toBe(200);
+    expect(search).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      { query: "release plan", limit: 10, projectId: "project_1" },
     );
   });
 
