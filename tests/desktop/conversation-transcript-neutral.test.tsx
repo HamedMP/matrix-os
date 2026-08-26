@@ -108,4 +108,57 @@ describe("provider-neutral conversation transcript", () => {
       vi.useRealTimers();
     }
   });
+
+  it("reveals a live response progressively when polling first sees it as completed", () => {
+    vi.useFakeTimers();
+    const text = "A completed polling frame should still arrive smoothly.";
+    const activeTurn: ConversationTurnPresentation = {
+      id: "turn-fast-completion",
+      startedAt: 1_000,
+      endedAt: 1_000,
+      active: true,
+      work: [],
+    };
+
+    try {
+      const { container, rerender } = render(
+        <ConversationTranscript turns={[activeTurn]} callbacks={{ copyText: vi.fn() }} />,
+      );
+      rerender(
+        <ConversationTranscript
+          turns={[{
+            ...activeTurn,
+            active: false,
+            endedAt: 2_000,
+            final: {
+              kind: "message",
+              id: "message-fast-completion",
+              role: "assistant",
+              phase: "final",
+              markdown: text,
+              copyText: text,
+              timestamp: 2_000,
+            },
+          }]}
+          callbacks={{ copyText: vi.fn() }}
+        />,
+      );
+
+      const response = container.querySelector(
+        '[data-slot="message"][data-align="start"] [data-selectable]',
+      );
+      expect(response?.textContent).toBe("");
+
+      act(() => vi.advanceTimersByTime(32));
+      expect(response?.textContent?.length).toBeGreaterThan(0);
+      expect(response?.textContent?.length).toBeLessThan(text.length);
+
+      for (let frame = 0; frame < 120; frame += 1) {
+        act(() => vi.advanceTimersByTime(16));
+      }
+      expect(response?.textContent).toBe(text);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

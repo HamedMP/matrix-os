@@ -121,22 +121,24 @@ function ResponseMessage({
   callbacks,
   showMetadata,
   streaming,
+  animateOnMount,
 }: {
   message: ConversationMessagePresentation;
   callbacks: ConversationPresentationCallbacks;
   showMetadata: boolean;
   streaming: boolean;
+  animateOnMount: boolean;
 }) {
   const previousMessageId = useRef(message.id);
   const [visibleMarkdown, setVisibleMarkdown] = useState(() => (
-    streaming ? "" : message.markdown
+    streaming || animateOnMount ? "" : message.markdown
   ));
 
   useEffect(() => {
     if (previousMessageId.current === message.id) return;
     previousMessageId.current = message.id;
-    setVisibleMarkdown(streaming ? "" : message.markdown);
-  }, [message.id, message.markdown, streaming]);
+    setVisibleMarkdown(streaming || animateOnMount ? "" : message.markdown);
+  }, [animateOnMount, message.id, message.markdown, streaming]);
 
   useEffect(() => {
     if (visibleMarkdown === message.markdown) return;
@@ -218,11 +220,13 @@ function PresentationItem({
   callbacks,
   showMetadata = false,
   streaming = false,
+  animateOnMount = false,
 }: {
   item: ConversationWorkPresentation;
   callbacks: ConversationPresentationCallbacks;
   showMetadata?: boolean;
   streaming?: boolean;
+  animateOnMount?: boolean;
 }) {
   if (item.kind === "activity-group") {
     return (
@@ -238,6 +242,7 @@ function PresentationItem({
       callbacks={callbacks}
       showMetadata={showMetadata}
       streaming={streaming}
+      animateOnMount={animateOnMount}
     />
   );
 }
@@ -245,9 +250,11 @@ function PresentationItem({
 function ConversationTurn({
   turn,
   callbacks,
+  initialFinalIds,
 }: {
   turn: ConversationTurnPresentation;
   callbacks: ConversationPresentationCallbacks;
+  initialFinalIds: ReadonlySet<string>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const showWork = turn.active || expanded;
@@ -274,6 +281,7 @@ function ConversationTurn({
           callbacks={callbacks}
           showMetadata={!turn.active}
           streaming={turn.active}
+          animateOnMount={!initialFinalIds.has(turn.final.id)}
         />
       ) : null}
     </>
@@ -287,11 +295,19 @@ export function ConversationTranscript({
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
 }) {
+  const initialFinalIds = useRef(new Set(
+    turns.flatMap((turn) => turn.final ? [turn.final.id] : []),
+  ));
   return (
     <Conversation>
       <ConversationContent className="justify-start pt-8 sm:pt-12">
         {turns.map((turn) => (
-          <ConversationTurn key={turn.id} turn={turn} callbacks={callbacks} />
+          <ConversationTurn
+            key={turn.id}
+            turn={turn}
+            callbacks={callbacks}
+            initialFinalIds={initialFinalIds.current}
+          />
         ))}
       </ConversationContent>
     </Conversation>
