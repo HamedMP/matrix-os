@@ -295,7 +295,12 @@ describe("ChatTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Worked for 2s" }));
     expect(screen.getByRole("button", { name: "Failed command: bun run test" })).toBeTruthy();
-    expect(screen.getByRole("status", { name: "Agent work failed" })).toBeTruthy();
+    const failureNotice = screen.getByRole("status", { name: "Agent work failed" });
+    expect(failureNotice.textContent).toContain("Agent work failed");
+    expect(failureNotice.textContent).toContain("The command failed.");
+    expect(failureNotice.className).toContain("rounded-xl");
+    expect(failureNotice.style.background).toContain("var(--danger)");
+    expect(failureNotice.style.borderColor).toBe("");
     expect(screen.queryByRole("button", { name: "Running command: bun run test" })).toBeNull();
   });
 

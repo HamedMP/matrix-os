@@ -197,16 +197,28 @@ function Notice({
           <Bubble variant="ghost">
             <BubbleContent
               {...(failed ? { role: "status", "aria-label": notice.label } : {})}
-              className={`max-w-[620px] rounded-lg border px-3 py-2 text-sm ${failed ? "flex items-start gap-2" : ""}`}
+              className={`max-w-[620px] rounded-xl px-3.5 py-3 text-sm ${failed ? "flex items-start gap-2.5" : ""}`}
               style={{
-                borderColor: failed
-                  ? "color-mix(in srgb, var(--danger) 35%, var(--border-subtle))"
-                  : "var(--border-subtle)",
-                color: failed ? "var(--danger)" : "var(--text-secondary)",
+                background: failed
+                  ? "color-mix(in srgb, var(--danger) 8%, transparent)"
+                  : "var(--bg-sunken)",
+                color: "var(--text-primary)",
               }}
             >
-              {failed ? <CircleAlert size={15} aria-hidden className="mt-0.5 shrink-0" /> : null}
-              <MessageResponse copyText={callbacks.copyText}>{notice.markdown}</MessageResponse>
+              {failed ? (
+                <CircleAlert
+                  size={16}
+                  aria-hidden
+                  className="mt-0.5 shrink-0"
+                  style={{ color: "var(--danger)" }}
+                />
+              ) : null}
+              <div className="min-w-0">
+                <p className="font-medium leading-5">{notice.label}</p>
+                <div className="mt-0.5 leading-5" style={{ color: "var(--text-secondary)" }}>
+                  <MessageResponse copyText={callbacks.copyText}>{notice.markdown}</MessageResponse>
+                </div>
+              </div>
             </BubbleContent>
           </Bubble>
         </MessageContent>
