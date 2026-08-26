@@ -31,4 +31,62 @@ describe("canonical Chat presentation adapter", () => {
       final: { role: "assistant" },
     });
   });
+
+  it("projects persisted run activity and assistant deltas while a Run is active", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const turn = snapshot.turns[0]!;
+    const occurredAt = run.startedAt ?? run.createdAt;
+
+    const turns = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [
+        {
+          id: "activity_tool_running",
+          chatId: snapshot.chat.id,
+          runId: run.id,
+          type: "tool.progress",
+          toolCallId: "tool_fixture",
+          label: "Reading project files",
+          status: "running",
+          occurredAt,
+        },
+        {
+          id: "activity_delta_one",
+          chatId: snapshot.chat.id,
+          runId: run.id,
+          type: "assistant.delta",
+          messageId: "msg_fixture_stream",
+          delta: "I found ",
+          occurredAt,
+        },
+        {
+          id: "activity_delta_two",
+          chatId: snapshot.chat.id,
+          runId: run.id,
+          type: "assistant.delta",
+          messageId: "msg_fixture_stream",
+          delta: "the issue.",
+          occurredAt,
+        },
+      ],
+    });
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      id: turn.id,
+      active: true,
+      work: [{
+        kind: "activity-group",
+        activities: [{ label: "Reading project files", state: "running" }],
+      }],
+      final: {
+        role: "assistant",
+        markdown: "I found the issue.",
+        copyText: "I found the issue.",
+      },
+    });
+  });
 });

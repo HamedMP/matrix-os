@@ -177,12 +177,20 @@ describe("Desktop sidebar navigation shell", () => {
 
   it("uses the global Chat navigation to return to the canonical inbox", () => {
     useHermesChat.setState({ view: "conversation", sessionId: "conversation-two" });
+    useTabs.getState().openTab({
+      kind: "chat",
+      title: "Selected canonical Chat",
+      chatId: "chat_canonical_selected",
+      closable: false,
+    });
     renderSidebar();
 
     fireEvent.click(screen.getByRole("button", { name: "Chat" }));
 
     expect(useHermesChat.getState().view).toBe("index");
     expect(useThreads.getState().activeThreadId).toBeNull();
+    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId))
+      .toMatchObject({ kind: "chat", title: "Chat", chatId: undefined });
     expect(useTabs.getState().recentViews.some((recent) => recent.id === "hermes"))
       .toBe(false);
   });

@@ -466,4 +466,20 @@ describe("Desktop navigation header", () => {
     expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent)
       .toContain("ChatTrip planning");
   });
+
+  it("shows canonical Chat tab state in the breadcrumb without legacy store state", () => {
+    useTabs.getState().openTab({
+      kind: "chat",
+      title: "Canonical streaming check",
+      chatId: "chat_canonical",
+      closable: false,
+    });
+
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent)
+      .toBe("ChatCanonical streaming check");
+    expect(screen.getByRole("button", { name: "Chat" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Go back" }).hasAttribute("disabled")).toBe(false);
+  });
 });

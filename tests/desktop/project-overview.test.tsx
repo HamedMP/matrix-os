@@ -187,6 +187,61 @@ describe("ProjectOverview", () => {
     expect(screen.queryByText("No sessions yet. Start one above.")).toBeNull();
   });
 
+  it("uses canonical Project Chats as the session list instead of duplicate legacy Runs", async () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const canonicalRecord = {
+      chat: {
+        id: snapshot.chat.id,
+        ownerScope: snapshot.chat.ownerScope,
+        title: "Canonical project investigation",
+        lifecycle: snapshot.chat.lifecycle,
+        attention: snapshot.chat.attention,
+        revision: snapshot.chat.revision,
+        messageCount: snapshot.chat.messageCount,
+        lastMessagePreview: snapshot.chat.lastMessagePreview,
+        currentSelection: snapshot.chat.currentSelection,
+        createdAt: snapshot.chat.createdAt,
+        updatedAt: snapshot.chat.updatedAt,
+      },
+      projectId: "matrix-os",
+      providerBinding: snapshot.chat.providerBinding,
+    };
+    const get = vi.fn(async (path: string) => {
+      if (path === "/api/chats?limit=100&projectId=matrix-os") return { items: [canonicalRecord] };
+      if (path === "/api/conversations") return { conversations: [] };
+      throw new Error(`unexpected api path ${path}`);
+    });
+    useConnection.setState({
+      status: "signed-in",
+      api: { baseUrl: "https://matrix.test", get } as never,
+    });
+    useTabs.getState().openTab({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+    });
+
+    render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryWithThreads([{ ...thread(1), title: "Coding agent run" }])}
+        active
+        viewSwitch={null}
+      />,
+    );
+
+    const canonicalRow = await screen.findByRole("button", {
+      name: "Open chat Canonical project investigation",
+    });
+    expect(screen.queryByRole("button", { name: "Open session Coding agent run" })).toBeNull();
+
+    fireEvent.click(canonicalRow);
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
+    expect(useTabs.getState().tabs.find((tab) => tab.projectSlug === "matrix-os")?.chatId)
+      .toBe(snapshot.chat.id);
+  });
+
   it("opens a moved Chat in the shared Project Chats surface", async () => {
     const projectContext = {
       projectId: "matrix-os",
@@ -270,7 +325,7 @@ describe("ProjectOverview", () => {
       activeRun: snapshot.chat.activeRun,
     };
     const get = vi.fn(async (path: string) => {
-      if (path === "/api/chats?limit=1&projectId=matrix-os") return { items: [] };
+      if (path === "/api/chats?limit=100&projectId=matrix-os") return { items: [] };
       if (path === "/api/chat-providers") return providerCatalog;
       if (path === "/api/conversations") return { conversations: [] };
       throw new Error(`unexpected api path ${path}`);

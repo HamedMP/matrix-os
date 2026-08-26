@@ -133,4 +133,21 @@ describe("CanonicalChatWorkspace", () => {
     await waitFor(() => expect(modelPicker.textContent).toContain("GPT-5.6-Sol"));
     expect(modelPicker.textContent).not.toContain("Provider default");
   });
+
+  it("shows the current Project on the shared composer before a Chat exists", async () => {
+    const emptyClient = client();
+    vi.mocked(emptyClient.list).mockResolvedValue({ items: [] });
+
+    render(
+      <CanonicalChatWorkspace
+        client={emptyClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Project Matrix OS" })).toBeTruthy();
+  });
 });

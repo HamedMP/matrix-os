@@ -163,6 +163,57 @@ describe("canonical Chat route controller", () => {
     await waitFor(() => expect(result.current.status).toBe("ready"));
   });
 
+  it("polls active Runs so persisted activity and assistant deltas reach the shared surface", async () => {
+    const runningRecord = {
+      ...globalRecord,
+      activeRun: { runId: "run_streaming", turnId: "turn_streaming", status: "running" as const },
+    };
+    const firstDetail = {
+      ...detail,
+      record: runningRecord,
+      runs: [{
+        id: "run_streaming",
+        chatId: globalRecord.chat.id,
+        turnId: "turn_streaming",
+        attempt: 1,
+        status: "running" as const,
+        providerInstanceId: "codex_default",
+        createdAt: "2026-08-26T00:00:01.000Z",
+      }],
+    };
+    const streamedDetail = {
+      ...firstDetail,
+      activities: [{
+        id: "activity_delta_1",
+        runId: "run_streaming",
+        sequence: 1,
+        type: "assistant.delta" as const,
+        occurredAt: "2026-08-26T00:00:02.000Z",
+        payload: { messageId: "assistant_streaming", delta: "partial answer" },
+      }],
+    };
+    const getDetail = vi.fn()
+      .mockResolvedValueOnce(firstDetail)
+      .mockResolvedValue(streamedDetail);
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [runningRecord] })),
+      getDetail,
+    });
+
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+
+    await waitFor(() => expect(result.current.detail?.record.activeRun?.status).toBe("running"));
+    await waitFor(() => expect(result.current.detail?.activities).toEqual(streamedDetail.activities), {
+      timeout: 2_000,
+    });
+    expect(getDetail).toHaveBeenCalledTimes(2);
+  });
+
   it("admits the first Project turn before opening its detail so the optimistic message cannot be replaced by an empty Chat", async () => {
     const projectRecord = {
       ...globalRecord,

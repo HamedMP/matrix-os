@@ -13,6 +13,7 @@ import {
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
+import { insertSharedComposerTextAtSelection } from "./shared-chat-composer-test-utils";
 
 function catalogFixture(): CanonicalProviderCatalog {
   const support = {
@@ -577,6 +578,35 @@ describe("SharedChatComposer", () => {
     await waitFor(() => expect(screen.queryByTestId("composer-reference-token-skill-review")).toBeNull());
   });
 
+  it("moves the caret across inline tokens with the arrow keys", async () => {
+    render(<Harness
+      initialValue="A /review B"
+      initialReferenceTokens={[{
+        type: "invocation",
+        label: "Review",
+        invocation: { kind: "skill", descriptorId: "review", invocation: "/review" },
+      }]}
+    />);
+
+    const input = screen.getByRole("textbox", { name: "Message chat" });
+    const decorator = screen.getByTestId("composer-reference-token-skill-review")
+      .closest('[data-lexical-decorator="true"]');
+    expect(decorator).toBeTruthy();
+
+    const range = document.createRange();
+    range.setStartAfter(decorator!);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+
+    fireEvent.keyDown(input, { key: "ArrowLeft", code: "ArrowLeft" });
+    await insertSharedComposerTextAtSelection(input, "X");
+
+    await waitFor(() => expect(input.textContent).toBe("A X/review B"));
+  });
+
   it("preserves arbitrary text, resource, and skill order inside one editable prompt", () => {
     render(<Harness
       initialValue="Inspect [src/index.ts](src-index) with /review please"
@@ -617,6 +647,44 @@ describe("SharedChatComposer", () => {
     expect(promptFlow.className).toContain("ring-0");
     expect(promptFlow.className).toContain("pt-4");
     expect(promptFlow.className).not.toContain("pt-1");
+  });
+
+  it("aligns the empty placeholder with the editable prompt baseline", () => {
+    const { container } = render(<Harness />);
+    const prompt = screen.getByRole("textbox", { name: "Message chat" });
+    const placeholder = container.querySelector<HTMLElement>('[data-slot="prompt-input-placeholder"]');
+
+    expect(prompt.className).toContain("pt-4");
+    expect(placeholder?.className).toContain("top-4");
+    expect(placeholder?.className).not.toContain("top-1");
+  });
+
+  it("selects and copies the full prompt including inline slash and resource tokens", async () => {
+    render(<Harness
+      initialValue="Use /review on [src/index.ts](src-index) now"
+      initialReferenceTokens={[
+        {
+          type: "invocation",
+          label: "Review",
+          invocation: { kind: "skill", descriptorId: "review", invocation: "/review" },
+        },
+        { type: "resource", resource: { kind: "file", id: "src-index", label: "src/index.ts" } },
+      ]}
+    />);
+    const input = screen.getByRole("textbox", { name: "Message chat" });
+    const setData = vi.fn();
+
+    fireEvent.keyDown(input, { key: "a", code: "KeyA", ctrlKey: true });
+    fireEvent.copy(input, { clipboardData: { setData } });
+
+    await waitFor(() => expect(setData).toHaveBeenCalledWith(
+      "text/plain",
+      "Use /review on [src/index.ts](src-index) now",
+    ));
+    expect(screen.getByTestId("composer-reference-token-skill-review").className)
+      .toContain("select-text");
+    expect(screen.getByTestId("composer-reference-token-file-src-index").className)
+      .toContain("select-text");
   });
 
   it("renders distinct T3-style file type glyphs for TypeScript and JSON references", () => {

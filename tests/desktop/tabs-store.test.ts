@@ -275,6 +275,25 @@ describe("tabs store", () => {
     expect(useTabs.getState().tabs[0]?.chatId).toBe("chat_moved");
   });
 
+  it("clears the selected canonical Chat when its root route is opened", () => {
+    const tabId = useTabs.getState().openTab({
+      kind: "chat",
+      title: "Investigate streaming",
+      chatId: "chat_selected",
+      closable: false,
+    });
+
+    const focusedId = useTabs.getState().openTab({
+      kind: "chat",
+      title: "Chat",
+      closable: false,
+    });
+
+    expect(focusedId).toBe(tabId);
+    expect(useTabs.getState().tabs[0]).toMatchObject({ title: "Chat" });
+    expect(useTabs.getState().tabs[0]?.chatId).toBeUndefined();
+  });
+
   it("treats different identities as distinct tabs", () => {
     useTabs.getState().openTab({ kind: "project", projectSlug: "a", title: "A" });
     useTabs.getState().openTab({ kind: "project", projectSlug: "b", title: "B" });

@@ -57,6 +57,7 @@ function rememberedOptions(
 function projectContext(
   projectId: string | undefined,
   projects: ReturnType<typeof useBoard.getState>["projects"],
+  fallbackLabel?: string,
 ): KernelConversationContextProjection | null {
   if (!projectId) return null;
   const project = projects.find((candidate) => (
@@ -64,10 +65,10 @@ function projectContext(
   ));
   return {
     projectId,
-    projectName: project?.name ?? projectId,
+    projectName: project?.name ?? fallbackLabel ?? projectId,
     projectKind: project?.kind ?? "folder",
     ...(project?.repository ? { repositoryLabel: project.repository } : {}),
-    status: project ? "ready" : "unavailable",
+    status: project || fallbackLabel ? "ready" : "unavailable",
   };
 }
 
@@ -80,6 +81,7 @@ export function CanonicalChatWorkspace({
   active,
   catalog,
   onProjectChanged,
+  onActiveChatChanged,
 }: {
   api?: ApiClient;
   client: CanonicalChatClient;
@@ -89,6 +91,7 @@ export function CanonicalChatWorkspace({
   active: boolean;
   catalog?: CanonicalProviderCatalog;
   onProjectChanged?: (chatId: string, projectId: string | null) => void;
+  onActiveChatChanged?: (chatId: string | null, title?: string) => void;
 }) {
   const projects = useBoard((state) => state.projects);
   const fallbackCatalog = useMemo(
@@ -115,6 +118,7 @@ export function CanonicalChatWorkspace({
     initialChatId ? "conversation" : "index",
   );
   const previousRoute = useRef({ initialChatId, projectId });
+  const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
   const runtimeSummary = useCodingAgentWorkspace((state) => state.summary);
@@ -177,7 +181,18 @@ export function CanonicalChatWorkspace({
     });
   }, [catalog, controller.detail?.record.chat.currentSelection, controller.detail?.record.providerBinding, liveCatalog.status, providerCatalog]);
 
-  const context = projectContext(controller.detail?.record.projectId, projects);
+  useEffect(() => {
+    const record = controller.detail?.record;
+    if (!record || reportedChatId.current === record.chat.id) return;
+    reportedChatId.current = record.chat.id;
+    onActiveChatChanged?.(record.chat.id, record.chat.title);
+  }, [controller.detail?.record, onActiveChatChanged]);
+
+  const context = projectContext(
+    controller.detail?.record.projectId ?? projectId ?? undefined,
+    projects,
+    projectLabel,
+  );
   const activeRun = controller.detail?.record.activeRun;
   const transcript = controller.detail ? canonicalChatPresentation(controller.detail) : [];
   const copyText = useCallback(async (text: string) => {
@@ -243,6 +258,8 @@ export function CanonicalChatWorkspace({
         permissionMode: selection.permissionMode,
       }, canonicalChatTitle(submission));
       if (!admitted) return;
+      reportedChatId.current = admitted.record.chat.id;
+      onActiveChatChanged?.(admitted.record.chat.id, admitted.record.chat.title);
       setDraft("");
       setReferenceTokens([]);
       attachments.clear();
@@ -253,11 +270,16 @@ export function CanonicalChatWorkspace({
 
   const startNewChat = () => {
     controller.startNewChat();
+    reportedChatId.current = null;
+    onActiveChatChanged?.(null);
     if (projectId === null) setGlobalView("draft");
   };
 
   const selectChat = (chatId: string) => {
     controller.selectChat(chatId);
+    const selected = controller.items.find((item) => item.chat.id === chatId);
+    reportedChatId.current = chatId;
+    onActiveChatChanged?.(chatId, selected?.chat.title);
     if (projectId === null) setGlobalView("conversation");
   };
 

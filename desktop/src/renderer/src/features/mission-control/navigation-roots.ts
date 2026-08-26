@@ -5,7 +5,7 @@ import { useThreads } from "../../stores/threads";
 export function openChatIndex(): void {
   useThreads.getState().setActiveThread(null);
   useHermesChat.getState().showIndex();
-  useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
+  useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false });
 }
 
 export function openTerminalIndex(): void {

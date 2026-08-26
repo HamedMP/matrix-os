@@ -1,7 +1,12 @@
 import { AlertCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
+import type {
+  AgentThreadSummary,
+  CanonicalChatRecord,
+  ProjectAgentWorkspace,
+  RuntimeSummary,
+} from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
 import { useBoard } from "../../stores/board";
@@ -53,7 +58,8 @@ function allThreads(
 
 type ProjectOverviewSession =
   | { kind: "coding"; id: string; updatedAt: number; thread: AgentThreadSummary }
-  | { kind: "chat"; id: string; updatedAt: number; conversation: HermesConversationSummary };
+  | { kind: "chat"; id: string; updatedAt: number; conversation: HermesConversationSummary }
+  | { kind: "canonical"; id: string; updatedAt: number; record: CanonicalChatRecord };
 
 function projectSessions(
   threads: AgentThreadSummary[],
@@ -73,6 +79,18 @@ function projectSessions(
       conversation,
     })),
   ]
+    .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+    .slice(0, PROJECT_OVERVIEW_THREAD_LIMIT);
+}
+
+function canonicalProjectSessions(records: CanonicalChatRecord[]): ProjectOverviewSession[] {
+  return records
+    .map((record): ProjectOverviewSession => ({
+      kind: "canonical",
+      id: record.chat.id,
+      updatedAt: Date.parse(record.chat.updatedAt),
+      record,
+    }))
     .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
     .slice(0, PROJECT_OVERVIEW_THREAD_LIMIT);
 }
@@ -105,6 +123,7 @@ export default function ProjectOverview({
   const [canonicalStatus, setCanonicalStatus] = useState<"unavailable" | "loading" | "ready">(
     canonicalClient ? "loading" : "unavailable",
   );
+  const [canonicalChats, setCanonicalChats] = useState<CanonicalChatRecord[]>([]);
   const workspaceEntry = useProjectWorkspaces((state) => state.entries[projectId]);
   const ensureWorkspace = useProjectWorkspaces((state) => state.ensure);
   const refreshWorkspace = useProjectWorkspaces((state) => state.refresh);
@@ -125,10 +144,17 @@ export default function ProjectOverview({
   const projectHermesConversations = useMemo(() => hermesConversations.filter((conversation) => (
     conversation.context?.projectId === projectId
   )), [hermesConversations, projectId]);
-  const sessions = useMemo(
+  const legacySessions = useMemo(
     () => projectSessions(threads, projectHermesConversations),
     [projectHermesConversations, threads],
   );
+  const sessions = useMemo(() => (
+    canonicalStatus === "ready"
+      ? canonicalProjectSessions(canonicalChats)
+      : canonicalStatus === "loading" && canonicalClient && active
+        ? []
+        : legacySessions
+  ), [active, canonicalChats, canonicalClient, canonicalStatus, legacySessions]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const hermesRefreshScopeRef = useRef<string | null>(null);
 
@@ -136,13 +162,18 @@ export default function ProjectOverview({
     let current = true;
     if (!active || !canonicalClient) {
       setCanonicalStatus("unavailable");
+      setCanonicalChats([]);
       return () => { current = false; };
     }
     setCanonicalStatus("loading");
-    void canonicalClient.list({ projectId: canonicalProjectId, limit: 1 }).then(() => {
-      if (current) setCanonicalStatus("ready");
+    void canonicalClient.list({ projectId: canonicalProjectId, limit: PROJECT_OVERVIEW_THREAD_LIMIT }).then((page) => {
+      if (!current) return;
+      setCanonicalChats(page.items);
+      setCanonicalStatus("ready");
     }).catch(() => {
-      if (current) setCanonicalStatus("unavailable");
+      if (!current) return;
+      setCanonicalChats([]);
+      setCanonicalStatus("unavailable");
     });
     return () => { current = false; };
   }, [active, canonicalClient, canonicalProjectId]);
@@ -228,7 +259,7 @@ export default function ProjectOverview({
               </p>
             </div>
           ) : null}
-          {workspaceEntry?.status === "loading" && sessions.length === 0 ? (
+          {(workspaceEntry?.status === "loading" || canonicalStatus === "loading") && sessions.length === 0 ? (
             <p className="py-6 text-sm" style={{ color: "var(--text-tertiary)" }}>Loading recent sessions…</p>
           ) : null}
           {workspaceEntry?.status === "error" && sessions.length === 0 ? (
@@ -245,12 +276,49 @@ export default function ProjectOverview({
               </button>
             </div>
           ) : null}
-          {summary && workspaceEntry?.status !== "loading" && workspaceEntry?.status !== "error" && sessions.length === 0 ? (
+          {summary && canonicalStatus !== "loading" && workspaceEntry?.status !== "loading" && workspaceEntry?.status !== "error" && sessions.length === 0 ? (
             <p className="py-6 text-sm" style={{ color: "var(--text-tertiary)" }}>No sessions yet. Start one above.</p>
           ) : null}
 
           <div>
             {sessions.map((session) => {
+              if (session.kind === "canonical") {
+                const { record } = session;
+                const relative = formatRelativeTime(record.chat.updatedAt, nowMs);
+                const driverKind = record.providerBinding?.driverKind;
+                const providerLabel = driverKind?.replace(/_/g, " ") ?? "Agent";
+                const running = Boolean(record.activeRun);
+                return (
+                  <button
+                    key={`canonical:${record.chat.id}`}
+                    type="button"
+                    aria-label={`Open chat ${record.chat.title}`}
+                    onClick={() => {
+                      setSelectedThread(projectId, null);
+                      setView(projectId, "chats");
+                      useTabs.getState().openTab({
+                        kind: "project",
+                        projectSlug: projectId,
+                        chatId: record.chat.id,
+                        title: projectLabel,
+                      });
+                    }}
+                    className="group flex w-full items-center gap-3 border-b px-3 py-3.5 text-left outline-none transition-colors last:border-b-0 hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    style={{ borderColor: "var(--border-subtle)" }}
+                  >
+                    <span aria-label={`${providerLabel} provider`} title={providerLabel} className="shrink-0">
+                      {driverKind
+                        ? <ProviderDriverGlyph kind={driverKind} size={15} />
+                        : <ProviderGlyph kind="custom" compact />}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
+                    {running ? (
+                      <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={STATUS_COLORS.running}>Running</span>
+                    ) : null}
+                    {relative ? <span className="w-16 shrink-0 text-right text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relative}</span> : null}
+                  </button>
+                );
+              }
               if (session.kind === "chat") {
                 const conversation = session.conversation;
                 const relative = formatRelativeTime(new Date(conversation.updatedAt).toISOString(), nowMs);

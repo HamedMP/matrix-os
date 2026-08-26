@@ -48,3 +48,15 @@ export async function appendSharedComposerText(composer: HTMLElement, value: str
     }, { discrete: true });
   });
 }
+
+export async function insertSharedComposerTextAtSelection(composer: HTMLElement, value: string) {
+  const editor = getNearestEditorFromDOMNode(composer);
+  if (!editor) throw new Error("Expected a Lexical chat composer");
+  await act(async () => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) throw new Error("Expected a range selection");
+      selection.insertText(value);
+    }, { discrete: true });
+  });
+}

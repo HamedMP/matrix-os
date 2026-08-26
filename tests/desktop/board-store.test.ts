@@ -307,6 +307,7 @@ describe("loadProjects", () => {
     await useBoard.getState().loadProjects(api);
     expect(api.get).toHaveBeenCalledWith("/api/workspace/projects");
     expect(useBoard.getState().projects).toEqual([{
+      id: "p1",
       slug: "proj",
       name: "Proj",
       kind: "scratch",

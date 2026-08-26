@@ -168,13 +168,22 @@ export const useTabs = create<TabsState>()((set, get) => ({
     const key = identityKey(spec);
     const existing = get().tabs.find((t) => identityKey(t) === key);
     if (existing) {
-      set((state) => ({
-        tabs: spec.chatId === undefined
+      set((state) => {
+        const routeOwnsChatSelection = spec.kind === "chat" || spec.kind === "project";
+        const nextChatId = routeOwnsChatSelection || spec.chatId !== undefined
+          ? spec.chatId
+          : existing.chatId;
+        const tabs = existing.title === spec.title && existing.chatId === nextChatId
           ? state.tabs
-          : state.tabs.map((tab) => tab.id === existing.id ? { ...tab, chatId: spec.chatId } : tab),
-        activeTabId: existing.id,
-        ...recordHistory(state.viewHistory, state.historyIndex, existing.id),
-      }));
+          : state.tabs.map((tab) => tab.id === existing.id
+            ? { ...tab, title: spec.title, chatId: nextChatId }
+            : tab);
+        return {
+          tabs,
+          activeTabId: existing.id,
+          ...recordHistory(state.viewHistory, state.historyIndex, existing.id),
+        };
+      });
       return existing.id;
     }
     counter += 1;

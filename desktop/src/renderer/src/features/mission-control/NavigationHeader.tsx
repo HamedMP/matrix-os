@@ -144,14 +144,18 @@ export default function NavigationHeader() {
   const hermesConversationTitle = hermesSessionId
     ? hermesConversations.find((conversation) => conversation.id === hermesSessionId)?.title
     : undefined;
-  const activeConversationTitle = activeThreadTitle
+  const canonicalConversationTitle = activeTab?.kind === "chat" && activeTab.chatId
+    ? activeTab.title
+    : undefined;
+  const activeConversationTitle = canonicalConversationTitle
+    ?? activeThreadTitle
     ?? (hermesConversationView === "conversation" ? hermesConversationTitle : undefined);
   const breadcrumbs = breadcrumbItemsForTab(activeTab, activeConversationTitle);
   const hasContextActions = Boolean(
     activeTab && activeTab.kind !== "terminals" && activeTab.kind !== "terminal",
   );
   const canReturnToChatIndex = activeTab?.kind === "chat"
-    && (activeThreadId !== null || hermesConversationView === "conversation");
+    && (Boolean(activeTab.chatId) || activeThreadId !== null || hermesConversationView === "conversation");
   const canReturnToTerminalIndex = activeTab?.kind === "terminal"
     || (activeTab?.kind === "terminals" && activeTab.title !== "Terminal");
   const canReturnToProjectsIndex = activeTab?.kind === "project"

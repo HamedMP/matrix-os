@@ -92,6 +92,23 @@ export function CanonicalChatRoute({
       initialChatId={initialChatId}
       projectLabel={projectLabel}
       active={active}
+      onActiveChatChanged={(chatId, title) => {
+        if (projectId === null) {
+          useTabs.getState().openTab({
+            kind: "chat",
+            title: title ?? "Chat",
+            ...(chatId ? { chatId } : {}),
+            closable: false,
+          });
+          return;
+        }
+        useTabs.getState().openTab({
+          kind: "project",
+          projectSlug: projectId,
+          title: projectLabel ?? projectId,
+          ...(chatId ? { chatId } : {}),
+        });
+      }}
       onProjectChanged={(chatId, targetProjectId) => {
         if (targetProjectId === null) {
           useTabs.getState().openTab({ kind: "chat", title: "Chat", chatId, closable: false });
