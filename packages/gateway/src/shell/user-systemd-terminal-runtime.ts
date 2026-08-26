@@ -56,6 +56,7 @@ export interface UserSystemdRuntimeResult extends UserSystemdTerminalDescriptor 
 const SYSTEMCTL_TIMEOUT_MS = 10_000;
 const READINESS_TIMEOUT_MS = 10_000;
 const READINESS_INTERVAL_MS = 100;
+const READINESS_STABILITY_MS = 250;
 const INACTIVE_RECOVERY_RETRY_DELAY_MS = 250;
 const MAX_RUNTIME_DESCRIPTORS = 256;
 const MAX_TERMINAL_RUNTIME_ASSET_BYTES = 256 * 1024 * 1024;
@@ -313,6 +314,7 @@ export function createUserSystemdTerminalRuntime(options: {
   readinessProbe?: (descriptor: UserSystemdTerminalDescriptor) => Promise<boolean>;
   now?: () => string;
   readinessTimeoutMs?: number;
+  readinessStabilityMs?: number;
   generationLockHelperPath?: string;
   removePath?: (path: string) => Promise<void>;
 }) {
@@ -325,6 +327,8 @@ export function createUserSystemdTerminalRuntime(options: {
   const descriptorRoot = join(homePath, "system", "terminal-runtimes");
   const generationLockHelperPath = options.generationLockHelperPath;
   const removePath = options.removePath ?? ((path: string) => rm(path, { force: true }));
+  const readinessStabilityMs = options.readinessStabilityMs
+    ?? (options.readinessProbe ? 0 : READINESS_STABILITY_MS);
   let mutationTail = Promise.resolve();
   const systemdEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -445,7 +449,12 @@ export function createUserSystemdTerminalRuntime(options: {
   async function waitUntilReady(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
     const deadline = Date.now() + (options.readinessTimeoutMs ?? READINESS_TIMEOUT_MS);
     do {
-      if (await readinessProbe(descriptor)) return;
+      if (await readinessProbe(descriptor)) {
+        if (readinessStabilityMs <= 0) return;
+        await delay(readinessStabilityMs);
+        if (await readinessProbe(descriptor)) return;
+        throw new TerminalRuntimeUnavailableError();
+      }
       await delay(READINESS_INTERVAL_MS);
     } while (Date.now() < deadline);
     throw new TerminalRuntimeUnavailableError();
@@ -633,8 +642,7 @@ export function createUserSystemdTerminalRuntime(options: {
           join(descriptorRoot, `${descriptor.runtimeId}.json`),
           descriptor,
         );
-        await runSystemctl(["start", unitName(persisted.runtimeId)]);
-        await waitUntilReady(persisted);
+        await startInterruptedRuntime(persisted);
         return { ...persisted, lifecycle: "running" };
       });
     },

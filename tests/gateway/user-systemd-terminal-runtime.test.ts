@@ -431,6 +431,53 @@ describe("user-systemd terminal runtime", () => {
     );
   });
 
+  it("stabilizes a newly created runtime and retries when the first background watcher exits", async () => {
+    let readinessChecks = 0;
+    let startCount = 0;
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (command, args) => {
+      if (command === "systemctl" && args[1] === "start") {
+        startCount += 1;
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "systemctl" && args[1] === "is-active") {
+        throw Object.assign(new Error("inactive"), { code: 3 });
+      }
+      return { stdout: "", stderr: "" };
+    });
+    const readinessProbe = vi.fn(async () => {
+      readinessChecks += 1;
+      if (startCount === 1) return readinessChecks === 1;
+      return true;
+    });
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe,
+      readinessTimeoutMs: 0,
+      readinessStabilityMs: 1,
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+
+    await expect(runtime.create({
+      runtimeId: RUNTIME_ID,
+      scope: "workspace",
+      kind: "agent",
+      displayName: "Codex",
+      cwd,
+      layoutPath,
+    })).resolves.toMatchObject({ lifecycle: "running" });
+
+    expect(startCount).toBe(2);
+    expect(runCommand).toHaveBeenCalledWith(
+      `/opt/matrix/terminal-runtime/generations/${GENERATION}/zellij`,
+      ["delete-session", `matrix-${RUNTIME_ID}`, "--force"],
+      expect.any(Object),
+    );
+    expect(readinessProbe).toHaveBeenCalledTimes(4);
+  });
+
   it("does not retry explicit recovery while the original unit remains active", async () => {
     let recovery = false;
     const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => ({

@@ -154,18 +154,30 @@ describe("canonical Chat Provider catalog", () => {
     )).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "claude_code_default",
-        availability: "unavailable",
+        availability: "setup_required",
         models: [],
+        setupActions: expect.arrayContaining([
+          expect.objectContaining({ id: "claude_install", kind: "foreground_terminal" }),
+          expect.objectContaining({ id: "claude_connect", kind: "foreground_terminal" }),
+        ]),
       }),
       expect.objectContaining({
         id: "opencode_default",
-        availability: "unavailable",
+        availability: "setup_required",
         models: [],
+        setupActions: expect.arrayContaining([
+          expect.objectContaining({ id: "opencode_install", kind: "foreground_terminal" }),
+          expect.objectContaining({ id: "opencode_connect", kind: "foreground_terminal" }),
+        ]),
       }),
       expect.objectContaining({
         id: "pi_default",
-        availability: "unavailable",
+        availability: "setup_required",
         models: [],
+        setupActions: expect.arrayContaining([
+          expect.objectContaining({ id: "pi_install", kind: "foreground_terminal" }),
+          expect.objectContaining({ id: "pi_connect", kind: "foreground_terminal" }),
+        ]),
       }),
     ]));
     expect(new Set(catalog.instances.map((instance) => instance.catalogRevision)))
@@ -193,9 +205,8 @@ describe("canonical Chat Provider catalog", () => {
 
     expect(hermes.availability).toBe("auth_required");
     expect(hermes.defaultSelection).toBeUndefined();
-    expect(hermes.models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ availability: "auth_required" }),
-    ]));
+    expect(hermes.models).toEqual([]);
+    expect(hermes.options).toEqual([]);
   });
 
   it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
@@ -315,6 +326,11 @@ describe("canonical Chat Provider catalog", () => {
       || instance.driverKind === "opencode"
       || instance.driverKind === "pi")
       .every((instance) => instance.availability === "unavailable")).toBe(true);
+    expect(catalog.instances.filter((instance) => instance.driverKind === "codex"
+      || instance.driverKind === "claude_code"
+      || instance.driverKind === "opencode"
+      || instance.driverKind === "pi")
+      .every((instance) => instance.setupActions.length === 0)).toBe(true);
     expect(JSON.stringify(catalog)).not.toContain("secret coding inventory failure");
   });
 

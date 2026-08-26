@@ -107,7 +107,7 @@ function catalogFixture(): CanonicalProviderCatalog {
         availability: "auth_required",
         workspaceRequirement: "project_optional",
         catalogRevision: "catalog_fixture",
-        models: [{ id: "provider-default", displayName: "Provider default", availability: "auth_required", capabilities: ["reasoning", "tools"], supportsVision: false, supportsToolUse: true }],
+        models: [],
         options: [],
         skills: [],
         commands: [],
@@ -451,8 +451,8 @@ describe("SharedChatComposer", () => {
     expect(opencode.className).toContain("opacity-35");
     expect(opencode.getAttribute("title")).toContain("OpenCode — Authentication required");
     fireEvent.click(opencode);
-    expect(screen.getByRole("option", { name: /Provider default.*OpenCode/ }).getAttribute("aria-disabled"))
-      .toBe("true");
+    expect(screen.getByText("No models found.")).toBeTruthy();
+    expect(screen.queryByRole("option")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
     expect(onProviderSetup).toHaveBeenCalledWith("opencode_default", "opencode_connect");
   });

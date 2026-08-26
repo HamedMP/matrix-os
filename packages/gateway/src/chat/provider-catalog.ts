@@ -2,6 +2,7 @@ import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalProviderCatalogSchema,
+  CODEX_VERIFIED_NPM_PACKAGE,
   type AgentProviderDescriptor,
   type AgentProviderSummary,
   type AgentRuntimeDescriptor,
@@ -28,6 +29,30 @@ const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
 const CODING_DRIVERS = ["codex", "claude_code", "opencode", "pi"] as const;
 const MAX_EFFORTS = 4;
 const MAX_SKILLS = 64;
+
+const CODING_SETUP: Record<CodingDriverKind, {
+  command: string;
+  installPackage: string;
+  installFlags?: string;
+}> = {
+  claude_code: {
+    command: "claude",
+    installPackage: "@anthropic-ai/claude-code@latest",
+  },
+  codex: {
+    command: "codex login --device-auth",
+    installPackage: CODEX_VERIFIED_NPM_PACKAGE,
+  },
+  opencode: {
+    command: "opencode",
+    installPackage: "opencode-ai@latest",
+  },
+  pi: {
+    command: "pi",
+    installPackage: "@earendil-works/pi-coding-agent@latest",
+    installFlags: "--ignore-scripts",
+  },
+};
 
 type InstanceDraft = Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">;
 type CodingDriverKind = typeof CODING_DRIVERS[number];
@@ -148,42 +173,82 @@ function codingInstance(
   const models = projectedCatalog?.models.map((model) => ({ ...model, availability: modelAvailability }))
     ?? codingModels(provider);
   const defaultModel = projectedCatalog?.defaultModel;
+  const visibleModels = availability === "available" ? models : [];
   return {
     id,
     driverKind,
     displayName: provider.displayName,
     availability,
     workspaceRequirement: "project_optional",
-    models,
-    options: projectedCatalog?.options ?? codingOptions(provider),
+    models: visibleModels,
+    options: availability === "available"
+      ? projectedCatalog?.options ?? codingOptions(provider)
+      : [],
     skills,
     commands: [],
     setupActions: provider.setupActions,
     supports: codingSupports(driverKind, provider.supportedModes),
-    ...(availability === "available" && models.length > 0 ? {
+    ...(availability === "available" && visibleModels.length > 0 ? {
       defaultSelection: {
         instanceId: id,
-        model: models.some((model) => model.id === defaultModel) ? defaultModel! : models[0]!.id,
+        model: visibleModels.some((model) => model.id === defaultModel)
+          ? defaultModel!
+          : visibleModels[0]!.id,
       },
     } : {}),
   };
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function visibleSetupCommand(command: string): string {
+  return `sh -lc ${shellQuote([
+    'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
+    'export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"',
+    command,
+  ].join("; "))}`;
+}
+
+function missingCodingSetupActions(
+  driverKind: CodingDriverKind,
+): CanonicalProviderSetupAction[] {
+  const actionId = driverKind === "claude_code" ? "claude" : driverKind;
+  const displayName = driverDisplayName(driverKind);
+  const setup = CODING_SETUP[driverKind];
+  const flags = setup.installFlags ? `${setup.installFlags} ` : "";
+  return [{
+    id: `${actionId}_install`,
+    kind: "foreground_terminal",
+    label: `Install ${displayName}`,
+    command: visibleSetupCommand(
+      `npm install -g ${flags}--prefix "$MATRIX_NODE_PREFIX" ${setup.installPackage}`,
+    ),
+  }, {
+    id: `${actionId}_connect`,
+    kind: "foreground_terminal",
+    label: `Connect ${displayName}`,
+    command: visibleSetupCommand(setup.command),
+  }];
+}
+
 function unavailableCodingInstance(
   driverKind: CodingDriverKind,
   skills: CanonicalChatSkillDescriptor[],
+  inventoryAvailable: boolean,
 ): InstanceDraft {
   return {
     id: `${driverKind}_default`,
     driverKind,
     displayName: driverDisplayName(driverKind),
-    availability: "unavailable",
+    availability: inventoryAvailable ? "setup_required" : "unavailable",
     workspaceRequirement: "project_optional",
     models: [],
     options: [],
     skills,
     commands: [],
-    setupActions: [],
+    setupActions: inventoryAvailable ? missingCodingSetupActions(driverKind) : [],
     supports: codingSupports(driverKind, []),
   };
 }
@@ -289,12 +354,13 @@ function systemInstance(input: {
   const harnessConfigured = input.messagingConfigured
     && input.selectedProvider !== null
     && input.selectedModel !== null;
-  const models = systemModels(input.kind, input.providers).map((model) => (
+  const discoveredModels = systemModels(input.kind, input.providers).map((model) => (
     harnessConfigured || model.availability === "unavailable"
       ? model
       : { ...model, availability: "auth_required" as const }
   ));
-  const availability = systemAvailability(input.runtime, models, harnessConfigured);
+  const availability = systemAvailability(input.runtime, discoveredModels, harnessConfigured);
+  const models = availability === "available" ? discoveredModels : [];
   const selectedModel = input.selectedProvider && input.selectedModel
     ? `${input.selectedProvider}:${input.selectedModel}`
     : null;
@@ -307,7 +373,7 @@ function systemInstance(input: {
     availability,
     workspaceRequirement: "none",
     models,
-    options: systemOptions(input.kind, input.providers),
+    options: availability === "available" ? systemOptions(input.kind, input.providers) : [],
     skills: input.skills,
     commands: [],
     setupActions: systemSetupActions(input.runtime),
@@ -393,7 +459,7 @@ export function createChatProviderCatalogService(options: {
       }));
       const completeCodingInstances = CODING_DRIVERS.map((kind) =>
         codingInstances.find((instance) => instance.driverKind === kind)
-          ?? unavailableCodingInstance(kind, skills)
+          ?? unavailableCodingInstance(kind, skills, codingResult.status === "fulfilled")
       );
       const instances = [...systemInstances, ...completeCodingInstances];
       const driverKinds = [...SYSTEM_DRIVERS, ...CODING_DRIVERS];

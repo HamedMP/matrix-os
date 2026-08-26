@@ -1,4 +1,9 @@
-import type { AgentProviderSummary, SafeSetupAction } from "@matrix-os/contracts";
+import type {
+  AgentProviderSummary,
+  CanonicalProviderInstanceDescriptor,
+  CanonicalProviderSetupAction,
+  SafeSetupAction,
+} from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
 import type { useTabs } from "../../stores/tabs";
 import { providerSupportsSetupAction } from "./provider-readiness";
@@ -125,4 +130,37 @@ export async function executeProviderSetupAction(input: {
     sessionName: setupSessionName(input.provider.id, foregroundAction.id),
   };
   return await openProviderSetupTerminal(input.api, setup, input.openTab, "provider-readiness");
+}
+
+function catalogActionPrefix(instance: CanonicalProviderInstanceDescriptor): string {
+  return instance.driverKind === "claude_code" ? "claude" : instance.driverKind;
+}
+
+function sameCatalogAction(
+  left: CanonicalProviderSetupAction,
+  right: CanonicalProviderSetupAction,
+): boolean {
+  if (left.id !== right.id || left.kind !== right.kind || left.label !== right.label) return false;
+  return left.kind === "open_settings"
+    || (right.kind === "foreground_terminal" && left.command === right.command);
+}
+
+export async function executeCatalogProviderSetupAction(input: {
+  instance: CanonicalProviderInstanceDescriptor;
+  action: CanonicalProviderSetupAction;
+  api: ApiClient | null;
+  openTab: ReturnType<typeof useTabs.getState>["openTab"];
+}): Promise<boolean> {
+  if (input.action.kind !== "foreground_terminal" || !input.api) return false;
+  const prefix = catalogActionPrefix(input.instance);
+  if (!input.action.id.startsWith(`${prefix}_`)) return false;
+  if (!input.instance.setupActions.some((candidate) => sameCatalogAction(candidate, input.action))) {
+    return false;
+  }
+  return await openProviderSetupTerminal(input.api, {
+    key: `${input.instance.id}:${input.action.id}`,
+    label: input.action.label,
+    command: input.action.command,
+    sessionName: setupSessionName(input.instance.id, input.action.id),
+  }, input.openTab, "provider-catalog-setup");
 }
