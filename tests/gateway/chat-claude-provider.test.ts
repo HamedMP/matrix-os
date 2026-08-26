@@ -51,6 +51,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       }),
       JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "hello " } } }),
       JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "world" } } }),
+      JSON.stringify({ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "end_turn" } } }),
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "hello world", session_id: "claude_session" }),
     ]));
     const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
@@ -150,5 +151,30 @@ describe("Claude canonical Chat Provider adapter", () => {
         recoveryActions: ["retry"],
       },
     });
+  });
+
+  it("trusts a successful result event even when Claude exits non-zero afterward", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "completed before exit",
+        session_id: "claude_session",
+      }),
+    ], 1));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "state.updated",
+        state: { sessionId: "claude_session" },
+      },
+      { type: "assistant.delta", delta: "completed before exit" },
+      { type: "run.completed", outcome: "completed" },
+    ]);
   });
 });

@@ -28,7 +28,7 @@ const ClaudeStreamLineSchema = z.object({
   model: z.string().min(1).max(160).optional(),
   event: z.object({
     type: z.string(),
-    delta: z.object({ type: z.string(), text: z.string().optional() }).passthrough().optional(),
+    delta: z.object({ type: z.string().optional(), text: z.string().optional() }).passthrough().optional(),
   }).passthrough().optional(),
 }).passthrough();
 
@@ -145,6 +145,14 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const emitBufferedResult = () => {
+      if (!streamedText && resultText) {
+        for (const delta of outputChunks(resultText)) {
+          queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+        }
+      }
+    };
+
     void runCanonicalCli({
       command: launch.command,
       args: launch.args,
@@ -163,11 +171,7 @@ export function createClaudeChatProviderAdapter(options: {
       },
     }).then(() => {
       if (buffered.trim()) parseLine(buffered);
-      if (!streamedText && resultText) {
-        for (const delta of outputChunks(resultText)) {
-          queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
-        }
-      }
+      emitBufferedResult();
       queue.push(CanonicalProviderRunEventSchema.parse(!sawResult || resultFailed
         ? {
             type: "run.completed",
@@ -181,7 +185,20 @@ export function createClaudeChatProviderAdapter(options: {
           }
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      if (sawResult && !resultFailed) {
+        console.warn(
+          "[chat-claude] Claude CLI exited non-zero after a successful result:",
+          error instanceof Error ? error.message : "unknown error",
+        );
+        emitBufferedResult();
+        queue.push(CanonicalProviderRunEventSchema.parse({
+          type: "run.completed",
+          outcome: "completed",
+        }));
+        queue.finish();
+        return;
+      }
       queue.push(CanonicalProviderRunEventSchema.parse({
         type: "run.completed",
         outcome: input.signal.aborted ? "aborted" : "failed",
