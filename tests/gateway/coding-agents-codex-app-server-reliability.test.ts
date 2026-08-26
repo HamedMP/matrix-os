@@ -460,7 +460,7 @@ describe("Codex app-server runner reliability", () => {
     }
   });
 
-  it("keeps the provider available for another turn until the runner is stopped", async () => {
+  it("exits on explicit shutdown with the terminal outcome's exit code", async () => {
     for (const turnStatus of ["completed", "failed"] as const) {
       const runtime = await startFakeRuntime(`terminal_${turnStatus}`, [
         initialize,
