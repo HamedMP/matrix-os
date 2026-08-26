@@ -10,6 +10,8 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
 function thread(index: number): AgentThreadSummary {
   return {
@@ -33,6 +35,39 @@ function summaryWithThreads(items: AgentThreadSummary[]): RuntimeSummary {
   } as RuntimeSummary;
 }
 
+function summaryWithProjectComposer(): RuntimeSummary {
+  return {
+    runtime: { id: "rt_test", label: "Test", status: "available" },
+    capabilities: [
+      { id: "codingAgentsThreadCreate", enabled: true },
+      { id: "codingAgentsProjectWorkspace", enabled: true },
+    ],
+    providers: [{
+      id: "codex",
+      kind: "codex",
+      displayName: "Codex",
+      availability: "available",
+      installStatus: "installed",
+      authStatus: "authenticated",
+      supportedModes: ["default", "plan"],
+      defaultMode: "default",
+      setupActions: [],
+    }],
+    projects: {
+      items: [{ id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 }],
+      hasMore: false,
+      limit: 20,
+    },
+    activeThreads: { items: [], hasMore: false, limit: 20 },
+    attentionThreads: { items: [], hasMore: false, limit: 20 },
+    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    previewSessions: { items: [], hasMore: false, limit: 50 },
+    recentActivity: { items: [], hasMore: false, limit: 20 },
+    limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
+    serverTime: "2026-08-26T00:00:00.000Z",
+  };
+}
+
 describe("ProjectOverview", () => {
   beforeEach(() => {
     useCodingAgentWorkspace.setState({ createdThreadHandles: [] });
@@ -40,6 +75,7 @@ describe("ProjectOverview", () => {
     useHermesChat.setState(useHermesChat.getInitialState(), true);
     useConnection.setState({ api: null });
     useProjectView.setState({ entries: {}, selectionRevisions: {}, runtimeScope: null });
+    useTabs.setState(useTabs.getInitialState(), true);
   });
 
   afterEach(cleanup);
@@ -203,5 +239,138 @@ describe("ProjectOverview", () => {
     expect(useHermesChat.getState().conversationContext).toEqual(projectContext);
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+  });
+
+  it("creates the first Project message through canonical Chat and opens that exact Chat", async () => {
+    const { snapshot, providerCatalog } = createCanonicalChatFixture("accepted");
+    const createdRecord = {
+      chat: {
+        id: snapshot.chat.id,
+        ownerScope: snapshot.chat.ownerScope,
+        title: "Inspect the project",
+        lifecycle: snapshot.chat.lifecycle,
+        attention: snapshot.chat.attention,
+        revision: 0,
+        messageCount: 0,
+        currentSelection: snapshot.chat.currentSelection,
+        createdAt: snapshot.chat.createdAt,
+        updatedAt: snapshot.chat.updatedAt,
+      },
+      projectId: "matrix-os",
+    };
+    const admittedRecord = {
+      chat: {
+        ...createdRecord.chat,
+        revision: snapshot.chat.revision,
+        messageCount: snapshot.chat.messageCount,
+        lastMessagePreview: snapshot.chat.lastMessagePreview,
+      },
+      projectId: "matrix-os",
+      providerBinding: snapshot.chat.providerBinding,
+      activeRun: snapshot.chat.activeRun,
+    };
+    const get = vi.fn(async (path: string) => {
+      if (path === "/api/chats?limit=1&projectId=matrix-os") return { items: [] };
+      if (path === "/api/chat-providers") return providerCatalog;
+      if (path === "/api/conversations") return { conversations: [] };
+      throw new Error(`unexpected api path ${path}`);
+    });
+    const post = vi.fn(async (path: string) => {
+      if (path === "/api/chats") return createdRecord;
+      if (path === `/api/chats/${snapshot.chat.id}/turns`) {
+        return {
+          record: admittedRecord,
+          message: snapshot.messages[0],
+          turn: snapshot.turns[0],
+          run: snapshot.runs[0],
+          admission: "accepted",
+        };
+      }
+      throw new Error(`unexpected api path ${path}`);
+    });
+    const runtimeScope = "operator|https://platform.test|primary";
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: { baseUrl: "https://matrix.test", get, post } as never,
+    });
+    useProjectWorkspaces.setState({
+      runtimeScope,
+      entries: {
+        "matrix-os": {
+          status: "ready",
+          workspace: {
+            project: { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 },
+            tasks: { items: [], hasMore: false, limit: 100 },
+            projectThreads: { items: [], hasMore: false, limit: 100 },
+            taskThreads: { items: [], hasMore: false, limit: 100 },
+            updatedAt: "2026-08-26T00:00:00.000Z",
+          },
+          error: null,
+          fetchedAt: Date.now(),
+        },
+      },
+    });
+    useTabs.getState().openTab({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel === "state:get") return { value: null };
+          if (channel === "state:set") return { ok: true };
+          throw new Error(`unexpected operator channel ${channel}`);
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
+    render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryWithProjectComposer()}
+        active
+        viewSwitch={null}
+      />,
+    );
+
+    const picker = await screen.findByRole("button", { name: "Choose model and provider" });
+    await waitFor(() => expect(picker.textContent).toContain("GPT-5.6-Sol"));
+    expect(picker.textContent).not.toContain("Provider default");
+    const composer = screen.getByLabelText("Message new chat");
+    for (const key of "Inspect the project") fireEvent.keyDown(window, { key });
+    await waitFor(() => expect(composer.textContent).toBe("Inspect the project"));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/api/chats",
+      expect.objectContaining({
+        projectId: "matrix-os",
+        title: "Inspect the project",
+        currentSelection: expect.objectContaining({
+          instanceId: "codex_fixture",
+          model: "gpt-5.6-sol",
+        }),
+      }),
+    ));
+    expect(post).toHaveBeenCalledWith(
+      `/api/chats/${snapshot.chat.id}/turns`,
+      expect.objectContaining({
+        baseRevision: 0,
+        parts: [{ type: "text", text: "Inspect the project" }],
+        selection: expect.objectContaining({
+          instanceId: "codex_fixture",
+          model: "gpt-5.6-sol",
+        }),
+      }),
+    );
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
+    expect(useTabs.getState().tabs.find((tab) => tab.projectSlug === "matrix-os")?.chatId)
+      .toBe(snapshot.chat.id);
   });
 });

@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
+import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
+import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat, type HermesConversationSummary } from "../../stores/hermes-chat";
@@ -92,6 +94,17 @@ export default function ProjectOverview({
 }) {
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const api = useConnection((state) => state.api);
+  const canonicalProjectId = useBoard((state) => (
+    state.projects.find((project) => project.slug === projectId || project.id === projectId)?.id
+      ?? projectId
+  ));
+  const canonicalClient = useMemo(
+    () => api?.baseUrl ? createCanonicalChatClient(api) : null,
+    [api],
+  );
+  const [canonicalStatus, setCanonicalStatus] = useState<"unavailable" | "loading" | "ready">(
+    canonicalClient ? "loading" : "unavailable",
+  );
   const workspaceEntry = useProjectWorkspaces((state) => state.entries[projectId]);
   const ensureWorkspace = useProjectWorkspaces((state) => state.ensure);
   const refreshWorkspace = useProjectWorkspaces((state) => state.refresh);
@@ -118,6 +131,21 @@ export default function ProjectOverview({
   );
   const [nowMs, setNowMs] = useState(() => Date.now());
   const hermesRefreshScopeRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    if (!active || !canonicalClient) {
+      setCanonicalStatus("unavailable");
+      return () => { current = false; };
+    }
+    setCanonicalStatus("loading");
+    void canonicalClient.list({ projectId: canonicalProjectId, limit: 1 }).then(() => {
+      if (current) setCanonicalStatus("ready");
+    }).catch(() => {
+      if (current) setCanonicalStatus("unavailable");
+    });
+    return () => { current = false; };
+  }, [active, canonicalClient, canonicalProjectId]);
 
   useEffect(() => {
     if (!active) {
@@ -155,7 +183,7 @@ export default function ProjectOverview({
           {viewSwitch}
         </div>
 
-        {summary && workspaceEnabled ? (
+        {summary && workspaceEnabled && canonicalStatus !== "loading" ? (
           <div className="mb-6">
             <ProjectChatDraft
               summary={summary}
@@ -166,6 +194,18 @@ export default function ProjectOverview({
               focusRequestId={composerFocusRequestId}
               typeToStartEnabled={canCreate}
               presentation="landing"
+              canonicalClient={canonicalStatus === "ready" ? canonicalClient : null}
+              canonicalProjectId={canonicalProjectId}
+              onCanonicalCreated={(chatId, label) => {
+                setView(projectId, "chats");
+                useTabs.getState().openTab({
+                  kind: "project",
+                  projectSlug: projectId,
+                  chatId,
+                  title: projectLabel,
+                });
+                useTabs.getState().recordRecentConversation(chatId, label);
+              }}
               onCreated={(threadId, label) => {
                 setSelectedThread(projectId, threadId);
                 setView(projectId, "chats");
@@ -173,6 +213,8 @@ export default function ProjectOverview({
               }}
             />
           </div>
+        ) : summary && workspaceEnabled ? (
+          <div className="mb-6 h-[126px] animate-pulse rounded-[var(--radius-xl)] border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }} aria-label="Loading Chat composer" />
         ) : null}
 
         <section aria-label={`${projectLabel} sessions`}>

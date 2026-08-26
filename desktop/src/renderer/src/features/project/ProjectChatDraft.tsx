@@ -8,6 +8,7 @@ import {
   type AgentThreadComposerDraft,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
+import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useDraftChat } from "../../stores/draft-chat";
@@ -36,7 +37,7 @@ import {
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "../chat/canonical-composer-state";
-import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
+import { failClosedProviderCatalog, useChatProviderCatalog } from "../chat/chat-provider-catalog";
 import { useProviderSetup } from "../chat/use-provider-setup";
 import { capabilityEnabled } from "../coding-agents/capabilities";
 import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
@@ -47,6 +48,7 @@ import {
   type ComposerSeed,
 } from "../coding-agents/composer-seed";
 import { ProjectChatHero } from "./ProjectChatHero";
+import { startCanonicalProjectChat } from "./start-canonical-project-chat";
 
 /**
  * The draft-chat pane: shown in the conversation column while no chat is
@@ -65,6 +67,9 @@ export function ProjectChatDraft({
   focusRequestId,
   typeToStartEnabled,
   onCreated,
+  canonicalClient,
+  canonicalProjectId = projectId,
+  onCanonicalCreated,
   presentation = "hero",
 }: {
   summary: RuntimeSummary;
@@ -75,6 +80,9 @@ export function ProjectChatDraft({
   focusRequestId: number;
   typeToStartEnabled: boolean;
   onCreated: (threadId: string, label: string) => void;
+  canonicalClient?: CanonicalChatClient | null;
+  canonicalProjectId?: string;
+  onCanonicalCreated?: (chatId: string, label: string) => void;
   presentation?: "hero" | "landing";
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
@@ -135,8 +143,10 @@ export function ProjectChatDraft({
   const submitting = createStatus === "submitting";
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const [resolvingTarget, setResolvingTarget] = useState(false);
+  const [canonicalSubmitting, setCanonicalSubmitting] = useState(false);
+  const [canonicalError, setCanonicalError] = useState<string | null>(null);
   const submitInFlightRef = useRef(false);
-  const busy = submitting || resolvingTarget;
+  const busy = submitting || resolvingTarget || canonicalSubmitting;
   // Local focus bumps (type-to-start, chip seeds) combine with the shared
   // composer-focus request id; PromptInput focuses whenever the sum changes.
   const [localFocusBumps, setLocalFocusBumps] = useState(0);
@@ -158,16 +168,20 @@ export function ProjectChatDraft({
     () => createLegacyProjectProviderCatalog(summary),
     [summary],
   );
-  const loadedCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog);
+  const unavailableCatalog = useMemo(
+    () => failClosedProviderCatalog(fallbackCatalog),
+    [fallbackCatalog],
+  );
   const projectCatalog = useMemo(
-    () => filterCatalogForLegacyProject(loadedCatalog, summary),
-    [loadedCatalog, summary],
+    () => canonicalClient
+      ? liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
+      : filterCatalogForLegacyProject(liveCatalog.catalog, summary),
+    [canonicalClient, liveCatalog.catalog, liveCatalog.status, summary, unavailableCatalog],
   );
-  const preferredInstanceId = instanceIdForLegacyProvider(
-    projectCatalog,
-    summary,
-    effectiveDraft.providerId,
-  );
+  const preferredInstanceId = canonicalClient
+    ? undefined
+    : instanceIdForLegacyProvider(projectCatalog, summary, effectiveDraft.providerId);
   const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
     () => {
       let selection = createCanonicalComposerSelection(fallbackCatalog, instanceIdForLegacyProvider(
@@ -236,11 +250,16 @@ export function ProjectChatDraft({
   const selectedInstance = projectCatalog.instances.find((instance) => (
     instance.id === canonicalSelection?.instanceId
   ));
-  const canonicalBlocked = !legacyProjectSelectionExecutable(
-    projectCatalog,
-    summary,
-    canonicalSelection,
+  const canonicalSelectionExecutable = Boolean(
+    canonicalSelection
+    && selectedInstance?.availability === "available"
+    && selectedInstance.models.some((model) => (
+      model.id === canonicalSelection.model && model.availability === "available"
+    )),
   );
+  const canonicalBlocked = canonicalClient
+    ? !canonicalSelectionExecutable
+    : !legacyProjectSelectionExecutable(projectCatalog, summary, canonicalSelection);
   const handleProviderSetup = useProviderSetup(summary.providers, refreshSummary);
 
   useEffect(() => {
@@ -270,6 +289,41 @@ export function ProjectChatDraft({
       instance.id === canonicalSelection?.instanceId
     ));
     if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) return;
+    if (canonicalClient && canonicalSelection) {
+      submitInFlightRef.current = true;
+      setCanonicalSubmitting(true);
+      setCanonicalError(null);
+      try {
+        const uploaded = await attachments.uploadAll();
+        if (!uploaded.ok) return;
+        const started = await startCanonicalProjectChat({
+          client: canonicalClient,
+          projectId: canonicalProjectId,
+          submission,
+          attachmentPaths: uploaded.attachments.flatMap((attachment) => (
+            attachment.path ? [attachment.path] : []
+          )),
+          selection: canonicalSelection,
+        });
+        if (!started) return;
+        providerSelectionTouchedRef.current = false;
+        useDraftChat.getState().clearDraft(projectId);
+        setDraft(initialDraft);
+        setReferenceTokens([]);
+        attachments.clear();
+        onCanonicalCreated?.(started.chatId, started.title);
+      } catch (error: unknown) {
+        console.warn(
+          "[project-chat] canonical first turn failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        setCanonicalError("The message could not be sent. Try again.");
+      } finally {
+        submitInFlightRef.current = false;
+        setCanonicalSubmitting(false);
+      }
+      return;
+    }
     let effective = canonicalSelection
       ? applyCanonicalSelectionToAgentDraft(
           summary,
@@ -347,8 +401,8 @@ export function ProjectChatDraft({
       ) : null}
       <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
         <div className={`mx-auto w-full ${presentation === "landing" ? "max-w-none" : "max-w-[46rem]"}`} data-slot="draft-composer">
-          {createError ? (
-            <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{createError}</p>
+          {canonicalError || createError ? (
+            <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{canonicalError ?? createError}</p>
           ) : null}
           {canCreate ? (
             <>
@@ -382,6 +436,7 @@ export function ProjectChatDraft({
                     providerSelectionTouchedRef.current = true;
                     setComposerSelectionPreference(selection);
                     setCanonicalSelection(selection);
+                    if (canonicalClient) return;
                     const nextDraft = applyCanonicalSelectionToAgentDraft(
                       summary,
                       projectCatalog,

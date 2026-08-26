@@ -5,12 +5,9 @@ import type {
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
+import { canonicalChatRequestId } from "./canonical-chat-submission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
-
-function requestId(): string {
-  return `req_${crypto.randomUUID().replaceAll("-", "")}`;
-}
 
 function detailWithRecord(
   detail: CanonicalChatDetailResponse,
@@ -135,7 +132,7 @@ export function useCanonicalChatRouteController({
       let current = detail;
       if (!current) {
         const record = await client.create({
-          clientRequestId: requestId(),
+          clientRequestId: canonicalChatRequestId(),
           title,
           ...(projectId === null ? {} : { projectId }),
           currentSelection: input.selection,
@@ -150,7 +147,7 @@ export function useCanonicalChatRouteController({
       }
       const admitted = await client.admitTurn(current.record.chat.id, {
         ...input,
-        clientRequestId: requestId(),
+        clientRequestId: canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       });
       const next: CanonicalChatDetailResponse = {
@@ -179,7 +176,7 @@ export function useCanonicalChatRouteController({
     if (!detail || !activeRun) return;
     try {
       await client.cancelRun(detail.record.chat.id, activeRun.runId, {
-        clientRequestId: requestId(),
+        clientRequestId: canonicalChatRequestId(),
       });
       await loadDetail(detail.record.chat.id);
     } catch {

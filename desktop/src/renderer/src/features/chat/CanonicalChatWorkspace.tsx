@@ -18,12 +18,13 @@ import { useConversationAttachments } from "./attachments/use-conversation-attac
 import { ChatStarterCards } from "./ChatStarterCards";
 import { CanonicalChatIndex } from "./CanonicalChatIndex";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
+import { canonicalChatInputParts, canonicalChatTitle } from "./canonical-chat-submission";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
 import {
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
-import { useChatProviderCatalog } from "./chat-provider-catalog";
+import { failClosedProviderCatalog, useChatProviderCatalog } from "./chat-provider-catalog";
 import { canonicalResourceReferenceForPath, searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
 import {
@@ -37,17 +38,6 @@ import { useCanonicalChatRouteController } from "./use-canonical-chat-route-cont
 import { useProviderSetup } from "./use-provider-setup";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
-
-function failClosedCatalog(catalog: CanonicalProviderCatalog): CanonicalProviderCatalog {
-  return {
-    ...catalog,
-    instances: catalog.instances.map(({ defaultSelection: _selection, ...instance }) => ({
-      ...instance,
-      availability: "unavailable",
-      models: instance.models.map((model) => ({ ...model, availability: "unavailable" })),
-    })),
-  };
-}
 
 function rememberedOptions(
   catalog: CanonicalProviderCatalog,
@@ -81,27 +71,6 @@ function projectContext(
   };
 }
 
-function inputParts(submission: SharedChatComposerSubmission): CanonicalChatMessagePart[] {
-  return [
-    ...(submission.text ? [{ type: "text" as const, text: submission.text }] : []),
-    ...submission.invocations.map((invocation) => ({
-      type: "invocation_reference" as const,
-      invocation,
-    })),
-    ...submission.resources.map((resource) => ({
-      type: "resource_reference" as const,
-      resource,
-    })),
-  ];
-}
-
-function titleFor(submission: SharedChatComposerSubmission): string {
-  return submission.text.replace(/\s+/g, " ").slice(0, 80)
-    || submission.invocations[0]?.invocation
-    || submission.resources[0]?.label
-    || "New chat";
-}
-
 export function CanonicalChatWorkspace({
   api,
   client,
@@ -127,7 +96,7 @@ export function CanonicalChatWorkspace({
     [projects.length],
   );
   const liveCatalog = useChatProviderCatalog(fallbackCatalog, api ?? null);
-  const unavailableCatalog = useMemo(() => failClosedCatalog(fallbackCatalog), [fallbackCatalog]);
+  const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
   const providerCatalog = catalog ?? (
     liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
   );
@@ -253,7 +222,7 @@ export function CanonicalChatWorkspace({
           }]
         : []
     ));
-    const parts = [...inputParts(submission), ...uploadedParts];
+    const parts = [...canonicalChatInputParts(submission), ...uploadedParts];
     if (parts.length === 0) {
       setUploadingAttachments(false);
       return;
@@ -268,7 +237,7 @@ export function CanonicalChatWorkspace({
         },
         interactionMode: selection.interactionMode,
         permissionMode: selection.permissionMode,
-      }, titleFor(submission));
+      }, canonicalChatTitle(submission));
       if (!admitted) return;
       setDraft("");
       setReferenceTokens([]);

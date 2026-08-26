@@ -6,6 +6,19 @@ import { useEffect, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 
+export function failClosedProviderCatalog(
+  catalog: CanonicalProviderCatalog,
+): CanonicalProviderCatalog {
+  return {
+    ...catalog,
+    instances: catalog.instances.map(({ defaultSelection: _selection, ...instance }) => ({
+      ...instance,
+      availability: "unavailable",
+      models: instance.models.map((model) => ({ ...model, availability: "unavailable" })),
+    })),
+  };
+}
+
 export async function fetchCanonicalProviderCatalog(
   api: Pick<ApiClient, "get">,
 ): Promise<CanonicalProviderCatalog> {
