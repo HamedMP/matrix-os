@@ -477,6 +477,7 @@ describe("native desktop shell", () => {
     expect(launcher?.style.background).toBe("");
     const launcherAppIcon = launcher?.querySelector<HTMLElement>("[data-desktop-app-icon]");
     expect(launcherAppIcon?.style.background).toBe("var(--surface-inverse, #0D0C0C)");
+    expect(launcherAppIcon?.style.color).toBe("rgb(250, 250, 245)");
     expect(launcherAppIcon?.className).toContain("group-hover:-translate-y-0.5");
     expect(launcher?.querySelector("[data-desktop-app-icon-shine]")).toBeTruthy();
     expect(dock.querySelector("[data-testid='desktop-taskbar-files'] [data-desktop-app-icon-shine]")).toBeTruthy();

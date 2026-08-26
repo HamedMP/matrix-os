@@ -114,7 +114,7 @@ export default function DesktopTaskbar({
           title="App Launcher"
           icon={<LayoutGrid size={21} aria-hidden="true" />}
           color="var(--surface-inverse, #0D0C0C)"
-          iconColor="var(--text-on-accent)"
+          iconColor="#FAFAF5"
           pressed={launcherOpen}
           onClick={onOpenApps}
         />
