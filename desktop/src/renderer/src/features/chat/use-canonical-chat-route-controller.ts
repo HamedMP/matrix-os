@@ -44,13 +44,15 @@ export function useCanonicalChatRouteController({
     const sequence = ++detailRequestSequence.current;
     try {
       const loaded = await client.getDetail(chatId, { limit: 200 });
-      if (sequence !== detailRequestSequence.current) return;
+      if (sequence !== detailRequestSequence.current) return null;
       setDetail(loaded);
       setError(null);
+      return loaded;
     } catch (error: unknown) {
       console.warn("[canonical-chat] detail load failed:", diagnosticErrorKind(error));
-      if (sequence !== detailRequestSequence.current) return;
+      if (sequence !== detailRequestSequence.current) return null;
       setError("Chat could not be loaded. Try again.");
+      return null;
     }
   }, [client]);
 
@@ -106,9 +108,20 @@ export function useCanonicalChatRouteController({
 
   useEffect(() => {
     if (!active || !activeChatId || !detail?.record.activeRun) return;
-    const timeout = window.setTimeout(() => void loadDetail(activeChatId), 200);
-    return () => window.clearTimeout(timeout);
-  }, [active, activeChatId, detail?.record.activeRun, loadDetail]);
+    let cancelled = false;
+    let timeout: number | undefined;
+    const poll = () => {
+      timeout = window.setTimeout(async () => {
+        const loaded = await loadDetail(activeChatId);
+        if (!cancelled && loaded?.record.activeRun) poll();
+      }, 200);
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    };
+  }, [active, activeChatId, Boolean(detail?.record.activeRun), loadDetail]);
 
   const selectChat = useCallback((chatId: string | null) => {
     detailRequestSequence.current += 1;

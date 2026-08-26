@@ -266,6 +266,140 @@ describe("canonical Chat route controller", () => {
     }
   });
 
+  it("keeps polling an admitted Project Run until the completed assistant message is visible", async () => {
+    const projectRecord = {
+      ...globalRecord,
+      projectId: "project_1",
+      chat: { ...globalRecord.chat, id: "chat_project_continuation", title: "Project continuation" },
+    };
+    const activeRun = {
+      runId: "run_project_continuation",
+      turnId: "turn_project_continuation",
+      status: "running" as const,
+    };
+    const admittedRecord = {
+      ...projectRecord,
+      chat: { ...projectRecord.chat, revision: 1, messageCount: 1 },
+      activeRun,
+    };
+    const message = {
+      id: "message_project_continuation",
+      chatId: projectRecord.chat.id,
+      seq: 1,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: activeRun.turnId,
+      parts: [{ type: "text" as const, text: "Continue in this Project" }],
+      createdAt: "2026-08-26T00:00:01.000Z",
+    };
+    const turn = {
+      id: activeRun.turnId,
+      chatId: projectRecord.chat.id,
+      clientRequestId: "request_project_continuation",
+      baseMessageSeq: 0,
+      inputMessageId: message.id,
+      status: "accepted" as const,
+      createdAt: "2026-08-26T00:00:01.000Z",
+      updatedAt: "2026-08-26T00:00:01.000Z",
+    };
+    const run = {
+      id: activeRun.runId,
+      chatId: projectRecord.chat.id,
+      turnId: turn.id,
+      attempt: 1,
+      status: "running" as const,
+      driverKind: "codex" as const,
+      instanceId: "codex_default",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      historyBoundarySeq: 0,
+      capabilitySnapshot: {
+        revision: "catalog_1",
+        rootChat: true,
+        attachments: true,
+        resources: true,
+        tools: true,
+        approvals: true,
+        userInput: false,
+        resume: true,
+        cancellation: true,
+        worktrees: false,
+        interactionModes: ["default"],
+        permissionModes: ["supervised"],
+      },
+      createdAt: "2026-08-26T00:00:01.000Z",
+      updatedAt: "2026-08-26T00:00:01.000Z",
+    };
+    const runningDetail = {
+      record: admittedRecord,
+      messages: [message],
+      turns: [turn],
+      runs: [run],
+      activities: [],
+    };
+    const assistantMessage = {
+      id: "message_project_continuation_assistant",
+      chatId: projectRecord.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: turn.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text: "Project continuation completed" }],
+      createdAt: "2026-08-26T00:00:02.000Z",
+    };
+    const completedDetail = {
+      ...runningDetail,
+      record: {
+        ...projectRecord,
+        chat: { ...projectRecord.chat, revision: 2, messageCount: 2 },
+      },
+      messages: [message, assistantMessage],
+      runs: [{ ...run, status: "completed" as const, outcome: "completed" as const }],
+    };
+    const getDetail = vi.fn()
+      .mockResolvedValueOnce({ ...detail, record: projectRecord })
+      .mockResolvedValueOnce(runningDetail)
+      .mockResolvedValueOnce(completedDetail);
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [projectRecord] })),
+      getDetail,
+      admitTurn: vi.fn(async () => ({
+        record: admittedRecord,
+        message,
+        turn,
+        run,
+        admission: "accepted" as const,
+      })),
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: "project_1",
+      active: true,
+      initialChatId: projectRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(projectRecord.chat.id));
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        await result.current.submitTurn({
+          parts: [{ type: "text", text: "Continue in this Project" }],
+          selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+          interactionMode: "default",
+          permissionMode: "supervised",
+        }, "Project continuation");
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(450); });
+
+      expect(getDetail).toHaveBeenCalledTimes(3);
+      expect(result.current.detail?.messages).toContainEqual(assistantMessage);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("admits the first Project turn before opening its detail so the optimistic message cannot be replaced by an empty Chat", async () => {
     const projectRecord = {
       ...globalRecord,
