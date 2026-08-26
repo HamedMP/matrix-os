@@ -14,16 +14,9 @@ import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { useChatContext } from "@/stores/chat-context";
-import { TrafficLights } from "../window/TrafficLights";
+import { OSWindow, OSWindowTopBar } from "../window/OSWindow";
 import { useThemeStyle } from "../window/useThemeStyle";
 import { resolveTitleBarVariant } from "../window/title-bar-variant";
-import {
-  MacGlassTitleBarChrome,
-  MacTitleBarChrome,
-  Win11TitleBarChrome,
-  Win98TitleBarChrome,
-  WinXpTitleBarChrome,
-} from "../window/DesignTitleBarChrome";
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
@@ -342,34 +335,13 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const titleBarHeight = 36;
   const titleBarGap = 8;
 
-  // All five title-bar variants share the same handlers; only the visual bar
-  // differs. Chrome components live in window/DesignTitleBarChrome.tsx.
-  const designChromeProps = {
-    title: win.title,
-    iconUrl,
-    isFocused,
-    onClose: () => closeWindow(win.id),
-    onMinimize: animateMinimize,
-    onMaximize: () => useWindowManager.getState().toggleFullscreen(win.id),
-  };
-
-  const titleBarChrome = (() => {
-    switch (titleBarVariant) {
-      case "win98":
-        return <Win98TitleBarChrome {...designChromeProps} />;
-      case "macos-glass":
-        return <MacGlassTitleBarChrome {...designChromeProps} />;
-      case "winxp":
-        return <WinXpTitleBarChrome {...designChromeProps} />;
-      case "win11":
-        return <Win11TitleBarChrome {...designChromeProps} />;
-      default:
-        return <MacTitleBarChrome {...designChromeProps} />;
-    }
-  })();
-
   const titleBarInner = (
-    <div
+    <OSWindowTopBar
+      window={win}
+      iconUrl={iconUrl}
+      isFocused={isFocused}
+      presentation="canvas"
+      onMinimize={animateMinimize}
       className={titleBarVariant === "mac" || titleBarVariant === "macos-glass"
         ? "absolute cursor-grab active:cursor-grabbing select-none group/titlebar transition-all duration-200"
         : "absolute cursor-grab active:cursor-grabbing select-none"}
@@ -383,10 +355,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       onPointerMove={onDragMove}
       onPointerUp={onDragEnd}
       onPointerCancel={onDragEnd}
-      onDoubleClick={onTitleDoubleClick}
-    >
-      {titleBarChrome}
-    </div>
+    />
   );
   const titleBar = (
     <div
@@ -401,34 +370,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
     </div>
   );
 
-  // In fullscreen the floating title bar can't sit above the window, so render a
-  // static header at the top of the window instead — same traffic lights + title
-  // as every other window, double-click to restore. This replaces the old
-  // near-invisible exit pill.
-  const fullscreenTitleBar = (
-    <div
-      className="shrink-0 flex items-center gap-2 px-3 h-9 bg-muted/90 border-b border-border/60 select-none backdrop-blur-xl"
-      onDoubleClick={() => useWindowManager.getState().toggleFullscreen(win.id)}
-    >
-      <TrafficLights
-        onClose={() => closeWindow(win.id)}
-        onMinimize={animateMinimize}
-        onFullscreen={() => useWindowManager.getState().toggleFullscreen(win.id)}
-      />
-      <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0">
-        {iconUrl ? (
-          // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
-          <img src={iconUrl} alt="" className="size-4 rounded-md object-cover shrink-0" draggable={false} />
-        ) : (
-          <span className="size-4 rounded-md bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
-            {win.title.charAt(0).toUpperCase()}
-          </span>
-        )}
-        <span className="text-xs font-medium text-foreground/70 truncate">{win.title}</span>
-      </div>
-      <div className="w-[42px] shrink-0" />
-    </div>
-  );
+  const fullscreenTitleBar = <OSWindowTopBar window={win} iconUrl={iconUrl} presentation="fullscreen" onMinimize={animateMinimize} />;
 
   // Zoomed-out preview: icon card with title bar above.
   // Skip preview if fullscreen — always render interactive content.
@@ -566,7 +508,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
 
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational positioning wrapper, not a control. The onMouseDown is a pure pointer convenience that raises window focus/z-index; keyboard users focus the window by tabbing into its own interactive children (title-bar buttons and the app content), so no role/onKeyDown is needed. Giving this whole-window container (which wraps an app iframe) a button role would mislabel it for assistive tech.
-    <div
+    <OSWindow
+      window={win}
       ref={wrapperRef}
       className="absolute"
       data-canvas-window={!isPreview && !isFullscreen || undefined}
@@ -641,6 +584,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
           </svg>
         </div>
       )}
-    </div>
+    </OSWindow>
   );
 }
