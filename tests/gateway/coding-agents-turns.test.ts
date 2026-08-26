@@ -14,6 +14,25 @@ import {
 } from "./coding-agent-turn-harness.js";
 
 describe("coding agent same-thread turns", () => {
+  it("GW-013 resumes an owner-scoped global thread without Project relation validation", async () => {
+    const harness = await createHarness({ globalThread: true });
+    try {
+      const response = await harness.app.request(post(
+        `/api/coding-agents/threads/${harness.threadId}/turns`,
+        turnBody,
+      ));
+
+      expect(response.status).toBe(202);
+      expect(CreateAgentTurnResponseSchema.parse(await response.json())).toMatchObject({
+        threadId: harness.threadId,
+        status: "accepted",
+      });
+      expect(harness.validateThread).not.toHaveBeenCalled();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("GW-012 GW-013 accepts and replays one bounded user turn", async () => {
     const harness = await createHarness();
     try {

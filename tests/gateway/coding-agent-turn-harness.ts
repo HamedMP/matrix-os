@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { vi } from "vitest";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
+import { CodingAgentThreadRelationError } from "../../packages/gateway/src/coding-agents/thread-relations.js";
 import {
   createCodingAgentThreadStore,
   type CodingAgentProviderAdapter,
@@ -30,13 +31,21 @@ export const turnBody = {
 
 export async function createTurnHarness(options: {
   initialOutcome?: "completed" | "aborted";
+  globalThread?: boolean;
   provider?: CodingAgentProviderAdapter;
   maxTurnDispatches?: number;
   turnDispatchTimeoutMs?: number;
   projectionPublisher?: CodingAgentThreadProjectionPublisher;
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-turns-"));
-  const validateThread = vi.fn(async () => undefined);
+  const validateThread = vi.fn(async (
+    _principal: RequestPrincipal,
+    relation: { projectId?: string; taskId?: string },
+  ) => {
+    if (options.globalThread && !relation.projectId) {
+      throw new CodingAgentThreadRelationError("invalid_relation");
+    }
+  });
   const provider: CodingAgentProviderAdapter = options.provider ?? {
     providerId: "codex",
     startThread({ thread, now, nextEventId }) {
@@ -70,8 +79,7 @@ export async function createTurnHarness(options: {
   const created = await threads.createThread(ownerPrincipal, {
     providerId: "codex",
     prompt: "Start the implementation.",
-    projectId: "matrix-os",
-    taskId: "task_auth",
+    ...(options.globalThread ? {} : { projectId: "matrix-os", taskId: "task_auth" }),
     clientRequestId: "req_thread_turn_fixture",
   });
   let principal = ownerPrincipal;
