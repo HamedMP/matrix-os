@@ -41,6 +41,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(keeper).toContain("--new-session-with-layout");
     expect(keeper).toContain('"attach", "--create-background", descriptor.sessionName');
     expect(keeper).toContain('"watch", descriptor.sessionName');
+    const watcher = keeper.slice(keeper.indexOf("const watcherCommand"));
+    expect(watcher).toContain('stdio: ["pipe", "ignore", "ignore"]');
     expect(keeper).toContain("SESSION_START_TIMEOUT_MS");
     expect(keeper).toContain('process.off("SIGTERM", handleSigterm)');
     expect(keeper).toContain('process.off("SIGINT", handleSigint)');

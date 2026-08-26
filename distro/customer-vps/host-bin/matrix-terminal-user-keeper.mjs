@@ -247,7 +247,10 @@ const watcherCommand = [zellijPath, "watch", descriptor.sessionName]
   .join(" ");
 child = spawn("/usr/bin/script", ["-qefc", watcherCommand, "/dev/null"], {
   ...childOptions,
-  stdio: "ignore",
+  // Keep the watcher's input open. `stdio: "ignore"` maps stdin to
+  // `/dev/null`, so `script` forwards EOF to `zellij watch` and the user unit
+  // exits immediately after the startup readiness probe succeeds.
+  stdio: ["pipe", "ignore", "ignore"],
 });
 child.once("error", () => fail("pty_start_failed"));
 child.once("exit", (code, signal) => exitAfterChild(code, signal));
