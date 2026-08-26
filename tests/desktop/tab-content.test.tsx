@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TabContent, { TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
+import { SURFACE_BASE_BACKGROUND } from "@desktop/renderer/src/design/surface";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
@@ -82,7 +83,7 @@ describe("TabContent", () => {
     expect(activePane?.style.display).toBe("flex");
     expect(activePane?.style.visibility).toBe("visible");
     expect(activePane?.style.pointerEvents).toBe("auto");
-    expect(activePane?.style.background).toBe("var(--bg-app)");
+    expect(activePane?.style.background).toBe(SURFACE_BASE_BACKGROUND);
     expect(hiddenPane?.hasAttribute("inert")).toBe(true);
     expect(hiddenPane?.getAttribute("aria-hidden")).toBe("true");
     expect(hiddenPane?.style.display).toBe("none");
@@ -118,7 +119,7 @@ describe("TabContent", () => {
     expect(activePane?.style.display).toBe("flex");
     expect(activePane?.style.visibility).toBe("visible");
     expect(activePane?.style.pointerEvents).toBe("auto");
-    expect(activePane?.style.background).toBe("var(--bg-app)");
+    expect(activePane?.style.background).toBe(SURFACE_BASE_BACKGROUND);
     expect(activePane?.getAttribute("aria-hidden")).toBe("false");
     expect(activePane?.hasAttribute("inert")).toBe(false);
   });

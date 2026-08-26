@@ -4,6 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
+import {
+  SURFACE_BASE_BACKGROUND,
+  SURFACE_BASE_BACKGROUND_FALLBACK,
+} from "@desktop/renderer/src/design/surface";
 import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
@@ -199,7 +203,7 @@ describe("TerminalView session switching", () => {
     const root = host.querySelector<HTMLElement>(".xterm")!;
     const viewport = host.querySelector<HTMLElement>(".xterm-viewport")!;
     const scrollable = host.querySelector<HTMLElement>(".xterm-scrollable-element")!;
-    const background = "#32352e";
+    const background = SURFACE_BASE_BACKGROUND_FALLBACK;
     const colorProbe = document.createElement("div");
     colorProbe.style.backgroundColor = background;
 
@@ -211,7 +215,7 @@ describe("TerminalView session switching", () => {
     expect(frame.className).not.toContain("pl-3");
     expect(frame.className).not.toContain("pl-4");
     expect(frame.className).toContain("overflow-hidden");
-    expect(frame.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(frame.style.backgroundColor).toBe(SURFACE_BASE_BACKGROUND);
     expect(root.style.width).toBe("100%");
     expect(root.style.height).toBe("100%");
     expect(root.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
