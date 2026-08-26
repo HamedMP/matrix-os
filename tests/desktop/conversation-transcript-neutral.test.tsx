@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscript } from "../../desktop/src/renderer/src/components/conversation/transcript";
+import type { ConversationTurnPresentation } from "../../desktop/src/renderer/src/components/conversation/presentation";
 import {
   adaptProjectLikeConversation,
   type ProjectLikeConversationTurn,
@@ -64,5 +65,47 @@ describe("provider-neutral conversation transcript", () => {
 
     expect(screen.getByText("I’ll inspect the repository first.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
+  });
+
+  it("reveals a newly streamed assistant chunk progressively", () => {
+    vi.useFakeTimers();
+    const text = "A streamed response should not appear as one abrupt block.";
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-streaming",
+      startedAt: 1_000,
+      endedAt: 1_000,
+      active: true,
+      work: [],
+      final: {
+        kind: "message",
+        id: "message-streaming",
+        role: "assistant",
+        phase: "final",
+        markdown: text,
+        copyText: text,
+        timestamp: 1_000,
+      },
+    }];
+
+    try {
+      const { container } = render(
+        <ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />,
+      );
+      const response = container.querySelector(
+        '[data-slot="message"][data-align="start"] [data-selectable]',
+      );
+      expect(response?.textContent).toBe("");
+
+      act(() => vi.advanceTimersByTime(32));
+      expect(response?.textContent?.length).toBeGreaterThan(0);
+      expect(response?.textContent?.length).toBeLessThan(text.length);
+
+      for (let frame = 0; frame < 120; frame += 1) {
+        act(() => vi.advanceTimersByTime(16));
+      }
+      expect(response?.textContent).toBe(text);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
