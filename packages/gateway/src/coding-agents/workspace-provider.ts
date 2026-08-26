@@ -141,11 +141,9 @@ function runningStatusFor(session: { runtime?: { status?: unknown } | null }): "
   return session.runtime?.status === "starting" ? "starting" : "running";
 }
 
-function workspaceTurnInput(
+function workspaceTurnPrompt(
   message: string,
   attachments: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["attachments"],
-  model: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["model"],
-  modelOptions: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["modelOptions"],
 ): string {
   const references = (attachments ?? [])
     .filter((attachment) => attachment.kind === "structured_ref")
@@ -156,6 +154,16 @@ function workspaceTurnInput(
   if (Buffer.byteLength(body, "utf-8") > 64 * 1024) {
     throw new Error("Workspace provider input is too large");
   }
+  return body;
+}
+
+function workspaceTurnInput(
+  message: string,
+  attachments: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["attachments"],
+  model: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["model"],
+  modelOptions: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["modelOptions"],
+): string {
+  const body = workspaceTurnPrompt(message, attachments);
   const payload = JSON.stringify({ prompt: body, model, modelOptions: modelOptions ?? [] });
   if (Buffer.byteLength(payload, "utf-8") > 66 * 1024) {
     throw new Error("Workspace provider input is too large");
@@ -302,7 +310,7 @@ export function createWorkspaceCodingAgentProvider(
         await options.codexControl.submitTurn({
           sessionId,
           turnId: turn.turnId,
-          prompt: turn.message,
+          prompt: workspaceTurnPrompt(turn.message, turn.attachments),
           ...(turn.model ? { model: turn.model } : {}),
           modelOptions: turn.modelOptions ?? [],
         });

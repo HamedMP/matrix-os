@@ -558,7 +558,16 @@ exec /bin/sh "$@"
         createdAt: baseNow.toISOString(),
         updatedAt: baseNow.toISOString(),
       }),
-      turn: { turnId: "turn_workspace_1", message: "Continue with the tests." },
+      turn: {
+        turnId: "turn_workspace_1",
+        message: "Continue with the tests.",
+        attachments: [{
+          id: "file:packages/gateway/src/server.ts",
+          kind: "structured_ref",
+          label: "Gateway server",
+          path: "packages/gateway/src/server.ts",
+        }],
+      },
       resumeState: resumeState!,
       signal,
       now: () => baseNow,
@@ -569,7 +578,12 @@ exec /bin/sh "$@"
     expect(submitTurn).toHaveBeenCalledWith({
       sessionId: "sess_workspace_1",
       turnId: "turn_workspace_1",
-      prompt: "Continue with the tests.",
+      prompt: [
+        "Continue with the tests.",
+        "",
+        "Context references:",
+        "- Gateway server: packages/gateway/src/server.ts",
+      ].join("\n"),
       modelOptions: [],
     });
     expect(sendInput).not.toHaveBeenCalled();
