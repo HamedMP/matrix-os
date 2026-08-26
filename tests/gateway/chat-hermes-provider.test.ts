@@ -61,6 +61,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       "--usage-file", "/tmp/hermes-run/usage.json",
       "--yolo",
     ]));
+    expect(args).not.toContain("--source");
     expect(options).toMatchObject({ cwd: "/safe/project" });
     expect(events).toEqual([
       { type: "assistant.delta", delta: "hello from hermes" },

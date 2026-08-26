@@ -90,7 +90,6 @@ export function createHermesChatProviderAdapter(options: {
       "--provider", selected.provider,
       "--model", selected.model,
       "--usage-file", usage.path,
-      "--source", "tool",
       "--yolo",
       ...(resumeState ? ["--resume", resumeState.sessionId] : []),
     ];
@@ -123,11 +122,12 @@ export function createHermesChatProviderAdapter(options: {
               state: { sessionId: usageReport.session_id },
             }));
           }
-        } catch {
-          console.warn("[chat/hermes] Usage report unavailable");
+        } catch (error: unknown) {
+          console.warn("[chat/hermes] Usage report unavailable:", error instanceof Error ? error.name : "UnknownError");
         }
         queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "completed" }));
-      } catch {
+      } catch (error: unknown) {
+        console.warn("[chat/hermes] Provider Run failed:", error instanceof Error ? error.name : "UnknownError");
         queue.push(CanonicalProviderRunEventSchema.parse({
           type: "run.completed",
           outcome: input.signal.aborted ? "aborted" : "failed",

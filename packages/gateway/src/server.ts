@@ -51,6 +51,7 @@ import { createReviewStore } from "./review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
+import { resolveAgentCredentialProbe } from "./onboarding/agent-credential-probe.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createWorktreeManager } from "./worktree-manager.js";
@@ -593,20 +594,7 @@ export async function createGateway(config: GatewayConfig) {
     probeAgent: async (_ownerId, agent) => {
       const detected = await agentCredentialLauncher.detectAgentCredentials();
       const status = detected.agents.find((candidate) => candidate.id === agent);
-      return {
-        available: Boolean(status?.installed && status.authState === "ok"),
-        condition: status?.errorCode === "agent_missing"
-          ? "missing"
-          : status?.errorCode === "agent_auth_required"
-            ? "auth_required"
-            : status?.errorCode === "agent_version_unsupported"
-              ? "version_unsupported"
-              : status?.errorCode === "agent_check_failed"
-                ? "check_failed"
-                : status?.authState === "ok"
-                  ? "available"
-                  : "check_failed",
-      };
+      return resolveAgentCredentialProbe(homePath, agent, status);
     },
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
