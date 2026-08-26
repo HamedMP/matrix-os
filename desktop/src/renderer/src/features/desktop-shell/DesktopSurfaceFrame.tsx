@@ -141,7 +141,7 @@ export default function DesktopSurfaceFrame({
   return (
     <OSWindow
       surfaceId={tab.id}
-      sidebarWidth={terminalOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
+      sidebarWidth={undefined}
       topBar={isWindow ? (
         <TopBar
           chromePlacement={terminalOwnsChrome ? "sidebar" : "full-width"}

@@ -43,9 +43,10 @@ import {
   type TerminalAppearanceTokens,
 } from "./terminal-appearance";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
+import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
+import { relativeSessionActivity } from "./terminal-session-activity";
 
 const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
-const SESSION_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -66,22 +67,6 @@ function shellStatusLabel(shell: ShellSessionSummary): string {
 
 function shellTitle(shell: ShellSessionSummary): string {
   return shell.subtitle?.trim() || shell.lastAction?.trim() || shell.name;
-}
-
-function relativeActivity(updatedAt: string | undefined, now = Date.now()): string {
-  if (!updatedAt) return "Activity unknown";
-  const timestamp = Date.parse(updatedAt);
-  if (!Number.isFinite(timestamp)) return "Activity unknown";
-  const elapsed = Math.max(0, now - timestamp);
-  const minutes = Math.floor(elapsed / 60_000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days} days ago`;
-  return SESSION_DAY_FORMATTER.format(timestamp);
 }
 
 function sessionStart(createdAt: string | undefined): string {
@@ -503,20 +488,19 @@ export default function TerminalsTab({
   const overviewSelected = selectedName === null;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: SURFACE_BASE_BACKGROUND }}>
-      <TerminalAppTabs
-        openedSessionNames={openedSessionNames}
-        selectedName={selectedName}
-        onSelectOverview={() => {
-          setSelectedName(null);
-          setLiveSessionName(null);
-        }}
-        onSelectSession={(name) => {
-          setSelectedName(name);
-          setLiveSessionName(name);
-        }}
-        onCloseSession={closeShellTab}
-      />
+    <div className="relative flex min-h-0 flex-1 overflow-hidden" style={{ background: SURFACE_BASE_BACKGROUND }}>
+      <div className="w-[280px] min-w-[200px] max-w-[280px] shrink-0 border-r" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
+        <TerminalSessionSidebar
+          sessions={shells}
+          selectedName={selectedName}
+          creating={creating}
+          disabled={!api}
+          onCreate={() => void createShell()}
+          onSelect={showShellDetail}
+          onDelete={setDeleteTarget}
+        />
+      </div>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <RetainedPane
           as="section"
@@ -707,6 +691,7 @@ export default function TerminalsTab({
           );
         })}
       </div>
+      </div>
 
       <Dialog
         open={deleteTarget !== null}
@@ -866,7 +851,7 @@ function ShellCard({
             {shellStatusLabel(shell)}
           </span>
           <span className="w-[92px] text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {relativeActivity(shell.updatedAt)}
+            {relativeSessionActivity(shell.updatedAt)}
           </span>
         </button>
 
