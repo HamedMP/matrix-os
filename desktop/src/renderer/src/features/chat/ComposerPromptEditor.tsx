@@ -325,7 +325,7 @@ function ComposerPromptEditorInner({
             data-slot="prompt-input-content"
             data-max-length={maxLength}
             className="block max-h-[220px] min-h-9 w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent px-4 pt-1 pb-1 text-md leading-relaxed shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 [&_p]:m-0 disabled:opacity-60"
-            onKeyDown={(event) => { onKeyDown(event); }}
+            onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => { onKeyDown(event); }}
           />
         )}
         placeholder={(

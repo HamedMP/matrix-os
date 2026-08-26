@@ -11,6 +11,7 @@ import { isMatrixManagedProjectSource } from "./project-registry-layout.js";
 import { createProjectRegistry, PROJECT_SLUG_REGEX } from "./project-registry.js";
 import { removeValidatedLegacyProjectState } from "./legacy-project-state.js";
 import { projectStateRecoveryDir } from "./bounded-json-file.js";
+import { reconcileProjectIdentityIndex } from "./project-identity-index.js";
 
 export { PROJECT_SLUG_REGEX } from "./project-registry.js";
 
@@ -96,9 +97,11 @@ type CreateProjectMode = ProjectKind;
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
+const MAX_PROJECT_ID_INDEX_ENTRIES = 10_000;
 
 const GitHubUrlSchema = z.string().trim().min(1).max(512);
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
+const ProjectIdSchema = z.string().regex(/^proj_[A-Za-z0-9_-]{1,128}$/);
 const ProjectNameSchema = z.string().trim().min(1).max(128);
 const ProjectDescriptionSchema = z.string().trim().max(1_000).optional();
 const CreateRequestIdSchema = z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/);
@@ -315,24 +318,9 @@ async function resolveEligibleProjectWorkingDirectory(
         : null;
     }
 
-    const registryEntry = join(projectsRoot, project.slug);
-    if (realLocalPath === registryEntry) return realLocalPath;
-    if (
-      realLocalPath.startsWith(`${registryEntry}${sep}`)
-      || registryEntry.startsWith(`${realLocalPath}${sep}`)
-    ) {
-      return null;
-    }
-    const relativeToRegistry = relative(projectsRoot, realLocalPath);
-    if (
-      relativeToRegistry !== ""
-      && !relativeToRegistry.startsWith("..")
-      && !isAbsolute(relativeToRegistry)
-    ) {
-      const segments = relativeToRegistry.split(sep);
-      if (segments.length === 1 || segments[1] !== "repo") return null;
-    }
-    return realLocalPath;
+    return await isManagedProjectContainer(realHomePath, realLocalPath)
+      ? null
+      : realLocalPath;
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error) {
       const code = (error as NodeJS.ErrnoException).code;
@@ -698,6 +686,30 @@ export function createProjectManager(options: {
       }
       projects.sort((a, b) => a.deletingAt!.localeCompare(b.deletingAt!));
       return { projects, nextCursor: null };
+    },
+
+    async getProjectById(
+      ownerScope: OwnerScope,
+      projectId: string,
+    ): Promise<Result<{ project: ProjectConfig }> | Failure> {
+      if (!ProjectIdSchema.safeParse(projectId).success) {
+        return genericError(400, "invalid_project_id", "Project reference is invalid");
+      }
+      const result = await reconcileProjectIdentityIndex({
+        ownerScope,
+        projectId,
+        maxEntries: MAX_PROJECT_ID_INDEX_ENTRIES,
+        listSlugs: () => registry.listSlugs(),
+        readProject: (slug) => readProjectConfig(homePath, slug),
+      });
+      if (result.kind === "found") return { ok: true, project: result.project };
+      if (result.kind === "conflict") {
+        return genericError(409, "project_identity_conflict", "Project identity requires repair");
+      }
+      if (result.kind === "capacity") {
+        return genericError(503, "project_index_unavailable", "Project lookup is unavailable");
+      }
+      return genericError(404, "not_found", "Project was not found");
     },
 
     async getProject(

@@ -1253,7 +1253,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 as="div"
                 axis={isHorizontal ? "x" : "y"}
                 values={userApps.map((a) => a.path)}
-                onReorder={(newOrder) => reorderDockSection("userApps", newOrder)}
+                onReorder={(newOrder: string[]) => reorderDockSection("userApps", newOrder)}
                 className={isHorizontal
                   ? "flex flex-row items-center gap-1"
                   : "flex flex-col items-center gap-1"

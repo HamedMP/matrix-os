@@ -1,5 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { Kysely, PostgresDialect, sql, type Generated, type InsertObject, type Transaction } from 'kysely';
+import {
+  Kysely,
+  PostgresDialect,
+  sql,
+  type Generated,
+  type Insertable,
+  type InsertObject,
+  type Selectable,
+  type Transaction,
+  type Updateable,
+} from 'kysely';
 import pg from 'pg';
 import { z } from 'zod/v4';
 import type {
@@ -82,6 +92,9 @@ interface UserMachinesTable {
   resize_started_at: string | null;
   resize_target_server_type: string | null;
   attempt: number;
+  activation_state: Generated<string>;
+  prebilling_intent_id: Generated<string | null>;
+  activation_authorized_at: Generated<string | null>;
 }
 
 export interface ProvisioningJobsTable {
@@ -106,6 +119,8 @@ export interface ProvisioningJobsTable {
   activation_step: string;
   provider_create_action_id: number | null;
   fallback_reason: string | null;
+  authorization_basis: Generated<string>;
+  prebilling_intent_id: Generated<string | null>;
 }
 
 interface HostBundleReleasesTable {
@@ -505,6 +520,33 @@ interface BillingCheckoutAttemptsTable {
   resolved_at: string | null;
 }
 
+export interface PrebillingProvisioningIntentsTable {
+  id: string;
+  checkout_attempt_id: string;
+  clerk_user_id: string;
+  runtime_slot: string;
+  plan_slug: string;
+  billing_interval: string;
+  server_type: string;
+  region_slug: string;
+  developer_tools: string;
+  state: string;
+  revision: number;
+  machine_id: string | null;
+  stripe_session_id: string | null;
+  stripe_session_expires_at: string | null;
+  lease_expires_at: string | null;
+  reserved_hourly_cost_micros: number;
+  cleanup_claimed_at: string | null;
+  cleanup_lease_expires_at: string | null;
+  ready_at: string | null;
+  authorized_at: string | null;
+  cleaned_at: string | null;
+  last_error_code: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface BillingTrialAccountsTable {
   clerk_user_id: string;
   trial_checkout_attempt_id: string | null;
@@ -535,6 +577,7 @@ export interface PlatformDatabase {
   user_machines: UserMachinesTable;
   provisioning_jobs: ProvisioningJobsTable;
   billing_checkout_attempts: BillingCheckoutAttemptsTable;
+  prebilling_provisioning_intents: PrebillingProvisioningIntentsTable;
   billing_trial_accounts: BillingTrialAccountsTable;
   onboarding_first_run: OnboardingFirstRunTable;
   onboarding_journey_events: OnboardingJourneyEventsTable;
@@ -664,6 +707,9 @@ export interface UserMachineRecord {
   resizeStartedAt: string | null;
   resizeTargetServerType: string | null;
   attempt: number;
+  activationState: 'awaiting_billing' | 'authorized';
+  prebillingIntentId: string | null;
+  activationAuthorizedAt: string | null;
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
@@ -950,6 +996,9 @@ export interface NewUserMachine {
   resizeStartedAt?: string | null;
   resizeTargetServerType?: string | null;
   attempt?: number;
+  activationState?: 'awaiting_billing' | 'authorized';
+  prebillingIntentId?: string | null;
+  activationAuthorizedAt?: string | null;
 }
 
 export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview']);
@@ -1061,7 +1110,10 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       failure_at TEXT,
       resize_started_at TEXT,
       resize_target_server_type TEXT,
-      attempt INTEGER NOT NULL DEFAULT 1
+      attempt INTEGER NOT NULL DEFAULT 1,
+      activation_state TEXT NOT NULL DEFAULT 'authorized',
+      prebilling_intent_id TEXT,
+      activation_authorized_at TEXT
     )
   `.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
@@ -1081,6 +1133,10 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_target_server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS activation_state TEXT NOT NULL DEFAULT 'authorized'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS prebilling_intent_id TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS activation_authorized_at TEXT`.execute(db);
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_prebilling_intent ON user_machines(prebilling_intent_id) WHERE prebilling_intent_id IS NOT NULL`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
   await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
@@ -1120,7 +1176,9 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       last_error_code TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      completed_at TEXT
+      completed_at TEXT,
+      authorization_basis TEXT NOT NULL DEFAULT 'billing_entitlement',
+      prebilling_intent_id TEXT
     )
   `.execute(db);
   await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS target_bundle_version TEXT`.execute(db);
@@ -1132,6 +1190,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS activation_step TEXT NOT NULL DEFAULT 'selecting'`.execute(db);
   await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS provider_create_action_id BIGINT`.execute(db);
   await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS fallback_reason TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS authorization_basis TEXT NOT NULL DEFAULT 'billing_entitlement'`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS prebilling_intent_id TEXT`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_dispatch
     ON provisioning_jobs(status, available_at, lease_expires_at)
@@ -1187,6 +1247,45 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     ON billing_checkout_attempts(clerk_user_id, runtime_slot)
     WHERE status IN ('creating', 'open')
   `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS prebilling_provisioning_intents (
+      id TEXT PRIMARY KEY,
+      checkout_attempt_id TEXT NOT NULL UNIQUE REFERENCES billing_checkout_attempts(id) ON DELETE CASCADE,
+      clerk_user_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      plan_slug TEXT NOT NULL,
+      billing_interval TEXT NOT NULL,
+      server_type TEXT NOT NULL,
+      region_slug TEXT NOT NULL,
+      developer_tools TEXT NOT NULL,
+      state TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1,
+      machine_id TEXT UNIQUE REFERENCES user_machines(machine_id) ON UPDATE CASCADE,
+      stripe_session_id TEXT,
+      stripe_session_expires_at TEXT,
+      lease_expires_at TEXT,
+      reserved_hourly_cost_micros BIGINT NOT NULL DEFAULT 0,
+      cleanup_claimed_at TEXT,
+      cleanup_lease_expires_at TEXT,
+      ready_at TEXT,
+      authorized_at TEXT,
+      cleaned_at TEXT,
+      last_error_code TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prebilling_intents_active_owner_slot
+    ON prebilling_provisioning_intents(clerk_user_id, runtime_slot)
+    WHERE state IN ('awaiting_checkout', 'preparing', 'ready_waiting_for_billing', 'payment_settling', 'preparation_failed', 'preparation_deferred', 'cleanup_pending')
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prebilling_intents_stripe_session
+    ON prebilling_provisioning_intents(stripe_session_id)
+    WHERE stripe_session_id IS NOT NULL
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_prebilling_intents_cleanup ON prebilling_provisioning_intents(state, lease_expires_at)`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS billing_trial_accounts (
       clerk_user_id TEXT PRIMARY KEY,
@@ -2142,7 +2241,7 @@ function toPlatformUserRow(record: NewPlatformUser): InsertObject<PlatformDataba
   };
 }
 
-function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
+function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineRecord {
   return {
     machineId: row.machine_id,
     clerkUserId: row.clerk_user_id,
@@ -2178,10 +2277,13 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     resizeStartedAt: row.resize_started_at,
     resizeTargetServerType: row.resize_target_server_type,
     attempt: row.attempt,
+    activationState: z.enum(['awaiting_billing', 'authorized']).parse(row.activation_state ?? 'authorized'),
+    prebillingIntentId: row.prebilling_intent_id,
+    activationAuthorizedAt: row.activation_authorized_at,
   };
 }
 
-function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
+function toUserMachineRow(record: NewUserMachine): Insertable<UserMachinesTable> {
   return {
     machine_id: record.machineId,
     clerk_user_id: record.clerkUserId,
@@ -2215,11 +2317,14 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     resize_started_at: record.resizeStartedAt ?? null,
     resize_target_server_type: record.resizeTargetServerType ?? null,
     attempt: record.attempt ?? 1,
+    activation_state: record.activationState ?? 'authorized',
+    prebilling_intent_id: record.prebillingIntentId ?? null,
+    activation_authorized_at: record.activationAuthorizedAt ?? null,
   };
 }
 
-function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachinesTable> {
-  const update: Partial<UserMachinesTable> = {};
+function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable<UserMachinesTable> {
+  const update: Updateable<UserMachinesTable> = {};
   if (values.machineId !== undefined) update.machine_id = values.machineId;
   if (values.clerkUserId !== undefined) update.clerk_user_id = values.clerkUserId;
   if (values.handle !== undefined) update.handle = values.handle;
@@ -2252,6 +2357,9 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.resizeStartedAt !== undefined) update.resize_started_at = values.resizeStartedAt;
   if (values.resizeTargetServerType !== undefined) update.resize_target_server_type = values.resizeTargetServerType;
   if (values.attempt !== undefined) update.attempt = values.attempt;
+  if (values.activationState !== undefined) update.activation_state = values.activationState;
+  if (values.prebillingIntentId !== undefined) update.prebilling_intent_id = values.prebillingIntentId;
+  if (values.activationAuthorizedAt !== undefined) update.activation_authorized_at = values.activationAuthorizedAt;
   return update;
 }
 
@@ -3211,6 +3319,7 @@ export async function getAccessibleActiveUserMachineByClerkId(
     .selectFrom('user_machines')
     .selectAll()
     .where(accessibleUserMachinePredicate(clerkUserId))
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null);
   if (runtimeSlot) {
     query = query.where('runtime_slot', '=', runtimeSlot);
@@ -3256,6 +3365,7 @@ export async function getRunningUserMachineByHandle(
     .selectAll()
     .where('handle', '=', handle)
     .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null);
   if (runtimeSlot) {
     query = query.where('runtime_slot', '=', runtimeSlot);
@@ -3280,6 +3390,7 @@ export async function getRunningUserMachineByClerkId(
     .where('clerk_user_id', '=', clerkUserId)
     .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
@@ -3297,6 +3408,7 @@ export async function getAccessibleRunningUserMachineByClerkId(
     .where(accessibleUserMachinePredicate(clerkUserId))
     .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
@@ -3314,6 +3426,7 @@ export async function getRunningUserMachineByClerkIdForUpdate(
     .where('clerk_user_id', '=', clerkUserId)
     .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null)
     .forUpdate()
     .executeTakeFirst();
@@ -4125,7 +4238,11 @@ export async function claimCheckoutAttempt(
   }
   const sameSelection = activeRow.plan_slug === record.planSlug
     && activeRow.billing_interval === record.billingInterval
-    && activeRow.region_slug === record.regionSlug;
+    && activeRow.region_slug === record.regionSlug
+    && activeRow.server_type === (record.serverType ?? null)
+    && activeRow.trial_period_days === (record.trialPeriodDays ?? null)
+    && activeRow.developer_tools
+      === serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS);
   const retryAgeMs = Date.parse(record.createdAt) - Date.parse(activeRow.created_at);
   const withinIdempotencyWindow = Number.isFinite(retryAgeMs)
     && retryAgeMs >= 0

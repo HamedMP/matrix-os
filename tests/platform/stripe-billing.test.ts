@@ -120,6 +120,43 @@ describe('platform/stripe-billing', () => {
     }), { idempotencyKey: 'attempt_trial' });
   });
 
+  it('binds an eligible preparation intent to an explicitly expiring checkout and subscription', async () => {
+    const sessionsCreate = vi.fn().mockResolvedValue({
+      url: 'https://checkout.stripe.test/prebilling',
+      id: 'cs_prebilling',
+      expires_at: 1_787_567_400,
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { create: sessionsCreate } } }),
+    });
+
+    await expect(client.createCheckoutSession({
+      clerkUserId: 'user_123',
+      idempotencyKey: 'attempt_prebilling',
+      priceId: 'price_builder_monthly',
+      mode: 'subscription',
+      automaticTax: true,
+      allowPromotionCodes: true,
+      regionSlug: 'region_fsn1',
+      runtimeSlot: 'primary',
+      prebillingIntentId: 'intent_123',
+      expiresAt: '2026-08-24T10:30:00.000Z',
+      successUrl: 'https://app.matrix-os.com/?checkout=success',
+      cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
+    })).resolves.toMatchObject({
+      id: 'cs_prebilling',
+      expiresAt: '2026-08-24T10:30:00.000Z',
+    });
+    expect(sessionsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      expires_at: 1_787_567_400,
+      metadata: expect.objectContaining({ matrix_prebilling_intent_id: 'intent_123' }),
+      subscription_data: expect.objectContaining({
+        metadata: expect.objectContaining({ matrix_prebilling_intent_id: 'intent_123' }),
+      }),
+    }), { idempotencyKey: 'attempt_prebilling' });
+  });
+
   it('retrieves the authoritative selection for a persisted checkout session', async () => {
     const sessionsRetrieve = vi.fn().mockResolvedValue({
       status: 'open',

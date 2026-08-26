@@ -343,12 +343,23 @@ export function createWorktreeManager(options: {
   const runCommand = options.runCommand ?? defaultRunCommand;
 
   return {
-    async getWorktree(projectSlug: string, id: string): Promise<{ ok: true; worktree: WorktreeRecord } | Failure> {
+    async getWorktree(
+      projectSlug: string,
+      id: string,
+      ownerScope?: OwnerScope,
+    ): Promise<{ ok: true; worktree: WorktreeRecord } | Failure> {
       if (!SlugSchema.safeParse(projectSlug).success || !WorktreeIdSchema.safeParse(id).success) {
         return failure(400, "invalid_ref", "Worktree reference is invalid");
       }
       const project = await readProject(homePath, projectSlug);
-      const worktree = project ? await readWorktree(homePath, projectSlug, id) : null;
+      const worktree = project && (!ownerScope || (
+        !project.archivedAt
+        && !project.deletingAt
+        && project.ownerScope.type === ownerScope.type
+        && project.ownerScope.id === ownerScope.id
+      ))
+        ? await readWorktree(homePath, projectSlug, id)
+        : null;
       return worktree
         ? { ok: true, worktree }
         : failure(404, "not_found", "Worktree was not found");

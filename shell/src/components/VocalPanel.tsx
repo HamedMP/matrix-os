@@ -574,8 +574,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
         </ShellNotificationPortal>
       )}
 
-      {/* react-doctor-disable-next-line react-doctor/no-unknown-property -- valid styled-jsx attribute */}
-      <style jsx global>{`
+      <style>{`
         @keyframes vocal-breathe {
           0%, 100% { filter: brightness(0.9) saturate(1); transform: scale(1); }
           50%       { filter: brightness(1.35) saturate(1.15); transform: scale(1.015); }

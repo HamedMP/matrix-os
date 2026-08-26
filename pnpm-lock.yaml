@@ -4,7 +4,7 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-packageExtensionsChecksum: sha256-rZpBjPGwynkZBO6ecOJcSqSzQ7VMBks/aE429NKBlCU=
+packageExtensionsChecksum: sha256-MHRU4TXUD7qujRA9MBGatf2208j0N4EyngS9KgxMkMQ=
 
 importers:
 
@@ -27784,10 +27784,14 @@ snapshots:
 
   langium@4.2.1:
     dependencies:
+      '@chevrotain/regexp-to-ast': 11.1.2
       chevrotain: 11.1.2
       chevrotain-allstar: 0.3.1(chevrotain@11.1.2)
+      vscode-jsonrpc: 8.2.0
       vscode-languageserver: 9.0.1
+      vscode-languageserver-protocol: 3.17.5
       vscode-languageserver-textdocument: 1.0.12
+      vscode-languageserver-types: 3.17.5
       vscode-uri: 3.1.0
 
   language-subtag-registry@0.3.23: {}

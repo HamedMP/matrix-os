@@ -47,8 +47,8 @@ import {
   type StripePriceCatalog,
   type StripeSubscriptionProjection,
 } from './billing.js';
-import { DeveloperToolsWithDefaultSchema } from './developer-tools.js';
-import { RuntimeSlotSchema } from './customer-vps-schema.js';
+import { DeveloperToolsWithDefaultSchema, type DeveloperToolId } from './developer-tools.js';
+import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -91,6 +91,7 @@ const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.enum(['monthly', 'annual']).default('monthly'),
   regionSlug: BillingRegionSlugSchema.default('region_fsn1'),
+  serverType: HetznerServerTypeSchema.optional(),
   developerTools: DeveloperToolsWithDefaultSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   returnPath: z.string().min(1).max(2048).optional().refine(
@@ -126,6 +127,8 @@ export interface StripeCheckoutSessionInput {
   runtimeSlot: string;
   trialPeriodDays?: number | null;
   paymentMethodMode?: 'card_required' | 'dynamic';
+  prebillingIntentId?: string;
+  expiresAt?: string;
   successUrl: string;
   cancelUrl: string;
 }
@@ -145,7 +148,11 @@ export interface StripeBillingClient {
    * Stripe Customer when needed; the signed subscription webhook links it back
    * to the Clerk user from server-written metadata.
    */
-  createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{ url: string; id: string }>;
+  createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{
+    url: string;
+    id: string;
+    expiresAt?: string;
+  }>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;
   createPortalSession(input: {
     customerId: string;
@@ -161,6 +168,35 @@ export interface StripeWebhookEvent {
   data: { object: unknown };
 }
 
+export interface PrebillingCheckoutCoordinator {
+  createIntent(input: {
+    checkoutAttemptId: string;
+    clerkUserId: string;
+    runtimeSlot: 'primary';
+    planSlug: MatrixBillingPlanSlug;
+    billingInterval: MatrixBillingInterval;
+    serverType: string;
+    regionSlug: string;
+    developerTools: DeveloperToolId[];
+    now: string;
+  }): Promise<{ intentId: string; expiresAt: string } | undefined>;
+  startPreparation(input: {
+    intentId: string;
+    stripeSessionId: string;
+    stripeSessionExpiresAt: string;
+  }): Promise<void>;
+  authorizeSubscription(
+    db: PlatformDB,
+    input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
+  ): Promise<{ authorized: boolean; machineId: string | null; needsFallback: boolean }>;
+  ensureFallback(input: { intentId: string }): Promise<void>;
+  reconcileFallbacks?(): Promise<{ checked: number; completed: number; failed: number }>;
+  expireCheckout(
+    db: PlatformDB,
+    input: { stripeSessionId: string; intentId?: string; clerkUserId?: string; now: string },
+  ): Promise<{ cleaned: boolean; intentId: string | null }>;
+}
+
 export function createBillingRoutes(options: {
   db: PlatformDB;
   stripe: StripeBillingClient;
@@ -168,6 +204,7 @@ export function createBillingRoutes(options: {
   resolveClerkUserId: (c: Context) => Promise<string | null>;
   now?: () => Date;
   upsertEntitlement?: typeof upsertBillingEntitlement;
+  prebilling?: PrebillingCheckoutCoordinator;
   /**
    * Optional product telemetry sink. Fire-and-forget: implementations must
    * never throw into the request path, and callers only pass low-cardinality,
@@ -292,6 +329,9 @@ export function createBillingRoutes(options: {
       const serverType = selectedPlan
         ? loadRuntimeCatalog(env).profiles.find((profile) => profile.sku === selectedPlan.defaultCatalogSku)?.serverType
         : undefined;
+      if (parsed.data.serverType && parsed.data.serverType !== serverType) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
       const checkoutClaim = {
         clerkUserId,
         createdAt: currentTime.toISOString(),
@@ -400,6 +440,24 @@ export function createBillingRoutes(options: {
         }, 409);
       }
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
+      let preparation: { intentId: string; expiresAt: string } | undefined;
+      if (options.prebilling && serverType && parsed.data.runtimeSlot === 'primary') {
+        try {
+          preparation = await options.prebilling.createIntent({
+            checkoutAttemptId: attempt.attempt.id,
+            clerkUserId,
+            runtimeSlot: 'primary',
+            planSlug: parsed.data.planSlug,
+            billingInterval: parsed.data.interval,
+            serverType,
+            regionSlug: parsed.data.regionSlug,
+            developerTools: parsed.data.developerTools,
+            now: currentTime.toISOString(),
+          });
+        } catch (err: unknown) {
+          console.warn('[billing] prebilling intent unavailable:', err instanceof Error ? err.name : typeof err);
+        }
+      }
       const session = await options.stripe.createCheckoutSession({
         idempotencyKey: attempt.attempt.id,
         clerkUserId,
@@ -412,11 +470,26 @@ export function createBillingRoutes(options: {
         runtimeSlot: parsed.data.runtimeSlot,
         trialPeriodDays: attempt.attempt.trialPeriodDays,
         paymentMethodMode: attempt.attempt.trialPeriodDays ? 'card_required' : 'dynamic',
+        ...(preparation ? {
+          prebillingIntentId: preparation.intentId,
+          expiresAt: preparation.expiresAt,
+        } : {}),
         successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
       });
       if (!await finalizeCheckoutAttempt(options.db, attempt.attempt.id, session.id, session.url)) {
         throw new Error('checkout_attempt_finalize_failed');
+      }
+      if (preparation) {
+        try {
+          await options.prebilling?.startPreparation({
+            intentId: preparation.intentId,
+            stripeSessionId: session.id,
+            stripeSessionExpiresAt: session.expiresAt ?? preparation.expiresAt,
+          });
+        } catch (err: unknown) {
+          console.warn('[billing] prebilling preparation unavailable:', err instanceof Error ? err.name : typeof err);
+        }
       }
       emitTelemetry(BILLING_CHECKOUT_CREATED_EVENT, {
         distinctId: clerkUserId,
@@ -552,6 +625,7 @@ export function createBillingRoutes(options: {
 
     try {
       const webhookProcessedAt = now();
+      let fallbackIntentId: string | undefined;
       const result = await runBillingWebhookTransaction(options.db, async (trx) => {
         const inserted = await insertBillingWebhookEvent(trx, {
           stripeEventId: event.id,
@@ -578,6 +652,19 @@ export function createBillingRoutes(options: {
               webhookProcessedAt.toISOString(),
               true,
             );
+            if (event.type === 'checkout.session.expired') {
+              const checkoutObject = event.data.object && typeof event.data.object === 'object'
+                ? event.data.object as { metadata?: unknown }
+                : undefined;
+              const intentId = readPrebillingIntentIdFromStripeMetadata(checkoutObject?.metadata);
+              const clerkUserId = readClerkUserIdFromCheckoutSession(event.data.object);
+              await options.prebilling?.expireCheckout(trx, {
+                stripeSessionId: sessionId,
+                ...(intentId ? { intentId } : {}),
+                ...(clerkUserId ? { clerkUserId } : {}),
+                now: webhookProcessedAt.toISOString(),
+              });
+            }
           }
           emitTelemetry(
             event.type === 'checkout.session.completed'
@@ -738,6 +825,19 @@ export function createBillingRoutes(options: {
         }
         const summary = await recomputeStripeSummary(trx, projection.clerkUserId, priceCatalog, env, webhookProcessedAt);
         if (summary) await persistEntitlement(trx, summary);
+        if (
+          summary
+          && projection.prebillingIntentId
+          && getRuntimeAccessDecision(summary, webhookProcessedAt).runtimeProxyAllowed
+        ) {
+          const authorization = await options.prebilling?.authorizeSubscription(trx, {
+            intentId: projection.prebillingIntentId,
+            clerkUserId: projection.clerkUserId,
+            runtimeSlot: projection.runtimeSlot,
+            now: webhookProcessedAt.toISOString(),
+          });
+          if (authorization?.needsFallback) fallbackIntentId = projection.prebillingIntentId;
+        }
         emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
           distinctId: entitlement.clerkUserId,
           properties: buildSubscriptionTelemetryProperties(entitlement, priceCatalog),
@@ -776,6 +876,15 @@ export function createBillingRoutes(options: {
         }
         return { received: true, processed: true };
       });
+      if (!fallbackIntentId && 'duplicate' in result && result.duplicate && isSubscriptionEvent(event.type)) {
+        const subscription = event.data.object && typeof event.data.object === 'object'
+          ? event.data.object as { status?: unknown; metadata?: unknown }
+          : undefined;
+        if (['active', 'trialing', 'past_due'].includes(String(subscription?.status))) {
+          fallbackIntentId = readPrebillingIntentIdFromStripeMetadata(subscription?.metadata) ?? undefined;
+        }
+      }
+      if (fallbackIntentId) await options.prebilling?.ensureFallback({ intentId: fallbackIntentId });
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));
@@ -888,7 +997,10 @@ async function projectSubscription(
   db: PlatformDB,
   value: unknown,
   currentTime: Date,
-): Promise<(StripeSubscriptionProjection & { runtimeSlot: string }) | null> {
+): Promise<(StripeSubscriptionProjection & {
+  runtimeSlot: string;
+  prebillingIntentId: string | null;
+}) | null> {
   if (!value || typeof value !== 'object') return null;
   const sub = value as {
     id?: unknown;
@@ -938,6 +1050,7 @@ async function projectSubscription(
     stripeCustomerId: customer.stripeCustomerId,
     stripeSubscriptionId: sub.id,
     runtimeSlot,
+    prebillingIntentId: readPrebillingIntentIdFromStripeMetadata(sub.metadata),
     status,
     currentPeriodEnd: typeof sub.current_period_end === 'number'
       ? epochSecondsToIso(sub.current_period_end)
@@ -965,6 +1078,14 @@ async function projectSubscription(
 function readRuntimeSlotFromStripeMetadata(metadata: unknown): string | null {
   if (!metadata || typeof metadata !== 'object') return null;
   const parsed = RuntimeSlotSchema.safeParse((metadata as { matrix_runtime_slot?: unknown }).matrix_runtime_slot);
+  return parsed.success ? parsed.data : null;
+}
+
+function readPrebillingIntentIdFromStripeMetadata(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const parsed = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).safeParse(
+    (metadata as { matrix_prebilling_intent_id?: unknown }).matrix_prebilling_intent_id,
+  );
   return parsed.success ? parsed.data : null;
 }
 

@@ -56,6 +56,8 @@ import {
 } from './billing.js';
 import { resolveEffectiveBillingEntitlementForSlot } from './billing-entitlement-resolver.js';
 import { createBillingRoutes } from './billing-routes.js';
+import { createPrebillingProvisioningCoordinator } from './prebilling-provisioning.js';
+import { loadPrebillingProvisioningConfig } from './prebilling-provisioning-config.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
 import {
   sanitizeProxyResponseHeaders,
@@ -536,6 +538,24 @@ export function createApp(deps: {
     getGatewayUrlForHandle,
   }));
 
+  const prebilling = deps.customerVpsService
+    ? createPrebillingProvisioningCoordinator({
+        db,
+        config: loadPrebillingProvisioningConfig(appEnv),
+        customerVpsService: deps.customerVpsService,
+        resolveIdentity: (clerkUserId) => selectProvisionIdentityForClerkUser(db, clerkUserId, appEnv),
+        onProvisioned: async (provisioned) => ensureProvisionedPlatformUser(db, {
+          clerkUserId: provisioned.clerkUserId,
+          handle: provisioned.handle,
+          displayName: provisioned.displayName,
+          email: provisioned.email,
+          runtimeId: `vps:${provisioned.machineId}`,
+        }),
+      })
+    : undefined;
+  deps.customerVpsService?.setPrebillingFallbackReconciler?.(
+    prebilling ? async () => { await prebilling.reconcileFallbacks?.(); } : undefined,
+  );
   app.route('/billing', createBillingRoutes({
     db,
     stripe: appEnv.STRIPE_SECRET_KEY
@@ -544,6 +564,7 @@ export function createApp(deps: {
     env: appEnv,
     resolveClerkUserId: resolveBillingClerkUserId,
     captureEvent: captureFunnelEvent,
+    prebilling,
   }));
 
   // Onboarding journey (spec 092): one server-owned signup-to-ready state every

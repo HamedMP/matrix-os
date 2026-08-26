@@ -10,6 +10,12 @@ export default defineConfig({
         if (!importer) return null;
         const normalized = importer.split(path.sep).join("/");
         if (
+          source === "@tldraw/tldraw" &&
+          normalized.endsWith("/shell/src/components/canvas/WorkspaceCanvas.tsx")
+        ) {
+          return path.resolve(__dirname, "tests/shell/mocks/tldraw.tsx");
+        }
+        if (
           source === "@tiptap/react" &&
           normalized.endsWith("/home/apps/notes/src/RichEditor.tsx")
         ) {
@@ -68,6 +74,7 @@ export default defineConfig({
         "packages/kernel/src/skill-registry.ts",
       ),
       "@matrix-os/kernel": path.resolve(__dirname, "packages/kernel/src/index.ts"),
+      vitest: path.resolve(__dirname, "node_modules/vitest"),
       react: path.resolve(__dirname, "node_modules/react"),
       "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
       "@aws-sdk/client-s3": path.resolve(__dirname, "node_modules/@aws-sdk/client-s3"),
@@ -75,6 +82,9 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    server: {
+      deps: { inline: ["@testing-library/jest-dom"] },
+    },
     // CI runners are sometimes slow under load; tests that rely on async
     // waitFor polling can exceed the 5s vitest default.
     testTimeout: 20_000,
