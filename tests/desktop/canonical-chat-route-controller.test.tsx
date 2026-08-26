@@ -139,6 +139,30 @@ describe("canonical Chat route controller", () => {
     expect(getDetail).toHaveBeenCalledWith("chat_moved", { limit: 200 });
   });
 
+  it("finishes the scoped list load when an initial Chat detail loads concurrently", async () => {
+    let resolveList!: (value: { items: typeof globalRecord[] }) => void;
+    const list = vi.fn(() => new Promise<{ items: typeof globalRecord[] }>((resolve) => {
+      resolveList = resolve;
+    }));
+    const sharedClient = client({ list });
+
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: "project_1",
+      active: true,
+      initialChatId: "chat_global",
+    }));
+
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe("chat_global"));
+    expect(result.current.status).toBe("loading");
+
+    await act(async () => {
+      resolveList({ items: [globalRecord] });
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+  });
+
   it("admits the first Project turn before opening its detail so the optimistic message cannot be replaced by an empty Chat", async () => {
     const projectRecord = {
       ...globalRecord,

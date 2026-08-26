@@ -34,29 +34,30 @@ export function useCanonicalChatRouteController({
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [status, setStatus] = useState<CanonicalChatRouteStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const requestSequence = useRef(0);
+  const listRequestSequence = useRef(0);
+  const detailRequestSequence = useRef(0);
 
   const loadDetail = useCallback(async (chatId: string) => {
-    const sequence = ++requestSequence.current;
+    const sequence = ++detailRequestSequence.current;
     try {
       const loaded = await client.getDetail(chatId, { limit: 200 });
-      if (sequence !== requestSequence.current) return;
+      if (sequence !== detailRequestSequence.current) return;
       setDetail(loaded);
       setError(null);
     } catch {
-      if (sequence !== requestSequence.current) return;
+      if (sequence !== detailRequestSequence.current) return;
       setError("Chat could not be loaded. Try again.");
     }
   }, [client]);
 
   const load = useCallback(async (query = "") => {
-    const sequence = ++requestSequence.current;
+    const sequence = ++listRequestSequence.current;
     setStatus("loading");
     try {
       const page = query.trim()
         ? await client.search(query, { projectId, limit: 100 })
         : await client.list({ projectId, limit: 100 });
-      if (sequence !== requestSequence.current) return;
+      if (sequence !== listRequestSequence.current) return;
       setItems(page.items);
       setError(null);
       setStatus("ready");
@@ -66,14 +67,15 @@ export function useCanonicalChatRouteController({
       });
       if (page.items.length === 0) setDetail(null);
     } catch {
-      if (sequence !== requestSequence.current) return;
+      if (sequence !== listRequestSequence.current) return;
       setStatus("error");
       setError("Chats could not be loaded. Try again.");
     }
   }, [autoSelectFirst, client, projectId]);
 
   useEffect(() => {
-    requestSequence.current += 1;
+    listRequestSequence.current += 1;
+    detailRequestSequence.current += 1;
     setItems([]);
     setDetail(null);
     setActiveChatId(initialChatId);
@@ -94,7 +96,7 @@ export function useCanonicalChatRouteController({
   }, [active, activeChatId, detail?.record.activeRun, loadDetail]);
 
   const selectChat = useCallback((chatId: string | null) => {
-    requestSequence.current += 1;
+    detailRequestSequence.current += 1;
     setActiveChatId(chatId);
     setDetail(null);
     setError(null);
