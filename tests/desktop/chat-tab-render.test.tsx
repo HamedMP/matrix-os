@@ -860,15 +860,19 @@ describe("ChatTab", () => {
   it("automatically retries a transient initial conversation index failure", async () => {
     vi.useFakeTimers();
     try {
-      const get = vi.fn()
-        .mockRejectedValueOnce(new Error("offline"))
-        .mockResolvedValueOnce([{
+      let conversationCalls = 0;
+      const get = vi.fn(async (path: string) => {
+        if (path.startsWith("/api/chats")) return { legacy: true };
+        conversationCalls += 1;
+        if (conversationCalls === 1) throw new Error("offline");
+        return [{
           id: "conversation-recovered",
           preview: "Back online",
           messageCount: 1,
           createdAt: 10,
           updatedAt: 20,
-        }]);
+        }];
+      });
       useConnection.setState({ api: { get } as never });
       useHermesChat.setState({
         view: "index",
@@ -879,12 +883,12 @@ describe("ChatTab", () => {
 
       render(<ChatTab />);
       await act(async () => { await Promise.resolve(); });
-      expect(get).toHaveBeenCalledTimes(1);
+      expect(conversationCalls).toBe(1);
       expect(useHermesChat.getState().indexStatus).toBe("error");
 
       await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
 
-      expect(get).toHaveBeenCalledTimes(2);
+      expect(conversationCalls).toBe(2);
       expect(useHermesChat.getState().indexStatus).toBe("ready");
       expect(useHermesChat.getState().conversations).toEqual([
         expect.objectContaining({ id: "conversation-recovered", title: "Back online" }),

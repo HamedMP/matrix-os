@@ -34,6 +34,7 @@ import { ConversationContextFeedback } from "./ConversationContextComposer";
 import ConversationContextPicker from "./ConversationContextPicker";
 import { hermesConversationPresentation } from "./hermes-presentation";
 import { HermesConversationIndex } from "./HermesConversationIndex";
+import { CanonicalChatRoute } from "./CanonicalChatRoute";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
@@ -310,7 +311,7 @@ export function HermesPane() {
   );
 }
 
-export default function ChatTab() {
+function LegacyChatTab() {
   const api = useConnection((state) => state.api);
   const conversationView = useHermesChat((state) => state.view);
   const indexStatus = useHermesChat((state) => state.indexStatus);
@@ -345,5 +346,24 @@ export default function ChatTab() {
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {conversationView === "index" ? <HermesConversationIndex api={api} /> : <HermesPane />}
     </div>
+  );
+}
+
+export default function ChatTab({
+  active = true,
+  initialChatId,
+}: {
+  active?: boolean;
+  initialChatId?: string;
+}) {
+  const api = useConnection((state) => state.api);
+  return (
+    <CanonicalChatRoute
+      api={api}
+      projectId={null}
+      initialChatId={initialChatId}
+      active={active}
+      fallback={<LegacyChatTab />}
+    />
   );
 }

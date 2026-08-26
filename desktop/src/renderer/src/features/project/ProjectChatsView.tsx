@@ -41,6 +41,8 @@ import { ProjectChatDraft } from "./ProjectChatDraft";
 import { buildProjectInspectorContext } from "./project-inspector-context";
 import { ProjectThreadList } from "./ProjectThreadList";
 import { HermesPane } from "../chat/ChatTab";
+import { CanonicalChatRoute } from "../chat/CanonicalChatRoute";
+import { useBoard } from "../../stores/board";
 
 export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/composer-seed";
 
@@ -53,7 +55,7 @@ const TYPE_TO_START_MAX_PROMPT_BYTES = 24_000;
  * background project tabs keep their selection but never fight over the
  * shared snapshot.
  */
-export default function ProjectChatsView({ projectId, active }: { projectId: string; active: boolean }) {
+function LegacyProjectChatsView({ projectId, active }: { projectId: string; active: boolean }) {
   const status = useCodingAgentWorkspace((s) => s.status);
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const error = useCodingAgentWorkspace((s) => s.error);
@@ -710,6 +712,31 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         </Group>
       )}
     </div>
+  );
+}
+
+export default function ProjectChatsView({
+  projectId,
+  active,
+  initialChatId,
+}: {
+  projectId: string;
+  active: boolean;
+  initialChatId?: string;
+}) {
+  const api = useConnection((state) => state.api);
+  const projectLabel = useBoard((state) => (
+    state.projects.find((project) => project.slug === projectId)?.name ?? projectId
+  ));
+  return (
+    <CanonicalChatRoute
+      api={api}
+      projectId={projectId}
+      initialChatId={initialChatId}
+      projectLabel={projectLabel}
+      active={active}
+      fallback={<LegacyProjectChatsView projectId={projectId} active={active} />}
+    />
   );
 }
 

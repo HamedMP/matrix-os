@@ -61,7 +61,15 @@ export function ProjectViewSwitch({
  * The Figma sessions landing and the existing chat detail share the Chats segment;
  * contextual tools remain owned by ProjectChatsView.
  */
-export default function ProjectTab({ projectSlug, active }: { projectSlug: string; active: boolean }) {
+export default function ProjectTab({
+  projectSlug,
+  active,
+  initialChatId,
+}: {
+  projectSlug: string;
+  active: boolean;
+  initialChatId?: string;
+}) {
   const view = useProjectView((s) => s.entries[projectSlug]?.view ?? DEFAULT_PROJECT_VIEW);
   const setView = useProjectView((s) => s.setView);
   const boardProject = useBoard((s) => s.projects.find((project) => project.slug === projectSlug));
@@ -186,7 +194,7 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
           viewSwitch={<ProjectViewSwitch view={view} onChange={(next) => setView(projectSlug, next)} />}
         />
       ) : view === "chats" ? (
-        <ProjectChatsView projectId={projectSlug} active={active} />
+        <ProjectChatsView projectId={projectSlug} active={active} initialChatId={initialChatId} />
       ) : (
         <Board projectSlug={projectSlug} active={active} />
       )}

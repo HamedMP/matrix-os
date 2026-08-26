@@ -52,7 +52,7 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "home":
       return <HomeTab active={active} />;
     case "chat":
-      return <ChatTab />;
+      return <ChatTab active={active} initialChatId={tab.chatId} />;
     case "terminals":
       return <TerminalsTab active={active} />;
     case "files":
@@ -64,7 +64,9 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "app":
       return tab.slug ? <EmbedHost kind="app" slug={tab.slug} active={active} /> : null;
     case "project":
-      return tab.projectSlug ? <ProjectTab projectSlug={tab.projectSlug} active={active} /> : null;
+      return tab.projectSlug
+        ? <ProjectTab projectSlug={tab.projectSlug} active={active} initialChatId={tab.chatId} />
+        : null;
     case "task":
       return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":

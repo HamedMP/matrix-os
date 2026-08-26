@@ -265,6 +265,16 @@ describe("tabs store", () => {
     expect(useTabs.getState().activeTabId).toBe(a);
   });
 
+  it("updates the requested Chat when focusing an existing route tab", () => {
+    const tabId = useTabs.getState().openTab({ kind: "chat", title: "Chat", chatId: "chat_old" });
+
+    const focusedId = useTabs.getState().openTab({ kind: "chat", title: "Chat", chatId: "chat_moved" });
+
+    expect(focusedId).toBe(tabId);
+    expect(useTabs.getState().tabs).toHaveLength(1);
+    expect(useTabs.getState().tabs[0]?.chatId).toBe("chat_moved");
+  });
+
   it("treats different identities as distinct tabs", () => {
     useTabs.getState().openTab({ kind: "project", projectSlug: "a", title: "A" });
     useTabs.getState().openTab({ kind: "project", projectSlug: "b", title: "B" });

@@ -25,6 +25,7 @@ export interface Tab {
   icon?: string;
   // Identity payload — at most one tab per (kind + key).
   projectSlug?: string;
+  chatId?: string;
   taskId?: string;
   sessionName?: string;
   slug?: string;
@@ -168,6 +169,9 @@ export const useTabs = create<TabsState>()((set, get) => ({
     const existing = get().tabs.find((t) => identityKey(t) === key);
     if (existing) {
       set((state) => ({
+        tabs: spec.chatId === undefined
+          ? state.tabs
+          : state.tabs.map((tab) => tab.id === existing.id ? { ...tab, chatId: spec.chatId } : tab),
         activeTabId: existing.id,
         ...recordHistory(state.viewHistory, state.historyIndex, existing.id),
       }));

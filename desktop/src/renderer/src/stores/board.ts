@@ -34,6 +34,7 @@ export interface Card {
 }
 
 export interface Project {
+  id?: string;
   slug: string;
   name: string;
   kind: "scratch" | "github" | "folder";
@@ -77,6 +78,7 @@ const WireTaskSchema = z.object({
 });
 
 const WireProjectSchema = z.object({
+  id: z.string().min(1).max(128).optional(),
   slug: z.string().min(1),
   name: z.string().min(1),
   localPath: z.string().min(1).optional(),
@@ -92,6 +94,7 @@ export function parseProject(raw: unknown): Project | null {
   const parsed = WireProjectSchema.safeParse(raw);
   if (!parsed.success) return null;
   return {
+    ...(parsed.data.id ? { id: parsed.data.id } : {}),
     slug: parsed.data.slug,
     name: parsed.data.name,
     kind: parsed.data.kind ?? (parsed.data.github ? "github" : "scratch"),
