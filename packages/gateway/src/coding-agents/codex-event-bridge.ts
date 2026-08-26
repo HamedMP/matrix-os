@@ -22,6 +22,7 @@ const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const WatchInputSchema = z.object({
   threadId: AgentThreadSummarySchema.shape.id,
   sessionId: SessionIdSchema,
+  startAtEnd: z.boolean().optional(),
 }).strict();
 const MAX_WATCHERS = 100;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
@@ -329,11 +330,16 @@ export function createCodexEventBridge(options: {
       principal: RequestPrincipal;
       threadId: string;
       sessionId: string;
+      startAtEnd?: boolean;
     }): Promise<{ path: string }> {
       if (closed || !await versionIsVerified()) {
         throw new Error("Codex structured events are unavailable");
       }
-      const parsed = WatchInputSchema.parse({ threadId: input.threadId, sessionId: input.sessionId });
+      const parsed = WatchInputSchema.parse({
+        threadId: input.threadId,
+        sessionId: input.sessionId,
+        ...(input.startAtEnd !== undefined ? { startAtEnd: input.startAtEnd } : {}),
+      });
       await ensureEventDirectory();
       const path = codexProviderEventPath(homePath, parsed.sessionId);
       const existing = watchers.get(parsed.sessionId);
@@ -345,12 +351,26 @@ export function createCodexEventBridge(options: {
         return { path };
       }
       evictIfNeeded();
+      let offset = 0;
+      if (parsed.startAtEnd) {
+        try {
+          const info = await lstat(path);
+          if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_TRANSCRIPT_BYTES) {
+            throw new Error("Codex event transcript is unavailable");
+          }
+          offset = info.size;
+        } catch (error: unknown) {
+          if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) {
+            throw error;
+          }
+        }
+      }
       watchers.set(parsed.sessionId, {
         principal: input.principal,
         threadId: parsed.threadId,
         sessionId: parsed.sessionId,
         path,
-        offset: 0,
+        offset,
         lastTouchedAt: nowMs(),
       });
       return { path };

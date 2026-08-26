@@ -648,6 +648,7 @@ exec /bin/sh "$@"
       principal: ownerPrincipal,
       threadId: "thread_workspace_restarted_1",
       sessionId: "sess_workspace_restarted_1",
+      startAtEnd: true,
     });
     expect(watch.mock.invocationCallOrder[0]).toBeLessThan(submitTurn.mock.invocationCallOrder[0]!);
   });

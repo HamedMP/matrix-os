@@ -314,6 +314,7 @@ export function createWorkspaceCodingAgentProvider(
           principal,
           threadId: thread.id,
           sessionId,
+          startAtEnd: true,
         });
         await options.codexControl.submitTurn({
           sessionId,

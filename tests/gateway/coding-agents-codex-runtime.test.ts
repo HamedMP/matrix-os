@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { appendFile, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
@@ -342,6 +342,66 @@ describe("Codex structured event runtime", () => {
       batches.length = 0;
       await bridge.drain();
       expect(batches).toEqual([]);
+    } finally {
+      await bridge.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("starts a restored watcher after the existing transcript and ingests only new records", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-resume-"));
+    const sessionId = "sess_bridge_resume_1";
+    const eventPath = codexProviderEventPath(homePath, sessionId);
+    const batches: CodingAgentProviderEventBatch[] = [];
+    const bridge = createCodexEventBridge({
+      homePath,
+      pollIntervalMs: 60_000,
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
+    });
+    bridge.attachThreadStore({
+      async ingestProviderEvents(_principal, _threadId, batch) {
+        batches.push(batch);
+      },
+    });
+    try {
+      await mkdir(dirname(eventPath), { recursive: true });
+      await writeFile(eventPath, [
+        JSON.stringify({ type: "thread.started", thread_id: "019f-old-thread" }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { id: "item_old", type: "agent_message", text: "Old response." },
+        }),
+        JSON.stringify({ type: "turn.completed" }),
+        "",
+      ].join("\n"), "utf-8");
+
+      await bridge.watch({
+        principal,
+        threadId: "thread_bridge_resume_1",
+        sessionId,
+        startAtEnd: true,
+      });
+      await appendFile(eventPath, [
+        JSON.stringify({ type: "turn.started" }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { id: "item_new", type: "agent_message", text: "New response." },
+        }),
+        JSON.stringify({ type: "turn.completed" }),
+        "",
+      ].join("\n"), "utf-8");
+
+      await bridge.drain();
+
+      expect(JSON.stringify(batches)).not.toContain("Old response.");
+      expect(batches).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          events: expect.arrayContaining([
+            expect.objectContaining({ type: "assistant.text.delta", delta: "New response." }),
+            expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+          ]),
+        }),
+      ]));
     } finally {
       await bridge.shutdown();
       await rm(homePath, { recursive: true, force: true });
