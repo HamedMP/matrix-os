@@ -339,7 +339,7 @@ describe("Codex app-server control runtime", () => {
       config,
     ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
     try {
-      const transcript = await waitForTranscript(eventPath, /The repository is ready/);
+      const transcript = await waitForTranscript(eventPath, /"type":"turn.completed"/);
       expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output/);
 
       let sequence = 0;
@@ -565,7 +565,7 @@ describe("Codex app-server control runtime", () => {
         .map((line) => JSON.parse(line))
         .filter((event) => event.type === "matrix.codex.assistant.delta")
         .map((event) => event.delta);
-      expect(deltas).toEqual([`${"a".repeat(40)}${"b".repeat(40)}`, "c".repeat(40)]);
+      expect(deltas).toEqual(["a".repeat(40), "b".repeat(40), "c".repeat(40)]);
     } finally {
       child.kill("SIGTERM");
       await rm(homePath, { recursive: true, force: true });
