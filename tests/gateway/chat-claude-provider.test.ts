@@ -79,6 +79,30 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("executes with the owner Claude credential environment", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "authenticated", session_id: "claude_session" }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn,
+      resolveCredentialEnv: vi.fn(async () => ({
+        PATH: "/credential/bin",
+        ANTHROPIC_API_KEY: "owner-key",
+      })),
+    });
+
+    for await (const _event of adapter.start(baseInput)) {
+      // Drain the bounded native event stream.
+    }
+
+    expect(spawnFn.mock.calls[0]![2].env).toMatchObject({
+      ANTHROPIC_API_KEY: "owner-key",
+      HOME: "/home/matrix/home",
+      MATRIX_HOME: "/home/matrix/home",
+    });
+  });
+
   it("resumes the persisted Claude session and maps full access explicitly", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "resumed", session_id: "claude_session" }),

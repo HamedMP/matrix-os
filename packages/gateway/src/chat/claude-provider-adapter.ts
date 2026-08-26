@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { buildAgentLaunch } from "../agent-launcher.js";
+import { buildKernelEnv } from "../kernel-credentials.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -35,6 +36,16 @@ type ClaudeChatState = z.infer<typeof ClaudeChatStateSchema>;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const MAX_STREAM_BYTES = 1024 * 1024;
 
+function definedEnvironment(
+  value: Record<string, string | undefined>,
+): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const [name, entry] of Object.entries(value)) {
+    if (entry !== undefined) environment[name] = entry;
+  }
+  return environment;
+}
+
 function permissionMode(value: string, interactionMode: string) {
   if (interactionMode === "review") return "plan" as const;
   if (value === "supervised") return "default" as const;
@@ -57,6 +68,7 @@ export function createClaudeChatProviderAdapter(options: {
   homePath: string;
   spawnFn?: CanonicalCliSpawn;
   timeoutMs?: number;
+  resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -88,6 +100,12 @@ export function createClaudeChatProviderAdapter(options: {
       const separator = launch.args.indexOf("--");
       launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--resume", resumeState.sessionId);
     }
+    const credentialEnv = await (
+      options.resolveCredentialEnv ?? (() => buildKernelEnv(options.homePath))
+    )();
+    const runEnv = credentialEnv === undefined
+      ? launch.env
+      : definedEnvironment({ ...credentialEnv, ...launch.env });
 
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
     let buffered = "";
@@ -131,7 +149,8 @@ export function createClaudeChatProviderAdapter(options: {
       command: launch.command,
       args: launch.args,
       cwd: launch.cwd,
-      env: launch.env,
+      env: runEnv,
+      replaceEnv: credentialEnv !== undefined,
       signal: input.signal,
       timeoutMs,
       maxStdoutBytes: MAX_STREAM_BYTES,

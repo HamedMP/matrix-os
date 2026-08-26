@@ -21,6 +21,7 @@ export async function runCanonicalCli(options: {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  replaceEnv?: boolean;
   signal: AbortSignal;
   timeoutMs: number;
   maxStdoutBytes: number;
@@ -34,7 +35,9 @@ export async function runCanonicalCli(options: {
   let settled = false;
   const child = (options.spawnFn ?? defaultSpawn)(options.command, options.args, {
     cwd: options.cwd,
-    env: { ...process.env, ...options.env } as Record<string, string>,
+    env: options.replaceEnv
+      ? options.env
+      : { ...process.env, ...options.env } as Record<string, string>,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
