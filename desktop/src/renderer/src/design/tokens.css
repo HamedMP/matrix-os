@@ -14,6 +14,13 @@
   --bg-active: rgba(67, 78, 63, 0.1);
   --bg-selected: rgba(67, 78, 63, 0.08);
 
+  /* ── Figma semantic surfaces ────────────────────────────────── */
+  --surface-base-background: #fffffd;
+  --surface-primary: #fffefc;
+  --surface-overlay: #242323;
+  --surface-tertiary: #e1e0e0;
+  --surface-success: #eef7f2;
+
   /* ── Desktop wallpaper mesh (kept in sync with the web shell) ─ */
   --gradient-deep: #323d2e;
   --gradient-mid: #9aa48c;
@@ -38,6 +45,7 @@
   --border-subtle: #ebe9e1;
   --border-default: #d6d3c8;
   --border-strong: #c4c0b2;
+  --border-success: #34b275;
   --sidebar-divider: color-mix(in srgb, var(--border-subtle) 62%, transparent);
 
   /* ── Text ───────────────────────────────────────────────────── */
@@ -143,6 +151,12 @@
   --bg-active: rgba(140, 199, 190, 0.12);
   --bg-selected: rgba(140, 199, 190, 0.12);
 
+  --surface-base-background: #141614;
+  --surface-primary: #181c18;
+  --surface-overlay: #242323;
+  --surface-tertiary: #2a302c;
+  --surface-success: #173827;
+
   --forest: #1a1e1a;
   --forest-deep: #101210;
   --forest-foreground: #eaecea;
@@ -159,6 +173,7 @@
   --border-subtle: rgba(140, 199, 190, 0.1);
   --border-default: rgba(140, 199, 190, 0.16);
   --border-strong: rgba(140, 199, 190, 0.24);
+  --border-success: #3fae78;
 
   --text-primary: #eaecea;
   --text-secondary: #aab4ac;

@@ -25,7 +25,6 @@ import {
 } from "../../stores/shell-sessions";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
-import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import {
   reconcileShellSessionSnapshot,
   syncShellSessions,
@@ -184,7 +183,6 @@ export default function TerminalsTab({
   const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
   const reconcileRecentTerminals = useTabs((s) => s.reconcileRecentTerminals);
   const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
-  const terminalAppearanceMode = useTerminalAppearance((s) => s.mode);
   const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
   const terminalsTabId = useTabs((s) => s.tabs.find((tab) => tab.kind === "terminals")?.id);
   const renameTab = useTabs((s) => s.renameTab);
@@ -540,7 +538,6 @@ export default function TerminalsTab({
                 <TerminalView
                   sessionName={sessionName}
                   active={active && liveSessionName === sessionName}
-                  themeMode={terminalAppearanceMode}
                 />
               </div>
             </div>

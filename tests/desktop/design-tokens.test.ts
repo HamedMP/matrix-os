@@ -1,8 +1,3 @@
-// Guards the renderer design-token system: every var(--name) referenced in
-// renderer sources must resolve to a real definition, the Tailwind @theme
-// bridge must map the full text scale, and --text-tertiary must keep WCAG AA
-// contrast in both themes. Plain fs reads — no DOM required.
-
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -21,16 +16,7 @@ function collectSources(dir: string, out: string[] = []): string[] {
 const VAR_REFERENCE = /var\(\s*(--[A-Za-z0-9_-]+)/g;
 const CSS_DECLARATION = /(--[A-Za-z0-9_-]+)\s*:/g;
 const CSS_PROPERTY_RULE = /@property\s+(--[A-Za-z0-9_-]+)/g;
-// Inline style custom properties in TS/TSX: both "--x": value and ["--x"]: value.
-// This also covers the semantic variables design/themes/apply.ts sets via
-// setProperty, since they are declared as keys of chromeToSemanticVars.
 const TS_CUSTOM_PROPERTY = /["'](--[A-Za-z0-9_-]+)["']\s*\]?\s*:/g;
-
-// Variables provided by the toolchain or read only with a fallback, so they
-// legitimately have no local definition:
-// - --spacing: Tailwind v4 default theme variable.
-// - --scroll-fade-reveal: optional scroll-fade override knob (ported shadcn
-//   utilities), only ever read as var(--scroll-fade-reveal, <fallback>).
 const FRAMEWORK_VARS = new Set(["--spacing", "--scroll-fade-reveal"]);
 
 function buildDefinitions(files: string[]): Set<string> {
@@ -64,7 +50,6 @@ function tokenValue(block: string, name: string): string {
   return match[1]!.trim();
 }
 
-// WCAG 2.x relative luminance + contrast ratio for #rrggbb pairs.
 function luminance(hex: string): number {
   if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error(`not a 6-digit hex color: ${hex}`);
   const channel = (offset: number) => {
@@ -105,13 +90,8 @@ describe("design token references", () => {
 
 describe("tailwind text scale bridge", () => {
   const SCALE: Array<[string, string]> = [
-    ["xs", "11px"],
-    ["sm", "12px"],
-    ["base", "13px"],
-    ["md", "14px"],
-    ["lg", "16px"],
-    ["xl", "20px"],
-    ["2xl", "28px"],
+    ["xs", "11px"], ["sm", "12px"], ["base", "13px"], ["md", "14px"],
+    ["lg", "16px"], ["xl", "20px"], ["2xl", "28px"],
   ];
 
   it("maps the full token text scale into the @theme block", () => {
@@ -120,26 +100,18 @@ describe("tailwind text scale bridge", () => {
     expect(themeMatch, "index.css @theme inline block").not.toBeNull();
     const themeBlockSource = themeMatch![1]!;
     for (const [name] of SCALE) {
-      expect(
-        themeBlockSource.includes(`--text-${name}: var(--text-${name});`),
-        `@theme must map --text-${name} so the text-${name} utility resolves`,
-      ).toBe(true);
+      expect(themeBlockSource.includes(`--text-${name}: var(--text-${name});`)).toBe(true);
     }
   });
 
   it("defines the scale as px tokens in tokens.css", () => {
-    const tokensCss = readRendererFile("design", "tokens.css");
-    const root = themeBlock(tokensCss, ":root");
-    for (const [name, px] of SCALE) {
-      expect(tokenValue(root, `--text-${name}`)).toBe(px);
-    }
+    const root = themeBlock(readRendererFile("design", "tokens.css"), ":root");
+    for (const [name, px] of SCALE) expect(tokenValue(root, `--text-${name}`)).toBe(px);
   });
 });
 
 describe("Desktop sidebar geometry tokens", () => {
-  const tokensCss = readRendererFile("design", "tokens.css");
-  const root = themeBlock(tokensCss, ":root");
-
+  const root = themeBlock(readRendererFile("design", "tokens.css"), ":root");
   it("defines the Figma sidebar and shell geometry", () => {
     expect(tokenValue(root, "--titlebar-height")).toBe("38px");
     expect(tokenValue(root, "--sidebar-expanded-width")).toBe("240px");
@@ -149,35 +121,34 @@ describe("Desktop sidebar geometry tokens", () => {
   });
 });
 
+describe("Figma semantic surface tokens", () => {
+  const tokensCss = readRendererFile("design", "tokens.css");
+  it("defines the OS window surfaces and success badge tokens in both modes", () => {
+    for (const selector of [":root", '[data-theme="dark"]']) {
+      const block = themeBlock(tokensCss, selector);
+      for (const name of ["--surface-base-background", "--surface-primary", "--surface-overlay", "--surface-tertiary", "--surface-success", "--border-success"]) {
+        expect(tokenValue(block, name)).toMatch(/^#/);
+      }
+    }
+  });
+});
+
 describe("composer focus presentation", () => {
   it("suppresses the global focus ring inside the rich prompt editor", () => {
-    const indexCss = readRendererFile("design", "index.css");
-
-    expect(indexCss).toMatch(
+    expect(readRendererFile("design", "index.css")).toMatch(
       /\.prompt-card \[data-slot="prompt-input-content"\]:focus-visible\s*\{[^}]*box-shadow:\s*none;/,
     );
   });
 });
 
 describe("tertiary text contrast (WCAG AA)", () => {
-  const MIN_AA_CONTRAST = 4.5;
   const tokensCss = readRendererFile("design", "tokens.css");
-  const THEMES: Array<[string, string]> = [
-    ["light", ":root"],
-    ["dark", '[data-theme="dark"]'],
-  ];
-
-  for (const [label, selector] of THEMES) {
+  for (const [label, selector] of [["light", ":root"], ["dark", '[data-theme="dark"]']] as const) {
     it(`${label} theme --text-tertiary reaches 4.5:1 on app surfaces`, () => {
       const block = themeBlock(tokensCss, selector);
       const tertiary = tokenValue(block, "--text-tertiary");
       for (const surfaceToken of ["--bg-surface", "--bg-app"]) {
-        const surface = tokenValue(block, surfaceToken);
-        const ratio = contrastRatio(tertiary, surface);
-        expect(
-          ratio,
-          `${label} ${tertiary} on ${surfaceToken} ${surface} = ${ratio.toFixed(2)}:1`,
-        ).toBeGreaterThanOrEqual(MIN_AA_CONTRAST);
+        expect(contrastRatio(tertiary, tokenValue(block, surfaceToken))).toBeGreaterThanOrEqual(4.5);
       }
     });
   }

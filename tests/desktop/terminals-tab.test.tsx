@@ -10,7 +10,7 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
-import { useTerminalAppearance } from "../../desktop/src/renderer/src/stores/terminal-appearance";
+import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance";
 
 const terminalMounts = vi.hoisted(() => new Map<string, number>());
 
@@ -18,12 +18,11 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
   default: ({
     sessionName,
     active,
-    themeMode,
   }: {
     sessionName: string;
     active?: boolean;
-    themeMode?: "dark" | "light";
   }) => {
+    const themeMode = useAppearance((state) => state.mode);
     React.useEffect(() => {
       terminalMounts.set(sessionName, (terminalMounts.get(sessionName) ?? 0) + 1);
       return () => {
@@ -98,14 +97,10 @@ describe("TerminalsTab", () => {
       activeTabId: null,
       openTab: vi.fn(),
     });
-    useTerminalAppearance.setState({
-      ...useTerminalAppearance.getInitialState(),
+    useAppearance.setState({
+      ...useAppearance.getInitialState(),
       mode: "dark",
       hydrated: true,
-      load: vi.fn().mockResolvedValue(undefined),
-      setMode: vi.fn((mode: "dark" | "light") => {
-        useTerminalAppearance.setState({ mode });
-      }),
     }, true);
   });
 

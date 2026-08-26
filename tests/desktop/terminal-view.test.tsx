@@ -6,7 +6,6 @@ import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
 import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
-import { useTerminalAppearance } from "@desktop/renderer/src/stores/terminal-appearance";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import {
   bracketTerminalPaths,
@@ -162,11 +161,6 @@ describe("TerminalView session switching", () => {
     attachmentResize.mockReset();
     attachmentWrite.mockReset();
     useAppearance.setState({ mode: "light", themeId: "operator", hydrated: true });
-    useTerminalAppearance.setState({
-      ...useTerminalAppearance.getInitialState(),
-      mode: "dark",
-      hydrated: true,
-    }, true);
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -365,42 +359,32 @@ describe("TerminalView session switching", () => {
     expect(terminal.reset).toHaveBeenCalledOnce();
   });
 
-  it("defaults to dark independently of Desktop appearance and re-themes from its local prop", () => {
-    const { rerender } = render(<TerminalView sessionName="alpha" />);
+  it("uses the resolved Desktop appearance and re-themes with Settings", () => {
+    render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;
-    expect(terminal.initialOptions.theme).toMatchObject({ background: "#32352e" });
-
-    rerender(<TerminalView sessionName="alpha" themeMode="light" />);
+    expect(terminal.initialOptions.theme).toMatchObject({ background: "#fffffd" });
 
     const colorProbe = document.createElement("div");
-    colorProbe.style.backgroundColor = "#fffffd";
-    expect(terminal.options.theme).toMatchObject({ background: "#fffffd" });
+    act(() => {
+      useAppearance.setState({ mode: "dark", themeId: "dracula" });
+    });
+    colorProbe.style.backgroundColor = "#141614";
+    expect(terminal.options.theme).toMatchObject({ background: "#141614" });
     expect(terminal.element?.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
     expect(terminal.element?.querySelector<HTMLElement>(".xterm-viewport")?.style.backgroundColor)
       .toBe(colorProbe.style.backgroundColor);
+  });
+
+  it("recreates a switched session with the current Terminal theme", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" />);
 
     act(() => {
       useAppearance.setState({ mode: "dark", themeId: "dracula" });
     });
-    expect(terminal.options.theme).toMatchObject({ background: "#fffffd" });
-  });
-
-  it("recreates a switched session with the current Terminal theme", () => {
-    const { rerender } = render(<TerminalView sessionName="alpha" themeMode="dark" />);
-
-    rerender(<TerminalView sessionName="alpha" themeMode="light" />);
-    rerender(<TerminalView sessionName="beta" themeMode="light" />);
+    rerender(<TerminalView sessionName="beta" />);
 
     expect(createdTerminals).toHaveLength(2);
-    expect(createdTerminals.at(-1)?.initialOptions.theme).toMatchObject({ background: "#fffffd" });
-  });
-
-  it("uses the persisted Terminal preference when no view override is provided", () => {
-    useTerminalAppearance.setState({ mode: "light" });
-
-    render(<TerminalView sessionName="alpha" />);
-
-    expect(createdTerminals.at(-1)?.initialOptions.theme).toMatchObject({ background: "#fffffd" });
+    expect(createdTerminals.at(-1)?.initialOptions.theme).toMatchObject({ background: "#141614" });
   });
 
   it("overrides xterm OSC activation and registers plain-text URL detection", () => {

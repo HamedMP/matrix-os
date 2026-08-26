@@ -5,12 +5,10 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
+import { resolveThemeMode } from "../../design/themes/apply";
+import { useAppearance } from "../../stores/appearance";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
-import {
-  useTerminalAppearance,
-  type TerminalAppearanceMode,
-} from "../../stores/terminal-appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
@@ -64,7 +62,6 @@ interface TerminalViewProps {
   // is released so only the focused terminal holds a VPS attachment.
   active?: boolean;
   onRecreate?: () => void;
-  themeMode?: TerminalAppearanceMode;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component -- This component owns one xterm instance and its coupled attach, resize, link, paste, and teardown lifecycle. Splitting those effects across child components would obscure single-resource ownership; visual theme helpers and menus remain extracted.
@@ -72,11 +69,10 @@ export default function TerminalView({
   sessionName,
   active = true,
   onRecreate,
-  themeMode,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
-  const persistedThemeMode = useTerminalAppearance((state) => state.mode);
-  const resolvedThemeMode = themeMode ?? persistedThemeMode;
+  const appearanceMode = useAppearance((state) => state.mode);
+  const resolvedThemeMode = resolveThemeMode(appearanceMode);
   const terminalTheme = getDesktopTerminalXtermTheme(resolvedThemeMode);
   const latestThemeModeRef = useRef(resolvedThemeMode);
   latestThemeModeRef.current = resolvedThemeMode;
