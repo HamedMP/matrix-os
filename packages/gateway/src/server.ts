@@ -135,7 +135,7 @@ import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
 import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import { createCanonicalChatRoutes } from "./chat/routes.js";
-import { createChatExecutionRootResolver } from "./chat/execution-root.js";
+import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import {
@@ -866,6 +866,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let chatRepository: ChatRepository | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
+  let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
 
   if (databaseUrl) {
@@ -4157,6 +4158,11 @@ export async function createGateway(config: GatewayConfig) {
     } : {}),
   });
   if (chatRepository) {
+    canonicalChatExecutionRoots = createChatExecutionRootResolver({
+      homePath,
+      projects: codingAgentProjectManager,
+      worktrees: codingAgentWorktreeManager,
+    });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createHermesChatProviderAdapter({ dispatcher }),
     ];
@@ -4178,11 +4184,7 @@ export async function createGateway(config: GatewayConfig) {
       repository: chatRepository,
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
-      executionRoots: createChatExecutionRootResolver({
-        homePath,
-        projects: codingAgentProjectManager,
-        worktrees: codingAgentWorktreeManager,
-      }),
+      executionRoots: canonicalChatExecutionRoots,
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
@@ -4190,8 +4192,9 @@ export async function createGateway(config: GatewayConfig) {
   }
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
-      ? createCanonicalChatService(chatRepository, {
+        ? createCanonicalChatService(chatRepository, {
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
+          ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
         })
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),

@@ -1,6 +1,7 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
+import { ChatExecutionRootError } from "../../packages/gateway/src/chat/execution-root.js";
 import type {
   ChatDetailPage,
   ChatListPage,
@@ -59,7 +60,15 @@ describe("canonical Chat service", () => {
 
   it("moves a Chat without changing its identity or bypassing revision guards", async () => {
     const update = vi.fn(async () => ({ ...record(), projectId: "project_1" }));
-    const service = createCanonicalChatService(repository({ update }));
+    const resolve = vi.fn(async () => ({
+      ref: { kind: "project" as const, projectId: "project_1" },
+      primaryWorkspaceRoot: "/private/project",
+      projectSlug: "project-1",
+      fingerprint: "a".repeat(64),
+    }));
+    const service = createCanonicalChatService(repository({ update }), {
+      executionRoots: { resolve },
+    });
 
     const moved = await service.updateProject(owner, "chat_service_test", {
       baseRevision: 0,
@@ -70,8 +79,36 @@ describe("canonical Chat service", () => {
       baseRevision: 0,
       projectId: "project_1",
     });
+    expect(resolve).toHaveBeenCalledWith(owner, {
+      kind: "project",
+      projectId: "project_1",
+    });
     expect(moved.chat.id).toBe("chat_service_test");
     expect(moved.projectId).toBe("project_1");
+  });
+
+  it("fails closed before mutation when the target Project is stale", async () => {
+    const update = vi.fn(async () => ({ ...record(), projectId: "project_missing" }));
+    const service = createCanonicalChatService(repository({ update }), {
+      executionRoots: {
+        resolve: vi.fn(async () => {
+          throw new ChatExecutionRootError("invalid_root");
+        }),
+      },
+    });
+
+    await expect(service.updateProject(owner, "chat_service_test", {
+      baseRevision: 0,
+      projectId: "project_missing",
+    })).rejects.toMatchObject({
+      status: 409,
+      safeError: {
+        code: "project_unavailable",
+        safeMessage: "The Project workspace is unavailable.",
+        retryable: false,
+      },
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("round-trips opaque list cursors without exposing repository cursor fields", async () => {
