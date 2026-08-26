@@ -214,15 +214,14 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       style={{ top: "var(--titlebar-height)", background: "inherit" }}
     >
       <DesktopBackground />
-      {drawerOpen ? (
-        <DesktopAppDrawer
-          tabs={tabs}
-          surfaces={surfaces}
-          onClose={() => setDrawerOpen(false)}
-          onActivate={activateFromDrawer}
-          onCloseTab={closeFromDrawer}
-        />
-      ) : null}
+      <DesktopAppDrawer
+        open={drawerOpen}
+        tabs={tabs}
+        surfaces={surfaces}
+        onClose={() => setDrawerOpen(false)}
+        onActivate={activateFromDrawer}
+        onCloseTab={closeFromDrawer}
+      />
       {desktopModeHydrated ? (
         <>
       {desktopMode === "desktop" && !tabWorkspaceActive ? (

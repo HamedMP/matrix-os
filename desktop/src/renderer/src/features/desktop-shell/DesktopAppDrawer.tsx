@@ -67,12 +67,14 @@ function PreviewTile({
 }
 
 export default function DesktopAppDrawer({
+  open,
   tabs,
   surfaces,
   onClose,
   onActivate,
   onCloseTab,
 }: {
+  open: boolean;
   tabs: Tab[];
   surfaces: Record<string, DesktopSurface>;
   onClose: () => void;
@@ -82,28 +84,42 @@ export default function DesktopAppDrawer({
   const openTabs = tabs.filter((tab) => surfaces[tab.id]?.mode !== "closed" && surfaces[tab.id] !== undefined);
 
   useEffect(() => {
+    if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [onClose, open]);
 
   return (
-    <div className="absolute inset-0" data-testid="desktop-app-drawer-layer">
+    <div
+      className={`absolute inset-0 ${open ? "pointer-events-auto" : "pointer-events-none"}`}
+      data-state={open ? "open" : "closed"}
+      data-testid="desktop-app-drawer-layer"
+    >
       <div
         aria-hidden="true"
         data-testid="desktop-app-drawer-backdrop"
-        className="absolute inset-0 bg-black/10 backdrop-blur-[1px]"
-        style={{ zIndex: DESKTOP_Z_INDEX.nativeDesktopDrawerBackdrop }}
+        className={`absolute inset-0 bg-black/10 backdrop-blur-[1px] ${open ? "opacity-100" : "opacity-0"}`}
+        style={{
+          zIndex: DESKTOP_Z_INDEX.nativeDesktopDrawerBackdrop,
+          transition: "opacity 180ms ease-out",
+        }}
         onPointerDown={onClose}
       />
       <aside
         role="dialog"
         aria-label="All open apps"
         aria-modal="true"
-        className="absolute inset-y-0 left-0 flex w-[240px] flex-col border-r border-[var(--border-default)] bg-[color-mix(in_srgb,var(--bg-app)_63%,transparent)] shadow-lg backdrop-blur-md motion-safe:animate-in motion-safe:slide-in-from-left"
-        style={{ zIndex: DESKTOP_Z_INDEX.nativeDesktopDrawer }}
+        aria-hidden={!open}
+        className="absolute inset-y-0 left-0 flex w-[240px] flex-col border-r border-[var(--border-default)] bg-[color-mix(in_srgb,var(--bg-app)_63%,transparent)] shadow-lg backdrop-blur-md"
+        style={{
+          zIndex: DESKTOP_Z_INDEX.nativeDesktopDrawer,
+          opacity: open ? 1 : 0,
+          transform: open ? "translateX(0)" : "translateX(-100%)",
+          transition: "transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease-out",
+        }}
       >
         <header className="flex items-center justify-between px-3 py-3">
           <h2 className="text-xs font-medium text-[var(--text-secondary)]">All open apps</h2>

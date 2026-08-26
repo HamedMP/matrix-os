@@ -402,25 +402,25 @@ describe("native desktop shell", () => {
     expect(useTabs.getState().tabs.some((tab) => tab.kind === "app")).toBe(false);
   });
 
-  it("opens the all-open-apps drawer from Sidebar and dismisses it by close, Escape, and backdrop", () => {
+  it("opens the all-open-apps drawer from Sidebar and dismisses it by close, Escape, and backdrop", async () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
     expect(screen.getByRole("dialog", { name: "All open apps" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Close all open apps" }));
-    expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull());
 
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull());
 
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
     fireEvent.pointerDown(screen.getByTestId("desktop-app-drawer-backdrop"));
-    expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull());
   });
 
-  it("routes preview tiles to minimized, tabbed, and windowed apps without activating a close action", () => {
+  it("routes preview tiles to minimized, tabbed, and windowed apps without activating a close action", async () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
     const settingsId = useTabs.getState().activeTabId!;
@@ -433,6 +433,7 @@ describe("native desktop shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview Settings" }));
     expect(useDesktopSurfaces.getState().surfaces[settingsId]?.mode).toBe("window");
     expect(useTabs.getState().activeTabId).toBe(settingsId);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull());
 
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
     fireEvent.click(screen.getByRole("button", { name: "Preview Terminal" }));
