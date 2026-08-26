@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import React, { useState } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
@@ -149,5 +149,36 @@ describe("CanonicalChatWorkspace", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Project Matrix OS" })).toBeTruthy();
+  });
+
+  it("keeps Project New chat detached from the first existing Chat after route sync", async () => {
+    const routeClient = client();
+
+    function Harness() {
+      const [activeChatId, setActiveChatId] = useState<string | null>(snapshot.chat.id);
+      return (
+        <CanonicalChatWorkspace
+          client={routeClient}
+          projectId="matrix-os"
+          projectLabel="Matrix OS"
+          initialChatId={activeChatId ?? undefined}
+          active
+          catalog={providerCatalog}
+          onActiveChatChanged={(chatId) => setActiveChatId(chatId)}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await waitFor(() => expect(routeClient.list).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+
+    expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
+    expect(routeClient.getDetail).toHaveBeenCalledTimes(1);
   });
 });

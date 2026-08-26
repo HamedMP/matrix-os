@@ -108,7 +108,7 @@ export function CanonicalChatWorkspace({
     projectId,
     active,
     initialChatId,
-    autoSelectFirst: projectId !== null,
+    autoSelectFirst: false,
   });
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
