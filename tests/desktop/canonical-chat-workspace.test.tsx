@@ -280,4 +280,44 @@ describe("CanonicalChatWorkspace", () => {
     expect(routeClient.list).toHaveBeenCalledTimes(1);
     expect(routeClient.getDetail).toHaveBeenCalledTimes(1);
   });
+
+  it("does not let stale Global Chat detail overwrite a requested New Chat draft", async () => {
+    const routeClient = client();
+    const reportedIds: Array<string | null> = [];
+
+    function Harness() {
+      const [route, setRoute] = useState<{
+        chatId?: string;
+        view: "draft" | "conversation";
+      }>({ chatId: snapshot.chat.id, view: "conversation" });
+      return (
+        <CanonicalChatWorkspace
+          client={routeClient}
+          projectId={null}
+          initialChatId={route.chatId}
+          initialView={route.view}
+          active
+          catalog={providerCatalog}
+          onActiveChatChanged={(chatId) => {
+            reportedIds.push(chatId);
+            setRoute(chatId
+              ? { chatId, view: "conversation" }
+              : { view: "draft" });
+          }}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+
+    expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
+    expect(reportedIds).toEqual([null]);
+  });
 });

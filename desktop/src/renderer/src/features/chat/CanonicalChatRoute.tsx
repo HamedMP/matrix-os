@@ -7,6 +7,8 @@ import { useProjectView } from "../../stores/project-view";
 import { useTabs } from "../../stores/tabs";
 import { CanonicalChatWorkspace } from "./CanonicalChatWorkspace";
 
+type CanonicalRouteAvailability = "checking" | "available" | "unavailable";
+
 export function CanonicalChatRoute({
   api,
   projectId,
@@ -54,7 +56,19 @@ export function CanonicalChatRoute({
     return state.projects.find((project) => project.slug === projectId || project.id === projectId)?.id
       ?? projectId;
   });
-  const [available, setAvailable] = useState(false);
+  const routeKey = clientIdentity
+    ? `${clientIdentity}\u0000${canonicalProjectId ?? "global"}`
+    : null;
+  const [availability, setAvailability] = useState<{
+    routeKey: string | null;
+    value: CanonicalRouteAvailability;
+  }>(() => ({
+    routeKey,
+    value: routeKey ? "checking" : "unavailable",
+  }));
+  const currentAvailability: CanonicalRouteAvailability = availability.routeKey === routeKey
+    ? availability.value
+    : routeKey ? "checking" : "unavailable";
   const provenRoute = useRef<{
     client: ReturnType<typeof createCanonicalChatClient>;
     projectId: string | null;
@@ -64,28 +78,43 @@ export function CanonicalChatRoute({
     let current = true;
     if (!client) {
       provenRoute.current = null;
-      setAvailable(false);
+      setAvailability({ routeKey: null, value: "unavailable" });
       return () => { current = false; };
     }
     if (!active) return () => { current = false; };
     if (
       provenRoute.current?.client === client
       && provenRoute.current.projectId === canonicalProjectId
-    ) return () => { current = false; };
-    setAvailable(false);
+    ) {
+      setAvailability({ routeKey, value: "available" });
+      return () => { current = false; };
+    }
+    setAvailability({ routeKey, value: "checking" });
     void client.list({ projectId: canonicalProjectId, limit: 1 }).then(() => {
       if (!current) return;
       provenRoute.current = { client, projectId: canonicalProjectId };
-      setAvailable(true);
+      setAvailability({ routeKey, value: "available" });
     }).catch(() => {
       if (!current) return;
       provenRoute.current = null;
-      setAvailable(false);
+      setAvailability({ routeKey, value: "unavailable" });
     });
     return () => { current = false; };
-  }, [active, canonicalProjectId, client]);
+  }, [active, canonicalProjectId, client, routeKey]);
 
-  if (!client || !available) return fallback;
+  if (!client || currentAvailability === "unavailable") return fallback;
+  if (currentAvailability === "checking") {
+    return (
+      <div
+        role="status"
+        aria-label="Loading chats"
+        className="flex min-h-0 flex-1 items-center justify-center text-sm"
+        style={{ color: "var(--text-tertiary)" }}
+      >
+        Loading chats…
+      </div>
+    );
+  }
   return (
     <CanonicalChatWorkspace
       api={api ?? undefined}
