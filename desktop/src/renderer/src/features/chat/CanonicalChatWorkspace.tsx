@@ -114,6 +114,7 @@ export function CanonicalChatWorkspace({
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialChatId ? "conversation" : "index",
   );
+  const previousRoute = useRef({ initialChatId, projectId });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
   const runtimeSummary = useCodingAgentWorkspace((state) => state.summary);
@@ -134,6 +135,9 @@ export function CanonicalChatWorkspace({
   }, [api, refreshRuntimeSummary, runtimeStatus]);
 
   useEffect(() => {
+    const previous = previousRoute.current;
+    if (previous.initialChatId === initialChatId && previous.projectId === projectId) return;
+    previousRoute.current = { initialChatId, projectId };
     if (projectId !== null) return;
     setGlobalView(initialChatId ? "conversation" : "index");
   }, [initialChatId, projectId]);

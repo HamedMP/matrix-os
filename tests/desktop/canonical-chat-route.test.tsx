@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { CanonicalChatRoute } from "@desktop/renderer/src/features/chat/CanonicalChatRoute";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -49,6 +49,44 @@ describe("CanonicalChatRoute", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "Chats" })).toBeTruthy();
+  });
+
+  it("preserves an in-progress canonical draft when the retained Chat tab is reactivated", async () => {
+    const routeApi = api(vi.fn(async (path: string) => {
+      if (path.startsWith("/api/chat-providers")) throw new Error("catalog unavailable");
+      return { items: [] };
+    }));
+    const { rerender } = render(
+      <CanonicalChatRoute
+        api={routeApi}
+        projectId={null}
+        active
+        fallback={<div>legacy chat</div>}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
+    expect(await screen.findByRole("textbox", { name: "Start a chat" })).toBeTruthy();
+
+    rerender(
+      <CanonicalChatRoute
+        api={routeApi}
+        projectId={null}
+        active={false}
+        fallback={<div>legacy chat</div>}
+      />,
+    );
+    rerender(
+      <CanonicalChatRoute
+        api={routeApi}
+        projectId={null}
+        active
+        fallback={<div>legacy chat</div>}
+      />,
+    );
+
+    expect(await screen.findByRole("textbox", { name: "Start a chat" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Chats" })).toBeNull();
   });
 
   it("keeps the legacy route on an older Gateway instead of showing a broken surface", async () => {

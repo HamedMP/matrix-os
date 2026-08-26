@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
 import { useBoard } from "../../stores/board";
@@ -30,19 +30,32 @@ export function CanonicalChatRoute({
       ?? projectId;
   });
   const [available, setAvailable] = useState(false);
+  const provenRoute = useRef<{
+    client: ReturnType<typeof createCanonicalChatClient>;
+    projectId: string | null;
+  } | null>(null);
 
   useEffect(() => {
     let current = true;
     if (!client) {
+      provenRoute.current = null;
       setAvailable(false);
       return () => { current = false; };
     }
     if (!active) return () => { current = false; };
+    if (
+      provenRoute.current?.client === client
+      && provenRoute.current.projectId === canonicalProjectId
+    ) return () => { current = false; };
     setAvailable(false);
     void client.list({ projectId: canonicalProjectId, limit: 1 }).then(() => {
-      if (current) setAvailable(true);
+      if (!current) return;
+      provenRoute.current = { client, projectId: canonicalProjectId };
+      setAvailable(true);
     }).catch(() => {
-      if (current) setAvailable(false);
+      if (!current) return;
+      provenRoute.current = null;
+      setAvailable(false);
     });
     return () => { current = false; };
   }, [active, canonicalProjectId, client]);
