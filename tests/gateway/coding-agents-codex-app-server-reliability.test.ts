@@ -194,8 +194,11 @@ describe("Codex app-server runner reliability", () => {
     ], { stubControlServer: true });
 
     try {
+      const transcript = await waitForTranscript(runtime.eventPath, /"type":"turn\.completed"/);
+      expect(runtime.child.exitCode).toBeNull();
+      runtime.child.kill("SIGTERM");
       const exitCode = await waitForExit(runtime.child);
-      expect(exitCode, await readFile(runtime.eventPath, "utf8")).toBe(0);
+      expect(exitCode, transcript).toBe(0);
       const events = await replayTranscript(runtime.eventPath);
       const assistantDelta = events.find((event) => event.type === "assistant.text.delta");
       expect(assistantDelta).toMatchObject({ type: "assistant.text.delta", delta: "Partial answer." });
@@ -220,8 +223,11 @@ describe("Codex app-server runner reliability", () => {
     ], { stubControlServer: true });
 
     try {
+      const transcript = await waitForTranscript(runtime.eventPath, /"type":"turn\.failed"/);
+      expect(runtime.child.exitCode).toBeNull();
+      runtime.child.kill("SIGTERM");
       const exitCode = await waitForExit(runtime.child);
-      expect(exitCode, await readFile(runtime.eventPath, "utf8")).toBe(1);
+      expect(exitCode, transcript).toBe(1);
       const events = await replayTranscript(runtime.eventPath);
       const toolStarted = events.find((event) => event.type === "tool.started");
       expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command" });
@@ -454,7 +460,7 @@ describe("Codex app-server runner reliability", () => {
     }
   });
 
-  it("stops the long-lived provider on completed and failed turns", async () => {
+  it("keeps the provider available for another turn until the runner is stopped", async () => {
     for (const turnStatus of ["completed", "failed"] as const) {
       const runtime = await startFakeRuntime(`terminal_${turnStatus}`, [
         initialize,
@@ -467,8 +473,13 @@ describe("Codex app-server runner reliability", () => {
       ]);
 
       try {
+        const transcript = await waitForTranscript(
+          runtime.eventPath,
+          new RegExp(`"type":"turn\\.${turnStatus === "completed" ? "completed" : "failed"}"`),
+        );
+        expect(runtime.child.exitCode).toBeNull();
+        runtime.child.kill("SIGTERM");
         const code = await waitForExit(runtime.child);
-        const transcript = await readFile(runtime.eventPath, "utf8");
         expect(code).toBe(turnStatus === "completed" ? 0 : 1);
         expect(transcript).toContain(turnStatus === "completed"
           ? '"type":"turn.completed"'
@@ -517,6 +528,9 @@ describe("Codex app-server runner reliability", () => {
         socket?.once("connect", resolve);
         socket?.once("error", reject);
       });
+      await waitForTranscript(runtime.eventPath, /"type":"turn\.completed"/);
+      expect(runtime.child.exitCode).toBeNull();
+      runtime.child.kill("SIGTERM");
       await expect(waitForExit(runtime.child, 4_000)).resolves.toBe(0);
       await expect(lstat(runtime.controlPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
