@@ -209,6 +209,31 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.options).toEqual([]);
   });
 
+  it("restores visible Terminal setup actions when an unavailable coding Provider omits them", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "opencode",
+        displayName: "OpenCode",
+        kind: "opencode",
+        availability: "unavailable",
+        installStatus: "installed",
+        authStatus: "unknown",
+        defaultModel: undefined,
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    const opencode = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "opencode_default")!;
+
+    expect(opencode.models).toEqual([]);
+    expect(opencode.setupActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "opencode_install", kind: "foreground_terminal" }),
+      expect.objectContaining({ id: "opencode_connect", kind: "foreground_terminal" }),
+    ]));
+  });
+
   it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),

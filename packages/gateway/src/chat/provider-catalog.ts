@@ -186,7 +186,9 @@ function codingInstance(
       : [],
     skills,
     commands: [],
-    setupActions: provider.setupActions,
+    setupActions: provider.setupActions.length > 0 || availability === "available"
+      ? provider.setupActions
+      : missingCodingSetupActions(driverKind),
     supports: codingSupports(driverKind, provider.supportedModes),
     ...(availability === "available" && visibleModels.length > 0 ? {
       defaultSelection: {
