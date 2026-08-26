@@ -80,7 +80,9 @@ function withQuery(path: string, values: Record<string, string | number | undefi
   return query ? `${path}?${query}` : path;
 }
 
-export function createCanonicalChatClient(api: ApiClient): CanonicalChatClient {
+export function createCanonicalChatClient(
+  api: Pick<ApiClient, "get" | "post" | "patch">,
+): CanonicalChatClient {
   return {
     async list(input = {}) {
       const parsed = CanonicalChatListInputSchema.parse(input);

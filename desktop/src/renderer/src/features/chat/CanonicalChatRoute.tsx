@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
 import { useBoard } from "../../stores/board";
+import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
 import { useTabs } from "../../stores/tabs";
 import { CanonicalChatWorkspace } from "./CanonicalChatWorkspace";
@@ -21,9 +22,31 @@ export function CanonicalChatRoute({
   active: boolean;
   fallback: ReactNode;
 }) {
-  const client = useMemo(() => (
-    api?.baseUrl ? createCanonicalChatClient(api) : null
-  ), [api]);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  const latestApi = useRef(api);
+  latestApi.current = api;
+  const clientIdentity = api?.baseUrl
+    ? `${api.baseUrl}\u0000${runtimeSlot}\u0000${authGeneration}`
+    : null;
+  const client = useMemo(() => {
+    if (!clientIdentity) return null;
+    const currentApi = () => {
+      if (!latestApi.current) throw new Error("ChatApiUnavailable");
+      return latestApi.current;
+    };
+    return createCanonicalChatClient({
+      get<T>(path: string) {
+        return currentApi().get<T>(path);
+      },
+      post<T>(path: string, body: unknown) {
+        return currentApi().post<T>(path, body);
+      },
+      patch<T>(path: string, body: unknown) {
+        return currentApi().patch<T>(path, body);
+      },
+    });
+  }, [clientIdentity]);
   const canonicalProjectId = useBoard((state) => {
     if (projectId === null) return null;
     return state.projects.find((project) => project.slug === projectId || project.id === projectId)?.id
