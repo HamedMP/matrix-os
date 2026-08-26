@@ -13,6 +13,17 @@ describe("canonical Chat submission", () => {
     })).toBe("Inspect this computer without modifying files");
   });
 
+  it("turns structured instruction prompts into topic-style titles", () => {
+    const prompt = "write exactly twelve numbered short lines, each starting mat480_stream_, and use the bash tool once to run printf mat480_tool_ok before the final answer.";
+
+    expect(canonicalChatTitle({
+      text: prompt,
+      agentPrompt: prompt,
+      invocations: [],
+      resources: [],
+    })).toBe("Mat480 stream lines");
+  });
+
   it("uses visible resource labels and omits leading slash commands from titles", () => {
     expect(canonicalChatTitle({
       text: "/matrix-app-builder inspect [CLAUDE.md](CLAUDE.md) and explain the app architecture in detail",

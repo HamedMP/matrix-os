@@ -318,10 +318,21 @@ export function SharedChatComposer({
       : 0;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   useEffect(() => setSuggestionIndex(0), [resourceQuery, slashQuery]);
+  const currentSubmission = () => {
+    const editorValue = editorRef.current?.readValue();
+    return buildSharedChatComposerSubmission(
+      editorValue?.value ?? value,
+      editorValue?.tokens ?? referenceTokens,
+    );
+  };
   const applySuggestion = (index: number) => {
     if (slashQuery !== null) {
       const entry = filteredSlashEntries[index];
       if (entry) {
+        // Dismiss synchronously. Lexical publishes the rewritten value on its
+        // update listener, so without this guard an immediate second Enter can
+        // still see the stale slash query and be swallowed by the old menu.
+        setDismissedSuggestionKey(suggestionKey);
         editorRef.current?.insertToken({
           type: "invocation",
           label: entry.displayName,
@@ -341,6 +352,9 @@ export function SharedChatComposer({
     }
     const resource = filteredResources[index - (canAttach ? 1 : 0)];
     if (resourceQuery !== null && resource) {
+      // Keep keyboard behavior deterministic after mouse or Enter selection:
+      // the next Enter belongs to the composer, not the stale resource menu.
+      setDismissedSuggestionKey(suggestionKey);
       editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`, cursor);
     }
   };
@@ -362,7 +376,7 @@ export function SharedChatComposer({
           && !disabled
           && (canSubmit ?? (value.trim().length > 0 || referenceTokens.length > 0))
         ) {
-          onSubmit(buildSharedChatComposerSubmission(value, referenceTokens));
+          onSubmit(currentSubmission());
         }
         return true;
       }
@@ -382,6 +396,7 @@ export function SharedChatComposer({
     return false;
   };
   const insertResource = (resource: CanonicalChatResourceReference) => {
+    setDismissedSuggestionKey(suggestionKey);
     editorRef.current?.insertToken(
       { type: "resource", resource },
       resourceQuery !== null ? `@${resourceMatch?.[1] ?? ""}` : "",
@@ -460,7 +475,7 @@ export function SharedChatComposer({
       <PromptInput
         value={value}
         onChange={onChange}
-        onSubmit={() => onSubmit(buildSharedChatComposerSubmission(value, referenceTokens))}
+        onSubmit={() => onSubmit(currentSubmission())}
         onAbort={onAbort}
         busy={busy}
         disabled={disabled}

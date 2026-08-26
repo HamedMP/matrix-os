@@ -345,6 +345,7 @@ function $selectAbsoluteOffset(offset: number): void {
 export interface ComposerPromptEditorHandle {
   focus: () => void;
   insertToken: (token: ComposerReferenceToken, trigger?: string, cursor?: number) => void;
+  readValue: () => { value: string; tokens: ComposerReferenceToken[] };
 }
 
 interface ComposerPromptEditorProps {
@@ -438,6 +439,10 @@ function ComposerPromptEditorInner({
 
   useImperativeHandle(editorRef, () => ({
     focus: focusEditor,
+    readValue: () => editor.getEditorState().read(() => ({
+      value: $serializePrompt(),
+      tokens: collectTokens($getRoot()),
+    })),
     insertToken: (token, trigger = "", cursor) => {
       focusEditor();
       editor.update(() => {
