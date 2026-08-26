@@ -666,6 +666,43 @@ describe("CanonicalChatOrchestrator", () => {
     expect(rejected?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
   });
 
+  it("commits successful output when terminal activity exceeds the persisted limit", async () => {
+    await repository.create(owner, {
+      id: "chat_terminal_activity_overflow",
+      clientRequestId: "req_create_terminal_activity_overflow",
+      title: "Terminal activity overflow",
+    });
+    const provider = adapter(async function* () {
+      for (let index = 0; index < 498; index += 1) {
+        yield { type: "assistant.delta", delta: "x" };
+      }
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_terminal_activity_overflow", {
+      clientRequestId: "req_terminal_activity_overflow_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "finish at the activity boundary" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const snapshot = await repository.exportChat(owner, "chat_terminal_activity_overflow");
+    expect(snapshot?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
+    expect(snapshot?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", state: "committed", parts: [{ type: "text", text: "x".repeat(498) }] }),
+    ]));
+    expect(snapshot?.activities).toHaveLength(500);
+  });
+
   it("terminalizes a Run when normalized activity exceeds the persisted limit", async () => {
     await repository.create(owner, {
       id: "chat_activity_overflow",

@@ -638,10 +638,19 @@ export class CanonicalChatOrchestrator {
       }
       if (!terminal) throw new Error("Provider completed without a terminal event");
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
-      if (terminal.error) {
-        await this.persistActivities(owner, run, [{ type: "run.error", error: terminal.error }], completedAt);
+      const terminalActivities: Array<Record<string, unknown>> = [
+        ...(terminal.error ? [{ type: "run.error", error: terminal.error }] : []),
+        { type: "run.status", status: terminal.outcome },
+      ];
+      try {
+        await this.persistActivities(owner, run, terminalActivities, completedAt);
+      } catch (activityError: unknown) {
+        if (!(activityError instanceof ChatConflictError)) throw activityError;
+        console.warn(
+          "[chat/orchestrator] Terminal Run activity exceeded the persisted limit; committing the terminal outcome:",
+          activityError.name,
+        );
       }
-      await this.persistActivities(owner, run, [{ type: "run.status", status: terminal.outcome }], completedAt);
       const output = text ? CanonicalChatMessageSchema.parse({
         id: `msg_${run.id.slice("run_".length)}_assistant`,
         chatId: run.chatId,
