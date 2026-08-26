@@ -13,7 +13,7 @@ import type {
 import type { Tab } from "../../stores/tabs";
 import { TabErrorBoundary, TabPane } from "../mission-control/TabContent";
 import type { NativeDesktopMode } from "../../stores/native-desktop-mode";
-import { OSWindow, TopBar } from "./OSWindow";
+import { OSWindow, OS_WINDOW_SIDEBAR_WIDTH, TopBar } from "./OSWindow";
 
 export default function DesktopSurfaceFrame({
   tab,
@@ -141,6 +141,17 @@ export default function DesktopSurfaceFrame({
   return (
     <OSWindow
       surfaceId={tab.id}
+      sidebarWidth={terminalOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
+      topBar={isWindow ? (
+        <TopBar
+          chromePlacement={terminalOwnsChrome ? "sidebar" : "full-width"}
+          sidebarWidth={terminalOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
+          onClose={onClose}
+          onMinimize={onMinimize}
+          onMaximize={onMaximize}
+          onDragStart={(event) => startPointerInteraction(event, "move")}
+        />
+      ) : null}
       role={isWindow && visible ? "dialog" : undefined}
       aria-label={isWindow && visible ? `${tab.title} window` : undefined}
       aria-hidden={!visible}
@@ -151,15 +162,6 @@ export default function DesktopSurfaceFrame({
       style={frameStyle}
       onPointerDown={isWindow ? onFocus : undefined}
     >
-      {isWindow ? (
-        <TopBar
-          chromePlacement={terminalOwnsChrome ? "sidebar" : "full-width"}
-          onClose={onClose}
-          onMinimize={onMinimize}
-          onMaximize={onMaximize}
-          onDragStart={(event) => startPointerInteraction(event, "move")}
-        />
-      ) : null}
       <div
         key="surface-content"
         data-testid={`desktop-surface-content-${tab.kind}`}

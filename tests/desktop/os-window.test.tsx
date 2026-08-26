@@ -7,12 +7,24 @@ import { OSWindow, TopBar } from "../../desktop/src/renderer/src/features/deskto
 
 describe("Electron OS window chrome", () => {
   it("uses the shared base surface for every OS window", () => {
-    const { container } = render(<OSWindow surfaceId="terminal-window" />);
+    const { container } = render(
+      <OSWindow surfaceId="terminal-window" sidebarWidth={280} topBar={<div data-test-top-bar />} className="absolute" />,
+    );
 
     const window = container.firstElementChild as HTMLElement;
     expect(window.style.background).toBe("var(--surface-base-background, #FFFFFD)");
+    expect(window.className).not.toContain("relative");
     expect(window.style.getPropertyValue("--bg-surface")).toBe("var(--surface-base-background, #FFFFFD)");
     expect(window.style.getPropertyValue("--bg-sunken")).toBe("var(--surface-base-background, #FFFFFD)");
+    const sidebar = container.querySelector("[data-os-window-sidebar]") as HTMLElement;
+    expect(sidebar.style.width).toBe("280px");
+    expect(sidebar.style.minWidth).toBe("200px");
+    expect(sidebar.style.maxWidth).toBe("280px");
+    expect(sidebar.style.borderRight).toBe("1px solid var(--border-default, #F3F2F2)");
+    expect(sidebar.className).not.toContain("absolute");
+    expect(container.querySelector("[data-os-window-main]")).toBeTruthy();
+    expect(container.querySelector("[data-os-window-body]")?.className).toContain("absolute");
+    expect(container.querySelector("[data-os-window-top-bar-overlay]")?.className).toContain("absolute");
   });
 
   it("keeps a full-width transparent gesture layer when Terminal controls use the sidebar", () => {

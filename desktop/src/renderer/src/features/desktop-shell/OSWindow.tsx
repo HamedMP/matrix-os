@@ -8,6 +8,8 @@ import {
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
 export const OS_WINDOW_GESTURE_HEIGHT = 38;
+export const OS_WINDOW_SIDEBAR_MIN_WIDTH = 200;
+export const OS_WINDOW_SIDEBAR_WIDTH = 280;
 export type OSWindowChromePlacement = "full-width" | "sidebar";
 
 export function TrafficLights({
@@ -41,7 +43,7 @@ export function TopBar({
   title,
   icon,
   chromePlacement = "full-width",
-  sidebarWidth = 280,
+  sidebarWidth = OS_WINDOW_SIDEBAR_WIDTH,
   onClose,
   onMinimize,
   onMaximize,
@@ -96,7 +98,21 @@ export function TopBar({
 }
 
 /** Shared transparent OS-view frame for every Electron app surface. */
-export function OSWindow({ surfaceId, style, ...props }: ComponentProps<"section"> & { surfaceId: string }) {
+export function OSWindow({
+  surfaceId,
+  sidebarWidth,
+  sidebar,
+  topBar,
+  className,
+  style,
+  children,
+  ...props
+}: ComponentProps<"section"> & {
+  surfaceId: string;
+  sidebarWidth?: number;
+  sidebar?: ReactNode;
+  topBar?: ReactNode;
+}) {
   const paneSurface = {
     background: SURFACE_BASE_BACKGROUND,
     "--bg-app": SURFACE_BASE_BACKGROUND,
@@ -105,5 +121,39 @@ export function OSWindow({ surfaceId, style, ...props }: ComponentProps<"section
     "--bg-sunken": SURFACE_BASE_BACKGROUND,
   } as CSSProperties;
 
-  return <section data-os-window data-desktop-surface={surfaceId} style={{ ...paneSurface, ...style }} {...props} />;
+  return (
+    <section
+      data-os-window
+      data-desktop-surface={surfaceId}
+      className={`flex flex-col ${className ?? ""}`}
+      style={{ ...paneSurface, ...style }}
+      {...props}
+    >
+      <div data-os-window-body className="absolute inset-0 flex min-h-0">
+        {sidebarWidth ? (
+          <aside
+            data-os-window-sidebar
+            data-os-window-sidebar-divider
+            className="flex shrink-0 flex-col overflow-hidden"
+            style={{
+              width: sidebarWidth,
+              minWidth: OS_WINDOW_SIDEBAR_MIN_WIDTH,
+              maxWidth: OS_WINDOW_SIDEBAR_WIDTH,
+              borderRight: "1px solid var(--border-default, #F3F2F2)",
+            }}
+          >
+            {sidebar}
+          </aside>
+        ) : null}
+        <main data-os-window-main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          {children}
+        </main>
+      </div>
+      {topBar ? (
+        <div data-os-window-top-bar-overlay className="absolute inset-x-0 top-0 z-20">
+          {topBar}
+        </div>
+      ) : null}
+    </section>
+  );
 }
