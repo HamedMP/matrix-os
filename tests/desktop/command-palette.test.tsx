@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../desktop/src/renderer/src/lib/feature-flags", () => ({
   CODING_AGENTS_DESKTOP_WORKSPACE: true,
+  NATIVE_DESKTOP_WINDOW_SHELL: true,
 }));
 
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
@@ -183,6 +184,15 @@ describe("CommandPalette", () => {
     render(<CommandPalette />);
 
     expect(screen.queryByText("Open Agents")).toBeNull();
+  });
+
+  it("opens the native App Launcher without creating an Apps tab", () => {
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Open Apps"));
+
+    expect(useUi.getState().appLauncherOpen).toBe(true);
+    expect(useTabs.getState().openTab).not.toHaveBeenCalledWith({ kind: "apps", title: "Apps" });
   });
 
   it("opens project results on the sessions overview instead of restoring a stale subview", () => {

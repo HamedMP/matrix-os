@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { Button } from "../../design/primitives";
+import { Button, ContextMenu } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import {
@@ -50,7 +50,6 @@ export interface BrowserSelection {
 }
 
 const NO_ENTRIES: BrowserEntry[] = [];
-const DIRECTORY_PREVIEW_DELAY_MS = 500;
 
 function joinPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
@@ -58,6 +57,10 @@ function joinPath(parent: string, name: string): string {
 
 function parentPath(path: string): string {
   return path.split("/").slice(0, -1).join("/");
+}
+
+function pathTitle(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? "Matrix home";
 }
 
 export default function ComputerFileBrowser({
@@ -70,6 +73,11 @@ export default function ComputerFileBrowser({
   onCreateFolder,
   resolveFolderChoice,
   onAlternateFolderAction,
+  initialPath = "",
+  onPathChange,
+  onOpenFolderInNewTab,
+  onRequestCreateFolder,
+  refreshRevision = 0,
 }: {
   compact?: boolean;
   // framed renders the browser as its own bordered card (dialogs, pickers).
@@ -85,6 +93,11 @@ export default function ComputerFileBrowser({
   onCreateFolder?: (path: string) => void;
   resolveFolderChoice?: (path: string) => FolderPickerChoice;
   onAlternateFolderAction?: (path: string) => void;
+  initialPath?: string;
+  onPathChange?: (path: string) => void;
+  onOpenFolderInNewTab?: (path: string, name: string) => void;
+  onRequestCreateFolder?: (parentPath: string) => void;
+  refreshRevision?: number;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -101,7 +114,7 @@ export default function ComputerFileBrowser({
     canGoForward,
     backPath,
     forwardPath,
-  } = useBrowserHistory();
+  } = useBrowserHistory(initialPath);
   const [candidatePath, setCandidatePath] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<BrowserEntry[]>([]);
@@ -112,7 +125,6 @@ export default function ComputerFileBrowser({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const requestGeneration = useRef(0);
-  const directoryPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entryRefs = useRef<Array<HTMLButtonElement | null>>([]);
   // Navigating into a directory or switching between the grid and list
   // branches unmounts the focused row. Without restoring focus it falls to
@@ -122,15 +134,12 @@ export default function ComputerFileBrowser({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepth = useRef(0);
   const [dragActive, setDragActive] = useState(false);
+  const [contextDirectory, setContextDirectory] = useState<{ path: string; name: string } | null>(null);
+  const refreshMounted = useRef(false);
 
   const markFocusForRestore = useCallback(() => {
     const active = document.activeElement;
     restoreFocusRef.current = entryRefs.current.some((el) => el !== null && el === active);
-  }, []);
-  const cancelPendingDirectoryPreview = useCallback(() => {
-    if (directoryPreviewTimer.current === null) return;
-    clearTimeout(directoryPreviewTimer.current);
-    directoryPreviewTimer.current = null;
   }, []);
   const gridRef = useRef<HTMLDivElement | null>(null);
   // Listings belong to one computer/session. Derive the rendered view
@@ -215,33 +224,38 @@ export default function ComputerFileBrowser({
   useEffect(() => {
     setLoadedScope(browserScope);
     resetHistory();
-    setCandidatePath("");
+    setCandidatePath(initialPath);
     setSelectedPath(null);
     setSearchOpen(false);
     setSearchQuery("");
-    void load("");
+    void load(initialPath);
     return () => {
-      cancelPendingDirectoryPreview();
       requestGeneration.current += 1;
     };
-  }, [browserScope, cancelPendingDirectoryPreview, load, resetHistory]);
+  }, [browserScope, initialPath, load, resetHistory]);
+
+  useEffect(() => {
+    if (!refreshMounted.current) {
+      refreshMounted.current = true;
+      return;
+    }
+    if (!scoped) return;
+    void load(viewCurrentPath);
+    // refreshRevision is an explicit request from the owning tab after a
+    // mutation. Path/load identity are intentionally stable here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshRevision]);
 
   const commitNavigation = useCallback((path: string, entry?: BrowserEntry) => {
-    cancelPendingDirectoryPreview();
     markFocusForRestore();
     setCandidatePath(path);
     setSelectedPath(null);
     setSearchOpen(false);
     setSearchQuery("");
-    onSelectionChange?.({
-      path,
-      entry: entry ?? {
-        name: path ? path.split("/").pop() ?? path : "Matrix home",
-        type: "directory",
-      },
-    });
+    onSelectionChange?.(null);
+    onPathChange?.(path);
     void load(path);
-  }, [cancelPendingDirectoryPreview, load, markFocusForRestore, onSelectionChange]);
+  }, [load, markFocusForRestore, onPathChange, onSelectionChange]);
 
   const navigate = useCallback((path: string, entry?: BrowserEntry) => {
     pushPath(path);
@@ -268,21 +282,13 @@ export default function ComputerFileBrowser({
   // browser/preview split behaves like a Finder column with Quick Look.
   const selectEntry = useCallback((entry: BrowserEntry, path: string) => {
     setSelectedPath(path);
-    cancelPendingDirectoryPreview();
     if (entry.type === "directory") {
       setCandidatePath(path);
-      // Defer the overview-to-split reflow until the platform double-click
-      // window closes. Otherwise the first click narrows the row before the
-      // second click lands, so a native double-click can miss the folder.
-      directoryPreviewTimer.current = setTimeout(() => {
-        directoryPreviewTimer.current = null;
-        onSelectionChange?.({ path, entry });
-      }, DIRECTORY_PREVIEW_DELAY_MS);
     } else {
       onSelectionChange?.({ path, entry });
       onOpenFile?.(path);
     }
-  }, [cancelPendingDirectoryPreview, onOpenFile, onSelectionChange]);
+  }, [onOpenFile, onSelectionChange]);
 
   // Double-click or Enter "opens": directories navigate, files preview.
   const activateEntry = useCallback((entry: BrowserEntry, path: string) => {
@@ -397,7 +403,7 @@ export default function ComputerFileBrowser({
     const buttons = sortedEntries.map((entry, index) => {
       const path = joinPath(viewCurrentPath, entry.name);
       const isCandidate = entry.type === "directory" && viewCandidatePath === path;
-      return (
+      const entryButton = (
         <EntryButton
           key={`${entry.type}:${path}`}
           entry={entry}
@@ -418,8 +424,10 @@ export default function ComputerFileBrowser({
           onDropFiles={mode === "browse" && entry.type === "directory" && !isManagedBrowserPath(path)
             ? (files) => enqueueFiles(files, path)
             : undefined}
+          contextPath={entry.type === "directory" ? path : undefined}
         />
       );
+      return entryButton;
     });
     content =
       view === "grid" ? (
@@ -513,8 +521,26 @@ export default function ComputerFileBrowser({
           }}
         />
       ) : null}
+      <ContextMenu items={mode === "browse"
+        ? [
+            ...(contextDirectory && onOpenFolderInNewTab
+              ? [{ label: "Open in new tab", onSelect: () => onOpenFolderInNewTab(contextDirectory.path, contextDirectory.name) }]
+              : []),
+            ...(onRequestCreateFolder && !isProtectedFolderCreationParentPath(contextDirectory?.path ?? viewCurrentPath)
+              ? [{ label: "New folder…", onSelect: () => onRequestCreateFolder(contextDirectory?.path ?? viewCurrentPath) }]
+              : []),
+          ]
+        : []}>
       <div
         data-files-listing
+        data-testid="files-listing"
+        onContextMenuCapture={(event) => {
+          const target = event.target;
+          const path = target instanceof Element
+            ? target.closest<HTMLElement>("[data-files-entry-path]")?.dataset.filesEntryPath
+            : undefined;
+          setContextDirectory(path ? { path, name: pathTitle(path) } : null);
+        }}
         className={`${compact ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto ${
           compact && view === "list" ? "px-1.5 pb-1.5" : compact || view === "grid" ? "p-1.5" : "pb-4"
         }`}
@@ -541,6 +567,7 @@ export default function ComputerFileBrowser({
           </div>
         ) : null}
       </div>
+      </ContextMenu>
 
       <UploadStatusList uploads={fileUploads.uploads} onRetry={fileUploads.retry} onRemove={fileUploads.remove} />
 

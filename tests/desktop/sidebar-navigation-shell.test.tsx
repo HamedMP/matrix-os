@@ -355,17 +355,33 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByRole("menuitem", { name: "Settings" })).toBeTruthy();
   });
 
+  it("balances the renderer overlay lease while the account menu is open", async () => {
+    renderSidebar();
+    const accountTrigger = screen.getByRole("button", { name: "Open account menu" });
+
+    fireEvent.pointerDown(accountTrigger, { button: 0, ctrlKey: false });
+    await screen.findByRole("menu", { name: "Account" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+  });
+
   it("offers the approved account actions and routes them through current behavior", async () => {
     renderSidebar();
     const trigger = screen.getByRole("button", { name: "Open account menu" });
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const menu = await screen.findByRole("menu", { name: "Account" });
+    expect(menu.style.borderRadius).toBe("12px");
+    expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(3);
+    expect(screen.getByText("Personal account")).toBeTruthy();
     expect(await screen.findByText("ada operator", { exact: false })).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)).toMatchObject({ kind: "settings" });
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "View all plans" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "View plans" }));
     expect(useUi.getState().requestedSettingsSection).toBe("billing");
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
@@ -373,7 +389,7 @@ describe("Desktop sidebar navigation shell", () => {
     expect(invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://matrix-os.com/docs" });
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Log out" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Logout" }));
     expect(signOut).toHaveBeenCalledOnce();
   });
 });

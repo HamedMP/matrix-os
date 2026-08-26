@@ -5,14 +5,12 @@ import SignIn from "./features/signin/SignIn";
 import MissionControl from "./features/mission-control/MissionControl";
 import DesktopUpdateExperience from "./features/updates/DesktopUpdateExperience";
 import { useAppearance } from "./stores/appearance";
-import { useTerminalAppearance } from "./stores/terminal-appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
 
 export default function App() {
   const status = useConnection((s) => s.status);
   const refresh = useConnection((s) => s.refresh);
   const loadAppearance = useAppearance((s) => s.load);
-  const loadTerminalAppearance = useTerminalAppearance((s) => s.load);
 
   useEffect(() => {
     wireConnectionEvents();
@@ -20,8 +18,7 @@ export default function App() {
     // Apply the persisted theme once at boot; tokens.css keeps the first paint
     // on the Matrix palette until this resolves.
     void loadAppearance();
-    void loadTerminalAppearance();
-  }, [loadAppearance, loadTerminalAppearance, refresh]);
+  }, [loadAppearance, refresh]);
 
   return (
     <Tooltip.Provider delayDuration={400} skipDelayDuration={200}>

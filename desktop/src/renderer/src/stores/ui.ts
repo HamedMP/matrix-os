@@ -11,12 +11,14 @@ interface UiState {
   composerOpen: boolean;
   paletteOpen: boolean;
   quickOpenOpen: boolean;
+  appLauncherOpen: boolean;
   // Native WebContentsViews always paint above the renderer. Any renderer
   // surface that crosses into an embed must hold one overlay lease so the
   // active embed can detach until that surface closes.
   rendererOverlayCount: number;
   sidebarCollapsed: boolean;
   homeRefreshRequest: number;
+  desktopBackgroundRefreshRequest: number;
   // One-shot request for which Settings section the next Settings render
   // should select (consumed and cleared by SettingsView).
   requestedSettingsSection: string | null;
@@ -27,11 +29,13 @@ interface UiState {
   setComposerOpen: (open: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   setQuickOpenOpen: (open: boolean) => void;
+  setAppLauncherOpen: (open: boolean) => void;
   acquireRendererOverlay: () => void;
   releaseRendererOverlay: () => void;
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   requestHomeRefresh: () => void;
+  requestDesktopBackgroundRefresh: () => void;
   requestSettingsSection: (section: string) => void;
   clearRequestedSettingsSection: () => void;
 }
@@ -43,9 +47,11 @@ export const useUi = create<UiState>()((set) => ({
   composerOpen: false,
   paletteOpen: false,
   quickOpenOpen: false,
+  appLauncherOpen: false,
   rendererOverlayCount: 0,
   sidebarCollapsed: false,
   homeRefreshRequest: 0,
+  desktopBackgroundRefreshRequest: 0,
   requestedSettingsSection: null,
   setCreateProjectOpen: (open) => set({ createProjectOpen: open }),
   openCreateProject: () => set({ createProjectOpen: true }),
@@ -54,6 +60,7 @@ export const useUi = create<UiState>()((set) => ({
   setComposerOpen: (open) => set({ composerOpen: open }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setQuickOpenOpen: (open) => set({ quickOpenOpen: open }),
+  setAppLauncherOpen: (open) => set({ appLauncherOpen: open }),
   acquireRendererOverlay: () => set((state) => ({
     rendererOverlayCount: state.rendererOverlayCount + 1,
   })),
@@ -64,6 +71,9 @@ export const useUi = create<UiState>()((set) => ({
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   requestHomeRefresh: () => set((state) => ({
     homeRefreshRequest: (state.homeRefreshRequest + 1) % 1_000_000,
+  })),
+  requestDesktopBackgroundRefresh: () => set((state) => ({
+    desktopBackgroundRefreshRequest: (state.desktopBackgroundRefreshRequest + 1) % 1_000_000,
   })),
   requestSettingsSection: (section) => set({ requestedSettingsSection: section }),
   clearRequestedSettingsSection: () => set({ requestedSettingsSection: null }),

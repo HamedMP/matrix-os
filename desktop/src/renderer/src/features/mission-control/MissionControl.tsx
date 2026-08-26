@@ -5,7 +5,10 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useWorkspace, type PanelLayout } from "../../stores/workspace";
-import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+import {
+  CODING_AGENTS_DESKTOP_WORKSPACE,
+  NATIVE_DESKTOP_WINDOW_SHELL,
+} from "../../lib/feature-flags";
 import Sidebar from "./Sidebar";
 import NavigationHeader from "./NavigationHeader";
 import TabContent from "./TabContent";
@@ -19,6 +22,9 @@ import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { useShellSessionSync } from "../../lib/shell-session-sync";
 import { preloadAppIcons, useApps } from "../../stores/apps";
+import NativeDesktopShell from "../desktop-shell/NativeDesktopShell";
+import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
+import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
 
 export function MissionControlContentSurface({
   collapsed,
@@ -56,14 +62,29 @@ export default function MissionControl() {
   const authGeneration = useConnection((s) => s.authGeneration);
   const loadProjects = useBoard((s) => s.loadProjects);
   const loadApps = useApps((s) => s.load);
+  const loadNativeDesktopMode = useNativeDesktopMode((s) => s.load);
   const openTab = useTabs((s) => s.openTab);
   const tabCount = useTabs((s) => s.tabs.length);
   const createProjectOpen = useUi((s) => s.createProjectOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const rendererOverlayOpen = useUi(
+    (s) =>
+      s.paletteOpen ||
+      s.composerOpen ||
+      s.quickOpenOpen ||
+      s.appLauncherOpen ||
+      s.createTaskOpen ||
+      s.createProjectOpen ||
+      s.rendererOverlayCount > 0,
+  );
 
   useGlobalShortcuts();
   useShellSessionSync(api, `${runtimeScope}|${authGeneration}|${runtimeSlot}`);
+
+  useEffect(() => {
+    if (NATIVE_DESKTOP_WINDOW_SHELL) void loadNativeDesktopMode();
+  }, [loadNativeDesktopMode]);
 
   useEffect(() => {
     const { configure, hydrate } = useWorkspace.getState();
@@ -85,7 +106,7 @@ export default function MissionControl() {
 
   useEffect(() => {
     // Open the Home tab on first mount so the workspace is never empty.
-    if (tabCount === 0) openTab({ kind: "home", title: "Home", closable: false });
+    if (!NATIVE_DESKTOP_WINDOW_SHELL && tabCount === 0) openTab(HOSTED_SHELL_TAB_SPEC);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -169,17 +190,28 @@ export default function MissionControl() {
   }, [api, runtimeScope, runtimeSlot]);
 
   return (
-    <div className="relative flex flex-1 overflow-hidden" style={{ background: "var(--bg-sunken)" }}>
-      <NavigationHeader />
-      <div
-        className="absolute bottom-0 left-0"
-        style={{ top: "var(--titlebar-height)" }}
-      >
-        <Sidebar />
-      </div>
-      <MissionControlContentSurface collapsed={sidebarCollapsed}>
-        <TabContent />
-      </MissionControlContentSurface>
+    <div
+      className="relative flex flex-1 overflow-hidden"
+      style={{
+        background: NATIVE_DESKTOP_WINDOW_SHELL ? "var(--bg-app)" : "var(--bg-sunken)",
+      }}
+    >
+      <NavigationHeader nativeDesktop={NATIVE_DESKTOP_WINDOW_SHELL} />
+      {NATIVE_DESKTOP_WINDOW_SHELL ? (
+        <NativeDesktopShell overlayOpen={rendererOverlayOpen} />
+      ) : (
+        <>
+          <div
+            className="absolute bottom-0 left-0"
+            style={{ top: "var(--titlebar-height)" }}
+          >
+            <Sidebar />
+          </div>
+          <MissionControlContentSurface collapsed={sidebarCollapsed}>
+            <TabContent />
+          </MissionControlContentSurface>
+        </>
+      )}
       <Composer />
       <CommandPalette />
       <QuickOpen />

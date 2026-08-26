@@ -74,7 +74,9 @@ describe("sidebar computer menu", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Change computer, currently Main Computer" })).not.toBeNull());
     fireEvent.pointerDown(screen.getByRole("button", { name: "Change computer, currently Main Computer" }), { button: 0, ctrlKey: false });
 
-    expect(screen.getByRole("menu", { name: "Choose computer" })).not.toBeNull();
+    const menu = screen.getByRole("menu", { name: "Choose computer" });
+    expect(menu.style.borderRadius).toBe("12px");
+    expect(menu).not.toBeNull();
     expect(screen.getByRole("menuitemradio", { name: /Main Computer.*Current/i }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("menuitemradio", { name: /Additional Computer.*Available/i })).not.toBeNull();
     expect(screen.getByRole("menuitemradio", { name: /Preview Computer.*Starting/i }).hasAttribute("data-disabled")).toBe(true);

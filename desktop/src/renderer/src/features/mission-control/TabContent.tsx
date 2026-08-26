@@ -16,6 +16,7 @@ import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";
 import ProjectsIndex from "../project/ProjectsIndex";
+import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -47,14 +48,26 @@ export class TabErrorBoundary extends Component<{
   }
 }
 
-function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
+export function TabPane({
+  tab,
+  active,
+  visible = active,
+  layoutRevision,
+  visualScale = 1,
+}: {
+  tab: Tab;
+  active: boolean;
+  visible?: boolean;
+  layoutRevision?: string;
+  visualScale?: number;
+}) {
   switch (tab.kind) {
     case "home":
-      return <HomeTab active={active} />;
+      return <HomeTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "chat":
       return <ChatTab active={active} initialChatId={tab.chatId} initialView={tab.chatView} />;
     case "terminals":
-      return <TerminalsTab active={active} />;
+      return <TerminalsTab active={active} visible={visible} />;
     case "files":
       return <FilesWorkspace />;
     case "apps":
@@ -62,7 +75,9 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "projects":
       return <ProjectsIndex />;
     case "app":
-      return tab.slug ? <EmbedHost kind="app" slug={tab.slug} active={active} /> : null;
+      return tab.slug
+        ? <EmbedHost kind="app" slug={tab.slug} appIdentity={tab.appIdentity} active={active} layoutRevision={layoutRevision} visualScale={visualScale} />
+        : null;
     case "project":
       return tab.projectSlug
         ? <ProjectTab projectSlug={tab.projectSlug} active={active} initialChatId={tab.chatId} />
@@ -121,7 +136,7 @@ export default function TabContent() {
             key={tab.id}
             active={active}
             className="absolute inset-0 flex min-h-0 flex-col"
-            background="var(--bg-app)"
+            background={SURFACE_BASE_BACKGROUND}
             data-tab-id={tab.id}
             data-tab-kind={tab.kind}
           >

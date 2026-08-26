@@ -14,6 +14,19 @@
   --bg-active: rgba(67, 78, 63, 0.1);
   --bg-selected: rgba(67, 78, 63, 0.08);
 
+  /* ── Figma semantic surfaces ────────────────────────────────── */
+  --surface-base-background: #fffffd;
+  --surface-primary: #fffefc;
+  --surface-overlay: #242323;
+  --surface-tertiary: #e1e0e0;
+  --surface-success: #eef7f2;
+
+  /* ── Desktop wallpaper mesh (kept in sync with the web shell) ─ */
+  --gradient-deep: #323d2e;
+  --gradient-mid: #9aa48c;
+  --gradient-light: #b8c4a8;
+  --gradient-accent: #6a8a7a;
+
   /* ── Brand surfaces (the dark forest panel) ─────────────────── */
   --forest: #434e3f;
   --forest-deep: #32352e;
@@ -32,6 +45,7 @@
   --border-subtle: #ebe9e1;
   --border-default: #d6d3c8;
   --border-strong: #c4c0b2;
+  --border-success: #34b275;
   --sidebar-divider: color-mix(in srgb, var(--border-subtle) 62%, transparent);
 
   /* ── Text ───────────────────────────────────────────────────── */
@@ -39,6 +53,7 @@
   --text-secondary: #5b5f53;
   /* WCAG AA: 4.99:1 on --bg-surface, 4.86:1 on --bg-app. */
   --text-tertiary: #73705f;
+  --text-subtle: #96968f;
   --text-disabled: #b5b1a3;
   --text-on-accent: #fafaf5;
 
@@ -56,9 +71,22 @@
   --danger-muted: rgba(200, 85, 61, 0.12);
   --info: #4a7c92;
   --info-muted: rgba(74, 124, 146, 0.12);
+  --surface-brand-emphasis: #748e59;
+  --surface-error-emphasis: #ba5236;
+  --surface-info-emphasis: #3b85ba;
+  --surface-inverse: #0d0c0c;
+  --surface-neutral-emphasis: #6b7280;
+  --surface-success-emphasis: #288a5b;
+  --surface-warning-emphasis: #e0aa52;
   --update-action: #2f9bff;
   --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.12);
+
+  /* Matrix-owned window chrome. These intentionally differ from macOS's
+     native traffic lights so the app boundary remains visually obvious. */
+  --matrix-window-close: #d06e53;
+  --matrix-window-minimize: #f1c379;
+  --matrix-window-maximize: #bed77b;
 
   /* ── Status (tasks / threads / sessions) ────────────────────── */
   --status-todo: #8a8576;
@@ -123,6 +151,12 @@
   --bg-active: rgba(140, 199, 190, 0.12);
   --bg-selected: rgba(140, 199, 190, 0.12);
 
+  --surface-base-background: #141614;
+  --surface-primary: #181c18;
+  --surface-overlay: #242323;
+  --surface-tertiary: #2a302c;
+  --surface-success: #173827;
+
   --forest: #1a1e1a;
   --forest-deep: #101210;
   --forest-foreground: #eaecea;
@@ -139,10 +173,12 @@
   --border-subtle: rgba(140, 199, 190, 0.1);
   --border-default: rgba(140, 199, 190, 0.16);
   --border-strong: rgba(140, 199, 190, 0.24);
+  --border-success: #3fae78;
 
   --text-primary: #eaecea;
   --text-secondary: #aab4ac;
   --text-tertiary: #7a8a80;
+  --text-subtle: #96968f;
   --text-disabled: #55605a;
   --text-on-accent: #141614;
 
@@ -151,6 +187,13 @@
   --accent-muted: rgba(140, 199, 190, 0.16);
   --highlight: #d8853f;
   --highlight-muted: rgba(216, 133, 63, 0.18);
+  --surface-brand-emphasis: #748e59;
+  --surface-error-emphasis: #ba5236;
+  --surface-info-emphasis: #3b85ba;
+  --surface-inverse: #0d0c0c;
+  --surface-neutral-emphasis: #6b7280;
+  --surface-success-emphasis: #288a5b;
+  --surface-warning-emphasis: #e0aa52;
   --update-action: #2f9bff;
   --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.18);

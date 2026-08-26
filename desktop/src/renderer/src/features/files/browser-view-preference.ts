@@ -20,6 +20,6 @@ interface BrowserViewPreferenceState {
 }
 
 export const useBrowserViewPreference = create<BrowserViewPreferenceState>()((set) => ({
-  view: "list",
+  view: "grid",
   setView: (view) => set({ view }),
 }));

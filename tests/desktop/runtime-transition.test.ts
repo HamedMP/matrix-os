@@ -15,6 +15,7 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
+import { useDesktopSurfaces } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
 
 describe("desktop runtime transition", () => {
   beforeEach(() => {
@@ -42,6 +43,19 @@ describe("desktop runtime transition", () => {
       loaded: true,
       loading: false,
       error: null,
+    });
+    useDesktopSurfaces.setState({
+      surfaces: {
+        "old-task": {
+          tabId: "old-task",
+          mode: "tab",
+          restoreMode: "tab",
+          bounds: { x: 12, y: 12, width: 800, height: 600 },
+          zIndex: 40,
+        },
+      },
+      workspaceView: "tabs",
+      nextZIndex: 41,
     });
     useCodingAgentWorkspace.setState({ activeThreadId: "thread_old", selectedReviewId: "review_old" });
     useProjectWorkspaces.setState({
@@ -78,6 +92,7 @@ describe("desktop runtime transition", () => {
     expect(useCodingAgentWorkspace.getState()).toMatchObject({ activeThreadId: null, selectedReviewId: null });
     expect(useProjectWorkspaces.getState().entries).toEqual({});
     expect(useProjectView.getState().entries).toEqual({});
+    expect(useDesktopSurfaces.getState()).toMatchObject({ surfaces: {}, workspaceView: "desktop" });
   });
 
   it("clears unsent chat drafts owned by the previous identity", () => {
@@ -115,7 +130,7 @@ describe("desktop runtime transition", () => {
     });
   });
 
-  it("reopens the Home tab so the desktop is never left blank after a switch", () => {
+  it("returns to the icon desktop without reopening the hosted web shell after a switch", () => {
     useTabs.getState().ensureNavigationScope("old-runtime");
     useTabs.getState().openTab({ kind: "terminal", sessionName: "old-shell", title: "old-shell" });
     useTabs.getState().recordRecentConversation("thread-old", "Old private thread");
@@ -126,11 +141,10 @@ describe("desktop runtime transition", () => {
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
 
     const { tabs, activeTabId, recentViews, viewHistory } = useTabs.getState();
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]).toMatchObject({ kind: "home", closable: false });
-    expect(activeTabId).toBe(tabs[0]?.id);
+    expect(tabs).toEqual([]);
+    expect(activeTabId).toBeNull();
     expect(recentViews).toEqual([]);
-    expect(viewHistory).toEqual([tabs[0]?.id]);
+    expect(viewHistory).toEqual([]);
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 

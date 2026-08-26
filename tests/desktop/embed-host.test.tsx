@@ -77,6 +77,43 @@ describe("EmbedHost", () => {
     });
   });
 
+  it("reports position-only changes when its desktop layout revision changes", async () => {
+    const view = render(<EmbedHost kind="hosted-shell" layoutRevision="window:10:20:300:200" />);
+    await act(async () => {
+      openResolve?.({ embedId: "embed-1", state: "loading" });
+    });
+    vi.mocked(invoke).mockClear();
+    rect = { left: 90, top: 120, width: 300, height: 200 };
+
+    view.rerender(<EmbedHost kind="hosted-shell" layoutRevision="window:90:120:300:200" />);
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:set-bounds", {
+        embedId: "embed-1",
+        bounds: { x: 90, y: 120, width: 300, height: 200 },
+      });
+    });
+  });
+
+  it("resynchronizes native bounds and page scale when the Canvas transform changes", async () => {
+    const view = render(<EmbedHost kind="app" slug="notes" layoutRevision="canvas:0:0:1" visualScale={1} />);
+    await act(async () => {
+      openResolve?.({ embedId: "embed-1", state: "loading" });
+    });
+    vi.mocked(invoke).mockClear();
+    rect = { left: -180, top: 75, width: 450, height: 300 };
+
+    view.rerender(<EmbedHost kind="app" slug="notes" layoutRevision="canvas:-200:50:0.5" visualScale={0.5} />);
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:set-scale", { embedId: "embed-1", factor: 0.5 });
+      expect(invoke).toHaveBeenCalledWith("embed:set-bounds", {
+        embedId: "embed-1",
+        bounds: { x: -180, y: 75, width: 450, height: 300 },
+      });
+    });
+  });
+
   it("restores the auth retry prompt when retryAuth returns ok false", async () => {
     vi.mocked(invoke).mockImplementation((channel: string) => {
       if (channel === "embed:open") {

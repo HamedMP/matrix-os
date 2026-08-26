@@ -157,6 +157,10 @@ describe("sortBrowserEntries", () => {
 describe("ComputerFileBrowser view options", () => {
   let api: ReturnType<typeof makeApi>;
 
+  it("uses folder-style grid view by default", () => {
+    expect(useBrowserViewPreference.getInitialState().view).toBe("grid");
+  });
+
   beforeEach(() => {
     api = makeApi();
     useBrowserViewPreference.setState({ view: "list" });

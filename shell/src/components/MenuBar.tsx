@@ -13,6 +13,7 @@ import { isSelfHostedDocument } from "@/lib/self-host-mode";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { useOsSessionStore } from "./os-session/os-session-store";
 import { useThemeStyle } from "./window/useThemeStyle";
+import { TrafficLights } from "./window/TrafficLights";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { EllipsisIcon } from "lucide-react";
 
@@ -449,11 +450,29 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
       : []),
   ];
   const activeAppLabel = <span className="block min-w-0 truncate">{activeAppName}</span>;
+  const toggleFocusedWindowFullscreen = () => {
+    if (focusedWindow) useWindowManager.getState().toggleFullscreen(focusedWindow.id);
+  };
+  const topBarTrafficLights = (
+    <div className="flex h-full w-[78px] shrink-0 items-center justify-center border-r border-black/[0.06] dark:border-white/[0.1]">
+      <TrafficLights
+        className="relative z-10"
+        onClose={() => { if (focusedWindow) closeWindow(focusedWindow.id); }}
+        onMinimize={() => { if (focusedWindow) minimizeWindow(focusedWindow.id); }}
+        onFullscreen={toggleFocusedWindowFullscreen}
+      />
+    </div>
+  );
 
   const macGlassMenuBar = isMacGlass ? (
-    <header data-menu-bar className="fixed top-0 inset-x-0 hidden h-8 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-3 text-[13px] leading-none select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm md:grid" style={{ zIndex: SHELL_Z_INDEX.menuBar }}>
+    <header data-menu-bar className="fixed top-0 inset-x-0 hidden h-[38px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center text-[12px] leading-none select-none bg-[#f4f7ed]/82 text-[#242323] backdrop-blur-[68px] border-b border-white/30 shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-card/70 dark:text-foreground md:grid" style={{ zIndex: SHELL_Z_INDEX.menuBar }}>
       {/* Left: Apple menu + bold app menu + global menus */}
-      <div className="flex min-w-0 items-center gap-0.5 whitespace-nowrap font-medium">
+      <div className="flex h-full min-w-0 items-center whitespace-nowrap font-medium">
+        {topBarTrafficLights}
+        <div data-top-bar-tabs className="flex h-full shrink-0 items-stretch border-r border-black/[0.06] dark:border-white/[0.1]">
+          <ModeSwitcherBar />
+        </div>
+        <div className="flex min-w-0 items-center gap-0.5 px-2">
         <MenuDropdown label={<AppleLogoIcon className="size-3.5" />} ariaLabel="Apple menu" items={appleItems} open={openMenu === "apple"} onToggle={() => toggleMenu("apple")} onClose={closeMenu} />
         <MenuDropdown label={activeAppLabel} ariaLabel={activeAppName} title={activeAppName} triggerClassName="min-w-0 max-w-24 lg:max-w-56" items={appItems} open={openMenu === "app"} onToggle={() => toggleMenu("app")} onClose={closeMenu} bold />
         <div data-testid="full-application-actions" className="hidden items-center gap-0.5 lg:flex">
@@ -464,16 +483,16 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
           <MenuDropdown label="Help" items={helpItems} open={openMenu === "help"} onToggle={() => toggleMenu("help")} onClose={closeMenu} />
         </div>
         <ApplicationActionsMenu sections={compactSections} />
+        </div>
       </div>
 
       {/* Center: mode switcher + contextual toolbar controls — always centered via grid */}
       <div className="flex min-w-0 items-center gap-0.5 whitespace-nowrap text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
-        <ModeSwitcherBar />
         {children}
       </div>
 
       {/* Right: status icons + Control Center + clock + fast-user-switching avatar */}
-      <div className="flex min-w-0 items-center justify-end gap-0.5 whitespace-nowrap text-foreground/70">
+      <div className="flex h-full min-w-0 items-center justify-end whitespace-nowrap text-[#242323]/70 dark:text-foreground/70">
         <span className="hidden items-center px-1 lg:flex" aria-hidden="true">
           <BatteryFullIcon className="size-4" />
         </span>
@@ -482,7 +501,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
         </span>
         <button
           type="button"
-          className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
+          className="flex h-full items-center border-l border-r border-black/[0.06] px-3 hover:bg-black/[0.04] dark:border-white/[0.1] dark:hover:bg-white/10"
           onClick={onOpenCommandPalette}
           title="Spotlight (Cmd+K)"
           aria-label="Spotlight search"
@@ -492,7 +511,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
         {onOpenSettings ? (
           <button
             type="button"
-            className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
+            className="flex h-full items-center border-r border-black/[0.06] px-3 hover:bg-black/[0.04] dark:border-white/[0.1] dark:hover:bg-white/10"
             onClick={onOpenSettings}
             title="Control Center"
             aria-label="Control Center"
@@ -504,10 +523,10 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
             <ControlCenterIcon className="size-3.5" />
           </span>
         )}
-        <button type="button" className="px-2 py-0.5 rounded hover:bg-foreground/10 text-foreground/80">
+        <button type="button" className="hidden h-full items-center px-2 hover:bg-black/[0.04] text-[#242323]/80 dark:text-foreground/80 lg:flex">
           <MenuBarClock format={formatMacMenuBarClock} compactFormat={formatCompactMacMenuBarClock} />
         </button>
-        <div className="pl-0.5">
+        <div className="flex h-full items-center border-l border-black/[0.06] px-2 dark:border-white/[0.1]">
           <MenuBarUser onOpenSettings={onOpenSettings} />
         </div>
       </div>
@@ -517,9 +536,14 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
   return (
     <>
       {macGlassMenuBar ?? (
-      <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden h-8 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-3 text-[13px] leading-none select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm md:grid">
+      <header data-menu-bar className="fixed top-0 inset-x-0 hidden h-[38px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center text-[12px] leading-none select-none bg-[#f4f7ed]/82 text-[#242323] backdrop-blur-[68px] border-b border-white/30 shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-card/70 dark:text-foreground md:grid" style={{ zIndex: SHELL_Z_INDEX.menuBar }}>
         {/* Left: app icon + app menu + global menus */}
-        <div className="flex min-w-0 items-center gap-0.5 whitespace-nowrap">
+        <div className="flex h-full min-w-0 items-center whitespace-nowrap">
+          {topBarTrafficLights}
+          <div data-top-bar-tabs className="flex h-full shrink-0 items-stretch border-r border-black/[0.06] dark:border-white/[0.1]">
+            <ModeSwitcherBar />
+          </div>
+          <div className="flex min-w-0 items-center gap-0.5 px-2">
           <div className="flex shrink-0 items-center px-2 py-0.5 rounded">
             {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- active app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image */}
             <img
@@ -542,29 +566,40 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
             <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
           </div>
           <ApplicationActionsMenu sections={compactSections} />
+          </div>
         </div>
 
         {/* Center: mode switcher + contextual toolbar controls — always centered via grid */}
         <div className="flex min-w-0 items-center gap-0.5 whitespace-nowrap text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
-          <ModeSwitcherBar />
           {children}
         </div>
 
         {/* Right: Search + clock + user */}
-        <div className="flex min-w-0 items-center justify-end gap-1 whitespace-nowrap">
+        <div className="flex h-full min-w-0 items-center justify-end whitespace-nowrap">
           <button
             type="button"
-            className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
+            className="flex h-full items-center border-l border-r border-black/[0.06] px-3 hover:bg-black/[0.04] dark:border-white/[0.1] dark:hover:bg-white/10"
             onClick={onOpenCommandPalette}
             title="Search (Cmd+K)"
             aria-label="Search"
           >
             <SearchIcon className="size-3.5 text-foreground/70" />
           </button>
-          <button type="button" className="px-2 py-0.5 rounded hover:bg-foreground/10 text-foreground/80">
+          {onOpenSettings ? (
+            <button
+              type="button"
+              className="flex h-full items-center border-r border-black/[0.06] px-3 hover:bg-black/[0.04] dark:border-white/[0.1] dark:hover:bg-white/10"
+              onClick={onOpenSettings}
+              title="System settings"
+              aria-label="System settings"
+            >
+              <ControlCenterIcon className="size-3.5" />
+            </button>
+          ) : null}
+          <button type="button" className="hidden h-full items-center px-2 hover:bg-black/[0.04] text-[#242323]/80 dark:text-foreground/80 lg:flex">
             <MenuBarClock />
           </button>
-          <div className="pl-0.5">
+          <div className="flex h-full items-center border-l border-black/[0.06] px-2 dark:border-white/[0.1]">
             <MenuBarUser onOpenSettings={onOpenSettings} />
           </div>
         </div>

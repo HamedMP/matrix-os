@@ -127,6 +127,16 @@ describe("local store", () => {
     await expect(store.setUnknown("appearance", { theme: "dark", zoom: 0.1 })).rejects.toThrow();
   });
 
+  it("persists only supported native desktop modes", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+
+    await store.set("desktopShell", { mode: "canvas" });
+
+    expect(await store.get("desktopShell")).toEqual({ mode: "canvas" });
+    await expect(store.setUnknown("desktopShell", { mode: "ambient" })).rejects.toThrow();
+    await expect(store.setUnknown("desktopShell", { mode: "canvas", privateState: true })).rejects.toThrow();
+  });
+
   it("persists only a bounded Terminal-local light or dark preference", async () => {
     const store = createLocalStore({ dir: await makeDir() });
 

@@ -60,7 +60,8 @@ function makeApi(overrides?: ApiOverrides) {
     overrides?.textFor ? overrides.textFor(path) : "# Matrix files\n\nA remote home you can inspect.",
   );
   const getBlob = vi.fn(async () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: "image/png" }));
-  return { get, getText, getBlob, baseUrl: "https://app.matrix-os.com" };
+  const post = vi.fn(async () => ({ ok: true }));
+  return { get, getText, getBlob, post, baseUrl: "https://app.matrix-os.com" };
 }
 
 async function flushMicrotasks(): Promise<void> {
@@ -111,60 +112,112 @@ describe("Files workspace", () => {
     ]);
   });
 
-  it("starts with the Figma-width overview and opens a split preview after selection", async () => {
+  it("keeps folders in one pane and opens a selected file in an optional preview", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
-    await screen.findByRole("button", { name: "Open README.md" });
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
 
-    const panes = screen.getByTestId("files-workspace-panes");
-    expect(panes.getAttribute("data-layout")).toBe("overview");
-    const homeContent = within(panes).getByTestId("files-home-content");
-    expect(homeContent.className).toContain("max-w-[1052px]");
-    expect(homeContent.className).toContain("px-4");
-    expect(homeContent.className).toContain("pt-4");
-    expect(within(panes).queryByRole("region", { name: "File preview" })).toBeNull();
+    fireEvent.click(workspaces);
+    expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+    expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("browser");
 
-    fireEvent.click(screen.getByRole("button", { name: "Open workspaces" }));
-
-    await waitFor(() => expect(panes.getAttribute("data-layout")).toBe("split"));
-    expect(await within(panes).findByRole("region", { name: "File preview" })).toBeTruthy();
-    expect(within(panes).getByRole("heading", { name: "workspaces" })).toBeTruthy();
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces"));
-    expect(within(panes).getByText("hero.png")).toBeTruthy();
-  });
-
-  it("opens nested folders and file previews from the preview grid", async () => {
-    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Open workspaces" }));
-    const preview = await screen.findByRole("region", { name: "File preview" });
-
-    fireEvent.click(await within(preview).findByRole("button", {
-      name: "Open matrix-os in preview",
-    }));
-    expect(await within(preview).findByRole("heading", { name: "matrix-os" })).toBeTruthy();
-
-    fireEvent.click(await within(preview).findByRole("button", {
-      name: "Open packages in preview",
-    }));
-    expect(await within(preview).findByRole("heading", { name: "packages" })).toBeTruthy();
-    expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces%2Fmatrix-os%2Fpackages");
-
-    fireEvent.click(within(preview).getByRole("button", { name: "Back in preview" }));
-    fireEvent.click(within(preview).getByRole("button", { name: "Back in preview" }));
-    fireEvent.click(await within(preview).findByRole("button", {
-      name: "Open app.ts in preview",
-    }));
-    expect(await within(preview).findByText(/A remote home you can inspect/)).toBeTruthy();
+    fireEvent.doubleClick(workspaces);
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(await screen.findByRole("region", { name: "File preview" })).toBeTruthy();
+    expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("preview");
   });
 
   it("shows the designed empty-folder preview state", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
-    fireEvent.click(await screen.findByRole("button", { name: "Open empty" }));
 
-    expect(await screen.findByRole("heading", { name: "This folder is empty" })).toBeTruthy();
-    expect(screen.getByText("No files or folders inside.")).toBeTruthy();
-    expect(api.getText).not.toHaveBeenCalled();
-    expect(api.getBlob).not.toHaveBeenCalled();
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open empty" }));
+
+    expect(await screen.findByText("This folder is empty.")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+  });
+
+  it("opens a folder in a retained Files tab from its context menu", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+
+    fireEvent.contextMenu(workspaces);
+    fireEvent.click(await screen.findByText("Open in new tab"));
+
+    expect((await screen.findByRole("tab", { name: "workspaces" })).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Matrix home" }).getAttribute("aria-selected")).toBe("false");
+    expect(await screen.findByRole("button", { name: "Open app.ts" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Matrix home" }));
+    expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
+  });
+
+  it("creates a folder from the listing context menu and refreshes the active tab", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open workspaces" });
+
+    fireEvent.contextMenu(screen.getAllByTestId("files-listing").at(-1)!);
+    fireEvent.click(await screen.findByText("New folder…"));
+    const folderNameInput = screen.getByRole("textbox", { name: "Folder name" });
+    expect(document.activeElement).toBe(folderNameInput);
+    fireEvent.change(folderNameInput, { target: { value: "Ideas" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create folder" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/files/mkdir", { path: "Ideas" }));
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps folder creation scoped to the tab that opened the dialog", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+    fireEvent.contextMenu(workspaces);
+    fireEvent.click(await screen.findByText("Open in new tab"));
+    await screen.findByRole("button", { name: "Open app.ts" });
+
+    fireEvent.contextMenu(screen.getAllByTestId("files-listing").at(-1)!);
+    fireEvent.click(await screen.findByText("New folder…"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder name" }), {
+      target: { value: "Ideas" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Matrix home", hidden: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Create folder" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/files/mkdir",
+      { path: "workspaces/Ideas" },
+    ));
+    await waitFor(() => expect(api.get.mock.calls.filter(
+      ([path]) => path === "/api/files/list?path=workspaces",
+    )).toHaveLength(2));
+    expect(api.get.mock.calls.filter(
+      ([path]) => path === "/api/files/list?path=",
+    )).toHaveLength(1);
+  });
+
+  it("cancels folder creation when the selected computer changes", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open workspaces" });
+
+    fireEvent.contextMenu(screen.getByTestId("files-listing"));
+    fireEvent.click(await screen.findByText("New folder…"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder name" }), {
+      target: { value: "Ideas" },
+    });
+    act(() => {
+      useConnection.setState({ runtimeSlot: "pr-920" });
+    });
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New folder" })).toBeNull());
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("closes the optional preview without changing the open folder", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(await screen.findByRole("region", { name: "File preview" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
+    expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open app.ts" })).toBeTruthy();
   });
 
   it("shows an unsupported state without reading unknown file bytes", async () => {
@@ -229,85 +282,6 @@ describe("Files workspace", () => {
     expect(screen.getByRole("button", { name: "workspaces" })).not.toBeNull();
   });
 
-  it("keeps the Preview pane mounted while navigating root to child to grandchild", async () => {
-    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
-    const panes = screen.getByTestId("files-workspace-panes");
-
-    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
-    fireEvent.doubleClick(workspaces);
-
-    const matrixOs = await screen.findByRole("button", { name: "Open matrix-os" });
-    expect(panes.getAttribute("data-layout")).toBe("split");
-    expect(within(panes).getByRole("region", { name: "File preview" })).toBeTruthy();
-    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "workspaces" })).toBeTruthy();
-
-    fireEvent.doubleClick(matrixOs);
-
-    const packages = await screen.findByRole("button", { name: "Open packages" });
-    expect(panes.getAttribute("data-layout")).toBe("split");
-    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "matrix-os" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "workspaces" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "matrix-os" })).toBeTruthy();
-
-    fireEvent.doubleClick(packages);
-
-    expect(await screen.findByRole("button", { name: "Open gateway" })).toBeTruthy();
-    expect(panes.getAttribute("data-layout")).toBe("split");
-    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "packages" })).toBeTruthy();
-    expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces%2Fmatrix-os%2Fpackages");
-
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(await screen.findByRole("button", { name: "Open package.json" })).toBeTruthy();
-    expect(panes.getAttribute("data-layout")).toBe("split");
-    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "matrix-os" })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Forward" }));
-    expect(await screen.findByRole("button", { name: "Open gateway" })).toBeTruthy();
-    expect(panes.getAttribute("data-layout")).toBe("split");
-    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "packages" })).toBeTruthy();
-  });
-
-  it("keeps the Preview pane mounted when Matrix home returns to root", async () => {
-    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
-    const panes = screen.getByTestId("files-workspace-panes");
-
-    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
-    await screen.findByRole("button", { name: "Open matrix-os" });
-    fireEvent.click(screen.getByRole("button", { name: "Matrix home" }));
-
-    expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
-    expect(panes.getAttribute("data-layout")).toBe("split");
-    const preview = screen.getByRole("region", { name: "File preview" });
-    expect(within(preview).getByRole("heading", { name: "Matrix home" })).toBeTruthy();
-    expect(await within(preview).findByText("README.md")).toBeTruthy();
-  });
-
-  it("keeps the Preview pane mounted when Up returns from a top-level folder to root", async () => {
-    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
-    const panes = screen.getByTestId("files-workspace-panes");
-
-    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
-    await screen.findByRole("button", { name: "Open matrix-os" });
-    fireEvent.click(screen.getByRole("button", { name: "Up one level" }));
-
-    expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
-    expect(panes.getAttribute("data-layout")).toBe("split");
-    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "Matrix home" })).toBeTruthy();
-  });
-
-  it("keeps the Preview pane mounted when Back history returns to root", async () => {
-    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
-    const panes = screen.getByTestId("files-workspace-panes");
-
-    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
-    await screen.findByRole("button", { name: "Open matrix-os" });
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-
-    expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
-    expect(panes.getAttribute("data-layout")).toBe("split");
-    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "Matrix home" })).toBeTruthy();
-  });
-
   it("previews bounded code as selectable text", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
@@ -368,7 +342,7 @@ describe("Files workspace", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
-      expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("overview");
+      expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("browser");
       expect(api.get).toHaveBeenCalledWith("/api/files/list?path=");
     });
     expect(api.getText).not.toHaveBeenCalled();
@@ -467,7 +441,7 @@ describe("Files workspace", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
-      expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("overview");
+      expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("browser");
       expect(api.get).toHaveBeenCalledWith("/api/files/list?path=");
     });
     expect(api.getText).not.toHaveBeenCalled();

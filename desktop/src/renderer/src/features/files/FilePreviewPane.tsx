@@ -6,6 +6,7 @@ import {
   LoaderCircle,
   ShieldAlert,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import { lazy, useEffect, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
@@ -319,14 +320,10 @@ export function FilePreview({
   return <EmptyState icon={<FileQuestion size={26} />} headline="Preview not available" description="This file type can’t be previewed here." />;
 }
 
-export function PreviewPane({ selection }: { selection: PreviewSelection }) {
+export function PreviewPane({ selection, onClose }: { selection: PreviewSelection; onClose?: () => void }) {
   const [history, setHistory] = useState<PreviewSelection[]>([selection]);
   const activeSelection = history.at(-1) ?? selection;
   const { entry, path } = activeSelection;
-
-  useEffect(() => {
-    setHistory([selection]);
-  }, [selection.entry, selection.path]);
 
   const metadata = isManagedBrowserPath(path)
     ? "Managed · Read only"
@@ -358,6 +355,11 @@ export function PreviewPane({ selection }: { selection: PreviewSelection }) {
           <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }} title={entry.name}>{entry.name}</h2>
           {metadata ? <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{metadata}</p> : null}
         </div>
+        {onClose ? (
+          <button type="button" aria-label="Close preview" onClick={onClose} className="ml-auto flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}>
+            <X size={16} />
+          </button>
+        ) : null}
       </header>
       <FilePreview
         path={path}

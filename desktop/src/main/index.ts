@@ -4,6 +4,7 @@ import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
 import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
+import { NativeAppBridge, createNativeAppQueryRequester } from "./embeds/native-app-bridge";
 import {
   abortCodingAgentThread,
   createCodingAgentSourcePullRequest,
@@ -101,7 +102,9 @@ async function openExternalHttpUrl(url: string): Promise<void> {
 function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const win = new BrowserWindow({
     ...bounds,
-    titleBarStyle: "hiddenInset",
+    // Let the renderer's active surface continue beneath the macOS controls
+    // instead of retaining an opaque native title-bar material.
+    titleBarStyle: "hidden",
     trafficLightPosition: { x: 14, y: 13 },
     backgroundColor: "#0e0e13",
     show: false,
@@ -217,11 +220,22 @@ if (!gotLock) {
         : "null";
       installGatewayCors(session.defaultSession, () => auth.getGatewayOrigin(), rendererOrigin);
 
+      const nativeAppBridge = new NativeAppBridge({
+        gatewayOrigin: () => auth.getGatewayOrigin(),
+        request: createNativeAppQueryRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
+      });
+      nativeAppBridge.registerIpc(ipcMain);
+
       const embeds = new EmbedService({
         getWindow: () => mainWindow,
         getGatewayOrigin: () => auth.getGatewayOrigin(),
         getToken: () => auth.getToken(),
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
+        appBridge: nativeAppBridge,
+        appPreloadPath: join(__dirname, "../preload/index.cjs"),
       });
       const updater = createUpdater({
         onAvailable: (version) => {
@@ -371,6 +385,7 @@ if (!gotLock) {
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
+          embeds.closeAll();
           codingAgentThreadEvents.closeAll();
           mainWindow = null;
         });

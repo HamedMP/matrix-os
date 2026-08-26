@@ -332,6 +332,14 @@ describe("Desktop navigation header", () => {
     expect(useUi.getState().sidebarCollapsed).toBe(false);
   });
 
+  it("removes sidebar-only chrome for the native desktop shell", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
+    expect(screen.getByRole("banner").style.gridTemplateColumns)
+      .toBe("96px minmax(0, 1fr)");
+  });
+
   it("matches the Figma top-bar geometry and navigation-action order", () => {
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 
@@ -379,6 +387,25 @@ describe("Desktop navigation header", () => {
       useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
     });
     expect(screen.queryByRole("menuitem", { name: "Refresh Home" })).toBeNull();
+  });
+
+  it("uses permanent workspace tabs instead of Browser breadcrumbs or actions in native desktop", () => {
+    useTabs.getState().openTab({ kind: "home", title: "Browser", closable: false });
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    expect(screen.getByRole("tab", { name: "Desktop" })).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions for Browser" })).toBeNull();
+  });
+
+  it("uses Figma-style native top-bar controls without a mode switcher", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    const desktopTab = screen.getByRole("tab", { name: "Desktop" });
+    expect(desktopTab.textContent).toBe("");
+    expect(screen.getByRole("tab", { name: "Sidebar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
+    expect(screen.queryByLabelText("Workspace mode")).toBeNull();
   });
 
   it("shows the current Terminal session in the breadcrumb and returns through the shared root", () => {

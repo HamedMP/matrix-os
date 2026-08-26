@@ -122,13 +122,14 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
             side="bottom"
             align="start"
             sideOffset={4}
-            className="relative overflow-hidden rounded-xl border p-1 outline-none"
+            className="relative overflow-hidden border p-1 outline-none"
             style={{
               zIndex: DESKTOP_Z_INDEX.popover,
               width: "var(--sidebar-menu-width)",
               borderColor: "var(--border-default)",
               background: "var(--bg-overlay)",
               boxShadow: "var(--shadow-2)",
+              borderRadius: "12px",
             }}
           >
             <div className="flex items-center px-2 py-1.5 pr-8">
@@ -158,7 +159,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
                     key={computer.runtimeSlot}
                     value={computer.runtimeSlot}
                     disabled={disabled}
-                    className="flex cursor-default items-center gap-2 rounded-lg px-2 py-2 text-left outline-none data-[disabled]:opacity-60 data-[highlighted]:bg-[var(--bg-hover)]"
+                    className="flex cursor-default items-center gap-2 px-2 py-2 text-left outline-none data-[disabled]:opacity-60 data-[highlighted]:bg-[var(--bg-hover)]"
                     onSelect={(event) => {
                       event.preventDefault();
                       void switchComputer(computer.runtimeSlot);

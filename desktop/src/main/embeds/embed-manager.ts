@@ -14,6 +14,7 @@ export interface Bounds {
 
 export interface EmbedViewLike {
   setBounds(bounds: Bounds): void;
+  setScale(factor: number): void;
   loadUrl(url: string): Promise<void>;
   attach(): void;
   detach(): void;
@@ -27,7 +28,13 @@ type EmbedOriginOptions =
   | { allowedOrigins?: never; getAllowedOrigins: () => string[] };
 
 export type EmbedManagerOptions = {
-  createView: (opts: { partition: string; onState: (state: "loading" | "ready" | "failed") => void }) => EmbedViewLike;
+  createView: (opts: {
+    partition: string;
+    kind: EmbedKind;
+    slug: string | null;
+    routeSlug: string | null;
+    onState: (state: "loading" | "ready" | "failed") => void;
+  }) => EmbedViewLike;
   maxLive?: number;
 } & EmbedOriginOptions;
 
@@ -85,7 +92,12 @@ export class EmbedManager {
     slug: string | null,
     bounds: Bounds,
     url: string,
-    options?: { id?: string; active?: boolean; onState?: (state: "loading" | "ready" | "failed") => void },
+    options?: {
+      id?: string;
+      active?: boolean;
+      routeSlug?: string;
+      onState?: (state: "loading" | "ready" | "failed") => void;
+    },
   ): string {
     if (!isNavigationAllowed(url, this.getAllowedOrigins())) {
       throw new Error("embed URL is not allowed");
@@ -94,7 +106,7 @@ export class EmbedManager {
     const partition =
       kind === "hosted-shell"
         ? "persist:hosted-shell"
-        : this.appPartition(slug);
+        : this.appPartition(options?.routeSlug ?? slug);
 
     const id = options?.id ?? randomUUID();
     const active = options?.active ?? true;
@@ -113,7 +125,13 @@ export class EmbedManager {
       }
       onState(state);
     };
-    const view = this.createView({ partition, onState: emitState });
+    const view = this.createView({
+      partition,
+      kind,
+      slug,
+      routeSlug: kind === "app" ? options?.routeSlug ?? slug : null,
+      onState: emitState,
+    });
     record = {
       id,
       url,
@@ -138,6 +156,13 @@ export class EmbedManager {
     const record = this.records.get(embedId);
     if (!record) return false;
     record.view.setBounds(bounds);
+    return true;
+  }
+
+  setScale(embedId: string, factor: number): boolean {
+    const record = this.records.get(embedId);
+    if (!record || !Number.isFinite(factor) || factor < 0.5 || factor > 2) return false;
+    record.view.setScale(factor);
     return true;
   }
 

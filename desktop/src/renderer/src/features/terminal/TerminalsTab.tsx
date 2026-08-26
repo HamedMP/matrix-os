@@ -7,12 +7,8 @@ import {
   GripVertical,
   Layers,
   MoreHorizontal,
-  Plus,
   RefreshCw,
-  Search,
-  Moon,
   SquareTerminal,
-  Sun,
   Trash2,
   X,
 } from "lucide-react";
@@ -30,21 +26,15 @@ import {
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import {
-  useTerminalAppearance,
-  type TerminalAppearanceMode,
-} from "../../stores/terminal-appearance";
-import {
   reconcileShellSessionSnapshot,
   syncShellSessions,
 } from "../../lib/shell-session-sync";
 import TerminalView from "./TerminalView";
-import {
-  getTerminalAppearanceTokens,
-  type TerminalAppearanceTokens,
-} from "./terminal-appearance";
+import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
+import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
+import { relativeSessionActivity } from "./terminal-session-activity";
 
 const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
-const SESSION_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -67,20 +57,15 @@ function shellTitle(shell: ShellSessionSummary): string {
   return shell.subtitle?.trim() || shell.lastAction?.trim() || shell.name;
 }
 
-function relativeActivity(updatedAt: string | undefined, now = Date.now()): string {
-  if (!updatedAt) return "Activity unknown";
-  const timestamp = Date.parse(updatedAt);
-  if (!Number.isFinite(timestamp)) return "Activity unknown";
-  const elapsed = Math.max(0, now - timestamp);
-  const minutes = Math.floor(elapsed / 60_000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days} days ago`;
-  return SESSION_DAY_FORMATTER.format(timestamp);
+function mostRecentShell(sessions: ShellSessionSummary[]): ShellSessionSummary | null {
+  return sessions.reduce<ShellSessionSummary | null>((latest, session) => {
+    if (!latest) return session;
+    const latestActivity = Date.parse(latest.updatedAt ?? latest.createdAt ?? "");
+    const sessionActivity = Date.parse(session.updatedAt ?? session.createdAt ?? "");
+    return Number.isFinite(sessionActivity) && (!Number.isFinite(latestActivity) || sessionActivity > latestActivity)
+      ? session
+      : latest;
+  }, null);
 }
 
 function sessionStart(createdAt: string | undefined): string {
@@ -88,50 +73,6 @@ function sessionStart(createdAt: string | undefined): string {
   const timestamp = Date.parse(createdAt);
   if (!Number.isFinite(timestamp)) return "an unknown time";
   return SESSION_START_FORMATTER.format(timestamp);
-}
-
-function TerminalThemeToggle({
-  mode,
-  tokens,
-  onChange,
-}: {
-  mode: TerminalAppearanceMode;
-  tokens: TerminalAppearanceTokens;
-  onChange: (mode: TerminalAppearanceMode) => void;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label="Terminal theme"
-      className="flex h-8 shrink-0 items-center gap-0.5 rounded-lg border p-0.5"
-      style={{ borderColor: tokens.controlBorder, background: tokens.control }}
-    >
-      {([
-        { mode: "light" as const, label: "Use light Terminal theme", icon: Sun },
-        { mode: "dark" as const, label: "Use dark Terminal theme", icon: Moon },
-      ]).map((option) => {
-        const selected = option.mode === mode;
-        const Icon = option.icon;
-        return (
-          <button
-            key={option.mode}
-            type="button"
-            aria-label={option.label}
-            aria-pressed={selected}
-            className="flex h-[26px] w-[26px] items-center justify-center rounded-md outline-none focus-visible:ring-1 focus-visible:ring-current"
-            style={{
-              background: selected ? tokens.selected : "transparent",
-              color: selected ? tokens.text : tokens.muted,
-              boxShadow: selected && mode === "light" ? "0 1px 2px rgb(20 20 19 / 0.08)" : "none",
-            }}
-            onClick={() => onChange(option.mode)}
-          >
-            <Icon size={16} aria-hidden="true" />
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 function placementFor(shell: ShellSessionSummary, openShellNames: Set<string>): ShellSessionPlacement {
@@ -142,8 +83,89 @@ function normalizeBusyNames(names: string[]): string[] {
   return names.filter((name, index) => name.length > 0 && names.indexOf(name) === index);
 }
 
+function TerminalAppTabs({
+  openedSessionNames,
+  selectedName,
+  onSelectOverview,
+  onSelectSession,
+  onCloseSession,
+}: {
+  openedSessionNames: string[];
+  selectedName: string | null;
+  onSelectOverview: () => void;
+  onSelectSession: (name: string) => void;
+  onCloseSession: (name: string) => void;
+}) {
+  if (openedSessionNames.length === 0) return null;
+  return (
+    <div
+      role="tablist"
+      aria-label="Terminal app tabs"
+      className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b px-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-label="Terminal sessions"
+        aria-selected={selectedName === null}
+        className="flex h-7 shrink-0 items-center gap-1.5 rounded-t-md border px-2.5 text-xs"
+        style={{
+          borderColor: selectedName === null ? "var(--border-subtle)" : "transparent",
+          borderBottomColor: selectedName === null ? "var(--bg-surface)" : "transparent",
+          background: selectedName === null ? "var(--bg-surface)" : "transparent",
+          color: selectedName === null ? "var(--text-primary)" : "var(--text-secondary)",
+        }}
+        onClick={onSelectOverview}
+      >
+        <SquareTerminal size={12} aria-hidden="true" /> Sessions
+      </button>
+      {openedSessionNames.map((name) => {
+        const selected = selectedName === name;
+        return (
+          <div
+            key={name}
+            className="group flex h-7 min-w-[116px] max-w-[190px] items-center rounded-t-md border pl-2.5 pr-1"
+            style={{
+              borderColor: selected ? "var(--border-subtle)" : "transparent",
+              borderBottomColor: selected ? "var(--bg-surface)" : "transparent",
+              background: selected ? "var(--bg-surface)" : "transparent",
+              color: selected ? "var(--text-primary)" : "var(--text-secondary)",
+            }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-label={name}
+              aria-selected={selected}
+              className="min-w-0 flex-1 truncate text-left font-mono text-[11px]"
+              onClick={() => onSelectSession(name)}
+            >
+              {name}
+            </button>
+            <button
+              type="button"
+              aria-label={`Close ${name} terminal tab`}
+              className="flex size-5 shrink-0 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
+              onClick={() => onCloseSession(name)}
+            >
+              <X size={11} aria-hidden="true" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- TerminalsTab is the cohesive shell-session workspace: network load/create, selection, rename, delete confirmation, search, and drag refs are independent UI concerns. A reducer would couple unrelated state transitions without reducing render risk; extracting subcomponents below keeps the row/empty states isolated.
-export default function TerminalsTab({ active = true }: { active?: boolean }) {
+export default function TerminalsTab({
+  active = true,
+  visible = active,
+}: {
+  active?: boolean;
+  visible?: boolean;
+}) {
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const shells = useShellSessions((s) => s.sessions);
@@ -158,18 +180,14 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const reorder = useShellSessions((s) => s.reorder);
   const patchUiState = useShellSessions((s) => s.patchUiState);
   const tabs = useTabs((s) => s.tabs);
-  const openTab = useTabs((s) => s.openTab);
   const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
   const reconcileRecentTerminals = useTabs((s) => s.reconcileRecentTerminals);
   const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
-  const terminalAppearanceMode = useTerminalAppearance((s) => s.mode);
-  const setTerminalAppearanceMode = useTerminalAppearance((s) => s.setMode);
-  const terminalAppearance = getTerminalAppearanceTokens(terminalAppearanceMode);
   const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
   const terminalsTabId = useTabs((s) => s.tabs.find((tab) => tab.kind === "terminals")?.id);
   const renameTab = useTabs((s) => s.renameTab);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState<string | null>(() => mostRecentShell(shells)?.name ?? null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
   const [openedSessionNames, setOpenedSessionNames] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -203,29 +221,19 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     [liveSessionName, tabs],
   );
 
-  const filteredShells = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return shells;
-    return shells.filter((shell) =>
-      [
-        shell.name,
-        shell.status,
-        shell.visualStatus,
-        shell.subtitle,
-        shell.lastAction,
-        shell.attachCommand,
-        shell.tabs?.map((tab) => tab.name).join(" "),
-      ].filter(Boolean).join(" ").toLowerCase().includes(normalized),
-    );
-  }, [query, shells]);
-
-  const selectedShell = selectedName ? shells.find((shell) => shell.name === selectedName) ?? null : null;
-  const selected = selectedShell?.name ?? selectedName;
+  const latestShell = useMemo(() => mostRecentShell(shells), [shells]);
+  const selected = selectedName && shells.some((shell) => shell.name === selectedName)
+    ? selectedName
+    : latestShell?.name ?? null;
+  const visibleSessionNames = useMemo(() => {
+    if (!selected || openedSessionNames.includes(selected)) return openedSessionNames;
+    return [...openedSessionNames, selected].slice(-MAX_PRESERVED_TERMINALS);
+  }, [openedSessionNames, selected]);
 
   useEffect(() => {
     if (!terminalsTabId) return;
-    renameTab(terminalsTabId, selectedName ?? "Terminal");
-  }, [renameTab, selectedName, terminalsTabId]);
+    renameTab(terminalsTabId, "Terminal");
+  }, [renameTab, terminalsTabId]);
 
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
@@ -280,6 +288,14 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   }, [api, patchUiState]);
 
   useEffect(() => {
+    if (!latestShell || (selectedName && liveSessionName)) return;
+    const selectedShell = selectedName
+      ? shells.find((shell) => shell.name === selectedName)
+      : latestShell;
+    if (selectedShell) showShellDetail(selectedShell);
+  }, [latestShell, liveSessionName, selectedName, shells, showShellDetail]);
+
+  useEffect(() => {
     if (!terminalSessionRequest) return;
     if (terminalSessionRequest.sessionName === null) {
       setSelectedName(null);
@@ -307,11 +323,15 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     terminalSessionRequest,
   ]);
 
-  const openShellInTab = (shell: ShellSessionSummary) => {
-    openTab({ kind: "terminal", sessionName: shell.name, title: shell.name });
-    if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
-      void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
-    }
+  const openShellInTab = (shell: ShellSessionSummary) => showShellDetail(shell);
+
+  const closeShellTab = (name: string) => {
+    const remaining = openedSessionNames.filter((openedName) => openedName !== name);
+    setOpenedSessionNames(remaining);
+    if (selectedRef.current !== name) return;
+    const nextName = remaining.at(-1) ?? null;
+    setSelectedName(nextName);
+    setLiveSessionName(nextName);
   };
 
   const moveShell = async (shell: ShellSessionSummary, placement: ShellSessionPlacement) => {
@@ -415,74 +435,33 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     finishDrag();
   };
 
-  const overviewVisible = active && selectedName === null;
+  const overviewSelected = selected === null;
 
   return (
-    <div className="relative flex min-h-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <RetainedPane
-        as="section"
-        active={overviewVisible}
-        className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
-        background="var(--bg-surface)"
-        style={{ borderRadius: 8 }}
-      >
-        <div className="flex min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
-          <div data-terminal-overview className="mx-auto flex min-h-0 w-full max-w-[1022px] flex-1 flex-col">
-            <div className="mb-6 flex min-h-10 shrink-0 items-center gap-2">
-              <h1
-                className="text-[36px] font-medium leading-none tracking-[-0.02em]"
-                style={{ color: "var(--text-primary)", fontFamily: '"Instrument Serif", Georgia, serif' }}
-              >
-                Terminal
-              </h1>
-              <div className="flex-1" />
-              <IconButton
-                label="Search terminal sessions"
-                active={searchOpen}
-                className="h-8 w-8 rounded-lg"
-                onClick={() => {
-                  setSearchOpen((open) => !open);
-                  if (searchOpen) setQuery("");
-                }}
-              >
-                <Search size={15} />
-              </IconButton>
-              <Button
-                className="h-8 rounded-lg"
-                variant="primary"
-                disabled={!api || creating}
-                onClick={() => void createShell()}
-                aria-label="New shell"
-              >
-                {creating ? "Starting" : "New"}
-              </Button>
-            </div>
-
-            {searchOpen ? (
-              <label
-                className="mb-3 flex h-9 shrink-0 items-center gap-2 rounded-md border px-3"
-                style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
-              >
-                <Search size={14} aria-hidden="true" style={{ color: "var(--text-tertiary)" }} />
-                <input
-                  autoFocus
-                  aria-label="Search terminal sessions"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search sessions"
-                  className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-                  style={{ color: "var(--text-primary)" }}
-                />
-              </label>
-            ) : null}
-
-            {actionError ? (
-              <p role="status" className="mb-3 rounded-md px-3 py-2 text-xs" style={{ color: "var(--danger)", background: "var(--danger-muted)" }}>
-                {actionError}
-              </p>
-            ) : null}
-
-            <div className="flex min-h-[280px] flex-1 flex-col overflow-x-hidden overflow-y-auto">
+    <div className="relative flex min-h-0 flex-1 overflow-hidden" style={{ background: SURFACE_BASE_BACKGROUND }}>
+      <div className="w-[280px] min-w-[200px] max-w-[280px] shrink-0 border-r" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
+        <TerminalSessionSidebar
+          sessions={shells}
+          selectedName={selectedName}
+          creating={creating}
+          disabled={!api}
+          onCreate={() => void createShell()}
+          onSelect={showShellDetail}
+          onDelete={setDeleteTarget}
+        />
+      </div>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        <RetainedPane
+          as="section"
+          active={active && overviewSelected}
+          visible={visible && overviewSelected}
+          className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
+          background={SURFACE_BASE_BACKGROUND}
+          style={{ borderRadius: 8 }}
+        >
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <div data-terminal-overview className="flex w-full max-w-md flex-col">
               {loading && shells.length === 0 ? (
                 <div role="status" aria-label="Loading terminal sessions" className="flex flex-1 items-center justify-center gap-2 py-16" style={{ color: "var(--text-secondary)" }}>
                   <RefreshCw className="status-pulse" size={16} aria-hidden="true" />
@@ -506,105 +485,67 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
                   }
                 />
               ) : shells.length === 0 ? (
-                <ShellListEmpty onCreate={createShell} creating={creating} disabled={!api} />
-              ) : filteredShells.length === 0 ? (
-                <EmptyState
-                  icon={<Search size={24} />}
-                  headline="No matching sessions"
-                  description="Try a different search term."
-                />
+                <ShellListEmpty />
               ) : (
-                <ul aria-label="Terminal sessions">
-                  {filteredShells.map((shell) => (
-                    <ShellCard
-                      key={shell.name}
-                      shell={shell}
-                      busy={isShellBusy(shell.name)}
-                      placement={placementFor(shell, openShellNames)}
-                      renaming={renamingName === shell.name}
-                      renameDraft={renameDraft}
-                      renameError={renameError}
-                      onRenameDraft={setRenameDraft}
-                      onCommitRename={() => void commitRename()}
-                      onCancelRename={() => {
-                        setRenamingName(null);
-                        setRenameError(null);
-                      }}
-                      onOpen={() => showShellDetail(shell)}
-                      onOpenInTab={() => openShellInTab(shell)}
-                      onMove={(placement) => void moveShell(shell, placement)}
-                      onRename={() => startRename(shell)}
-                      onDelete={() => setDeleteTarget(shell)}
-                      onCopy={() => void copyAttachCommand(shell)}
-                      onDragStart={() => {
-                        draggingNameRef.current = shell.name;
-                        draggingPlacementRef.current = placementFor(shell, openShellNames);
-                      }}
-                      onDragEnd={finishDrag}
-                      onDrop={() => dropOnShell(shell)}
-                    />
-                  ))}
-                </ul>
+                null
               )}
-            </div>
           </div>
         </div>
-      </RetainedPane>
+        </RetainedPane>
 
-      {openedSessionNames.map((sessionName) => {
-        const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
-        const visible = active && selectedName === sessionName;
-        return (
-          <RetainedPane
-            as="section"
-            key={sessionName}
-            active={visible}
-            className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
-            background={terminalAppearance.surface}
-            style={{ borderRadius: 8 }}
-          >
+        {visibleSessionNames.map((sessionName) => {
+          const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
+          const selected = selectedName === sessionName;
+          const statusLabel = shellStatusLabel(shell);
+          const activeStatus = statusLabel === "Active";
+          return (
+            <RetainedPane
+              as="section"
+              key={sessionName}
+              active={active && selected}
+              visible={visible && selected}
+              className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
+              background={SURFACE_BASE_BACKGROUND}
+              style={{ borderRadius: 8 }}
+            >
             <header
-              className="flex h-[70px] shrink-0 items-center gap-3 border-b px-4 py-4"
-              style={{ borderColor: terminalAppearance.border, background: terminalAppearance.surface }}
+              className="flex shrink-0 items-center justify-between border-b px-4 py-4"
+              style={{ borderColor: "var(--border-default, #F3F2F2)", background: SURFACE_BASE_BACKGROUND }}
             >
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-[13px] font-normal leading-4" style={{ color: terminalAppearance.text }}>{shellTitle(shell)}</h1>
-                <p className="mt-1 truncate text-[13px] leading-4" style={{ color: terminalAppearance.muted }}>
+                <h1 className="truncate text-xs font-medium leading-[19.5px]" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</h1>
+                <p className="mt-1 truncate text-xs leading-4 tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
                   Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
                 </p>
               </div>
               <span
-                className="inline-flex h-5 items-center rounded-full border px-2 text-[11px]"
+                className="inline-flex h-5 items-center justify-center rounded-[26px] border px-2 py-0.5 text-xs font-medium leading-4"
                 style={{
-                  borderColor: terminalAppearance.border,
-                  background: terminalAppearance.control,
-                  color: terminalAppearance.text,
+                  borderColor: activeStatus ? "var(--border-success, #34B275)" : "var(--border-default, #F3F2F2)",
+                  background: activeStatus ? "var(--surface-success, #EEF7F2)" : "var(--surface-tertiary, #E1E0E0)",
+                  color: "var(--text-primary)",
                 }}
               >
-                {shellStatusLabel(shell)}
+                {statusLabel}
               </span>
-              <TerminalThemeToggle
-                mode={terminalAppearanceMode}
-                tokens={terminalAppearance}
-                onChange={setTerminalAppearanceMode}
-              />
             </header>
             <div data-terminal-detail className="flex min-h-0 flex-1">
               <div
                 data-terminal-viewport
                 className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
-                style={{ background: terminalAppearance.surface }}
+                style={{ background: SURFACE_BASE_BACKGROUND }}
               >
                 <TerminalView
                   sessionName={sessionName}
                   active={active && liveSessionName === sessionName}
-                  themeMode={terminalAppearanceMode}
                 />
               </div>
             </div>
-          </RetainedPane>
-        );
-      })}
+            </RetainedPane>
+          );
+        })}
+      </div>
+      </div>
 
       <Dialog
         open={deleteTarget !== null}
@@ -633,24 +574,12 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   );
 }
 
-function ShellListEmpty({
-  onCreate,
-  creating,
-  disabled,
-}: {
-  onCreate: () => void;
-  creating: boolean;
-  disabled: boolean;
-}) {
+function ShellListEmpty() {
   return (
     <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-8 text-center" style={{ borderColor: "var(--border-subtle)" }}>
       <SquareTerminal size={22} style={{ color: "var(--text-tertiary)" }} />
       <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>No shell sessions yet</p>
       <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Start a shell to attach from the Mac Terminal.</p>
-      <Button variant="subtle" disabled={disabled || creating} onClick={() => void onCreate()}>
-        <Plus size={13} />
-        New shell
-      </Button>
     </div>
   );
 }
@@ -764,7 +693,7 @@ function ShellCard({
             {shellStatusLabel(shell)}
           </span>
           <span className="w-[92px] text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {relativeActivity(shell.updatedAt)}
+            {relativeSessionActivity(shell.updatedAt)}
           </span>
         </button>
 
@@ -793,7 +722,7 @@ function ShellCard({
                 boxShadow: "var(--shadow-2)",
               }}
             >
-              <ShellMenuItem icon={<ExternalLink size={13} />} label="Open in tab" onSelect={onOpenInTab} />
+              <ShellMenuItem icon={<ExternalLink size={13} />} label="Open in Terminal tab" onSelect={onOpenInTab} />
               <ShellMenuItem
                 icon={placement === "active" ? <Layers size={13} /> : <SquareTerminal size={13} />}
                 label={placement === "active" ? "Move to background" : "Make active"}

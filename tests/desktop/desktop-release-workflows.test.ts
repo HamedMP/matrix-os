@@ -89,6 +89,20 @@ describe("desktop release workflows", () => {
     expect(bundledContracts).toHaveLength(2);
   });
 
+  it("emits one self-contained sandbox preload for the shell and native apps", () => {
+    const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
+    const preload = readFileSync(join(root, "desktop/src/preload/index.ts"), "utf8");
+    const main = readFileSync(join(root, "desktop/src/main/index.ts"), "utf8");
+
+    expect(config).toContain('input: resolve(__dirname, "src/preload/index.ts")');
+    expect(config).toContain("inlineDynamicImports: true");
+    expect(config).not.toContain('"app-bridge": resolve(');
+    expect(preload).toContain('const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge"');
+    expect(preload).toContain("process.argv.includes(NATIVE_APP_BRIDGE_ARG)");
+    expect(preload).toContain('contextBridge.exposeInMainWorld("MatrixOS"');
+    expect(main).toContain('appPreloadPath: join(__dirname, "../preload/index.cjs")');
+  });
+
   it("records the full canary app version in the release manifest", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
 

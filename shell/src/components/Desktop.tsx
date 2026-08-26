@@ -1194,7 +1194,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         </MenuBar>
       )}
       <OsSessionHost />
-      <div className={isWindowsDesign ? "relative flex-1 flex flex-col md:flex-row" : "relative flex-1 flex flex-col md:flex-row md:pt-8"}>
+      <div className={isWindowsDesign ? "relative flex-1 flex flex-col md:flex-row" : "relative flex-1 flex flex-col md:flex-row md:pt-[38px]"}>
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
         {modeConfig.showDock && !isWindowsDesign && <div
           className={[

@@ -9,6 +9,18 @@ export interface MatrixApp {
   slug: string;
   name: string;
   category?: string;
+  appIdentity?: string;
+}
+
+const SAFE_APP_IDENTITY = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
+
+function appIdentityFromFile(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 300) return undefined;
+  const identity = value
+    .replace(/^\/+/, "")
+    .replace(/\/index\.html$/, "")
+    .replace(/\.html$/, "");
+  return identity.length <= 256 && SAFE_APP_IDENTITY.test(identity) ? identity : undefined;
 }
 
 const MAX_APP_ICON_PRELOADS = 20;
@@ -65,13 +77,19 @@ export function parseApps(value: unknown): MatrixApp[] {
   const apps: MatrixApp[] = [];
   for (const raw of list.slice(0, 200)) {
     if (!raw || typeof raw !== "object") continue;
-    const app = raw as Partial<MatrixApp>;
+    const app = raw as Partial<MatrixApp> & { file?: unknown };
     if (typeof app.slug !== "string" || app.slug.trim().length === 0) continue;
     const slug = app.slug.trim();
     const name = typeof app.name === "string" && app.name.trim().length > 0 ? app.name.trim() : slug;
     const category =
       typeof app.category === "string" && app.category.trim().length > 0 ? app.category.trim() : undefined;
-    apps.push({ slug, name, category });
+    const appIdentity = appIdentityFromFile(app.file);
+    apps.push({
+      slug,
+      name,
+      ...(category ? { category } : {}),
+      ...(appIdentity ? { appIdentity } : {}),
+    });
   }
   return apps;
 }

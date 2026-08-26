@@ -163,6 +163,7 @@ export function EntryButton({
   onNavigate,
   onKeyDown,
   onDropFiles,
+  contextPath,
 }: {
   entry: BrowserEntry;
   grid: boolean;
@@ -176,6 +177,7 @@ export function EntryButton({
   onNavigate: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   onDropFiles?: (files: File[]) => void;
+  contextPath?: string;
 }) {
   const kind = kindForEntry(entry);
   const glyphColor = entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)";
@@ -188,6 +190,7 @@ export function EntryButton({
         aria-label={`Open ${entry.name}`}
         aria-pressed={pressed}
         data-grid-tile
+        data-files-entry-path={contextPath}
         className="flex w-24 flex-col items-center gap-1.5 rounded-lg px-1.5 py-2.5 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
         style={{ background: selected ? "var(--bg-selected)" : "transparent" }}
         onClick={onSelect}
@@ -230,6 +233,7 @@ export function EntryButton({
       aria-label={`Open ${entry.name}`}
       aria-pressed={pressed}
       data-files-list-row
+      data-files-entry-path={contextPath}
       className={`grid w-full items-center outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)] ${compact
         ? "h-9 gap-1 rounded-md px-2 text-left text-sm"
         : "h-[54px] gap-4 rounded-none border-b px-4 text-left text-base font-medium last:border-b-0"}`}

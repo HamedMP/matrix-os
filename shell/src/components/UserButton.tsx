@@ -33,7 +33,7 @@ function Placeholder({ variant = "dock" }: { variant?: UserButtonVariant }) {
         <div
           className={cn(
             "flex items-center justify-center rounded-xl border border-border/60 bg-card shadow-sm",
-            variant === "menubar" ? "size-[18px] rounded-full border-0 shadow-none" : "size-10",
+            variant === "menubar" ? "size-7 rounded-full border shadow-sm" : "size-10",
             isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
           )}
         >
@@ -90,14 +90,14 @@ function SelfHostedUserButton({
       onClick={onOpenSettings}
       className={cn(
         "flex items-center justify-center rounded-xl border border-border/60 bg-card text-foreground shadow-sm transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        isMenubar ? "size-[18px] rounded-full border-0 bg-transparent shadow-none" : "size-10",
+        isMenubar ? "size-7 rounded-full border bg-card shadow-sm" : "size-10",
         isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
       )}
     >
       <span
         className={cn(
           "grid shrink-0 place-items-center rounded-full bg-emerald-600/12 text-emerald-700 dark:text-emerald-300",
-          isMenubar ? "size-[18px]" : "size-10",
+          isMenubar ? "size-7" : "size-10",
         )}
       >
         <ServerIcon className={cn("size-5", isMenubar && "size-3")} aria-hidden="true" />
@@ -181,7 +181,7 @@ function MountedUserButton({
           aria-label={`Account menu for ${displayName}`}
           className={cn(
             "flex items-center justify-center rounded-xl border border-border/60 bg-card text-foreground shadow-sm transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            isMenubar ? "size-[18px] rounded-full border-0 bg-transparent shadow-none" : "size-10",
+            isMenubar ? "size-7 rounded-full border bg-card shadow-sm" : "size-10",
             isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
           )}
         >
@@ -293,21 +293,21 @@ function AccountAvatar({
     <span
       className={cn(
         "flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#4b3b86] text-white",
-        compact ? "size-[18px]" : "size-10",
+        compact ? "size-7" : "size-10",
       )}
     >
       {avatarUrl ? (
         <Image
           src={avatarUrl}
           alt=""
-          width={compact ? 18 : 40}
-          height={compact ? 18 : 40}
+          width={compact ? 28 : 40}
+          height={compact ? 28 : 40}
           className="size-full object-cover"
           referrerPolicy="no-referrer"
           unoptimized
         />
       ) : (
-        <UserIcon className={cn("size-5", compact && "size-3")} aria-hidden="true" />
+        <UserIcon className={cn("size-5", compact && "size-4")} aria-hidden="true" />
       )}
       <span className="sr-only">{displayName}</span>
     </span>

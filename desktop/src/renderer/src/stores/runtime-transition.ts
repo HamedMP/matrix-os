@@ -20,6 +20,9 @@ import { useUi } from "./ui";
 import { useWorkspace } from "./workspace";
 import { advanceRuntimeGeneration } from "./runtime-generation";
 import { resetAppsRuntime } from "./apps";
+import { NATIVE_DESKTOP_WINDOW_SHELL } from "../lib/feature-flags";
+import { HOSTED_SHELL_TAB_SPEC } from "../lib/hosted-shell";
+import { useDesktopSurfaces } from "./desktop-surfaces";
 
 interface RuntimeChangeOptions {
   disposeRuntimeAttachments?: () => void;
@@ -62,9 +65,10 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     terminalSessionRequest: null,
     terminalSessionRequestSequence: 0,
   });
-  // MissionControl only opens Home in its mount-only effect, so reopen it here
-  // or a successful switch leaves the already-mounted desktop with no active tab.
-  useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+  useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+  // The native window shell intentionally returns to its icon desktop. The
+  // legacy renderer still needs a hosted-shell root because it has no desktop.
+  if (!NATIVE_DESKTOP_WINDOW_SHELL) useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);
   // The Hermes index, transcript, and kernel session follow the selected
   // computer; invalidate in-flight list/history requests before the new API is
   // published so prior-owner data cannot repopulate the next runtime.
@@ -120,6 +124,7 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     composerOpen: false,
     paletteOpen: false,
     quickOpenOpen: false,
+    appLauncherOpen: false,
     rendererOverlayCount: 0,
   });
 }
