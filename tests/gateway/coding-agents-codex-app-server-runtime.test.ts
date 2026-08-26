@@ -338,15 +338,8 @@ describe("Codex app-server control runtime", () => {
       fakeCodexPath,
       config,
     ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
-    let runnerStderr = "";
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (chunk) => {
-      runnerStderr += chunk;
-    });
-
     try {
-      expect(await waitForExit(child), runnerStderr).toBe(0);
-      const transcript = await readFile(eventPath, "utf8");
+      const transcript = await waitForTranscript(eventPath, /The repository is ready/);
       expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output/);
 
       let sequence = 0;
@@ -384,6 +377,7 @@ describe("Codex app-server control runtime", () => {
         .toBe(toolCompleted && "toolCallId" in toolCompleted ? toolCompleted.toolCallId : undefined);
     } finally {
       child.kill("SIGTERM");
+      await waitForExit(child).catch(() => undefined);
       await rm(homePath, { recursive: true, force: true });
     }
   });
@@ -440,10 +434,10 @@ describe("Codex app-server control runtime", () => {
         { id: "service_tier", value: "standard" },
       ],
     }), "utf8").toString("base64");
-    child.stdin?.end(`matrix-turn-v2:${secondTurn}\n`);
+    child.stdin?.write(`matrix-turn-v2:${secondTurn}\n`);
 
     try {
-      await expect(waitForExit(child)).resolves.toBe(0);
+      await waitForTranscript(eventPath, /answer-2/);
       const requests = (await readFile(requestsPath, "utf8"))
         .trim().split("\n").map((line) => JSON.parse(line));
       expect(requests).toHaveLength(2);
@@ -467,6 +461,63 @@ describe("Codex app-server control runtime", () => {
       expect(transcript).toContain("answer-2");
     } finally {
       child.kill("SIGTERM");
+      await waitForExit(child).catch(() => undefined);
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps accepting Turns through the control socket after terminal stdin closes", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-control-turns-"));
+    const fakeCodexPath = join(homePath, "fake-codex-control-turns.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_control_turns_1");
+    const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "let turn = 0;",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-control' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    turn += 1;",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: `native-turn-${turn}` } } }));",
+      "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: `native-turn-${turn}`, itemId: `native-message-${turn}`, delta: `control-answer-${turn}` } }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: `native-turn-${turn}`, status: 'completed', items: [] } } }));",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "First turn.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await waitForTranscript(eventPath, /control-answer-1/);
+      await expect(sendControl(controlPath, {
+        type: "turn",
+        prompt: "Second turn.",
+        modelOptions: [],
+        clientRequestId: "req_control_turn_2",
+      })).resolves.toEqual({ ok: true });
+      const transcript = await waitForTranscript(eventPath, /control-answer-2/);
+      expect(transcript.match(/"type":"turn.completed"/g)).toHaveLength(2);
+    } finally {
+      child.kill("SIGTERM");
+      await waitForExit(child).catch(() => undefined);
       await rm(homePath, { recursive: true, force: true });
     }
   });

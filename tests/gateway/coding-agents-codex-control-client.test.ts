@@ -46,12 +46,19 @@ async function listen(homePath: string, sessionId: string, reply?: string) {
 }
 
 describe("Codex control client", () => {
-  it("submits bounded approval and structured input frames", async () => {
+  it("submits bounded Turn, approval, and structured input frames", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "mx-control-"));
     const sessionId = "sess_thread_control_1";
     const frames = await listen(homePath, sessionId, '{"ok":true}\n');
     const client = createCodexControlClient({ homePath, timeoutMs: 1_000 });
 
+    await client.submitTurn({
+      sessionId,
+      turnId: "turn_control_1",
+      prompt: "Continue with the focused tests.",
+      model: "gpt-5.6-sol",
+      modelOptions: [{ id: "effort", value: "high" }],
+    });
     await client.submitApproval({
       sessionId,
       approvalId: "appr_codex_11111111111111111111111111111111",
@@ -68,6 +75,13 @@ describe("Codex control client", () => {
     });
 
     expect(frames).toEqual([
+      {
+        type: "turn",
+        prompt: "Continue with the focused tests.",
+        model: "gpt-5.6-sol",
+        modelOptions: [{ id: "effort", value: "high" }],
+        clientRequestId: "req_control_1",
+      },
       {
         type: "approval",
         approvalId: "appr_codex_11111111111111111111111111111111",

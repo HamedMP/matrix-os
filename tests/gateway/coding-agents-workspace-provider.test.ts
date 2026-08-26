@@ -513,6 +513,7 @@ exec /bin/sh "$@"
 
   it("resumes a running workspace thread through its persisted deterministic session", async () => {
     const sendInput = vi.fn(async () => ({ ok: true, session: workspaceSession() }));
+    const submitTurn = vi.fn(async () => undefined);
     const runtime = {
       startSession: vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() })),
       sendInput,
@@ -522,6 +523,11 @@ exec /bin/sh "$@"
       providerId: "codex",
       agent: "codex",
       runtime,
+      codexControl: {
+        submitTurn,
+        submitApproval: vi.fn(),
+        submitInput: vi.fn(),
+      } as never,
     });
     const started = await provider.startThread({
       principal: ownerPrincipal,
@@ -560,14 +566,13 @@ exec /bin/sh "$@"
     });
 
     expect(resumeState).toEqual({ conversationId: "sess_workspace_1" });
-    expect(sendInput).toHaveBeenCalledWith(
-      "sess_workspace_1",
-      `matrix-turn-v2:${Buffer.from(JSON.stringify({
-        prompt: "Continue with the tests.",
-        modelOptions: [],
-      }), "utf-8").toString("base64")}\r`,
-      signal,
-    );
+    expect(submitTurn).toHaveBeenCalledWith({
+      sessionId: "sess_workspace_1",
+      turnId: "turn_workspace_1",
+      prompt: "Continue with the tests.",
+      modelOptions: [],
+    });
+    expect(sendInput).not.toHaveBeenCalled();
     expect(resumed).toMatchObject({
       events: [],
       outcome: "delivered",

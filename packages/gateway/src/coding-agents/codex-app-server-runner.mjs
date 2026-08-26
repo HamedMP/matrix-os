@@ -217,7 +217,11 @@ const InputControlSchema = z.object({
   }),
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
-const ControlSchema = z.discriminatedUnion("type", [ApprovalControlSchema, InputControlSchema]);
+const TurnControlSchema = PendingTurnSchema.extend({
+  type: z.literal("turn"),
+  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
+}).strict();
+const ControlSchema = z.discriminatedUnion("type", [TurnControlSchema, ApprovalControlSchema, InputControlSchema]);
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -706,7 +710,9 @@ async function applyControl(control) {
     const same = replay.fingerprint === digest([control]);
     return same ? { ok: true, replayed: true } : { ok: false };
   }
-  if (control.type === "approval") {
+  if (control.type === "turn") {
+    if (!enqueuePendingTurn(control)) return { ok: false };
+  } else if (control.type === "approval") {
     const pending = pendingApprovals.get(control.approvalId);
     if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
     sendProvider({
@@ -754,7 +760,7 @@ const controlServer = createServer({ allowHalfOpen: true }, (socket) => {
   socket.on("error", () => socket.destroy());
   socket.on("data", (chunk) => {
     input += chunk;
-    if (Buffer.byteLength(input, "utf8") > MAX_LINE_BYTES) socket.destroy();
+    if (Buffer.byteLength(input, "utf8") > MAX_TURN_FRAME_BYTES) socket.destroy();
   });
   socket.on("end", async () => {
     const line = input.trim();
@@ -838,15 +844,20 @@ function decodeTurnFrame(line) {
 
 function enqueueTurn(line) {
   const turn = decodeTurnFrame(line);
-  if (!turn || pendingTurns.length >= MAX_PENDING_TURNS) return;
+  if (turn) enqueuePendingTurn(turn);
+}
+
+function enqueuePendingTurn(turn) {
+  if (pendingTurns.length >= MAX_PENDING_TURNS) return false;
   pendingTurns.push(turn);
   wakeTurn?.();
   wakeTurn = undefined;
+  return true;
 }
 
 function nextTurn() {
   if (pendingTurns.length > 0) return Promise.resolve(pendingTurns.shift());
-  if (stdinClosed || stopping) return Promise.resolve(undefined);
+  if (stopping) return Promise.resolve(undefined);
   return new Promise((resolve) => {
     wakeTurn = () => resolve(pendingTurns.shift());
   });

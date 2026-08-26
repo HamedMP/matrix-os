@@ -3,6 +3,7 @@ import { createConnection } from "node:net";
 import { extname, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
+  AgentModelOptionSchema,
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   RequestIdSchema,
@@ -32,7 +33,15 @@ const InputFrameSchema = z.object({
   structuredAnswers: StructuredAnswersSchema,
   clientRequestId: RequestIdSchema,
 }).strict();
-const ControlFrameSchema = z.discriminatedUnion("type", [ApprovalFrameSchema, InputFrameSchema]);
+const TurnFrameSchema = z.object({
+  type: z.literal("turn"),
+  prompt: z.string().trim().min(1).max(64 * 1024)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= 64 * 1024),
+  model: z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  modelOptions: z.array(AgentModelOptionSchema).max(32),
+  clientRequestId: RequestIdSchema,
+}).strict();
+const ControlFrameSchema = z.discriminatedUnion("type", [TurnFrameSchema, ApprovalFrameSchema, InputFrameSchema]);
 const ControlResponseSchema = z.union([
   z.object({ ok: z.literal(true), replayed: z.boolean().optional() }).strict(),
   z.object({ ok: z.literal(false) }).strict(),
@@ -40,9 +49,17 @@ const ControlResponseSchema = z.union([
 
 const DEFAULT_TIMEOUT_MS = 2_000;
 const MAX_TIMEOUT_MS = 10_000;
+const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
 export interface CodexControlClient {
+  submitTurn(input: {
+    sessionId: string;
+    turnId: string;
+    prompt: string;
+    model?: string;
+    modelOptions: z.infer<typeof AgentModelOptionSchema>[];
+  }): Promise<void>;
   submitApproval(input: {
     sessionId: string;
     approvalId: string;
@@ -79,7 +96,9 @@ export function createCodexControlClient(options: {
       const info = await lstat(path);
       if (!info.isSocket() || info.isSymbolicLink()) throw new Error("control_unavailable");
       const line = `${JSON.stringify(frame)}\n`;
-      if (Buffer.byteLength(line, "utf8") > 64 * 1024) throw new Error("control_frame_limit");
+      if (Buffer.byteLength(line, "utf8") > MAX_CONTROL_FRAME_BYTES) {
+        throw new Error("control_frame_limit");
+      }
       const signal = AbortSignal.timeout(timeoutMs);
       const response = await new Promise<z.infer<typeof ControlResponseSchema>>((resolve, reject) => {
         const socket = createConnection({ path });
@@ -125,6 +144,15 @@ export function createCodexControlClient(options: {
   }
 
   return {
+    submitTurn(input) {
+      return send(input.sessionId, {
+        type: "turn",
+        prompt: input.prompt,
+        ...(input.model ? { model: input.model } : {}),
+        modelOptions: input.modelOptions,
+        clientRequestId: `req_${input.turnId.slice("turn_".length)}`,
+      });
+    },
     submitApproval(input) {
       return send(input.sessionId, {
         type: "approval",

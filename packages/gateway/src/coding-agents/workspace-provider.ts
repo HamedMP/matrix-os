@@ -290,7 +290,7 @@ export function createWorkspaceCodingAgentProvider(
       };
     },
     async resumeTurn({ thread, turn, resumeState, signal }) {
-      if (!runnable || !options.runtime.sendInput) {
+      if (!runnable) {
         throw new Error("Workspace provider turn resume unavailable");
       }
       const sessionId = sessionIdForThread(thread.id);
@@ -298,6 +298,19 @@ export function createWorkspaceCodingAgentProvider(
         throw new Error("Workspace provider conversation mismatch");
       }
       signal.throwIfAborted();
+      if (agent === "codex" && options.codexControl) {
+        await options.codexControl.submitTurn({
+          sessionId,
+          turnId: turn.turnId,
+          prompt: turn.message,
+          ...(turn.model ? { model: turn.model } : {}),
+          modelOptions: turn.modelOptions ?? [],
+        });
+        return { events: [], outcome: "delivered", resumeState };
+      }
+      if (!options.runtime.sendInput) {
+        throw new Error("Workspace provider turn resume unavailable");
+      }
       const result = await options.runtime.sendInput(
         sessionId,
         workspaceTurnInput(turn.message, turn.attachments, turn.model, turn.modelOptions),
