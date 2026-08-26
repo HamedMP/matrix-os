@@ -8,7 +8,7 @@ import type {
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
 import { MessageSquare, Plus, Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
@@ -77,6 +77,7 @@ export function CanonicalChatWorkspace({
   client,
   projectId,
   initialChatId,
+  initialView,
   projectLabel,
   active,
   catalog,
@@ -87,6 +88,7 @@ export function CanonicalChatWorkspace({
   client: CanonicalChatClient;
   projectId: string | null;
   initialChatId?: string;
+  initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
   active: boolean;
   catalog?: CanonicalProviderCatalog;
@@ -113,11 +115,12 @@ export function CanonicalChatWorkspace({
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
+  const [draftProjectId, setDraftProjectId] = useState<string | null>(projectId);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
-    initialChatId ? "conversation" : "index",
+    initialView ?? (initialChatId ? "conversation" : "index"),
   );
-  const previousRoute = useRef({ initialChatId, projectId });
+  const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
@@ -138,17 +141,17 @@ export function CanonicalChatWorkspace({
     void refreshRuntimeSummary();
   }, [api, refreshRuntimeSummary, runtimeStatus]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = previousRoute.current;
-    if (previous.initialChatId === initialChatId && previous.projectId === projectId) return;
-    previousRoute.current = { initialChatId, projectId };
+    if (
+      previous.initialChatId === initialChatId
+      && previous.initialView === initialView
+      && previous.projectId === projectId
+    ) return;
+    previousRoute.current = { initialChatId, initialView, projectId };
     if (projectId !== null) return;
-    setGlobalView(initialChatId ? "conversation" : "index");
-  }, [initialChatId, projectId]);
-
-  useEffect(() => {
-    if (projectId === null && controller.detail) setGlobalView("conversation");
-  }, [controller.detail, projectId]);
+    setGlobalView(initialView ?? (initialChatId ? "conversation" : "index"));
+  }, [initialChatId, initialView, projectId]);
 
   useEffect(() => {
     setSelection((current) => {
@@ -189,7 +192,7 @@ export function CanonicalChatWorkspace({
   }, [controller.detail?.record, onActiveChatChanged]);
 
   const context = projectContext(
-    controller.detail?.record.projectId ?? projectId ?? undefined,
+    controller.detail?.record.projectId ?? draftProjectId ?? projectId ?? undefined,
     projects,
     projectLabel,
   );
@@ -200,8 +203,8 @@ export function CanonicalChatWorkspace({
     await navigator.clipboard.writeText(text);
   }, []);
   const activeProjectSlug = projects.find((project) => (
-    project.id === (controller.detail?.record.projectId ?? projectId)
-    || project.slug === (controller.detail?.record.projectId ?? projectId)
+    project.id === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
+    || project.slug === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
   ))?.slug;
   const resourceSearch = useCallback((resourceQuery: string) => (
     api
@@ -256,10 +259,12 @@ export function CanonicalChatWorkspace({
         },
         interactionMode: selection.interactionMode,
         permissionMode: selection.permissionMode,
-      }, canonicalChatTitle(submission));
+      }, canonicalChatTitle(submission), draftProjectId ?? projectId);
       if (!admitted) return;
       reportedChatId.current = admitted.record.chat.id;
       onActiveChatChanged?.(admitted.record.chat.id, admitted.record.chat.title);
+      setGlobalView("conversation");
+      setDraftProjectId(admitted.record.projectId ?? null);
       setDraft("");
       setReferenceTokens([]);
       attachments.clear();
@@ -272,6 +277,7 @@ export function CanonicalChatWorkspace({
     controller.startNewChat();
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
+    setDraftProjectId(projectId);
     if (projectId === null) setGlobalView("draft");
   };
 
@@ -331,12 +337,23 @@ export function CanonicalChatWorkspace({
           <ConversationContextPicker
             context={context}
             compact={!context}
-            disabled={!controller.detail || Boolean(activeRun)}
+            disabled={Boolean(activeRun)}
             onSelect={(targetProjectSlug) => {
               const target = projects.find((project) => project.slug === targetProjectSlug);
-              void moveProject(target?.id ?? targetProjectSlug);
+              const targetProjectId = target?.id ?? targetProjectSlug;
+              if (controller.detail) {
+                void moveProject(targetProjectId);
+                return;
+              }
+              setDraftProjectId(targetProjectId);
             }}
-            onRemove={() => void moveProject(null)}
+            onRemove={() => {
+              if (controller.detail) {
+                void moveProject(null);
+                return;
+              }
+              setDraftProjectId(null);
+            }}
           />
         )}
       />
@@ -445,6 +462,15 @@ export function CanonicalChatWorkspace({
             <ConversationTranscript turns={transcript} callbacks={{ copyText }} />
             <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">{composer}</div>
           </>
+        ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
+          <div
+            role="status"
+            aria-label="Loading chat"
+            className="flex min-h-0 flex-1 items-center justify-center text-sm"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            Loading chat…
+          </div>
         ) : (
           <div className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center gap-[26px] px-5 py-8">
             <div className="flex flex-col items-center gap-3 text-center">

@@ -38,29 +38,6 @@ function selectedOptionValue(
   return selection.options.find((option) => option.id === optionId)?.value;
 }
 
-function FixedCapability({
-  label,
-  value,
-  description,
-}: {
-  label: string;
-  value: string;
-  description: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled
-      title={description}
-      className="flex h-8 max-w-[9rem] items-center truncate rounded-lg px-2 text-sm capitalize disabled:cursor-default disabled:opacity-70"
-      style={{ color: "var(--text-secondary)" }}
-    >
-      <span className="truncate">{value}</span>
-    </button>
-  );
-}
-
 function CompactSelect({
   label,
   value,
@@ -75,16 +52,7 @@ function CompactSelect({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  if (options.length === 0) return null;
-  if (options.length === 1) {
-    return (
-      <FixedCapability
-        label={label}
-        value={options[0]!.label}
-        description={`${label} is fixed for this harness.`}
-      />
-    );
-  }
+  if (options.length <= 1) return null;
   const selected = options.find((option) => option.value === value) ?? options[0]!;
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -386,7 +354,12 @@ export function SharedChatComposer({
     if (suggestionCount === 0) {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
-        if (!disabled && (canSubmit ?? value.trim().length > 0)) {
+        if (
+          !slashMenuOpen
+          && !resourceMenuOpen
+          && !disabled
+          && (canSubmit ?? (value.trim().length > 0 || referenceTokens.length > 0))
+        ) {
           onSubmit(buildSharedChatComposerSubmission(value, referenceTokens));
         }
         return true;
@@ -417,7 +390,6 @@ export function SharedChatComposer({
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
-  const hasEffortOption = composerOptions.some((option) => option.id === "effort");
   useEffect(() => {
     if (!slashMenuOpen && !resourceMenuOpen && !attachmentMenuOpen) return;
     const dismissOutside = (event: PointerEvent) => {
@@ -561,13 +533,6 @@ export function SharedChatComposer({
               onNewChat={onNewChat}
               onChange={onSelectionChange}
             />
-            {selection && !hasEffortOption ? (
-              <FixedCapability
-                label="Reasoning effort"
-                value="Default"
-                description={`${instance?.displayName ?? "This harness"} does not expose a reasoning-effort control.`}
-              />
-            ) : null}
             {selection ? composerOptions.map((option) => option.kind === "enum" ? (
               <CompactSelect
                 key={option.id}

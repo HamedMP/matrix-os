@@ -11,6 +11,7 @@ export function CanonicalChatRoute({
   api,
   projectId,
   initialChatId,
+  initialView,
   projectLabel,
   active,
   fallback,
@@ -18,6 +19,7 @@ export function CanonicalChatRoute({
   api: ApiClient | null;
   projectId: string | null;
   initialChatId?: string;
+  initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
   active: boolean;
   fallback: ReactNode;
@@ -90,6 +92,7 @@ export function CanonicalChatRoute({
       client={client}
       projectId={canonicalProjectId}
       initialChatId={initialChatId}
+      initialView={initialView}
       projectLabel={projectLabel}
       active={active}
       onActiveChatChanged={(chatId, title) => {
@@ -97,6 +100,7 @@ export function CanonicalChatRoute({
           useTabs.getState().openTab({
             kind: "chat",
             title: title ?? "Chat",
+            chatView: chatId ? "conversation" : "draft",
             ...(chatId ? { chatId } : {}),
             closable: false,
           });

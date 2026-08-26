@@ -7,14 +7,20 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import {
   $applyNodeReplacement,
+  $createNodeSelection,
   $createParagraphNode,
   $createTextNode,
   $getRoot,
   $getSelection,
   $isElementNode,
+  $isNodeSelection,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
+  COMMAND_PRIORITY_HIGH,
+  COPY_COMMAND,
   DecoratorNode,
+  PASTE_COMMAND,
   SKIP_SCROLL_INTO_VIEW_TAG,
   type EditorState,
   type LexicalNode,
@@ -36,6 +42,10 @@ import {
 } from "react";
 import { ComposerResourceGlyph } from "./ComposerResourceGlyph";
 import {
+  CanonicalChatInvocationSchema,
+  CanonicalChatResourceReferenceSchema,
+} from "@matrix-os/contracts";
+import {
   composerReferenceTokenKey,
   serializeComposerReferenceToken,
   type ComposerReferenceToken,
@@ -47,7 +57,51 @@ type SerializedComposerTokenNode = Spread<{
   version: 1;
 }, SerializedLexicalNode>;
 
-function ComposerToken({ token }: { token: ComposerReferenceToken }) {
+const COMPOSER_CLIPBOARD_MIME = "application/x-matrix-chat-composer+json";
+const MAX_CLIPBOARD_VALUE_LENGTH = 100_000;
+const MAX_CLIPBOARD_TOKENS = 100;
+
+function visibleComposerReferenceToken(token: ComposerReferenceToken): string {
+  return token.type === "invocation" ? token.invocation.invocation : token.resource.label;
+}
+
+function isComposerReferenceToken(value: unknown): value is ComposerReferenceToken {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type === "invocation") {
+    return Boolean(
+      CanonicalChatInvocationSchema.safeParse(candidate.invocation).success
+      && typeof candidate.label === "string"
+      && candidate.label.length <= 280,
+    );
+  }
+  if (candidate.type !== "resource") return false;
+  return CanonicalChatResourceReferenceSchema.safeParse(candidate.resource).success;
+}
+
+function parseComposerClipboardPayload(raw: string): {
+  value: string;
+  tokens: ComposerReferenceToken[];
+} | null {
+  if (!raw || raw.length > MAX_CLIPBOARD_VALUE_LENGTH * 2) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      parsed.version !== 1
+      || typeof parsed.value !== "string"
+      || parsed.value.length > MAX_CLIPBOARD_VALUE_LENGTH
+      || !Array.isArray(parsed.tokens)
+      || parsed.tokens.length > MAX_CLIPBOARD_TOKENS
+      || !parsed.tokens.every(isComposerReferenceToken)
+    ) return null;
+    return { value: parsed.value, tokens: parsed.tokens };
+  } catch {
+    return null;
+  }
+}
+
+function ComposerToken({ token, nodeKey }: { token: ComposerReferenceToken; nodeKey: NodeKey }) {
+  const [editor] = useLexicalComposerContext();
   const kind = token.type === "invocation" ? token.invocation.kind : token.resource.kind;
   const id = token.type === "invocation" ? token.invocation.descriptorId : token.resource.id;
   const label = token.type === "invocation" ? token.invocation.invocation : token.resource.label;
@@ -61,6 +115,20 @@ function ComposerToken({ token }: { token: ComposerReferenceToken }) {
       data-testid={`composer-reference-token-${kind}-${id}`}
       className="relative mx-px inline-flex max-w-64 select-text items-baseline gap-1 align-baseline text-md leading-relaxed font-medium"
       style={{ color: "var(--accent)" }}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        editor.update(() => {
+          const nodeSelection = $createNodeSelection();
+          nodeSelection.add(nodeKey);
+          $setSelection(nodeSelection);
+        });
+        const selection = window.getSelection();
+        if (!selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(event.currentTarget);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }}
     >
       <span data-slot="composer-reference-token-icon" className="inline-flex shrink-0 self-center items-center justify-center">
         {token.type === "invocation"
@@ -112,7 +180,7 @@ class ComposerTokenNode extends DecoratorNode<ReactElement> {
   }
 
   override getTextContent(): string {
-    return serializeComposerReferenceToken(this.__token);
+    return visibleComposerReferenceToken(this.__token);
   }
 
   override isInline(): true {
@@ -124,7 +192,7 @@ class ComposerTokenNode extends DecoratorNode<ReactElement> {
   }
 
   override decorate(): ReactElement {
-    return <ComposerToken token={this.__token} />;
+    return <ComposerToken token={this.__token} nodeKey={this.getKey()} />;
   }
 }
 
@@ -177,6 +245,17 @@ function $setPrompt(value: string, tokens: ComposerReferenceToken[]) {
     paragraph.append(segment.type === "text" ? $createTextNode(segment.value) : $createComposerTokenNode(segment.token));
   }
   root.append(paragraph);
+}
+
+function $serializePrompt(): string {
+  return $getRoot().getChildren().map((block) => {
+    if (!$isElementNode(block)) return block.getTextContent();
+    return block.getChildren().map((child) => (
+      child instanceof ComposerTokenNode
+        ? serializeComposerReferenceToken(child.__token)
+        : child.getTextContent()
+    )).join("");
+  }).join("\n");
 }
 
 function absoluteSelectionOffset(): number {
@@ -274,7 +353,7 @@ function ComposerPromptEditorInner({
   useLayoutEffect(() => {
     const signature = tokenSignature(tokens);
     const current = editor.getEditorState().read(() => ({
-      value: $getRoot().getTextContent(),
+      value: $serializePrompt(),
       signature: tokenSignature(collectTokens($getRoot())),
     }));
     if (current.value === value && current.signature === signature) return;
@@ -311,11 +390,67 @@ function ComposerPromptEditorInner({
   const handleChange = useCallback((state: EditorState) => {
     if (applyingRef.current) return;
     state.read(() => {
-      const nextValue = $getRoot().getTextContent();
+      const nextValue = $serializePrompt();
       const nextTokens = collectTokens($getRoot());
       onChange(nextValue, nextTokens, absoluteSelectionOffset());
     });
   }, [onChange]);
+
+  useEffect(() => {
+    const unregisterCopy = editor.registerCommand(COPY_COMMAND, (event) => {
+      if (!event || !("clipboardData" in event) || !event.clipboardData) return false;
+      const selection = $getSelection();
+      if ($isNodeSelection(selection)) {
+        const tokenNodes = selection.getNodes().filter(
+          (node): node is ComposerTokenNode => node instanceof ComposerTokenNode,
+        );
+        if (tokenNodes.length === 0) return false;
+        const selectedTokens = tokenNodes.map((node) => node.__token);
+        const visibleText = selectedTokens.map(visibleComposerReferenceToken).join("");
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", visibleText);
+        event.clipboardData.setData(COMPOSER_CLIPBOARD_MIME, JSON.stringify({
+          version: 1,
+          value: selectedTokens.map(serializeComposerReferenceToken).join(""),
+          tokens: selectedTokens,
+        }));
+        return true;
+      }
+      if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      const text = selection.getTextContent();
+      if (!text) return false;
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", text);
+      if (text === $getRoot().getTextContent()) {
+        event.clipboardData.setData(COMPOSER_CLIPBOARD_MIME, JSON.stringify({
+          version: 1,
+          value: $serializePrompt(),
+          tokens: collectTokens($getRoot()),
+        }));
+      }
+      return true;
+    }, COMMAND_PRIORITY_HIGH);
+    const unregisterPaste = editor.registerCommand(PASTE_COMMAND, (event) => {
+      if (!("clipboardData" in event) || !event.clipboardData) return false;
+      const payload = parseComposerClipboardPayload(event.clipboardData.getData(COMPOSER_CLIPBOARD_MIME));
+      if (!payload) return false;
+      event.preventDefault();
+      let selection = $getSelection();
+      if (!$isRangeSelection(selection)) {
+        $getRoot().selectEnd();
+        selection = $getSelection();
+      }
+      if (!$isRangeSelection(selection)) return false;
+      selection.insertNodes(splitValue(payload.value, payload.tokens).map((segment) => (
+        segment.type === "text" ? $createTextNode(segment.value) : $createComposerTokenNode(segment.token)
+      )));
+      return true;
+    }, COMMAND_PRIORITY_HIGH);
+    return () => {
+      unregisterPaste();
+      unregisterCopy();
+    };
+  }, [editor]);
 
   return (
     <div className="relative w-full">
@@ -328,14 +463,14 @@ function ComposerPromptEditorInner({
             placeholder={<span />}
             data-slot="prompt-input-content"
             data-max-length={maxLength}
-            className="block max-h-[220px] min-h-11 w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent px-4 pb-1 pt-4 text-md leading-relaxed shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 [&_p]:m-0 disabled:opacity-60"
+            className="block max-h-[220px] min-h-9 w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent px-4 pb-1 pt-1 text-md leading-relaxed shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 [&_p]:m-0 disabled:opacity-60"
             onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => { onKeyDown(event); }}
           />
         )}
         placeholder={(
           <div
             data-slot="prompt-input-placeholder"
-            className="pointer-events-none absolute inset-x-4 top-4 text-md leading-relaxed"
+            className="pointer-events-none absolute inset-x-4 top-1 text-md leading-relaxed"
             style={{ color: "var(--text-tertiary)" }}
           >
             {placeholder}

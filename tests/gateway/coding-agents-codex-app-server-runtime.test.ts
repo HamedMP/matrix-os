@@ -522,6 +522,56 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
+  it("flushes assistant text in conversational chunks before the final completion", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-stream-"));
+    const fakeCodexPath = join(homePath, "fake-codex-stream.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_stream_1");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-stream' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-stream' } } }));",
+      "    for (const delta of ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40)]) console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'native-thread-stream', turnId: 'native-turn-stream', itemId: 'native-message-stream', delta } }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { threadId: 'native-thread-stream', turn: { id: 'native-turn-stream', status: 'completed', items: [] } } }));",
+      "    process.exit(0);",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "Stream an answer.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await expect(waitForExit(child)).resolves.toBe(0);
+      const deltas = (await readFile(eventPath, "utf8")).trim().split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((event) => event.type === "matrix.codex.assistant.delta")
+        .map((event) => event.delta);
+      expect(deltas).toEqual([`${"a".repeat(40)}${"b".repeat(40)}`, "c".repeat(40)]);
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("persists a generic failure and removes the control socket when the provider exits", async () => {
     const homePath = await mkdtemp(join("/tmp", "codex-exit-"));
     const fakeCodexPath = join(homePath, "fake-codex-exit.mjs");

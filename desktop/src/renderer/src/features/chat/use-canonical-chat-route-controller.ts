@@ -3,7 +3,7 @@ import type {
   CanonicalChatRecord,
   CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 
@@ -34,6 +34,8 @@ export function useCanonicalChatRouteController({
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [status, setStatus] = useState<CanonicalChatRouteStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const activeChatIdRef = useRef<string | null>(initialChatId);
+  const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
 
@@ -62,8 +64,11 @@ export function useCanonicalChatRouteController({
       setError(null);
       setStatus("ready");
       setActiveChatId((current) => {
-        if (current && page.items.some((record) => record.chat.id === current)) return current;
-        return autoSelectFirst ? page.items[0]?.chat.id ?? null : null;
+        const next = current && page.items.some((record) => record.chat.id === current)
+          ? current
+          : autoSelectFirst ? page.items[0]?.chat.id ?? null : null;
+        activeChatIdRef.current = next;
+        return next;
       });
       if (page.items.length === 0) setDetail(null);
     } catch {
@@ -73,12 +78,19 @@ export function useCanonicalChatRouteController({
     }
   }, [autoSelectFirst, client, projectId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const previousScope = routeScopeRef.current;
+    const scopeChanged = previousScope?.active !== active
+      || previousScope.client !== client
+      || previousScope.projectId !== projectId;
+    routeScopeRef.current = { active, client, projectId };
+    if (!scopeChanged && initialChatId === activeChatIdRef.current) return;
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
     setItems([]);
     setDetail(null);
     setActiveChatId(initialChatId);
+    activeChatIdRef.current = initialChatId;
     setStatus("idle");
     setError(null);
     if (active) void load();
@@ -91,13 +103,14 @@ export function useCanonicalChatRouteController({
 
   useEffect(() => {
     if (!active || !activeChatId || !detail?.record.activeRun) return;
-    const timeout = window.setTimeout(() => void loadDetail(activeChatId), 1_000);
+    const timeout = window.setTimeout(() => void loadDetail(activeChatId), 200);
     return () => window.clearTimeout(timeout);
   }, [active, activeChatId, detail?.record.activeRun, loadDetail]);
 
   const selectChat = useCallback((chatId: string | null) => {
     detailRequestSequence.current += 1;
     setActiveChatId(chatId);
+    activeChatIdRef.current = chatId;
     setDetail(null);
     setError(null);
   }, []);
@@ -129,6 +142,7 @@ export function useCanonicalChatRouteController({
   const submitTurn = useCallback(async (
     input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
     title: string,
+    initialProjectId: string | null = projectId,
   ) => {
     try {
       let current = detail;
@@ -136,7 +150,7 @@ export function useCanonicalChatRouteController({
         const record = await client.create({
           clientRequestId: canonicalChatRequestId(),
           title,
-          ...(projectId === null ? {} : { projectId }),
+          ...(initialProjectId === null ? {} : { projectId: initialProjectId }),
           currentSelection: input.selection,
         });
         current = {
@@ -160,6 +174,7 @@ export function useCanonicalChatRouteController({
         runs: [...current.runs, admitted.run],
       };
       setActiveChatId(admitted.record.chat.id);
+      activeChatIdRef.current = admitted.record.chat.id;
       setDetail(next);
       setItems((existing) => [
         admitted.record,

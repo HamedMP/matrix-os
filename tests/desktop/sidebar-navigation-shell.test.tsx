@@ -190,7 +190,7 @@ describe("Desktop sidebar navigation shell", () => {
     expect(useHermesChat.getState().view).toBe("index");
     expect(useThreads.getState().activeThreadId).toBeNull();
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId))
-      .toMatchObject({ kind: "chat", title: "Chat", chatId: undefined });
+      .toMatchObject({ kind: "chat", title: "Chat", chatId: undefined, chatView: "index" });
     expect(useTabs.getState().recentViews.some((recent) => recent.id === "hermes"))
       .toBe(false);
   });

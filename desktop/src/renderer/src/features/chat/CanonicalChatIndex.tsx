@@ -74,8 +74,8 @@ export function CanonicalChatIndex({
 
         {error ? <div role="alert" className="mb-3 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>{error}</div> : null}
         {status === "loading" && items.length === 0 ? (
-          <div role="status" aria-label="Loading chats" className="overflow-hidden rounded-xl border">
-            {[0, 1, 2].map((item) => <div key={item} className="h-16 animate-pulse border-b last:border-b-0" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }} />)}
+          <div role="status" aria-label="Loading chats" className="py-8 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
+            Loading chats…
           </div>
         ) : null}
         {status !== "loading" && items.length === 0 ? (

@@ -139,6 +139,29 @@ describe("canonical Chat route controller", () => {
     expect(getDetail).toHaveBeenCalledWith("chat_moved", { limit: 200 });
   });
 
+  it("does not reload when the retained tab reflects an internally selected Chat", async () => {
+    const sharedClient = client();
+    const { result, rerender } = renderHook(
+      ({ initialChatId }) => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId,
+        autoSelectFirst: false,
+      }),
+      { initialProps: { initialChatId: null as string | null } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => result.current.selectChat(globalRecord.chat.id));
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(globalRecord.chat.id));
+    rerender({ initialChatId: globalRecord.chat.id });
+
+    expect(sharedClient.list).toHaveBeenCalledTimes(1);
+    expect(sharedClient.getDetail).toHaveBeenCalledTimes(1);
+    expect(result.current.detail?.record.chat.id).toBe(globalRecord.chat.id);
+  });
+
   it("finishes the scoped list load when an initial Chat detail loads concurrently", async () => {
     let resolveList!: (value: { items: typeof globalRecord[] }) => void;
     const list = vi.fn(() => new Promise<{ items: typeof globalRecord[] }>((resolve) => {
@@ -212,6 +235,35 @@ describe("canonical Chat route controller", () => {
       timeout: 2_000,
     });
     expect(getDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes an active Run quickly enough for conversational streaming", async () => {
+    vi.useFakeTimers();
+    try {
+      const runningRecord = {
+        ...globalRecord,
+        activeRun: { runId: "run_streaming", turnId: "turn_streaming", status: "running" as const },
+      };
+      const runningDetail = { ...detail, record: runningRecord };
+      const getDetail = vi.fn(async () => runningDetail);
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("admits the first Project turn before opening its detail so the optimistic message cannot be replaced by an empty Chat", async () => {
@@ -295,5 +347,60 @@ describe("canonical Chat route controller", () => {
     expect(result.current.detail?.messages).toEqual([message]);
     expect(result.current.detail?.runs).toEqual([run]);
     expect(result.current.activeChatId).toBe(projectRecord.chat.id);
+  });
+
+  it("creates a Global draft inside the Project selected before its first Turn", async () => {
+    const projectRecord = {
+      ...globalRecord,
+      projectId: "project_1",
+      chat: { ...globalRecord.chat, id: "chat_project_draft", title: "Inspect workspace" },
+    };
+    const message = {
+      id: "message_project_draft",
+      chatId: projectRecord.chat.id,
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Inspect workspace" }],
+      createdAt: "2026-08-26T00:00:01.000Z",
+    };
+    const turn = {
+      id: "turn_project_draft",
+      chatId: projectRecord.chat.id,
+      messageId: message.id,
+      sequence: 1,
+      status: "queued" as const,
+      createdAt: "2026-08-26T00:00:01.000Z",
+    };
+    const run = {
+      id: "run_project_draft",
+      chatId: projectRecord.chat.id,
+      turnId: turn.id,
+      attempt: 1,
+      status: "queued" as const,
+      providerInstanceId: "codex_default",
+      createdAt: "2026-08-26T00:00:01.000Z",
+    };
+    const create = vi.fn(async () => projectRecord);
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [] })),
+      create,
+      admitTurn: vi.fn(async () => ({ record: projectRecord, message, turn, run })),
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+    }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    await act(async () => {
+      await result.current.submitTurn({
+        parts: [{ type: "text", text: "Inspect workspace" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      }, "Inspect workspace", "project_1");
+    });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ projectId: "project_1" }));
   });
 });

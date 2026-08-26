@@ -26,6 +26,7 @@ export interface Tab {
   // Identity payload — at most one tab per (kind + key).
   projectSlug?: string;
   chatId?: string;
+  chatView?: "index" | "draft" | "conversation";
   taskId?: string;
   sessionName?: string;
   slug?: string;
@@ -173,10 +174,15 @@ export const useTabs = create<TabsState>()((set, get) => ({
         const nextChatId = routeOwnsChatSelection || spec.chatId !== undefined
           ? spec.chatId
           : existing.chatId;
-        const tabs = existing.title === spec.title && existing.chatId === nextChatId
+        const nextChatView = spec.kind === "chat"
+          ? spec.chatView ?? (nextChatId ? "conversation" : "index")
+          : existing.chatView;
+        const tabs = existing.title === spec.title
+          && existing.chatId === nextChatId
+          && existing.chatView === nextChatView
           ? state.tabs
           : state.tabs.map((tab) => tab.id === existing.id
-            ? { ...tab, title: spec.title, chatId: nextChatId }
+            ? { ...tab, title: spec.title, chatId: nextChatId, chatView: nextChatView }
             : tab);
         return {
           tabs,

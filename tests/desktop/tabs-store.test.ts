@@ -273,6 +273,7 @@ describe("tabs store", () => {
     expect(focusedId).toBe(tabId);
     expect(useTabs.getState().tabs).toHaveLength(1);
     expect(useTabs.getState().tabs[0]?.chatId).toBe("chat_moved");
+    expect(useTabs.getState().tabs[0]?.chatView).toBe("conversation");
   });
 
   it("clears the selected canonical Chat when its root route is opened", () => {
@@ -292,6 +293,21 @@ describe("tabs store", () => {
     expect(focusedId).toBe(tabId);
     expect(useTabs.getState().tabs[0]).toMatchObject({ title: "Chat" });
     expect(useTabs.getState().tabs[0]?.chatId).toBeUndefined();
+    expect(useTabs.getState().tabs[0]?.chatView).toBe("index");
+  });
+
+  it("persists an explicit New Chat draft view across retained-tab focus changes", () => {
+    const chatTabId = useTabs.getState().openTab({
+      kind: "chat",
+      title: "Chat",
+      chatView: "draft",
+      closable: false,
+    });
+    useTabs.getState().openTab({ kind: "home", title: "Home" });
+
+    useTabs.getState().focusTab(chatTabId);
+
+    expect(useTabs.getState().tabs.find((tab) => tab.id === chatTabId)?.chatView).toBe("draft");
   });
 
   it("treats different identities as distinct tabs", () => {

@@ -200,7 +200,7 @@ export default function ConversationContextPicker({
             ) : (
               activeProjects.map((project, index) => {
                 const repository = projectRepositoryLabel(project);
-                const selected = context?.projectId === project.slug;
+                const selected = context?.projectId === project.slug || context?.projectId === project.id;
                 return (
                   <button
                     key={project.slug}

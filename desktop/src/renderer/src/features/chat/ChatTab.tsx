@@ -352,9 +352,11 @@ function LegacyChatTab() {
 export default function ChatTab({
   active = true,
   initialChatId,
+  initialView,
 }: {
   active?: boolean;
   initialChatId?: string;
+  initialView?: "index" | "draft" | "conversation";
 }) {
   const api = useConnection((state) => state.api);
   return (
@@ -362,6 +364,7 @@ export default function ChatTab({
       api={api}
       projectId={null}
       initialChatId={initialChatId}
+      initialView={initialView}
       active={active}
       fallback={<LegacyChatTab />}
     />
