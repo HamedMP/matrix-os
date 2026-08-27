@@ -37,6 +37,7 @@ function createRegistry(
     maxSessions: opts.maxSessions ?? 10,
     bufferSize: opts.bufferSize ?? 1024,
     persistPath: opts.persistPath ?? "/tmp/test-home/system/terminal-sessions.json",
+    autoRestore: opts.autoRestore ?? false,
     ...opts,
   }, spawnFn ?? createMockSpawn());
 }
@@ -83,6 +84,7 @@ describe("SessionRegistry", () => {
     });
 
     it("rejects shell not in allowlist and falls back to default", () => {
+      vi.stubEnv("SHELL", "/bin/zsh");
       const mockSpawn = createMockSpawn();
       const registry = createRegistry({}, mockSpawn);
       registry.create("/home", "/usr/bin/python3");
