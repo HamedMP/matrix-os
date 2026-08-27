@@ -63,11 +63,11 @@ jobs:
       NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.head }}
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -125,7 +125,7 @@ jobs:
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.head }}
       - uses: actions/download-artifact@v8
@@ -161,7 +161,7 @@ jobs:
       RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
       TEST_ONLY_ACTIVATION: MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.head }}
       - name: Recover the exact-head disposable preview updater
