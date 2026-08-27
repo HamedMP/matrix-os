@@ -1,4 +1,5 @@
 import { desktopFonts, desktopPalette } from '@matrix-os/brand/tokens';
+import { rabbitMarkSvg } from '@matrix-os/brand/marks';
 
 function escapeHtmlAttr(value: string): string {
   return value
@@ -107,7 +108,7 @@ export function approvalPage(
       var button = document.getElementById('confirm-button');
       if (button) {
         button.disabled = isBusy || !runtimeReady;
-        button.textContent = isBusy ? 'authorizing...' : 'approve login';
+        button.textContent = isBusy ? 'Connecting...' : 'Approve and connect';
       }
     }
 
@@ -122,7 +123,6 @@ export function approvalPage(
     }
 
     function updateSignedInIdentity() {
-      var instance = document.getElementById('instance-line');
       var card = document.getElementById('identity-card');
       if (!window.Clerk || !window.Clerk.user) return;
       var user = window.Clerk.user;
@@ -160,17 +160,12 @@ export function approvalPage(
         fallback.hidden = false;
       }
       if (card) card.hidden = false;
-      if (instance) instance.textContent = 'signed in: @' + handle + ' on app.matrix-os.com';
     }
 
     function updateSelectedComputer() {
       var select = document.getElementById('computer-select');
-      var instance = document.getElementById('instance-line');
       selectedRuntimeSlot = select?.value || '';
       runtimeReady = Boolean(selectedRuntimeSlot);
-      if (instance && select?.selectedOptions[0]) {
-        instance.textContent = 'computer: ' + select.selectedOptions[0].textContent;
-      }
       setBusy(false);
     }
 
@@ -557,28 +552,19 @@ export function approvalPage(
       backdrop-filter: blur(18px);
     }
     .brand-lockup { display: flex; align-items: center; gap: 10px; font-weight: 680; }
-    .brand-mark {
-      width: 28px;
-      height: 28px;
-      display: grid;
-      place-items: center;
-      border-radius: 9px;
-      background: var(--green);
-      color: var(--forest);
-      font-family: ${desktopFonts.display};
-      font-weight: 800;
-    }
+    .rabbit-mark { display: block; width: auto; flex: 0 0 auto; fill: currentColor; }
+    .rabbit-mark-phosphor { color: var(--green); height: 34px; }
     .secure-label { color: rgba(252, 252, 248, 0.7); font-size: 12px; }
     .stage-content {
       position: relative;
       z-index: 1;
       flex: 1;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      gap: 40px;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      align-items: center;
       padding: clamp(34px, 7vw, 72px);
     }
+    .stage-copy { align-self: center; max-width: 520px; }
     .eyebrow {
       margin: 0 0 14px;
       color: var(--green);
@@ -597,48 +583,29 @@ export function approvalPage(
       letter-spacing: -0.045em;
       line-height: 0.98;
     }
-    .stage-lede { max-width: 470px; margin-top: 20px; color: rgba(252, 252, 248, 0.72); }
-    .terminal-window {
-      overflow: hidden;
-      border: 1px solid rgba(252, 252, 248, 0.2);
-      border-radius: 18px;
-      background: rgba(5, 29, 18, 0.62);
-      box-shadow: 0 22px 60px rgba(3, 20, 12, 0.32);
-      backdrop-filter: blur(18px);
+    .stage-lede { max-width: 430px; margin-top: 20px; color: rgba(252, 252, 248, 0.72); }
+    .stage-promise {
+      align-self: end;
+      max-width: 420px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(252, 252, 248, 0.2);
+      color: rgba(252, 252, 248, 0.7);
+      font-family: ${desktopFonts.display};
+      font-size: clamp(18px, 2vw, 24px);
+      font-weight: 560;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
     }
-    .terminal-bar {
-      min-height: 42px;
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      padding: 0 14px;
-      border-bottom: 1px solid rgba(252, 252, 248, 0.13);
-      color: rgba(252, 252, 248, 0.65);
-      font-size: 12px;
+    .stage-watermark {
+      position: absolute;
+      right: -72px;
+      bottom: -150px;
+      z-index: 0;
+      color: rgba(190, 215, 123, 0.08);
+      pointer-events: none;
+      transform: rotate(-7deg);
     }
-    .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--coral); }
-    .dot:nth-child(2) { background: var(--gold); }
-    .dot:nth-child(3) { background: var(--green); }
-    .terminal-title { margin-left: 6px; }
-    .screen {
-      padding: 20px;
-      font-family: ${desktopFonts.mono};
-      font-size: 13px;
-      line-height: 1.7;
-    }
-    .prompt { color: var(--green); }
-    .muted { color: rgba(252, 252, 248, 0.54); }
-    .code {
-      display: inline-block;
-      margin: 10px 0 14px;
-      padding: 9px 13px;
-      border: 1px solid rgba(190, 215, 123, 0.52);
-      border-radius: 10px;
-      background: rgba(190, 215, 123, 0.12);
-      color: var(--paper);
-      font-size: 22px;
-      letter-spacing: 0.1em;
-    }
+    .stage-watermark .rabbit-mark { height: 520px; }
     .panel {
       min-width: 0;
       background: var(--paper);
@@ -756,42 +723,28 @@ export function approvalPage(
 </head>
 <body>
   <main>
-    <section class="desktop-stage" aria-label="${productLabel} login preview">
+    <section class="desktop-stage" aria-label="${productLabel} secure connection">
       <div class="brand-bar">
-        <div class="brand-lockup"><span class="brand-mark">M</span><span>Matrix OS</span></div>
+        <div class="brand-lockup">${rabbitMarkSvg('rabbit-mark rabbit-mark-phosphor')}<span>Matrix OS</span></div>
         <span class="secure-label">Secure device connection</span>
       </div>
+      <div class="stage-watermark">${rabbitMarkSvg('rabbit-mark stage-rabbit-mark')}</div>
       <div class="stage-content">
-        <div>
-          <p class="eyebrow">Device authorization</p>
+        <div class="stage-copy">
+          <p class="eyebrow">Your private computer</p>
           <h1>Connect Matrix OS</h1>
-          <p class="stage-lede">Confirm the code shown in the ${isNativeApp ? 'desktop app' : 'terminal'}, choose your cloud computer, and Matrix will finish the connection.</p>
+          <p class="stage-lede">Approve once to securely open your private computer from this device.</p>
         </div>
-        <div class="terminal-window">
-          <div class="terminal-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="terminal-title">${isNativeApp ? 'Matrix Desktop — device sign in' : 'matrix login'}</span></div>
-          <div class="screen">
-            <div><span class="prompt">matrix</span> login</div>
-            <div class="muted">open app.matrix-os.com/auth/device</div>
-            <div>verification code</div>
-            <div class="code">${escapedCode}</div>
-            <div id="instance-line" class="muted">waiting for signed-in Matrix instance...</div>
-            <br>
-            <div><span class="prompt">matrix</span> whoami</div>
-            <div class="muted">@handle on app.matrix-os.com</div>
-            <div><span class="prompt">matrix</span> shell attach -c main</div>
-            <div><span class="prompt">matrix</span> run -it -- claude</div>
-            <div><span class="prompt">matrix</span> doctor</div>
-          </div>
-        </div>
+        <p class="stage-promise">One account. One private computer. Every surface.</p>
       </div>
     </section>
     <section class="panel">
       <div>
         <p class="eyebrow">One last step</p>
         <h2>Approve ${productLabel}</h2>
-        <p>Authorize ${isNativeApp ? 'the desktop app' : 'this terminal'} to connect to your Matrix OS cloud computer. If you are new, create your account here first.</p>
+        <p>Allow this device to open your Matrix OS cloud computer.</p>
       </div>
-      <div class="trial-note"><span class="trial-dot"></span><span><strong>Free trial for eligible accounts</strong>The current offer is 3 days by default. A card is required. Stripe Checkout confirms whether your account qualifies, the exact trial length, and when billing starts.</span></div>
+      <div class="trial-note"><span class="trial-dot"></span><span><strong>3-day trial for eligible accounts</strong>A card is required. Stripe confirms eligibility and billing before setup.</span></div>
       <div id="signin-area" style="display:none"></div>
       <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
         <input type="hidden" name="userCode" value="${escapedCode}">
@@ -811,7 +764,7 @@ export function approvalPage(
           <label for="computer-select">Computer</label>
           <select id="computer-select" name="runtimeSlot" aria-label="Computer"></select>
         </div>
-        <button id="confirm-button" type="submit" disabled>approve login</button>
+        <button id="confirm-button" type="submit" disabled>Approve and connect</button>
       </form>
       <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
     </section>
@@ -835,7 +788,7 @@ export function approvalSuccessPage(nativeRedirectUri: string | null = null): st
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${redirectMeta}<title>Connected — Matrix OS</title>
 <style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,rgba(241,195,121,.58),transparent 28rem),radial-gradient(circle at 85% 90%,rgba(197,214,226,.8),transparent 34rem),${desktopPalette.canvas};color:${desktopPalette.forest};font-family:${desktopFonts.sans}}.card{width:min(520px,100%);padding:clamp(32px,7vw,64px);border:1px solid rgba(14,52,34,.16);border-radius:28px;background:${desktopPalette.paper};box-shadow:0 30px 90px rgba(14,52,34,.16);text-align:center}.mark{width:72px;height:72px;display:grid;place-items:center;margin:0 auto 26px;border-radius:22px;background:${desktopPalette.green};color:${desktopPalette.forest};font-family:${desktopFonts.display};font-size:30px;font-weight:800;animation:arrive .5s cubic-bezier(.2,.8,.2,1) both}.eyebrow{margin:0 0 12px;color:${desktopPalette.coral};font-size:12px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}h1{margin:0;font-family:${desktopFonts.display};font-size:clamp(38px,8vw,58px);font-weight:590;letter-spacing:-.045em;line-height:1}p{margin:18px auto 0;max-width:390px;color:${desktopPalette.textMuted};line-height:1.6}a{display:inline-flex;min-height:48px;align-items:center;justify-content:center;margin-top:8px;padding:0 22px;border-radius:14px;background:${desktopPalette.forest};color:${desktopPalette.paper};font-weight:680;text-decoration:none}a:focus-visible{outline:3px solid ${desktopPalette.gold};outline-offset:3px}@keyframes arrive{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,rgba(241,195,121,.58),transparent 28rem),radial-gradient(circle at 85% 90%,rgba(197,214,226,.8),transparent 34rem),${desktopPalette.canvas};color:${desktopPalette.forest};font-family:${desktopFonts.sans}}.card{width:min(520px,100%);padding:clamp(32px,7vw,64px);border:1px solid rgba(14,52,34,.16);border-radius:28px;background:${desktopPalette.paper};box-shadow:0 30px 90px rgba(14,52,34,.16);text-align:center}.rabbit-mark{display:block;width:auto;fill:currentColor}.success-rabbit{color:${desktopPalette.forest};height:78px;margin:0 auto 26px;animation:arrive .5s cubic-bezier(.2,.8,.2,1) both}.eyebrow{margin:0 0 12px;color:${desktopPalette.coral};font-size:12px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}h1{margin:0;font-family:${desktopFonts.display};font-size:clamp(38px,8vw,58px);font-weight:590;letter-spacing:-.045em;line-height:1}p{margin:18px auto 0;max-width:390px;color:${desktopPalette.textMuted};line-height:1.6}a{display:inline-flex;min-height:48px;align-items:center;justify-content:center;margin-top:8px;padding:0 22px;border-radius:14px;background:${desktopPalette.forest};color:${desktopPalette.paper};font-weight:680;text-decoration:none}a:focus-visible{outline:3px solid ${desktopPalette.gold};outline-offset:3px}@keyframes arrive{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head>
-<body><main class="card"><div class="mark" aria-hidden="true">M</div><p class="eyebrow">Device approved</p><h1>You&#39;re connected</h1><p>${detail}</p>${redirectLink}</main></body></html>`;
+<body><main class="card">${rabbitMarkSvg('rabbit-mark success-rabbit')}<p class="eyebrow">Device approved</p><h1>You&#39;re connected</h1><p>${detail}</p>${redirectLink}</main></body></html>`;
 }
