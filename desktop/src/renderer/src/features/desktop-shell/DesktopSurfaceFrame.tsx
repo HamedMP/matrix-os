@@ -18,6 +18,7 @@ import {
   OS_WINDOW_SIDEBAR_WIDTH,
   TopBar,
 } from "./OSWindow";
+import SurfaceIcon from "./SurfaceIcon";
 
 export default function DesktopSurfaceFrame({
   tab,
@@ -149,6 +150,8 @@ export default function DesktopSurfaceFrame({
       safeAreaLayout={terminalOwnsChrome ? "sidebar" : "pane"}
       topBar={isWindow ? (
         <TopBar
+          title={tab.title}
+          icon={<SurfaceIcon tab={tab} size={14} />}
           chromePlacement={terminalOwnsChrome ? "sidebar" : "full-width"}
           sidebarWidth={terminalOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
           onClose={onClose}

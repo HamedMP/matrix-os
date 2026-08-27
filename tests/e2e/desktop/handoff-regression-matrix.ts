@@ -371,11 +371,11 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
     evidence: [
       testEvidence(
         "tests/desktop/terminals-tab.test.tsx",
-        "keeps secondary row actions in an accessible overflow menu",
+        "keeps the OS View sidebar delete action accessible",
       ),
       testEvidence(
         "tests/desktop/terminals-tab.test.tsx",
-        "uses the Figma list toolbar and reveals a bounded search-empty state",
+        "uses the Figma sidebar toolbar without legacy list controls",
       ),
     ],
     figmaNode: "67:5290",

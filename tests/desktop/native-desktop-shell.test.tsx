@@ -243,8 +243,8 @@ describe("native desktop shell", () => {
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
 
-    expect(screen.getByRole("dialog", { name: "Hermes window" })).toBeTruthy();
-    expect(screen.getByText("Hermes content")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Chat window" })).toBeTruthy();
+    expect(screen.getByText("Chat content")).toBeTruthy();
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
@@ -435,12 +435,12 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     const tabId = useTabs.getState().activeTabId!;
 
-    fireEvent.click(screen.getByRole("button", { name: "Minimize Hermes" }));
-    expect(screen.queryByRole("dialog", { name: "Hermes window" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Minimize Chat" }));
+    expect(screen.queryByRole("dialog", { name: "Chat window" })).toBeNull();
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("minimized");
 
-    fireEvent.click(screen.getByRole("button", { name: "Restore Hermes" }));
-    expect(screen.getByRole("dialog", { name: "Hermes window" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Restore Chat" }));
+    expect(screen.getByRole("dialog", { name: "Chat window" })).toBeTruthy();
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("window");
   });
 
@@ -452,7 +452,7 @@ describe("native desktop shell", () => {
     expect(runningApps.className).toContain("[scrollbar-width:none]");
     expect(runningApps.className).toContain("[&::-webkit-scrollbar]:hidden");
     expect(runningApps.className).not.toContain("pb-2");
-    const chatButton = screen.getByRole("button", { name: "Focus Hermes" });
+    const chatButton = screen.getByRole("button", { name: "Focus Chat" });
     expect(chatButton.className).not.toContain("hover:-translate-y-0.5");
     expect(chatButton.querySelector("[data-desktop-app-icon]")?.className)
       .toContain("group-hover:-translate-y-0.5");
@@ -610,7 +610,7 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
 
-    expect(screen.getByText("Hermes content")).toBeTruthy();
+    expect(screen.getByText("Chat content")).toBeTruthy();
     expect(screen.getByText("Terminal content")).toBeTruthy();
     expect(screen.getByTestId("desktop-surface-content-chat").hasAttribute("inert")).toBe(true);
     expect(screen.getByTestId("desktop-surface-content-terminals").hasAttribute("inert")).toBe(false);
@@ -624,13 +624,13 @@ describe("native desktop shell", () => {
 
     const dragHandle = screen.getByTestId("desktop-window-drag-handle");
     expect(dragHandle.classList.contains("titlebar-drag")).toBe(false);
-    expect(dragHandle.classList.contains("no-drag")).toBe(true);
+    expect(dragHandle.classList.contains("z-20")).toBe(true);
     expect(screen.getByRole("button", { name: "Close Files" }).style.background)
-      .toBe("var(--matrix-window-close)");
+      .toBe("var(--surface-primary, #FFFEFC)");
     expect(screen.getByRole("button", { name: "Minimize Files" }).style.background)
-      .toBe("var(--matrix-window-minimize)");
+      .toBe("var(--surface-primary, #FFFEFC)");
     expect(screen.getByRole("button", { name: "Maximize Files into tabs" }).style.background)
-      .toBe("var(--matrix-window-maximize)");
+      .toBe("var(--surface-primary, #FFFEFC)");
 
     fireEvent.pointerDown(dragHandle, { button: 0, clientX: 400, clientY: 180 });
     fireEvent.pointerMove(window, { clientX: 480, clientY: 225 });
