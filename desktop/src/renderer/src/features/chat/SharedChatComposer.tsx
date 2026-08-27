@@ -218,6 +218,7 @@ export function SharedChatComposer({
   maxLength,
   unavailableProviderLabel,
   menuSide = "top",
+  layout = "default",
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -250,6 +251,7 @@ export function SharedChatComposer({
   maxLength?: number;
   unavailableProviderLabel?: string;
   menuSide?: "top" | "bottom";
+  layout?: "default" | "narrow";
 }) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
@@ -482,6 +484,7 @@ export function SharedChatComposer({
         canSubmit={canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0))}
         autoFocus={autoFocus}
         focusRequestId={focusRequestId}
+        layout={layout}
         maxLength={maxLength}
         placeholder={placeholder}
         ariaLabel={ariaLabel}

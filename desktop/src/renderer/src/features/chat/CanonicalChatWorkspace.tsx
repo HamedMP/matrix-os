@@ -145,6 +145,20 @@ export function CanonicalChatWorkspace({
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const [workspaceLayout, setWorkspaceLayout] = useState<"wide" | "narrow">("wide");
+
+  useLayoutEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width !== "number") return;
+      setWorkspaceLayout(width < 720 ? "narrow" : "wide");
+    });
+    observer.observe(workspace);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!api || runtimeStatus !== "idle") return;
@@ -381,12 +395,18 @@ export function CanonicalChatWorkspace({
             }}
           />
         )}
+        layout={workspaceLayout === "narrow" ? "narrow" : "default"}
       />
     </>
   );
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-slot="canonical-chat-workspace">
+    <div
+      ref={workspaceRef}
+      className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${workspaceLayout === "narrow" ? "flex-col" : "flex-row"}`}
+      data-slot="canonical-chat-workspace"
+      data-layout={workspaceLayout}
+    >
       {projectId === null ? (
         <CanonicalChatIndex
           items={controller.items}
@@ -402,10 +422,12 @@ export function CanonicalChatWorkspace({
             setDeleteTarget({ id: record.chat.id, title: record.chat.title });
           }}
           onNewChat={startNewChat}
+          layout={workspaceLayout}
         />
       ) : <aside
         aria-label="Project chats"
-        className="flex w-[260px] shrink-0 flex-col border-r p-3"
+        data-layout={workspaceLayout}
+        className={`flex shrink-0 flex-col p-3 ${workspaceLayout === "narrow" ? "h-[168px] min-h-[120px] w-full border-b" : "w-[260px] border-r"}`}
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
       >
         <div className="flex items-center justify-between gap-2 px-1 pb-3">
@@ -496,25 +518,36 @@ export function CanonicalChatWorkspace({
             Loading chat…
           </div>
         ) : projectId === null ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 items-center justify-center px-5 py-8">
+          <div
+            data-slot="chat-new-chat-content"
+            className={`flex min-h-0 flex-1 flex-col ${workspaceLayout === "narrow" ? "overflow-y-auto" : ""}`}
+          >
+            <div className={`flex min-h-0 flex-1 items-center justify-center ${workspaceLayout === "narrow" ? "px-3 py-3" : "px-5 py-8"}`}>
               <div className="w-full max-w-[480px]">
-                <ChatStarterCards layout="two-by-two" onSelect={setDraft} />
+                <ChatStarterCards
+                  layout="two-by-two"
+                  density={workspaceLayout === "narrow" ? "compact" : "regular"}
+                  onSelect={setDraft}
+                />
               </div>
             </div>
-            <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
+            <div className={`mx-auto w-full max-w-[868px] shrink-0 ${workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5"}`}>
               {composer}
             </div>
           </div>
         ) : (
-          <div className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center gap-[26px] px-5 py-8">
+          <div className={`mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center ${workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8"}`}>
             <div className="flex flex-col items-center gap-3 text-center">
               <MessageSquare size={28} aria-hidden style={{ color: "var(--text-tertiary)" }} />
               <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.02em]" style={{ color: "var(--text-primary)" }}>
                 What should we build today?
               </h1>
             </div>
-            <ChatStarterCards layout="two-by-two" onSelect={setDraft} />
+            <ChatStarterCards
+              layout="two-by-two"
+              density={workspaceLayout === "narrow" ? "compact" : "regular"}
+              onSelect={setDraft}
+            />
             {composer}
           </div>
         )}

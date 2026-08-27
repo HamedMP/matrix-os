@@ -23,6 +23,7 @@ export function PromptInput({
   canSubmit,
   focusRequestId,
   onTextareaKeyDown,
+  layout = "default",
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -46,6 +47,7 @@ export function PromptInput({
   // Bumping this id focuses the textarea (type-to-start, ⌘J, chip seeds).
   focusRequestId?: number;
   onTextareaKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean | void;
+  layout?: "default" | "narrow";
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const submissionReady = canSubmit ?? value.trim().length > 0;
@@ -68,6 +70,7 @@ export function PromptInput({
   return (
     <div
       className="prompt-card flex flex-col rounded-[var(--radius-xl)] border"
+      data-layout={layout}
       style={{ background: "var(--bg-surface)" }}
     >
       {attachments}
@@ -99,11 +102,11 @@ export function PromptInput({
           />
         </div>
       )}
-      <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-        <div className="flex min-w-0 flex-1 items-center gap-1">
+      <div className={`flex gap-2 px-2.5 pb-2.5 ${layout === "narrow" ? "flex-col items-stretch" : "items-center justify-between"}`}>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {controls}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className={`flex shrink-0 flex-wrap items-center gap-1.5 ${layout === "narrow" ? "justify-end" : ""}`}>
           {trailingControls}
           {busy && onAbort ? (
             <button

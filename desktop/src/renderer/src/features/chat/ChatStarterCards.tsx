@@ -9,9 +9,11 @@ const STARTERS = [
 
 export function ChatStarterCards({
   layout = "responsive",
+  density = "regular",
   onSelect,
 }: {
   layout?: "responsive" | "two-by-two";
+  density?: "regular" | "compact";
   onSelect: (prompt: string) => void;
 }) {
   return (
@@ -22,7 +24,7 @@ export function ChatStarterCards({
           type="button"
           aria-label={label}
           onClick={() => onSelect(label)}
-          className="flex min-h-32 flex-col items-start justify-between rounded-xl border p-4 text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className={`flex flex-col items-start justify-between rounded-xl border text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${density === "compact" ? "min-h-24 p-3" : "min-h-32 p-4"}`}
           style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
         >
           <span className="flex size-8 items-center justify-center rounded-lg" style={{ background: "var(--bg-sunken)", color: tone }}>

@@ -26,6 +26,7 @@ export function CanonicalChatIndex({
   onSelect,
   onDelete,
   onNewChat,
+  layout = "wide",
 }: {
   items: CanonicalChatRecord[];
   activeChatId: string | null;
@@ -37,14 +38,21 @@ export function CanonicalChatIndex({
   onSelect: (chatId: string) => void;
   onDelete: (record: CanonicalChatRecord) => void;
   onNewChat: () => void;
+  layout?: "wide" | "narrow";
 }) {
   const [searchOpen, setSearchOpen] = useState(query.length > 0);
 
   return (
-    <OSWindowSafeView area="sidebar" className="h-full min-h-0 w-[280px] min-w-[200px] max-w-[280px] shrink-0">
+    <OSWindowSafeView
+      area="sidebar"
+      data-layout={layout}
+      className={layout === "narrow"
+        ? "h-[168px] min-h-[120px] w-full max-w-none shrink-0"
+        : "h-full min-h-0 w-[280px] min-w-[200px] max-w-[280px] shrink-0"}
+    >
       <aside
         aria-label="Global chats"
-        className="flex h-full min-h-0 w-full flex-col border-r"
+        className={`flex h-full min-h-0 w-full flex-col ${layout === "narrow" ? "border-b" : "border-r"}`}
         style={{ borderColor: "var(--border-default, #F3F2F2)" }}
       >
         <header className="flex shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>

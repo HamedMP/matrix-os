@@ -12,6 +12,31 @@ import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { snapshot, providerCatalog } = createCanonicalChatFixture("completed");
+const resizeObserverCallbacks: ResizeObserverCallback[] = [];
+
+class WorkspaceResizeObserver implements ResizeObserver {
+  constructor(callback: ResizeObserverCallback) {
+    resizeObserverCallbacks.push(callback);
+  }
+
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() { return []; }
+}
+
+function resizeChatWorkspace(width: number) {
+  const workspace = document.querySelector<HTMLElement>('[data-slot="canonical-chat-workspace"]');
+  if (!workspace) throw new Error("Canonical Chat workspace did not render");
+  const entry = {
+    target: workspace,
+    contentRect: { width },
+  } as unknown as ResizeObserverEntry;
+  for (const callback of resizeObserverCallbacks) {
+    callback([entry], {} as ResizeObserver);
+  }
+}
+
 const record = {
   chat: {
     id: snapshot.chat.id,
@@ -52,14 +77,11 @@ function client(): CanonicalChatClient {
 
 describe("CanonicalChatWorkspace", () => {
   beforeAll(() => {
-    globalThis.ResizeObserver = class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    } as typeof ResizeObserver;
+    globalThis.ResizeObserver = WorkspaceResizeObserver;
   });
 
   beforeEach(() => {
+    resizeObserverCallbacks.length = 0;
     useBoard.setState(useBoard.getInitialState(), true);
     useConnection.setState(useConnection.getInitialState(), true);
   });
@@ -105,6 +127,58 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
+  });
+
+  it("uses a single-column New Chat layout at the OS View minimum width", async () => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId={null}
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Explore and understand code" });
+    act(() => resizeChatWorkspace(440));
+
+    const workspace = document.querySelector<HTMLElement>('[data-slot="canonical-chat-workspace"]');
+    const index = screen.getByRole("complementary", { name: "Global chats" }).parentElement;
+    const starters = document.querySelector<HTMLElement>('[data-slot="chat-starter-cards"]');
+    const composer = document.querySelector<HTMLElement>('[data-slot="shared-chat-composer"] .prompt-card');
+    const newChatContent = document.querySelector<HTMLElement>('[data-slot="chat-new-chat-content"]');
+    expect(workspace?.getAttribute("data-layout")).toBe("narrow");
+    expect(workspace?.className).toContain("flex-col");
+    expect(index?.getAttribute("data-layout")).toBe("narrow");
+    expect(starters?.className).toContain("grid-cols-2");
+    expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toContain("min-h-24");
+    expect(newChatContent?.className).toContain("overflow-y-auto");
+    expect(composer?.getAttribute("data-layout")).toBe("narrow");
+  });
+
+  it("keeps an existing conversation usable at the OS View minimum width", async () => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId={null}
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    await screen.findByRole("textbox", { name: "Reply to chat" });
+    act(() => resizeChatWorkspace(440));
+
+    const workspace = document.querySelector<HTMLElement>('[data-slot="canonical-chat-workspace"]');
+    const index = screen.getByRole("complementary", { name: "Global chats" }).parentElement;
+    const composer = document.querySelector<HTMLElement>('[data-slot="shared-chat-composer"] .prompt-card');
+    expect(workspace?.getAttribute("data-layout")).toBe("narrow");
+    expect(workspace?.className).toContain("flex-col");
+    expect(index?.getAttribute("data-layout")).toBe("narrow");
+    expect(screen.getByRole("region", { name: "Messages" })).toBeTruthy();
+    expect(composer?.getAttribute("data-layout")).toBe("narrow");
   });
 
   it("keeps Global Chat history visible while starting a draft and reopening an existing Chat", async () => {
