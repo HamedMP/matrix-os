@@ -172,6 +172,77 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("captures the workspace before dispatch and settles changes atomically with the terminal Run", async () => {
+    await repository.create(owner, {
+      id: "chat_turn_changes",
+      clientRequestId: "req_create_turn_changes",
+      title: "Turn changes",
+      projectId: "project_matrix",
+    });
+    const captureStart = vi.fn(async () => ({ tree: "1".repeat(40), head: "2".repeat(40) }));
+    const captureFinal = vi.fn(async (input: { identity: { chatId: string; turnId: string; runId: string }; start: { tree: string } }) => ({
+      end: { tree: "3".repeat(40), head: "2".repeat(40) },
+      changes: {
+        ...input.identity,
+        projectId: "project_matrix",
+        executionRoot: { kind: "project" as const, projectId: "project_matrix" },
+        revision: `turnrev_${"4".repeat(64)}`,
+        beforeRevision: `tree_${input.start.tree}`,
+        afterRevision: `tree_${"3".repeat(40)}`,
+        source: "workspace_checkpoints" as const,
+        label: "Workspace changes observed during this turn" as const,
+        concurrent: false,
+        partial: false,
+        files: [{ path: "src/app.ts", status: "modified" as const, additions: 1, deletions: 0, partial: false }],
+        totals: { changedFileCount: 1, additions: 1, deletions: 0 },
+        capturedAt: "2026-08-26T00:00:00.000Z",
+      },
+    }));
+    const provider = adapter(async function* () {
+      expect(captureStart).toHaveBeenCalledTimes(1);
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const roots: ChatExecutionRootResolver = {
+      resolve: async (_owner, ref) => ({
+        ref,
+        fingerprint: "f".repeat(64),
+        primaryWorkspaceRoot: "/safe/project",
+        projectSlug: "matrix-os",
+      }),
+      revalidate: async (_owner, provenance) => ({
+        ...provenance,
+        primaryWorkspaceRoot: "/safe/project",
+        projectSlug: "matrix-os",
+      }),
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      executionRoots: roots,
+      turnChanges: { captureStart, captureFinal },
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_turn_changes", {
+      clientRequestId: "req_turn_changes",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "edit it" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    expect(captureFinal).toHaveBeenCalledWith(expect.objectContaining({
+      root: "/safe/project",
+      start: { tree: "1".repeat(40), head: "2".repeat(40) },
+      identity: expect.objectContaining({ chatId: "chat_turn_changes", runId: admitted.run.id }),
+    }));
+    await expect(repository.getTurnChanges(owner, "chat_turn_changes", admitted.turn.id))
+      .resolves.toMatchObject({ changes: { files: [expect.objectContaining({ path: "src/app.ts" })] } });
+  });
+
   it("persists and replays typed Provider activity in first-received order", async () => {
     await repository.create(owner, {
       id: "chat_typed_activity",
@@ -533,6 +604,72 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.activities.some((activity) =>
       activity.type === "assistant.delta" && activity.delta === "late output"
     )).toBe(false);
+  });
+
+  it("atomically settles the active Run checkpoint when cancellation wins the Provider race", async () => {
+    await repository.create(owner, {
+      id: "chat_cancelled_changes",
+      clientRequestId: "req_create_cancelled_changes",
+      title: "Cancelled changes",
+      projectId: "project_matrix",
+    });
+    const provider = adapter(async function* (input) {
+      await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
+      yield { type: "run.completed", outcome: "aborted" };
+    });
+    const roots = {
+      resolve: vi.fn(async () => ({
+        ref: { kind: "project" as const, projectId: "project_matrix" },
+        fingerprint: "a".repeat(64),
+        primaryWorkspaceRoot: "/safe/project",
+        projectSlug: "matrix-os",
+      })),
+      revalidate: vi.fn(async (_owner, provenance) => ({
+        ...provenance,
+        primaryWorkspaceRoot: "/safe/project",
+        projectSlug: "matrix-os",
+      })),
+    };
+    const captureStart = vi.fn(async () => ({ tree: "b".repeat(40), head: "d".repeat(40) }));
+    const captureFinal = vi.fn(async (input) => ({
+      end: { tree: "c".repeat(40), head: "d".repeat(40) },
+      changes: {
+        ...input.identity,
+        revision: `turnrev_${"e".repeat(64)}`,
+        beforeRevision: `tree_${input.start.tree}`,
+        afterRevision: `tree_${"c".repeat(40)}`,
+        source: "workspace_checkpoints" as const,
+        label: "Workspace changes observed during this turn" as const,
+        concurrent: false,
+        partial: false,
+        files: [{ path: "src/app.ts", status: "modified" as const, additions: 1, deletions: 0, partial: false }],
+        totals: { changedFileCount: 1, additions: 1, deletions: 0 },
+        capturedAt: input.capturedAt,
+      },
+    }));
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      executionRoots: roots,
+      turnChanges: { captureStart, captureFinal },
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_cancelled_changes", {
+      clientRequestId: "req_cancelled_changes_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "wait" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+
+    await orchestrator.cancelRun(owner, "chat_cancelled_changes", admitted.run.id);
+    await orchestrator.drain();
+
+    expect(captureFinal).toHaveBeenCalledTimes(1);
+    expect((await repository.getTurnChanges(owner, "chat_cancelled_changes", admitted.turn.id))?.changes)
+      .toMatchObject({ runId: admitted.run.id, label: "Workspace changes observed during this turn" });
   });
 
   it("resumes later Turns only through the same adapter state schema and Instance", async () => {

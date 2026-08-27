@@ -16,6 +16,7 @@ import {
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatSafeError,
   type CanonicalChatTurnAdmissionResponse,
+  type CanonicalChatTurnChangeSet,
   type CanonicalCreateChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
 } from "@matrix-os/contracts";
@@ -45,6 +46,7 @@ import {
   type ChatRepository,
 } from "./repository.js";
 import type { ChatOwner } from "./records.js";
+import type { ChatTurnChangeCapture, ChatTurnCheckpoint } from "./turn-changes.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
@@ -64,7 +66,17 @@ interface ActiveRun {
   chatId: string;
   runId: string;
   instanceId: string;
+  run: CanonicalChatRun;
+  resolvedRoot?: ResolvedChatExecutionRoot;
+  turnChangeStart?: ChatTurnCheckpoint;
+  terminalChanges?: Promise<TurnChangeSettlement | undefined>;
   completion: Promise<void>;
+}
+
+interface TurnChangeSettlement {
+  changes: CanonicalChatTurnChangeSet;
+  afterTree: string;
+  afterHead: string;
 }
 
 function id(prefix: "cturn_" | "run_" | "msg_" | "activity_"): string {
@@ -173,6 +185,7 @@ export class CanonicalChatOrchestrator {
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     executionRoots?: ChatExecutionRootResolver;
+    turnChanges?: Pick<ChatTurnChangeCapture, "captureStart" | "captureFinal">;
     now?: () => Date;
     shutdownDrainMs?: number;
   }) {
@@ -343,6 +356,18 @@ export class CanonicalChatOrchestrator {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    let turnChangeStart: ChatTurnCheckpoint | undefined;
+    if (resolvedRoot && this.options.turnChanges) {
+      try {
+        turnChangeStart = await this.options.turnChanges.captureStart(resolvedRoot.primaryWorkspaceRoot);
+      } catch (error: unknown) {
+        console.warn("[chat/orchestrator] Turn checkpoint capture failed:", error instanceof Error ? error.name : "UnknownError");
+        throw new CanonicalChatOrchestrationError(
+          safeError("project_unavailable", "The Project workspace is unavailable.", true, ["retry"]),
+          503,
+        );
+      }
+    }
     let admitted;
     this.reservePendingDispatch(run.id);
     try {
@@ -354,6 +379,19 @@ export class CanonicalChatOrchestrator {
         turn,
         run,
         ...(adapterState ? { adapterState } : {}),
+        ...(turnChangeStart && resolvedRoot ? {
+          turnChangeStart: {
+            chatId,
+            turnId: turn.id,
+            runId: run.id,
+            projectId: resolvedRoot.ref.projectId,
+            executionRoot: resolvedRoot.ref,
+            executionRootFingerprint: resolvedRoot.fingerprint,
+            beforeTree: turnChangeStart.tree,
+            beforeHead: turnChangeStart.head,
+            capturedAt: timestamp,
+          },
+        } : {}),
       });
     } catch (error: unknown) {
       this.pendingDispatch.delete(run.id);
@@ -363,11 +401,13 @@ export class CanonicalChatOrchestrator {
     try {
       if (!admitted.alreadyAccepted) {
         if (this.atCapacity(owner)) {
+          const turnChanges = await this.captureTerminalChanges(admitted.run, resolvedRoot, turnChangeStart, timestamp);
           await this.options.repository.finishRun(owner, {
             chatId,
             runId: admitted.run.id,
             outcome: "failed",
             completedAt: timestamp,
+            ...(turnChanges ? { turnChanges } : {}),
           });
           throw new CanonicalChatOrchestrationError(
             safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
@@ -382,6 +422,7 @@ export class CanonicalChatOrchestrator {
           admitted.chat.chat.messageCount + 1,
           resolvedRoot,
           resumeState,
+          turnChangeStart,
         );
       }
       return CanonicalChatTurnAdmissionResponseSchema.parse({
@@ -494,6 +535,18 @@ export class CanonicalChatOrchestrator {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    let turnChangeStart: ChatTurnCheckpoint | undefined;
+    if (resolvedRoot && this.options.turnChanges) {
+      try {
+        turnChangeStart = await this.options.turnChanges.captureStart(resolvedRoot.primaryWorkspaceRoot);
+      } catch (error: unknown) {
+        console.warn("[chat/orchestrator] Retry checkpoint capture failed:", error instanceof Error ? error.name : "UnknownError");
+        throw new CanonicalChatOrchestrationError(
+          safeError("project_unavailable", "The Project workspace is unavailable.", true, ["retry"]),
+          503,
+        );
+      }
+    }
     let admitted;
     this.reservePendingDispatch(run.id);
     try {
@@ -505,6 +558,19 @@ export class CanonicalChatOrchestrator {
         baseRevision: input.baseRevision,
         run,
         ...(adapterState ? { adapterState } : {}),
+        ...(turnChangeStart && resolvedRoot ? {
+          turnChangeStart: {
+            chatId,
+            turnId,
+            runId: run.id,
+            projectId: resolvedRoot.ref.projectId,
+            executionRoot: resolvedRoot.ref,
+            executionRootFingerprint: resolvedRoot.fingerprint,
+            beforeTree: turnChangeStart.tree,
+            beforeHead: turnChangeStart.head,
+            capturedAt: timestamp,
+          },
+        } : {}),
       });
     } catch (error: unknown) {
       this.pendingDispatch.delete(run.id);
@@ -513,11 +579,13 @@ export class CanonicalChatOrchestrator {
     try {
       if (!admitted.alreadyAccepted) {
         if (this.atCapacity(owner)) {
+          const turnChanges = await this.captureTerminalChanges(admitted.run, resolvedRoot, turnChangeStart, timestamp);
           await this.options.repository.finishRun(owner, {
             chatId,
             runId: admitted.run.id,
             outcome: "failed",
             completedAt: timestamp,
+            ...(turnChanges ? { turnChanges } : {}),
           });
           throw new CanonicalChatOrchestrationError(
             safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
@@ -532,6 +600,7 @@ export class CanonicalChatOrchestrator {
           admitted.chat.chat.messageCount + 1,
           resolvedRoot,
           resumeState,
+          turnChangeStart,
         );
       }
       return CanonicalChatRunAdmissionResponseSchema.parse({
@@ -553,9 +622,10 @@ export class CanonicalChatOrchestrator {
     outputSeq: number,
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
+    turnChangeStart?: ChatTurnCheckpoint,
   ): void {
     const controller = new AbortController();
-    const completion = this.dispatch(owner, message, run, adapter, outputSeq, controller, resolvedRoot, resumeState)
+    const completion = this.dispatch(owner, message, run, adapter, outputSeq, controller, resolvedRoot, resumeState, turnChangeStart)
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       })
@@ -567,6 +637,9 @@ export class CanonicalChatOrchestrator {
       chatId: run.chatId,
       runId: run.id,
       instanceId: run.instanceId,
+      run,
+      ...(resolvedRoot ? { resolvedRoot } : {}),
+      ...(turnChangeStart ? { turnChangeStart } : {}),
       completion,
     });
   }
@@ -580,6 +653,7 @@ export class CanonicalChatOrchestrator {
     controller: AbortController,
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
+    turnChangeStart?: ChatTurnCheckpoint,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     try {
@@ -673,12 +747,14 @@ export class CanonicalChatOrchestrator {
         parts: [{ type: "text", text }],
         createdAt: completedAt,
       }) : undefined;
+      const turnChanges = await this.captureTerminalChanges(run, resolvedRoot, turnChangeStart, completedAt);
       await this.options.repository.finishRun(owner, {
         chatId: run.chatId,
         runId: run.id,
         outcome: terminal.outcome,
         completedAt,
         ...(output ? { output } : {}),
+        ...(turnChanges ? { turnChanges } : {}),
       });
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
@@ -699,15 +775,61 @@ export class CanonicalChatOrchestrator {
             activityError instanceof Error ? activityError.name : "UnknownError",
           );
         }
+        const turnChanges = await this.captureTerminalChanges(run, resolvedRoot, turnChangeStart, completedAt);
         await this.options.repository.finishRun(owner, {
           chatId: run.chatId,
           runId: run.id,
           outcome,
           completedAt,
+          ...(turnChanges ? { turnChanges } : {}),
         });
       } catch (finishError: unknown) {
         if (!(finishError instanceof ChatRunNotActiveError)) throw finishError;
       }
+    }
+  }
+
+  private async captureTerminalChanges(
+    run: CanonicalChatRun,
+    resolvedRoot: ResolvedChatExecutionRoot | undefined,
+    start: ChatTurnCheckpoint | undefined,
+    capturedAt: string,
+  ): Promise<TurnChangeSettlement | undefined> {
+    const active = this.active.get(run.id);
+    if (active?.terminalChanges) return active.terminalChanges;
+    const capture = this.captureTerminalChangesOnce(run, resolvedRoot, start, capturedAt);
+    if (active) active.terminalChanges = capture;
+    return capture;
+  }
+
+  private async captureTerminalChangesOnce(
+    run: CanonicalChatRun,
+    resolvedRoot: ResolvedChatExecutionRoot | undefined,
+    start: ChatTurnCheckpoint | undefined,
+    capturedAt: string,
+  ): Promise<TurnChangeSettlement | undefined> {
+    if (!this.options.turnChanges || !resolvedRoot || !start || !run.executionRoot) return undefined;
+    try {
+      const captured = await this.options.turnChanges.captureFinal({
+        root: resolvedRoot.primaryWorkspaceRoot,
+        start,
+        identity: {
+          chatId: run.chatId,
+          turnId: run.turnId,
+          runId: run.id,
+          projectId: resolvedRoot.ref.projectId,
+          executionRoot: run.executionRoot,
+        },
+        capturedAt,
+      });
+      return {
+        changes: captured.changes,
+        afterTree: captured.end.tree,
+        afterHead: captured.end.head,
+      };
+    } catch (error: unknown) {
+      console.warn("[chat/orchestrator] Terminal turn-change capture failed:", error instanceof Error ? error.name : "UnknownError");
+      return undefined;
     }
   }
 
@@ -754,11 +876,22 @@ export class CanonicalChatOrchestrator {
       });
     }
     try {
+      const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
+      const turnChanges = active && active.chatId === chatId && active.owner.type === owner.type
+        && active.owner.ownerId === owner.ownerId
+        ? await this.captureTerminalChanges(
+          active.run,
+          active.resolvedRoot,
+          active.turnChangeStart,
+          completedAt,
+        )
+        : undefined;
       const finished = await this.options.repository.finishRun(owner, {
         chatId,
         runId,
         outcome: "aborted",
-        completedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+        completedAt,
+        ...(turnChanges ? { turnChanges } : {}),
       });
       if (providerCancellation) {
         let timeout: ReturnType<typeof setTimeout> | undefined;

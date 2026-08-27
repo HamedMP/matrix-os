@@ -126,6 +126,24 @@ export interface ChatRunAdapterStateTable {
   updated_at: Timestamp;
 }
 
+export interface ChatTurnChangeSetsTable {
+  run_id: string;
+  chat_id: string;
+  turn_id: string;
+  project_id: string;
+  execution_root: JsonValue;
+  execution_root_fingerprint: string;
+  before_tree: string;
+  before_head: string;
+  after_tree: string | null;
+  after_head: string | null;
+  status: "capturing" | "settled";
+  change_set: JsonValue | null;
+  byte_count: number;
+  captured_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface ChatOutboxTable {
   cursor: Generated<number>;
   owner_type: "personal" | "organization";
@@ -181,6 +199,7 @@ export interface ChatDatabase {
   chat_runs: ChatRunsTable;
   chat_run_events: ChatRunEventsTable;
   chat_run_adapter_state: ChatRunAdapterStateTable;
+  chat_turn_change_sets: ChatTurnChangeSetsTable;
   chat_outbox: ChatOutboxTable;
   chat_deletions: ChatDeletionsTable;
   chat_legacy_imports: ChatLegacyImportsTable;
@@ -393,6 +412,26 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
     )
   `.execute(db);
   await sql`
+    CREATE TABLE IF NOT EXISTS chat_turn_change_sets (
+      run_id TEXT PRIMARY KEY REFERENCES chat_runs(id) ON DELETE CASCADE,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      turn_id TEXT NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL,
+      execution_root JSONB NOT NULL,
+      execution_root_fingerprint TEXT NOT NULL CHECK (execution_root_fingerprint ~ '^[a-f0-9]{64}$'),
+      before_tree TEXT NOT NULL CHECK (before_tree ~ '^[a-f0-9]{40,64}$'),
+      before_head TEXT NOT NULL CHECK (before_head ~ '^[a-f0-9]{40,64}$'),
+      after_tree TEXT CHECK (after_tree ~ '^[a-f0-9]{40,64}$'),
+      after_head TEXT CHECK (after_head ~ '^[a-f0-9]{40,64}$'),
+      status TEXT NOT NULL CHECK (status IN ('capturing', 'settled')),
+      change_set JSONB,
+      byte_count INTEGER NOT NULL DEFAULT 0 CHECK (byte_count >= 0 AND byte_count <= 524288),
+      captured_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (turn_id, run_id)
+    )
+  `.execute(db);
+  await sql`
     CREATE TABLE IF NOT EXISTS chat_outbox (
       cursor BIGSERIAL PRIMARY KEY,
       owner_type TEXT NOT NULL CHECK (owner_type IN ('personal', 'organization')),
@@ -451,6 +490,7 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_page ON chat_messages(chat_id, seq)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_run_events_run_occurred ON chat_run_events(run_id, occurred_at, id)`.execute(db);
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_run_events_receive_seq ON chat_run_events(receive_seq)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_turn_change_sets_turn ON chat_turn_change_sets(chat_id, turn_id, updated_at DESC)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_search ON chat_messages USING GIN (to_tsvector('simple', search_text)) WHERE state = 'committed'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
 }

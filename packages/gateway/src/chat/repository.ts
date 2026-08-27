@@ -43,6 +43,12 @@ import {
   type ChatRecord,
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
+import {
+  ChatTurnChangeRepository,
+  recordTurnChangeStartInTransaction,
+  type ChatTurnChangeRecord,
+  type ChatTurnChangeStartInput,
+} from "./turn-change-repository.js";
 
 export {
   ChatBusyError,
@@ -81,6 +87,7 @@ export interface AdmitTurnInput {
   turn: CanonicalChatTurn;
   run: CanonicalChatRun;
   adapterState?: { schemaVersion: number; state: unknown };
+  turnChangeStart?: ChatTurnChangeStartInput;
 }
 
 export interface AdmittedTurn {
@@ -98,6 +105,7 @@ export interface AdmitRetryInput {
   baseRevision: number;
   run: CanonicalChatRun;
   adapterState?: { schemaVersion: number; state: unknown };
+  turnChangeStart?: ChatTurnChangeStartInput;
 }
 
 export interface AdmittedRun {
@@ -218,6 +226,7 @@ export class ChatRepository {
   private readonly transactionScoped: boolean;
   private readonly detail: ChatDetailRepository;
   private readonly runLifecycle: ChatRunLifecycleRepository;
+  private readonly turnChanges: ChatTurnChangeRepository;
 
   constructor(dialectOrKysely: Dialect | Kysely<ChatDatabase>, transactionScoped = false) {
     this.kysely = dialectOrKysely instanceof Kysely
@@ -226,6 +235,7 @@ export class ChatRepository {
     this.transactionScoped = transactionScoped;
     this.detail = new ChatDetailRepository(this.kysely, hydrateRecord.bind(null, this.kysely));
     this.runLifecycle = new ChatRunLifecycleRepository(this.kysely, (fn) => this.transact(fn));
+    this.turnChanges = new ChatTurnChangeRepository(this.kysely, (fn) => this.transact(fn));
   }
 
   async bootstrap(): Promise<void> {
@@ -527,6 +537,9 @@ export class ChatRepository {
           byte_count: stateBytes,
         }).execute();
       }
+      if (input.turnChangeStart) {
+        await recordTurnChangeStartInTransaction(trx, owner, input.turnChangeStart);
+      }
 
       const revision = input.baseRevision + 1;
       const updated = await trx.updateTable("chats").set({
@@ -643,6 +656,9 @@ export class ChatRepository {
           byte_count: stateBytes,
         }).execute();
       }
+      if (input.turnChangeStart) {
+        await recordTurnChangeStartInTransaction(trx, owner, input.turnChangeStart);
+      }
       await trx.updateTable("chat_turns").set({ status: "accepted", updated_at: run.updatedAt })
         .where("id", "=", turnId).execute();
       const revision = input.baseRevision + 1;
@@ -715,6 +731,18 @@ export class ChatRepository {
       turn: toTurn(turnRow),
       latestRun: toRun(runRow),
     };
+  }
+
+  async recordTurnChangeStart(ownerInput: ChatOwner, input: ChatTurnChangeStartInput): Promise<void> {
+    return this.turnChanges.recordStart(ownerInput, input);
+  }
+
+  async getTurnChanges(
+    ownerInput: ChatOwner,
+    chatId: string,
+    turnId: string,
+  ): Promise<ChatTurnChangeRecord | null> {
+    return this.turnChanges.get(ownerInput, chatId, turnId);
   }
 
   async listActiveRunContexts(
@@ -797,6 +825,11 @@ export class ChatRepository {
     outcome: "completed" | "failed" | "aborted";
     completedAt: string;
     output?: CanonicalChatMessage;
+    turnChanges?: {
+      changes: import("@matrix-os/contracts").CanonicalChatTurnChangeSet;
+      afterTree: string;
+      afterHead: string;
+    };
   }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
     return this.runLifecycle.finishRun(ownerInput, input);
   }

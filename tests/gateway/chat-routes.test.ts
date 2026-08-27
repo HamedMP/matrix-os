@@ -5,6 +5,7 @@ import {
   CanonicalChatDetailResponseSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatTurnChangeSetSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
@@ -59,6 +60,9 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     retryTurn: vi.fn(async () => {
       throw new Error("not configured");
     }),
+    getTurnChanges: vi.fn(async () => null),
+    getTurnDiff: vi.fn(async () => null),
+    readTurnFile: vi.fn(async () => null),
     ...overrides,
   };
 }
@@ -71,6 +75,71 @@ function appFor(service: CanonicalChatRouteService) {
 }
 
 describe("canonical Chat routes", () => {
+  it("serves owner-derived turn changes, structured diff and honestly labeled file reads", async () => {
+    const changes = CanonicalChatTurnChangeSetSchema.parse({
+      chatId: "chat_route_test",
+      turnId: "cturn_route",
+      runId: "run_route",
+      projectId: "project_matrix",
+      executionRoot: { kind: "project", projectId: "project_matrix" },
+      revision: `turnrev_${"a".repeat(64)}`,
+      beforeRevision: `tree_${"b".repeat(40)}`,
+      afterRevision: `tree_${"c".repeat(40)}`,
+      source: "workspace_checkpoints",
+      label: "Workspace changes observed during this turn",
+      concurrent: false,
+      partial: false,
+      files: [{ path: "src/app.ts", status: "modified", additions: 1, deletions: 0, partial: false }],
+      totals: { changedFileCount: 1, additions: 1, deletions: 0 },
+      capturedAt: "2026-08-27T04:00:00.000Z",
+    });
+    const getTurnChanges = vi.fn(async () => ({ changes }));
+    const getTurnDiff = vi.fn(async () => ({
+      chatId: changes.chatId,
+      turnId: changes.turnId,
+      revision: changes.revision,
+      file: { ...changes.files[0]!, hunks: [] },
+    }));
+    const readTurnFile = vi.fn(async () => ({
+      chatId: changes.chatId,
+      turnId: changes.turnId,
+      revision: changes.revision,
+      path: "src/app.ts",
+      version: "current" as const,
+      label: "Current file" as const,
+      content: "export const app = true;\n",
+      encoding: "utf8" as const,
+      truncated: false,
+      sizeBytes: 25,
+    }));
+    const app = appFor(routeService({ getTurnChanges, getTurnDiff, readTurnFile }));
+
+    expect((await app.request("/api/chats/chat_route_test/turns/cturn_route/changes")).status).toBe(200);
+    expect((await app.request("/api/chats/chat_route_test/turns/cturn_route/changes/diff?path=src%2Fapp.ts")).status).toBe(200);
+    const fileResponse = await app.request("/api/chats/chat_route_test/turns/cturn_route/files?path=src%2Fapp.ts&version=current");
+    expect(fileResponse.status).toBe(200);
+    expect(await fileResponse.json()).toMatchObject({ label: "Current file", version: "current" });
+    expect(getTurnChanges).toHaveBeenCalledWith({ type: "personal", ownerId: "owner_1" }, "chat_route_test", "cturn_route");
+    expect(getTurnDiff).toHaveBeenCalledWith({ type: "personal", ownerId: "owner_1" }, "chat_route_test", "cturn_route", "src/app.ts");
+    expect(readTurnFile).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "cturn_route",
+      { path: "src/app.ts", version: "current" },
+    );
+  });
+
+  it("rejects unsafe turn-change paths before the service boundary", async () => {
+    const getTurnDiff = vi.fn(async () => null);
+    const readTurnFile = vi.fn(async () => null);
+    const app = appFor(routeService({ getTurnDiff, readTurnFile }));
+    expect((await app.request("/api/chats/chat_route_test/turns/cturn_route/changes/diff?path=..%2Fsecret")).status).toBe(400);
+    expect((await app.request("/api/chats/chat_route_test/turns/cturn_route/files?path=%2Fetc%2Fpasswd&version=current")).status).toBe(400);
+    expect((await app.request("/api/chats/chat_route_test/turns/cturn_route/files?path=src%2Fapp.ts&version=unknown")).status).toBe(400);
+    expect(getTurnDiff).not.toHaveBeenCalled();
+    expect(readTurnFile).not.toHaveBeenCalled();
+  });
+
   it("derives personal ownership and creates a Chat through the shared service", async () => {
     const create = vi.fn(async (_owner: ChatOwner, _input: CanonicalCreateChatRequest) => record);
     const service = routeService({ create });
