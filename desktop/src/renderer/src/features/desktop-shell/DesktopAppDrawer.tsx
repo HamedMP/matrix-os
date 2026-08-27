@@ -59,6 +59,7 @@ function PreviewTile({
           event.stopPropagation();
           onClose();
         }}
+        onKeyDown={(event) => event.stopPropagation()}
       >
         <X size={14} strokeWidth={1.7} aria-hidden="true" />
       </button>
@@ -97,6 +98,7 @@ export default function DesktopAppDrawer({
       className={`absolute inset-0 ${open ? "pointer-events-auto" : "pointer-events-none"}`}
       data-state={open ? "open" : "closed"}
       data-testid="desktop-app-drawer-layer"
+      inert={!open}
     >
       <div
         aria-hidden="true"

@@ -405,11 +405,14 @@ describe("native desktop shell", () => {
   it("opens the all-open-apps drawer from Sidebar and dismisses it by close, Escape, and backdrop", async () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
+    expect(screen.getByTestId("desktop-app-drawer-layer").hasAttribute("inert")).toBe(true);
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
     expect(screen.getByRole("dialog", { name: "All open apps" })).toBeTruthy();
+    expect(screen.getByTestId("desktop-app-drawer-layer").hasAttribute("inert")).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Close all open apps" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull());
+    expect(screen.getByTestId("desktop-app-drawer-layer").hasAttribute("inert")).toBe(true);
 
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
     fireEvent.keyDown(document, { key: "Escape" });
@@ -418,6 +421,25 @@ describe("native desktop shell", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
     fireEvent.pointerDown(screen.getByTestId("desktop-app-drawer-backdrop"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "All open apps" })).toBeNull());
+  });
+
+  it("does not activate a preview when its close control receives a keyboard event", () => {
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
+    const settingsId = useTabs.getState().activeTabId!;
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Settings window" })).getByRole("button", { name: "Minimize" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+    const terminalId = useTabs.getState().activeTabId!;
+    fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
+
+    const closeSettings = screen.getByRole("button", { name: "Close Settings preview" });
+    fireEvent.keyDown(closeSettings, { key: "Enter" });
+
+    expect(useTabs.getState().activeTabId).toBe(terminalId);
+    expect(screen.getByRole("dialog", { name: "All open apps" })).toBeTruthy();
+
+    fireEvent.click(closeSettings);
+    expect(useTabs.getState().tabs.some((tab) => tab.id === settingsId)).toBe(false);
   });
 
   it("routes preview tiles to minimized, tabbed, and windowed apps without activating a close action", async () => {
