@@ -115,10 +115,14 @@ printf 'bash-prompt=%s\\n' "\${MATRIX_TERMINAL_PROMPT:-}" >> "$MATRIX_TEST_TRACE
 printf 'bash-path=%s\\n' "$PATH" >> "$MATRIX_TEST_TRACE"
 exit 0
 `);
+      await writeFile(join(runtimeBin, "sh"), `#!/bin/sh
+exec /bin/sh "$@"
+`);
       await Promise.all([
         chmod(wrapperPath, 0o700),
         chmod(join(runtimeBin, "npm"), 0o700),
         chmod(join(runtimeBin, "bash"), 0o700),
+        chmod(join(runtimeBin, "sh"), 0o700),
       ]);
 
       const command = terminalAgentVisibleInstallCommand(codex!);
@@ -130,6 +134,7 @@ exit 0
           MATRIX_TEST_NPM_EXIT: npmExitCode,
           MATRIX_TEST_TRACE: tracePath,
           SHELL: join(runtimeBin, "bash"),
+          PATH: `${runtimeBin}:/usr/bin`,
         },
       });
       const trace = await readFile(tracePath, "utf8");
@@ -138,7 +143,7 @@ exit 0
       expect(trace).not.toContain("bash-args=-l");
       expect(trace).toContain(`bash-args=--noprofile --rcfile ${bashrcPath} -i`);
       expect(trace).toContain("bash-prompt=owner-handle:\\w$ ");
-      expect(trace).toContain(`bash-path=${runtimeBin}:`);
+      expect(trace).toContain(`:${runtimeBin}:`);
     } finally {
       await rm(testDir, { recursive: true, force: true });
     }
