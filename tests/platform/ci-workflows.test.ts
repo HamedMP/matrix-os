@@ -1,6 +1,107 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parse } from 'yaml';
+
+function readChangeDetectionCheckoutRun(root: string): string | undefined {
+  const workflow = parse(
+    readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'),
+  ) as {
+    jobs?: {
+      changes?: {
+        steps?: Array<{
+          name?: string;
+          run?: string;
+        }>;
+      };
+    };
+  };
+
+  return workflow.jobs?.changes?.steps?.find(
+    (step) => step.name === 'Checkout with bounded retry',
+  )?.run;
+}
+
+function runChangeDetectionCheckout(
+  checkoutRun: string,
+  failuresBeforeSuccess: number,
+): {
+  attempts: string;
+  checkoutCompleted: boolean;
+  status: number | null;
+  stderr: string;
+  stdout: string;
+} {
+  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-ci-checkout-retry-'));
+  const fakeBin = join(tempDir, 'bin');
+  const fetchAttempts = join(tempDir, 'fetch-attempts');
+  const checkoutMarker = join(tempDir, 'checkout-complete');
+  mkdirSync(fakeBin);
+  writeFileSync(
+    join(fakeBin, 'git'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" fetch "* ]]; then
+  attempt=0
+  if [ -f "$FAKE_GIT_FETCH_ATTEMPTS" ]; then
+    attempt="$(cat "$FAKE_GIT_FETCH_ATTEMPTS")"
+  fi
+  attempt=$((attempt + 1))
+  printf '%s' "$attempt" > "$FAKE_GIT_FETCH_ATTEMPTS"
+  if [ "$FAKE_GIT_FAILURES_BEFORE_SUCCESS" -lt 0 ] || [ "$attempt" -le "$FAKE_GIT_FAILURES_BEFORE_SUCCESS" ]; then
+    exit 1
+  fi
+fi
+if [[ " $* " == *" checkout --force --detach "* ]]; then
+  touch "$FAKE_GIT_CHECKOUT_MARKER"
+fi
+`,
+  );
+  chmodSync(join(fakeBin, 'git'), 0o755);
+
+  try {
+    const result = spawnSync('bash', ['-c', checkoutRun], {
+      cwd: tempDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        CHECKOUT_BACKOFF_SECONDS: '0',
+        CHECKOUT_MAX_ATTEMPTS: '3',
+        CHECKOUT_TIMEOUT_SECONDS: '1',
+        FAKE_GIT_CHECKOUT_MARKER: checkoutMarker,
+        FAKE_GIT_FAILURES_BEFORE_SUCCESS: String(failuresBeforeSuccess),
+        FAKE_GIT_FETCH_ATTEMPTS: fetchAttempts,
+        GH_TOKEN: 'test-token',
+        GITHUB_REF: 'refs/heads/main',
+        GITHUB_REPOSITORY: 'HamedMP/matrix-os',
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_SHA: '0123456789012345678901234567890123456789',
+      },
+    });
+
+    return {
+      attempts: readFileSync(fetchAttempts, 'utf8'),
+      checkoutCompleted: existsSync(checkoutMarker),
+      status: result.status,
+      stderr: result.stderr,
+      stdout: result.stdout,
+    };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
 
 describe('CI workflows', () => {
   const stripePriceSecrets = [
@@ -41,10 +142,45 @@ describe('CI workflows', () => {
       workflow.indexOf('  # ── Gate 1: Mechanical checks'),
     );
 
-    expect(changesJob).toContain('timeout-minutes: 2');
-    expect(changesJob).toContain('fetch-depth: 1');
+    expect(changesJob).toContain('timeout-minutes: 3');
+    expect(changesJob).toContain('name: Checkout with bounded retry');
+    expect(changesJob).toContain('CHECKOUT_MAX_ATTEMPTS: "3"');
+    expect(changesJob).toContain('CHECKOUT_TIMEOUT_SECONDS: "30"');
+    expect(changesJob).toContain('CHECKOUT_BACKOFF_SECONDS: "5"');
+    expect(changesJob).toContain('timeout --foreground --kill-after=5s');
+    expect(changesJob).toContain('for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS")');
+    expect(changesJob).toContain('Checkout fetch failed after $CHECKOUT_MAX_ATTEMPTS attempts');
     expect(changesJob).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
+    expect(changesJob).not.toContain('uses: actions/checkout@v6');
     expect(changesJob).not.toContain('fetch-depth: 0');
+  });
+
+  it('recovers when the first change-detection checkout fetch fails transiently', () => {
+    const root = process.cwd();
+    const checkoutRun = readChangeDetectionCheckoutRun(root);
+    expect(checkoutRun).toBeTypeOf('string');
+
+    const result = runChangeDetectionCheckout(checkoutRun ?? 'exit 1', 1);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.attempts).toBe('2');
+    expect(result.checkoutCompleted).toBe(true);
+    expect(result.stdout).toContain('Checkout fetch attempt 1/3');
+    expect(result.stdout).toContain('Checkout fetch attempt 2/3');
+  });
+
+  it('fails change detection after the bounded checkout attempts are exhausted', () => {
+    const root = process.cwd();
+    const checkoutRun = readChangeDetectionCheckoutRun(root);
+    expect(checkoutRun).toBeTypeOf('string');
+
+    const result = runChangeDetectionCheckout(checkoutRun ?? 'exit 1', -1);
+
+    expect(result.status).toBe(1);
+    expect(result.attempts).toBe('3');
+    expect(result.checkoutCompleted).toBe(false);
+    expect(result.stdout).toContain('Checkout fetch attempt 3/3');
+    expect(result.stdout).toContain('Checkout fetch failed after 3 attempts');
   });
 
   it('runs lightweight docs contract tests for docs-only CI changes', () => {
