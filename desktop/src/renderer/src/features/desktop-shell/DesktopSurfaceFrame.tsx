@@ -30,10 +30,10 @@ function desktopWindowMotion(tabId: string, bounds: DesktopSurfaceBounds): CSSPr
     : null;
   const viewportWidth = shell?.clientWidth || (typeof window !== "undefined" ? window.innerWidth : 1280);
   const edge = direction === 0
-    ? { x: `${variation}px`, y: `${24 - bounds.y - bounds.height}px` }
+    ? { x: `${variation}px`, y: `${12 - bounds.y - bounds.height}px` }
     : direction === 1
-      ? { x: `${24 - bounds.x - bounds.width}px`, y: `${variation}px` }
-      : { x: `${viewportWidth - 24 - bounds.x}px`, y: `${variation}px` };
+      ? { x: `${12 - bounds.x - bounds.width}px`, y: `${variation}px` }
+      : { x: `${viewportWidth - 12 - bounds.x}px`, y: `${variation}px` };
   return {
     "--desktop-exit-x": edge.x,
     "--desktop-exit-y": edge.y,
