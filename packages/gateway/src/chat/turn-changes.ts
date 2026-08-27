@@ -108,7 +108,11 @@ function parseNameStatus(output: string): NameStatus[] {
   return files;
 }
 
-function parseNumstat(output: string): Map<string, { additions: number; deletions: number; binary: boolean }> {
+export function parseBoundedNumstat(
+  output: string,
+  retainedPaths: readonly string[],
+): Map<string, { additions: number; deletions: number; binary: boolean }> {
+  const retained = new Set(retainedPaths.slice(0, MAX_CHANGE_FILES));
   const values = output.split("\0");
   const result = new Map<string, { additions: number; deletions: number; binary: boolean }>();
   for (let index = 0; index < values.length;) {
@@ -125,6 +129,7 @@ function parseNumstat(output: string): Map<string, { additions: number; deletion
       path = values[index++] ?? "";
     }
     if (!path) continue;
+    if (!retained.has(path) || result.size >= MAX_CHANGE_FILES) continue;
     const binary = additionsText === "-" || deletionsText === "-";
     result.set(path, {
       additions: binary ? 0 : Number.parseInt(additionsText, 10) || 0,
@@ -282,7 +287,10 @@ export function createChatTurnChangeCapture(options: {
         git(input.root, ["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--numstat", "-z", input.start.tree, end.tree, "--", "."], { maxBuffer: outputLimitBytes }),
       ]);
       const nameStatus = parseNameStatus(names);
-      const stats = parseNumstat(numstat);
+      const stats = parseBoundedNumstat(
+        numstat,
+        nameStatus.slice(0, MAX_CHANGE_FILES).map((file) => file.path),
+      );
       const changedFileCount = nameStatus.length;
       const projected = nameStatus.slice(0, MAX_CHANGE_FILES).map((file) => {
         const counts = stats.get(file.path) ?? { additions: 0, deletions: 0, binary: file.status === "binary" };

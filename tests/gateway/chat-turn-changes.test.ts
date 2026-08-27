@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ChatTurnChangeCaptureError,
   createChatTurnChangeCapture,
+  parseBoundedNumstat,
 } from "../../packages/gateway/src/chat/turn-changes.js";
 
 const execFileAsync = promisify(execFile);
@@ -35,6 +36,53 @@ afterEach(async () => {
 });
 
 describe("Chat turn checkpoint capture", () => {
+  it("caps retained numstat entries even when Git reports more paths than the projection limit", () => {
+    const paths = Array.from({ length: 250 }, (_, index) => `src/file-${index}.ts`);
+    const output = paths.map((path) => `1\t0\t${path}\0`).join("");
+
+    const stats = parseBoundedNumstat(output, paths);
+
+    expect(stats.size).toBe(200);
+    expect(stats.get("src/file-199.ts")).toEqual({ additions: 1, deletions: 0, binary: false });
+    expect(stats.has("src/file-200.ts")).toBe(false);
+  });
+
+  it("reports an honest partial projection when Git returns more than 200 changed paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-chat-turn-overflow-"));
+    created.push(root);
+    const paths = Array.from({ length: 201 }, (_, index) => `src/file-${index}.ts`);
+    let writeTreeCalls = 0;
+    const runGit = vi.fn(async (_root: string, args: readonly string[]) => {
+      if (args[0] === "write-tree") return `${(writeTreeCalls++ === 0 ? "b" : "c").repeat(40)}\n`;
+      if (args[0] === "rev-parse") return `${"d".repeat(40)}\n`;
+      if (args.includes("--name-status")) return paths.map((path) => `M\0${path}\0`).join("");
+      if (args.includes("--numstat")) return paths.map((path) => `1\t0\t${path}\0`).join("");
+      return "";
+    });
+    const capture = createChatTurnChangeCapture({ runGit });
+    const start = await capture.captureStart(root);
+
+    const result = await capture.captureFinal({
+      root,
+      start,
+      identity: {
+        chatId: "chat_overflow",
+        turnId: "cturn_overflow",
+        runId: "run_overflow",
+        projectId: "project_matrix",
+        executionRoot: { kind: "project", projectId: "project_matrix" },
+      },
+      capturedAt: "2026-08-27T04:00:00.000Z",
+    });
+
+    expect(result.changes).toMatchObject({
+      partial: true,
+      totals: { changedFileCount: 201, additions: 200, deletions: 0 },
+    });
+    expect(result.changes.files).toHaveLength(200);
+    expect(result.changes.files.at(-1)?.path).toBe("src/file-199.ts");
+  });
+
   it("isolates changes between checkpoints including rename and binary files", async () => {
     const root = await repository();
     await writeFile(join(root, "README.md"), "pre-existing\n", "utf8");
