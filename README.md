@@ -25,7 +25,6 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg?style=for-the-badge" alt="AGPL-3.0 License"></a>
-  <a href="https://github.com/HamedMP/matrix-os/stargazers"><img src="https://img.shields.io/github/stars/HamedMP/matrix-os?style=for-the-badge" alt="GitHub stars"></a>
   <a href="https://matrix-os.com"><img src="https://img.shields.io/badge/Live-matrix--os.com-D06F25?style=for-the-badge" alt="matrix-os.com"></a>
   <a href="https://matrix-os.com/skills.md"><img src="https://img.shields.io/badge/Agent_Setup-skills.md-434E3F?style=for-the-badge" alt="Agent setup"></a>
   <a href="https://skills.sh/HamedMP/matrix-os"><img src="https://skills.sh/b/HamedMP/matrix-os" alt="skills.sh"></a>
