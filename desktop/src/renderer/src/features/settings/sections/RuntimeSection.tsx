@@ -1,4 +1,4 @@
-import { Check, LoaderCircle, Monitor, RefreshCw } from "lucide-react";
+import { Check, LoaderCircle, Monitor, RefreshCw } from "@renderer/lib/hugeicons";
 import { useEffect } from "react";
 import {
   type MatrixComputer,

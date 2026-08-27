@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronsLeftIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronsLeftIcon, RefreshCwIcon, SearchIcon } from "@/lib/hugeicons";
 
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";

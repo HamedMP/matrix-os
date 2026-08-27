@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon, XIcon } from "@/lib/hugeicons";
 
 import { useTerminalAppContext } from "./TerminalAppContext";
 import { DEFAULT_CWD } from "./terminal-layout";

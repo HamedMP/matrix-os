@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon } from "@/lib/hugeicons";
 import { useConnectionHealth } from "@/hooks/useConnectionHealth";
 import { manualReconnect } from "@/hooks/useSocket";
 import { getGatewayUrl } from "@/lib/gateway";

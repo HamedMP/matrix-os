@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useFileBrowser, type FileEntry } from "@/hooks/useFileBrowser";
 import { getGatewayUrl } from "@/lib/gateway";
 import { cn } from "@/lib/utils";
-import { FolderIcon, FileTextIcon, ChevronRightIcon } from "lucide-react";
+import { FolderIcon, FileTextIcon, ChevronRightIcon } from "@/lib/hugeicons";
 
 const GATEWAY_URL = getGatewayUrl();
 const COLUMN_VIEW_FETCH_TIMEOUT_MS = 10_000;

@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { MarkdownEditor } from "../MarkdownEditor";
 import { getGatewayUrl } from "@/lib/gateway";
-import { UserIcon } from "lucide-react";
+import { UserIcon } from "@/lib/hugeicons";
 import { AgentRuntimePanel } from "./AgentRuntimePanel";
 import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 

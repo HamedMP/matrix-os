@@ -5,7 +5,7 @@ import { useSocket } from "@/hooks/useSocket";
 import { useVoice } from "@/hooks/useVoice";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { SendIcon, MicIcon, MicOffIcon, Loader2Icon, AudioLinesIcon } from "lucide-react";
+import { SendIcon, MicIcon, MicOffIcon, Loader2Icon, AudioLinesIcon } from "@/lib/hugeicons";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 
 interface InputBarProps {

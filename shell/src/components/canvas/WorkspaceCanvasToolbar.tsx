@@ -1,6 +1,6 @@
 "use client";
 
-import { AppWindow, FileText, Filter, GitPullRequest, Monitor, Plus, Search, Terminal } from "lucide-react";
+import { AppWindow, FileText, Filter, GitPullRequest, Monitor, Plus, Search, Terminal } from "@/lib/hugeicons";
 import type { ReactNode } from "react";
 import { useWorkspaceCanvasStore, type WorkspaceCanvasNodeType } from "@/stores/workspace-canvas-store";
 

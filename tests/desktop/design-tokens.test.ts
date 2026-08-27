@@ -126,7 +126,7 @@ describe("Figma semantic surface tokens", () => {
   it("defines the OS window surfaces and success badge tokens in both modes", () => {
     for (const selector of [":root", '[data-theme="dark"]']) {
       const block = themeBlock(tokensCss, selector);
-      for (const name of ["--surface-base-background", "--surface-primary", "--surface-overlay", "--surface-tertiary", "--surface-success", "--border-success"]) {
+      for (const name of ["--surface-base-background", "--surface-primary", "--surface-overlay", "--surface-tertiary", "--surface-success", "--border-success", "--text-inverse"]) {
         expect(tokenValue(block, name)).toMatch(/^#/);
       }
     }

@@ -1,4 +1,4 @@
-import { ChevronRight, GitBranch, SquareTerminal } from "lucide-react";
+import { ChevronRight, GitBranch, SquareTerminal } from "@renderer/lib/hugeicons";
 import type { AgentThreadSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { Button } from "../../design/primitives";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";

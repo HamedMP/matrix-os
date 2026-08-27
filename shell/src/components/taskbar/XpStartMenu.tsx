@@ -9,7 +9,7 @@ import {
   MonitorIcon,
   PowerIcon,
   SlidersHorizontalIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { isBuiltInAppPath } from "@/lib/builtin-apps";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";

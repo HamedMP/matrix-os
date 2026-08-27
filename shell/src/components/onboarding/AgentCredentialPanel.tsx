@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, CheckCircle2Icon, KeyRoundIcon, PlusIcon } from "lucide-react";
+import { BotIcon, CheckCircle2Icon, KeyRoundIcon, PlusIcon } from "@/lib/hugeicons";
 import type { AgentCredentialStatus } from "@/hooks/useAgentCredentialStatus";
 
 function agentLabel(agent: string) {

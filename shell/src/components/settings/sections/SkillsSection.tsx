@@ -16,7 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { getGatewayUrl } from "@/lib/gateway";
-import { SparklesIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon } from "lucide-react";
+import { SparklesIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon } from "@/lib/hugeicons";
 
 const GATEWAY = getGatewayUrl();
 const REQUEST_TIMEOUT_MS = 10_000;

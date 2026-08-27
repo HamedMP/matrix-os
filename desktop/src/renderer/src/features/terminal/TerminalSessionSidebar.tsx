@@ -1,4 +1,4 @@
-import { Plus, SquareTerminal, Trash2 } from "lucide-react";
+import { Plus, SquareTerminal, Trash2 } from "@renderer/lib/hugeicons";
 
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
 import { OSWindowSafeView } from "../desktop-shell/OSWindow";

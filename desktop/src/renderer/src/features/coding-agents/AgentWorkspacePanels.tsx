@@ -1,4 +1,4 @@
-import { Bell, ChevronRight, GitBranch } from "lucide-react";
+import { Bell, ChevronRight, GitBranch } from "@renderer/lib/hugeicons";
 import type { RuntimeSummary } from "@matrix-os/contracts";
 import { StatusDot } from "../../design/primitives";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";

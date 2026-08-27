@@ -3,7 +3,7 @@
 // internally per agent run in packages/kernel/src/options.ts), so there is
 // nothing real to render. The section says where MCP servers live and hands
 // off to the canonical terminal session for managing them.
-import { Server } from "lucide-react";
+import { Server } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import { categoryMessage } from "../../../../shared/app-error";
 import { Button } from "../../design/primitives";

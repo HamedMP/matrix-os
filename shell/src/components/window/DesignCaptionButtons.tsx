@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { Minus, Square, X } from "lucide-react";
+import { Minus, Square, X } from "@/lib/hugeicons";
 import type { TitleBarVariant } from "./title-bar-variant";
 
 /**

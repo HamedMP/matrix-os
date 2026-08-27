@@ -4,7 +4,7 @@
 // runtime switches; a failed refresh keeps the last good snapshot visible
 // (stale-while-revalidate) and only ever shows generic, allowlisted copy.
 import type { AgentProviderSummary, RuntimeSummary } from "@matrix-os/contracts";
-import { RefreshCw, SquareTerminal } from "lucide-react";
+import { RefreshCw, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
 import { Button, StatusDot } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";

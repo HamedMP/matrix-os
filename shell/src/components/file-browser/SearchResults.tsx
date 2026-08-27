@@ -5,7 +5,7 @@ import {
   FileTextIcon,
   FolderIcon,
   FileCodeIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 interface SearchResultsProps {
   onOpenFile?: (path: string) => void;

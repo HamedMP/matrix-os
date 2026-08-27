@@ -4,7 +4,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { MicIcon } from "lucide-react";
+import { MicIcon } from "@/lib/hugeicons";
 
 /**
  * Aoede's dock entrypoint. Uses the `.aoede-dock-button` class for the

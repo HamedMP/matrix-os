@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { MicIcon, MicOffIcon, Loader2Icon } from "lucide-react";
+import { MicIcon, MicOffIcon, Loader2Icon } from "@/lib/hugeicons";
 
 export type SpeechState = "idle" | "listening" | "processing";
 

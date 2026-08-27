@@ -8,7 +8,7 @@ import {
   ListTree,
   Sparkles,
   SquareTerminal,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";

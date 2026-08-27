@@ -1,6 +1,6 @@
 // Classic branches/PRs/worktrees view — the pre-DAG Git panel content,
 // preserved as the fallback surface for gateways without the log endpoints.
-import { GitBranch, GitPullRequest, FolderGit2, RefreshCw, Sparkles } from "lucide-react";
+import { GitBranch, GitPullRequest, FolderGit2, RefreshCw, Sparkles } from "@renderer/lib/hugeicons";
 import { useEffect } from "react";
 import { categoryMessage } from "../../../../shared/app-error";
 import { Button, IconButton } from "../../design/primitives";

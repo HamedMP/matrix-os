@@ -3,7 +3,7 @@
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { PreviewTabContent } from "./PreviewTab";
 import { cn } from "@/lib/utils";
-import { XIcon } from "lucide-react";
+import { XIcon } from "@/lib/hugeicons";
 import { type KeyboardEvent } from "react";
 
 export function PreviewWindow() {

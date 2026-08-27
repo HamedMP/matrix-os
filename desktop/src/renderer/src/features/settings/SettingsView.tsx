@@ -10,7 +10,7 @@ import {
   Server,
   Sparkles,
   UserRound,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
 import AccountSection from "./sections/AccountSection";
 import AppearanceSection from "./sections/AppearanceSection";

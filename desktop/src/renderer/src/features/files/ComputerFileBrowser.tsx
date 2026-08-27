@@ -1,4 +1,4 @@
-import { FolderOpen } from "lucide-react";
+import { FolderOpen } from "@renderer/lib/hugeicons";
 import {
   useCallback,
   useEffect,

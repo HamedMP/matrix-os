@@ -1,6 +1,6 @@
 "use client";
 
-import { TerminalIcon } from "lucide-react";
+import { TerminalIcon } from "@/lib/hugeicons";
 import { useEffect, useEffectEvent, useRef, type ReactNode, type RefObject } from "react";
 import { TerminalAgentLogo } from "./TerminalAgentLogo";
 import {

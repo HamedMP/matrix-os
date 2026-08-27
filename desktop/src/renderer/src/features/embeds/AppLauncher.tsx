@@ -1,4 +1,4 @@
-import { LayoutGrid, Search } from "lucide-react";
+import { LayoutGrid, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useApps, type MatrixApp } from "../../stores/apps";

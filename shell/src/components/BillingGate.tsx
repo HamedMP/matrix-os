@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertCircleIcon, Loader2Icon } from "lucide-react";
+import { AlertCircleIcon, Loader2Icon } from "@/lib/hugeicons";
 import {
   getMatrixBillingSuccessRedirectUrl,
 } from "@/lib/billing";

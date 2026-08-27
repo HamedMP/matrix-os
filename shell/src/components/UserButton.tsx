@@ -9,7 +9,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Loader2Icon, LogOutIcon, PlusCircleIcon, ServerIcon, SettingsIcon, UserIcon } from "lucide-react";
+import { Loader2Icon, LogOutIcon, PlusCircleIcon, ServerIcon, SettingsIcon, UserIcon } from "@/lib/hugeicons";
 import Image from "next/image";
 import Link from "next/link";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";

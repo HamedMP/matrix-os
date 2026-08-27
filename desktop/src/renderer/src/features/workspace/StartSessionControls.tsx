@@ -1,4 +1,4 @@
-import { AlertCircle, Bot, SquareTerminal, Sparkles } from "lucide-react";
+import { AlertCircle, Bot, SquareTerminal, Sparkles } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import { toUserMessage } from "../../lib/errors";
 import { startTaskSession } from "../../lib/task-sessions";

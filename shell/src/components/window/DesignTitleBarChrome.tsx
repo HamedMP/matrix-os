@@ -1,6 +1,6 @@
 "use client";
 
-import { Maximize2, Minus } from "lucide-react";
+import { Maximize2, Minus } from "@/lib/hugeicons";
 import { TrafficLights } from "./TrafficLights";
 import { WinXpCaptionButtons, Win11CaptionButtons } from "./DesignCaptionButtons";
 

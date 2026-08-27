@@ -1,4 +1,4 @@
-import { Bug, CircleCheck, Hammer, Search } from "lucide-react";
+import { Bug, CircleCheck, Hammer, Search } from "@renderer/lib/hugeicons";
 
 const STARTERS = [
   { label: "Explore and understand code", Icon: Search, tone: "var(--success)" },

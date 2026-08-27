@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { fileBlobUrl } from "@/lib/file-blob";
 import { Button } from "@/components/ui/button";
-import { MinusIcon, PlusIcon, MaximizeIcon } from "lucide-react";
+import { MinusIcon, PlusIcon, MaximizeIcon } from "@/lib/hugeicons";
 
 interface ImageViewerProps {
   path: string;

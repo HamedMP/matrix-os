@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Copy, ExternalLink } from "lucide-react";
+import { Copy, ExternalLink } from "@/lib/hugeicons";
 
 import type { TerminalLinkEntry } from "./terminal-links";
 

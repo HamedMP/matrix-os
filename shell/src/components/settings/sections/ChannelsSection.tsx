@@ -8,7 +8,7 @@ import {
   SmartphoneIcon,
   HashIcon,
   SlackIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 const GATEWAY = getGatewayUrl();
 const CHANNELS_FETCH_TIMEOUT_MS = 10_000;

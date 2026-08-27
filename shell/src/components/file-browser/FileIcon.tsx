@@ -9,7 +9,7 @@ import {
   MusicIcon,
   FileCodeIcon,
   FileJsonIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { cn } from "@/lib/utils";
 
 interface FileIconProps {

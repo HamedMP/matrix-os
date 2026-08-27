@@ -1,4 +1,4 @@
-import { Monitor, PanelLeft } from "lucide-react";
+import { Monitor, PanelLeft } from "@renderer/lib/hugeicons";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import DesktopTab from "./DesktopTab";

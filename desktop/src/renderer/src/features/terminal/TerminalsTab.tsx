@@ -11,7 +11,7 @@ import {
   SquareTerminal,
   Trash2,
   X,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, EmptyState, IconButton } from "../../design/primitives";
 import RetainedPane from "../../design/RetainedPane";

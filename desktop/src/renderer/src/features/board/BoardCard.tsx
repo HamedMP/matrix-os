@@ -1,4 +1,4 @@
-import { GitBranch, Globe, SquareTerminal } from "lucide-react";
+import { GitBranch, Globe, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useMemo, useState } from "react";
 import { ContextMenu, StatusDot, type MenuItem } from "../../design/primitives";
 import { invoke } from "../../lib/operator";

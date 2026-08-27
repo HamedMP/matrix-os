@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasLabels, type CanvasLabel } from "@/stores/canvas-labels";
-import { Trash2, Palette } from "lucide-react";
+import { Trash2, Palette } from "@/lib/hugeicons";
 
 const LABEL_COLORS = [
   "#ffffff",

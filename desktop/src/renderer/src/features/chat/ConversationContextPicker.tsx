@@ -1,6 +1,6 @@
 import * as Popover from "@radix-ui/react-popover";
 import type { KernelConversationContextProjection } from "@matrix-os/contracts";
-import { Check, FolderGit2, FolderOpen, Plus, X } from "lucide-react";
+import { Check, FolderGit2, FolderOpen, Plus, X } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { useBoard, type Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";

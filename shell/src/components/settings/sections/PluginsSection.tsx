@@ -12,7 +12,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { getGatewayUrl } from "@/lib/gateway";
-import { PuzzleIcon, PlusIcon } from "lucide-react";
+import { PuzzleIcon, PlusIcon } from "@/lib/hugeicons";
 
 const GATEWAY = getGatewayUrl();
 const PLUGINS_FETCH_TIMEOUT_MS = 10_000;

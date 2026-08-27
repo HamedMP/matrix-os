@@ -1,7 +1,7 @@
-// Static glyph per coding-agent provider kind. Uses bundled lucide icons only
-// — provider logos are never fetched from remote URLs.
+// Static glyph per coding-agent provider kind. Uses bundled icons only —
+// provider logos are never fetched from remote URLs.
 import type { AgentProviderSummary } from "@matrix-os/contracts";
-import { Code2, Cpu, MousePointer2, Pi, Sparkles, SquareTerminal } from "lucide-react";
+import { Code2, Cpu, MousePointer2, Pi, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
 
 const KIND_ICONS = {
   claude: Sparkles,

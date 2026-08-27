@@ -12,7 +12,7 @@ import {
   PlusIcon,
   Rows2Icon,
   Trash2Icon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";

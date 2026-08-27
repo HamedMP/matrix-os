@@ -19,7 +19,7 @@ import {
   SquareTerminal,
   Wrench,
   X,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";

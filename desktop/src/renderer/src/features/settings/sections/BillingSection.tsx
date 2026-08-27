@@ -1,4 +1,4 @@
-import { CreditCard, ExternalLink } from "lucide-react";
+import { CreditCard, ExternalLink } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { z } from "zod/v4";
 import { Button } from "../../../design/primitives";

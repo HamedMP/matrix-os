@@ -1,4 +1,4 @@
-import { Download, LoaderCircle } from "lucide-react";
+import { Download, LoaderCircle } from "@renderer/lib/hugeicons";
 import { useDesktopUpdate } from "../../stores/desktop-update";
 
 interface DesktopUpdateButtonProps {

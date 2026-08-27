@@ -37,7 +37,7 @@ import {
   PanelRightCloseIcon,
   MicIcon,
   Volume2Icon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 interface ConversationMeta {
   id: string;

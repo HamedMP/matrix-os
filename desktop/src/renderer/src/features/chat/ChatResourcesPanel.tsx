@@ -1,4 +1,4 @@
-import { FileText, Link2, Plug, Upload, X } from "lucide-react";
+import { FileText, Link2, Plug, Upload, X } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef } from "react";
 import type { ChatMessage } from "../../lib/chat";
 import { useConnection } from "../../stores/connection";

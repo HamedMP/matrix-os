@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2Icon, ClipboardIcon, GitBranchIcon, TerminalIcon } from "lucide-react";
+import { CheckCircle2Icon, ClipboardIcon, GitBranchIcon, TerminalIcon } from "@/lib/hugeicons";
 
 export const DEVELOPER_SETUP_PROMPT = `Set up Matrix OS as my remote developer computer.
 

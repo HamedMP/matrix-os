@@ -5,7 +5,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { saveDesktopConfigPatch, useDesktopConfig, buildMeshGradient, BUNDLED_WALLPAPERS, wallpaperUrl, type DesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { getGatewayUrl } from "@/lib/gateway";
-import { UploadIcon, XIcon, ImageIcon, PaletteIcon } from "lucide-react";
+import { UploadIcon, XIcon, ImageIcon, PaletteIcon } from "@/lib/hugeicons";
 import { Switch } from "@/components/ui/switch";
 import { DesignPicker } from "@/components/settings/DesignPicker";
 

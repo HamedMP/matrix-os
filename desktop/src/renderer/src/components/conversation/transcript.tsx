@@ -1,4 +1,4 @@
-import { ChevronRight, CircleAlert, FileText } from "lucide-react";
+import { ChevronRight, CircleAlert, FileText } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import {
   Conversation,

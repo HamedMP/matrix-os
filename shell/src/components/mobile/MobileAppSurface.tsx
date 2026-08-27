@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { HomeIcon } from "lucide-react";
+import { HomeIcon } from "@/lib/hugeicons";
 
 interface MobileAppSurfaceProps {
   title: string;

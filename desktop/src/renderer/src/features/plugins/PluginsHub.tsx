@@ -3,7 +3,7 @@
 // with Settings), MCP servers (honest empty state — no listing route exists),
 // skills (real list from GET /api/settings/skills), and the Matrix CLI
 // install card. Section nav mirrors SettingsView's layout.
-import { Blocks, Server, Sparkles, SquareTerminal } from "lucide-react";
+import { Blocks, Server, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import IntegrationsSettingsSection from "../integrations/IntegrationsSettingsSection";
 import CliSection from "./CliSection";

@@ -11,7 +11,7 @@ import {
   ListIcon,
   ColumnsIcon,
   SearchIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { cn } from "@/lib/utils";
 
 export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {

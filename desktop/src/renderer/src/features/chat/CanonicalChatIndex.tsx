@@ -1,5 +1,5 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
+import { MessageSquare, Plus, Search, Trash2, X } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 
 import { OSWindowSafeView } from "../desktop-shell/OSWindow";

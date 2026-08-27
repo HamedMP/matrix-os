@@ -1,5 +1,5 @@
 import type { CanonicalProviderDriverKind } from "@matrix-os/contracts";
-import { Cpu } from "lucide-react";
+import { Cpu } from "@renderer/lib/hugeicons";
 import type { ReactNode } from "react";
 import hermesProviderIcon from "../../assets/providers/hermes-provider.png";
 

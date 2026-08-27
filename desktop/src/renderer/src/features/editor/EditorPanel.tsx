@@ -1,4 +1,4 @@
-import { Code2, Eye, FileCode2, X } from "lucide-react";
+import { Code2, Eye, FileCode2, X } from "@renderer/lib/hugeicons";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";

@@ -1,7 +1,7 @@
 // Full-section status views: loading skeleton, the capability-gated
 // "unavailable on this runtime" empty state, the generic offline/error
 // state with retry, and the empty-catalog state.
-import { Plug } from "lucide-react";
+import { Plug } from "@renderer/lib/hugeicons";
 import { Button } from "../../design/primitives";
 
 export function LoadingSkeleton() {

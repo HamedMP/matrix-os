@@ -1,7 +1,7 @@
 "use client";
 
 import { Toaster as Sonner, type ToasterProps } from "sonner";
-import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon } from "lucide-react";
+import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon } from "@/lib/hugeicons";
 
 /**
  * Brand-themed sonner Toaster.

@@ -5,7 +5,7 @@ import {
   FolderKanban,
   MessageCircle,
   SquareTerminal,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { useMemo } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { openCodingAgentThread } from "../../lib/project-chat";

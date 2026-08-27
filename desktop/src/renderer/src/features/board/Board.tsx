@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Kanban, Plus } from "lucide-react";
+import { Kanban, Plus } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";

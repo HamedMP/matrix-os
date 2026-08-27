@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { TerminalIcon, LayoutGridIcon, MonitorIcon, AudioWaveformIcon, type LucideIcon } from "lucide-react";
+import { TerminalIcon, LayoutGridIcon, MonitorIcon, AudioWaveformIcon, type LucideIcon } from "@/lib/hugeicons";
 
 export type DesktopMode = "desktop" | "canvas" | "ambient" | "dev";
 

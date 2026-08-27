@@ -1,4 +1,4 @@
-import { ExternalLink, Monitor, RefreshCw } from "lucide-react";
+import { ExternalLink, Monitor, RefreshCw } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import type { PreviewSessionSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { Button, StatusDot } from "../../design/primitives";

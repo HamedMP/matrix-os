@@ -2,7 +2,7 @@
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2Icon, GithubIcon, MessageCircleIcon, SparklesIcon, TerminalIcon, XIcon } from "lucide-react";
+import { CheckCircle2Icon, GithubIcon, MessageCircleIcon, SparklesIcon, TerminalIcon, XIcon } from "@/lib/hugeicons";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 

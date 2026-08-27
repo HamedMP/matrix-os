@@ -6,7 +6,7 @@ import {
   CheckCircleIcon,
   AlertTriangleIcon,
   XCircleIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 const levelConfig = {
   info: {

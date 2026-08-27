@@ -1,4 +1,4 @@
-import { LayoutGrid } from "lucide-react";
+import { LayoutGrid } from "@renderer/lib/hugeicons";
 import type { ReactNode } from "react";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";

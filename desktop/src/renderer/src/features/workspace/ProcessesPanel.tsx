@@ -1,4 +1,4 @@
-import { Activity, RefreshCw } from "lucide-react";
+import { Activity, RefreshCw } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { EmptyState, IconButton, StatusDot } from "../../design/primitives";

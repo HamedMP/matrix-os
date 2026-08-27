@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCcwIcon } from "lucide-react";
+import { RotateCcwIcon } from "@/lib/hugeicons";
 
 export interface AdminSetupSessionSummary {
   id: string;

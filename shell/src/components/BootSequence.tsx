@@ -10,7 +10,7 @@ import {
   Loader2Icon,
   RefreshCwIcon,
   ServerIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
 import { MatrixBootMark } from "@/components/MatrixBootMark";
 import {

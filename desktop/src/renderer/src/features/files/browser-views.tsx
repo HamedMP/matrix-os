@@ -16,7 +16,7 @@ import {
   Search,
   Upload,
   X,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { useEffect, useRef } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 import { Button, IconButton } from "../../design/primitives";

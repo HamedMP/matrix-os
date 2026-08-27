@@ -6,7 +6,7 @@ import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
 import { MicPermissionDialog } from "./MicPermissionDialog";
-import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
+import { KeyboardIcon, MicIcon, SparklesIcon } from "@/lib/hugeicons";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { ShellNotificationCard } from "./ShellNotificationCard";
 import { ShellNotificationStack } from "./ShellNotificationStack";

@@ -1,5 +1,5 @@
 import { useRef, type ComponentProps, type KeyboardEvent } from "react";
-import { ChevronDownIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon } from "@/lib/hugeicons";
 
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";

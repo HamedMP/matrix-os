@@ -1,6 +1,6 @@
 "use client";
 
-import { Terminal, GitPullRequest, ClipboardCheck, FileText, Eye, AppWindow, CircleDot, AlertTriangle } from "lucide-react";
+import { Terminal, GitPullRequest, ClipboardCheck, FileText, Eye, AppWindow, CircleDot, AlertTriangle } from "@/lib/hugeicons";
 import { TerminalPane } from "@/components/terminal/TerminalPane";
 import { useTheme } from "@/hooks/useTheme";
 import type { WorkspaceCanvasNode as WorkspaceCanvasNodeModel } from "@/stores/workspace-canvas-store";

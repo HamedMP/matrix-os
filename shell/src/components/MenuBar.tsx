@@ -4,7 +4,7 @@ import { useState, useEffect, useEffectEvent, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useIsClient } from "@/hooks/useIsClient";
-import { BatteryFullIcon, SearchIcon, UserIcon, WifiIcon } from "lucide-react";
+import { BatteryFullIcon, SearchIcon, UserIcon, WifiIcon } from "@/lib/hugeicons";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton } from "./UserButton";
@@ -15,7 +15,7 @@ import { useOsSessionStore } from "./os-session/os-session-store";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { TrafficLights } from "./window/TrafficLights";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
-import { EllipsisIcon } from "lucide-react";
+import { EllipsisIcon } from "@/lib/hugeicons";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
 

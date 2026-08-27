@@ -34,7 +34,7 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from "lexical";
-import { Box, SquareTerminal } from "lucide-react";
+import { Box, SquareTerminal } from "@renderer/lib/hugeicons";
 import {
   forwardRef,
   useCallback,

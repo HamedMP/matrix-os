@@ -22,7 +22,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { getGatewayUrl } from "@/lib/gateway";
-import { ClockIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { ClockIcon, PlusIcon, TrashIcon } from "@/lib/hugeicons";
 
 const GATEWAY = getGatewayUrl();
 const CRON_FETCH_TIMEOUT_MS = 10_000;

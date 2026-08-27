@@ -1,4 +1,4 @@
-import { AlertCircle, Folder, GitBranch, GitFork, Search } from "lucide-react";
+import { AlertCircle, Folder, GitBranch, GitFork, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod/v4";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";

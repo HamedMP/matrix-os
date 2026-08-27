@@ -13,7 +13,7 @@ import {
   ShieldCheckIcon,
   SparklesIcon,
   Trash2Icon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {

@@ -4,7 +4,7 @@
 import type { HTMLAttributes } from "react";
 import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { FileIcon, ImageIcon, FileTextIcon, XIcon, PaperclipIcon } from "lucide-react";
+import { FileIcon, ImageIcon, FileTextIcon, XIcon, PaperclipIcon } from "@/lib/hugeicons";
 import { Button } from "@/components/ui/button";
 import { fileToBase64 } from "@/components/ai-elements/attachments-utils";
 

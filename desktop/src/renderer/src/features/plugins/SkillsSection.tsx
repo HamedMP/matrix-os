@@ -2,7 +2,7 @@
 // (see plugins-store.ts) — the list below is the actual installed skill pack
 // on the connected computer, rendered read-only. The empty state is honest:
 // no skills installed, with the canonical terminal path to manage them.
-import { Search, Sparkles, X } from "lucide-react";
+import { Search, Sparkles, X } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { categoryMessage } from "../../../../shared/app-error";
 import { Button } from "../../design/primitives";

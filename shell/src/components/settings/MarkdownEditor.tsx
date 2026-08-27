@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { EyeIcon, PencilIcon, SaveIcon } from "lucide-react";
+import { EyeIcon, PencilIcon, SaveIcon } from "@/lib/hugeicons";
 
 interface MarkdownEditorProps {
   content: string;

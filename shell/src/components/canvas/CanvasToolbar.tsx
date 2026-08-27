@@ -3,7 +3,7 @@
 import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX } from "@/hooks/useCanvasTransform";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasLabels } from "@/stores/canvas-labels";
-import { Minus, Plus, Maximize, Type, LayoutGrid, Grid3X3, MousePointer, Hand, Eye, EyeOff, CircleHelpIcon, EllipsisIcon, CheckIcon } from "lucide-react";
+import { Minus, Plus, Maximize, Type, LayoutGrid, Grid3X3, MousePointer, Hand, Eye, EyeOff, CircleHelpIcon, EllipsisIcon, CheckIcon } from "@/lib/hugeicons";
 import { useDotGrid } from "../DotGrid";
 import { useCanvasSettings } from "@/stores/canvas-settings";
 import { autoArrangeWindows } from "./canvas-auto-arrange";

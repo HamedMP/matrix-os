@@ -26,7 +26,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { SettingsIcon, MessageSquareIcon, LayoutGridIcon } from "lucide-react";
+import { SettingsIcon, MessageSquareIcon, LayoutGridIcon } from "@/lib/hugeicons";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";

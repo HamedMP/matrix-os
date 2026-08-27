@@ -1,7 +1,7 @@
 // Graph tab body: toolbar + virtualized commit DAG + selected-commit detail.
 // All data flows through the CommitGraphController owned by GitPanel so the
 // tab bar can hide this surface when the gateway lacks the log endpoints.
-import { GitGraph as GitGraphIcon, RefreshCw } from "lucide-react";
+import { GitGraph as GitGraphIcon, RefreshCw } from "@renderer/lib/hugeicons";
 import { categoryMessage } from "../../../../shared/app-error";
 import { EmptyState, IconButton } from "../../design/primitives";
 import GitCommitDetail from "./GitCommitDetail";

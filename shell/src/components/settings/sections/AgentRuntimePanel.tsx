@@ -17,7 +17,7 @@ import {
   RefreshCwIcon,
   Settings2Icon,
   TerminalIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

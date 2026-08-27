@@ -3,7 +3,7 @@ import {
   type HermesConfiguration,
   type HermesEnvironment,
 } from "@matrix-os/contracts";
-import { RefreshCw, Search, Sparkles, SquareTerminal, X } from "lucide-react";
+import { RefreshCw, Search, Sparkles, SquareTerminal, X } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";

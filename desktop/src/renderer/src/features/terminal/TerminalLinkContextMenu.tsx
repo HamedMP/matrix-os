@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Copy, ExternalLink, TextSelect } from "lucide-react";
+import { Copy, ExternalLink, TextSelect } from "@renderer/lib/hugeicons";
 import type { TerminalLinkEntry } from "./terminal-link-actions";
 
 export interface DesktopTerminalMenuState {

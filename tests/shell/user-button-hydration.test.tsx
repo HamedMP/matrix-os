@@ -1,6 +1,7 @@
 import React from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { UserIcon } from "../../shell/src/lib/hugeicons.js";
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ isLoaded: true, isSignedIn: true }),
@@ -30,7 +31,7 @@ describe("UserButton hydration shell", () => {
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
     const html = renderToString(<UserButton />);
 
-    expect(html).toContain("lucide-user");
+    expect(html).toContain(renderToString(<UserIcon className="size-4" />));
     expect(html).not.toContain("data-clerk-component");
   });
 });

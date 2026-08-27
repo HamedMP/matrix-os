@@ -10,18 +10,24 @@ describe("ProviderGlyph", () => {
     cleanup();
   });
 
-  it.each([
-    ["claude", "lucide-sparkles"],
-    ["codex", "lucide-square-terminal"],
-    ["opencode", "lucide-code-xml"],
-    ["cursor", "lucide-mouse-pointer2"],
-    ["pi", "lucide-pi"],
-    ["custom", "lucide-cpu"],
-  ] as const)("renders the %s glyph", (kind, iconClass) => {
+  const kinds = ["claude", "codex", "opencode", "cursor", "pi", "custom"] as const;
+
+  it.each(kinds)("renders the %s glyph", (kind) => {
     const { container } = render(<ProviderGlyph kind={kind} />);
     const svg = container.querySelector("svg");
     expect(svg).not.toBeNull();
-    expect(svg?.classList.contains(iconClass)).toBe(true);
+    expect(container.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("keeps a distinct bundled glyph for each provider kind", () => {
+    const glyphs = kinds.map((kind) => {
+      const { container, unmount } = render(<ProviderGlyph kind={kind} />);
+      const markup = container.querySelector("svg")?.innerHTML;
+      unmount();
+      return markup;
+    });
+
+    expect(new Set(glyphs).size).toBe(kinds.length);
   });
 
   it("renders pi with the shared accent chrome", () => {

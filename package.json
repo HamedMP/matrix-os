@@ -122,6 +122,8 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@hugeicons/core-free-icons": "^4.3.0",
+    "@hugeicons/react": "^1.1.9",
     "@types/pg": "^8.18.0",
     "ink": "^6.2.3",
     "pg": "^8.21.0",

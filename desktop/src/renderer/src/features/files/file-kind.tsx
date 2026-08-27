@@ -9,7 +9,7 @@ import {
   FileVideo,
   Folder,
   Image as ImageIcon,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 
 export type FileKind =
   | "folder"

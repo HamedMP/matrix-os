@@ -1,5 +1,5 @@
 import type { MouseEventHandler, PointerEventHandler } from "react";
-import { PanelLeftOpenIcon } from "lucide-react";
+import { PanelLeftOpenIcon } from "@/lib/hugeicons";
 
 import { DEFAULT_SHELL_SESSION_NAME } from "./TerminalSidebarItems";
 import { useTerminalAppContext } from "./TerminalAppContext";

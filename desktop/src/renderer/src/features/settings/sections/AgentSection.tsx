@@ -1,5 +1,5 @@
 import type { AgentProviderSummary, RuntimeSummary } from "@matrix-os/contracts";
-import { Save, SquareTerminal } from "lucide-react";
+import { Save, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { type AgentConfigView, normalizeAgentConfig, selectedModelEffort } from "../../../lib/agent-config";
 import { Button, StatusDot } from "../../../design/primitives";

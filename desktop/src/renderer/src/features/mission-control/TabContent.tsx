@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { Sparkles } from "@renderer/lib/hugeicons";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import RetainedPane from "../../design/RetainedPane";

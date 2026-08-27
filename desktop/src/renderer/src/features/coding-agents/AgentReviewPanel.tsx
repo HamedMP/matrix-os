@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitCommitHorizontal, GitPullRequest, Save, Search } from "lucide-react";
+import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitCommitHorizontal, GitPullRequest, Save, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
