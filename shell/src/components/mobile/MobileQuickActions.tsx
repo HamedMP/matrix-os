@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { LayersIcon, SettingsIcon, XCircleIcon, type LucideIcon } from "lucide-react";
+import { LayersIcon, SettingsIcon, XCircleIcon, type LucideIcon } from "@/lib/hugeicons";
 import {
   Drawer,
   DrawerClose,

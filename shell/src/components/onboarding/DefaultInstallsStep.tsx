@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
-import { CheckIcon, Loader2Icon, ServerIcon } from "lucide-react";
+import { CheckIcon, Loader2Icon, ServerIcon } from "@/lib/hugeicons";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
 import {

@@ -19,7 +19,7 @@ import {
   MessageSquareIcon,
   SquareIcon,
   XIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { useChatContext } from "@/stores/chat-context";
 import { useVocalStore } from "@/stores/vocal";
 import { RichContent } from "@/components/ui-blocks";

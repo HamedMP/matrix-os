@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
-import { Loader2Icon, LogOutIcon, UserIcon } from "lucide-react";
+import { Loader2Icon, LogOutIcon, UserIcon } from "@/lib/hugeicons";
 import {
   clearMatrixAppSession,
   clerkSignOutWithTimeout,

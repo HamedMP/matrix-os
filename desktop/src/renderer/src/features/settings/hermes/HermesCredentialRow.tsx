@@ -1,5 +1,5 @@
 import type { HermesEnvironmentEntry } from "@matrix-os/contracts";
-import { Check, KeyRound, Trash2 } from "lucide-react";
+import { Check, KeyRound, Trash2 } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import { Button } from "../../../design/primitives";
 

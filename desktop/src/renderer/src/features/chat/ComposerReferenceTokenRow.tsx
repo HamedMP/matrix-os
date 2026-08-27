@@ -1,4 +1,4 @@
-import { Box, File, FolderOpen, SquareTerminal, X } from "lucide-react";
+import { Box, File, FolderOpen, SquareTerminal, X } from "@renderer/lib/hugeicons";
 import type { ReactNode } from "react";
 import {
   composerReferenceTokenKey,

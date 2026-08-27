@@ -1,4 +1,4 @@
-import { ArrowLeft, FolderOpen, FolderPlus, Github, X } from "lucide-react";
+import { ArrowLeft, FolderOpen, FolderPlus, Github, X } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";

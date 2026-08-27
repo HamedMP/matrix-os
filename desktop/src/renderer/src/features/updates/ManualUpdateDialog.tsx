@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Download, LoaderCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Download, LoaderCircle } from "@renderer/lib/hugeicons";
 import { Button, Dialog } from "../../design/primitives";
 import { useDesktopUpdate } from "../../stores/desktop-update";
 import ReleaseNotesMarkdown from "./ReleaseNotesMarkdown";

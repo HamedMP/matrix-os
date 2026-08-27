@@ -7,7 +7,7 @@ import {
   SearchIcon,
   Volume2Icon,
   WifiIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {

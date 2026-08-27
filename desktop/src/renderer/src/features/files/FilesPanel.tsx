@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, File, Folder, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, File, Folder, RefreshCw } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect } from "react";
 import { IconButton } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 import { Button } from "@/components/ui/button";
-import { Trash2Icon, RotateCcwIcon } from "lucide-react";
+import { Trash2Icon, RotateCcwIcon } from "@/lib/hugeicons";
 
 const GATEWAY_URL = getGatewayUrl();
 const TRASH_FETCH_TIMEOUT_MS = 10_000;

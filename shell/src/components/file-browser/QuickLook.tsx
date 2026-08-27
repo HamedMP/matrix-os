@@ -5,7 +5,7 @@ import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { getGatewayUrl } from "@/lib/gateway";
 import { Button } from "@/components/ui/button";
-import { XIcon } from "lucide-react";
+import { XIcon } from "@/lib/hugeicons";
 
 const GATEWAY_URL = getGatewayUrl();
 const QUICK_LOOK_FETCH_TIMEOUT_MS = 10_000;

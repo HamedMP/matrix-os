@@ -2,8 +2,8 @@
 
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { cn } from "@/lib/utils";
-import { FolderIcon, Trash2Icon, StarIcon } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { FolderIcon, Trash2Icon, StarIcon } from "@/lib/hugeicons";
+import type { LucideIcon } from "@/lib/hugeicons";
 import { FILE_BROWSER_LOCATIONS } from "./file-browser-locations";
 
 interface FileBrowserSidebarProps {

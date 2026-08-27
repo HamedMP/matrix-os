@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon } from "@/lib/hugeicons";
 import { DEFAULT_THEME, saveTheme, useTheme, type Theme } from "@/hooks/useTheme";
 import {
   saveDesktopConfigPatch,

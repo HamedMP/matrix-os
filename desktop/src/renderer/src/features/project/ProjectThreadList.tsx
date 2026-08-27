@@ -1,4 +1,4 @@
-import { AlertCircle, MessageSquare, Plus, Search } from "lucide-react";
+import { AlertCircle, MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import type { ProjectWorkspaceStatus } from "../../stores/project-workspaces";

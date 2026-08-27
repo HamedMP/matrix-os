@@ -6,7 +6,7 @@ import type {
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { ChevronDown, Cpu, Search } from "lucide-react";
+import { ChevronDown, Cpu, Search } from "@renderer/lib/hugeicons";
 import { useRef, useState } from "react";
 import {
   changeCanonicalComposerInstance,

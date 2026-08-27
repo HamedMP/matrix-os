@@ -2,7 +2,7 @@
 // list from the gateway diff endpoint, with an expandable unified-diff view
 // per file (+/- coloring, client-side render cap on top of the server caps).
 import { useState } from "react";
-import { ChevronDown, ChevronRight, X } from "lucide-react";
+import { ChevronDown, ChevronRight, X } from "@renderer/lib/hugeicons";
 import { categoryMessage, type AppErrorCategory } from "../../../../shared/app-error";
 import { IconButton } from "../../design/primitives";
 import type { CommitDiffFile, CommitDiffState, CommitSummary } from "./graph-types";

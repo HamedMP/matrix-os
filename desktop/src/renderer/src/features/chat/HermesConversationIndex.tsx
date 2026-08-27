@@ -6,7 +6,7 @@ import {
   Search,
   Trash2,
   X,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { Button } from "../../design/primitives";
 import type { ApiClient } from "../../lib/api";
 import {

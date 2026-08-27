@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@renderer/lib/hugeicons";
 import type { CSSProperties, ReactNode } from "react";
 
 export function sidebarNavRowStyle(active: boolean): CSSProperties {

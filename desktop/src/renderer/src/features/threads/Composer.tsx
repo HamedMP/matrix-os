@@ -1,4 +1,4 @@
-import { CornerDownLeft } from "lucide-react";
+import { CornerDownLeft } from "@renderer/lib/hugeicons";
 import { useMemo, useState } from "react";
 import { Dialog } from "../../design/primitives";
 import { sendKernelMessage } from "../../lib/kernel-wiring";

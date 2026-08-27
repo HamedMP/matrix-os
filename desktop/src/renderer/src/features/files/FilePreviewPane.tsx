@@ -7,7 +7,7 @@ import {
   ShieldAlert,
   TriangleAlert,
   X,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { lazy, useEffect, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { AppError, toUserMessage } from "../../lib/errors";

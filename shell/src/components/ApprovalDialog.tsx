@@ -10,7 +10,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ShieldAlertIcon } from "lucide-react";
+import { ShieldAlertIcon } from "@/lib/hugeicons";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 
 interface ApprovalRequest {

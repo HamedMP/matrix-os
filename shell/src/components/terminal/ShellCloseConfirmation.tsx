@@ -2,7 +2,7 @@
 
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { Trash2Icon } from "lucide-react";
+import { Trash2Icon } from "@/lib/hugeicons";
 
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { formatShellDisplayName } from "./TerminalSidebarItems";

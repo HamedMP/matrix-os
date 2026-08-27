@@ -1,4 +1,4 @@
-import { ArchiveRestore, FolderArchive, Trash2 } from "lucide-react";
+import { ArchiveRestore, FolderArchive, Trash2 } from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
 import { Button } from "../../../design/primitives";
 import { useConnection } from "../../../stores/connection";

@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderOpenIcon, Loader2Icon } from "lucide-react";
+import { FolderOpenIcon, Loader2Icon } from "@/lib/hugeicons";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { IconView } from "./IconView";
 import { ListView } from "./ListView";

@@ -3,13 +3,13 @@
 // Inspired by AI Elements task pattern, consistent with MissionControl TaskCard
 import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
-import type { LucideIcon } from "lucide-react";
+import type { LucideIcon } from "@/lib/hugeicons";
 import {
   CircleIcon,
   LoaderCircleIcon,
   CheckCircle2Icon,
   XCircleIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 export type TaskStatus = "pending" | "in-progress" | "completed" | "error";
 

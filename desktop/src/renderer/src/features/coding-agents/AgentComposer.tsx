@@ -1,4 +1,4 @@
-import { Play } from "lucide-react";
+import { Play } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,

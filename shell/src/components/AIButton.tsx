@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { Button } from "@/components/ui/button";
-import { SparklesIcon, SendIcon } from "lucide-react";
+import { SparklesIcon, SendIcon } from "@/lib/hugeicons";
 
 interface AIButtonProps {
   appName: string;

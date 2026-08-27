@@ -17,7 +17,7 @@ import {
   ClockIcon,
   WrenchIcon,
   XCircleIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { isValidElement } from "react";
 
 import { CodeBlock } from "./code-block";

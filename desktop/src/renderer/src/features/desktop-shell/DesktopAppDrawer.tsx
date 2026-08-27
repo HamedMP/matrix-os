@@ -1,5 +1,5 @@
 import { useEffect, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { X } from "lucide-react";
+import { X } from "@renderer/lib/hugeicons";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";

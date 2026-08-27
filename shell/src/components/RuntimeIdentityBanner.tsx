@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangleIcon, CpuIcon, HardDriveIcon, RefreshCcwIcon, ServerIcon, XIcon } from "lucide-react";
+import { AlertTriangleIcon, CpuIcon, HardDriveIcon, RefreshCcwIcon, ServerIcon, XIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
 import { ShellNotificationCard } from "./ShellNotificationCard";
 

@@ -1,4 +1,4 @@
-import { Check, Copy, FileText, Folder, WrapText } from "lucide-react";
+import { Check, Copy, FileText, Folder, WrapText } from "@renderer/lib/hugeicons";
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";

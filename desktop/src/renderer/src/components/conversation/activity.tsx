@@ -9,7 +9,7 @@ import {
   SquareTerminal,
   Wrench,
   X,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { useState, type ComponentType, type CSSProperties } from "react";
 import { CopyAction } from "./message";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";

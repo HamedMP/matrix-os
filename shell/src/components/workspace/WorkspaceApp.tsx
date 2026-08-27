@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "@/lib/hugeicons";
 import { RuntimeSummarySchema, type PreviewSessionSummary, type RuntimeSummary } from "@matrix-os/contracts";
 import { getGatewayUrl } from "@/lib/gateway";
 import { getCodeEditorUrl } from "@/lib/feature-flags";

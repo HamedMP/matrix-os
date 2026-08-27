@@ -11,7 +11,7 @@ import {
   Server,
   ShieldCheck,
   Zap,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { useSystemActivityStore, type ActivitySnapshot } from "@/stores/systemActivityStore";
 import { CleanupSuggestions } from "./CleanupSuggestions";
 

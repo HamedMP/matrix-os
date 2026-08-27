@@ -1,4 +1,4 @@
-import { FileText, Image as ImageIcon, RotateCcw, X } from "lucide-react";
+import { FileText, Image as ImageIcon, RotateCcw, X } from "@renderer/lib/hugeicons";
 import {
   Attachment,
   AttachmentAction,

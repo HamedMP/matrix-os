@@ -1,5 +1,5 @@
 import type { AgentProviderSummary } from "@matrix-os/contracts";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";

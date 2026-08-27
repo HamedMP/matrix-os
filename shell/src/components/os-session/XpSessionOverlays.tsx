@@ -7,7 +7,7 @@ import {
   RotateCcwIcon,
   UsersIcon,
   XIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { StartMenuUser, XpFlagLogo } from "../taskbar/taskbar-shared";
 import { useOsSessionStore } from "./os-session-store";

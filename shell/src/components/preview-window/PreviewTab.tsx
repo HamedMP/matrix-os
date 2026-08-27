@@ -3,7 +3,7 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { usePreviewWindow, type PreviewTab as PreviewTabType } from "@/hooks/usePreviewWindow";
 import { fileBlobUrl, fileMediaUrl } from "@/lib/file-blob";
-import { FileIcon } from "lucide-react";
+import { FileIcon } from "@/lib/hugeicons";
 import { Button } from "@/components/ui/button";
 
 const FILE_FETCH_TIMEOUT_MS = 10_000;

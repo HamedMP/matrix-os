@@ -1,4 +1,4 @@
-import { ChevronLeft, Play, SquareTerminal } from "lucide-react";
+import { ChevronLeft, Play, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import type { RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import TerminalView from "../terminal/TerminalView";

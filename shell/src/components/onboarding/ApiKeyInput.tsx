@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { KeyRoundIcon, Loader2Icon, CheckCircle2Icon } from "lucide-react";
+import { KeyRoundIcon, Loader2Icon, CheckCircle2Icon } from "@/lib/hugeicons";
 
 interface ApiKeyInputProps {
   onSubmit: (key: string) => void;

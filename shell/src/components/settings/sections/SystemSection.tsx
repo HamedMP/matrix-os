@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { getGatewayUrl } from "@/lib/gateway";
-import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon, CloudIcon, Code2Icon, AlertTriangleIcon } from "lucide-react";
+import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon, CloudIcon, Code2Icon, AlertTriangleIcon } from "@/lib/hugeicons";
 
 const GATEWAY = getGatewayUrl();
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;

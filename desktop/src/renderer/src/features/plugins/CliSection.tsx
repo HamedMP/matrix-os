@@ -3,7 +3,7 @@
 // "brew install finnaai/tap/matrix") and the npm fallback is the published
 // "@finnaai/matrix" package (packages/sync-client). Copy uses
 // navigator.clipboard, the same capability the terminal UI already relies on.
-import { Check, Copy, SquareTerminal } from "lucide-react";
+import { Check, Copy, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { diagnosticErrorKind } from "../../lib/errors";

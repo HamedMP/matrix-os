@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { ClipboardPasteIcon } from "lucide-react";
+import { ClipboardPasteIcon } from "@/lib/hugeicons";
 
 type KeyboardMode = "abc" | "sym" | "nav";
 

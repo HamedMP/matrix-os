@@ -10,7 +10,7 @@ import {
   ImageIcon,
   ChevronDownIcon,
   ChevronUpIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 function formatSize(bytes?: number): string {
   if (bytes === undefined) return "--";

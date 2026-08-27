@@ -14,7 +14,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { PencilIcon, PinOffIcon, RefreshCwIcon, XCircleIcon } from "lucide-react";
+import { PencilIcon, PinOffIcon, RefreshCwIcon, XCircleIcon } from "@/lib/hugeicons";
 
 export function DockIcon({
   name,

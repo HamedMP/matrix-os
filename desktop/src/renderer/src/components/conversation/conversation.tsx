@@ -1,4 +1,4 @@
-import { ArrowDown } from "lucide-react";
+import { ArrowDown } from "@renderer/lib/hugeicons";
 import {
   useCallback,
   useEffect,

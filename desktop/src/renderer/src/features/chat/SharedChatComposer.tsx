@@ -5,7 +5,7 @@ import type {
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
-import { Box, ChevronDown, Paperclip, SquareTerminal } from "lucide-react";
+import { Box, ChevronDown, Paperclip, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";

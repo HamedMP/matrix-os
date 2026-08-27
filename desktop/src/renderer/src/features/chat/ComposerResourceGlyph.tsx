@@ -6,7 +6,7 @@ import {
   FolderKanban,
   ListTodo,
   SquareTerminal,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { FileGlyph, kindForEntry } from "../files/file-kind";
 
 type ComposerFileIconToken =

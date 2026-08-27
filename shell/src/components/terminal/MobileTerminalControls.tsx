@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { ClipboardPasteIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { ClipboardPasteIcon, PlusIcon, SearchIcon } from "@/lib/hugeicons";
 
 import { NewSessionMenu } from "./NewSessionMenu";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";

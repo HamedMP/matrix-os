@@ -12,7 +12,7 @@ import {
   XIcon,
   Loader2Icon,
   CheckCircle2Icon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 interface AppEntry {
   name: string;

@@ -9,7 +9,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon } from "@/lib/hugeicons";
 import { MessageResponse } from "./message";
 
 export type ReasoningProps = HTMLAttributes<HTMLDivElement> & {

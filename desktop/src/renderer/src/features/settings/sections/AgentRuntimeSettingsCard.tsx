@@ -3,7 +3,7 @@ import type {
   AgentRuntimeId,
   AgentSettingsView,
 } from "@matrix-os/contracts";
-import { KeyRound, Radio, SquareTerminal } from "lucide-react";
+import { KeyRound, Radio, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useState } from "react";
 import { Button, StatusDot } from "../../../design/primitives";
 import { normalizeAgentConfig } from "../../../lib/agent-config";

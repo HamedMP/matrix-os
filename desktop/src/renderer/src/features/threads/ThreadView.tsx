@@ -1,4 +1,4 @@
-import { CircleStop, Wrench } from "lucide-react";
+import { CircleStop, Wrench } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { Button, StatusDot } from "../../design/primitives";

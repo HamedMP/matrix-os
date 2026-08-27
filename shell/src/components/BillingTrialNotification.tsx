@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Clock3Icon, ExternalLinkIcon, Loader2Icon } from "lucide-react";
+import { Clock3Icon, ExternalLinkIcon, Loader2Icon } from "@/lib/hugeicons";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { MATRIX_BILLING_SERVER_PROFILES } from "@/lib/billing";
 import { ShellNotificationCard } from "./ShellNotificationCard";

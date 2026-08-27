@@ -5,7 +5,7 @@ import {
   LayoutGrid,
   MessageCircle,
   Terminal,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import phosphorPlugsUrl from "../../assets/phosphor/plugs.svg?no-inline";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";

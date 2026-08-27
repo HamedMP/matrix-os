@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Volume2Icon, WifiIcon } from "lucide-react";
+import { Volume2Icon, WifiIcon } from "@/lib/hugeicons";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {

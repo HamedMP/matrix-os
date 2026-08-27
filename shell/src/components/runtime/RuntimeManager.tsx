@@ -3,7 +3,7 @@
 import { RedirectToSignIn, useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { MatrixComputerListSchema, type MatrixComputerList } from "@matrix-os/contracts";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
-import { ArrowLeftIcon, LogOutIcon, SettingsIcon, UserIcon } from "lucide-react";
+import { ArrowLeftIcon, LogOutIcon, SettingsIcon, UserIcon } from "@/lib/hugeicons";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 

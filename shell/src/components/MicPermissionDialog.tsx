@@ -9,7 +9,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { MicIcon, MicOffIcon } from "lucide-react";
+import { MicIcon, MicOffIcon } from "@/lib/hugeicons";
 import type { MicPermissionState } from "@/hooks/useMicPermission";
 
 interface MicPermissionDialogProps {

@@ -5,7 +5,7 @@ import {
   CreditCard,
   LogOut,
   Settings,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { useEffect, useState, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { invoke } from "../../lib/operator";

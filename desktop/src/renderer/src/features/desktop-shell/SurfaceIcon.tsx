@@ -9,7 +9,7 @@ import {
   Settings,
   SquareTerminal,
   type LucideIcon,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import type { Tab, TabKind } from "../../stores/tabs";
 

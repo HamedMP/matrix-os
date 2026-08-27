@@ -1,4 +1,4 @@
-import { Maximize2, MessageSquare, Minimize2, PanelRightOpen, Server, X } from "lucide-react";
+import { Maximize2, MessageSquare, Minimize2, PanelRightOpen, Server, X } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { Group, Panel, Separator, type Layout as SplitLayout } from "react-resizable-panels";
 import { defaultAgentThreadComposerDraft } from "@matrix-os/contracts";

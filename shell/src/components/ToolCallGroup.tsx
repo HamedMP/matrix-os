@@ -11,7 +11,7 @@ import {
   CheckCircleIcon,
   LoaderCircleIcon,
   ChevronDownIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 function toolContext(msg: ChatMessage): string | undefined {
   const input = msg.toolInput;

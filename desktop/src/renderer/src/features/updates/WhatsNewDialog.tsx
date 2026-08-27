@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { X } from "@renderer/lib/hugeicons";
 import { Dialog } from "../../design/primitives";
 import { useDesktopUpdate } from "../../stores/desktop-update";
 import ReleaseNotesMarkdown from "./ReleaseNotesMarkdown";

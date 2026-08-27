@@ -1,4 +1,4 @@
-import { File } from "lucide-react";
+import { File } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";

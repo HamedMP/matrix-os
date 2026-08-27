@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { CheckCircle2Icon, SparklesIcon } from "lucide-react";
+import { CheckCircle2Icon, SparklesIcon } from "@/lib/hugeicons";
 
 interface ShellAuthLayoutProps {
   eyebrow: string;

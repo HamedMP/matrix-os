@@ -7,7 +7,7 @@ import {
   FolderPlusIcon,
   PencilIcon,
   Trash2Icon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { FILE_BROWSER_LOCATIONS } from "./file-browser-locations";
 import {

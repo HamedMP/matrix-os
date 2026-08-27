@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Copy, ExternalLink, Link2, X } from "lucide-react";
+import { Copy, ExternalLink, Link2, X } from "@/lib/hugeicons";
 
 import type { TerminalLinkEntry, TerminalLinksState } from "./terminal-links";
 

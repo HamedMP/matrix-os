@@ -9,7 +9,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDownIcon, CheckCircle2Icon, CircleIcon } from "lucide-react";
+import { ChevronDownIcon, CheckCircle2Icon, CircleIcon } from "@/lib/hugeicons";
 
 export interface PlanStep {
   title: string;

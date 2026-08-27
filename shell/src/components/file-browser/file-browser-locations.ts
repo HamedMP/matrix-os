@@ -5,8 +5,8 @@ import {
   PuzzleIcon,
   SettingsIcon,
   UsersIcon,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+} from "@/lib/hugeicons";
+import type { LucideIcon } from "@/lib/hugeicons";
 
 /**
  * Well-known home-directory locations shared by the classic file-browser

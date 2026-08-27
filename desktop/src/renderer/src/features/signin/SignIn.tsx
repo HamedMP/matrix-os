@@ -1,4 +1,4 @@
-import { Cloud, ExternalLink, GitBranch, MonitorCheck, ShieldCheck, Sparkles } from "lucide-react";
+import { Cloud, ExternalLink, GitBranch, MonitorCheck, ShieldCheck, Sparkles } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandPanel } from "../../design/BrandPanel";
 import { invoke } from "../../lib/operator";

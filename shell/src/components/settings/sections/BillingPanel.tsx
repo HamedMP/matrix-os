@@ -21,7 +21,7 @@ import {
   ReceiptTextIcon,
   ShieldCheckIcon,
   XCircleIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { useUser } from "@clerk/nextjs";
 import {
   MATRIX_BILLING_REGIONS,

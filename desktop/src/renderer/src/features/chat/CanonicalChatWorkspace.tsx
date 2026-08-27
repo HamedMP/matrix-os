@@ -7,7 +7,7 @@ import type {
   CanonicalProviderCatalog,
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
-import { MessageSquare, Plus, Search } from "lucide-react";
+import { MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import type { ApiClient } from "../../lib/api";

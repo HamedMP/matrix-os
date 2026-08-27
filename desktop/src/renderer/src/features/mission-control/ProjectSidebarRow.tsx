@@ -1,5 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Archive, Folder, MoreHorizontal, Trash2 } from "lucide-react";
+import { Archive, Folder, MoreHorizontal, Trash2 } from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import type { Project } from "../../stores/board";

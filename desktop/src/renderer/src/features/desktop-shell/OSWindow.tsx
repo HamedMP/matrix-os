@@ -1,4 +1,4 @@
-import { Maximize2, Minus, X } from "lucide-react";
+import { Maximize2, Minus, X } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,

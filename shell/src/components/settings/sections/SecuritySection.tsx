@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getGatewayUrl } from "@/lib/gateway";
-import { ShieldIcon, AlertTriangleIcon, InfoIcon, RefreshCwIcon } from "lucide-react";
+import { ShieldIcon, AlertTriangleIcon, InfoIcon, RefreshCwIcon } from "@/lib/hugeicons";
 
 const GATEWAY = getGatewayUrl();
 

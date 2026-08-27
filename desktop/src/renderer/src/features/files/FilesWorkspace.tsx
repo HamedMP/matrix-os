@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { Folder, Plus, X } from "lucide-react";
+import { Folder, Plus, X } from "@renderer/lib/hugeicons";
 import { Button, Dialog } from "../../design/primitives";
 import RetainedPane from "../../design/RetainedPane";
 import { toUserMessage } from "../../lib/errors";

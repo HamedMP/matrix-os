@@ -1,7 +1,7 @@
 "use client";
 
 import type { AppEntry } from "@/hooks/useWindowManager";
-import { BrushIcon, ExternalLinkIcon, HomeIcon } from "lucide-react";
+import { BrushIcon, ExternalLinkIcon, HomeIcon } from "@/lib/hugeicons";
 import { motion } from "framer-motion";
 import { fadeUp, staggerContainer, tapScale } from "@/lib/motion";
 

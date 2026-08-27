@@ -8,7 +8,7 @@ import {
   FolderIcon,
   ImageIcon,
   FileCodeIcon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 
 const GATEWAY_URL = getGatewayUrl();
 const PREVIEW_PANEL_FETCH_TIMEOUT_MS = 10_000;

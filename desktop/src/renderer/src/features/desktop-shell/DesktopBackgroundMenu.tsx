@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
-import { Image, LoaderCircle, X } from "lucide-react";
+import { Image, LoaderCircle, X } from "@renderer/lib/hugeicons";
 import { Button, ContextMenu, Dialog } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import type { ApiClient } from "../../lib/api";

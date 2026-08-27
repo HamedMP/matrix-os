@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
-import { Activity } from "lucide-react";
+import { Activity } from "@renderer/lib/hugeicons";
 import { EmptyState } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";

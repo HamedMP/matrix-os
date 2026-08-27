@@ -1,5 +1,5 @@
 "use client";
-import { PinIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "lucide-react";
+import { PinIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "@/lib/hugeicons";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import {
   ContextMenu,

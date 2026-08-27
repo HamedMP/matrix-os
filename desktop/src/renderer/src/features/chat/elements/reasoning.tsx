@@ -1,4 +1,4 @@
-import { Brain, ChevronRight } from "lucide-react";
+import { Brain, ChevronRight } from "@renderer/lib/hugeicons";
 import { useState, type ReactNode } from "react";
 import { markerVariants } from "./marker";
 

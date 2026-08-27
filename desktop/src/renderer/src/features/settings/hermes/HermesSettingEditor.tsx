@@ -1,5 +1,5 @@
 import type { HermesConfigField } from "@matrix-os/contracts";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw } from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
 import { Button } from "../../../design/primitives";
 import { parseHermesList, titleCase, valuesEqual } from "./hermes-form-model";

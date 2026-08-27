@@ -1,4 +1,4 @@
-import { ArrowUp, CircleStop } from "lucide-react";
+import { ArrowUp, CircleStop } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 
 // AI-Elements-style PromptInput: a card with a growing textarea and a

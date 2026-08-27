@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState, type CSSProperties } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, CheckIcon, SquareTerminalIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, CheckIcon, SquareTerminalIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
 import { MATRIX_OS_APP_THEME_OPTIONS } from "@/lib/theme-presets";
 import { useTerminalSettings, type ShellThemeId, type TerminalAppThemeId, type TerminalThemeId } from "@/stores/terminal-settings";

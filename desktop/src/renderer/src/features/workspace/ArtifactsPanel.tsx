@@ -1,4 +1,4 @@
-import { ExternalLink, Globe, RefreshCw } from "lucide-react";
+import { ExternalLink, Globe, RefreshCw } from "@renderer/lib/hugeicons";
 import { useEffect } from "react";
 import { categoryMessage } from "../../../../shared/app-error";
 import { EmptyState, IconButton, StatusDot } from "../../design/primitives";

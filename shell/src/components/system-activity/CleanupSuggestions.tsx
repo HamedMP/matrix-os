@@ -1,6 +1,6 @@
 "use client";
 
-import { Play, Sparkles } from "lucide-react";
+import { Play, Sparkles } from "@/lib/hugeicons";
 import type { ActivitySnapshot } from "@/stores/systemActivityStore";
 
 interface CleanupSuggestionsProps {

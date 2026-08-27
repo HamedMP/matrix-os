@@ -1,4 +1,4 @@
-import { LayoutGrid, MessageCircle, RefreshCw } from "lucide-react";
+import { LayoutGrid, MessageCircle, RefreshCw } from "@renderer/lib/hugeicons";
 import { useEffect, useRef } from "react";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, StatusDot } from "../../design/primitives";

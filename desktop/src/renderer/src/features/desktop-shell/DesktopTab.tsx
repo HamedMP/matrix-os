@@ -1,5 +1,5 @@
 import { cloneElement, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
-import { Minus, X } from "lucide-react";
+import { Minus, X } from "@renderer/lib/hugeicons";
 
 export type DesktopTabProps = {
   mode: "full" | "iconOnly";

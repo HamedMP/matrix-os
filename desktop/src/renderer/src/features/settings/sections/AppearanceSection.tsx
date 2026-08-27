@@ -1,4 +1,4 @@
-import { Check, Minus, Plus } from "lucide-react";
+import { Check, Minus, Plus } from "@renderer/lib/hugeicons";
 import { Button, IconButton } from "../../../design/primitives";
 import { getThemeVariant, unifiedThemes } from "../../../design/themes";
 import { resolveThemeMode, type ThemeMode } from "../../../design/themes/apply";

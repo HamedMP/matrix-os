@@ -7,7 +7,7 @@ import {
   Settings,
   SquareTerminal,
   type LucideIcon,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
 
 export type DesktopAppId = "browser" | "chat" | "terminal" | "files" | "plugins" | "settings" | "projects";

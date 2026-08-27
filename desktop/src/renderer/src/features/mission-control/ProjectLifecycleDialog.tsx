@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { Trash2 } from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
 import type { Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";

@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { ChevronDown } from "@renderer/lib/hugeicons";
 import type { AgentThreadComposerDraft, RuntimeSummary } from "@matrix-os/contracts";
 
 // The contracts package exposes AgentMode only as a schema; reuse the draft

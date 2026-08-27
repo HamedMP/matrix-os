@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ChevronDownIcon, ChevronUpIcon, CheckIcon, LoaderIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, CheckIcon, LoaderIcon } from "@/lib/hugeicons";
 
 interface ChannelCardProps {
   id: string;

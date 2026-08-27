@@ -15,7 +15,7 @@ import {
   CreditCardIcon,
   DownloadIcon,
   CheckCircle2Icon,
-} from "lucide-react";
+} from "@/lib/hugeicons";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
 import { ChannelsSection } from "./settings/sections/ChannelsSection";

@@ -1,4 +1,4 @@
-import { Bot, RefreshCw } from "lucide-react";
+import { Bot, RefreshCw } from "@renderer/lib/hugeicons";
 import type { RuntimeSummary } from "@matrix-os/contracts";
 import { Button, StatusDot } from "../../design/primitives";
 

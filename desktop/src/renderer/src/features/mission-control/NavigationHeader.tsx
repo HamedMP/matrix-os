@@ -4,7 +4,7 @@ import {
   ChevronRight,
   MoreHorizontal,
   PanelLeft,
-} from "lucide-react";
+} from "@renderer/lib/hugeicons";
 import { Fragment } from "react";
 import { useHermesChat } from "../../stores/hermes-chat";
 import { useTabs, type Tab } from "../../stores/tabs";

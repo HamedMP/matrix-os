@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircleIcon, Loader2Icon } from "lucide-react";
+import { AlertCircleIcon, Loader2Icon } from "@/lib/hugeicons";
 import { palette as c } from "@matrix-os/brand";
 import { MatrixBootMark } from "@/components/MatrixBootMark";
 import { AuthLayout } from "@/components/auth/AuthLayout";

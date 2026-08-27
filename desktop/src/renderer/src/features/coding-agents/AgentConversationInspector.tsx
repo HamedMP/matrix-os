@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
-import { Activity, FileDiff, FolderOpen, Globe, SquareTerminal, type LucideIcon } from "lucide-react";
+import { Activity, FileDiff, FolderOpen, Globe, SquareTerminal, type LucideIcon } from "@renderer/lib/hugeicons";
 
 export type AgentConversationInspectorTab = "changes" | "files" | "terminal" | "preview" | "activity";
 
