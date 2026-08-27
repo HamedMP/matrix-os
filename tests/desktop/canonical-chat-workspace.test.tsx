@@ -333,6 +333,74 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
   });
 
+  it("wires the canonical failed-Run retry action without a provider store", async () => {
+    const failed = createCanonicalChatFixture("failed").snapshot;
+    const failedRun = failed.runs[0]!;
+    const failedTurn = failed.turns[0]!;
+    const failedRecord = {
+      chat: {
+        id: failed.chat.id,
+        ownerScope: failed.chat.ownerScope,
+        title: failed.chat.title,
+        lifecycle: failed.chat.lifecycle,
+        attention: failed.chat.attention,
+        revision: failed.chat.revision,
+        messageCount: failed.chat.messageCount,
+        lastMessagePreview: failed.chat.lastMessagePreview,
+        currentSelection: failed.chat.currentSelection,
+        createdAt: failed.chat.createdAt,
+        updatedAt: failed.chat.updatedAt,
+      },
+      projectId: "matrix-os",
+      providerBinding: failed.chat.providerBinding,
+    };
+    const failedClient = client();
+    vi.mocked(failedClient.list).mockResolvedValue({ items: [failedRecord] });
+    vi.mocked(failedClient.getDetail).mockResolvedValue({
+      record: failedRecord,
+      messages: failed.messages,
+      turns: failed.turns,
+      runs: failed.runs,
+      activities: [{
+        id: "activity_failed_retry",
+        chatId: failed.chat.id,
+        runId: failedRun.id,
+        type: "run.error",
+        error: {
+          code: "run_failed",
+          safeMessage: "The Run stopped safely.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        },
+        occurredAt: failedRun.completedAt ?? failedRun.updatedAt,
+      }],
+    });
+    vi.mocked(failedClient.retryTurn).mockResolvedValue({
+      record: failedRecord,
+      turn: failedTurn,
+      run: failedRun,
+      admission: "accepted",
+    });
+
+    render(
+      <CanonicalChatWorkspace
+        client={failedClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: failed.chat.title }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry Agent work failed" }));
+    await waitFor(() => expect(failedClient.retryTurn).toHaveBeenCalledWith(
+      failed.chat.id,
+      failedTurn.id,
+      { clientRequestId: expect.stringMatching(/^req_/), baseRevision: failed.chat.revision },
+    ));
+  });
+
   it("shows a conversation loading state instead of flashing the New Chat hero", async () => {
     let resolveDetail!: (value: Awaited<ReturnType<CanonicalChatClient["getDetail"]>>) => void;
     const delayedClient = client();

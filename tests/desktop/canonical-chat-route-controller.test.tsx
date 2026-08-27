@@ -640,4 +640,30 @@ describe("canonical Chat route controller", () => {
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("provider secret detail"));
     warn.mockRestore();
   });
+
+  it("retries a failed canonical Turn with the confirmed Chat revision", async () => {
+    const retryTurn = vi.fn(async () => ({
+      record: { ...globalRecord, chat: { ...globalRecord.chat, revision: 1 } },
+      turn: { id: "cturn_retry" },
+      run: { id: "run_retry" },
+      admission: "accepted" as const,
+    }));
+    const sharedClient = client({ retryTurn });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe("chat_global"));
+
+    await act(async () => {
+      await result.current.retryTurn("cturn_retry");
+    });
+
+    expect(retryTurn).toHaveBeenCalledWith("chat_global", "cturn_retry", {
+      clientRequestId: expect.stringMatching(/^req_/),
+      baseRevision: 0,
+    });
+    expect(sharedClient.getDetail).toHaveBeenCalledTimes(2);
+  });
 });

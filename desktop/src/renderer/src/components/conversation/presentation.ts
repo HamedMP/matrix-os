@@ -3,7 +3,7 @@ export type ConversationMessageRole = "user" | "assistant";
 export interface ConversationAttachmentPresentation {
   id: string;
   label: string;
-  kind: "file";
+  kind: "file" | "resource" | "invocation";
 }
 
 export interface ConversationMessagePresentation {
@@ -14,8 +14,15 @@ export interface ConversationMessagePresentation {
   markdown: string;
   copyText: string;
   timestamp: number;
+  /** @deprecated Use references for new provider-neutral projections. */
   attachments?: ConversationAttachmentPresentation[];
+  references?: ConversationAttachmentPresentation[];
 }
+
+export type ConversationActionPresentation =
+  | { kind: "retry"; turnId: string; label: string }
+  | { kind: "approval"; requestId: string; decision: "approve" | "approve_for_session" | "decline" | "cancel"; label: string }
+  | { kind: "input"; requestId: string; label: string };
 
 export type ConversationActivityKind =
   | "phase"
@@ -55,10 +62,25 @@ export interface ConversationNoticePresentation {
   kind: "notice";
   id: string;
   phase: "commentary" | "final";
-  tone: "neutral" | "stopped" | "failed";
+  tone: "neutral" | "info" | "success" | "warning" | "stopped" | "failed";
   label: string;
   markdown: string;
   timestamp: number;
+  actions?: ConversationActionPresentation[];
+}
+
+export interface ConversationRequestPresentation {
+  kind: "request";
+  id: string;
+  phase: "commentary" | "final";
+  requestKind: "approval" | "input";
+  requestId: string;
+  state: "waiting" | "resolved";
+  label: string;
+  detail?: string;
+  risk?: "low" | "medium" | "high";
+  timestamp: number;
+  actions?: ConversationActionPresentation[];
 }
 
 /**
@@ -70,6 +92,7 @@ export interface ConversationWorkPresentationMap {
   message: ConversationMessagePresentation;
   "activity-group": ConversationActivityGroupPresentation;
   notice: ConversationNoticePresentation;
+  request: ConversationRequestPresentation;
 }
 
 export type ConversationWorkPresentation =
@@ -82,9 +105,11 @@ export interface ConversationTurnPresentation {
   active: boolean;
   user?: ConversationMessagePresentation;
   work: ConversationWorkPresentation[];
-  final?: ConversationMessagePresentation | ConversationNoticePresentation;
+  final?: ConversationMessagePresentation | ConversationNoticePresentation | ConversationRequestPresentation;
 }
 
 export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
+  performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
+  canPerformAction?: (action: ConversationActionPresentation) => boolean;
 }

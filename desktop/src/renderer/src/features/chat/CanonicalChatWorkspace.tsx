@@ -511,7 +511,16 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail ? (
           <>
-            <ConversationTranscript turns={transcript} callbacks={{ copyText }} />
+            <ConversationTranscript
+              turns={transcript}
+              callbacks={{
+                copyText,
+                canPerformAction: (action) => action.kind === "retry",
+                performAction: async (action) => {
+                  if (action.kind === "retry") await controller.retryTurn(action.turnId);
+                },
+              }}
+            />
             <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (

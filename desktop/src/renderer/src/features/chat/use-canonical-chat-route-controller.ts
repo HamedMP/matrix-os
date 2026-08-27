@@ -234,6 +234,25 @@ export function useCanonicalChatRouteController({
     }
   }, [client, detail, loadDetail]);
 
+  const retryTurn = useCallback(async (turnId: string) => {
+    if (!detail || detail.record.activeRun) return;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      await client.retryTurn(detail.record.chat.id, turnId, {
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: detail.record.chat.revision,
+      });
+      if (!isCurrentScope()) return;
+      await loadDetail(detail.record.chat.id);
+      setError(null);
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] retry failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return;
+      setError("The Run could not be retried. Refresh and try again.");
+    }
+  }, [client, detail, loadDetail]);
+
   const deleteChat = useCallback(async (chatId: string) => {
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
@@ -264,6 +283,7 @@ export function useCanonicalChatRouteController({
     moveProject,
     submitTurn,
     cancelActiveRun,
+    retryTurn,
     deleteChat,
     startNewChat: () => selectChat(null),
   };
