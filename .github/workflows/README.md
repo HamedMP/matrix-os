@@ -28,6 +28,21 @@ logs and artifacts.
 Docs-only changes still run targeted docs contract tests through `Docs Contract Tests`.
 Expensive jobs remain path-aware.
 
+### Main CI queue and coverage frontier
+
+Main pushes enter GitHub's FIFO concurrency queue in `ci.yml` (up to the
+platform's 100-run `queue: max` limit). A non-doc push also starts
+`ci-supersede.yml`, whose only write permission is cancelling older active CI
+runs whose heads are ancestors of the new commit. Docs-only successors
+queue behind broader runs instead of cancelling them.
+
+When a queued run is admitted, `scripts/ci/main-ci-coverage.mjs` finds the latest
+successful `CI coverage-v1` ancestor and treats it as the coverage frontier. The
+run plans against the complete frontier-to-head diff, not only the newest commit.
+Consequently, a failed or cancelled predecessor is automatically absorbed into
+the successor's source, docs-contract, pattern-scan, and React Doctor scope. If
+no trusted frontier exists, the run bootstraps from Git's empty tree.
+
 ## Release Artifacts
 
 Matrix OS does not publish customer runtime Docker images. The customer runtime
@@ -58,6 +73,7 @@ OTA payloads.
 | Workflow | Owner | When it runs | Required? |
 | --- | --- | --- | --- |
 | `ci.yml` | Core code validation | `ready-for-ci`, ready PRs, merge queue, `main`, manual | Yes, via `CI Results` |
+| `ci-supersede.yml` | Safe main-CI supersession | Non-doc pushes to `main` | No; optimization only, queueing remains safe if it fails |
 | `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on `ready-for-ci`, ready PRs, and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |

@@ -1,4 +1,5 @@
 name: CI
+run-name: CI coverage-v1 · ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -11,7 +12,11 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
-  cancel-in-progress: true
+  queue: max
+
+permissions:
+  actions: read
+  contents: read
 
 jobs:
   changes:
@@ -19,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
+      base_sha: ${{ steps.changed.outputs.base_sha }}
+      bootstrap: ${{ steps.changed.outputs.bootstrap }}
       should_run: ${{ steps.changed.outputs.should_run }}
       docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
     steps:
@@ -40,7 +47,7 @@ jobs:
             echo "Checkout fetch attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
             if timeout --foreground --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
               git -c http.extraheader="AUTHORIZATION: basic $auth_header" \
-                fetch --no-tags --prune --no-recurse-submodules --depth=1 \
+                fetch --no-tags --prune --no-recurse-submodules \
                 origin "$GITHUB_SHA" \
               && git checkout --force --detach "$GITHUB_SHA"; then
               echo "Checkout fetch succeeded on attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
@@ -63,9 +70,17 @@ jobs:
         env:
           PR_ACTION: ${{ github.event.action || '' }}
           PR_LABEL_NAME: ${{ github.event.label.name || '' }}
-          GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          # Main runs are admitted through the queue. Plan from the last
+          # successful coverage-aware ancestor so failed or cancelled work is
+          # automatically absorbed by the next run.
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # Manual and merge-queue runs must execute CI regardless of changed paths.
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
@@ -90,17 +105,8 @@ jobs:
             exit 0
           fi
 
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
-            changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
-          else
-            zero_sha="0000000000000000000000000000000000000000"
-            if [ -n "${GITHUB_EVENT_BEFORE:-}" ] && [ "$GITHUB_EVENT_BEFORE" != "$zero_sha" ] && git cat-file -e "${GITHUB_EVENT_BEFORE}^{commit}" 2>/dev/null; then
-              changed_files="$(git diff --name-only "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA")"
-            else
-              changed_files="$(git show --pretty= --name-only "$GITHUB_SHA")"
-            fi
-          fi
+          git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+          changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
 
           should_run=false
           docs_contract_tests=false
@@ -108,7 +114,7 @@ jobs:
             [ -z "$file" ] && continue
             case "$file" in
               docs/*|specs/*|*.md) docs_contract_tests=true ;;
-              *) should_run=true; docs_contract_tests=false; break ;;
+              *) should_run=true ;;
             esac
           done <<EOF
           $changed_files
@@ -216,9 +222,23 @@ jobs:
 
       - name: Run CLAUDE.md pattern scanner on changed files
         if: needs.changes.outputs.should_run == 'true'
+        env:
+          COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}
+          COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }}
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            BEFORE="$COVERAGE_BASE_SHA"
+            if [ -z "$BEFORE" ]; then
+              echo "Main CI coverage base is missing" >&2
+              exit 1
+            fi
+            if [ "$COVERAGE_BOOTSTRAP" = "true" ]; then
+              ./scripts/review/check-patterns.sh
+            else
+              ./scripts/review/check-patterns.sh --diff "$BEFORE"
+            fi
           else
             # On push: only scan files changed in this push range.
             # github.event.before is the pre-push tip; on force-push or first
@@ -259,6 +279,7 @@ jobs:
       - name: Audit React code (project dirs with changed .tsx/.jsx)
         if: needs.changes.outputs.should_run == 'true'
         env:
+          COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           HEAD_SHA: ${{ github.sha }}
@@ -267,6 +288,13 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ]; then
             git fetch --no-tags --depth=1 origin "$BASE_REF"
             base="origin/$BASE_REF"
+          elif [ "$EVENT_NAME" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            BEFORE="$COVERAGE_BASE_SHA"
+            if [ -z "$BEFORE" ]; then
+              echo "Main CI coverage base is missing" >&2
+              exit 1
+            fi
+            base="$BEFORE"
           else
             base="HEAD^"
             git rev-parse --verify "$base" >/dev/null 2>&1 || base="HEAD"

@@ -1,0 +1,32 @@
+name: Supersede Main CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'specs/**'
+      - '**/*.md'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  supersede:
+    name: Supersede covered main CI runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Cancel covered ancestor runs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/supersede-main-ci.mjs
