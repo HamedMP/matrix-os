@@ -900,6 +900,9 @@ describe("device routes", () => {
       expect(res.headers.get("content-security-policy")).toContain("https://challenges.cloudflare.com");
       expect(res.headers.get("content-security-policy")).toContain("worker-src 'self' blob:");
       expect(res.headers.get("content-security-policy")).toContain("frame-src https://challenges.cloudflare.com");
+      expect(res.headers.get("content-security-policy")).toContain("style-src 'self' 'nonce-");
+      expect(res.headers.get("content-security-policy")).toContain("https://fonts.googleapis.com");
+      expect(res.headers.get("content-security-policy")).toContain("font-src 'self' https://fonts.gstatic.com");
       expect(res.headers.get("content-security-policy")).not.toContain("'unsafe-inline'");
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
@@ -996,16 +999,34 @@ describe("device routes", () => {
 
       expect(html).toContain("Approve Matrix OS app");
       expect(html).toContain("Allow this device to open your Matrix OS cloud computer.");
-      expect(html).toContain("Connect Matrix OS");
+      expect(html).toContain(
+        '<h1><span class="stage-title-line">Connect</span><span class="stage-title-line stage-title-product">Matrix OS</span></h1>',
+      );
+      expect(html).toContain(".stage-title-line { display: block; }");
+      expect(html).toContain(".stage-title-product { white-space: nowrap; }");
       expect(html).toContain("Approve once to securely open your private computer from this device.");
       expect(html).not.toContain("3-day trial for eligible accounts");
       expect(html).not.toContain('class="trial-note"');
+      expect(html).not.toContain("free trial");
+      expect(html).not.toContain("3 days by default");
+      expect(html).not.toContain("Stripe Checkout");
       expect(html).not.toContain("New hosted accounts include a 3-day free trial");
       expect(html).toContain("Bricolage Grotesque");
+      expect(html).toMatch(/<style nonce="[^"]+">/);
+      expect(html).toContain('href="https://fonts.googleapis.com"');
+      expect(html).toContain('href="https://fonts.gstatic.com" crossorigin');
+      expect(html).toContain("family=Bricolage+Grotesque:opsz,wght@12..96,200..800&amp;display=swap");
       expect(html).toContain(`font-family: ${desktopFonts.display};`);
+      expect(html).toContain("font-optical-sizing: auto;");
+      expect(html).toContain('font-variation-settings: "wdth" 100;');
       expect(html).toContain(`fontFamily: '${desktopFonts.display}'`);
       expect(html).toContain('<span class="brand-name">Matrix OS</span>');
       expect(html).toContain(".brand-name {");
+      expect(html).toContain('font-family: "Bricolage Grotesque", sans-serif;');
+      expect(html).toContain("font-weight: 800;");
+      expect(html).toContain("font-weight: 700;");
+      expect(html).toMatch(/\.stage-content h1 \{[\s\S]*?font-weight: 700;/);
+      expect(html).toMatch(/\.panel h2, \.device-state h2 \{[\s\S]*?font-weight: 700;/);
       expect(html).toContain(".panel-intro { display: grid; gap: 16px; }");
       expect(html).toContain(desktopPalette.forest);
       expect(html).toContain(desktopPalette.green);

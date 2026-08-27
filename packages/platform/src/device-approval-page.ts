@@ -1,6 +1,10 @@
 import { desktopFonts, desktopPalette } from '@matrix-os/brand/tokens';
 import { rabbitMarkSvg } from '@matrix-os/brand/marks';
 
+const BRICOLAGE_FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&amp;display=swap" rel="stylesheet">`;
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -60,7 +64,7 @@ export function approvalPage(
         rootBox: { width: '100%' },
         cardBox: { width: '100%', boxShadow: 'none' },
         card: { width: '100%', padding: '0', boxShadow: 'none', background: 'transparent' },
-        headerTitle: { fontFamily: '${desktopFonts.display}' },
+        headerTitle: { fontFamily: '${desktopFonts.display}', fontWeight: '700' },
         formButtonPrimary: { backgroundColor: '${desktopPalette.forest}' },
         footer: { background: 'transparent' },
       },
@@ -248,7 +252,7 @@ export function approvalPage(
       setConfirmReady(false);
       renderActionState(
         'Set up your Matrix computer',
-        'Create or activate your Matrix computer first. Stripe Checkout confirms whether your account qualifies for the current free trial (3 days by default), its exact length, and the first charge before setup.',
+        'Create or activate your Matrix computer first, then return here to connect this device.',
         'Open setup',
         redirectToBillingSetup
       );
@@ -476,7 +480,8 @@ export function approvalPage(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Authorize device -- Matrix OS</title>
-  <style>
+  ${BRICOLAGE_FONT_LINKS}
+  <style nonce="${scriptNonce}">
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     :root {
@@ -505,6 +510,9 @@ export function approvalPage(
         var(--canvas);
       color: var(--forest);
       font-family: ${desktopFonts.display};
+      font-optical-sizing: auto;
+      font-style: normal;
+      font-variation-settings: "wdth" 100;
       padding: clamp(16px, 4vw, 48px);
     }
     main {
@@ -553,9 +561,13 @@ export function approvalPage(
     }
     .brand-lockup { display: flex; align-items: center; gap: 10px; }
     .brand-name {
-      font-family: ${desktopFonts.display};
-      font-weight: 750;
-      letter-spacing: -0.01em;
+      font-family: "Bricolage Grotesque", sans-serif;
+      font-optical-sizing: auto;
+      font-size: 17px;
+      font-style: normal;
+      font-variation-settings: "wdth" 100;
+      font-weight: 800;
+      letter-spacing: -0.015em;
     }
     .rabbit-mark { display: block; width: auto; flex: 0 0 auto; fill: currentColor; }
     .rabbit-mark-phosphor { color: var(--green); height: 34px; }
@@ -584,10 +596,12 @@ export function approvalPage(
       color: var(--paper);
       font-family: ${desktopFonts.display};
       font-size: clamp(40px, 6vw, 68px);
-      font-weight: 580;
+      font-weight: 700;
       letter-spacing: -0.045em;
       line-height: 0.98;
     }
+    .stage-title-line { display: block; }
+    .stage-title-product { white-space: nowrap; }
     .stage-lede { max-width: 430px; margin-top: 20px; color: rgba(252, 252, 248, 0.72); }
     .stage-promise {
       align-self: end;
@@ -628,7 +642,7 @@ export function approvalPage(
       margin: 0;
       font-family: ${desktopFonts.display};
       font-size: clamp(28px, 4vw, 42px);
-      font-weight: 590;
+      font-weight: 700;
       letter-spacing: -0.035em;
       line-height: 1.02;
     }
@@ -726,7 +740,7 @@ export function approvalPage(
       <div class="stage-content">
         <div class="stage-copy">
           <p class="eyebrow">Your private computer</p>
-          <h1>Connect Matrix OS</h1>
+          <h1><span class="stage-title-line">Connect</span><span class="stage-title-line stage-title-product">Matrix OS</span></h1>
           <p class="stage-lede">Approve once to securely open your private computer from this device.</p>
         </div>
         <p class="stage-promise">One account. One private computer. Every surface.</p>
@@ -779,9 +793,9 @@ export function approvalSuccessPage(nativeRedirectUri: string | null = null): st
     ? 'Opening Matrix OS now. Keep this tab open until the desktop app is in focus.'
     : 'You can close this tab and return to Matrix OS.';
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${redirectMeta}<title>Connected — Matrix OS</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${redirectMeta}<title>Connected — Matrix OS</title>${BRICOLAGE_FONT_LINKS}
 <style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,rgba(241,195,121,.58),transparent 28rem),radial-gradient(circle at 85% 90%,rgba(197,214,226,.8),transparent 34rem),${desktopPalette.canvas};color:${desktopPalette.forest};font-family:${desktopFonts.sans}}.card{width:min(520px,100%);padding:clamp(32px,7vw,64px);border:1px solid rgba(14,52,34,.16);border-radius:28px;background:${desktopPalette.paper};box-shadow:0 30px 90px rgba(14,52,34,.16);text-align:center}.rabbit-mark{display:block;width:auto;fill:currentColor}.success-rabbit{color:${desktopPalette.forest};height:78px;margin:0 auto 26px;animation:arrive .5s cubic-bezier(.2,.8,.2,1) both}.eyebrow{margin:0 0 12px;color:${desktopPalette.coral};font-size:12px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}h1{margin:0;font-family:${desktopFonts.display};font-size:clamp(38px,8vw,58px);font-weight:590;letter-spacing:-.045em;line-height:1}p{margin:18px auto 0;max-width:390px;color:${desktopPalette.textMuted};line-height:1.6}a{display:inline-flex;min-height:48px;align-items:center;justify-content:center;margin-top:8px;padding:0 22px;border-radius:14px;background:${desktopPalette.forest};color:${desktopPalette.paper};font-weight:680;text-decoration:none}a:focus-visible{outline:3px solid ${desktopPalette.gold};outline-offset:3px}@keyframes arrive{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,rgba(241,195,121,.58),transparent 28rem),radial-gradient(circle at 85% 90%,rgba(197,214,226,.8),transparent 34rem),${desktopPalette.canvas};color:${desktopPalette.forest};font-family:${desktopFonts.display};font-optical-sizing:auto;font-style:normal;font-variation-settings:"wdth" 100}.card{width:min(520px,100%);padding:clamp(32px,7vw,64px);border:1px solid rgba(14,52,34,.16);border-radius:28px;background:${desktopPalette.paper};box-shadow:0 30px 90px rgba(14,52,34,.16);text-align:center}.rabbit-mark{display:block;width:auto;fill:currentColor}.success-rabbit{color:${desktopPalette.forest};height:78px;margin:0 auto 26px;animation:arrive .5s cubic-bezier(.2,.8,.2,1) both}.eyebrow{margin:0 0 12px;color:${desktopPalette.coral};font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}h1{margin:0;font-family:${desktopFonts.display};font-size:clamp(38px,8vw,58px);font-weight:700;letter-spacing:-.045em;line-height:1}p{margin:18px auto 0;max-width:390px;color:${desktopPalette.textMuted};line-height:1.6}a{display:inline-flex;min-height:48px;align-items:center;justify-content:center;margin-top:8px;padding:0 22px;border-radius:14px;background:${desktopPalette.forest};color:${desktopPalette.paper};font-weight:700;text-decoration:none}a:focus-visible{outline:3px solid ${desktopPalette.gold};outline-offset:3px}@keyframes arrive{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head>
 <body><main class="card">${rabbitMarkSvg('rabbit-mark success-rabbit')}<p class="eyebrow">Device approved</p><h1>You&#39;re connected</h1><p>${detail}</p>${redirectLink}</main></body></html>`;
 }
