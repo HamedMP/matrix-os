@@ -205,7 +205,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     }
 
     const visibleSurfaceIds = Object.values(state.surfaces)
-      .filter((surface) => surface.mode === "window" || surface.mode === "tab")
+      .filter((surface) => surface.mode === "window")
       .map((surface) => surface.tabId);
     if (visibleSurfaceIds.length === 0) return { workspaceView: "desktop", desktopTransition: null };
     return {

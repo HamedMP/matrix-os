@@ -135,12 +135,12 @@ describe("desktop surfaces store", () => {
     expect(useDesktopSurfaces.getState().workspaceView).toBe("tabs");
   });
 
-  it("toggles show desktop while preserving each surface's presentation", () => {
+  it("animates only floating windows while preserving full-screen tabs", () => {
     useDesktopSurfaces.getState().reconcileTabs(["home", "chat"], { width: 1200, height: 760 });
     useDesktopSurfaces.getState().maximizeToTab("chat");
 
     useDesktopSurfaces.getState().showDesktop();
-    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual(["home", "chat"]);
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual(["home"]);
     expect(useDesktopSurfaces.getState().desktopTransition?.phase).toBe("hiding");
     expect(useDesktopSurfaces.getState().surfaces.home?.mode).toBe("window");
     expect(useDesktopSurfaces.getState().surfaces.chat?.mode).toBe("tab");
