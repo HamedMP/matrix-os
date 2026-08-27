@@ -1,6 +1,8 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { MessageSquare, Search, Trash2, X } from "lucide-react";
+import { MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
 import { useState } from "react";
+
+import { OSWindowSafeView } from "../desktop-shell/OSWindow";
 
 function activityLabel(timestamp: string): string {
   const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1_000));
@@ -15,6 +17,7 @@ function activityLabel(timestamp: string): string {
 
 export function CanonicalChatIndex({
   items,
+  activeChatId,
   query,
   status,
   error,
@@ -23,8 +26,10 @@ export function CanonicalChatIndex({
   onSelect,
   onDelete,
   onNewChat,
+  layout = "wide",
 }: {
   items: CanonicalChatRecord[];
+  activeChatId: string | null;
   query: string;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
@@ -33,79 +38,118 @@ export function CanonicalChatIndex({
   onSelect: (chatId: string) => void;
   onDelete: (record: CanonicalChatRecord) => void;
   onNewChat: () => void;
+  layout?: "wide" | "narrow";
 }) {
   const [searchOpen, setSearchOpen] = useState(query.length > 0);
-  return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4 sm:px-8" aria-labelledby="canonical-chat-index-title">
-      <div data-chat-index-content className="mx-auto flex w-full max-w-[1020px] flex-col">
-        <div className="mb-6 flex min-h-[47px] min-w-0 items-center justify-between gap-4">
-          <h1 id="canonical-chat-index-title" className="text-[36px] font-medium leading-none tracking-[-0.02em]" style={{ color: "var(--text-primary)", fontFamily: '"Instrument Serif", Georgia, serif' }}>
-            Chats
-          </h1>
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-            {searchOpen ? (
-              <form
-                className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 sm:max-w-64"
-                style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}
-                onSubmit={(event) => { event.preventDefault(); onSearch(query); }}
-              >
-                <Search size={14} aria-hidden style={{ color: "var(--text-tertiary)" }} />
-                <input
-                  type="text"
-                  role="searchbox"
-                  aria-label="Search chats"
-                  autoFocus
-                  value={query}
-                  onChange={(event) => onQueryChange(event.currentTarget.value)}
-                  className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-                  style={{ color: "var(--text-primary)" }}
-                  placeholder="Search chats"
-                />
-                <button type="button" aria-label="Close search" className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" onClick={() => { setSearchOpen(false); onQueryChange(""); onSearch(""); }}>
-                  <X size={13} aria-hidden />
-                </button>
-              </form>
-            ) : (
-              <button type="button" aria-label="Search chats" className="inline-flex h-8 w-8 items-center justify-center rounded-lg border hover:bg-[var(--bg-hover)]" style={{ background: "var(--bg-raised)", borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }} onClick={() => setSearchOpen(true)}>
-                <Search size={15} aria-hidden />
-              </button>
-            )}
-            <button type="button" className="inline-flex h-8 items-center rounded-lg px-3 text-sm font-medium" style={{ background: "var(--accent)", color: "var(--text-on-accent)" }} onClick={onNewChat}>New chat</button>
-          </div>
-        </div>
 
-        {error ? <div role="alert" className="mb-3 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>{error}</div> : null}
+  return (
+    <OSWindowSafeView
+      area="sidebar"
+      data-layout={layout}
+      className={layout === "narrow"
+        ? "h-[168px] min-h-[120px] w-full max-w-none shrink-0"
+        : "h-full min-h-0 w-[280px] min-w-[200px] max-w-[280px] shrink-0"}
+    >
+      <aside
+        aria-label="Global chats"
+        className={`flex h-full min-h-0 w-full flex-col ${layout === "narrow" ? "border-b" : "border-r"}`}
+        style={{ borderColor: "var(--border-default, #F3F2F2)" }}
+      >
+        <header className="flex shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
+          <div className="flex min-w-0 items-center gap-1">
+            <MessageSquare size={16} aria-hidden="true" />
+            <h1 aria-label="Chats" className="truncate text-base font-medium tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>Chat</h1>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label="Search chats"
+              className="flex size-6 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]"
+              style={{ color: "var(--text-secondary)" }}
+              onClick={() => setSearchOpen((open) => !open)}
+            >
+              <Search size={15} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label="New chat"
+              className="flex size-6 items-center justify-center rounded-md text-white"
+              style={{ background: "var(--surface-overlay, #242323)" }}
+              onClick={onNewChat}
+            >
+              <Plus size={16} aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+
+        {searchOpen ? (
+          <form
+            className="mx-3 my-2 flex h-8 shrink-0 items-center gap-2 rounded-lg border px-2"
+            style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)" }}
+            onSubmit={(event) => { event.preventDefault(); onSearch(query); }}
+          >
+            <Search size={14} aria-hidden="true" style={{ color: "var(--text-tertiary)" }} />
+            <input
+              type="text"
+              role="searchbox"
+              aria-label="Search chats"
+              autoFocus
+              value={query}
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+              style={{ color: "var(--text-primary)" }}
+              placeholder="Search chats"
+              onChange={(event) => onQueryChange(event.currentTarget.value)}
+            />
+            <button
+              type="button"
+              aria-label="Close search"
+              className="flex size-5 items-center justify-center rounded hover:bg-[var(--bg-hover)]"
+              onClick={() => { setSearchOpen(false); onQueryChange(""); onSearch(""); }}
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          </form>
+        ) : null}
+
+        {error ? <div role="alert" className="mx-3 mt-2 rounded-lg px-2 py-2 text-xs" style={{ color: "var(--text-secondary)", background: "var(--bg-sunken)" }}>{error}</div> : null}
         {status === "loading" && items.length === 0 ? (
-          <div role="status" aria-label="Loading chats" className="py-8 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
+          <div role="status" aria-label="Loading chats" className="px-4 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>
             Loading chats…
           </div>
         ) : null}
         {status !== "loading" && items.length === 0 ? (
-          <div className="flex min-h-[280px] flex-col items-center justify-center rounded-xl border px-6 text-center" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}>
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: "var(--bg-sunken)", color: "var(--text-tertiary)" }}><MessageSquare size={18} aria-hidden /></span>
-            <h2 className="mt-4 text-base font-semibold" style={{ color: "var(--text-primary)" }}>No chats yet</h2>
-            <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Start a chat, then return to it from here.</p>
-          </div>
+          <p className="px-4 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
         ) : null}
         {items.length > 0 ? (
-          <div data-chat-index-list className="pb-4">
+          <ul aria-label="Chat history" className="min-h-0 flex-1 overflow-y-auto pb-4">
             {items.map((record) => (
-              <div key={record.chat.id} className="group flex h-16 w-full items-center border-b last:border-b-0 hover:bg-[var(--bg-hover)]" style={{ borderColor: "var(--border-subtle)" }}>
-                <button type="button" aria-label={record.chat.title} className="flex min-w-0 flex-1 items-center gap-6 self-stretch px-4 text-left last:border-b-0" onClick={() => onSelect(record.chat.id)}>
-                  <span className="min-w-0 flex-1 truncate text-base font-medium" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
-                  <span className="flex shrink-0 items-center gap-4">
-                    <span className="rounded-full border px-2 py-1 text-xs font-medium capitalize" style={{ borderColor: "var(--border-default)", color: "var(--text-tertiary)" }}>{record.providerBinding?.driverKind?.replace("_", " ") ?? "Chat"}</span>
-                    <time className="w-[110px] shrink-0 text-right text-[13px]" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>{activityLabel(record.chat.updatedAt)}</time>
-                  </span>
+              <li key={record.chat.id} className="group/chat relative shrink-0 border-b" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
+                <button
+                  type="button"
+                  aria-label={record.chat.title}
+                  aria-current={record.chat.id === activeChatId || undefined}
+                  className="flex min-h-14 w-full min-w-0 items-center px-4 py-3 pr-24 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                  style={{ background: record.chat.id === activeChatId ? "var(--bg-selected)" : "transparent" }}
+                  onClick={() => onSelect(record.chat.id)}
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
                 </button>
-                <button type="button" aria-label={`Delete ${record.chat.title}`} className="mr-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-0 focus-visible:opacity-100 group-hover:opacity-100 hover:bg-[var(--danger-muted)]" style={{ color: "var(--danger)" }} onClick={() => onDelete(record)}>
-                  <Trash2 size={15} aria-hidden />
+                <time className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs transition-opacity group-hover/chat:opacity-0" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>
+                  {activityLabel(record.chat.updatedAt)}
+                </time>
+                <button
+                  type="button"
+                  aria-label={`Delete ${record.chat.title}`}
+                  className="absolute right-3 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md bg-[var(--surface-base-background,#FFFFFD)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] group-hover/chat:opacity-100"
+                  onClick={() => onDelete(record)}
+                >
+                  <Trash2 size={14} aria-hidden="true" />
                 </button>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         ) : null}
-      </div>
-    </section>
+      </aside>
+    </OSWindowSafeView>
   );
 }

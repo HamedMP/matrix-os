@@ -620,6 +620,13 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
 
+    const chatWindow = screen.getByRole("dialog", { name: "Chat window" });
+    const terminalWindow = screen.getByRole("dialog", { name: "Terminal window" });
+    const chatChrome = chatWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
+    const terminalChrome = terminalWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
+    expect(chatChrome).toBeTruthy();
+    expect(chatChrome?.style.width).toBe("280px");
+    expect(terminalChrome?.style.width).toBe("280px");
     expect(screen.getByText("Chat content")).toBeTruthy();
     expect(screen.getByText("Terminal content")).toBeTruthy();
     expect(screen.getByTestId("desktop-surface-content-chat").hasAttribute("inert")).toBe(true);

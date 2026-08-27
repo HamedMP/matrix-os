@@ -92,6 +92,7 @@ describe("CanonicalChatRoute", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
     expect(await screen.findByRole("textbox", { name: "Start a chat" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
 
     rerender(
       <CanonicalChatRoute
@@ -111,7 +112,7 @@ describe("CanonicalChatRoute", () => {
     );
 
     expect(await screen.findByRole("textbox", { name: "Start a chat" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Chats" })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
 
     rerender(
       <CanonicalChatRoute
@@ -122,7 +123,7 @@ describe("CanonicalChatRoute", () => {
       />,
     );
     expect(await screen.findByRole("textbox", { name: "Start a chat" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Chats" })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
   });
 
   it("keeps the legacy route on an older Gateway instead of showing a broken surface", async () => {
