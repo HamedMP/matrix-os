@@ -17,6 +17,7 @@ function activityLabel(timestamp: string): string {
 
 export function CanonicalChatIndex({
   items,
+  activeChatId,
   query,
   status,
   error,
@@ -27,6 +28,7 @@ export function CanonicalChatIndex({
   onNewChat,
 }: {
   items: CanonicalChatRecord[];
+  activeChatId: string | null;
   query: string;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
@@ -117,7 +119,9 @@ export function CanonicalChatIndex({
                 <button
                   type="button"
                   aria-label={record.chat.title}
+                  aria-current={record.chat.id === activeChatId || undefined}
                   className="flex min-h-14 w-full min-w-0 items-center px-4 py-3 pr-24 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                  style={{ background: record.chat.id === activeChatId ? "var(--bg-selected)" : "transparent" }}
                   onClick={() => onSelect(record.chat.id)}
                 >
                   <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>

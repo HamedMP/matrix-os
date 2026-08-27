@@ -99,7 +99,11 @@ describe("CanonicalChatWorkspace", () => {
 
     expect(await screen.findByRole("complementary", { name: "Global chats" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Global Chat" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "What should we build today?" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Build a new feature, app, or tool" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
   });
 
@@ -117,9 +121,12 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: snapshot.chat.title }));
+    const existingChat = screen.getByRole("button", { name: snapshot.chat.title });
+    fireEvent.click(existingChat);
     expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
     expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
+    expect(existingChat.getAttribute("aria-current")).toBe("true");
+    expect(existingChat.style.background).toBe("var(--bg-selected)");
   });
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {

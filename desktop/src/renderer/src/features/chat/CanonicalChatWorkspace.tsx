@@ -390,6 +390,7 @@ export function CanonicalChatWorkspace({
       {projectId === null ? (
         <CanonicalChatIndex
           items={controller.items}
+          activeChatId={controller.activeChatId}
           query={query}
           status={controller.status}
           error={controller.error}
@@ -493,6 +494,17 @@ export function CanonicalChatWorkspace({
             style={{ color: "var(--text-tertiary)" }}
           >
             Loading chat…
+          </div>
+        ) : projectId === null ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 items-center justify-center px-5 py-8">
+              <div className="w-full max-w-[480px]">
+                <ChatStarterCards layout="two-by-two" onSelect={setDraft} />
+              </div>
+            </div>
+            <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
+              {composer}
+            </div>
           </div>
         ) : (
           <div className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center gap-[26px] px-5 py-8">
