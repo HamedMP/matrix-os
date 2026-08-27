@@ -80,6 +80,19 @@ describe("Desktop handoff regression matrix", () => {
     );
   });
 
+  it("records the omitted OS View Terminal search state as deferred", () => {
+    const terminalSearchScenarios = HANDOFF_REGRESSION_MATRIX.filter(
+      (scenario) => scenario.surface === "terminal" && scenario.requirements.includes("search-empty"),
+    );
+
+    expect(terminalSearchScenarios).toHaveLength(1);
+    expect(terminalSearchScenarios[0]).toMatchObject({
+      id: "terminal-search-empty",
+      verification: "deferred",
+      note: expect.stringMatching(/intentionally omits search/i),
+    });
+  });
+
   it("keeps blocked feature semantics assigned to their owning dependency", () => {
     const dependencyOwners = new Set(
       HANDOFF_REGRESSION_MATRIX
