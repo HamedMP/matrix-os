@@ -76,12 +76,26 @@ export interface ToolPackInstaller {
   install(ownerId: string, packId: ToolPackId): Promise<void>;
 }
 
-type HostToolPackRunner = (
+interface HostInstallerStream {
+  on(event: "data", listener: (chunk: Buffer) => void): void;
+}
+
+interface HostInstallerProcess {
+  stdout: HostInstallerStream;
+  stderr: HostInstallerStream;
+  kill(signal: "SIGTERM"): void;
+  on(event: "error", listener: (err: Error) => void): void;
+  on(event: "close", listener: (code: number | null) => void): void;
+}
+
+type SpawnHostInstaller = (
   scriptPath: string,
-  ownerId: string,
-  packId: ToolPackId,
-  timeoutMs: number,
-) => Promise<void>;
+  args: string[],
+  options: {
+    env: NodeJS.ProcessEnv;
+    stdio: ["ignore", "pipe", "pipe"];
+  },
+) => HostInstallerProcess;
 
 export interface ToolPackService {
   listToolPacks(ownerId: string): Promise<ToolPacksResponse>;
@@ -126,16 +140,23 @@ export function createHostToolPackInstaller(options: {
   scriptPath?: string;
   timeoutMs?: number;
   linuxToolsTimeoutMs?: number;
-  runInstaller?: HostToolPackRunner;
+  spawnInstaller?: SpawnHostInstaller;
 } = {}): ToolPackInstaller {
   const scriptPath = options.scriptPath ?? "/opt/matrix/bin/matrix-install-tool-pack";
   const timeoutMs = options.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
   const linuxToolsTimeoutMs = options.linuxToolsTimeoutMs ?? DEFAULT_LINUX_TOOLS_INSTALL_TIMEOUT_MS;
-  const runInstaller = options.runInstaller ?? runHostInstaller;
+  const spawnInstaller = options.spawnInstaller
+    ?? ((command, args, spawnOptions) => spawn(command, args, spawnOptions));
 
   return {
     install: async (ownerId, packId) => {
-      await runInstaller(scriptPath, ownerId, packId, packId === "linux-tools" ? linuxToolsTimeoutMs : timeoutMs);
+      await runHostInstaller(
+        scriptPath,
+        ownerId,
+        packId,
+        packId === "linux-tools" ? linuxToolsTimeoutMs : timeoutMs,
+        spawnInstaller,
+      );
     },
   };
 }
@@ -316,9 +337,10 @@ async function runHostInstaller(
   ownerId: string,
   packId: ToolPackId,
   timeoutMs: number,
+  spawnInstaller: SpawnHostInstaller,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(scriptPath, [packId], {
+    const child = spawnInstaller(scriptPath, [packId], {
       env: {
         ...process.env,
         MATRIX_TOOL_PACK_OWNER_ID: ownerId,

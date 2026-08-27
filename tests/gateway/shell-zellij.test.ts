@@ -794,6 +794,8 @@ describe("zellij adapter", () => {
           MATRIX_NODE_PREFIX: nodePrefix,
           PATH: "/usr/bin:/bin",
         },
+        // Resource-containment bound for a leaked interactive shell, not a latency assertion.
+        timeout: 10_000,
       })).resolves.toMatchObject({ stdout: "MATRIX_CODEX_READY\n" });
     } finally {
       pty.emitExit(0);

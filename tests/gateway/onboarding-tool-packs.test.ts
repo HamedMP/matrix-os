@@ -259,31 +259,58 @@ describe("onboarding tool packs", () => {
   });
 
   it("uses the existing Linux tools service timeout budget for host installs", async () => {
-    const runInstaller = vi.fn(async () => {});
-    const installer = createHostToolPackInstaller({
-      scriptPath: "/opt/matrix/bin/test-installer",
-      timeoutMs: 50,
-      linuxToolsTimeoutMs: 500,
-      runInstaller,
-    });
+    vi.useFakeTimers();
+    try {
+      const createChild = () => ({
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        kill: vi.fn(),
+        on: vi.fn(),
+      });
+      const linuxToolsChild = createChild();
+      const codeServerChild = createChild();
+      const spawnInstaller = vi.fn()
+        .mockReturnValueOnce(linuxToolsChild)
+        .mockReturnValueOnce(codeServerChild);
+      const installer = createHostToolPackInstaller({
+        scriptPath: "/opt/matrix/bin/test-installer",
+        timeoutMs: 50,
+        linuxToolsTimeoutMs: 500,
+        spawnInstaller,
+      });
 
-    await installer.install(testPrincipal.userId, "linux-tools");
-    await installer.install(testPrincipal.userId, "code-server");
+      const linuxToolsInstall = installer.install(testPrincipal.userId, "linux-tools");
+      const linuxToolsResult = expect(linuxToolsInstall).rejects.toThrow(
+        "tool pack install timed out for linux-tools",
+      );
+      await vi.advanceTimersByTimeAsync(499);
+      expect(linuxToolsChild.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await linuxToolsResult;
+      expect(linuxToolsChild.kill).toHaveBeenCalledWith("SIGTERM");
 
-    expect(runInstaller).toHaveBeenNthCalledWith(
-      1,
-      "/opt/matrix/bin/test-installer",
-      testPrincipal.userId,
-      "linux-tools",
-      500,
-    );
-    expect(runInstaller).toHaveBeenNthCalledWith(
-      2,
-      "/opt/matrix/bin/test-installer",
-      testPrincipal.userId,
-      "code-server",
-      50,
-    );
+      const codeServerInstall = installer.install(testPrincipal.userId, "code-server");
+      const codeServerResult = expect(codeServerInstall).rejects.toThrow(
+        "tool pack install timed out for code-server",
+      );
+      await vi.advanceTimersByTimeAsync(49);
+      expect(codeServerChild.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await codeServerResult;
+      expect(codeServerChild.kill).toHaveBeenCalledWith("SIGTERM");
+
+      expect(spawnInstaller).toHaveBeenNthCalledWith(
+        1,
+        "/opt/matrix/bin/test-installer",
+        ["linux-tools"],
+        expect.objectContaining({
+          env: expect.objectContaining({ MATRIX_TOOL_PACK_OWNER_ID: testPrincipal.userId }),
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("expires installing jobs if the async settlement write fails", async () => {
