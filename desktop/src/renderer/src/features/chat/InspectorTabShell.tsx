@@ -9,6 +9,7 @@ import {
 } from "react";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type { LucideIcon } from "lucide-react";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export interface InspectorTabDefinition<TTab extends string> {
   id: TTab;
@@ -55,7 +56,13 @@ export function InspectorTabShell<TTab extends string>({
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const tablistRef = useRef<HTMLDivElement | null>(null);
   const [labelsVisible, setLabelsVisible] = useState(false);
-  const [visitedTabs, setVisitedTabs] = useState<TTab[]>(() => [safeDefaultTab]);
+  const [visitedTabs, setVisitedTabs] = useState<TTab[]>(() => (
+    controlledTab !== undefined
+      && controlledTab !== safeDefaultTab
+      && tabIds.includes(controlledTab)
+      ? [safeDefaultTab, controlledTab]
+      : [safeDefaultTab]
+  ));
   const visitedTabSet = useMemo(() => new Set(visitedTabs), [visitedTabs]);
 
   useEffect(() => {
@@ -166,8 +173,9 @@ export function InspectorTabShell<TTab extends string>({
                 <RadixTooltip.Portal>
                   <RadixTooltip.Content
                     sideOffset={6}
-                    className="z-[100] rounded-md px-2 py-1 text-xs"
+                    className="rounded-md px-2 py-1 text-xs"
                     style={{
+                      zIndex: DESKTOP_Z_INDEX.popover,
                       background: "var(--forest-deep)",
                       color: "var(--forest-foreground)",
                       boxShadow: "var(--shadow-2)",

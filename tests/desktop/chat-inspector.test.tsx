@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatInspector } from "../../desktop/src/renderer/src/features/chat/ChatInspector";
+import { DESKTOP_Z_INDEX } from "../../desktop/src/renderer/src/design/layering";
 import {
   createCanonicalChatFixture,
   createCanonicalInspectorFixture,
@@ -85,5 +86,51 @@ describe("ChatInspector", () => {
     context.focus();
     fireEvent.keyDown(context, { key: "ArrowRight" });
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: /^Changes\b/ }));
+  });
+
+  it("mounts a non-default controlled tab on the first render and retains its live surface", () => {
+    const projection = createCanonicalInspectorFixture("available");
+    const view = render(
+      <ChatInspector
+        state="ready"
+        projection={projection}
+        defaultTab="context"
+        selectedTab="files"
+      />,
+    );
+
+    const filesTab = screen.getByRole("tab", { name: /^Files\b/ });
+    const filesPanel = document.getElementById(filesTab.getAttribute("aria-controls")!);
+    expect(filesPanel).not.toBeNull();
+    expect(within(filesPanel!).getByText("packages/gateway/src/routes.ts")).toBeTruthy();
+
+    view.rerender(
+      <ChatInspector
+        state="ready"
+        projection={projection}
+        defaultTab="context"
+        selectedTab="context"
+      />,
+    );
+
+    expect(filesPanel!.hidden).toBe(true);
+    expect(within(filesPanel!).getByText("packages/gateway/src/routes.ts")).toBeTruthy();
+  });
+
+  it("keeps tab tooltips inside the centralized desktop popover layer", async () => {
+    render(
+      <ChatInspector
+        state="ready"
+        projection={createCanonicalInspectorFixture("available")}
+      />,
+    );
+
+    fireEvent.focus(screen.getByRole("tab", { name: /^Context\b/ }));
+
+    await waitFor(() => {
+      const tooltipSurface = document.querySelector<HTMLElement>("[data-side][data-align]");
+      expect(tooltipSurface).not.toBeNull();
+      expect(tooltipSurface!.style.zIndex).toBe(String(DESKTOP_Z_INDEX.popover));
+    });
   });
 });
