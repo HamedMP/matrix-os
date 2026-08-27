@@ -87,8 +87,8 @@ describe("CanonicalChatWorkspace", () => {
     expect(surface.querySelector('[data-slot="shared-chat-composer"]')).toBeTruthy();
   });
 
-  it("keeps the global Figma list full-width and exposes the MAT-476 attachment control", async () => {
-    const { container } = render(
+  it("renders Global Chat history beside the new-chat pane before a Chat is selected", async () => {
+    render(
       <CanonicalChatWorkspace
         client={client()}
         projectId={null}
@@ -97,15 +97,29 @@ describe("CanonicalChatWorkspace", () => {
       />,
     );
 
-    expect(await screen.findByRole("heading", { name: "Chats" })).toBeTruthy();
-    expect(container.querySelector('aside[aria-label="Global chats"]')).toBeNull();
+    expect(await screen.findByRole("complementary", { name: "Global chats" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Global Chat" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
-    expect(container.querySelector("[data-chat-index-content]")?.className).toContain("max-w-[1020px]");
-    expect(container.querySelector("[data-chat-index-list]")?.className).toContain("pb-4");
-    expect(screen.getByRole("button", { name: snapshot.chat.title }).className).toContain("last:border-b-0");
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
-    expect(await screen.findByRole("button", { name: "Add files and more" })).toBeTruthy();
+  it("keeps Global Chat history visible while starting a draft and reopening an existing Chat", async () => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId={null}
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
+    expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: snapshot.chat.title }));
+    expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
+    expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
   });
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
