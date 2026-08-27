@@ -312,9 +312,10 @@ describe("native desktop shell", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
     expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "Browser" })).toBeTruthy();
-    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).not.toContain(terminalTab!.id);
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual([]);
 
     fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).not.toContain(terminalTab!.id);
     expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("tab");
 
     fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));

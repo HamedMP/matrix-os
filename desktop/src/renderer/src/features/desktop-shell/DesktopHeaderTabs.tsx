@@ -27,6 +27,15 @@ export default function DesktopHeaderTabs() {
     requestBackgroundRefresh();
   }, [requestBackgroundRefresh, showDesktop]);
 
+  const focusDesktopOrShowDesktop = useCallback(() => {
+    if (workspaceView === "desktop") {
+      showDesktopWithRefresh();
+      return;
+    }
+    setWorkspaceView("desktop");
+    requestBackgroundRefresh();
+  }, [requestBackgroundRefresh, setWorkspaceView, showDesktopWithRefresh, workspaceView]);
+
   const activate = useCallback((tabId: string) => {
     focusTab(tabId);
     activateSurface(tabId);
@@ -80,7 +89,7 @@ export default function DesktopHeaderTabs() {
       }}
       onClose={close}
       workspaceView={workspaceView}
-      onShowDesktop={showDesktopWithRefresh}
+      onShowDesktop={focusDesktopOrShowDesktop}
       onToggleSidebar={toggleDrawer}
       sidebarOpen={drawerOpen}
     />
