@@ -295,10 +295,11 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          revisions="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json |
-            jq -r --arg tag "pr-${PR_NUMBER}" \
-              '[(.status.traffic // [])[] | select(.tag == $tag) | .revisionName] | unique | .[]')"
+          service="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json)"
+          revisions="$(jq -r --arg tag "pr-${PR_NUMBER}" \
+            '[(.status.traffic // [])[] | select(.tag == $tag) | .revisionName] | unique | .[]' \
+            <<< "$service")"
           if [ -z "$revisions" ]; then
             echo "No revisions tagged pr-${PR_NUMBER}; nothing to tear down."
             exit 0
@@ -307,7 +308,14 @@ jobs:
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --remove-tags "pr-${PR_NUMBER}" --quiet
           for rev in $revisions; do
-            gcloud run revisions delete "$rev" \
-              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
-            echo "Deleted revision $rev"
+            if delete_output="$(gcloud run revisions delete "$rev" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet 2>&1)"; then
+              echo "Deleted revision $rev"
+            elif grep -Fq "FAILED_PRECONDITION: The latest created Revision" <<< "$delete_output" \
+              && grep -Fq "cannot be directly deleted" <<< "$delete_output"; then
+              echo "::notice::Retained latest-created revision $rev after removing its PR tag."
+            else
+              printf '%s\n' "$delete_output" >&2
+              exit 1
+            fi
           done
