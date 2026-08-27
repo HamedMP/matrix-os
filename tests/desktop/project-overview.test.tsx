@@ -269,6 +269,80 @@ describe("ProjectOverview", () => {
       .toBe(snapshot.chat.id);
   });
 
+  it("keeps canonical Project Chats when the Project window moves behind another window", async () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const canonicalRecord = {
+      chat: {
+        id: snapshot.chat.id,
+        ownerScope: snapshot.chat.ownerScope,
+        title: "Canonical project investigation",
+        lifecycle: snapshot.chat.lifecycle,
+        attention: snapshot.chat.attention,
+        revision: snapshot.chat.revision,
+        messageCount: snapshot.chat.messageCount,
+        lastMessagePreview: snapshot.chat.lastMessagePreview,
+        currentSelection: snapshot.chat.currentSelection,
+        createdAt: snapshot.chat.createdAt,
+        updatedAt: snapshot.chat.updatedAt,
+      },
+      projectId: "matrix-os",
+      providerBinding: snapshot.chat.providerBinding,
+    };
+    useConnection.setState({
+      status: "signed-in",
+      api: {
+        baseUrl: "https://matrix.test",
+        get: vi.fn(async (path: string) => {
+          if (path === "/api/chats?limit=100&projectId=matrix-os") return { items: [canonicalRecord] };
+          if (path === "/api/conversations") return { conversations: [] };
+          throw new Error(`unexpected api path ${path}`);
+        }),
+      } as never,
+    });
+
+    const view = render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryWithThreads([{ ...thread(1), title: "Coding agent run" }])}
+        active
+        viewSwitch={null}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Open chat Canonical project investigation" });
+    view.rerender(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryWithThreads([{ ...thread(1), title: "Coding agent run" }])}
+        active={false}
+        viewSwitch={null}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Open chat Canonical project investigation" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Open session Coding agent run" })).toBeNull();
+    });
+  });
+
+  it("keeps the Project folder context affordance available in compact windows", () => {
+    render(
+      <div style={{ width: 320 }}>
+        <ProjectOverview
+          projectId="matrix-os"
+          projectLabel="Matrix OS"
+          summary={summaryWithProjectComposer()}
+          active={false}
+          viewSwitch={null}
+        />
+      </div>,
+    );
+
+    expect(screen.getByLabelText("Project folder Matrix OS")).toBeTruthy();
+  });
+
   it("shows a safe canonical-list error instead of silently falling back to legacy sessions", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     useConnection.setState({

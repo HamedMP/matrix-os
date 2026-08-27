@@ -153,16 +153,16 @@ export default function ProjectOverview({
   const sessions = useMemo(() => (
     canonicalStatus === "ready"
       ? canonicalProjectSessions(canonicalChats)
-      : (canonicalStatus === "loading" || canonicalStatus === "error") && canonicalClient && active
+      : (canonicalStatus === "loading" || canonicalStatus === "error") && canonicalClient
         ? []
         : legacySessions
-  ), [active, canonicalChats, canonicalClient, canonicalStatus, legacySessions]);
+  ), [canonicalChats, canonicalClient, canonicalStatus, legacySessions]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const hermesRefreshScopeRef = useRef<string | null>(null);
 
   useEffect(() => {
     let current = true;
-    if (!active || !canonicalClient) {
+    if (!canonicalClient) {
       setCanonicalStatus("unavailable");
       setCanonicalChats([]);
       return () => { current = false; };
@@ -181,7 +181,7 @@ export default function ProjectOverview({
         : "error");
     });
     return () => { current = false; };
-  }, [active, canonicalClient, canonicalLoadRevision, canonicalProjectId]);
+  }, [canonicalClient, canonicalLoadRevision, canonicalProjectId]);
 
   useEffect(() => {
     if (!active) {
