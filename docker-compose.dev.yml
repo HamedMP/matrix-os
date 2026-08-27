@@ -1,16 +1,14 @@
 # Matrix OS -- Docker-primary local development
 #
 # Usage:
-#   docker compose -f docker-compose.dev.yml up                    # dev only
-#   docker compose -f docker-compose.dev.yml --profile full up     # full stack
-#   docker compose -f docker-compose.dev.yml --profile obs up      # + observability
-#   docker compose -f docker-compose.dev.yml --profile multi up    # alice + bob
+#   docker compose --env-file .env.docker -f docker-compose.dev.yml up                # dev only
+#   docker compose --env-file .env.docker -f docker-compose.dev.yml --profile full up # full stack
 #
 # Reset to clean state:
-#   docker compose -f docker-compose.dev.yml down -v
+#   docker compose --env-file .env.docker -f docker-compose.dev.yml down -v
 #
 # Run tests inside container:
-#   docker compose -f docker-compose.dev.yml exec dev bun run test
+#   docker compose --env-file .env.docker -f docker-compose.dev.yml exec dev bun run test
 
 services:
   postgres:
@@ -71,6 +69,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+    env_file:
+      - .env.docker
     ports:
       - "3000:3000"
       - "4000:4000"
@@ -103,11 +103,9 @@ services:
       # keeps it container-local and fast; the entrypoint clears .next/cache on
       # each boot so it never goes stale across runs (a NAMED volume did).
       - /app/shell/.next
-    env_file:
-      - .env.docker
     environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - NODE_ENV=development
-      - ANTHROPIC_API_KEY=
       - MATRIX_HOME=/home/matrixos/home
       - MATRIX_HANDLE=${MATRIX_HANDLE:-dev}
       - MATRIX_DISPLAY_NAME=${MATRIX_DISPLAY_NAME:-Developer}
@@ -206,6 +204,8 @@ services:
     depends_on:
       dev:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     ports:
       - "9000:9000"
     volumes:
@@ -219,7 +219,7 @@ services:
       - user-data:/data/users
     environment:
       - PLATFORM_PORT=9000
-      - PLATFORM_DB_PATH=/data/platform.db
+      - PLATFORM_DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_platform
       - PLATFORM_SECRET=${PLATFORM_SECRET:-dev-secret}
       # Sync JWT signing -- must match the gateway's PLATFORM_JWT_SECRET so
       # tokens issued here validate against the gateway. Min 32 chars.

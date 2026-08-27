@@ -140,7 +140,7 @@ git clone https://github.com/HamedMP/matrix-os.git
 cd matrix-os
 
 flox activate
-bun run dev
+bun run dev             # source/HMR: gateway + proxy + shell
 ```
 
 Without Flox, install Node.js 24+, pnpm 10, and bun, then run:
@@ -158,6 +158,12 @@ bun run dev:shell      # Next.js shell
 bun run dev:proxy      # Shared API proxy
 bun run dev:platform   # Multi-tenant platform
 ```
+
+The source command does not start PostgreSQL, MinIO, Conduit, or platform.
+Use `bun run docker:full` for that complete topology, or
+`bun run docker:full:smoke` for a bounded full-stack health check with cleanup.
+See [Developer Onboarding](docs/dev/onboarding.md) for environment files,
+prerequisites, URLs, and health checks.
 
 ---
 

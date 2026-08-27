@@ -88,9 +88,10 @@ The Docker image has Clerk baked in at build time, so you don't need Clerk keys 
 | `.env` | Local dev without Docker (copy from `.env.example`) |
 | `shell/.env` | Shell-specific (Clerk keys, copy from `shell/.env.example`) |
 
-## Local Dev Without Docker
+## Source/HMR Development
 
-For working on the shell frontend or website directly:
+Use this path when changing the gateway, proxy, or shell and you want host-side
+watchers and HMR. It does **not** start platform, PostgreSQL, MinIO, or Conduit.
 
 ```bash
 cp .env.example .env
@@ -101,7 +102,30 @@ cp shell/.env.example shell/.env
 bun run dev
 ```
 
-This starts the gateway (:4000) and shell (:3000) with HMR.
+`bun run dev` starts exactly three source processes: gateway (`:4000`), proxy
+(`:8080`), and shell (`:3000`). The shell uses webpack HMR because Next 16
+Turbopack cannot resolve its own package through pnpm's intentional global
+virtual store when the Turbopack root spans the workspace. Keep
+`enableGlobalVirtualStore: true`.
+
+The source proxy uses an in-memory usage database unless `PROXY_DB_PATH` is
+set. To run platform separately, first start a PostgreSQL instance containing
+`matrixos_platform`, set `PLATFORM_DATABASE_URL` in `.env`, then run:
+
+```bash
+bun run dev:platform
+curl --fail http://localhost:9000/health
+```
+
+Source health checks:
+
+```bash
+curl --fail http://localhost:3000/
+curl --fail http://localhost:4000/health
+curl --fail http://localhost:8080/health
+```
+
+For the complete local topology, use `bun run docker:full` instead.
 
 ## Project Structure
 
@@ -173,6 +197,7 @@ When your PR changes `shell/` files, the Screenshots CI runs Playwright and comm
 ```bash
 bun run docker          # Dev (gateway + shell)
 bun run docker:full     # + proxy, platform, conduit
+bun run docker:full:smoke # build, health-check the full stack, then stop it
 bun run docker:stop     # Stop containers (preserves data)
 bun run docker:logs     # Tail logs
 bun run docker:shell    # Shell into container
@@ -190,3 +215,7 @@ Never run `docker compose down -v` unless you want to destroy all data.
 - [VPS Deployment](vps-deployment.md) -- production server
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- code style, CI/CD, PR process
 - [CLAUDE.md](../../CLAUDE.md) -- development rules, mandatory code patterns
+
+Repository docs cover contributor setup in this checkout. A separate public
+documentation PR is still required in the private `FinnaAI/matrix-os-site`
+repository under `content/docs/`; this repository cannot create that PR.
