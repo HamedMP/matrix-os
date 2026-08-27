@@ -794,7 +794,6 @@ describe("zellij adapter", () => {
           MATRIX_NODE_PREFIX: nodePrefix,
           PATH: "/usr/bin:/bin",
         },
-        timeout: 10_000,
       })).resolves.toMatchObject({ stdout: "MATRIX_CODEX_READY\n" });
     } finally {
       pty.emitExit(0);

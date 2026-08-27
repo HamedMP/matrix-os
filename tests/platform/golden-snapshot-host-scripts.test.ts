@@ -15,7 +15,7 @@ const prerequisitesPath = 'distro/customer-vps/host-bin/matrix-prepare-host-prer
 const serviceDiagnosticsPath = 'distro/customer-vps/host-bin/matrix-golden-service-diagnostics';
 const bootstrapAttestationPath = 'distro/customer-vps/host-bin/matrix-write-bootstrap-attestation';
 
-async function linuxStatPath(root: string): Promise<string> {
+async function createPathWithLinuxStatShim(root: string): Promise<string> {
   const bin = join(root, 'linux-test-bin');
   const statPath = join(bin, 'stat');
   await mkdir(bin, { recursive: true });
@@ -57,14 +57,14 @@ describe('golden snapshot host scripts', () => {
       'matrix-host-timing phase=core_services_started elapsed_seconds=9 image_source=snapshot',
       '',
     ].join('\n'));
-    const path = await linuxStatPath(root);
+    const pathWithStatShim = await createPathWithLinuxStatShim(root);
 
     await expect(execFileAsync('bash', [bootstrapAttestationPath], {
       env: {
         ...process.env,
         MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
         MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
-        PATH: path,
+        PATH: pathWithStatShim,
       },
     })).resolves.toMatchObject({ stdout: '' });
 
@@ -107,14 +107,14 @@ describe('golden snapshot host scripts', () => {
     };
     await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
     await writeFile(outputPath, `${JSON.stringify(original)}\n`);
-    const path = await linuxStatPath(root);
+    const pathWithStatShim = await createPathWithLinuxStatShim(root);
 
     await expect(execFileAsync('bash', [bootstrapAttestationPath], {
       env: {
         ...process.env,
         MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
         MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
-        PATH: path,
+        PATH: pathWithStatShim,
       },
     })).resolves.toMatchObject({ stdout: '' });
 
@@ -126,14 +126,14 @@ describe('golden snapshot host scripts', () => {
     const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
     await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
     await writeFile(outputPath, '{"schemaVersion":2}\n');
-    const path = await linuxStatPath(root);
+    const pathWithStatShim = await createPathWithLinuxStatShim(root);
 
     await expect(execFileAsync('bash', [bootstrapAttestationPath], {
       env: {
         ...process.env,
         MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
         MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
-        PATH: path,
+        PATH: pathWithStatShim,
       },
     })).rejects.toMatchObject({ code: 68 });
     expect(await readFile(outputPath, 'utf8')).toBe('{"schemaVersion":2}\n');
@@ -157,14 +157,14 @@ describe('golden snapshot host scripts', () => {
       'matrix-host-timing phase=core_services_started elapsed_seconds=9 image_source=snapshot',
       '',
     ].join('\n'));
-    const path = await linuxStatPath(root);
+    const pathWithStatShim = await createPathWithLinuxStatShim(root);
 
     await expect(execFileAsync('bash', [bootstrapAttestationPath], {
       env: {
         ...process.env,
         MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
         MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
-        PATH: path,
+        PATH: pathWithStatShim,
       },
     })).rejects.toMatchObject({ code: 66 });
     await expect(stat(join(root, 'var/lib/matrix/bootstrap-attestation.json')))
@@ -192,14 +192,14 @@ describe('golden snapshot host scripts', () => {
     ].join('\n'));
     await writeFile(join(root, 'tmp/matrix-host.tgz'), 'bundle');
     await writeFile(join(root, 'tmp/matrix-host.tgz.sha256'), `${'b'.repeat(64)}  matrix-host.tgz\n`);
-    const path = await linuxStatPath(root);
+    const pathWithStatShim = await createPathWithLinuxStatShim(root);
 
     await execFileAsync('bash', [bootstrapAttestationPath], {
       env: {
         ...process.env,
         MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
         MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
-        PATH: path,
+        PATH: pathWithStatShim,
       },
     });
 
@@ -263,7 +263,7 @@ describe('golden snapshot host scripts', () => {
       '',
     ].join('\n'));
     await chmod(fastPathPath, 0o755);
-    const path = await linuxStatPath(root);
+    const pathWithStatShim = await createPathWithLinuxStatShim(root);
 
     await expect(execFileAsync(fastPathPath, [], {
       env: {
@@ -273,7 +273,7 @@ describe('golden snapshot host scripts', () => {
         MATRIX_IMAGE_VERSION: '',
         MATRIX_SNAPSHOT_SOURCE_VERSION: '',
         MATRIX_TARGET_BUNDLE_SHA256: '',
-        PATH: path,
+        PATH: pathWithStatShim,
       },
     })).resolves.toMatchObject({ stdout: '' });
 

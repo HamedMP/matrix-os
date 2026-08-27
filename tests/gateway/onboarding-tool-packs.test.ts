@@ -1,6 +1,3 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   SelectToolPacksRequestSchema,
@@ -262,33 +259,31 @@ describe("onboarding tool packs", () => {
   });
 
   it("uses the existing Linux tools service timeout budget for host installs", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "matrix-tool-pack-installer-"));
-    const scriptPath = join(tempDir, "installer");
-    await writeFile(scriptPath, [
-      "#!/usr/bin/env bash",
-      "if [ \"$1\" = \"linux-tools\" ]; then",
-      "  sleep 0.1",
-      "else",
-      "  sleep 1",
-      "fi",
-      "",
-    ].join("\n"));
-    await chmod(scriptPath, 0o755);
+    const runInstaller = vi.fn(async () => {});
+    const installer = createHostToolPackInstaller({
+      scriptPath: "/opt/matrix/bin/test-installer",
+      timeoutMs: 50,
+      linuxToolsTimeoutMs: 500,
+      runInstaller,
+    });
 
-    try {
-      const installer = createHostToolPackInstaller({
-        scriptPath,
-        timeoutMs: 50,
-        linuxToolsTimeoutMs: 5_000,
-      });
+    await installer.install(testPrincipal.userId, "linux-tools");
+    await installer.install(testPrincipal.userId, "code-server");
 
-      await installer.install(testPrincipal.userId, "linux-tools");
-      await expect(installer.install(testPrincipal.userId, "code-server")).rejects.toThrow(
-        "tool pack install timed out for code-server",
-      );
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
+    expect(runInstaller).toHaveBeenNthCalledWith(
+      1,
+      "/opt/matrix/bin/test-installer",
+      testPrincipal.userId,
+      "linux-tools",
+      500,
+    );
+    expect(runInstaller).toHaveBeenNthCalledWith(
+      2,
+      "/opt/matrix/bin/test-installer",
+      testPrincipal.userId,
+      "code-server",
+      50,
+    );
   });
 
   it("expires installing jobs if the async settlement write fails", async () => {

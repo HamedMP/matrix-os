@@ -76,6 +76,13 @@ export interface ToolPackInstaller {
   install(ownerId: string, packId: ToolPackId): Promise<void>;
 }
 
+type HostToolPackRunner = (
+  scriptPath: string,
+  ownerId: string,
+  packId: ToolPackId,
+  timeoutMs: number,
+) => Promise<void>;
+
 export interface ToolPackService {
   listToolPacks(ownerId: string): Promise<ToolPacksResponse>;
   selectToolPacks(ownerId: string, packIds: ToolPackId[]): Promise<ToolPacksResponse>;
@@ -119,14 +126,16 @@ export function createHostToolPackInstaller(options: {
   scriptPath?: string;
   timeoutMs?: number;
   linuxToolsTimeoutMs?: number;
+  runInstaller?: HostToolPackRunner;
 } = {}): ToolPackInstaller {
   const scriptPath = options.scriptPath ?? "/opt/matrix/bin/matrix-install-tool-pack";
   const timeoutMs = options.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
   const linuxToolsTimeoutMs = options.linuxToolsTimeoutMs ?? DEFAULT_LINUX_TOOLS_INSTALL_TIMEOUT_MS;
+  const runInstaller = options.runInstaller ?? runHostInstaller;
 
   return {
     install: async (ownerId, packId) => {
-      await runHostInstaller(scriptPath, ownerId, packId, packId === "linux-tools" ? linuxToolsTimeoutMs : timeoutMs);
+      await runInstaller(scriptPath, ownerId, packId, packId === "linux-tools" ? linuxToolsTimeoutMs : timeoutMs);
     },
   };
 }
