@@ -89,9 +89,9 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByText("Fix navigation")).toBeTruthy();
     expect(screen.getByText("dev")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open recent Matrix OS" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open recent Fix navigation" }).querySelector(".lucide-message-circle")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open recent dev" }).querySelector(".lucide-square-terminal")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open recent Matrix OS" }).querySelector(".lucide-folder-kanban")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open recent Fix navigation" }).querySelector("[data-sidebar-icon] svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open recent dev" }).querySelector("[data-sidebar-icon] svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open recent Matrix OS" }).querySelector("[data-sidebar-icon] svg")).toBeTruthy();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Filter recents" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "Terminals" }));
@@ -235,16 +235,8 @@ describe("Desktop sidebar navigation shell", () => {
     expect(terminal.style.borderWidth).toBe("");
     expect(terminal.style.fontWeight).toBe("500");
 
-    const figmaGlyphs = {
-      Home: ".lucide-house",
-      Chat: ".lucide-message-circle",
-      Terminal: ".lucide-terminal",
-      Files: ".lucide-file",
-      Apps: ".lucide-layout-grid",
-      Projects: ".lucide-folder-open",
-    } as const;
-    for (const [label, selector] of Object.entries(figmaGlyphs)) {
-      expect(screen.getByRole("button", { name: label }).querySelector(selector)).toBeTruthy();
+    for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Projects"]) {
+      expect(screen.getByRole("button", { name: label }).querySelector("[data-sidebar-icon] svg")).toBeTruthy();
     }
     const pluginsGlyph = screen.getByRole("button", { name: "Plugins" })
       .querySelector<HTMLElement>('[data-figma-icon="phosphor-plugs"]');

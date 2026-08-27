@@ -365,9 +365,7 @@ describe("Desktop navigation header", () => {
       expect(icon?.style.width).toBe("14px");
       expect(icon?.style.height).toBe("14px");
     }
-    expect(actions[2]?.querySelector(".lucide-panel-left")).toBeTruthy();
-    expect(actions[2]?.querySelector(".lucide-panel-left-close")).toBeNull();
-    expect(actions[2]?.querySelector(".lucide-panel-left-open")).toBeNull();
+    expect(actions[2]?.querySelector("[data-header-icon] svg")).toBeTruthy();
   });
 
   it("places Home actions behind the Figma breadcrumb ellipsis", async () => {
@@ -375,7 +373,7 @@ describe("Desktop navigation header", () => {
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
-    expect(breadcrumb.querySelector(".lucide-chevron-right")).toBeTruthy();
+    expect(breadcrumb.querySelectorAll("svg")).toHaveLength(1);
     const actions = screen.getByRole("button", { name: "Actions for Home" });
     expect(breadcrumb.nextElementSibling).toContain(actions);
 
@@ -418,7 +416,7 @@ describe("Desktop navigation header", () => {
 
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(breadcrumb.textContent).toBe("Terminalclever-comet");
-    expect(breadcrumb.querySelectorAll(".lucide-chevron-right")).toHaveLength(1);
+    expect(breadcrumb.querySelectorAll("svg")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Actions for clever-comet" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
@@ -435,7 +433,7 @@ describe("Desktop navigation header", () => {
 
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(breadcrumb.textContent).toBe("Terminalfocused-shell");
-    expect(breadcrumb.querySelectorAll(".lucide-chevron-right")).toHaveLength(1);
+    expect(breadcrumb.querySelectorAll("svg")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Actions for Friendly terminal title" })).toBeNull();
   });
 

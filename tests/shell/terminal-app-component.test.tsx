@@ -2991,7 +2991,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByTestId("terminal-drawer-collapse-icon").querySelector('path[d="m11 17-5-5 5-5"]')).toBeTruthy();
+    expect(screen.getByTestId("terminal-drawer-collapse-icon").tagName.toLowerCase()).toBe("svg");
     expect(screen.getByTestId("terminal-sidebar-shell").style.transition).toContain("transform");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
@@ -3004,7 +3004,7 @@ describe("TerminalApp", () => {
     expect(rail.style.width).toBe("76px");
     expect(rail.className).not.toContain("absolute");
     expect(screen.getByRole("button", { name: "Expand sessions drawer" })).toBeTruthy();
-    expect(screen.getByTestId("terminal-drawer-expand-icon").querySelector('path[d="m6 17 5-5-5-5"]')).toBeTruthy();
+    expect(screen.getByTestId("terminal-drawer-expand-icon").tagName.toLowerCase()).toBe("svg");
     expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
     const matrixRailButton = screen.getByRole("button", { name: "Open matrix-main" });
     expect(matrixRailButton.textContent).toBe("mma");

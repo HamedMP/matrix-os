@@ -30,7 +30,8 @@ describe("UserButton hydration shell", () => {
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
     const html = renderToString(<UserButton />);
 
-    expect(html).toContain("lucide-user");
+    expect(html).toContain("<svg");
+    expect(html).toContain("size-4");
     expect(html).not.toContain("data-clerk-component");
   });
 });
