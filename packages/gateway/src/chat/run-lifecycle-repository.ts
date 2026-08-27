@@ -6,6 +6,7 @@ import {
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
+  type CanonicalChatTurnChangeSet,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
@@ -25,6 +26,7 @@ import {
   type ChatOutboxEventType,
   type ChatOwner,
 } from "./records.js";
+import { settleTurnChangesInTransaction } from "./turn-change-repository.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 type Transact = <T>(fn: (trx: Executor) => Promise<T>) => Promise<T>;
@@ -302,6 +304,7 @@ export class ChatRunLifecycleRepository {
     outcome: "completed" | "failed" | "aborted";
     completedAt: string;
     output?: CanonicalChatMessage;
+    turnChanges?: { changes: CanonicalChatTurnChangeSet; afterTree: string; afterHead: string };
   }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
     const owner = validateOwner(ownerInput);
     const completedAt = new Date(input.completedAt).toISOString();
@@ -314,6 +317,13 @@ export class ChatRunLifecycleRepository {
       if (!current) throw new ChatNotFoundError(input.chatId);
       if (!ACTIVE_RUNS.includes(current.status as typeof ACTIVE_RUNS[number])) {
         return { run: toRun(current), transitioned: false };
+      }
+      if (input.turnChanges) {
+        await settleTurnChangesInTransaction(trx, owner, {
+          chatId: input.chatId,
+          runId: input.runId,
+          ...input.turnChanges,
+        });
       }
       if (output !== undefined) {
         const expectedState = input.outcome === "completed" ? "committed" : "failed";

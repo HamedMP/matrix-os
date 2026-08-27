@@ -152,6 +152,7 @@ import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
+import { createChatTurnChangeCapture, type ChatTurnChangeCapture } from "./chat/turn-changes.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -861,6 +862,7 @@ export async function createGateway(config: GatewayConfig) {
   let chatRepository: ChatRepository | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
+  let canonicalChatTurnChanges: ChatTurnChangeCapture | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
 
   if (databaseUrl) {
@@ -4168,6 +4170,7 @@ export async function createGateway(config: GatewayConfig) {
       projects: codingAgentProjectManager,
       worktrees: codingAgentWorktreeManager,
     });
+    canonicalChatTurnChanges = createChatTurnChangeCapture();
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createHermesChatProviderAdapter({ homePath }),
     ];
@@ -4187,6 +4190,7 @@ export async function createGateway(config: GatewayConfig) {
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
       executionRoots: canonicalChatExecutionRoots,
+      turnChanges: canonicalChatTurnChanges,
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
@@ -4197,6 +4201,7 @@ export async function createGateway(config: GatewayConfig) {
         ? createCanonicalChatService(chatRepository, {
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
+          ...(canonicalChatTurnChanges ? { turnChanges: canonicalChatTurnChanges } : {}),
         })
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),

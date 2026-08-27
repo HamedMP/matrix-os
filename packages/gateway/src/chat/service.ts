@@ -9,6 +9,11 @@ import {
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
+  CanonicalChatTurnIdSchema,
+  CanonicalChatTurnChangeSummaryResponseSchema,
+  CanonicalChatTurnDiffResponseSchema,
+  CanonicalChatTurnFileReadQuerySchema,
+  CanonicalChatTurnFileReadResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
@@ -19,6 +24,10 @@ import {
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
+  type CanonicalChatTurnChangeSummaryResponse,
+  type CanonicalChatTurnDiffResponse,
+  type CanonicalChatTurnFileReadQuery,
+  type CanonicalChatTurnFileReadResponse,
   type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
@@ -32,6 +41,10 @@ import type { CanonicalChatRouteService } from "./routes.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { ChatExecutionRootError, type ChatExecutionRootResolver } from "./execution-root.js";
 import { CanonicalChatOrchestrationError, type CanonicalChatOrchestrator } from "./orchestrator.js";
+import {
+  ChatTurnChangeCaptureError,
+  type ChatTurnChangeCapture,
+} from "./turn-changes.js";
 
 const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -49,7 +62,21 @@ const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
 ]);
 
 type CursorEnvelope = z.infer<typeof CursorEnvelopeSchema>;
-type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "hardDelete" | "list" | "search" | "getDetailPage">;
+type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "hardDelete" | "list" | "search" | "getDetailPage" | "getTurnChanges">;
+
+function turnChangeUnavailable(error: unknown): never {
+  if (error instanceof ChatExecutionRootError || error instanceof ChatTurnChangeCaptureError) {
+    const retryable = error instanceof ChatExecutionRootError && error.code === "validation_unavailable"
+      || error instanceof ChatTurnChangeCaptureError && error.code === "capture_unavailable";
+    throw new CanonicalChatOrchestrationError(CanonicalChatSafeErrorSchema.parse({
+      code: "resource_unavailable",
+      safeMessage: "The requested Chat change is unavailable.",
+      retryable,
+      ...(retryable ? { recoveryActions: ["retry"] as const } : {}),
+    }), retryable ? 503 : 404);
+  }
+  throw error;
+}
 
 function encodeCursor(value: CursorEnvelope): string {
   return CanonicalChatApiCursorSchema.parse(
@@ -90,9 +117,36 @@ export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
     orchestrator?: Pick<CanonicalChatOrchestrator, "admitTurn" | "cancelRun" | "retryTurn">;
-    executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
+    executionRoots?: Pick<ChatExecutionRootResolver, "resolve" | "revalidate">;
+    turnChanges?: Pick<ChatTurnChangeCapture, "readDiff" | "readFile">;
   } = {},
 ): CanonicalChatRouteService {
+  const resolveStoredChanges = async (owner: ChatOwner, chatId: string, turnId: string) => {
+    const stored = await repository.getTurnChanges(
+      owner,
+      CanonicalChatIdSchema.parse(chatId),
+      CanonicalChatTurnIdSchema.parse(turnId),
+    );
+    if (!stored) return null;
+    if (!options.executionRoots || !options.turnChanges) {
+      return turnChangeUnavailable(new ChatTurnChangeCaptureError("capture_unavailable"));
+    }
+    try {
+      const resolved = await options.executionRoots.revalidate(owner, {
+        ref: stored.changes.executionRoot,
+        fingerprint: stored.executionRootFingerprint,
+      });
+      return {
+        stored,
+        root: resolved.primaryWorkspaceRoot,
+        start: { tree: stored.beforeTree, head: stored.beforeHead },
+        end: { tree: stored.afterTree, head: stored.afterHead },
+      };
+    } catch (error: unknown) {
+      return turnChangeUnavailable(error);
+    }
+  };
+
   return {
     async create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord> {
       const request = CanonicalCreateChatRequestSchema.parse(input);
@@ -208,6 +262,78 @@ export function createCanonicalChatService(
       });
     },
 
+    async getTurnChanges(
+      owner: ChatOwner,
+      chatId: string,
+      turnId: string,
+    ): Promise<CanonicalChatTurnChangeSummaryResponse | null> {
+      const stored = await repository.getTurnChanges(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalChatTurnIdSchema.parse(turnId),
+      );
+      return stored ? CanonicalChatTurnChangeSummaryResponseSchema.parse({ changes: stored.changes }) : null;
+    },
+
+    async getTurnDiff(
+      owner: ChatOwner,
+      chatId: string,
+      turnId: string,
+      path: string,
+    ): Promise<CanonicalChatTurnDiffResponse | null> {
+      const resolved = await resolveStoredChanges(owner, chatId, turnId);
+      if (!resolved) return null;
+      const parsedPath = CanonicalChatTurnFileReadQuerySchema.shape.path.parse(path);
+      const file = resolved.stored.changes.files.find((entry) => entry.path === parsedPath);
+      if (!file) return null;
+      try {
+        return CanonicalChatTurnDiffResponseSchema.parse({
+          chatId: resolved.stored.changes.chatId,
+          turnId: resolved.stored.changes.turnId,
+          revision: resolved.stored.changes.revision,
+          file: await options.turnChanges!.readDiff({
+            root: resolved.root,
+            path: parsedPath,
+            start: resolved.start,
+            end: resolved.end,
+            file,
+          }),
+        });
+      } catch (error: unknown) {
+        return turnChangeUnavailable(error);
+      }
+    },
+
+    async readTurnFile(
+      owner: ChatOwner,
+      chatId: string,
+      turnId: string,
+      input: CanonicalChatTurnFileReadQuery,
+    ): Promise<CanonicalChatTurnFileReadResponse | null> {
+      const resolved = await resolveStoredChanges(owner, chatId, turnId);
+      if (!resolved) return null;
+      const request = CanonicalChatTurnFileReadQuerySchema.parse(input);
+      if (!resolved.stored.changes.files.some((entry) => entry.path === request.path || entry.previousPath === request.path)) {
+        return null;
+      }
+      try {
+        return CanonicalChatTurnFileReadResponseSchema.parse({
+          chatId: resolved.stored.changes.chatId,
+          turnId: resolved.stored.changes.turnId,
+          revision: resolved.stored.changes.revision,
+          ...await options.turnChanges!.readFile({
+            root: resolved.root,
+            path: request.path,
+            version: request.version,
+            start: resolved.start,
+            end: resolved.end,
+          }),
+        });
+      } catch (error: unknown) {
+        return turnChangeUnavailable(error);
+      }
+    },
+
     async admitTurn(
       principal: RequestPrincipal,
       owner: ChatOwner,
@@ -267,6 +393,9 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     list: unavailable,
     search: unavailable,
     getDetail: unavailable,
+    getTurnChanges: unavailable,
+    getTurnDiff: unavailable,
+    readTurnFile: unavailable,
     admitTurn: unavailable,
     cancelRun: unavailable,
     retryTurn: unavailable,

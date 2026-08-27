@@ -127,6 +127,7 @@ describe("ChatRepository", () => {
       "chat_run_adapter_state",
       "chat_run_events",
       "chat_runs",
+      "chat_turn_change_sets",
       "chat_turns",
       "chat_user_state",
       "chats",

@@ -11,6 +11,7 @@
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
     "#canonical-chat-api": "./src/canonical-chat-api.ts",
+    "#canonical-chat-changes": "./src/canonical-chat-changes.ts",
     "#canonical-chat-primitives": "./src/canonical-chat-primitives.ts",
     "#canonical-chat-compatibility": "./src/canonical-chat-compatibility.ts",
     "#canonical-chat-compatibility-public": "./src/canonical-chat-compatibility-public.ts",

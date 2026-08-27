@@ -1,4 +1,4 @@
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import { CanonicalChatTurnChangeSetSchema, type CanonicalChatRecord } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
 import { ChatExecutionRootError } from "../../packages/gateway/src/chat/execution-root.js";
@@ -26,7 +26,7 @@ function record(id = "chat_service_test"): CanonicalChatRecord {
   };
 }
 
-function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update" | "hardDelete">> = {}) {
+function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update" | "hardDelete" | "getTurnChanges">> = {}) {
   return {
     create: vi.fn(async () => record()),
     list: vi.fn(async () => ({ items: [record()] } satisfies ChatListPage)),
@@ -40,11 +40,76 @@ function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | 
     } satisfies ChatDetailPage)),
     update: vi.fn(async () => ({ ...record(), projectId: "project_1" })),
     hardDelete: vi.fn(async () => ({ chatId: "chat_service_test", deletedAt: "2026-08-26T12:00:00.000Z" })),
+    getTurnChanges: vi.fn(async () => null),
     ...overrides,
-  } as Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update" | "hardDelete">;
+  } as Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update" | "hardDelete" | "getTurnChanges">;
 }
 
 describe("canonical Chat service", () => {
+  it("revalidates persisted root provenance before structured diff and current file reads", async () => {
+    const changes = CanonicalChatTurnChangeSetSchema.parse({
+      chatId: "chat_service_test",
+      turnId: "cturn_service",
+      runId: "run_service",
+      projectId: "project_1",
+      executionRoot: { kind: "project", projectId: "project_1" },
+      revision: `turnrev_${"a".repeat(64)}`,
+      beforeRevision: `tree_${"b".repeat(40)}`,
+      afterRevision: `tree_${"c".repeat(40)}`,
+      source: "workspace_checkpoints",
+      label: "Workspace changes observed during this turn",
+      concurrent: false,
+      partial: false,
+      files: [{ path: "src/app.ts", status: "modified", additions: 1, deletions: 0, partial: false }],
+      totals: { changedFileCount: 1, additions: 1, deletions: 0 },
+      capturedAt: "2026-08-27T04:00:00.000Z",
+    });
+    const stored = {
+      changes,
+      executionRootFingerprint: "d".repeat(64),
+      beforeTree: "b".repeat(40),
+      beforeHead: "e".repeat(40),
+      afterTree: "c".repeat(40),
+      afterHead: "e".repeat(40),
+    };
+    const getTurnChanges = vi.fn(async () => stored);
+    const revalidate = vi.fn(async () => ({
+      ref: changes.executionRoot,
+      primaryWorkspaceRoot: "/private/project",
+      projectSlug: "project-1",
+      fingerprint: stored.executionRootFingerprint,
+    }));
+    const readDiff = vi.fn(async ({ file }) => ({ ...file, hunks: [] }));
+    const readFile = vi.fn(async () => ({
+      path: "src/app.ts",
+      version: "current" as const,
+      label: "Current file" as const,
+      content: "export const app = true;\n",
+      encoding: "utf8" as const,
+      truncated: false,
+      sizeBytes: 25,
+    }));
+    const service = createCanonicalChatService(repository({ getTurnChanges }), {
+      executionRoots: { resolve: vi.fn(), revalidate },
+      turnChanges: { readDiff, readFile },
+    });
+
+    expect(await service.getTurnChanges(owner, changes.chatId, changes.turnId)).toEqual({ changes });
+    expect(await service.getTurnDiff(owner, changes.chatId, changes.turnId, "src/app.ts"))
+      .toMatchObject({ revision: changes.revision, file: { path: "src/app.ts", hunks: [] } });
+    expect(await service.readTurnFile(owner, changes.chatId, changes.turnId, { path: "src/app.ts", version: "current" }))
+      .toMatchObject({ revision: changes.revision, label: "Current file" });
+    expect(revalidate).toHaveBeenCalledWith(owner, {
+      ref: changes.executionRoot,
+      fingerprint: stored.executionRootFingerprint,
+    });
+    expect(readDiff).toHaveBeenCalledWith(expect.objectContaining({
+      root: "/private/project",
+      start: { tree: stored.beforeTree, head: stored.beforeHead },
+      end: { tree: stored.afterTree, head: stored.afterHead },
+    }));
+  });
+
   it("generates server-owned Chat ids and a bounded default title", async () => {
     const create = vi.fn(async (_owner, input) => record(input.id));
     const repo = repository({ create });

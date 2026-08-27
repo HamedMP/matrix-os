@@ -9,6 +9,10 @@ import {
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
   CanonicalChatTurnIdSchema,
+  CanonicalChatTurnChangeSummaryResponseSchema,
+  CanonicalChatTurnDiffResponseSchema,
+  CanonicalChatTurnFileReadQuerySchema,
+  CanonicalChatTurnFileReadResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalCreateChatRequestSchema,
@@ -21,6 +25,10 @@ import {
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
+  type CanonicalChatTurnChangeSummaryResponse,
+  type CanonicalChatTurnDiffResponse,
+  type CanonicalChatTurnFileReadQuery,
+  type CanonicalChatTurnFileReadResponse,
   type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
@@ -90,6 +98,23 @@ export interface CanonicalChatRouteService {
     limit: number;
     cursor?: string;
   }): Promise<CanonicalChatDetailResponse | null>;
+  getTurnChanges(
+    owner: ChatOwner,
+    chatId: string,
+    turnId: string,
+  ): Promise<CanonicalChatTurnChangeSummaryResponse | null>;
+  getTurnDiff(
+    owner: ChatOwner,
+    chatId: string,
+    turnId: string,
+    path: string,
+  ): Promise<CanonicalChatTurnDiffResponse | null>;
+  readTurnFile(
+    owner: ChatOwner,
+    chatId: string,
+    turnId: string,
+    input: CanonicalChatTurnFileReadQuery,
+  ): Promise<CanonicalChatTurnFileReadResponse | null>;
   admitTurn(
     principal: RequestPrincipal,
     owner: ChatOwner,
@@ -290,6 +315,63 @@ export function createCanonicalChatRoutes(options: {
       );
       if (!result) return notFound(context);
       return context.json(CanonicalChatDetailResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.get("/api/chats/:chatId/turns/:turnId/changes", async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const turnId = CanonicalChatTurnIdSchema.parse(context.req.param("turnId"));
+      const result = await options.service.getTurnChanges(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        turnId,
+      );
+      if (!result) return notFound(context);
+      return context.json(CanonicalChatTurnChangeSummaryResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.get("/api/chats/:chatId/turns/:turnId/changes/diff", async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const turnId = CanonicalChatTurnIdSchema.parse(context.req.param("turnId"));
+      const parsedPath = CanonicalChatTurnFileReadQuerySchema.shape.path.safeParse(context.req.query("path"));
+      if (!parsedPath.success) return validationError(context);
+      const result = await options.service.getTurnDiff(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        turnId,
+        parsedPath.data,
+      );
+      if (!result) return notFound(context);
+      return context.json(CanonicalChatTurnDiffResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.get("/api/chats/:chatId/turns/:turnId/files", async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const turnId = CanonicalChatTurnIdSchema.parse(context.req.param("turnId"));
+      const parsed = CanonicalChatTurnFileReadQuerySchema.safeParse({
+        path: context.req.query("path"),
+        version: context.req.query("version"),
+      });
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.readTurnFile(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        turnId,
+        parsed.data,
+      );
+      if (!result) return notFound(context);
+      return context.json(CanonicalChatTurnFileReadResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
