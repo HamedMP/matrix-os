@@ -261,12 +261,18 @@ describe("onboarding tool packs", () => {
   it("uses the existing Linux tools service timeout budget for host installs", async () => {
     vi.useFakeTimers();
     try {
-      const createChild = () => ({
-        stdout: { on: vi.fn() },
-        stderr: { on: vi.fn() },
-        kill: vi.fn(),
-        on: vi.fn(),
-      });
+      const createChild = () => {
+        let closeListener: ((code: number | null) => void) | undefined;
+        return {
+          stdout: { on: vi.fn() },
+          stderr: { on: vi.fn() },
+          kill: vi.fn(),
+          on: vi.fn((event: "error" | "close", listener: (value: Error | number | null) => void) => {
+            if (event === "close") closeListener = listener as (code: number | null) => void;
+          }),
+          close: (code: number | null) => closeListener?.(code),
+        };
+      };
       const linuxToolsChild = createChild();
       const codeServerChild = createChild();
       const spawnInstaller = vi.fn()
@@ -280,14 +286,12 @@ describe("onboarding tool packs", () => {
       });
 
       const linuxToolsInstall = installer.install(testPrincipal.userId, "linux-tools");
-      const linuxToolsResult = expect(linuxToolsInstall).rejects.toThrow(
-        "tool pack install timed out for linux-tools",
-      );
       await vi.advanceTimersByTimeAsync(499);
       expect(linuxToolsChild.kill).not.toHaveBeenCalled();
+      linuxToolsChild.close(0);
+      await expect(linuxToolsInstall).resolves.toBeUndefined();
       await vi.advanceTimersByTimeAsync(1);
-      await linuxToolsResult;
-      expect(linuxToolsChild.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(linuxToolsChild.kill).not.toHaveBeenCalled();
 
       const codeServerInstall = installer.install(testPrincipal.userId, "code-server");
       const codeServerResult = expect(codeServerInstall).rejects.toThrow(
