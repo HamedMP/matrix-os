@@ -8,6 +8,7 @@ import { advanceRuntimeGeneration } from "./runtime-generation";
 import { reconcileDesktopRuntimeChange } from "./runtime-transition";
 import { resetAppsRuntime } from "./apps";
 import { flushActiveNotesBeforeIdentityChange } from "../features/notes/notes-controller";
+import { clearDesktopQueryCache } from "../lib/query-client";
 
 export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 
@@ -56,6 +57,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       // Advance BEFORE publishing the new identity so a response settling in
       // between is already considered stale.
       if (identityChanged) {
+        clearDesktopQueryCache();
         advanceRuntimeGeneration();
         clearDraftChats();
         resetAppsRuntime();
@@ -85,6 +87,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       console.warn("[connection] failed to refresh auth status:", err instanceof Error ? err.message : String(err));
       // Dropping to signed-out is an identity change too.
       if (get().status !== "signed-out") {
+        clearDesktopQueryCache();
         advanceRuntimeGeneration();
         clearDraftChats();
         resetAppsRuntime();
@@ -109,6 +112,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       await invoke("runtime:select", { slot });
       // Clear previous-computer state only after the trusted core confirms the
       // switch, and before the new slot becomes observable to the UI.
+      clearDesktopQueryCache();
       reconcileDesktopRuntimeChange();
       // Publish the slot only after invalidating the previous ApiClient. The
       // trusted auth snapshot below may settle on a later turn; keeping the old
@@ -135,6 +139,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     // computers. Advance the shared generation and synchronously remove every
     // previous-owner cache before publishing signed-out state, so an in-flight
     // request cannot repopulate the next account's desktop.
+    clearDesktopQueryCache();
     reconcileDesktopRuntimeChange();
     set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
   },
