@@ -1,6 +1,12 @@
 import Database from 'better-sqlite3';
 
-const DB_PATH = process.env.PROXY_DB_PATH ?? '/data/proxy.db';
+export function resolveProxyDatabasePath(env: NodeJS.ProcessEnv = process.env): string {
+  // Docker supplies a durable /data path. Source development defaults to an
+  // in-memory database so it never depends on a container-only directory.
+  return env.PROXY_DB_PATH ?? ':memory:';
+}
+
+const DB_PATH = resolveProxyDatabasePath();
 
 let db: Database.Database;
 

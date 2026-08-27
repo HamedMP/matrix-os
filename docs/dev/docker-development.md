@@ -6,6 +6,7 @@ Matrix OS uses Docker as the primary local development environment via OrbStack 
 
 - **macOS**: [OrbStack](https://orbstack.dev) (required -- Docker Desktop is not supported)
 - **Linux/CI**: Standard Docker Engine + Docker Compose v2
+- Docker Compose v2 (`docker compose`, not the legacy `docker-compose` binary)
 - Copy `.env.docker.example` to `.env.docker` and fill in your keys
 
 ## Setup
@@ -27,7 +28,8 @@ All Docker commands have `bun run` shortcuts in `package.json`:
 
 ```bash
 bun run docker          # Dev only (gateway + shell with HMR)
-bun run docker:full     # + proxy, platform, conduit
+bun run docker:full     # + proxy and platform
+bun run docker:full:smoke # full stack, bounded health checks, cleanup
 bun run docker:all      # + observability (Grafana, Prometheus, Loki)
 bun run docker:multi    # + alice & bob multi-user
 bun run docker:stop     # Stop all containers (preserves data)
@@ -37,7 +39,11 @@ bun run docker:shell    # Shell into container as matrixos user
 bun run docker:build    # Full rebuild (no cache)
 ```
 
-These map to `docker compose -f docker-compose.dev.yml` with the appropriate profiles.
+These map to `docker compose -f docker-compose.dev.yml` with the appropriate
+profiles. The shortcuts pass `--env-file .env.docker`, so Compose interpolation
+uses the documented file; each service receives only its declared variables
+unless it explicitly declares `env_file`. Shell-only values may also live in
+`shell/.env` for source runs.
 
 ## Service URLs
 
@@ -49,7 +55,6 @@ These map to `docker compose -f docker-compose.dev.yml` with the appropriate pro
 | MinIO (console) | http://localhost:9101 | 9101 | default |
 | Proxy | http://localhost:8080 | 8080 | full |
 | Platform | http://localhost:9000 | 9000 | full |
-| Conduit (Matrix) | http://localhost:6167 | 6167 | full |
 | Prometheus | http://localhost:9090 | 9090 | obs |
 | Grafana | http://localhost:3200 | 3200 | obs |
 | Loki | http://localhost:3100 | 3100 | obs |
@@ -109,8 +114,19 @@ docker compose -f docker-compose.dev.yml exec dev sh
 ### Check health
 
 ```bash
-curl http://localhost:4000/health
+curl --fail http://localhost:3000/
+curl --fail http://localhost:4000/health
+curl --fail http://localhost:8080/health       # full profile
+curl --fail http://localhost:9000/health       # full profile
+curl --fail http://localhost:9100/minio/health/live
 ```
+
+For a repeatable full-stack check, run `bun run docker:full:smoke`. It builds
+and starts the `full` profile, waits at most three minutes for shell, gateway,
+proxy, platform, and MinIO, verifies the platform PostgreSQL database
+with `pg_isready`, and always runs `docker compose down --remove-orphans` on
+success or failure. It preserves named volumes; do not run it over a local stack
+you intend to keep running.
 
 ## Volume Management
 
@@ -121,7 +137,6 @@ Volumes persist data across container restarts:
 | `dev-node-modules` | pnpm dependencies (cached, ~30s first install) |
 | `dev-home` | Matrix OS home directory (`~/matrixos/`) |
 | `pgdata` | PostgreSQL data (app data layer) |
-| `conduit-data` | Matrix homeserver database |
 | `prometheus-data` | Metrics history |
 | `grafana-data` | Dashboard configs |
 
@@ -138,16 +153,20 @@ docker compose -f docker-compose.dev.yml down -v
 
 ```bash
 docker volume rm matrix-os_dev-node-modules
-docker compose -f docker-compose.dev.yml up
+docker compose --env-file .env.docker -f docker-compose.dev.yml up
 ```
 
 ## Environment Variables
 
-All env vars are loaded from `.env.docker` (via `env_file` in compose). The compose file also sets some defaults in the `environment` section.
+Compose interpolation reads `.env.docker` through the shortcut's explicit
+`--env-file` flag. The `dev` service also loads that file directly for its
+integration settings; other services receive only the variables declared in
+their `environment` sections. The compose file sets local-safe defaults where
+appropriate.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | - | Claude API key for kernel |
+| `ANTHROPIC_API_KEY` | Yes for AI calls | - | Claude API key used by gateway and proxy; health checks do not require a live request |
 | `MATRIX_HANDLE` | No | `dev` | User handle (set by platform in prod) |
 | `MATRIX_DISPLAY_NAME` | No | `Developer` | Display name (from Clerk signup in prod) |
 | `GEMINI_API_KEY` | No | - | Google Gemini key for image generation |

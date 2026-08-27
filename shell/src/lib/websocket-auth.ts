@@ -89,7 +89,10 @@ export async function buildAuthenticatedWebSocketUrl(
     }
   }
 
-  if (isSelfHostedDocument()) {
+  if (
+    isSelfHostedDocument()
+    || process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1"
+  ) {
     return gatewayUrl.toString();
   }
 

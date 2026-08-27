@@ -24,6 +24,13 @@ async function getRewrites(): Promise<RewriteRule[]> {
 }
 
 describe("shell PostHog same-origin proxy", () => {
+  it("rewrites the same-origin health probe to the gateway", async () => {
+    const rewrites = await getRewrites();
+    const healthRule = rewrites.find((rule) => rule.source === "/health");
+
+    expect(healthRule?.destination).toBe("http://localhost:4000/health");
+  });
+
   it("rewrites /relay asset and ingest paths to PostHog EU", async () => {
     const rewrites = await getRewrites();
     const staticRule = rewrites.find((rule) => rule.source === "/relay/static/:path*");

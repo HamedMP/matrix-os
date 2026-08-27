@@ -87,7 +87,17 @@ describe("SessionRegistry", () => {
       const registry = createRegistry({}, mockSpawn);
       registry.create("/home", "/usr/bin/python3");
       const call = mockSpawn.mock.calls[0];
-      expect(call[0]).not.toBe("/usr/bin/python3");
+      expect(call[0]).toBe("/bin/zsh");
+    });
+
+    it("defaults to zsh when SHELL is unset", () => {
+      vi.stubEnv("SHELL", "");
+      const mockSpawn = createMockSpawn();
+      const registry = createRegistry({}, mockSpawn);
+
+      registry.create("/home");
+
+      expect(mockSpawn.mock.calls[0][0]).toBe("/bin/zsh");
     });
 
     it("accepts shell in allowlist", () => {
