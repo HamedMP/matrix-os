@@ -55,13 +55,12 @@ export function TrafficLights({
     border: "0.8px solid var(--border-default, #F3F2F2)",
   };
   const controlLabel = (action: string) => title ? `${action} ${title}` : action;
-  const maximizeLabel = title ? `Maximize ${title} into tabs` : "Maximize";
 
   return (
     <div className="no-drag flex items-center gap-0.5">
       <button type="button" aria-label={controlLabel("Close")} className={controlClass} style={controlStyle} onClick={onClose}><X size={11.2} strokeWidth={1.7} /></button>
       <button type="button" aria-label={controlLabel("Minimize")} className={controlClass} style={controlStyle} onClick={onMinimize}><Minus size={11.2} strokeWidth={1.7} /></button>
-      <button type="button" aria-label={maximizeLabel} className={controlClass} style={controlStyle} onClick={onMaximize}><Maximize2 size={11.2} strokeWidth={1.7} /></button>
+      <button type="button" aria-label={controlLabel("Maximize")} className={controlClass} style={controlStyle} onClick={onMaximize}><Maximize2 size={11.2} strokeWidth={1.7} /></button>
     </div>
   );
 }

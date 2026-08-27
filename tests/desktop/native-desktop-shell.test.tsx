@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NativeDesktopShell from "@desktop/renderer/src/features/desktop-shell/NativeDesktopShell";
 import NavigationHeader from "@desktop/renderer/src/features/mission-control/NavigationHeader";
@@ -29,6 +29,11 @@ function mockLoadedWallpaperImage(): void {
       queueMicrotask(() => this.onload?.());
     }
   });
+}
+
+function getWindowControl(title: string, action: "Close" | "Minimize" | "Maximize"): HTMLElement {
+  return within(screen.getByRole("dialog", { name: `${title} window` }))
+    .getByRole("button", { name: action });
 }
 
 vi.mock("@desktop/renderer/src/features/mission-control/TabContent", () => ({
@@ -215,7 +220,7 @@ describe("native desktop shell", () => {
     });
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Browser into tabs" }));
+    fireEvent.click(getWindowControl("Browser", "Maximize"));
     fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
 
     await waitFor(() => {
@@ -230,7 +235,7 @@ describe("native desktop shell", () => {
   ])("refreshes the background after %s the maximized Browser", (_action, leaveBrowser) => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Browser into tabs" }));
+    fireEvent.click(getWindowControl("Browser", "Maximize"));
     const before = useUi.getState().desktopBackgroundRefreshRequest;
 
     leaveBrowser();
@@ -245,6 +250,7 @@ describe("native desktop shell", () => {
 
     expect(screen.getByRole("dialog", { name: "Chat window" })).toBeTruthy();
     expect(screen.getByText("Chat content")).toBeTruthy();
+    expect(document.querySelector("[data-os-window-chrome-placement]")?.textContent).toBe("");
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
@@ -260,7 +266,7 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("dialog", { name: "Settings window" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Settings into tabs" }));
+    fireEvent.click(getWindowControl("Settings", "Maximize"));
 
     expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]?.mode).toBe("tab");
     expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
@@ -282,7 +288,7 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
+    fireEvent.click(getWindowControl("Terminal", "Maximize"));
 
     expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("tab");
     expect(screen.getByRole("tab", { name: "Terminal" }).getAttribute("aria-selected")).toBe("true");
@@ -305,7 +311,7 @@ describe("native desktop shell", () => {
   it("puts minimize and close controls inside each maximized tab", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
+    fireEvent.click(getWindowControl("Terminal", "Maximize"));
 
     expect(screen.getByRole("button", { name: "Minimize Terminal tab" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Close Terminal workspace" })).toBeNull();
@@ -389,7 +395,7 @@ describe("native desktop shell", () => {
     });
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
+    fireEvent.click(getWindowControl("Terminal", "Maximize"));
 
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
 
@@ -410,7 +416,7 @@ describe("native desktop shell", () => {
     });
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
+    fireEvent.click(getWindowControl("Terminal", "Maximize"));
     fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
@@ -435,7 +441,7 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     const tabId = useTabs.getState().activeTabId!;
 
-    fireEvent.click(screen.getByRole("button", { name: "Minimize Chat" }));
+    fireEvent.click(getWindowControl("Chat", "Minimize"));
     expect(screen.queryByRole("dialog", { name: "Chat window" })).toBeNull();
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("minimized");
 
@@ -502,7 +508,7 @@ describe("native desktop shell", () => {
     expect(filesButton?.parentElement?.querySelector("[data-taskbar-running-indicator]")).toBeTruthy();
     expect(dock.querySelector("[data-testid='desktop-taskbar-running-apps']")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close Files" }));
+    fireEvent.click(getWindowControl("Files", "Close"));
     expect(filesButton?.parentElement?.querySelector("[data-taskbar-running-indicator]")).toBeNull();
     expect(filesButton?.isConnected).toBe(true);
   });
@@ -511,9 +517,9 @@ describe("native desktop shell", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
-    fireEvent.click(screen.getByRole("button", { name: "Close Files" }));
+    fireEvent.click(getWindowControl("Files", "Close"));
     fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
-    fireEvent.click(screen.getByRole("button", { name: "Close Plugins" }));
+    fireEvent.click(getWindowControl("Plugins", "Close"));
 
     expect(screen.queryByRole("dialog", { name: "Files window" })).toBeNull();
   });
@@ -529,7 +535,7 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[terminalTabId]?.mode).toBe("window");
     expect(useTabs.getState().activeTabId).toBe(terminalTabId);
 
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
+    fireEvent.click(getWindowControl("Terminal", "Maximize"));
     fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
     fireEvent.click(
       screen.getByRole("navigation", { name: "Running apps" })
@@ -545,7 +551,7 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
     const tabId = useTabs.getState().activeTabId!;
 
-    fireEvent.click(screen.getByRole("button", { name: "Maximize Files into tabs" }));
+    fireEvent.click(getWindowControl("Files", "Maximize"));
     expect(screen.getByRole("tab", { name: "Files" }).getAttribute("aria-selected")).toBe("true");
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("tab");
     const surface = document.querySelector<HTMLElement>(`[data-desktop-surface="${tabId}"]`)!;
@@ -583,7 +589,7 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
     expect(screen.getByText("Browser content")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close Browser" }));
+    fireEvent.click(getWindowControl("Browser", "Close"));
     expect(screen.queryByText("Browser content")).toBeNull();
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
     expect(screen.getByText("Browser content")).toBeTruthy();
@@ -592,14 +598,14 @@ describe("native desktop shell", () => {
   it("focuses the topmost visible surface after closing an active closable tab", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
-    fireEvent.click(screen.getByRole("button", { name: "Minimize Browser" }));
+    fireEvent.click(getWindowControl("Browser", "Minimize"));
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
     act(() => {
       useTabs.getState().openTab({ kind: "app", slug: "notes", title: "Notes" });
     });
     const notesId = useTabs.getState().activeTabId!;
 
-    fireEvent.click(screen.getByRole("button", { name: "Close Notes" }));
+    fireEvent.click(getWindowControl("Notes", "Close"));
 
     expect(useTabs.getState().tabs.some((tab) => tab.id === notesId)).toBe(false);
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)?.title).toBe("Files");
@@ -625,11 +631,11 @@ describe("native desktop shell", () => {
     const dragHandle = screen.getByTestId("desktop-window-drag-handle");
     expect(dragHandle.classList.contains("titlebar-drag")).toBe(false);
     expect(dragHandle.classList.contains("z-20")).toBe(true);
-    expect(screen.getByRole("button", { name: "Close Files" }).style.background)
+    expect(getWindowControl("Files", "Close").style.background)
       .toBe("var(--surface-primary, #FFFEFC)");
-    expect(screen.getByRole("button", { name: "Minimize Files" }).style.background)
+    expect(getWindowControl("Files", "Minimize").style.background)
       .toBe("var(--surface-primary, #FFFEFC)");
-    expect(screen.getByRole("button", { name: "Maximize Files into tabs" }).style.background)
+    expect(getWindowControl("Files", "Maximize").style.background)
       .toBe("var(--surface-primary, #FFFEFC)");
 
     fireEvent.pointerDown(dragHandle, { button: 0, clientX: 400, clientY: 180 });
