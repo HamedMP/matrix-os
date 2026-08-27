@@ -5,8 +5,11 @@ import { parse } from "yaml";
 
 import { resolveProxyDatabasePath } from "../../packages/proxy/src/db.js";
 import {
+  createSmokeCancellation,
   DOCKER_FULL_STACK_SERVICES,
   dockerFullStackCommands,
+  installSmokeSignalHandlers,
+  smokeDockerFullStack,
 } from "../../scripts/dev-stack-smoke.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -81,5 +84,71 @@ describe("local development contracts", () => {
     expect(dockerFullStackCommands.start).toContain("up");
     expect(dockerFullStackCommands.cleanup).toContain("down");
     expect(dockerFullStackCommands.cleanup).not.toContain("-v");
+  });
+
+  it("cancels health polling without allowing later signals to interrupt cleanup", () => {
+    const killedWith: NodeJS.Signals[] = [];
+    let cleanupInProgress = false;
+    const cancellation = createSmokeCancellation(
+      () => ({ kill: (signal: NodeJS.Signals) => killedWith.push(signal) }),
+      () => cleanupInProgress,
+    );
+
+    cancellation.handleSignal("SIGINT");
+    expect(cancellation.signal.aborted).toBe(true);
+    expect(killedWith).toEqual(["SIGINT"]);
+
+    cleanupInProgress = true;
+    cancellation.handleSignal("SIGTERM");
+    expect(killedWith).toEqual(["SIGINT"]);
+  });
+
+  it("cancels during health polling, cleans up once, and removes signal listeners", async () => {
+    const listeners = new Map<NodeJS.Signals, () => void>();
+    const signalTarget = {
+      on(signal: NodeJS.Signals, listener: () => void) {
+        listeners.set(signal, listener);
+      },
+      off(signal: NodeJS.Signals, listener: () => void) {
+        if (listeners.get(signal) === listener) listeners.delete(signal);
+      },
+    };
+    let cleanupInProgress = false;
+    const cancellation = createSmokeCancellation(
+      () => undefined,
+      () => cleanupInProgress,
+    );
+    const removeSignalHandlers = installSmokeSignalHandlers(signalTarget, cancellation);
+    const commands: string[][] = [];
+    let pollingStarted!: () => void;
+    const enteredPolling = new Promise<void>((resolve) => {
+      pollingStarted = resolve;
+    });
+
+    const smoke = smokeDockerFullStack({
+      cancellationSignal: cancellation.signal,
+      accessEnv: async () => undefined,
+      runCommand: async (command: string, args: string[]) => {
+        commands.push([command, ...args]);
+        if (args.includes("down")) cleanupInProgress = true;
+      },
+      waitForServices: async (signal: AbortSignal) => {
+        pollingStarted();
+        await new Promise((_, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+      verifyDatabase: async () => undefined,
+      log: () => undefined,
+    }).finally(removeSignalHandlers);
+
+    await enteredPolling;
+    listeners.get("SIGINT")?.();
+    listeners.get("SIGTERM")?.();
+
+    await expect(smoke).rejects.toThrow("smoke canceled by SIGINT");
+    expect(commands.filter((command) => command.includes("down"))).toHaveLength(1);
+    expect(commands.at(-1)).toEqual(dockerFullStackCommands.cleanup);
+    expect(listeners.size).toBe(0);
   });
 });
