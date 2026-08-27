@@ -44,7 +44,7 @@ function PreviewTile({
         <SurfaceIcon tab={tab} size={12} />
         <span className="min-w-0 truncate text-xs text-[var(--text-primary)]">{tab.title}</span>
       </div>
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/32 text-xs font-medium text-[var(--text-inverse,#FAF9F7)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/32 text-xs font-medium text-[var(--text-inverse)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         Go to app
       </div>
       <button

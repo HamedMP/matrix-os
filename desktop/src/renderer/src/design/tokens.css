@@ -56,6 +56,7 @@
   --text-subtle: #96968f;
   --text-disabled: #b5b1a3;
   --text-on-accent: #fafaf5;
+  --text-inverse: #fafaf5;
 
   /* ── Brand & semantic ───────────────────────────────────────── */
   --accent: #434e3f;
@@ -181,6 +182,7 @@
   --text-subtle: #96968f;
   --text-disabled: #55605a;
   --text-on-accent: #141614;
+  --text-inverse: #fafaf5;
 
   --accent: #8cc7be;
   --accent-hover: #9dd3cb;
