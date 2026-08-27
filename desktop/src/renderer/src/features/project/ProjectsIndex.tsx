@@ -164,7 +164,7 @@ function ProjectCard(props: {
     <button
       type="button"
       aria-label={`Open project ${project.name}`}
-      className="group flex min-h-[176px] flex-col rounded-xl border p-4 text-left outline-none transition-[border-color,background-color] hover:border-[var(--text-primary)] hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      className="group flex min-h-[176px] w-full flex-col rounded-xl border p-4 text-left outline-none transition-[border-color,background-color] hover:border-[var(--text-primary)] hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       onClick={onOpen}
     >
@@ -283,19 +283,20 @@ export default function ProjectsIndex() {
             action={api ? <Button variant="primary" onClick={() => void loadProjects(api)}>Retry</Button> : undefined}
           />
         ) : visibleProjects.length > 0 ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <ul aria-label="Projects" className="grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-2 md:grid-cols-3">
             {pagedProjects.map((project) => {
               const summary = summaryProjects?.find((candidate) => candidate.id === project.slug);
               return (
-                <ProjectCard
-                  key={project.slug}
-                  project={project}
-                  summaryUpdatedAt={summary?.updatedAt}
-                  onOpen={() => openProjectOverview(project.slug, project.name || project.slug)}
-                />
+                <li key={project.slug} className="min-w-0">
+                  <ProjectCard
+                    project={project}
+                    summaryUpdatedAt={summary?.updatedAt}
+                    onOpen={() => openProjectOverview(project.slug, project.name || project.slug)}
+                  />
+                </li>
               );
             })}
-          </div>
+          </ul>
         ) : (
           <div className="rounded-xl border px-5 py-10 text-center" style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}>
             {query ? "No projects match your search." : "Create your first project to get started."}

@@ -32,8 +32,7 @@ describe("CreateProjectDialog add-project flows", () => {
     fireEvent.change(screen.getByLabelText("What are you working on?"), {
       target: { value: projectName },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
-    fireEvent.click(screen.getByRole("button", { name: /New folder in Projects/ }));
+    fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
   }
 
   beforeEach(() => {
@@ -67,11 +66,12 @@ describe("CreateProjectDialog add-project flows", () => {
     vi.unstubAllGlobals();
   });
 
-  it("starts on the two Figma source cards and navigates back", async () => {
+  it("starts on the three Figma source cards and navigates back", async () => {
     render(<CreateProjectDialog open onClose={vi.fn()} />);
 
-    expect(screen.getByRole("button", { name: /Folders/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Existing folder/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Clone from GitHub/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /New folder/ })).toBeTruthy();
 
     selectCloneSource();
     expect(screen.getByPlaceholderText("https://github.com/owner/repo")).toBeTruthy();

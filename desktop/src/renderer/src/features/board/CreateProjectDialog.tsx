@@ -1,4 +1,4 @@
-import { ArrowLeft, FolderOpen, Github, X } from "lucide-react";
+import { ArrowLeft, FolderOpen, FolderPlus, Github, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
@@ -80,7 +80,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const authGeneration = useConnection((s) => s.authGeneration);
 
   const [step, setStep] = useState<Step>("pick");
-  const [selectedMode, setSelectedMode] = useState<"folder" | "github" | null>(null);
+  const [selectedMode, setSelectedMode] = useState<Mode | null>(null);
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
   const [description, setDescription] = useState("");
@@ -332,28 +332,39 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
             style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
           />
         </label>
-        <div className="grid grid-cols-2 gap-2">
-        <ModeCard
-          icon={<FolderOpen size={16} />}
-          label="Folders"
-          description="Connect an existing folder or create a new one"
-          selected={selectedMode === "folder"}
-          onSelect={() => {
-            setSelectedMode("folder");
-            setStep("folder");
-          }}
-        />
-        <ModeCard
-          icon={<Github size={16} />}
-          label="Clone from GitHub"
-          description="Copy a repository to this computer"
-          selected={selectedMode === "github"}
-          onSelect={() => {
-            setSelectedMode("github");
-            setStep("github");
-          }}
-        />
-      </div>
+        <div className="grid grid-cols-3 gap-2">
+          <ModeCard
+            icon={<FolderOpen size={16} />}
+            label="Existing folder"
+            description="Connect a folder on this computer"
+            selected={selectedMode === "folder"}
+            onSelect={() => {
+              setSelectedMode("folder");
+              setStep("folder");
+            }}
+          />
+          <ModeCard
+            icon={<Github size={16} />}
+            label="Clone from GitHub"
+            description="Copy a repository to this computer"
+            selected={selectedMode === "github"}
+            onSelect={() => {
+              setSelectedMode("github");
+              setStep("github");
+            }}
+          />
+          <ModeCard
+            icon={<FolderPlus size={16} />}
+            label="New folder"
+            description="Create a local project"
+            selected={selectedMode === "scratch"}
+            onSelect={() => {
+              setSelectedMode("scratch");
+              setParentSelection(null);
+              setStep("scratch");
+            }}
+          />
+        </div>
       </div>
       <div className="flex justify-end gap-2 border-t px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
         <Button variant="subtle" onClick={closeFromUser}>Cancel</Button>
@@ -415,33 +426,19 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       ) : null}
 
       {step === "folder" ? (
-        <>
-          <button
-            type="button"
-            className="flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm hover:bg-[var(--bg-hover)]"
-            style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
-            onClick={() => {
-              setParentSelection(null);
-              setStep("scratch");
-            }}
-          >
-            <span>New folder in Projects</span>
-            <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>Create a local project</span>
-          </button>
-          <ExistingFolderStepFields
-            name={name}
-            onNameChange={(value) => {
-              setName(value);
-              setNameTouched(true);
-            }}
-            folderPath={folderPath}
-            projects={projects}
-            onChooseFolder={chooseFolder}
-            onCreateFolder={startNewFolderAt}
-            onOpenProject={(slug) => void runSubmission((ctx) => openExistingProject(ctx, slug))}
-            submitting={submitting}
-          />
-        </>
+        <ExistingFolderStepFields
+          name={name}
+          onNameChange={(value) => {
+            setName(value);
+            setNameTouched(true);
+          }}
+          folderPath={folderPath}
+          projects={projects}
+          onChooseFolder={chooseFolder}
+          onCreateFolder={startNewFolderAt}
+          onOpenProject={(slug) => void runSubmission((ctx) => openExistingProject(ctx, slug))}
+          submitting={submitting}
+        />
       ) : null}
 
       {step === "scratch" ? (

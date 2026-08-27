@@ -104,14 +104,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     reconcileAndActivateCurrent();
   }, [reconcileAndActivateCurrent]);
 
-  const openRootAsTab = useCallback((open: () => void) => {
-    openRoot(open);
-    const tabId = useTabs.getState().activeTabId;
-    if (!tabId) return;
-    maximizeToTab(tabId);
-    focusTab(tabId);
-  }, [focusTab, maximizeToTab, openRoot]);
-
   const closeApps = useCallback(() => setLauncherOpen(false), [setLauncherOpen]);
   const toggleApps = useCallback(
     () => setLauncherOpen(!useUi.getState().appLauncherOpen),
@@ -148,12 +140,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
       plugins: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
       settings: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
-      projects: () => desktopMode === "canvas"
-        ? openRoot(openProjectsIndex)
-        : openRootAsTab(openProjectsIndex),
+      projects: () => openRoot(openProjectsIndex),
     };
     return FIXED_DESKTOP_APPS.map((app) => ({ ...app, open: openers[app.id] }));
-  }, [desktopMode, openRoot, openRootAsTab, openTab]);
+  }, [openRoot, openTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
     const surfaceState = useDesktopSurfaces.getState().surfaces;

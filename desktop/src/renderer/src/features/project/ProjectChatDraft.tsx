@@ -71,6 +71,7 @@ export function ProjectChatDraft({
   canonicalProjectId = projectId,
   onCanonicalCreated,
   presentation = "hero",
+  heroHeadline,
 }: {
   summary: RuntimeSummary;
   projectId: string;
@@ -84,6 +85,7 @@ export function ProjectChatDraft({
   canonicalProjectId?: string;
   onCanonicalCreated?: (chatId: string, label: string) => void;
   presentation?: "hero" | "landing";
+  heroHeadline?: string;
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
   const composerSelections = useProviderPreferences((s) => s.composerSelections);
@@ -391,6 +393,7 @@ export function ProjectChatDraft({
       {presentation === "hero" ? (
         <ProjectChatHero
           projectLabel={projectLabel}
+          headline={heroHeadline}
           suggestionsVisible={canCreate && promptEmpty}
           typeToStartEnabled={typeToStartEnabled}
           onSuggestion={(prompt) => {

@@ -229,7 +229,12 @@ export default function ProjectOverview({
               seed={null}
               focusRequestId={composerFocusRequestId}
               typeToStartEnabled={canCreate}
-              presentation="landing"
+              presentation={sessions.length === 0
+                && workspaceEntry?.status !== "loading"
+                && workspaceEntry?.status !== "error"
+                ? "hero"
+                : "landing"}
+              heroHeadline="What should we build today?"
               canonicalClient={canonicalStatus === "ready" ? canonicalClient : null}
               canonicalProjectId={canonicalProjectId}
               onCanonicalCreated={(chatId, label) => {
