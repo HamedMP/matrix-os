@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProjectsIndex from "../../desktop/src/renderer/src/features/project/ProjectsIndex";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -45,8 +45,9 @@ describe("ProjectsIndex", () => {
   it("opens a project card in the canonical project tab", () => {
     render(<ProjectsIndex />);
 
-    expect(screen.getByText("Build my portfolio and case study")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Open project Portfolio" }));
+    const collection = screen.getByRole("list", { name: "Projects" });
+    expect(within(collection).getByText("Build my portfolio and case study")).toBeTruthy();
+    fireEvent.click(within(collection).getByRole("button", { name: "Open project Portfolio" }));
 
     expect(useTabs.getState().tabs).toEqual([
       expect.objectContaining({ kind: "project", projectSlug: "portfolio", title: "Portfolio" }),

@@ -52,8 +52,9 @@ describe("CreateProjectDialog", () => {
     expect(screen.getAllByText("Create a project")).toHaveLength(2);
     expect(screen.getByLabelText("What are you working on?")).toBeTruthy();
     expect(screen.getByLabelText("What are you trying to achieve?")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Folders/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Existing folder/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Clone from GitHub/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /New folder/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create project" }).hasAttribute("disabled")).toBe(true);
   });
 

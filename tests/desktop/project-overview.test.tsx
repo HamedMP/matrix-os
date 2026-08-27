@@ -94,6 +94,7 @@ describe("ProjectOverview", () => {
 
     expect(screen.getByText("Loading project workspace…")).toBeTruthy();
     expect(screen.getByText("Fetching chat and workspace capabilities from this Matrix computer.")).toBeTruthy();
+    expect(screen.queryByText("What should we build today?")).toBeNull();
   });
 
   it("shows application-owned copy instead of a raw workspace error", () => {
@@ -120,6 +121,31 @@ describe("ProjectOverview", () => {
 
     expect(screen.getByText("Project sessions are unavailable.")).toBeTruthy();
     expect(screen.queryByText(/postgres failed/)).toBeNull();
+    expect(screen.queryByText("What should we build today?")).toBeNull();
+  });
+
+  it("shows the Figma empty Project hero and four starter actions only when the workspace is ready", () => {
+    render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryWithProjectComposer()}
+        active={false}
+        viewSwitch={null}
+      />,
+    );
+
+    expect(screen.getByText("What should we build today?")).toBeTruthy();
+    for (const action of [
+      "Explore and understand code",
+      "Build a new feature, app, or tool",
+      "Review code and suggest changes",
+      "Fix issues and failures",
+    ]) {
+      expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    }
+    expect(screen.queryByText("Loading project workspace…")).toBeNull();
+    expect(screen.queryByText("Project sessions are unavailable.")).toBeNull();
   });
 
   it("bounds the rendered recent-session collection", () => {

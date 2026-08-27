@@ -323,18 +323,22 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
   });
 
-  it.each([
-    ["Projects", "projects"],
-  ] as const)("opens %s directly as a tab workspace", (label, kind) => {
+  it("opens Projects as a floating window and only adds it to the tab strip when maximized", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
-    fireEvent.doubleClick(screen.getByRole("button", { name: label }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Projects" }));
 
-    expect(screen.getByRole("tab", { name: label }).getAttribute("aria-selected")).toBe("true");
-    const tab = useTabs.getState().tabs.find((candidate) => candidate.kind === kind);
+    const tab = useTabs.getState().tabs.find((candidate) => candidate.kind === "projects");
     expect(tab).toBeTruthy();
+    expect(useDesktopSurfaces.getState().surfaces[tab!.id]?.mode).toBe("window");
+    expect(screen.getByRole("dialog", { name: "Projects window" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByRole("tab", { name: "Projects" })).toBeNull();
+
+    fireEvent.click(getWindowControl("Projects", "Maximize"));
+
     expect(useDesktopSurfaces.getState().surfaces[tab!.id]?.mode).toBe("tab");
-    expect(screen.queryByRole("dialog", { name: `${label} window` })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Projects" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("opens Apps as a transient launcher instead of a desktop app surface", () => {
