@@ -10,8 +10,9 @@ describe("web desktop mode parity", () => {
     });
   });
 
-  it("exposes Desktop as the sole primary OS view while legacy renderers remain internal", () => {
+  it("keeps Canvas selectable while Desktop remains the canonical default", () => {
     expect(useDesktopMode.getState().visibleModes().map((mode) => mode.id)).toEqual([
+      "canvas",
       "desktop",
     ]);
     expect(useDesktopMode.getState().getModeConfig("desktop")).toMatchObject({
@@ -22,9 +23,9 @@ describe("web desktop mode parity", () => {
     });
   });
 
-  it("migrates removed Developer and Canvas modes into Desktop", () => {
+  it("preserves Canvas preferences while migrating removed modes into Desktop", () => {
     expect(normalizeDesktopMode("dev")).toBe("desktop");
-    expect(normalizeDesktopMode("canvas")).toBe("desktop");
+    expect(normalizeDesktopMode("canvas")).toBe("canvas");
     expect(normalizeDesktopMode("desktop")).toBe("desktop");
     expect(normalizeDesktopMode("something-else")).toBe("desktop");
   });

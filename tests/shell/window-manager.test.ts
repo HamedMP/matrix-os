@@ -14,6 +14,8 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 
 const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
 vi.stubGlobal("fetch", fetchSpy);
+const defaultInnerWidth = window.innerWidth;
+const defaultInnerHeight = window.innerHeight;
 
 function resetStore() {
   resetWindowManagerLayoutPersistenceForTests();
@@ -39,6 +41,8 @@ describe("Window Manager Store", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: defaultInnerWidth });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: defaultInnerHeight });
   });
 
   describe("openWindow", () => {
@@ -326,6 +330,35 @@ describe("Window Manager Store", () => {
       expect(restored.x).toBe(Math.round((window.innerWidth - width) / 2));
       expect(window.innerWidth - (restored.x + restored.width)).toBe(restored.x);
       expect(restored.y).toBe(80);
+    });
+
+    it("fits restored desktop windows inside the current viewport", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+      const saved: LayoutWindow[] = [
+        {
+          path: "__file-browser__",
+          title: "Files",
+          x: 1_400,
+          y: 900,
+          width: 1_200,
+          height: 900,
+          state: "open",
+        },
+      ];
+
+      useWindowManager.getState().loadLayout(saved);
+
+      const [restored] = useWindowManager.getState().windows;
+      expect(restored).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 860,
+        height: 522,
+      });
+      expect(restored.x + restored.width).toBeLessThanOrEqual(window.innerWidth - 20);
+      expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight - 20);
     });
 
     it("does not save immediately while hydrating server layout", () => {

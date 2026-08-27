@@ -72,9 +72,9 @@ describe("Desktop Mode Store", () => {
     expect(modes.map((m) => m.id)).toEqual(["canvas", "desktop", "ambient", "dev"]);
   });
 
-  it("visibleModes exposes only Desktop while legacy renderers are internal", () => {
+  it("visibleModes exposes Canvas and Desktop while legacy renderers are internal", () => {
     const modes = useDesktopMode.getState().visibleModes();
-    expect(modes.map((m) => m.id)).toEqual(["desktop"]);
+    expect(modes.map((m) => m.id)).toEqual(["canvas", "desktop"]);
   });
 
   it("setMode tracks previousMode", () => {

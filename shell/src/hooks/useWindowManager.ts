@@ -36,6 +36,8 @@ export interface AppEntry {
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
+const DESKTOP_WINDOW_MARGIN = 20;
+const DESKTOP_HEADER_HEIGHT = 38;
 const MAX_CLOSED_ENTRIES = 50;
 const LAYOUT_FETCH_TIMEOUT_MS = 10_000;
 
@@ -57,21 +59,35 @@ interface ClosedLayout {
 }
 
 function normalizeRestoredLayout(path: string, layout: ClosedLayout): ClosedLayout {
-  if (useDesktopMode.getState().mode === "canvas") return layout;
+  const mode = useDesktopMode.getState().mode;
+  if (mode === "canvas") return layout;
 
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
   const minSize = getMinimumWindowSize(path);
   const width = Math.min(
     Math.max(layout.width, minSize.width),
-    Math.max(minSize.width, vw - 40),
+    Math.max(minSize.width, vw - (DESKTOP_WINDOW_MARGIN * 2)),
+  );
+  const height = Math.min(
+    Math.max(layout.height, minSize.height),
+    Math.max(minSize.height, vh - topInset - (DESKTOP_WINDOW_MARGIN * 2)),
   );
   const wasWide = layout.width >= vw * 0.8;
+  const targetX = wasWide ? Math.round((vw - width) / 2) : layout.x;
+  const maxX = Math.max(DESKTOP_WINDOW_MARGIN, vw - width - DESKTOP_WINDOW_MARGIN);
+  const maxY = Math.max(
+    DESKTOP_WINDOW_MARGIN,
+    vh - topInset - height - DESKTOP_WINDOW_MARGIN,
+  );
 
   return {
     ...layout,
     width,
-    height: Math.max(layout.height, minSize.height),
-    x: wasWide ? Math.max(20, Math.round((vw - width) / 2)) : layout.x,
+    height,
+    x: Math.min(Math.max(targetX, DESKTOP_WINDOW_MARGIN), maxX),
+    y: Math.min(Math.max(layout.y, DESKTOP_WINDOW_MARGIN), maxY),
   };
 }
 

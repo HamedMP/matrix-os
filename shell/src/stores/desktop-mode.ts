@@ -75,11 +75,12 @@ const DEFAULT_MODE: DesktopMode = "desktop";
 
 /**
  * The native Desktop renderer is the canonical OS view. Keep the legacy mode
- * identifiers readable so old snapshots do not break, but migrate every
- * persisted renderer selection to Desktop until those renderers share the
- * native shell contract.
+ * identifiers readable so old snapshots do not break. Canvas remains a
+ * supported user preference; removed Developer and Ambient selections migrate
+ * to Desktop.
  */
-export function normalizeDesktopMode(_value: unknown): DesktopMode {
+export function normalizeDesktopMode(value: unknown): DesktopMode {
+  if (value === "canvas") return "canvas";
   return DEFAULT_MODE;
 }
 
@@ -102,14 +103,14 @@ export const useDesktopMode = create<DesktopModeStore>()(
       setMode: (mode: DesktopMode) => set({ previousMode: get().mode, mode }),
       getModeConfig: (mode: DesktopMode) => MODE_CONFIGS[mode],
       allModes: () => Object.values(MODE_CONFIGS),
-      visibleModes: () => [MODE_CONFIGS.desktop],
+      visibleModes: () => [MODE_CONFIGS.canvas, MODE_CONFIGS.desktop],
     }),
     {
       name: "matrix-os-desktop-mode",
       onRehydrateStorage: () => (state) => {
-        // The web OS now follows the native Desktop renderer. Legacy
-        // Developer/Canvas/Ambient values remain parseable for old layouts,
-        // then migrate to the canonical Desktop surface during hydration.
+        // The web OS defaults to the native Desktop renderer while preserving
+        // an explicit Canvas preference. Removed Developer/Ambient selections
+        // migrate to the canonical Desktop surface during hydration.
         if (state) {
           state.mode = normalizeDesktopMode(state.mode);
           state.previousMode = null;
