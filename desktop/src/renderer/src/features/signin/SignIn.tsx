@@ -84,9 +84,14 @@ export default function SignIn() {
               </h2>
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
                 {waitingForApproval
-                  ? "Approve this desktop from the Matrix OS page opened in your browser."
-                  : "Sign in or create an account in your browser, then choose a Matrix computer to connect."}
+                  ? "Approve this desktop in your browser. The page returns you to Matrix Desktop automatically."
+                  : "Sign in or create an account in your browser, choose a Matrix computer, and the approval page returns you to Matrix Desktop automatically."}
               </p>
+              {!waitingForApproval ? (
+                <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  New hosted accounts include a 3-day free trial. Card required; cancel anytime.
+                </p>
+              ) : null}
             </div>
 
             {waitingForApproval ? (

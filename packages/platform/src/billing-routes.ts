@@ -53,7 +53,7 @@ import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schem
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
 const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
-export const MATRIX_CARD_TRIAL_DAYS = 7;
+export const MATRIX_CARD_TRIAL_DAYS = 3;
 const MatrixCardTrialDaysSchema = z.string()
   .regex(/^[0-9]+$/)
   .transform(Number)

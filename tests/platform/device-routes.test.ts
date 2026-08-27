@@ -10,6 +10,7 @@ import { createApp } from "../../packages/platform/src/main.js";
 import { createAuthRoutes } from "../../packages/platform/src/auth-routes.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt, verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
+import { desktopPalette } from "@matrix-os/brand/tokens";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -730,6 +731,12 @@ describe("device routes", () => {
       expect(approveRes.status).toBe(200);
       const successHtml = await approveRes.text();
       expect(successHtml).toContain("Return to Matrix OS");
+      expect(successHtml).toContain("You&#39;re connected");
+      expect(successHtml).toContain("Opening Matrix OS");
+      expect(successHtml).toContain(desktopPalette.forest);
+      expect(successHtml).toContain("Bricolage Grotesque");
+      expect(successHtml).toContain("prefers-reduced-motion");
+      expect(successHtml).not.toContain("background:#0a0a0a");
       expect(successHtml).toContain("matrixos://auth?status=approved");
       expect(successHtml).toContain('http-equiv="refresh"');
     });
@@ -984,6 +991,15 @@ describe("device routes", () => {
 
       expect(html).toContain("Approve Matrix OS app");
       expect(html).toContain("Authorize the desktop app");
+      expect(html).toContain("Connect Matrix OS");
+      expect(html).toContain("Confirm the code shown in the desktop app");
+      expect(html).toContain("3-day free trial");
+      expect(html).toContain("Bricolage Grotesque");
+      expect(html).toContain("Geist Mono");
+      expect(html).toContain(desktopPalette.forest);
+      expect(html).toContain(desktopPalette.green);
+      expect(html).toContain("appearance: clerkAppearance");
+      expect(html).toContain("colorPrimary: '#0E3422'");
       expect(html).toContain("var nativeApp = true;");
       expect(html).toContain("Checking Matrix OS");
       expect(html).toContain("showRuntimeSetupState()");

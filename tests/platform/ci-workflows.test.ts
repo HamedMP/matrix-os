@@ -318,16 +318,16 @@ describe('CI workflows', () => {
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
     const preview = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
 
-    expect(production).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
+    expect(production).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}");
     expect(production).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
-    expect(production).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '7' }}");
+    expect(production).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}");
     expect(production).toContain('MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}');
     expect(production).toContain('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30.');
     expect(production).toContain('[[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]');
     expect(production).not.toContain('10#$MATRIX_CARD_TRIAL_DAYS');
-    expect(preview).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
+    expect(preview).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}");
     expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
-    expect(preview).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '7' }}");
+    expect(preview).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}");
     expect(preview).toContain('MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}');
     expect(preview).toContain('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30.');
     expect(preview).toContain('[[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]');

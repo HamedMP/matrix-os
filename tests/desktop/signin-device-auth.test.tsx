@@ -39,6 +39,8 @@ describe("desktop device authorization sign-in", () => {
     render(<SignIn />);
 
     expect(screen.getByText(/sign in or create an account in your browser/i)).toBeTruthy();
+    expect(screen.getByText(/3-day free trial/i)).toBeTruthy();
+    expect(screen.getByText(/returns you to Matrix Desktop automatically/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).toBeNull();
     expect(screen.queryByText(/or continue with email/i)).toBeNull();

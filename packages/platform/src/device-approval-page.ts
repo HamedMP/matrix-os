@@ -1,3 +1,5 @@
+import { desktopFonts, desktopPalette } from '@matrix-os/brand/tokens';
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -44,6 +46,24 @@ export function approvalPage(
     var runtimeReady = false;
     var selectedRuntimeSlot = '';
     var computerSelectionRequired = true;
+    var clerkAppearance = {
+      variables: {
+        colorPrimary: '${desktopPalette.forest}',
+        colorBackground: '${desktopPalette.paper}',
+        colorText: '${desktopPalette.forest}',
+        colorTextSecondary: '${desktopPalette.textMuted}',
+        borderRadius: '14px',
+        fontFamily: '${desktopFonts.sans}',
+      },
+      elements: {
+        rootBox: { width: '100%' },
+        cardBox: { width: '100%', boxShadow: 'none' },
+        card: { width: '100%', padding: '0', boxShadow: 'none', background: 'transparent' },
+        headerTitle: { fontFamily: '${desktopFonts.display}' },
+        formButtonPrimary: { backgroundColor: '${desktopPalette.forest}' },
+        footer: { background: 'transparent' },
+      },
+    };
 
     function deviceReturnPath() {
       var url = new URL(window.location.href);
@@ -233,7 +253,7 @@ export function approvalPage(
       setConfirmReady(false);
       renderActionState(
         'Set up your Matrix computer',
-        'Create or activate your Matrix computer first, then return here to approve the desktop app.',
+        'Create or activate your Matrix computer first. New hosted accounts include a 3-day free trial with a card, then return here to approve the desktop app.',
         'Open setup',
         redirectToBillingSetup
       );
@@ -268,6 +288,7 @@ export function approvalPage(
       if (signin && !signin.dataset.mounted) {
         signin.dataset.mounted = 'true';
         window.Clerk.mountSignUp(signin, {
+          appearance: clerkAppearance,
           signInUrl: deviceAuthUrl('sign-in'),
           forceRedirectUrl: approvalUrl,
           fallbackRedirectUrl: approvalUrl,
@@ -286,6 +307,7 @@ export function approvalPage(
       if (signin && !signin.dataset.mounted) {
         signin.dataset.mounted = 'true';
         window.Clerk.mountSignIn(signin, {
+          appearance: clerkAppearance,
           signUpUrl: deviceAuthUrl('sign-up'),
           forceRedirectUrl: approvalUrl,
           fallbackRedirectUrl: approvalUrl,
@@ -462,171 +484,311 @@ export function approvalPage(
   <style>
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
+    :root {
+      color-scheme: light;
+      --forest: ${desktopPalette.forest};
+      --coral: ${desktopPalette.coral};
+      --gold: ${desktopPalette.gold};
+      --green: ${desktopPalette.green};
+      --blue: ${desktopPalette.blue};
+      --paper: ${desktopPalette.paper};
+      --canvas: ${desktopPalette.canvas};
+      --ink-muted: ${desktopPalette.textMuted};
+      --line: rgba(14, 52, 34, 0.14);
+    }
     body {
       margin: 0;
       min-height: 100vh;
       display: grid;
       place-items: center;
-      background: #101312;
-      color: #e8efe7;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      padding: 24px;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(241, 195, 121, 0.45), transparent 30rem),
+        radial-gradient(circle at 88% 90%, rgba(197, 214, 226, 0.65), transparent 34rem),
+        var(--canvas);
+      color: var(--forest);
+      font-family: ${desktopFonts.sans};
+      padding: clamp(16px, 4vw, 48px);
     }
     main {
-      width: min(1120px, 100%);
+      width: min(1180px, 100%);
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
-      gap: 24px;
+      grid-template-columns: minmax(0, 1.12fr) minmax(360px, 0.88fr);
       align-items: stretch;
-    }
-    .terminal {
-      min-height: 480px;
-      background: #070908;
-      border: 1px solid #2b3a34;
-      border-radius: 8px;
       overflow: hidden;
-      box-shadow: 0 24px 80px rgba(0,0,0,0.38);
+      border: 1px solid rgba(14, 52, 34, 0.18);
+      border-radius: 28px;
+      background: var(--paper);
+      box-shadow: 0 34px 100px rgba(14, 52, 34, 0.18);
     }
-    .bar {
-      height: 38px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 0 14px;
-      background: #151a18;
-      border-bottom: 1px solid #2b3a34;
-      color: #9aa8a1;
-      font-size: 13px;
-    }
-    .dot { width: 10px; height: 10px; border-radius: 999px; background: #5f6b65; }
-    .dot.ok { background: #66d19e; }
-    .screen {
-      padding: 28px;
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-      font-size: 14px;
-      line-height: 1.7;
-    }
-    .prompt { color: #8fbfa3; }
-    .muted { color: #8a968f; }
-    .code {
-      display: inline-block;
-      margin: 12px 0 18px;
-      padding: 10px 14px;
-      border: 1px solid #385247;
-      border-radius: 6px;
-      background: #101714;
-      color: #f4f7f1;
-      font-size: 24px;
-      letter-spacing: 0.08em;
-    }
-    .panel {
-      background: #f6f2e8;
-      color: #25332d;
-      border: 1px solid #ddd4c3;
-      border-radius: 8px;
-      padding: 24px;
+    .desktop-stage {
+      position: relative;
+      min-height: 650px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      background:
+        radial-gradient(circle at 78% 16%, rgba(208, 110, 83, 0.7), transparent 26rem),
+        linear-gradient(145deg, #16472f 0%, var(--forest) 52%, ${desktopPalette.forestDeep} 100%);
+      color: var(--paper);
+      overflow: hidden;
     }
-    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
-    h2 { margin: 0; font-size: 18px; line-height: 1.2; }
-    p { margin: 0; color: #516158; line-height: 1.5; }
+    .desktop-stage::after {
+      content: "";
+      position: absolute;
+      inset: auto -16% -34% 18%;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: rgba(190, 215, 123, 0.18);
+      filter: blur(2px);
+      pointer-events: none;
+    }
+    .brand-bar {
+      position: relative;
+      z-index: 1;
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      border-bottom: 1px solid rgba(252, 252, 248, 0.15);
+      background: rgba(252, 252, 248, 0.07);
+      backdrop-filter: blur(18px);
+    }
+    .brand-lockup { display: flex; align-items: center; gap: 10px; font-weight: 680; }
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 9px;
+      background: var(--green);
+      color: var(--forest);
+      font-family: ${desktopFonts.display};
+      font-weight: 800;
+    }
+    .secure-label { color: rgba(252, 252, 248, 0.7); font-size: 12px; }
+    .stage-content {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 40px;
+      padding: clamp(34px, 7vw, 72px);
+    }
+    .eyebrow {
+      margin: 0 0 14px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+    .stage-content h1 {
+      max-width: 520px;
+      margin: 0;
+      color: var(--paper);
+      font-family: ${desktopFonts.display};
+      font-size: clamp(40px, 6vw, 68px);
+      font-weight: 580;
+      letter-spacing: -0.045em;
+      line-height: 0.98;
+    }
+    .stage-lede { max-width: 470px; margin-top: 20px; color: rgba(252, 252, 248, 0.72); }
+    .terminal-window {
+      overflow: hidden;
+      border: 1px solid rgba(252, 252, 248, 0.2);
+      border-radius: 18px;
+      background: rgba(5, 29, 18, 0.62);
+      box-shadow: 0 22px 60px rgba(3, 20, 12, 0.32);
+      backdrop-filter: blur(18px);
+    }
+    .terminal-bar {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 14px;
+      border-bottom: 1px solid rgba(252, 252, 248, 0.13);
+      color: rgba(252, 252, 248, 0.65);
+      font-size: 12px;
+    }
+    .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--coral); }
+    .dot:nth-child(2) { background: var(--gold); }
+    .dot:nth-child(3) { background: var(--green); }
+    .terminal-title { margin-left: 6px; }
+    .screen {
+      padding: 20px;
+      font-family: ${desktopFonts.mono};
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .prompt { color: var(--green); }
+    .muted { color: rgba(252, 252, 248, 0.54); }
+    .code {
+      display: inline-block;
+      margin: 10px 0 14px;
+      padding: 9px 13px;
+      border: 1px solid rgba(190, 215, 123, 0.52);
+      border-radius: 10px;
+      background: rgba(190, 215, 123, 0.12);
+      color: var(--paper);
+      font-size: 22px;
+      letter-spacing: 0.1em;
+    }
+    .panel {
+      min-width: 0;
+      background: var(--paper);
+      color: var(--forest);
+      padding: clamp(28px, 5vw, 58px);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 22px;
+    }
+    .panel .eyebrow { color: var(--coral); }
+    .panel h2, .device-state h2 {
+      margin: 0;
+      font-family: ${desktopFonts.display};
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 590;
+      letter-spacing: -0.035em;
+      line-height: 1.02;
+    }
+    p { margin: 0; color: var(--ink-muted); line-height: 1.55; }
+    .trial-note {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 13px 14px;
+      border: 1px solid rgba(190, 215, 123, 0.75);
+      border-radius: 14px;
+      background: rgba(190, 215, 123, 0.2);
+      color: var(--forest);
+      font-size: 13px;
+    }
+    .trial-note strong { display: block; }
+    .trial-dot { width: 9px; height: 9px; flex: 0 0 auto; margin-top: 6px; border-radius: 50%; background: var(--coral); }
     button {
       width: 100%;
-      background: #25332d;
-      color: #fffdf6;
-      border: 0;
-      padding: 0.75rem 1rem;
+      min-height: 48px;
+      background: var(--forest);
+      color: var(--paper);
+      border: 1px solid var(--forest);
+      padding: 0.8rem 1rem;
       font-size: 0.95rem;
-      border-radius: 6px;
+      font-weight: 650;
+      border-radius: 14px;
       cursor: pointer;
+      transition: transform 160ms ease, background 160ms ease;
     }
+    button:hover:not(:disabled) { transform: translateY(-1px); background: #174d34; }
+    button:focus-visible, select:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
     button:disabled { opacity: 0.65; cursor: wait; }
-    .status { min-height: 1.25rem; color: #9f2d2d; }
+    .status { min-height: 1.25rem; color: #9f3f2c; font-size: 13px; }
     .identity {
       display: grid;
       grid-template-columns: 44px minmax(0, 1fr);
       gap: 12px;
       align-items: center;
-      padding: 12px;
-      border: 1px solid #d7d0c2;
-      border-radius: 6px;
-      background: #fffdf8;
+      margin-bottom: 14px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: ${desktopPalette.surfaceMuted};
     }
     .identity-avatar {
       width: 44px;
       height: 44px;
       border-radius: 50%;
       object-fit: cover;
-      background: #25332d;
+      background: var(--forest);
     }
     .identity-avatar-fallback {
       display: grid;
       place-items: center;
-      color: #fffdf8;
+      color: var(--paper);
       font-weight: 700;
     }
     .identity-copy { min-width: 0; }
-    .identity-name { color: #25332d; font-weight: 700; }
+    .identity-name { color: var(--forest); font-weight: 700; }
     .identity-meta {
       overflow: hidden;
-      color: #66736c;
+      color: var(--ink-muted);
       font-size: 0.82rem;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .computer-field { display: grid; gap: 7px; margin: 14px 0; }
-    .computer-field label { color: #35453e; font-size: 0.82rem; font-weight: 700; }
+    .computer-field label { color: var(--forest); font-size: 0.82rem; font-weight: 700; }
     .computer-field select {
       width: 100%;
       min-height: 42px;
-      border: 1px solid #b9c2bc;
-      border-radius: 6px;
-      background: #fff;
-      color: #25332d;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper);
+      color: var(--forest);
       padding: 0 36px 0 12px;
       font: inherit;
     }
-    .computer-field select:focus-visible { outline: 2px solid #2c7254; outline-offset: 2px; }
     #signin-area { min-width: 0; }
     .device-state {
       display: flex;
       flex-direction: column;
       gap: 12px;
-      border-top: 1px solid #ded7c9;
+      border-top: 1px solid var(--line);
       padding-top: 16px;
     }
-    @media (max-width: 760px) {
+    .device-state h2 { font-size: 28px; }
+    @media (max-width: 820px) {
       main { grid-template-columns: 1fr; }
-      .terminal { min-height: 360px; }
-      .screen { padding: 20px; }
+      .desktop-stage { min-height: 470px; }
+      .stage-content { padding: 34px 28px; }
+      .panel { padding: 38px 28px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
     }
   </style>
 </head>
 <body>
   <main>
-    <section class="terminal" aria-label="${productLabel} login preview">
-      <div class="bar"><span class="dot ok"></span><span class="dot"></span><span class="dot"></span><span>${isNativeApp ? 'matrix app sign in' : 'matrix login'}</span></div>
-      <div class="screen">
-        <div><span class="prompt">matrix</span> login</div>
-        <div class="muted">open app.matrix-os.com/auth/device</div>
-        <div>verification code</div>
-        <div class="code">${escapedCode}</div>
-        <div id="instance-line" class="muted">waiting for signed-in Matrix instance...</div>
-        <br>
-        <div><span class="prompt">matrix</span> whoami</div>
-        <div class="muted">@handle on app.matrix-os.com</div>
-        <div><span class="prompt">matrix</span> shell attach -c main</div>
-        <div><span class="prompt">matrix</span> run -it -- claude</div>
-        <div><span class="prompt">matrix</span> doctor</div>
+    <section class="desktop-stage" aria-label="${productLabel} login preview">
+      <div class="brand-bar">
+        <div class="brand-lockup"><span class="brand-mark">M</span><span>Matrix OS</span></div>
+        <span class="secure-label">Secure device connection</span>
+      </div>
+      <div class="stage-content">
+        <div>
+          <p class="eyebrow">Device authorization</p>
+          <h1>Connect Matrix OS</h1>
+          <p class="stage-lede">Confirm the code shown in the ${isNativeApp ? 'desktop app' : 'terminal'}, choose your cloud computer, and Matrix will finish the connection.</p>
+        </div>
+        <div class="terminal-window">
+          <div class="terminal-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="terminal-title">${isNativeApp ? 'Matrix Desktop — device sign in' : 'matrix login'}</span></div>
+          <div class="screen">
+            <div><span class="prompt">matrix</span> login</div>
+            <div class="muted">open app.matrix-os.com/auth/device</div>
+            <div>verification code</div>
+            <div class="code">${escapedCode}</div>
+            <div id="instance-line" class="muted">waiting for signed-in Matrix instance...</div>
+            <br>
+            <div><span class="prompt">matrix</span> whoami</div>
+            <div class="muted">@handle on app.matrix-os.com</div>
+            <div><span class="prompt">matrix</span> shell attach -c main</div>
+            <div><span class="prompt">matrix</span> run -it -- claude</div>
+            <div><span class="prompt">matrix</span> doctor</div>
+          </div>
+        </div>
       </div>
     </section>
     <section class="panel">
       <div>
-        <h1>Approve ${productLabel}</h1>
-        <p>Authorize ${isNativeApp ? 'the desktop app' : 'this terminal'} to connect to your Matrix OS cloud computer.</p>
+        <p class="eyebrow">One last step</p>
+        <h2>Approve ${productLabel}</h2>
+        <p>Authorize ${isNativeApp ? 'the desktop app' : 'this terminal'} to connect to your Matrix OS cloud computer. If you are new, create your account here first.</p>
       </div>
+      <div class="trial-note"><span class="trial-dot"></span><span><strong>Start with a 3-day free trial</strong>Card required. Cancel anytime before the trial ends.</span></div>
       <div id="signin-area" style="display:none"></div>
       <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
         <input type="hidden" name="userCode" value="${escapedCode}">
@@ -664,8 +826,13 @@ export function approvalSuccessPage(nativeRedirectUri: string | null = null): st
   const redirectLink = nativeRedirectUri
     ? `<p><a href="${escapeHtmlAttr(nativeRedirectUri)}">Return to Matrix OS</a></p>`
     : '';
+  const detail = nativeRedirectUri
+    ? 'Opening Matrix OS now. Keep this tab open until the desktop app is in focus.'
+    : 'You can close this tab and return to Matrix OS.';
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">${redirectMeta}<title>Authorized</title>
-<style>body{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#eee;min-height:100vh;display:flex;align-items:center;justify-content:center}.card{max-width:380px;padding:2rem;background:#141414;border:1px solid #222;border-radius:8px;text-align:center}</style></head>
-<body><div class="card"><h1>Login successful</h1><p>You can close this tab and return to Matrix OS.</p>${redirectLink}</div></body></html>`;
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${redirectMeta}<title>Connected — Matrix OS</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,rgba(241,195,121,.58),transparent 28rem),radial-gradient(circle at 85% 90%,rgba(197,214,226,.8),transparent 34rem),${desktopPalette.canvas};color:${desktopPalette.forest};font-family:${desktopFonts.sans}}.card{width:min(520px,100%);padding:clamp(32px,7vw,64px);border:1px solid rgba(14,52,34,.16);border-radius:28px;background:${desktopPalette.paper};box-shadow:0 30px 90px rgba(14,52,34,.16);text-align:center}.mark{width:72px;height:72px;display:grid;place-items:center;margin:0 auto 26px;border-radius:22px;background:${desktopPalette.green};color:${desktopPalette.forest};font-family:${desktopFonts.display};font-size:30px;font-weight:800;animation:arrive .5s cubic-bezier(.2,.8,.2,1) both}.eyebrow{margin:0 0 12px;color:${desktopPalette.coral};font-size:12px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}h1{margin:0;font-family:${desktopFonts.display};font-size:clamp(38px,8vw,58px);font-weight:590;letter-spacing:-.045em;line-height:1}p{margin:18px auto 0;max-width:390px;color:${desktopPalette.textMuted};line-height:1.6}a{display:inline-flex;min-height:48px;align-items:center;justify-content:center;margin-top:8px;padding:0 22px;border-radius:14px;background:${desktopPalette.forest};color:${desktopPalette.paper};font-weight:680;text-decoration:none}a:focus-visible{outline:3px solid ${desktopPalette.gold};outline-offset:3px}@keyframes arrive{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head>
+<body><main class="card"><div class="mark" aria-hidden="true">M</div><p class="eyebrow">Device approved</p><h1>You&#39;re connected</h1><p>${detail}</p>${redirectLink}</main></body></html>`;
 }
