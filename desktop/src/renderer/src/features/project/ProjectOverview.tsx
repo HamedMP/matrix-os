@@ -211,10 +211,10 @@ export default function ProjectOverview({
       <div className="mx-auto flex w-full max-w-[980px] flex-col px-8 pb-12 pt-8">
         <div className="mb-6 flex items-start gap-4">
           <div className="min-w-0 flex-1">
-          <h1 className="text-[32px] leading-none tracking-[-0.035em]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-editorial)" }}>
+          <h1 className="text-[24px] font-semibold leading-[32px] tracking-[-0.6px]" style={{ color: "var(--text-primary)" }}>
             {projectLabel}
           </h1>
-          {description ? <p className="mt-2 text-sm" style={{ color: "var(--text-tertiary)" }}>{description}</p> : null}
+          {description ? <p className="mt-2 text-[16px] leading-[28px]" style={{ color: "var(--text-tertiary)" }}>{description}</p> : null}
           </div>
           {viewSwitch}
         </div>
@@ -340,11 +340,11 @@ export default function ProjectOverview({
                         ? <ProviderDriverGlyph kind={driverKind} size={15} />
                         : <ProviderGlyph kind="custom" compact />}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
+                    <span className="min-w-0 flex-1 truncate text-[16px] font-normal leading-[28px]" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
                     {running ? (
                       <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={STATUS_COLORS.running}>Running</span>
                     ) : null}
-                    {relative ? <span className="w-16 shrink-0 text-right text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relative}</span> : null}
+                    {relative ? <span className="w-16 shrink-0 text-right text-[12px] font-medium leading-[16px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relative}</span> : null}
                   </button>
                 );
               }
@@ -370,8 +370,8 @@ export default function ProjectOverview({
                     <span aria-label="Hermes provider" title="Hermes" className="shrink-0">
                       <ProviderDriverGlyph kind="hermes" size={15} />
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{conversation.title}</span>
-                    {relative ? <span className="w-16 shrink-0 text-right text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relative}</span> : null}
+                    <span className="min-w-0 flex-1 truncate text-[16px] font-normal leading-[28px]" style={{ color: "var(--text-primary)" }}>{conversation.title}</span>
+                    {relative ? <span className="w-16 shrink-0 text-right text-[12px] font-medium leading-[16px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relative}</span> : null}
                   </button>
                 );
               }
@@ -395,11 +395,11 @@ export default function ProjectOverview({
                   <span aria-label={`${providerLabel} provider`} title={providerLabel} className="shrink-0">
                     <ProviderGlyph kind={provider?.kind ?? "custom"} compact />
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{thread.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-[16px] font-normal leading-[28px]" style={{ color: "var(--text-primary)" }}>{thread.title}</span>
                   {status ? (
                     <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={STATUS_COLORS[status.tone]}>{status.label}</span>
                   ) : null}
-                  {relative ? <span className="w-16 shrink-0 text-right text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relative}</span> : null}
+                  {relative ? <span className="w-16 shrink-0 text-right text-[12px] font-medium leading-[16px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relative}</span> : null}
                 </button>
               );
             })}

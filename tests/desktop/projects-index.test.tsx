@@ -54,6 +54,39 @@ describe("ProjectsIndex", () => {
     ]);
   });
 
+  it("matches the Figma typography for the Projects heading and cards", () => {
+    render(<ProjectsIndex />);
+
+    const heading = screen.getByRole("heading", { name: "Projects" });
+    expect(heading.className).toContain("text-[24px]");
+    expect(heading.className).toContain("font-semibold");
+    expect(heading.className).toContain("leading-[32px]");
+    expect(heading.className).toContain("tracking-[-0.6px]");
+    expect(heading.style.fontFamily).not.toBe("var(--font-editorial)");
+
+    const card = screen.getByRole("button", { name: "Open project Portfolio" });
+    const title = within(card).getByText("Portfolio");
+    const description = within(card).getByText("Build my portfolio and case study");
+    const activity = card.querySelector<HTMLElement>('[data-slot="project-card-activity"]');
+    expect(title.className).toContain("text-[20px]");
+    expect(title.className).toContain("font-semibold");
+    expect(title.className).toContain("leading-[28px]");
+    expect(title.className).toContain("tracking-[-0.5px]");
+    expect(description.className).toContain("text-[16px]");
+    expect(description.className).toContain("leading-[28px]");
+    expect(activity?.className).toContain("text-[14px]");
+    expect(activity?.className).toContain("leading-[20px]");
+
+    const newProject = screen.getByRole("button", { name: "New" });
+    expect(newProject.className).toContain("text-[14px]");
+    expect(newProject.className).toContain("font-medium");
+    expect(newProject.className).toContain("leading-[20px]");
+    fireEvent.click(screen.getByRole("button", { name: "Search projects" }));
+    const search = screen.getByRole("textbox", { name: "Search projects" });
+    expect(search.className).toContain("text-[14px]");
+    expect(search.className).toContain("leading-[20px]");
+  });
+
   it("reopens a project on its sessions overview instead of the previously selected thread", () => {
     useProjectView.setState({
       entries: {

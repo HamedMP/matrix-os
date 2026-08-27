@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { useState } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
@@ -127,6 +127,68 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
+  });
+
+  it("matches the Figma typography for the Global Chat rail and starter actions", async () => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId={null}
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { name: "Chats" });
+    expect(heading.className).toContain("text-[16px]");
+    expect(heading.className).toContain("font-medium");
+    expect(heading.className).toContain("leading-[16px]");
+    expect(heading.className).toContain("tracking-[-0.4px]");
+
+    const chat = await screen.findByRole("button", { name: snapshot.chat.title });
+    const chatTitle = within(chat).getByText(snapshot.chat.title);
+    const activity = chat.parentElement?.querySelector("time");
+    expect(chatTitle.className).toContain("text-[14px]");
+    expect(chatTitle.className).toContain("leading-[20px]");
+    expect(activity?.className).toContain("text-[12px]");
+    expect(activity?.className).toContain("leading-[16px]");
+    expect(activity?.className).toContain("tracking-[0.12px]");
+
+    const starter = screen.getByRole("button", { name: "Explore and understand code" });
+    const starterLabel = within(starter).getByText("Explore and understand code");
+    expect(starterLabel.className).toContain("text-[13px]");
+    expect(starterLabel.className).toContain("font-medium");
+    expect(starterLabel.className).toContain("leading-[18px]");
+  });
+
+  it("uses the same explicit typography contract in the Project Chat rail", async () => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { name: "Matrix OS" });
+    expect(heading.className).toContain("text-[14px]");
+    expect(heading.className).toContain("font-semibold");
+    expect(heading.className).toContain("leading-[20px]");
+
+    const chat = await screen.findByRole("button", { name: snapshot.chat.title });
+    const chatTitle = within(chat).getByText(snapshot.chat.title);
+    const preview = within(chat).getByText(snapshot.chat.lastMessagePreview!);
+    expect(chatTitle.className).toContain("text-[14px]");
+    expect(chatTitle.className).toContain("leading-[20px]");
+    expect(preview.className).toContain("text-[12px]");
+    expect(preview.className).toContain("leading-[16px]");
+
+    const hero = screen.getByRole("heading", { name: "What should we build today?" });
+    expect(hero.className).toContain("text-[24px]");
+    expect(hero.className).toContain("font-medium");
+    expect(hero.className).toContain("leading-[32px]");
   });
 
   it("uses a single-column New Chat layout at the OS View minimum width", async () => {

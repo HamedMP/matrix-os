@@ -30,7 +30,7 @@ export function ChatStarterCards({
           <span className="flex size-8 items-center justify-center rounded-lg" style={{ background: "var(--bg-sunken)", color: tone }}>
             <Icon size={17} aria-hidden />
           </span>
-          <span className="max-w-32 text-sm font-medium leading-snug" style={{ color: "var(--text-primary)" }}>
+          <span className="max-w-32 text-[13px] font-medium leading-[18px]" style={{ color: "var(--text-primary)" }}>
             {label}
           </span>
         </button>

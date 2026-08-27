@@ -432,10 +432,10 @@ export function CanonicalChatWorkspace({
       >
         <div className="flex items-center justify-between gap-2 px-1 pb-3">
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            <h2 className="truncate text-[14px] font-semibold leading-[20px]" style={{ color: "var(--text-primary)" }}>
               {projectLabel ?? "Project chats"}
             </h2>
-            <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            <p className="text-[12px] leading-[16px] tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
               Project
             </p>
           </div>
@@ -460,7 +460,7 @@ export function CanonicalChatWorkspace({
             value={query}
             aria-label="Search chats"
             placeholder="Search chats"
-            className="h-9 w-full rounded-lg border bg-transparent pl-8 pr-2 text-sm outline-none focus:border-[var(--accent)]"
+            className="h-9 w-full rounded-lg border bg-transparent pl-8 pr-2 text-[14px] leading-[20px] outline-none focus:border-[var(--accent)]"
             style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
             onChange={(event) => {
               const value = event.currentTarget.value;
@@ -479,10 +479,10 @@ export function CanonicalChatWorkspace({
               className="w-full rounded-lg px-2.5 py-2 text-left hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)]"
               onClick={() => selectChat(record.chat.id)}
             >
-              <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+              <span className="block truncate text-[14px] font-medium leading-[20px]" style={{ color: "var(--text-primary)" }}>
                 {record.chat.title}
               </span>
-              <span className="block truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+              <span className="block truncate text-[12px] leading-[16px] tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
                 {record.chat.lastMessagePreview ?? "No messages yet"}
               </span>
             </button>
@@ -539,7 +539,7 @@ export function CanonicalChatWorkspace({
           <div className={`mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center ${workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8"}`}>
             <div className="flex flex-col items-center gap-3 text-center">
               <MessageSquare size={28} aria-hidden style={{ color: "var(--text-tertiary)" }} />
-              <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.02em]" style={{ color: "var(--text-primary)" }}>
+              <h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>
                 What should we build today?
               </h1>
             </div>

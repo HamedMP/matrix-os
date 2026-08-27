@@ -650,7 +650,12 @@ describe("SharedChatComposer", () => {
     const placeholder = container.querySelector<HTMLElement>('[data-slot="prompt-input-placeholder"]');
 
     expect(prompt.className).toContain("pt-1");
+    expect(prompt.className).toContain("text-[14px]");
+    expect(prompt.className).toContain("leading-[20px]");
     expect(placeholder?.className).toContain("top-1");
+    expect(placeholder?.className).toContain("text-[14px]");
+    expect(placeholder?.className).toContain("font-medium");
+    expect(placeholder?.className).toContain("leading-[20px]");
     expect(placeholder?.className).not.toContain("top-4");
   });
 
