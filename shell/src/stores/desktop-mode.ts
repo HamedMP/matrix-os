@@ -42,7 +42,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     showBottomPanel: false,
     showLauncher: true,
     chatPosition: "sidebar",
-    hidden: true,
+    hidden: false,
   },
   ambient: {
     id: "ambient",
@@ -67,10 +67,21 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     showLauncher: true,
     chatPosition: "sidebar",
     terminalProminent: true,
+    hidden: true,
   },
 };
 
-const DEFAULT_MODE: DesktopMode = "dev";
+const DEFAULT_MODE: DesktopMode = "desktop";
+
+/**
+ * The native Desktop renderer is the canonical OS view. Keep the legacy mode
+ * identifiers readable so old snapshots do not break, but migrate every
+ * persisted renderer selection to Desktop until those renderers share the
+ * native shell contract.
+ */
+export function normalizeDesktopMode(_value: unknown): DesktopMode {
+  return DEFAULT_MODE;
+}
 
 interface DesktopModeStore {
   mode: DesktopMode;
@@ -91,17 +102,16 @@ export const useDesktopMode = create<DesktopModeStore>()(
       setMode: (mode: DesktopMode) => set({ previousMode: get().mode, mode }),
       getModeConfig: (mode: DesktopMode) => MODE_CONFIGS[mode],
       allModes: () => Object.values(MODE_CONFIGS),
-      visibleModes: () => [MODE_CONFIGS.dev, MODE_CONFIGS.canvas],
+      visibleModes: () => [MODE_CONFIGS.desktop],
     }),
     {
       name: "matrix-os-desktop-mode",
       onRehydrateStorage: () => (state) => {
-        // Coerce any persisted hidden mode (desktop/ambient) or the
-        // now-removed "vocal" mode into canvas. Aoede is an overlay now
-        // (see `stores/vocal.ts`), not a mode.
-        const config = state ? MODE_CONFIGS[state.mode] : undefined;
-        if (state && (!config || config.hidden)) {
-          state.mode = DEFAULT_MODE;
+        // The web OS now follows the native Desktop renderer. Legacy
+        // Developer/Canvas/Ambient values remain parseable for old layouts,
+        // then migrate to the canonical Desktop surface during hydration.
+        if (state) {
+          state.mode = normalizeDesktopMode(state.mode);
           state.previousMode = null;
         }
         useDesktopMode.setState({ _hydrated: true });

@@ -4,6 +4,7 @@ import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { cn } from "@/lib/utils";
+import { Maximize2, Minus, X } from "@/lib/hugeicons";
 import {
   Card,
   CardContent,
@@ -17,10 +18,33 @@ import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
-import { TrafficLights } from "./DesktopDockControls";
-import { useThemeStyle } from "../window/useThemeStyle";
-import { resolveTitleBarVariant, usesCaptionButtons, designTitleBarContainerStyle } from "../window/title-bar-variant";
-import { DesignCaptionButtons } from "../window/DesignCaptionButtons";
+
+function WindowControls({
+  title,
+  onClose,
+  onMinimize,
+  onMaximize,
+}: {
+  title: string;
+  onClose: () => void;
+  onMinimize: () => void;
+  onMaximize: () => void;
+}) {
+  const controlClass = "flex size-4 items-center justify-center rounded-[4.8px] border border-border bg-card text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary";
+  return (
+    <div className="flex items-center gap-0.5">
+      <button type="button" aria-label={`Close ${title}`} className={controlClass} onClick={onClose}>
+        <X className="size-[11px]" strokeWidth={1.7} />
+      </button>
+      <button type="button" aria-label={`Minimize ${title}`} className={controlClass} onClick={onMinimize}>
+        <Minus className="size-[11px]" strokeWidth={1.7} />
+      </button>
+      <button type="button" aria-label={`Maximize ${title}`} className={controlClass} onClick={onMaximize}>
+        <Maximize2 className="size-[11px]" strokeWidth={1.7} />
+      </button>
+    </div>
+  );
+}
 
 interface DesktopWindowProps {
   win: AppWindow;
@@ -64,9 +88,6 @@ export function DesktopWindow({
   const isFullscreen = win.id === fullscreenWindowId;
   const isMinimizing = minimizingIds.has(win.id);
   const isHidden = win.minimized && !isMinimizing && !isFullscreen;
-  const terminalOwnsChrome = win.path.startsWith("__terminal__");
-  const titleBarVariant = resolveTitleBarVariant(useThemeStyle());
-  const captionButtons = usesCaptionButtons(titleBarVariant);
 
   let dockTargetX = 0;
   let dockTargetY = 0;
@@ -115,23 +136,16 @@ export function DesktopWindow({
     <Card
       data-window-id={win.id}
       className={isFullscreen
-        ? "fixed inset-0 gap-0 rounded-none p-0 overflow-hidden border-0 bg-background"
+        ? "pointer-events-auto fixed inset-0 gap-0 rounded-none border-0 bg-background p-0 overflow-hidden"
         : cn(
-            "app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl",
-            terminalOwnsChrome && "border-0",
+            "app-window pointer-events-auto absolute gap-0 overflow-hidden rounded-none border border-border bg-card p-0 shadow-2xl md:rounded-xl",
           )
       }
       style={windowStyle}
       onMouseDown={() => !isFullscreen && onFocusWindow(win.id)}
     >
       <CardHeader
-        className={cn(
-          "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
-          terminalOwnsChrome ? "border-b-0" : "border-b border-border",
-        )}
-        style={terminalOwnsChrome && !captionButtons
-          ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" }
-          : designTitleBarContainerStyle(titleBarVariant)}
+        className="flex h-[38px] flex-row items-center gap-0 space-y-0 border-b border-border bg-card/85 px-4 py-0 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing"
         onPointerDown={(e) => onDragStart(win.id, e)}
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
@@ -140,39 +154,16 @@ export function DesktopWindow({
           onToggleFullscreen(win.id);
         }}
       >
-        {captionButtons ? (
-          <>
-            <CardTitle
-              className={cn(
-                "text-xs truncate flex-1",
-                titleBarVariant === "winxp" ? "font-bold text-white" : "font-medium text-foreground/70",
-              )}
-              style={titleBarVariant === "winxp"
-                ? { fontFamily: 'Tahoma, "Segoe UI", sans-serif', textShadow: "0 1px 2px rgba(0, 0, 0, 0.5)" }
-                : undefined}
-            >
-              {win.title}
-            </CardTitle>
-            <DesignCaptionButtons
-              variant={titleBarVariant}
-              onClose={() => onCloseWindow(win.id)}
-              onMinimize={() => onAnimateMinimize(win.id)}
-              onMaximize={() => onToggleFullscreen(win.id)}
-            />
-          </>
-        ) : (
-          <>
-            <TrafficLights
-              onClose={() => onCloseWindow(win.id)}
-              onMinimize={() => onAnimateMinimize(win.id)}
-              onFullscreen={() => onToggleFullscreen(win.id)}
-            />
-            <CardTitle className="text-xs font-medium truncate flex-1 text-center">
-              {win.title}
-            </CardTitle>
-            <div className="w-[78px]" aria-hidden />
-          </>
-        )}
+        <WindowControls
+          title={win.title}
+          onClose={() => onCloseWindow(win.id)}
+          onMinimize={() => onAnimateMinimize(win.id)}
+          onMaximize={() => onToggleFullscreen(win.id)}
+        />
+        <CardTitle className="flex-1 truncate text-center text-xs font-medium text-foreground">
+          {win.title}
+        </CardTitle>
+        <div className="w-[52px]" aria-hidden />
       </CardHeader>
 
       <CardContent className="relative flex-1 p-0 min-h-0">

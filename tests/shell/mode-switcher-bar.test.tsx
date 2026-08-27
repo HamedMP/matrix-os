@@ -9,23 +9,24 @@ describe("ModeSwitcherBar", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("renders both visible modes and marks the active one", async () => {
+  it("renders only the canonical Desktop mode", async () => {
     const { useDesktopMode } = await import("../../shell/src/stores/desktop-mode.js");
     const { ModeSwitcherBar } = await import("../../shell/src/components/ModeSwitcherBar.js");
-    useDesktopMode.setState({ mode: "dev" });
+    useDesktopMode.setState({ mode: "desktop" });
     render(<ModeSwitcherBar />);
-    expect(screen.getByRole("button", { name: /developer/i }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: /canvas/i }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByText("Developer").className).toContain("hidden");
-    expect(screen.getByText("Developer").className).toContain("lg:inline");
+    expect(screen.getByRole("button", { name: /desktop/i }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("button", { name: /developer/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /canvas/i })).toBeNull();
+    expect(screen.getByText("Desktop").className).toContain("hidden");
+    expect(screen.getByText("Desktop").className).toContain("lg:inline");
   });
 
-  it("switches mode on click", async () => {
+  it("returns an internal renderer selection to Desktop on click", async () => {
     const { useDesktopMode } = await import("../../shell/src/stores/desktop-mode.js");
     const { ModeSwitcherBar } = await import("../../shell/src/components/ModeSwitcherBar.js");
-    useDesktopMode.setState({ mode: "dev" });
+    useDesktopMode.setState({ mode: "canvas" });
     render(<ModeSwitcherBar />);
-    fireEvent.click(screen.getByRole("button", { name: /canvas/i }));
-    expect(useDesktopMode.getState().mode).toBe("canvas");
+    fireEvent.click(screen.getByRole("button", { name: /desktop/i }));
+    expect(useDesktopMode.getState().mode).toBe("desktop");
   });
 });

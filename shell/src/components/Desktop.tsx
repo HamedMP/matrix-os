@@ -30,7 +30,6 @@ import { SettingsIcon, MessageSquareIcon, LayoutGridIcon } from "@/lib/hugeicons
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
-import { MenuBar } from "./MenuBar";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
 import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
@@ -82,6 +81,7 @@ import {
 } from "./desktop/desktop-app-routing";
 import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
 import { DesktopWindow } from "./desktop/DesktopWindow";
+import { WebDesktopSurface } from "./desktop/WebDesktopSurface";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -1175,7 +1175,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         <ConnectionIndicator />
         <BillingTrialNotification />
       </ShellNotificationStack>
-      {isWindowsDesign ? (
+      {desktopMode !== "desktop" && (isWindowsDesign ? (
         <WindowsTaskbar
           themeStyle={themeStyle}
           apps={apps}
@@ -1188,15 +1188,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         >
           {canvasToolbarChild}
         </WindowsTaskbar>
-      ) : (
-        <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize} onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}>
-          {canvasToolbarChild}
-        </MenuBar>
-      )}
+      ) : canvasToolbarChild)}
       <OsSessionHost />
-      <div className={isWindowsDesign ? "relative flex-1 flex flex-col md:flex-row" : "relative flex-1 flex flex-col md:flex-row md:pt-[38px]"}>
+      <div className="relative flex-1 flex flex-col md:flex-row">
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
-        {modeConfig.showDock && !isWindowsDesign && <div
+        {modeConfig.showDock && desktopMode !== "desktop" && !isWindowsDesign && <div
           className={[
             "hidden md:block fixed z-[55]",
             dock.position === "left" && "left-0 top-0 h-full",
@@ -1530,7 +1526,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         </div>}
 
         {/* Mobile dock (bottom tab bar) */}
-        {modeConfig.showDock && (
+        {modeConfig.showDock && desktopMode !== "desktop" && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             {!HERMES_CHAT_HIDDEN && (
             <button
@@ -1608,12 +1604,32 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
         <div className="relative flex-1 min-h-0 overflow-hidden">
           <DotGrid />
+          {desktopMode === "desktop" ? (
+            <WebDesktopSurface
+              apps={apps}
+              windows={windows}
+              launcherOpen={taskBoardOpen}
+              onOpenApp={openAppOrFocus}
+              onOpenLauncher={() => {
+                setTaskBoardOpen((open) => !open);
+                setSettingsOpen(false);
+                setChatOpen(false);
+              }}
+              onOpenSettings={() => {
+                setSettingsOpen(true);
+                setTaskBoardOpen(false);
+                setChatOpen(false);
+              }}
+              onActivateWindow={(id) => wmRestoreAndFocusWindow(id)}
+            />
+          ) : null}
           {/* XP desktop icons: above the wallpaper, below app windows. The
               component self-gates to the winxp design and renders null
               otherwise. */}
-          <XpDesktopIcons onOpenApp={openAppOrFocus} />
+          {desktopMode !== "desktop" ? <XpDesktopIcons onOpenApp={openAppOrFocus} /> : null}
           <MissionControl
             open={taskBoardOpen}
+            nativePresentation={desktopMode === "desktop"}
             apps={apps}
             openWindows={windows.reduce<Set<string>>((acc, w) => {
               if (!w.minimized) acc.add(w.path);
@@ -1697,7 +1713,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               key={win.id}
               win={win}
               chat={chat}
-              dockPosition={dock.position}
+              dockPosition={desktopMode === "desktop" ? "bottom" : dock.position}
               fullscreenWindowId={fullscreenWindowId}
               interacting={interacting}
               minimizingIds={minimizingIds}
