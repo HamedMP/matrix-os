@@ -91,7 +91,7 @@ The Docker image has Clerk baked in at build time, so you don't need Clerk keys 
 ## Source/HMR Development
 
 Use this path when changing the gateway, proxy, or shell and you want host-side
-watchers and HMR. It does **not** start platform, PostgreSQL, MinIO, or Conduit.
+watchers and HMR. It does **not** start platform, PostgreSQL, or MinIO.
 
 ```bash
 cp .env.example .env
@@ -196,7 +196,7 @@ When your PR changes `shell/` files, the Screenshots CI runs Playwright and comm
 
 ```bash
 bun run docker          # Dev (gateway + shell)
-bun run docker:full     # + proxy, platform, conduit
+bun run docker:full     # + proxy and platform
 bun run docker:full:smoke # build, health-check the full stack, then stop it
 bun run docker:stop     # Stop containers (preserves data)
 bun run docker:logs     # Tail logs

@@ -447,14 +447,14 @@ export function createApp(deps: {
   });
 
   // Matrix well-known endpoints (unauthenticated, required for federation)
-  const CONDUIT_SERVER = process.env.CONDUIT_SERVER ?? 'matrix-os.com:6167';
-  const CONDUIT_BASE_URL = process.env.CONDUIT_BASE_URL ?? 'https://matrix-os.com';
+  const matrixServer = process.env.MATRIX_SERVER ?? 'matrix-os.com';
+  const matrixHomeserverUrl = process.env.MATRIX_HOMESERVER_URL ?? 'https://matrix-os.com';
 
   app.get('/.well-known/matrix/server', (c) =>
-    c.json({ 'm.server': CONDUIT_SERVER }),
+    c.json({ 'm.server': matrixServer }),
   );
   app.get('/.well-known/matrix/client', (c) =>
-    c.json({ 'm.homeserver': { base_url: CONDUIT_BASE_URL } }),
+    c.json({ 'm.homeserver': { base_url: matrixHomeserverUrl } }),
   );
 
   app.route('/', platformMetricsRoutes.routes);

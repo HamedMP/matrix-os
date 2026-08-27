@@ -58,7 +58,6 @@ export const DOCKER_FULL_STACK_SERVICES = [
   "platform",
   "postgres",
   "minio",
-  "conduit",
 ];
 
 export const dockerFullStackCommands = {
@@ -73,7 +72,6 @@ const httpChecks = [
   ["proxy", "http://127.0.0.1:8080/health"],
   ["platform", "http://127.0.0.1:9000/health"],
   ["minio", "http://127.0.0.1:9100/minio/health/live"],
-  ["conduit", "http://127.0.0.1:6167/_matrix/client/versions"],
 ];
 
 function run(command, args) {

@@ -28,7 +28,7 @@ All Docker commands have `bun run` shortcuts in `package.json`:
 
 ```bash
 bun run docker          # Dev only (gateway + shell with HMR)
-bun run docker:full     # + proxy, platform, conduit
+bun run docker:full     # + proxy and platform
 bun run docker:full:smoke # full stack, bounded health checks, cleanup
 bun run docker:all      # + observability (Grafana, Prometheus, Loki)
 bun run docker:multi    # + alice & bob multi-user
@@ -55,7 +55,6 @@ unless it explicitly declares `env_file`. Shell-only values may also live in
 | MinIO (console) | http://localhost:9101 | 9101 | default |
 | Proxy | http://localhost:8080 | 8080 | full |
 | Platform | http://localhost:9000 | 9000 | full |
-| Conduit (Matrix) | http://localhost:6167 | 6167 | full |
 | Prometheus | http://localhost:9090 | 9090 | obs |
 | Grafana | http://localhost:3200 | 3200 | obs |
 | Loki | http://localhost:3100 | 3100 | obs |
@@ -120,12 +119,11 @@ curl --fail http://localhost:4000/health
 curl --fail http://localhost:8080/health       # full profile
 curl --fail http://localhost:9000/health       # full profile
 curl --fail http://localhost:9100/minio/health/live
-curl --fail http://localhost:6167/_matrix/client/versions # full profile
 ```
 
 For a repeatable full-stack check, run `bun run docker:full:smoke`. It builds
 and starts the `full` profile, waits at most three minutes for shell, gateway,
-proxy, platform, MinIO, and Conduit, verifies the platform PostgreSQL database
+proxy, platform, and MinIO, verifies the platform PostgreSQL database
 with `pg_isready`, and always runs `docker compose down --remove-orphans` on
 success or failure. It preserves named volumes; do not run it over a local stack
 you intend to keep running.
@@ -139,7 +137,6 @@ Volumes persist data across container restarts:
 | `dev-node-modules` | pnpm dependencies (cached, ~30s first install) |
 | `dev-home` | Matrix OS home directory (`~/matrixos/`) |
 | `pgdata` | PostgreSQL data (app data layer) |
-| `conduit-data` | Matrix homeserver database |
 | `prometheus-data` | Metrics history |
 | `grafana-data` | Dashboard configs |
 

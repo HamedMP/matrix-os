@@ -1,4 +1,4 @@
-export type HomeserverCandidate = "conduit" | "synapse";
+export type HomeserverCandidate = "synapse";
 
 export interface HomeserverSpikeConfig {
   candidate: HomeserverCandidate;

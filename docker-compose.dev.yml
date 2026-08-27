@@ -247,23 +247,6 @@ services:
       timeout: 3s
     restart: unless-stopped
 
-  conduit:
-    profiles: ["full"]
-    image: matrixconduit/matrix-conduit:latest
-    environment:
-      - CONDUIT_CONFIG=/etc/conduit.toml
-    ports:
-      - "6167:6167"
-    volumes:
-      - ./distro/conduit.toml:/etc/conduit.toml:ro
-      - conduit-data:/var/lib/matrix-conduit
-    healthcheck:
-      # Conduit's distroless image has no /bin/sh, so CMD-SHELL probes always
-      # fail even while the Matrix HTTP endpoint is healthy. The bounded full
-      # stack smoke verifies /_matrix/client/versions from the host instead.
-      disable: true
-    restart: unless-stopped
-
   # --- Observability profile ---
   prometheus:
     profiles: ["obs"]
@@ -427,7 +410,6 @@ volumes:
   proxy-data:
   platform-data:
   user-data:
-  conduit-data:
   prometheus-data:
   grafana-data:
   loki-data:

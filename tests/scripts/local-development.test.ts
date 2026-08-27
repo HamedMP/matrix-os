@@ -69,7 +69,7 @@ describe("local development contracts", () => {
     expect(environment("platform").some((value) => value.startsWith("PLATFORM_DB_PATH="))).toBe(false);
     expect(compose.services.platform.depends_on).toHaveProperty("postgres");
     expect(compose.services.dev.healthcheck?.start_period).toBe("5m");
-    expect(compose.services.conduit.healthcheck).toEqual({ disable: true });
+    expect(compose.services.conduit).toBeUndefined();
     const pkg = readJson("package.json") as { scripts: Record<string, string> };
     expect(pkg.scripts["docker:prepare"]).toBe("docker volume create matrixos-ai-auth");
     for (const script of ["docker", "docker:full", "docker:all", "docker:multi"]) {
@@ -86,7 +86,6 @@ describe("local development contracts", () => {
       "platform",
       "postgres",
       "minio",
-      "conduit",
     ]);
     expect(dockerFullStackCommands.start).toContain("up");
     expect(dockerFullStackCommands.prepare).toEqual([

@@ -159,7 +159,7 @@ bun run dev:proxy      # Shared API proxy
 bun run dev:platform   # Multi-tenant platform
 ```
 
-The source command does not start PostgreSQL, MinIO, Conduit, or platform.
+The source command does not start PostgreSQL, MinIO, or platform.
 Use `bun run docker:full` for that complete topology, or
 `bun run docker:full:smoke` for a bounded full-stack health check with cleanup.
 See [Developer Onboarding](docs/dev/onboarding.md) for environment files,

@@ -309,20 +309,20 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   }
 
   let matrixProvisioner: MatrixProvisioner | undefined;
-  const conduitUrl = process.env.MATRIX_CONDUIT_URL;
-  const conduitToken = process.env.CONDUIT_REGISTRATION_TOKEN;
-  if (conduitUrl && !conduitToken) {
-    console.error('[platform] CONDUIT_REGISTRATION_TOKEN is required when MATRIX_CONDUIT_URL is set');
+  const homeserverUrl = process.env.MATRIX_HOMESERVER_URL;
+  const registrationToken = process.env.MATRIX_REGISTRATION_TOKEN;
+  if (homeserverUrl && !registrationToken) {
+    console.error('[platform] MATRIX_REGISTRATION_TOKEN is required when MATRIX_HOMESERVER_URL is set');
     process.exit(1);
   }
-  if (conduitUrl) {
+  if (homeserverUrl) {
     const { createMatrixProvisioner } = await import('./matrix-provisioning.js');
     matrixProvisioner = createMatrixProvisioner({
       db,
-      homeserverUrl: conduitUrl,
-      registrationToken: conduitToken!,
+      homeserverUrl,
+      registrationToken: registrationToken!,
     });
-    console.log(`[matrix] Provisioner enabled (${conduitUrl})`);
+    console.log(`[matrix] Provisioner enabled (${homeserverUrl})`);
   }
 
   let integrationRoutes: Hono | undefined;
