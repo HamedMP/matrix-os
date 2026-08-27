@@ -1,26 +1,32 @@
 import { create } from "zustand";
 import { invoke } from "../lib/operator";
-
-export type TerminalAppearanceMode = "dark" | "light";
+import {
+  DEFAULT_DESKTOP_TERMINAL_APP_THEME_ID,
+  isDesktopTerminalAppThemeId,
+  type DesktopTerminalAppThemeId,
+} from "../features/terminal/terminal-app-theme";
 
 interface TerminalAppearanceState {
-  mode: TerminalAppearanceMode;
+  appThemeId: DesktopTerminalAppThemeId;
   hydrated: boolean;
   selectionRevision: number;
   load: () => Promise<void>;
-  setMode: (mode: TerminalAppearanceMode) => void;
+  setAppThemeId: (appThemeId: DesktopTerminalAppThemeId) => void;
 }
 
-const DEFAULT_TERMINAL_APPEARANCE: TerminalAppearanceMode = "dark";
-
-function isTerminalAppearanceMode(value: unknown): value is TerminalAppearanceMode {
-  return value === "dark" || value === "light";
+function storedThemeId(value: unknown): DesktopTerminalAppThemeId | null {
+  if (!value || typeof value !== "object") return null;
+  const stored = value as { appThemeId?: unknown; mode?: unknown };
+  if (isDesktopTerminalAppThemeId(stored.appThemeId)) return stored.appThemeId;
+  if (stored.mode === "dark") return "matrix-dark";
+  if (stored.mode === "light") return "light";
+  return null;
 }
 
-function persist(mode: TerminalAppearanceMode): void {
+function persist(appThemeId: DesktopTerminalAppThemeId): void {
   void invoke("state:set", {
     key: "terminalAppearance",
-    value: { mode },
+    value: { appThemeId },
   }).catch((error: unknown) => {
     console.warn(
       "[terminal-appearance] persist failed:",
@@ -30,20 +36,18 @@ function persist(mode: TerminalAppearanceMode): void {
 }
 
 export const useTerminalAppearance = create<TerminalAppearanceState>()((set) => ({
-  mode: DEFAULT_TERMINAL_APPEARANCE,
+  appThemeId: DEFAULT_DESKTOP_TERMINAL_APP_THEME_ID,
   hydrated: false,
   selectionRevision: 0,
 
   load: async () => {
     try {
       const result = await invoke("state:get", { key: "terminalAppearance" });
-      const value = result.value as { mode?: unknown } | null;
+      const appThemeId = storedThemeId(result.value);
       set((state) => ({
-        mode: state.selectionRevision > 0
-          ? state.mode
-          : isTerminalAppearanceMode(value?.mode)
-            ? value.mode
-            : DEFAULT_TERMINAL_APPEARANCE,
+        appThemeId: state.selectionRevision > 0
+          ? state.appThemeId
+          : appThemeId ?? DEFAULT_DESKTOP_TERMINAL_APP_THEME_ID,
         hydrated: true,
       }));
     } catch (error: unknown) {
@@ -52,14 +56,16 @@ export const useTerminalAppearance = create<TerminalAppearanceState>()((set) => 
         error instanceof Error ? error.message : String(error),
       );
       set((state) => ({
-        mode: state.selectionRevision > 0 ? state.mode : DEFAULT_TERMINAL_APPEARANCE,
+        appThemeId: state.selectionRevision > 0
+          ? state.appThemeId
+          : DEFAULT_DESKTOP_TERMINAL_APP_THEME_ID,
         hydrated: true,
       }));
     }
   },
 
-  setMode: (mode) => {
-    set((state) => ({ mode, selectionRevision: state.selectionRevision + 1 }));
-    persist(mode);
+  setAppThemeId: (appThemeId) => {
+    set((state) => ({ appThemeId, selectionRevision: state.selectionRevision + 1 }));
+    persist(appThemeId);
   },
 }));

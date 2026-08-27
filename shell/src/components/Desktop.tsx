@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -33,10 +33,7 @@ import { AmbientClock } from "./AmbientClock";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
 import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
-import { useIsClient } from "@/hooks/useIsClient";
-import { OsBootScreen } from "./os-session/OsBootScreen";
 import { OsSessionHost } from "./os-session/OsSessionHost";
-import { isBootDesign, readPersistedThemeStyle } from "./os-session/os-session-utils";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
@@ -53,7 +50,7 @@ import { iconUrlForSlug } from "@/lib/app-launch";
 import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
-import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
+import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
   enqueueTerminalLaunch,
   TERMINAL_SETUP_WINDOW_PATH,
@@ -90,64 +87,6 @@ const GATEWAY_URL = getGatewayUrl();
 // and destabilize every memo/callback that depends on `pinnedApps`. Treated as
 // read-only by convention; consumers always build new arrays rather than mutate.
 const EMPTY_PINNED_APPS: string[] = [];
-const MATRIX_SHIMMER =
-  "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
-
-const MATRIX_FIRST_RUN_LOGO_STYLE: CSSProperties = {
-  WebkitMaskImage: "url('/matrix-logo.svg')",
-  WebkitMaskRepeat: "no-repeat",
-  WebkitMaskSize: "contain",
-  WebkitMaskPosition: "center",
-  maskImage: "url('/matrix-logo.svg')",
-  maskRepeat: "no-repeat",
-  maskSize: "contain",
-  maskPosition: "center",
-  backgroundImage: MATRIX_SHIMMER,
-  backgroundSize: "300% 100%",
-  animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
-};
-
-function MatrixFirstRunLoading() {
-  return (
-    <div
-      data-onboarding-brand={MATRIX_ONBOARDING_BRAND_VERSION}
-      className="fixed inset-0 z-[70] grid place-items-center overflow-hidden bg-[#fffdf6] px-6 text-[#2f392c]"
-    >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(196,162,101,0.14),transparent_31%),linear-gradient(180deg,#fffdf6_0%,#f5efe2_100%)]" />
-      <main className="relative grid w-full max-w-[620px] justify-items-center gap-7 text-center">
-        <div
-          aria-label="Matrix OS logo"
-          className="h-[132px] w-[124px] sm:h-[156px] sm:w-[148px]"
-          style={MATRIX_FIRST_RUN_LOGO_STYLE}
-        />
-        <div className="grid max-w-[520px] gap-3">
-          <h1
-            className="m-0 text-[2.1rem] font-medium uppercase leading-[0.96] sm:text-[3.4rem] lg:text-[4.25rem]"
-            style={{
-              fontFamily: "var(--font-orbitron), var(--font-sans), system-ui, sans-serif",
-              backgroundClip: "text",
-              WebkitBackgroundClip: "text",
-              color: "transparent",
-              backgroundImage: MATRIX_SHIMMER,
-              backgroundSize: "300% 100%",
-              // eslint-disable-next-line react-doctor/no-long-transition-duration -- intentional ambient infinite shimmer/glow on the first-run loading brand, not UI feedback
-              animation: "onboard-shimmer 8s ease-in-out infinite, onboard-glow 8s ease-in-out infinite",
-            }}
-          >
-            Matrix OS
-          </h1>
-          <p className="m-0 text-base leading-7 text-[#2f392c]/65">
-            Checking your workspace and preparing the right Matrix surface.
-          </p>
-        </div>
-        <p className="inline-flex min-h-9 items-center justify-center rounded-full border border-[#2f392c]/10 bg-white/50 px-4 text-[13px] text-[#2f392c]/70 shadow-[0_12px_40px_rgba(47,57,44,0.08)]">
-          Loading Matrix
-        </p>
-      </main>
-    </div>
-  );
-}
-
 async function markOnboardingComplete() {
   const res = await fetch(`${getGatewayUrl()}/api/settings/onboarding-complete`, {
     method: "POST",
@@ -200,12 +139,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
   const firstRunStatusRef = useRef<DesktopFirstRunStatus>("checking");
-  // Pre-paint design from the shell snapshot cache: decides whether the
-  // initial loading surface is the OS-authentic boot screen (macos-glass /
-  // winxp / win11) or the existing Matrix loading screen (flat/neumorphic and
-  // unknown/first-run). Client-gated below to stay hydration-safe.
-  const isClient = useIsClient();
-  const [initialThemeStyle] = useState(() => readPersistedThemeStyle(cacheScope));
+  // Shell hydration always uses the shared Matrix brand surface. Theme-specific
+  // OS boot screens are reserved for actual OS-session transitions so this
+  // account → journey → Desktop handoff cannot visually swap designs.
   const launchPathConsumedRef = useRef<string | null>(null);
   const designApiPathsRef = useRef<Set<string>>(new Set());
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
@@ -1159,11 +1095,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         <ShellNotificationStack>
           <RuntimeIdentityBanner />
         </ShellNotificationStack>
-        {isClient && isBootDesign(initialThemeStyle) ? (
-          <OsBootScreen design={initialThemeStyle} />
-        ) : (
-          <MatrixFirstRunLoading />
-        )}
+        <MatrixLoadingScreen />
       </TooltipProvider>
     );
   }
@@ -1608,6 +1540,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             <WebDesktopSurface
               apps={apps}
               windows={windows}
+              fullscreenWindowId={fullscreenWindowId}
               launcherOpen={taskBoardOpen}
               onOpenApp={openAppOrFocus}
               onOpenLauncher={() => {
@@ -1621,6 +1554,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 setChatOpen(false);
               }}
               onActivateWindow={(id) => wmRestoreAndFocusWindow(id)}
+              onCloseWindow={wmCloseWindow}
+              onShowDesktop={() => {
+                wmExitFullscreen();
+                for (const windowRecord of windows) {
+                  if (!windowRecord.minimized) animateMinimize(windowRecord.id);
+                }
+              }}
+              onToggleFullscreen={wmToggleFullscreen}
             />
           ) : null}
           {/* XP desktop icons: above the wallpaper, below app windows. The
@@ -1728,6 +1669,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               onResizeMove={onResizeMove}
               onResizeStart={onResizeStart}
               onToggleFullscreen={wmToggleFullscreen}
+              topInset={desktopMode === "desktop" ? 38 : 0}
             />
           ))}
         </div>

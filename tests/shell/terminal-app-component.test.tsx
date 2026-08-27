@@ -865,8 +865,15 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("renders the redesigned desktop shell with sessions in the drawer instead of top tabs", async () => {
-    render(<TerminalApp />);
+  it("renders the native desktop session workspace instead of the legacy Matrix drawer", async () => {
+    const defaultFetch = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) } as Response);
+      }
+      return defaultFetch!(input, init);
+    });
+    render(<TerminalApp desktopParity />);
 
     await act(async () => {
       await Promise.resolve();
@@ -878,13 +885,13 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("application", { name: "Terminal" }).style.fontFamily).toBe(
       "var(--font-geist-sans), Geist, system-ui, sans-serif",
     );
-    const wordmark = screen.getByTestId("terminal-expanded-wordmark");
-    expect(wordmark.textContent).toBe("Matrix OS");
-    expect(wordmark.style.color).toBe("var(--terminal-drawer-fg)");
-    expect(wordmark.style.fontFamily).toBe("var(--font-orbitron), Orbitron, sans-serif");
-    expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
-    expect(screen.getByText("Active")).toBeTruthy();
-    expect(screen.getByText("Background")).toBeTruthy();
+    const overview = document.querySelector<HTMLElement>("[data-terminal-desktop-overview]");
+    expect(overview).toBeTruthy();
+    expect(within(overview!).getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(within(overview!).getAllByRole("button", { name: "New shell session" })).toHaveLength(2);
+    expect(within(overview!).getByText("No shell sessions yet")).toBeTruthy();
+    expect(screen.queryByTestId("terminal-expanded-wordmark")).toBeNull();
+    expect(screen.queryByPlaceholderText("Find a session...")).toBeNull();
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Files" })).toBeNull();
     expect(screen.queryByText("Zellij")).toBeNull();
@@ -1161,6 +1168,44 @@ describe("TerminalApp", () => {
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-fg")).toBe("#9BFFB5");
     expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-fg)");
     expect(screen.getByTestId("terminal-content-surface").style.background).toBe(expectedDarkTerminalBackground);
+    expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
+    expect(saveThemeSpy).not.toHaveBeenCalled();
+  });
+
+  it("applies terminal app themes to Desktop parity chrome without changing the inner shell theme", async () => {
+    terminalSettingsState.themeId = "dark";
+    const view = render(<TerminalApp desktopParity />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const terminalApp = screen.getByRole("application", { name: "Terminal" });
+    const sidebar = screen.getByTestId("terminal-sidebar-shell");
+    expect(terminalApp.style.background).toBe("var(--terminal-app-window-bg)");
+    expect(sidebar.style.background).toBe("var(--terminal-drawer-bg)");
+    expect(screen.getByTestId("terminal-desktop-session-header").style.background)
+      .toBe("var(--terminal-app-body-bg)");
+    expect(screen.getByTestId("terminal-content-surface").style.background)
+      .toBe(expectedDarkTerminalBackground);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Light Warm paper" }));
+      await Promise.resolve();
+    });
+    view.rerender(<TerminalApp desktopParity />);
+
+    expect(terminalSettingsState.appThemeId).toBe("light");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#E9E9D8");
+    expect(sidebar.style.background).toBe("var(--terminal-drawer-bg)");
+    expect(screen.getByTestId("terminal-content-surface").style.background)
+      .toBe(expectedDarkTerminalBackground);
     expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
     expect(saveThemeSpy).not.toHaveBeenCalled();
   });

@@ -56,6 +56,25 @@ interface ClosedLayout {
   height: number;
 }
 
+function normalizeRestoredLayout(path: string, layout: ClosedLayout): ClosedLayout {
+  if (useDesktopMode.getState().mode === "canvas") return layout;
+
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const minSize = getMinimumWindowSize(path);
+  const width = Math.min(
+    Math.max(layout.width, minSize.width),
+    Math.max(minSize.width, vw - 40),
+  );
+  const wasWide = layout.width >= vw * 0.8;
+
+  return {
+    ...layout,
+    width,
+    height: Math.max(layout.height, minSize.height),
+    x: wasWide ? Math.max(20, Math.round((vw - width) / 2)) : layout.x,
+  };
+}
+
 interface WindowManagerState {
   windows: AppWindow[];
   nextZ: number;
@@ -160,17 +179,16 @@ function computeDefaultWindowSize(path: string): { width: number; height: number
   };
 }
 
-// Float a fresh window centered on the viewport (dev/desktop modes). A small
-// per-window step keeps stacked opens from perfectly overlapping while staying
-// near the middle — never marching off to the right like the canvas cascade.
-function centeredWindowPosition(path: string, offsetIndex: number): { x: number; y: number } {
+// Float every fresh window at the exact center in dev/desktop modes. The dock
+// already exposes every running app, so offsetting later windows only produces
+// visibly asymmetric outer margins. Canvas keeps its separate spatial cascade.
+function centeredWindowPosition(path: string): { x: number; y: number } {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const { width, height } = computeDefaultWindowSize(path);
-  const step = (offsetIndex % 6) * 28;
   return {
-    x: Math.max(20, Math.round((vw - width) / 2) + step),
-    y: Math.max(20, Math.round((vh - height) / 2) + step),
+    x: Math.max(20, Math.round((vw - width) / 2)),
+    y: Math.max(20, Math.round((vh - height) / 2)),
   };
 }
 
@@ -181,7 +199,8 @@ function createWindowRecord(
   fallbackX: number,
   fallbackY: number,
 ): AppWindow {
-  const saved = state.closedLayouts.get(path);
+  const storedLayout = state.closedLayouts.get(path);
+  const saved = storedLayout ? normalizeRestoredLayout(path, storedLayout) : undefined;
   const minSize = getMinimumWindowSize(path);
   const { width: defaultWidth, height: defaultHeight } = computeDefaultWindowSize(path);
 
@@ -272,7 +291,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             fallbackY = rightmost.y;
           }
         } else {
-          const pos = centeredWindowPosition(path, visible.length);
+          const pos = centeredWindowPosition(path);
           fallbackX = pos.x;
           fallbackY = pos.y;
         }
@@ -319,7 +338,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
         const exclusivePos = useDesktopMode.getState().mode === "canvas"
           ? { x: dockXOffset + 20, y: 48 }
-          : centeredWindowPosition(path, 0);
+          : centeredWindowPosition(path);
         const nextWindow = createWindowRecord(
           { ...state, windows: zState.windows, nextZ: zState.nextZ },
           name,
@@ -455,26 +474,25 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         let z = state.nextZ;
 
         for (const s of saved) {
+          const restored = normalizeRestoredLayout(s.path, s);
           if (s.state === "closed") {
             newClosed.add(s.path);
-            const minSize = getMinimumWindowSize(s.path);
             newLayouts.set(s.path, {
-              x: s.x,
-              y: s.y,
-              width: Math.max(s.width, minSize.width),
-              height: Math.max(s.height, minSize.height),
+              x: restored.x,
+              y: restored.y,
+              width: restored.width,
+              height: restored.height,
             });
             continue;
           }
-          const minSize = getMinimumWindowSize(s.path);
           newWindows.push({
             id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             title: s.title,
             path: s.path,
-            x: s.x,
-            y: s.y,
-            width: Math.max(s.width, minSize.width),
-            height: Math.max(s.height, minSize.height),
+            x: restored.x,
+            y: restored.y,
+            width: restored.width,
+            height: restored.height,
             minimized: s.state === "minimized",
             zIndex: z++,
           });

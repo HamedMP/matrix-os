@@ -48,9 +48,13 @@ describe("Electron OS window chrome", () => {
     expect(screen.queryByText("Terminal")).toBeNull();
 
     const closeButton = screen.getByRole("button", { name: "Close" });
-    expect(closeButton.className).toContain("size-4");
-    expect(closeButton.className).toContain("rounded-[4.8px]");
-    expect((closeButton as HTMLElement).style.background).toBe("var(--surface-primary, #FFFEFC)");
+    expect(closeButton.className).toContain("size-5");
+    expect(closeButton.className).toContain("rounded-full");
+    expect((closeButton as HTMLElement).style.background).toBe("");
+    expect(closeButton.querySelector("[data-window-control-light]")?.className).toContain("size-3");
+    expect(closeButton.querySelector("[data-window-control-light]")?.className).toContain("bg-[#ff5f57]");
+    expect(closeButton.querySelector("[data-window-control-glyph]")?.className).toContain("opacity-0");
+    expect(closeButton.parentElement?.className).toContain("w-16");
 
     fireEvent.click(closeButton);
     expect(onClose).toHaveBeenCalledOnce();

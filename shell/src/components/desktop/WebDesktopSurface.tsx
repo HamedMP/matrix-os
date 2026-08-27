@@ -4,59 +4,80 @@ import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
+  Blocks,
+  FolderKanban,
   FolderTree,
+  Globe2,
   LayoutGrid,
   MessageCircle,
   Settings as SettingsGlyph,
   SquareTerminal,
   type LucideIcon,
 } from "@/lib/hugeicons";
+import { WebDesktopHeader } from "./WebDesktopHeader";
 
 interface WebDesktopSurfaceProps {
   apps: AppEntry[];
   windows: AppWindow[];
+  fullscreenWindowId: string | null;
   launcherOpen: boolean;
-  onOpenApp: (name: string, path: string) => void;
+  onOpenApp: (path: string, name?: string) => void;
   onOpenLauncher: () => void;
   onOpenSettings: () => void;
   onActivateWindow: (id: string) => void;
+  onCloseWindow: (id: string) => void;
+  onShowDesktop: () => void;
+  onToggleFullscreen: (id: string) => void;
   children?: ReactNode;
 }
 
 interface DesktopIconAppearance {
   color: string;
+  iconColor: string;
   icon: LucideIcon;
 }
 
 const DEFAULT_APPEARANCE: DesktopIconAppearance = {
-  color: "var(--primary, #434E3F)",
+  color: "#FFFEFC",
+  iconColor: "var(--primary, #434E3F)",
   icon: LayoutGrid,
 };
 
-function appearanceForPath(path: string): DesktopIconAppearance {
-  if (path.startsWith("__terminal__")) {
-    return { color: "#E0AA52", icon: SquareTerminal };
+export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
+  const name = app.name.toLowerCase();
+  if (name === "browser") {
+    return { color: "var(--surface-info-emphasis, #3B85BA)", iconColor: "white", icon: Globe2 };
   }
-  if (path === "__file-browser__") {
-    return { color: "var(--primary, #748E59)", icon: FolderTree };
+  if (app.path === "__chat__" || name === "chat" || name === "hermes") {
+    return { color: "var(--surface-success-emphasis, #288A5B)", iconColor: "white", icon: MessageCircle };
   }
-  if (path === "__chat__") {
-    return { color: "#288A5B", icon: MessageCircle };
+  if (app.path.startsWith("__terminal__")) {
+    return { color: "var(--surface-warning-emphasis, #E0AA52)", iconColor: "white", icon: SquareTerminal };
   }
-  if (path === "__settings__") {
-    return { color: "#6B7280", icon: SettingsGlyph };
+  if (app.path === "__file-browser__") {
+    return { color: "var(--surface-brand-emphasis, #748E59)", iconColor: "white", icon: FolderTree };
+  }
+  if (app.path === "__plugins__" || name === "plugins") {
+    return { color: "#7C6DB4", iconColor: "white", icon: Blocks };
+  }
+  if (app.path === "__settings__") {
+    return { color: "var(--surface-neutral-emphasis, #6B7280)", iconColor: "white", icon: SettingsGlyph };
+  }
+  if (app.path === "__workspace__" || name === "projects") {
+    return { color: "var(--surface-error-emphasis, #BA5236)", iconColor: "white", icon: FolderKanban };
   }
   return DEFAULT_APPEARANCE;
 }
 
 function DesktopAppIcon({ app, className = "" }: { app: AppEntry; className?: string }) {
-  const appearance = appearanceForPath(app.path);
+  const appearance = desktopAppearanceForApp(app);
   const Glyph = appearance.icon;
   const isCanonicalDesktopApp = app.path.startsWith("__");
   return (
     <span
-      className={`relative flex items-center justify-center overflow-hidden ${className}`}
-      style={{ background: appearance.color, color: "white" }}
+      data-desktop-app-icon
+      className={`flex items-center justify-center overflow-hidden border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)] ${className}`}
+      style={{ background: appearance.color, color: appearance.iconColor }}
     >
       {app.iconUrl && !isCanonicalDesktopApp ? (
         // Gateway-owned app icons can change at runtime and are already
@@ -97,7 +118,7 @@ function DesktopDestination({
     >
       <DesktopAppIcon
         app={app}
-        className="size-12 rounded-[14px] border border-white/15 shadow-[0_8px_20px_rgba(0,0,0,0.18)] transition-transform duration-150 group-hover:-translate-y-0.5"
+        className="relative size-12 rounded-[14px] transition-transform duration-150 group-hover:-translate-y-0.5"
       />
       <span
         className="max-w-full truncate text-[12px] font-medium text-white"
@@ -151,11 +172,15 @@ function TaskbarButton({
 export function WebDesktopSurface({
   apps,
   windows,
+  fullscreenWindowId,
   launcherOpen,
   onOpenApp,
   onOpenLauncher,
   onOpenSettings,
   onActivateWindow,
+  onCloseWindow,
+  onShowDesktop,
+  onToggleFullscreen,
   children,
 }: WebDesktopSurfaceProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -178,9 +203,22 @@ export function WebDesktopSurface({
   const filesApp = apps.find((app) => app.path === "__file-browser__");
   const filesWindow = windows.find((windowRecord) => windowRecord.path === "__file-browser__");
   const otherRunningWindows = windows.filter((windowRecord) => windowRecord.path !== "__file-browser__");
+  const renderWindowIcon = (windowRecord: AppWindow, large = false) => {
+    const app = apps.find((candidate) => (
+      windowRecord.path === candidate.path || windowRecord.path.startsWith(`${candidate.path}:`)
+    )) ?? { name: windowRecord.title, path: windowRecord.path };
+    return (
+      <DesktopAppIcon
+        app={app}
+        className={large
+          ? "size-16 rounded-[20px]"
+          : "size-4 rounded-[4px] border-0 shadow-none"}
+      />
+    );
+  };
 
   const surfaceStyle = {
-    "--web-desktop-taskbar-bg": "color-mix(in srgb, var(--card) 48%, transparent)",
+    "--web-desktop-taskbar-bg": "color-mix(in srgb, var(--card) 72%, transparent)",
   } as CSSProperties;
 
   return (
@@ -189,9 +227,19 @@ export function WebDesktopSurface({
       className="pointer-events-none absolute inset-0 overflow-hidden"
       style={surfaceStyle}
     >
+      <WebDesktopHeader
+        windows={windows}
+        fullscreenWindowId={fullscreenWindowId}
+        renderWindowIcon={renderWindowIcon}
+        onActivateWindow={onActivateWindow}
+        onCloseWindow={onCloseWindow}
+        onShowDesktop={onShowDesktop}
+        onToggleFullscreen={onToggleFullscreen}
+      />
+
       <nav
         aria-label="Desktop apps"
-        className="pointer-events-auto absolute left-5 top-5 grid grid-cols-2 gap-x-3 gap-y-4"
+        className="pointer-events-auto absolute left-5 top-[58px] grid grid-cols-2 gap-x-3 gap-y-4"
         style={{ zIndex: SHELL_Z_INDEX.desktopIcons }}
       >
         {desktopApps.map((app) => (
@@ -202,7 +250,7 @@ export function WebDesktopSurface({
             onSelect={() => setSelectedPath(app.path)}
             onOpen={() => {
               if (app.path === "__settings__") onOpenSettings();
-              else onOpenApp(app.name, app.path);
+              else onOpenApp(app.path, app.name);
             }}
           />
         ))}
@@ -234,12 +282,12 @@ export function WebDesktopSurface({
           running={Boolean(filesWindow)}
           onClick={() => {
             if (filesWindow) onActivateWindow(filesWindow.id);
-            else if (filesApp) onOpenApp(filesApp.name, filesApp.path);
+            else if (filesApp) onOpenApp(filesApp.path, filesApp.name);
           }}
         >
           <DesktopAppIcon
             app={filesApp ?? { name: "Files", path: "__file-browser__" }}
-            className="absolute inset-0 rounded-[13px]"
+            className="relative size-11 rounded-[13px]"
           />
         </TaskbarButton>
 
@@ -259,7 +307,7 @@ export function WebDesktopSurface({
                     running
                     onClick={() => onActivateWindow(windowRecord.id)}
                   >
-                    <DesktopAppIcon app={app} className="absolute inset-0 rounded-[13px]" />
+                    <DesktopAppIcon app={app} className="relative size-11 rounded-[13px]" />
                   </TaskbarButton>
                 );
               })}

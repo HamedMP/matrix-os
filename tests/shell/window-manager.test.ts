@@ -68,13 +68,15 @@ describe("Window Manager Store", () => {
       expect(windows[0].minimized).toBe(false);
     });
 
-    it("centers dev-mode windows with a small cascade offset", () => {
+    it("centers every dev-mode window without asymmetric cascade margins", () => {
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
       openWindow("App2", "apps/app2.html", 80);
       const [w1, w2] = useWindowManager.getState().windows;
-      expect(w2.x).toBe(w1.x + 28);
-      expect(w2.y).toBe(w1.y + 28);
+      expect(w2.x).toBe(w1.x);
+      expect(w2.y).toBe(w1.y);
+      expect(w1.x).toBe(Math.round((window.innerWidth - w1.width) / 2));
+      expect(w1.y).toBe(Math.round((window.innerHeight - w1.height) / 2));
     });
 
     it("places second canvas window to the right of the first", () => {
@@ -302,6 +304,28 @@ describe("Window Manager Store", () => {
       expect(windows.find((w) => w.path === "apps/notes.html")?.minimized).toBe(false);
       expect(windows.find((w) => w.path === "apps/todo.html")?.minimized).toBe(true);
       expect(closedPaths.has("apps/closed.html")).toBe(true);
+    });
+
+    it("recenters restored wide dev-mode windows so their side margins stay symmetric", () => {
+      const width = Math.round(window.innerWidth * 0.9);
+      const saved: LayoutWindow[] = [
+        {
+          path: "__file-browser__",
+          title: "Files",
+          x: 85,
+          y: 80,
+          width,
+          height: 600,
+          state: "open",
+        },
+      ];
+
+      useWindowManager.getState().loadLayout(saved);
+
+      const [restored] = useWindowManager.getState().windows;
+      expect(restored.x).toBe(Math.round((window.innerWidth - width) / 2));
+      expect(window.innerWidth - (restored.x + restored.width)).toBe(restored.x);
+      expect(restored.y).toBe(80);
     });
 
     it("does not save immediately while hydrating server layout", () => {

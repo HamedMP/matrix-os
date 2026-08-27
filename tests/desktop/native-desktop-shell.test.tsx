@@ -753,12 +753,12 @@ describe("native desktop shell", () => {
     const dragHandle = screen.getByTestId("desktop-window-drag-handle");
     expect(dragHandle.classList.contains("titlebar-drag")).toBe(false);
     expect(dragHandle.classList.contains("z-20")).toBe(true);
-    expect(getWindowControl("Files", "Close").style.background)
-      .toBe("var(--surface-primary, #FFFEFC)");
-    expect(getWindowControl("Files", "Minimize").style.background)
-      .toBe("var(--surface-primary, #FFFEFC)");
-    expect(getWindowControl("Files", "Maximize").style.background)
-      .toBe("var(--surface-primary, #FFFEFC)");
+    expect(getWindowControl("Files", "Close").querySelector("[data-window-control-light]")?.className)
+      .toContain("bg-[#ff5f57]");
+    expect(getWindowControl("Files", "Minimize").querySelector("[data-window-control-light]")?.className)
+      .toContain("bg-[#febc2e]");
+    expect(getWindowControl("Files", "Maximize").querySelector("[data-window-control-light]")?.className)
+      .toContain("bg-[#28c840]");
 
     fireEvent.pointerDown(dragHandle, { button: 0, clientX: 400, clientY: 180 });
     fireEvent.pointerMove(window, { clientX: 480, clientY: 225 });

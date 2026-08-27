@@ -4,7 +4,6 @@ import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { cn } from "@/lib/utils";
-import { Maximize2, Minus, X } from "@/lib/hugeicons";
 import {
   Card,
   CardContent,
@@ -18,8 +17,9 @@ import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
+import { WindowControlButtons } from "@/components/window/WindowControlButtons";
 
-function WindowControls({
+export function WindowControls({
   title,
   onClose,
   onMinimize,
@@ -30,20 +30,35 @@ function WindowControls({
   onMinimize: () => void;
   onMaximize: () => void;
 }) {
-  const controlClass = "flex size-4 items-center justify-center rounded-[4.8px] border border-border bg-card text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary";
   return (
-    <div className="flex items-center gap-0.5">
-      <button type="button" aria-label={`Close ${title}`} className={controlClass} onClick={onClose}>
-        <X className="size-[11px]" strokeWidth={1.7} />
-      </button>
-      <button type="button" aria-label={`Minimize ${title}`} className={controlClass} onClick={onMinimize}>
-        <Minus className="size-[11px]" strokeWidth={1.7} />
-      </button>
-      <button type="button" aria-label={`Maximize ${title}`} className={controlClass} onClick={onMaximize}>
-        <Maximize2 className="size-[11px]" strokeWidth={1.7} />
-      </button>
-    </div>
+    <WindowControlButtons
+      title={title}
+      onClose={onClose}
+      onMinimize={onMinimize}
+      onMaximize={onMaximize}
+    />
   );
+}
+
+export function desktopWindowTop(y: number, topInset: number): string {
+  return `${y + topInset}px`;
+}
+
+export function desktopWindowTitleBarStyle(usesTerminalChrome: boolean): CSSProperties {
+  const centeredSpacing: CSSProperties = {
+    alignItems: "center",
+    paddingTop: 0,
+    paddingBottom: 0,
+  };
+
+  return usesTerminalChrome ? {
+    ...centeredSpacing,
+    background: "var(--terminal-drawer-bg)",
+    color: "var(--terminal-drawer-fg)",
+  } : {
+    ...centeredSpacing,
+    borderBottom: "1px solid var(--border)",
+  };
 }
 
 interface DesktopWindowProps {
@@ -64,6 +79,7 @@ interface DesktopWindowProps {
   onResizeMove: (event: PointerEvent) => void;
   onResizeStart: (id: string, event: PointerEvent) => void;
   onToggleFullscreen: (id: string) => void;
+  topInset?: number;
 }
 
 export function DesktopWindow({
@@ -84,16 +100,19 @@ export function DesktopWindow({
   onResizeMove,
   onResizeStart,
   onToggleFullscreen,
+  topInset = 0,
 }: DesktopWindowProps) {
   const isFullscreen = win.id === fullscreenWindowId;
   const isMinimizing = minimizingIds.has(win.id);
   const isHidden = win.minimized && !isMinimizing && !isFullscreen;
+  const desktopParity = topInset > 0;
+  const usesTerminalChrome = win.path.startsWith("__terminal__") && !desktopParity;
 
   let dockTargetX = 0;
   let dockTargetY = 0;
   if (isMinimizing) {
     const winCenterX = win.x + win.width / 2;
-    const winCenterY = win.y + win.height / 2;
+    const winCenterY = win.y + topInset + win.height / 2;
     if (dockPosition === "left") {
       dockTargetX = -winCenterX;
       dockTargetY = (window.innerHeight / 2) - winCenterY;
@@ -108,10 +127,11 @@ export function DesktopWindow({
 
   const windowStyle = isFullscreen ? {
     zIndex: SHELL_Z_INDEX.fullscreenWindow,
+    top: `${topInset}px`,
     transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)",
   } : {
     "--win-x": `${win.x}px`,
-    "--win-y": `${win.y}px`,
+    "--win-y": desktopWindowTop(win.y, topInset),
     "--win-w": `${win.width}px`,
     "--win-h": `${win.height}px`,
     zIndex: win.zIndex,
@@ -138,14 +158,19 @@ export function DesktopWindow({
       className={isFullscreen
         ? "pointer-events-auto fixed inset-0 gap-0 rounded-none border-0 bg-background p-0 overflow-hidden"
         : cn(
-            "app-window pointer-events-auto absolute gap-0 overflow-hidden rounded-none border border-border bg-card p-0 shadow-2xl md:rounded-xl",
+            "app-window pointer-events-auto absolute gap-0 overflow-hidden rounded-none bg-card p-0 shadow-2xl md:rounded-xl",
+            usesTerminalChrome ? "border-0" : "border border-border",
           )
       }
       style={windowStyle}
       onMouseDown={() => !isFullscreen && onFocusWindow(win.id)}
     >
       <CardHeader
-        className="flex h-[38px] flex-row items-center gap-0 space-y-0 border-b border-border bg-card/85 px-4 py-0 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing"
+        className={cn(
+          "flex h-[38px] flex-row items-center gap-0 space-y-0 px-3 py-0 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing",
+          usesTerminalChrome ? "border-b-0" : "bg-card/85",
+        )}
+        style={desktopWindowTitleBarStyle(usesTerminalChrome)}
         onPointerDown={(e) => onDragStart(win.id, e)}
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
@@ -163,7 +188,7 @@ export function DesktopWindow({
         <CardTitle className="flex-1 truncate text-center text-xs font-medium text-foreground">
           {win.title}
         </CardTitle>
-        <div className="w-[52px]" aria-hidden />
+        <div className="w-16 shrink-0" aria-hidden />
       </CardHeader>
 
       <CardContent className="relative flex-1 p-0 min-h-0">
@@ -171,6 +196,7 @@ export function DesktopWindow({
           <TerminalApp
             launchTargetId={win.id}
             embeddedChrome
+            desktopParity={desktopParity}
             windowControls={{
               close: () => onCloseWindow(win.id),
               minimize: () => onAnimateMinimize(win.id),
