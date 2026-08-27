@@ -93,6 +93,21 @@ describe("Window Manager Store", () => {
       expect(w2.y).toBe(w1.y);
     });
 
+    it("fits a fresh terminal inside a narrow desktop work area", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 860,
+        height: 522,
+      });
+    });
+
     it("assigns incrementing zIndex", () => {
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
@@ -359,6 +374,53 @@ describe("Window Manager Store", () => {
       });
       expect(restored.x + restored.width).toBeLessThanOrEqual(window.innerWidth - 20);
       expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight - 20);
+    });
+
+    it("shrinks a restored terminal below its preferred minimum on narrow desktops", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+
+      useWindowManager.getState().loadLayout([{
+        path: "__terminal__",
+        title: "Terminal",
+        x: 200,
+        y: 160,
+        width: 1_040,
+        height: 680,
+        state: "open",
+      }]);
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 860,
+        height: 522,
+      });
+    });
+
+    it("keeps a reopened terminal fitted to a narrow desktop", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+
+      useWindowManager.getState().loadLayout([{
+        path: "__terminal__",
+        title: "Terminal",
+        x: 200,
+        y: 160,
+        width: 1_040,
+        height: 680,
+        state: "closed",
+      }]);
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 860,
+        height: 522,
+      });
     });
 
     it("does not save immediately while hydrating server layout", () => {
