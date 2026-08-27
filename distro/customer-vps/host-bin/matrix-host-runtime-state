@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# User-scoped host runtime readiness and repair scheduling. This helper is
+# intentionally separate from the privileged installer so the sync agent does
+# not own another filesystem lifecycle.
+
+readonly APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
+readonly STAGING_DIR="${MATRIX_STAGING_DIR:-/opt/matrix/staging}"
+readonly HOST_RUNTIME_DIR="${MATRIX_HOST_RUNTIME_DIR:-/opt/matrix/runtime/node}"
+readonly HOST_NODE_BIN="$HOST_RUNTIME_DIR/bin/node"
+readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
+readonly UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
+readonly UPDATE_VERSION_FILE="$APP_DIR/.update-version"
+readonly UPDATE_PHASE_MARKER="$STAGING_DIR/update-phase"
+readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"
+readonly VERSION_FILE="$APP_DIR/BUNDLE_VERSION"
+
+log() { echo "matrix-host-runtime-state: $*"; }
+
+runtime_is_ready() {
+  [ -d "$HOST_RUNTIME_DIR" ] && [ ! -L "$HOST_RUNTIME_DIR" ] || return 1
+  [ -f "$HOST_NODE_BIN" ] && [ ! -L "$HOST_NODE_BIN" ] && [ -x "$HOST_NODE_BIN" ] || return 1
+  /usr/bin/timeout --signal=KILL 10 /usr/bin/env -i \
+    PATH=/usr/bin:/bin "$HOST_NODE_BIN" --version >/dev/null 2>&1
+}
+
+schedule_repair() {
+  local version temp
+  runtime_is_ready && return 0
+  if [ -e "$UPDATE_TRIGGER" ] || [ -e "$UPDATE_REPAIR_TRIGGER" ] ||
+    [ -e "$UPDATE_VERSION_FILE" ] || [ -e "$UPDATE_CHANNEL_FILE" ] ||
+    [ -e "$UPDATE_PHASE_MARKER" ]; then
+    log "WARN: host Node runtime is unavailable; preserving the pending update request"
+    return 0
+  fi
+  version="$(cat "$VERSION_FILE" 2>/dev/null || echo unknown)"
+  [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+    log "ERROR: host Node runtime is unavailable and the installed release version is invalid"
+    return 1
+  }
+  temp="$(mktemp "$APP_DIR/.update-version.repair.XXXXXX")" || return 1
+  if ! printf '%s\n' "$version" >"$temp" || ! mv -fT "$temp" "$UPDATE_VERSION_FILE"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+  if ! touch "$UPDATE_REPAIR_TRIGGER"; then
+    rm -f -- "$UPDATE_VERSION_FILE"
+    return 1
+  fi
+  log "Host Node runtime is unavailable; scheduled exact-release self-repair for $version"
+}
+
+case "${1:-}" in
+  --check)
+    [ "$#" -eq 1 ] || exit 64
+    runtime_is_ready
+    ;;
+  --schedule)
+    [ "$#" -eq 1 ] || exit 64
+    schedule_repair
+    ;;
+  *)
+    echo "Usage: matrix-host-runtime-state <--check|--schedule>" >&2
+    exit 64
+    ;;
+esac

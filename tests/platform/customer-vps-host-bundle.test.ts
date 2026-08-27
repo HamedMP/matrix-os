@@ -75,6 +75,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('matrix-repair-host-runtime');
+    expect(script).toContain('matrix-host-runtime-state');
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');
@@ -1457,27 +1458,24 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('reapplies the installed release when the host Node runtime is incomplete', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const stateHelper = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-host-runtime-state'), 'utf8');
 
-    const readinessGuard = syncAgent.indexOf('installed_host_runtime_is_ready()');
-    const nodeGuard = syncAgent.indexOf('[ -x "$HOST_NODE_BIN" ]', readinessGuard);
-    const smokeTest = syncAgent.indexOf('/usr/bin/timeout --signal=KILL 10 "$HOST_NODE_BIN" --version', nodeGuard);
     const sameVersionGuard = syncAgent.indexOf('requested_update_is_already_current()');
-    const readinessCall = syncAgent.indexOf('installed_host_runtime_is_ready || return 1', sameVersionGuard);
-    const scheduleRepair = syncAgent.indexOf('schedule_host_runtime_repair()');
-    const versionValidation = syncAgent.indexOf('[[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]', scheduleRepair);
-    const atomicVersionMove = syncAgent.indexOf('mv -fT "$temp" "$UPDATE_VERSION_FILE"', versionValidation);
-    const repairTrigger = syncAgent.indexOf('touch "$UPDATE_REPAIR_TRIGGER"', atomicVersionMove);
-    const scheduleCall = syncAgent.indexOf('schedule_host_runtime_repair', syncAgent.indexOf('# ── Main loop'));
+    const readinessCall = syncAgent.indexOf('"$HOST_RUNTIME_STATE" --check', sameVersionGuard);
+    const scheduleCall = syncAgent.indexOf('"$HOST_RUNTIME_STATE" --schedule', syncAgent.indexOf('# ── Main loop'));
+    const processCheck = stateHelper.indexOf('/usr/bin/timeout --signal=KILL 10 /usr/bin/env -i');
+    const versionValidation = stateHelper.indexOf('[[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]');
+    const atomicVersionMove = stateHelper.indexOf('mv -fT "$temp" "$UPDATE_VERSION_FILE"', versionValidation);
+    const repairTrigger = stateHelper.indexOf('touch "$UPDATE_REPAIR_TRIGGER"', atomicVersionMove);
 
-    expect(readinessGuard).toBeGreaterThan(-1);
-    expect(nodeGuard).toBeGreaterThan(readinessGuard);
-    expect(smokeTest).toBeGreaterThan(nodeGuard);
+    expect(syncAgent).not.toContain('installed_host_runtime_is_ready()');
+    expect(syncAgent).not.toContain('schedule_host_runtime_repair()');
     expect(readinessCall).toBeGreaterThan(sameVersionGuard);
-    expect(scheduleRepair).toBeGreaterThan(-1);
-    expect(versionValidation).toBeGreaterThan(scheduleRepair);
+    expect(scheduleCall).toBeGreaterThan(syncAgent.indexOf('# ── Main loop'));
+    expect(processCheck).toBeGreaterThan(-1);
+    expect(versionValidation).toBeGreaterThan(-1);
     expect(atomicVersionMove).toBeGreaterThan(versionValidation);
     expect(repairTrigger).toBeGreaterThan(atomicVersionMove);
-    expect(scheduleCall).toBeGreaterThan(syncAgent.indexOf('# ── Main loop'));
   });
 
   it('atomically installs a missing host Node runtime from the verified bundle', () => {
@@ -1490,11 +1488,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const sourceGuard = repair.indexOf('[ -x "$source_dir/bin/node" ]');
     const destinationGuard = repair.indexOf('[ ! -L "$HOST_RUNTIME_DIR" ]');
     const repairLock = repair.indexOf('/usr/bin/flock --exclusive --wait 90 9');
-    const readinessAfterLock = repair.indexOf('if runtime_is_ready; then', repairLock);
+    const readinessAfterLock = repair.indexOf('if runtime_metadata_is_ready; then', repairLock);
     const stagedCopy = repair.indexOf('cp -a "$source_dir" "$incoming_dir"');
     const preserveExisting = repair.indexOf('cp -a -n "$HOST_RUNTIME_DIR/." "$incoming_dir/"', stagedCopy);
     const authoritativeNode = repair.indexOf(
-      'install -o root -g "$MATRIX_RUNTIME_GROUP" -m 0755 "$source_dir/bin/node" "$incoming_dir/bin/node"',
+      'install -o root -g root -m 0755 "$source_dir/bin/node" "$incoming_dir/bin/node"',
       preserveExisting,
     );
     const atomicActivation = repair.indexOf('mv -T "$incoming_dir" "$HOST_RUNTIME_DIR"', authoritativeNode);
@@ -1522,6 +1520,34 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(gatewayUnit.indexOf('ExecStartPre=+/opt/matrix/bin/matrix-repair-host-runtime')).toBeLessThan(
       gatewayUnit.indexOf('ExecStart=/opt/matrix/bin/matrix-gateway'),
     );
+  });
+
+  it('keeps privileged runtime readiness checks away from matrix-writable executables', () => {
+    const root = process.cwd();
+    const repair = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-repair-host-runtime'), 'utf8');
+    const build = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-tool-pack'), 'utf8');
+
+    const metadataCheck = repair.match(/runtime_metadata_is_ready\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(metadataCheck).not.toContain('"$HOST_NODE_BIN" --version');
+    expect(repair).not.toContain('"$source_dir/bin/node" --version');
+    expect(repair).toContain('chmod 1775 "$HOST_RUNTIME_ROOT"');
+    expect(repair).toContain('chmod 0755 "$incoming_dir"');
+    expect(repair).toContain('chmod 3775 "$incoming_dir/bin"');
+    expect(repair).toContain('install -o root -g root -m 0755 "$source_dir/bin/node" "$incoming_dir/bin/node"');
+    expect(repair).not.toContain('chmod -R g+rwX "$incoming_dir"');
+
+    expect(build).toContain('chmod 1775 "$STAGE_DIR/runtime"');
+    expect(build).toContain('chmod 0755 "$STAGE_DIR/runtime/node"');
+    expect(build).toContain('chmod 3775 "$STAGE_DIR/runtime/node/bin"');
+    expect(build).toContain('chmod 0755 "$STAGE_DIR/runtime/node/bin/node"');
+    expect(build).not.toContain('chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"');
+
+    expect(installer).toContain('chmod 1775 "$MATRIX_RUNTIME_DIR"');
+    expect(installer).toContain('chmod 0755 "$NODE_PREFIX"');
+    expect(installer).toContain('chmod 3775 "$NODE_PREFIX/bin"');
+    expect(installer).toContain('chmod 0755 "$NODE_PREFIX/bin/node"');
+    expect(installer).not.toContain('chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"');
   });
 
   it('securely bootstraps an incomplete terminal runtime before privileged helper use', () => {

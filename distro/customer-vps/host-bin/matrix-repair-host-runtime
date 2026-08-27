@@ -14,24 +14,36 @@ readonly MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-matrix}"
 
 log() { echo "matrix-repair-host-runtime: $*"; }
 
-runtime_is_ready() {
-  [ -d "$HOST_RUNTIME_DIR" ] && [ ! -L "$HOST_RUNTIME_DIR" ] || return 1
-  [ -f "$HOST_NODE_BIN" ] && [ ! -L "$HOST_NODE_BIN" ] && [ -x "$HOST_NODE_BIN" ] || return 1
-  /usr/bin/timeout --signal=KILL 10 "$HOST_NODE_BIN" --version >/dev/null 2>&1
-}
-
 runtime_layout_is_safe() {
   [ ! -L "$HOST_RUNTIME_ROOT" ] && { [ ! -e "$HOST_RUNTIME_ROOT" ] || [ -d "$HOST_RUNTIME_ROOT" ]; } || return 1
   [ ! -L "$HOST_RUNTIME_DIR" ] && { [ ! -e "$HOST_RUNTIME_DIR" ] || [ -d "$HOST_RUNTIME_DIR" ]; }
 }
 
-if ! runtime_layout_is_safe; then
-  log "ERROR: invalid installed host runtime layout"
-  exit 1
-fi
-if runtime_is_ready; then
-  exit 0
-fi
+root_owned() { [ "$(stat -c %u "$1" 2>/dev/null)" = 0 ]; }
+
+mode_has_sticky_bit() {
+  local mode
+  mode="$(stat -c %a "$1" 2>/dev/null)" || return 1
+  (( (8#$mode & 01000) != 0 ))
+}
+
+mode_blocks_group_and_other_writes() {
+  local mode
+  mode="$(stat -c %a "$1" 2>/dev/null)" || return 1
+  (( (8#$mode & 0022) == 0 ))
+}
+
+runtime_metadata_is_ready() {
+  runtime_layout_is_safe || return 1
+  [ -d "$HOST_RUNTIME_ROOT" ] && [ -d "$HOST_RUNTIME_DIR/bin" ] || return 1
+  [ -f "$HOST_NODE_BIN" ] && [ ! -L "$HOST_NODE_BIN" ] && [ -x "$HOST_NODE_BIN" ] || return 1
+  root_owned "$HOST_RUNTIME_ROOT" && mode_has_sticky_bit "$HOST_RUNTIME_ROOT" || return 1
+  root_owned "$HOST_RUNTIME_DIR" && mode_blocks_group_and_other_writes "$HOST_RUNTIME_DIR" || return 1
+  root_owned "$HOST_RUNTIME_DIR/bin" && mode_has_sticky_bit "$HOST_RUNTIME_DIR/bin" || return 1
+  root_owned "$HOST_NODE_BIN" && mode_blocks_group_and_other_writes "$HOST_NODE_BIN"
+}
+
+runtime_metadata_is_ready && exit 0
 
 if [ "$(id -u)" -ne 0 ]; then
   log "ERROR: runtime repair must run as root"
@@ -50,7 +62,7 @@ if ! runtime_layout_is_safe; then
   log "ERROR: invalid installed host runtime layout"
   exit 1
 fi
-if runtime_is_ready; then
+if runtime_metadata_is_ready; then
   exit 0
 fi
 
@@ -90,12 +102,9 @@ source_dir="$source_real"
   log "ERROR: bundled host runtime is invalid"
   exit 1
 }
-/usr/bin/timeout --signal=KILL 10 "$source_dir/bin/node" --version >/dev/null 2>&1 || {
-  log "ERROR: bundled Node runtime failed its smoke test"
-  exit 1
-}
 
-install -d -o root -g "$MATRIX_RUNTIME_GROUP" -m 0775 "$HOST_RUNTIME_ROOT"
+install -d -o root -g "$MATRIX_RUNTIME_GROUP" -m 1775 "$HOST_RUNTIME_ROOT"
+chmod 1775 "$HOST_RUNTIME_ROOT"
 incoming_dir="$HOST_RUNTIME_ROOT/.node.incoming.$$"
 previous_dir="$HOST_RUNTIME_ROOT/.node.previous.$$"
 rm -rf -- "$incoming_dir" "$previous_dir"
@@ -109,15 +118,19 @@ cleanup() {
 trap cleanup EXIT
 
 cp -a "$source_dir" "$incoming_dir"
+chown -R root:"$MATRIX_RUNTIME_GROUP" "$incoming_dir"
 if [ -d "$HOST_RUNTIME_DIR" ]; then
   # Keep non-bundled global agent installs, while the verified bundle wins for
   # every file it owns. Reinstall node explicitly in case the old copy exists
   # but is corrupt or non-executable.
   cp -a -n "$HOST_RUNTIME_DIR/." "$incoming_dir/"
 fi
-install -o root -g "$MATRIX_RUNTIME_GROUP" -m 0755 "$source_dir/bin/node" "$incoming_dir/bin/node"
-chown -R root:"$MATRIX_RUNTIME_GROUP" "$incoming_dir"
-chmod -R g+rwX "$incoming_dir"
+chmod 0755 "$incoming_dir"
+chmod -R g+rwX "$incoming_dir/lib/node_modules"
+find "$incoming_dir/lib/node_modules" -type d -exec chmod g+s {} +
+chown root:"$MATRIX_RUNTIME_GROUP" "$incoming_dir/bin"
+chmod 3775 "$incoming_dir/bin"
+install -o root -g root -m 0755 "$source_dir/bin/node" "$incoming_dir/bin/node"
 
 if [ -d "$HOST_RUNTIME_DIR" ]; then
   mv -T "$HOST_RUNTIME_DIR" "$previous_dir"
@@ -126,7 +139,7 @@ if ! mv -T "$incoming_dir" "$HOST_RUNTIME_DIR"; then
   [ ! -d "$previous_dir" ] || mv -T "$previous_dir" "$HOST_RUNTIME_DIR"
   exit 1
 fi
-if ! runtime_is_ready; then
+if ! runtime_metadata_is_ready; then
   rm -rf -- "$HOST_RUNTIME_DIR"
   [ ! -d "$previous_dir" ] || mv -T "$previous_dir" "$HOST_RUNTIME_DIR"
   log "ERROR: repaired host runtime failed verification"

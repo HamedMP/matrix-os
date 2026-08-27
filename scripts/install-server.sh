@@ -486,8 +486,13 @@ prepare_runtime_permissions() {
   section "Preparing runtime permissions"
   if [ -d /opt/matrix/runtime/node ]; then
     run_required "setting Node runtime owner group" chown -R root:matrix /opt/matrix/runtime/node
-    run_required "allowing matrix user Node runtime writes" chmod -R g+rwX /opt/matrix/runtime/node
-    if find /opt/matrix/runtime/node -type d -exec chmod g+s {} + >>"$MATRIX_INSTALL_LOG" 2>&1; then
+    run_required "protecting Node runtime root" chmod 1775 /opt/matrix/runtime
+    run_required "protecting Node runtime prefix" chmod 0755 /opt/matrix/runtime/node
+    run_required "allowing global package writes" chmod -R g+rwX /opt/matrix/runtime/node/lib/node_modules
+    run_required "allowing CLI entry creation" chmod 3775 /opt/matrix/runtime/node/bin
+    run_required "protecting Node executable" chown root:root /opt/matrix/runtime/node/bin/node
+    run_required "protecting Node executable mode" chmod 0755 /opt/matrix/runtime/node/bin/node
+    if find /opt/matrix/runtime/node/lib/node_modules -type d -exec chmod g+s {} + >>"$MATRIX_INSTALL_LOG" 2>&1; then
       ok "Runtime permissions ready"
       return
     fi
