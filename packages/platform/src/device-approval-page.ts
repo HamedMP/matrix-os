@@ -54,7 +54,7 @@ export function approvalPage(
         colorText: '${desktopPalette.forest}',
         colorTextSecondary: '${desktopPalette.textMuted}',
         borderRadius: '14px',
-        fontFamily: '${desktopFonts.sans}',
+        fontFamily: '${desktopFonts.display}',
       },
       elements: {
         rootBox: { width: '100%' },
@@ -504,7 +504,7 @@ export function approvalPage(
         radial-gradient(circle at 88% 90%, rgba(197, 214, 226, 0.65), transparent 34rem),
         var(--canvas);
       color: var(--forest);
-      font-family: ${desktopFonts.sans};
+      font-family: ${desktopFonts.display};
       padding: clamp(16px, 4vw, 48px);
     }
     main {
@@ -551,7 +551,12 @@ export function approvalPage(
       background: rgba(252, 252, 248, 0.07);
       backdrop-filter: blur(18px);
     }
-    .brand-lockup { display: flex; align-items: center; gap: 10px; font-weight: 680; }
+    .brand-lockup { display: flex; align-items: center; gap: 10px; }
+    .brand-name {
+      font-family: ${desktopFonts.display};
+      font-weight: 750;
+      letter-spacing: -0.01em;
+    }
     .rabbit-mark { display: block; width: auto; flex: 0 0 auto; fill: currentColor; }
     .rabbit-mark-phosphor { color: var(--green); height: 34px; }
     .secure-label { color: rgba(252, 252, 248, 0.7); font-size: 12px; }
@@ -589,7 +594,7 @@ export function approvalPage(
       max-width: 420px;
       padding-top: 20px;
       border-top: 1px solid rgba(252, 252, 248, 0.2);
-      color: rgba(252, 252, 248, 0.7);
+      color: rgba(252, 252, 248, 0.9);
       font-family: ${desktopFonts.display};
       font-size: clamp(18px, 2vw, 24px);
       font-weight: 560;
@@ -616,6 +621,8 @@ export function approvalPage(
       justify-content: center;
       gap: 22px;
     }
+    .panel-intro { display: grid; gap: 16px; }
+    .panel-intro .eyebrow { margin: 0; }
     .panel .eyebrow { color: var(--coral); }
     .panel h2, .device-state h2 {
       margin: 0;
@@ -626,19 +633,6 @@ export function approvalPage(
       line-height: 1.02;
     }
     p { margin: 0; color: var(--ink-muted); line-height: 1.55; }
-    .trial-note {
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-      padding: 13px 14px;
-      border: 1px solid rgba(190, 215, 123, 0.75);
-      border-radius: 14px;
-      background: rgba(190, 215, 123, 0.2);
-      color: var(--forest);
-      font-size: 13px;
-    }
-    .trial-note strong { display: block; }
-    .trial-dot { width: 9px; height: 9px; flex: 0 0 auto; margin-top: 6px; border-radius: 50%; background: var(--coral); }
     button {
       width: 100%;
       min-height: 48px;
@@ -725,7 +719,7 @@ export function approvalPage(
   <main>
     <section class="desktop-stage" aria-label="${productLabel} secure connection">
       <div class="brand-bar">
-        <div class="brand-lockup">${rabbitMarkSvg('rabbit-mark rabbit-mark-phosphor')}<span>Matrix OS</span></div>
+        <div class="brand-lockup">${rabbitMarkSvg('rabbit-mark rabbit-mark-phosphor')}<span class="brand-name">Matrix OS</span></div>
         <span class="secure-label">Secure device connection</span>
       </div>
       <div class="stage-watermark">${rabbitMarkSvg('rabbit-mark stage-rabbit-mark')}</div>
@@ -739,12 +733,11 @@ export function approvalPage(
       </div>
     </section>
     <section class="panel">
-      <div>
+      <div class="panel-intro">
         <p class="eyebrow">One last step</p>
         <h2>Approve ${productLabel}</h2>
         <p>Allow this device to open your Matrix OS cloud computer.</p>
       </div>
-      <div class="trial-note"><span class="trial-dot"></span><span><strong>3-day trial for eligible accounts</strong>A card is required. Stripe confirms eligibility and billing before setup.</span></div>
       <div id="signin-area" style="display:none"></div>
       <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
         <input type="hidden" name="userCode" value="${escapedCode}">

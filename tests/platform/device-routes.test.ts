@@ -10,7 +10,7 @@ import { createApp } from "../../packages/platform/src/main.js";
 import { createAuthRoutes } from "../../packages/platform/src/auth-routes.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt, verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
-import { desktopPalette } from "@matrix-os/brand/tokens";
+import { desktopFonts, desktopPalette } from "@matrix-os/brand/tokens";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -907,6 +907,7 @@ describe("device routes", () => {
       const html = await res.text();
       expect(html).toContain("Approve once to securely open your private computer from this device.");
       expect(html).toContain("One account. One private computer. Every surface.");
+      expect(html).toContain("color: rgba(252, 252, 248, 0.9);");
       expect(html).not.toContain('class="terminal-window"');
       expect(html).not.toContain(">matrix login<");
       expect(html).not.toContain("shell attach -c main");
@@ -997,10 +998,15 @@ describe("device routes", () => {
       expect(html).toContain("Allow this device to open your Matrix OS cloud computer.");
       expect(html).toContain("Connect Matrix OS");
       expect(html).toContain("Approve once to securely open your private computer from this device.");
-      expect(html).toContain("3-day trial for eligible accounts");
-      expect(html).toContain("Stripe confirms eligibility and billing before setup.");
+      expect(html).not.toContain("3-day trial for eligible accounts");
+      expect(html).not.toContain('class="trial-note"');
       expect(html).not.toContain("New hosted accounts include a 3-day free trial");
       expect(html).toContain("Bricolage Grotesque");
+      expect(html).toContain(`font-family: ${desktopFonts.display};`);
+      expect(html).toContain(`fontFamily: '${desktopFonts.display}'`);
+      expect(html).toContain('<span class="brand-name">Matrix OS</span>');
+      expect(html).toContain(".brand-name {");
+      expect(html).toContain(".panel-intro { display: grid; gap: 16px; }");
       expect(html).toContain(desktopPalette.forest);
       expect(html).toContain(desktopPalette.green);
       expect(html).toContain(desktopPalette.stageStart);
