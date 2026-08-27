@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Restore the bundle-owned Node runtime without replacing developer tools that
+# users installed into the shared prefix. During an update this helper runs
+# while the checksum-verified bundle is still available in staging.
+
+readonly APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
+readonly STAGING_DIR="${MATRIX_STAGING_DIR:-/opt/matrix/staging}"
+readonly HOST_RUNTIME_ROOT="${MATRIX_HOST_RUNTIME_ROOT:-/opt/matrix/runtime}"
+readonly HOST_RUNTIME_DIR="$HOST_RUNTIME_ROOT/node"
+readonly HOST_NODE_BIN="$HOST_RUNTIME_DIR/bin/node"
+readonly MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-matrix}"
+
+log() { echo "matrix-repair-host-runtime: $*"; }
+
+runtime_is_ready() {
+  [ -d "$HOST_RUNTIME_DIR" ] && [ ! -L "$HOST_RUNTIME_DIR" ] || return 1
+  [ -f "$HOST_NODE_BIN" ] && [ ! -L "$HOST_NODE_BIN" ] && [ -x "$HOST_NODE_BIN" ] || return 1
+  /usr/bin/timeout --signal=KILL 10 "$HOST_NODE_BIN" --version >/dev/null 2>&1
+}
+
+runtime_layout_is_safe() {
+  [ ! -L "$HOST_RUNTIME_ROOT" ] && { [ ! -e "$HOST_RUNTIME_ROOT" ] || [ -d "$HOST_RUNTIME_ROOT" ]; } || return 1
+  [ ! -L "$HOST_RUNTIME_DIR" ] && { [ ! -e "$HOST_RUNTIME_DIR" ] || [ -d "$HOST_RUNTIME_DIR" ]; }
+}
+
+if ! runtime_layout_is_safe; then
+  log "ERROR: invalid installed host runtime layout"
+  exit 1
+fi
+if runtime_is_ready; then
+  exit 0
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  log "ERROR: runtime repair must run as root"
+  exit 1
+fi
+if [[ ! "$MATRIX_RUNTIME_GROUP" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]]; then
+  log "ERROR: invalid runtime group"
+  exit 1
+fi
+exec 9>/run/lock/matrix-host-runtime-repair.lock
+if ! /usr/bin/flock --exclusive --wait 90 9; then
+  log "ERROR: timed out waiting for another runtime repair"
+  exit 1
+fi
+if ! runtime_layout_is_safe; then
+  log "ERROR: invalid installed host runtime layout"
+  exit 1
+fi
+if runtime_is_ready; then
+  exit 0
+fi
+
+version=""
+source_dir="${1:-}"
+if [ -z "$source_dir" ]; then
+  [ -f "$APP_DIR/BUNDLE_VERSION" ] && [ ! -L "$APP_DIR/BUNDLE_VERSION" ] || {
+    log "ERROR: installed release version is unavailable"
+    exit 1
+  }
+  IFS= read -r version <"$APP_DIR/BUNDLE_VERSION" || true
+  [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+    log "ERROR: installed release version is invalid"
+    exit 1
+  }
+  source_dir="$STAGING_DIR/bundle-$version/runtime/node"
+fi
+
+staging_real="$(realpath -e "$STAGING_DIR")" || {
+  log "ERROR: update staging is unavailable"
+  exit 1
+}
+source_real="$(realpath -e "$source_dir")" || {
+  log "ERROR: bundled host runtime is unavailable"
+  exit 1
+}
+case "$source_real" in
+  "$staging_real"/bundle-*/runtime/node) ;;
+  *)
+    log "ERROR: bundled host runtime is outside update staging"
+    exit 1
+    ;;
+esac
+source_dir="$source_real"
+[ -d "$source_dir" ] && [ ! -L "$source_dir" ] || exit 1
+[ -f "$source_dir/bin/node" ] && [ ! -L "$source_dir/bin/node" ] && [ -x "$source_dir/bin/node" ] || {
+  log "ERROR: bundled host runtime is invalid"
+  exit 1
+}
+/usr/bin/timeout --signal=KILL 10 "$source_dir/bin/node" --version >/dev/null 2>&1 || {
+  log "ERROR: bundled Node runtime failed its smoke test"
+  exit 1
+}
+
+install -d -o root -g "$MATRIX_RUNTIME_GROUP" -m 0775 "$HOST_RUNTIME_ROOT"
+incoming_dir="$HOST_RUNTIME_ROOT/.node.incoming.$$"
+previous_dir="$HOST_RUNTIME_ROOT/.node.previous.$$"
+rm -rf -- "$incoming_dir" "$previous_dir"
+
+cleanup() {
+  rm -rf -- "$incoming_dir"
+  if [ -d "$previous_dir" ] && [ ! -e "$HOST_RUNTIME_DIR" ]; then
+    mv -T "$previous_dir" "$HOST_RUNTIME_DIR" || true
+  fi
+}
+trap cleanup EXIT
+
+cp -a "$source_dir" "$incoming_dir"
+if [ -d "$HOST_RUNTIME_DIR" ]; then
+  # Keep non-bundled global agent installs, while the verified bundle wins for
+  # every file it owns. Reinstall node explicitly in case the old copy exists
+  # but is corrupt or non-executable.
+  cp -a -n "$HOST_RUNTIME_DIR/." "$incoming_dir/"
+fi
+install -o root -g "$MATRIX_RUNTIME_GROUP" -m 0755 "$source_dir/bin/node" "$incoming_dir/bin/node"
+chown -R root:"$MATRIX_RUNTIME_GROUP" "$incoming_dir"
+chmod -R g+rwX "$incoming_dir"
+
+if [ -d "$HOST_RUNTIME_DIR" ]; then
+  mv -T "$HOST_RUNTIME_DIR" "$previous_dir"
+fi
+if ! mv -T "$incoming_dir" "$HOST_RUNTIME_DIR"; then
+  [ ! -d "$previous_dir" ] || mv -T "$previous_dir" "$HOST_RUNTIME_DIR"
+  exit 1
+fi
+if ! runtime_is_ready; then
+  rm -rf -- "$HOST_RUNTIME_DIR"
+  [ ! -d "$previous_dir" ] || mv -T "$previous_dir" "$HOST_RUNTIME_DIR"
+  log "ERROR: repaired host runtime failed verification"
+  exit 1
+fi
+
+rm -rf -- "$previous_dir"
+trap - EXIT
+log "Restored the bundled Node runtime"

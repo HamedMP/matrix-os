@@ -12,6 +12,7 @@ EnvironmentFile=/opt/matrix/env/host.env
 Environment=SYMPHONY_PORT=4766
 Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex
 WorkingDirectory=/opt/matrix
+ExecStartPre=+/opt/matrix/bin/matrix-repair-host-runtime
 ExecStartPre=+/opt/matrix/bin/matrix-install-developer-tools --sandbox-only
 ExecStart=/opt/matrix/bin/matrix-gateway
 TimeoutStartSec=720

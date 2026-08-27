@@ -15,6 +15,9 @@ readonly APP_DIR="/opt/matrix/app"
 readonly STAGING_DIR="/opt/matrix/staging"
 readonly BIN_DIR="/opt/matrix/bin"
 readonly BOOTSTRAP_ATTESTATION_WRITER="$BIN_DIR/matrix-write-bootstrap-attestation"
+readonly HOST_RUNTIME_REPAIR="$BIN_DIR/matrix-repair-host-runtime"
+readonly HOST_RUNTIME_DIR="/opt/matrix/runtime/node"
+readonly HOST_NODE_BIN="$HOST_RUNTIME_DIR/bin/node"
 readonly VERSION_FILE="$APP_DIR/BUNDLE_VERSION"
 readonly RELEASE_FILE="/opt/matrix/release.json"
 readonly RELEASE_ROLLBACK_FILE="/opt/matrix/release.json.rollback"
@@ -558,6 +561,12 @@ download_bundle() {
 
 prepare_triggered_update_action=apply
 
+installed_host_runtime_is_ready() {
+  [ -d "$HOST_RUNTIME_DIR" ] && [ ! -L "$HOST_RUNTIME_DIR" ] || return 1
+  [ -f "$HOST_NODE_BIN" ] && [ ! -L "$HOST_NODE_BIN" ] && [ -x "$HOST_NODE_BIN" ] || return 1
+  /usr/bin/timeout --signal=KILL 10 "$HOST_NODE_BIN" --version >/dev/null 2>&1
+}
+
 installed_terminal_runtime_is_ready() {
   local marker="$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE" generation generation_dir asset actual_generation
   [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
@@ -587,7 +596,34 @@ requested_update_is_already_current() {
   [ "$remote_version" = "$(current_version)" ] || return 1
   [ ! -e "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 1
   [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 1
+  installed_host_runtime_is_ready || return 1
   installed_terminal_runtime_is_ready || return 1
+}
+
+schedule_host_runtime_repair() {
+  local version temp
+  installed_host_runtime_is_ready && return 0
+  if [ -e "$UPDATE_TRIGGER" ] || [ -e "$UPDATE_REPAIR_TRIGGER" ] ||
+    [ -e "$UPDATE_VERSION_FILE" ] || [ -e "$UPDATE_CHANNEL_FILE" ] ||
+    [ -e "$UPDATE_PHASE_MARKER" ]; then
+    log "WARN: host Node runtime is unavailable; preserving the pending update request"
+    return 0
+  fi
+  version="$(current_version)"
+  [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+    log "ERROR: host Node runtime is unavailable and the installed release version is invalid"
+    return 1
+  }
+  temp="$(mktemp "$APP_DIR/.update-version.repair.XXXXXX")" || return 1
+  if ! printf '%s\n' "$version" >"$temp" || ! mv -fT "$temp" "$UPDATE_VERSION_FILE"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+  if ! touch "$UPDATE_REPAIR_TRIGGER"; then
+    rm -f -- "$UPDATE_VERSION_FILE"
+    return 1
+  fi
+  log "Host Node runtime is unavailable; scheduled exact-release self-repair for $version"
 }
 
 consume_idempotent_update_request() {
@@ -781,6 +817,13 @@ apply_update() {
   if ! install_terminal_runtime_payload "$extract_dir"; then
     log "ERROR: Terminal runtime installation failed; aborting before app replacement"
     write_update_error "terminal_runtime_install_failed" "The terminal runtime assets could not be installed." "$version"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
+  if [ ! -x "$HOST_RUNTIME_REPAIR" ] ||
+    ! sudo -- "$HOST_RUNTIME_REPAIR" "$extract_dir/runtime/node"; then
+    log "ERROR: Host Node runtime installation failed; aborting before app replacement"
+    write_update_error "host_runtime_install_failed" "The host Node runtime could not be installed safely." "$version"
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
@@ -1153,6 +1196,7 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+schedule_host_runtime_repair || log "WARN: failed to schedule host Node runtime repair"
 last_staging_cleanup="$(date +%s)"
 
 while true; do
