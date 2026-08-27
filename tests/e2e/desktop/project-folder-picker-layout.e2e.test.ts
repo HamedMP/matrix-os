@@ -85,7 +85,7 @@ suite("Desktop Add Project compact folder picker", () => {
     await page.getByRole("button", { name: "New", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Create a project" });
     await dialog.waitFor();
-    await dialog.getByRole("button", { name: /Folders/ }).click();
+    await dialog.getByRole("button", { name: /Existing folder/ }).click();
     await dialog.getByText("Connect an existing folder", { exact: true }).waitFor();
     await dialog.getByRole("button", { name: "List view" }).click();
 
