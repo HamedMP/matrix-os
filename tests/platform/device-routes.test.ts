@@ -993,11 +993,16 @@ describe("device routes", () => {
       expect(html).toContain("Authorize the desktop app");
       expect(html).toContain("Connect Matrix OS");
       expect(html).toContain("Confirm the code shown in the desktop app");
-      expect(html).toContain("3-day free trial");
+      expect(html).toContain("3 days by default");
+      expect(html).toContain("Stripe Checkout confirms whether your account qualifies");
+      expect(html).not.toContain("New hosted accounts include a 3-day free trial");
       expect(html).toContain("Bricolage Grotesque");
       expect(html).toContain("Geist Mono");
       expect(html).toContain(desktopPalette.forest);
       expect(html).toContain(desktopPalette.green);
+      expect(html).toContain(desktopPalette.stageStart);
+      expect(html).toContain(desktopPalette.forestHover);
+      expect(html).toContain(desktopPalette.danger);
       expect(html).toContain("appearance: clerkAppearance");
       expect(html).toContain("colorPrimary: '#0E3422'");
       expect(html).toContain("var nativeApp = true;");

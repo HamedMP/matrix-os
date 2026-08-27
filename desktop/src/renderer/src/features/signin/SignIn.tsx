@@ -89,7 +89,7 @@ export default function SignIn() {
               </p>
               {!waitingForApproval ? (
                 <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
-                  New hosted accounts include a 3-day free trial. Card required; cancel anytime.
+                  Eligible first-time hosted accounts may receive a free trial—3 days by default. Stripe Checkout confirms eligibility, trial length, and price before setup.
                 </p>
               ) : null}
             </div>

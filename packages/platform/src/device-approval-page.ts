@@ -253,7 +253,7 @@ export function approvalPage(
       setConfirmReady(false);
       renderActionState(
         'Set up your Matrix computer',
-        'Create or activate your Matrix computer first. New hosted accounts include a 3-day free trial with a card, then return here to approve the desktop app.',
+        'Create or activate your Matrix computer first. Stripe Checkout confirms whether your account qualifies for the current free trial (3 days by default), its exact length, and the first charge before setup.',
         'Open setup',
         redirectToBillingSetup
       );
@@ -494,6 +494,9 @@ export function approvalPage(
       --paper: ${desktopPalette.paper};
       --canvas: ${desktopPalette.canvas};
       --ink-muted: ${desktopPalette.textMuted};
+      --stage-start: ${desktopPalette.stageStart};
+      --forest-hover: ${desktopPalette.forestHover};
+      --danger: ${desktopPalette.danger};
       --line: rgba(14, 52, 34, 0.14);
     }
     body {
@@ -527,7 +530,7 @@ export function approvalPage(
       flex-direction: column;
       background:
         radial-gradient(circle at 78% 16%, rgba(208, 110, 83, 0.7), transparent 26rem),
-        linear-gradient(145deg, #16472f 0%, var(--forest) 52%, ${desktopPalette.forestDeep} 100%);
+        linear-gradient(145deg, var(--stage-start) 0%, var(--forest) 52%, ${desktopPalette.forestDeep} 100%);
       color: var(--paper);
       overflow: hidden;
     }
@@ -682,10 +685,10 @@ export function approvalPage(
       cursor: pointer;
       transition: transform 160ms ease, background 160ms ease;
     }
-    button:hover:not(:disabled) { transform: translateY(-1px); background: #174d34; }
+    button:hover:not(:disabled) { transform: translateY(-1px); background: var(--forest-hover); }
     button:focus-visible, select:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
     button:disabled { opacity: 0.65; cursor: wait; }
-    .status { min-height: 1.25rem; color: #9f3f2c; font-size: 13px; }
+    .status { min-height: 1.25rem; color: var(--danger); font-size: 13px; }
     .identity {
       display: grid;
       grid-template-columns: 44px minmax(0, 1fr);
@@ -788,7 +791,7 @@ export function approvalPage(
         <h2>Approve ${productLabel}</h2>
         <p>Authorize ${isNativeApp ? 'the desktop app' : 'this terminal'} to connect to your Matrix OS cloud computer. If you are new, create your account here first.</p>
       </div>
-      <div class="trial-note"><span class="trial-dot"></span><span><strong>Start with a 3-day free trial</strong>Card required. Cancel anytime before the trial ends.</span></div>
+      <div class="trial-note"><span class="trial-dot"></span><span><strong>Free trial for eligible accounts</strong>The current offer is 3 days by default. A card is required. Stripe Checkout confirms whether your account qualifies, the exact trial length, and when billing starts.</span></div>
       <div id="signin-area" style="display:none"></div>
       <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
         <input type="hidden" name="userCode" value="${escapedCode}">

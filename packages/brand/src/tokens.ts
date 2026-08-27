@@ -20,6 +20,8 @@ export const fonts = {
 export const desktopPalette = {
   forest: "#0E3422",
   forestDeep: "#092417",
+  stageStart: "#16472F",
+  forestHover: "#174D34",
   coral: "#D06E53",
   gold: "#F1C379",
   green: "#BED77B",
@@ -28,6 +30,7 @@ export const desktopPalette = {
   canvas: "#F1F4E8",
   surfaceMuted: "#F7F8F1",
   textMuted: "#536259",
+  danger: "#9F3F2C",
 } as const;
 
 export const desktopFonts = {
