@@ -152,6 +152,31 @@ describe("desktop surfaces store", () => {
     expect(useDesktopSurfaces.getState().surfaces.chat?.mode).toBe("tab");
   });
 
+  it("removes an activated window from the hidden desktop snapshot", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["home", "chat"], { width: 1200, height: 760 });
+    useDesktopSurfaces.getState().showDesktop();
+
+    useDesktopSurfaces.getState().activateSurface("home");
+
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual(["chat"]);
+    expect(useDesktopSurfaces.getState().desktopTransition?.surfaceIds).toEqual(["chat"]);
+  });
+
+  it("removes closed and deleted windows from the hidden desktop snapshot", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["home", "chat"], { width: 1200, height: 760 });
+    useDesktopSurfaces.getState().showDesktop();
+
+    useDesktopSurfaces.getState().closeSurface("home");
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual(["chat"]);
+
+    useDesktopSurfaces.getState().reconcileTabs(["chat"], { width: 1200, height: 760 });
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual(["chat"]);
+
+    useDesktopSurfaces.getState().reconcileTabs(["notes"], { width: 1200, height: 760 });
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual([]);
+    expect(useDesktopSurfaces.getState().desktopTransition).toBeNull();
+  });
+
   it("returns to the desktop when a window is activated or the last tab surface disappears", () => {
     useDesktopSurfaces.getState().reconcileTabs(["terminal", "files"], { width: 1200, height: 760 });
     useDesktopSurfaces.getState().maximizeToTab("terminal");

@@ -141,6 +141,26 @@ function nextFocusedState(
   };
 }
 
+function syncDesktopHiddenState(
+  state: Pick<DesktopSurfacesState, "desktopHiddenSurfaceIds" | "desktopTransition">,
+  surfaces: Record<string, DesktopSurface>,
+  hiddenSurfaceIds = state.desktopHiddenSurfaceIds,
+  transitionSurfaceIds = state.desktopTransition?.surfaceIds,
+): Pick<DesktopSurfacesState, "desktopHiddenSurfaceIds" | "desktopTransition"> {
+  const desktopHiddenSurfaceIds = hiddenSurfaceIds.filter((tabId) => surfaces[tabId]?.mode === "window");
+  const surfaceIds = transitionSurfaceIds?.filter((tabId) => surfaces[tabId]?.mode === "window") ?? [];
+  return {
+    desktopHiddenSurfaceIds,
+    desktopTransition: surfaceIds.length > 0
+      ? { ...state.desktopTransition!, surfaceIds }
+      : null,
+  };
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
   surfaces: {},
   nextZIndex: DESKTOP_Z_INDEX.nativeDesktopWindowStart,
@@ -190,9 +210,18 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
       && Object.values(surfaces).some((surface) => surface.mode === "tab")
       ? "tabs"
       : "desktop";
-    return unchanged && workspaceView === state.workspaceView
+    const syncedHiddenState = syncDesktopHiddenState(state, surfaces);
+    const hiddenStateUnchanged = sameStringArray(
+      syncedHiddenState.desktopHiddenSurfaceIds,
+      state.desktopHiddenSurfaceIds,
+    ) && syncedHiddenState.desktopTransition?.phase === state.desktopTransition?.phase
+      && sameStringArray(
+        syncedHiddenState.desktopTransition?.surfaceIds ?? [],
+        state.desktopTransition?.surfaceIds ?? [],
+      );
+    return unchanged && workspaceView === state.workspaceView && hiddenStateUnchanged
       ? state
-      : { surfaces, nextZIndex, workspaceView };
+      : { surfaces, nextZIndex, workspaceView, ...syncedHiddenState };
   }),
 
   showDesktop: () => set((state) => {
@@ -231,7 +260,16 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
       mode,
       restoreMode: mode === "tab" ? "tab" : "window",
     });
-    return { ...focused, workspaceView: mode === "tab" ? "tabs" : "desktop" };
+    return {
+      ...focused,
+      ...syncDesktopHiddenState(
+        state,
+        focused.surfaces,
+        state.desktopHiddenSurfaceIds.filter((id) => id !== tabId),
+        state.desktopTransition?.surfaceIds.filter((id) => id !== tabId),
+      ),
+      workspaceView: mode === "tab" ? "tabs" : "desktop",
+    };
   }),
 
   focusSurface: (tabId) => set((state) => nextFocusedState(state, tabId)),
@@ -289,6 +327,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     };
     return {
       surfaces,
+      ...syncDesktopHiddenState(state, surfaces),
       workspaceView: Object.values(surfaces).some((candidate) => candidate.mode === "tab")
         ? state.workspaceView
         : "desktop",
