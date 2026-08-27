@@ -32,4 +32,23 @@ describe("CI GitHub Actions API client", () => {
     expect(failure).toMatchObject({ message: "GitHub Actions API request failed" });
     expect(String(failure)).not.toContain("provider secret");
   });
+
+  it("logs fetch diagnostics while preserving a generic caller error", async () => {
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(
+        requestGitHub("https://api.github.com/fixed", {
+          token: "token",
+          fetchImpl: vi.fn(async () => {
+            throw new Error("DNS lookup timed out");
+          }),
+        }),
+      ).rejects.toThrow("GitHub Actions API is unavailable");
+      expect(diagnostic).toHaveBeenCalledWith(
+        "GitHub Actions API request failed: DNS lookup timed out",
+      );
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
 });

@@ -38,7 +38,12 @@ export async function requestGitHub(endpoint, {
       redirect: "error",
       signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
+    const rawMessage = error instanceof Error
+      ? error.message
+      : "Unknown GitHub Actions API error";
+    const diagnostic = rawMessage.replace(/[\0\r\n]/g, " ").slice(0, 500);
+    console.error(`GitHub Actions API request failed: ${diagnostic}`);
     throw new Error("GitHub Actions API is unavailable");
   }
   if (!acceptedStatuses.includes(response.status)) {

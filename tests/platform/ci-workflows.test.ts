@@ -134,6 +134,12 @@ describe('CI workflows', () => {
     expect(superseder).toContain("- 'docs/**'");
     expect(superseder).toContain("- 'specs/**'");
     expect(superseder).toContain("- '**/*.md'");
+    expect(superseder).toContain(
+      'uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
+    );
+    expect(superseder).toContain(
+      'uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6',
+    );
     expect(superseder).toContain('node scripts/ci/supersede-main-ci.mjs');
   });
 
