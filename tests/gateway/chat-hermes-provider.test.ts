@@ -56,6 +56,7 @@ function gatewayHarness(options: {
   storedSessionId?: string;
   wrongCreateResponseFirst?: boolean;
   ignoreTerm?: boolean;
+  ignoreInterrupt?: boolean;
 } = {}) {
   const child = new FakeGatewayChild();
   child.ignoreTerm = options.ignoreTerm ?? false;
@@ -79,7 +80,9 @@ function gatewayHarness(options: {
     } else if (method === "prompt.submit") {
       queueMicrotask(() => child.frame(result(request, { status: "streaming" })));
     } else if (method === "session.interrupt") {
-      queueMicrotask(() => child.frame(result(request, { status: "interrupted" })));
+      if (!options.ignoreInterrupt) {
+        queueMicrotask(() => child.frame(result(request, { status: "interrupted" })));
+      }
     } else if (method === "session.close") {
       queueMicrotask(() => child.frame(result(request, { closed: true })));
     }
@@ -221,6 +224,35 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(child.stdin.writes.find((request) => request.method === "session.interrupt")?.params).toEqual({ session_id: "live_session" });
     await expect(events.next()).resolves.toMatchObject({ done: true });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("bounds an unresponsive session interrupt before terminating the child", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    try {
+      const { child, spawnFn } = gatewayHarness({ ignoreInterrupt: true });
+      const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+      const events = adapter.start({ ...baseInput, signal: controller.signal })[Symbol.asyncIterator]();
+      let terminalSettled = false;
+      const terminal = events.next().then((value) => {
+        terminalSettled = true;
+        return value;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(child.stdin.writes.some((request) => request.method === "prompt.submit")).toBe(true);
+
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(terminalSettled).toBe(true);
+      await expect(terminal).resolves.toMatchObject({ value: { type: "run.completed", outcome: "aborted" } });
+      expect(child.stdin.writes.some((request) => request.method === "session.interrupt")).toBe(true);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      await expect(events.next()).resolves.toMatchObject({ done: true });
+    } finally {
+      controller.abort();
+      vi.useRealTimers();
+    }
   });
 
   it.each([

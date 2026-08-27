@@ -63,6 +63,7 @@ function deferred<T>(): Deferred<T> {
 }
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_INTERRUPT_TIMEOUT_MS = 1_000;
 const DEFAULT_STALL_TIMEOUT_MS = 120_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_TERMINATION_GRACE_MS = 1_000;
@@ -112,7 +113,6 @@ class HermesStdioRpcClient {
   private shuttingDown = false;
   private failure: Error | undefined;
   private eventListener: ((event: z.infer<typeof GatewayEventSchema>["params"]) => void) | undefined;
-
   constructor(private readonly options: {
     command: string;
     cwd: string;
@@ -451,8 +451,9 @@ export function createHermesChatProviderAdapter(options: {
       } catch (error: unknown) {
         const aborted = input.signal.aborted;
         if (aborted && liveSessionId) {
+          const interruptTimeoutMs = Math.min(DEFAULT_INTERRUPT_TIMEOUT_MS, options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
           try {
-            await client.request("session.interrupt", { session_id: liveSessionId }, options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+            await client.request("session.interrupt", { session_id: liveSessionId }, interruptTimeoutMs);
           } catch (interruptError: unknown) {
             console.warn(
               "[chat/hermes] Session interrupt failed:",
