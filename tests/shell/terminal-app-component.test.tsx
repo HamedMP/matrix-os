@@ -69,6 +69,8 @@ import {
 } from "../../shell/src/components/terminal/TerminalSidebarItems.js";
 import type { ShellSessionSummary } from "../../shell/src/components/terminal/terminal-session-state.js";
 import { getTerminalThemePreset } from "../../shell/src/components/terminal/terminal-themes.js";
+import { ChevronsLeftIcon, ChevronsRightIcon } from "../../shell/src/lib/hugeicons.js";
+import { expectRenderedIcon } from "../helpers/rendered-icon";
 
 function normalizeCssColor(color: string) {
   const element = document.createElement("div");
@@ -2991,7 +2993,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByTestId("terminal-drawer-collapse-icon").tagName.toLowerCase()).toBe("svg");
+    expectRenderedIcon(screen.getByTestId("terminal-drawer-collapse-icon"), ChevronsLeftIcon);
     expect(screen.getByTestId("terminal-sidebar-shell").style.transition).toContain("transform");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
@@ -3004,7 +3006,7 @@ describe("TerminalApp", () => {
     expect(rail.style.width).toBe("76px");
     expect(rail.className).not.toContain("absolute");
     expect(screen.getByRole("button", { name: "Expand sessions drawer" })).toBeTruthy();
-    expect(screen.getByTestId("terminal-drawer-expand-icon").tagName.toLowerCase()).toBe("svg");
+    expectRenderedIcon(screen.getByTestId("terminal-drawer-expand-icon"), ChevronsRightIcon);
     expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
     const matrixRailButton = screen.getByRole("button", { name: "Open matrix-main" });
     expect(matrixRailButton.textContent).toBe("mma");

@@ -13,6 +13,12 @@ import { useTabs, type Tab } from "../../desktop/src/renderer/src/stores/tabs";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import {
+  ChevronLeft,
+  ChevronRight,
+  PanelLeft,
+} from "../../desktop/src/renderer/src/lib/hugeicons";
+import { expectRenderedIcon } from "../helpers/rendered-icon";
 
 describe("Desktop navigation header", () => {
   beforeEach(() => {
@@ -365,7 +371,9 @@ describe("Desktop navigation header", () => {
       expect(icon?.style.width).toBe("14px");
       expect(icon?.style.height).toBe("14px");
     }
-    expect(actions[2]?.querySelector("[data-header-icon] svg")).toBeTruthy();
+    expectRenderedIcon(actions[0]?.querySelector("[data-header-icon] svg"), ChevronLeft);
+    expectRenderedIcon(actions[1]?.querySelector("[data-header-icon] svg"), ChevronRight);
+    expectRenderedIcon(actions[2]?.querySelector("[data-header-icon] svg"), PanelLeft);
   });
 
   it("places Home actions behind the Figma breadcrumb ellipsis", async () => {
@@ -374,6 +382,7 @@ describe("Desktop navigation header", () => {
 
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(breadcrumb.querySelectorAll("svg")).toHaveLength(1);
+    expectRenderedIcon(breadcrumb.querySelector("svg"), ChevronRight);
     const actions = screen.getByRole("button", { name: "Actions for Home" });
     expect(breadcrumb.nextElementSibling).toContain(actions);
 
@@ -417,6 +426,7 @@ describe("Desktop navigation header", () => {
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(breadcrumb.textContent).toBe("Terminalclever-comet");
     expect(breadcrumb.querySelectorAll("svg")).toHaveLength(1);
+    expectRenderedIcon(breadcrumb.querySelector("svg"), ChevronRight);
     expect(screen.queryByRole("button", { name: "Actions for clever-comet" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
@@ -434,6 +444,7 @@ describe("Desktop navigation header", () => {
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(breadcrumb.textContent).toBe("Terminalfocused-shell");
     expect(breadcrumb.querySelectorAll("svg")).toHaveLength(1);
+    expectRenderedIcon(breadcrumb.querySelector("svg"), ChevronRight);
     expect(screen.queryByRole("button", { name: "Actions for Friendly terminal title" })).toBeNull();
   });
 

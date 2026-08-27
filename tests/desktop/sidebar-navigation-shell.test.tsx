@@ -12,6 +12,17 @@ import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import {
+  File,
+  FolderKanban,
+  FolderOpen,
+  House,
+  LayoutGrid,
+  MessageCircle,
+  SquareTerminal,
+  Terminal,
+} from "../../desktop/src/renderer/src/lib/hugeicons";
+import { expectRenderedIcon } from "../helpers/rendered-icon";
 
 vi.mock("../../desktop/src/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
   default: () => <button type="button">Main computer</button>,
@@ -89,9 +100,18 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByText("Fix navigation")).toBeTruthy();
     expect(screen.getByText("dev")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open recent Matrix OS" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open recent Fix navigation" }).querySelector("[data-sidebar-icon] svg")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open recent dev" }).querySelector("[data-sidebar-icon] svg")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open recent Matrix OS" }).querySelector("[data-sidebar-icon] svg")).toBeTruthy();
+    expectRenderedIcon(
+      screen.getByRole("button", { name: "Open recent Fix navigation" }).querySelector("[data-sidebar-icon] svg"),
+      MessageCircle,
+    );
+    expectRenderedIcon(
+      screen.getByRole("button", { name: "Open recent dev" }).querySelector("[data-sidebar-icon] svg"),
+      SquareTerminal,
+    );
+    expectRenderedIcon(
+      screen.getByRole("button", { name: "Open recent Matrix OS" }).querySelector("[data-sidebar-icon] svg"),
+      FolderKanban,
+    );
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Filter recents" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "Terminals" }));
@@ -235,8 +255,19 @@ describe("Desktop sidebar navigation shell", () => {
     expect(terminal.style.borderWidth).toBe("");
     expect(terminal.style.fontWeight).toBe("500");
 
-    for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Projects"]) {
-      expect(screen.getByRole("button", { name: label }).querySelector("[data-sidebar-icon] svg")).toBeTruthy();
+    const figmaGlyphs = {
+      Home: House,
+      Chat: MessageCircle,
+      Terminal,
+      Files: File,
+      Apps: LayoutGrid,
+      Projects: FolderOpen,
+    } as const;
+    for (const [label, ExpectedIcon] of Object.entries(figmaGlyphs)) {
+      expectRenderedIcon(
+        screen.getByRole("button", { name: label }).querySelector("[data-sidebar-icon] svg"),
+        ExpectedIcon,
+      );
     }
     const pluginsGlyph = screen.getByRole("button", { name: "Plugins" })
       .querySelector<HTMLElement>('[data-figma-icon="phosphor-plugs"]');
