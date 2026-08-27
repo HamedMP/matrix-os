@@ -132,6 +132,73 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(fake.createThread).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves structured activity kinds and labels while unknown tools stay generic", async () => {
+    const fake = fakeStore([
+      event({
+        type: "tool.started",
+        eventId: "evt_plan_started",
+        toolCallId: "tool_plan",
+        displayName: "Update plan",
+        kind: "plan",
+      }),
+      event({
+        type: "tool.started",
+        eventId: "evt_unknown_started",
+        toolCallId: "tool_unknown",
+        displayName: "Use extension",
+        kind: "provider_extension",
+      }),
+      event({
+        type: "tool.completed",
+        eventId: "evt_plan_completed",
+        toolCallId: "tool_plan",
+        outcome: "success",
+      }),
+      event({
+        type: "tool.completed",
+        eventId: "evt_unknown_completed",
+        toolCallId: "tool_unknown",
+        outcome: "failed",
+      }),
+      event({ type: "thread.completed", eventId: "evt_activity_complete", outcome: "completed" }),
+    ]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+
+    const events = [];
+    for await (const candidate of adapter.start(input())) events.push(candidate);
+
+    expect(events).toEqual([
+      { type: "state.updated", state: { conversationId: "thread_native" } },
+      {
+        type: "agent.activity",
+        activityId: "tool_plan",
+        kind: "plan",
+        label: "Update plan",
+        status: "running",
+      },
+      {
+        type: "tool.progress",
+        toolCallId: "tool_unknown",
+        label: "Use extension",
+        status: "running",
+      },
+      {
+        type: "agent.activity",
+        activityId: "tool_plan",
+        kind: "plan",
+        label: "Update plan",
+        status: "completed",
+      },
+      {
+        type: "tool.progress",
+        toolCallId: "tool_unknown",
+        label: "Use extension",
+        status: "failed",
+      },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+  });
+
   it("resumes and cancels only the same persisted coding thread", async () => {
     const accepted = event({
       type: "turn.accepted",

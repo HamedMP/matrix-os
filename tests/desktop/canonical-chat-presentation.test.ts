@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CanonicalChatRunActivitySchema } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 
@@ -88,5 +89,87 @@ describe("canonical Chat presentation adapter", () => {
         copyText: "I found the issue.",
       },
     });
+  });
+
+  it("keeps typed activity in first-received order while projecting terminal states", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const received = [
+      {
+        id: "activity_plan_running",
+        type: "agent.activity",
+        activityId: "plan_primary",
+        kind: "plan",
+        label: "Plan implementation",
+        status: "running",
+        occurredAt: "2026-08-26T00:00:03.000Z",
+      },
+      {
+        id: "activity_command_completed",
+        type: "agent.activity",
+        activityId: "command_primary",
+        kind: "command",
+        label: "Run focused tests",
+        status: "completed",
+        summary: "Focused checks passed.",
+        occurredAt: "2026-08-26T00:00:01.000Z",
+      },
+      {
+        id: "activity_plan_partial",
+        type: "agent.activity",
+        activityId: "plan_primary",
+        kind: "plan",
+        label: "Plan implementation",
+        status: "partial",
+        summary: "Two of three steps completed.",
+        occurredAt: "2026-08-26T00:00:02.000Z",
+      },
+      {
+        id: "activity_search_cancelled",
+        type: "agent.activity",
+        activityId: "search_primary",
+        kind: "web_search",
+        label: "Search documentation",
+        status: "cancelled",
+        occurredAt: "2026-08-26T00:00:00.000Z",
+      },
+    ].map((activity) => CanonicalChatRunActivitySchema.parse({
+      ...activity,
+      chatId: snapshot.chat.id,
+      runId: run.id,
+    }));
+
+    const [turn] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: received,
+    });
+
+    expect(turn?.work).toEqual([{
+      kind: "activity-group",
+      id: `${run.id}:activities`,
+      activities: [
+        expect.objectContaining({
+          id: "activity_plan_running",
+          kind: "plan",
+          state: "partial",
+          label: "Plan implementation",
+          detail: "Two of three steps completed.",
+        }),
+        expect.objectContaining({
+          id: "activity_command_completed",
+          kind: "command",
+          state: "completed",
+          label: "Run focused tests",
+        }),
+        expect.objectContaining({
+          id: "activity_search_cancelled",
+          kind: "web_search",
+          state: "stopped",
+          label: "Search documentation",
+        }),
+      ],
+    }]);
   });
 });

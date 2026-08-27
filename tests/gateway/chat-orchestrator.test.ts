@@ -9,6 +9,7 @@ import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orche
 import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
+  type CanonicalProviderRunEvent,
 } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 
@@ -169,6 +170,123 @@ describe("CanonicalChatOrchestrator", () => {
       "assistant.delta",
       "run.status",
     ]);
+  });
+
+  it("persists and replays typed Provider activity in first-received order", async () => {
+    await repository.create(owner, {
+      id: "chat_typed_activity",
+      clientRequestId: "req_create_typed_activity",
+      title: "Typed activity",
+    });
+    const emitted: CanonicalProviderRunEvent[] = [
+      {
+        type: "agent.activity",
+        activityId: "phase_implementation",
+        kind: "phase",
+        label: "Implementation phase",
+        status: "running",
+      },
+      {
+        type: "agent.activity",
+        activityId: "reasoning_summary",
+        kind: "reasoning",
+        label: "Reviewed the architecture",
+        status: "completed",
+        summary: "Selected the existing canonical persistence seam.",
+      },
+      {
+        type: "agent.activity",
+        activityId: "plan_primary",
+        kind: "plan",
+        label: "Execute the plan",
+        status: "partial",
+      },
+      {
+        type: "agent.activity",
+        activityId: "command_tests",
+        kind: "command",
+        label: "Run focused tests",
+        status: "failed",
+      },
+      {
+        type: "agent.activity",
+        activityId: "files_summary",
+        kind: "file_change",
+        label: "Updated two files",
+        status: "completed",
+      },
+      {
+        type: "agent.activity",
+        activityId: "mcp_linear",
+        kind: "mcp_tool",
+        label: "Checked issue context",
+        status: "completed",
+      },
+      {
+        type: "agent.activity",
+        activityId: "dynamic_review",
+        kind: "dynamic_tool",
+        label: "Ran project review",
+        status: "completed",
+      },
+      {
+        type: "agent.activity",
+        activityId: "delegate_tests",
+        kind: "delegation",
+        label: "Delegated test analysis",
+        status: "cancelled",
+      },
+      {
+        type: "agent.activity",
+        activityId: "search_docs",
+        kind: "web_search",
+        label: "Searched documentation",
+        status: "completed",
+      },
+      {
+        type: "agent.activity",
+        activityId: "inspect_screenshot",
+        kind: "image_inspection",
+        label: "Inspected screenshot",
+        status: "completed",
+      },
+    ];
+    const provider = adapter(async function* () {
+      for (const event of emitted) yield event;
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_typed_activity", {
+      clientRequestId: "req_typed_activity_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "Show activity" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const replayed = await repository.exportChat(owner, "chat_typed_activity");
+    expect(replayed?.activities.filter((activity) => activity.type === "agent.activity").map((activity) => ({
+      activityId: activity.activityId,
+      kind: activity.kind,
+      status: activity.status,
+      ...(activity.summary ? { summary: activity.summary } : {}),
+    }))).toEqual(emitted.map((event) => {
+      if (event.type !== "agent.activity") throw new Error("Expected typed activity");
+      return {
+        activityId: event.activityId,
+        kind: event.kind,
+        status: event.status,
+        ...(event.summary ? { summary: event.summary } : {}),
+      };
+    }));
   });
 
   it("does not reconcile a committed Run while its dispatch registration is pending", async () => {

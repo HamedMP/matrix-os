@@ -156,6 +156,25 @@ describe("Codex structured event normalization", () => {
     );
   });
 
+  it("keeps structured Codex tool categories provider-neutral", () => {
+    const items = [
+      { id: "item_mcp", type: "mcp_tool_call", status: "in_progress" },
+      { id: "item_agent", type: "collab_tool_call", status: "in_progress" },
+      { id: "item_search", type: "web_search" },
+      { id: "item_plan", type: "todo_list" },
+    ];
+
+    expect(items.map((item) => parseCodexExecJsonLine(JSON.stringify({
+      type: "item.started",
+      item,
+    }), context).events[0])).toEqual([
+      expect.objectContaining({ type: "tool.started", kind: "mcp_tool", displayName: "Use MCP tool" }),
+      expect.objectContaining({ type: "tool.started", kind: "delegation", displayName: "Coordinate agents" }),
+      expect.objectContaining({ type: "tool.started", kind: "web_search", displayName: "Search web" }),
+      expect.objectContaining({ type: "tool.started", kind: "plan", displayName: "Update plan" }),
+    ]);
+  });
+
   it("normalizes bounded file changes and drops unsafe paths", () => {
     const result = parseCodexExecJsonLine(JSON.stringify({
       type: "item.completed",

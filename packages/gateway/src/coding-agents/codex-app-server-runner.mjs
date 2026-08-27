@@ -315,10 +315,12 @@ function assertTrackedItemCapacity(collection, value) {
 function toolPresentation(type) {
   if (type === "commandExecution") return { displayName: "Run command", kind: "command" };
   if (type === "fileChange") return { displayName: "Update files", kind: "file_change" };
-  if (type === "webSearch") return { displayName: "Search web", kind: "search" };
+  if (type === "mcpToolCall") return { displayName: "Use MCP tool", kind: "mcp_tool" };
+  if (type === "dynamicToolCall") return { displayName: "Use dynamic tool", kind: "dynamic_tool" };
+  if (type === "webSearch") return { displayName: "Search web", kind: "web_search" };
   if (type === "plan") return { displayName: "Update plan", kind: "plan" };
-  if (type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
-  return { displayName: "Use tool", kind: "tool" };
+  if (type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "delegation" };
+  return { displayName: "Use dynamic tool", kind: "dynamic_tool" };
 }
 
 function toolOutcome(status) {

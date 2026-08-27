@@ -236,6 +236,61 @@ describe("canonical Chat contracts", () => {
     }).success).toBe(false);
   });
 
+  it("accepts bounded provider-neutral typed activity and rejects runtime internals", () => {
+    const kinds = [
+      "phase",
+      "reasoning",
+      "plan",
+      "command",
+      "file_change",
+      "mcp_tool",
+      "dynamic_tool",
+      "delegation",
+      "web_search",
+      "image_inspection",
+    ] as const;
+    const statuses = ["running", "completed", "failed", "cancelled", "partial"] as const;
+
+    for (const [index, kind] of kinds.entries()) {
+      expect(CanonicalChatRunActivitySchema.parse({
+        id: `activity_typed_${index}`,
+        chatId: "chat_demo",
+        runId: "run_demo",
+        occurredAt: now,
+        type: "agent.activity",
+        activityId: `typed_${index}`,
+        kind,
+        label: `Safe ${kind.replaceAll("_", " ")} activity`,
+        status: statuses[index % statuses.length],
+        summary: "A bounded provider-neutral summary.",
+      })).toMatchObject({ type: "agent.activity", kind });
+    }
+
+    expect(CanonicalChatRunActivitySchema.safeParse({
+      id: "activity_typed_raw",
+      chatId: "chat_demo",
+      runId: "run_demo",
+      occurredAt: now,
+      type: "agent.activity",
+      activityId: "typed_raw",
+      kind: "command",
+      label: "Run command",
+      status: "completed",
+      rawArguments: { command: "cat /home/matrix/private" },
+    }).success).toBe(false);
+    expect(CanonicalChatRunActivitySchema.safeParse({
+      id: "activity_typed_path",
+      chatId: "chat_demo",
+      runId: "run_demo",
+      occurredAt: now,
+      type: "agent.activity",
+      activityId: "typed_path",
+      kind: "file_change",
+      label: "Updated /home/matrix/private",
+      status: "completed",
+    }).success).toBe(false);
+  });
+
   it("describes a Driver and Instance whose controls are capability-derived", () => {
     const driver = CanonicalProviderDriverDescriptorSchema.parse({
       kind: "codex",

@@ -1,12 +1,16 @@
 import {
+  BrainCircuit,
   Check,
   ChevronRight,
   Eye,
   FilePenLine,
+  Image,
+  ListChecks,
   LoaderCircle,
   Minus,
   Search,
   SquareTerminal,
+  Users,
   Wrench,
   X,
 } from "lucide-react";
@@ -19,7 +23,16 @@ import type {
 } from "./presentation";
 
 const ACTIVITY_ICON: Record<ConversationActivityPresentation["kind"], ComponentType<{ className?: string; style?: CSSProperties }>> = {
+  phase: LoaderCircle,
+  reasoning: BrainCircuit,
+  plan: ListChecks,
   command: SquareTerminal,
+  file_change: FilePenLine,
+  mcp_tool: Wrench,
+  dynamic_tool: Wrench,
+  delegation: Users,
+  web_search: Search,
+  image_inspection: Image,
   read: Eye,
   edit: FilePenLine,
   search: Search,
@@ -70,7 +83,7 @@ export function ConversationActivity({
               <LoaderCircle aria-hidden className="status-pulse size-3.5 shrink-0" />
             ) : activity.state === "failed" ? (
               <X aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--danger)" }} />
-            ) : activity.state === "stopped" ? (
+            ) : activity.state === "stopped" || activity.state === "partial" ? (
               <Minus aria-hidden className="size-3.5 shrink-0" />
             ) : (
               <Check aria-hidden className="size-3.5 shrink-0" />

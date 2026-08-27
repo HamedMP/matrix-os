@@ -39,7 +39,9 @@ function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }
 
-function activityState(message: ChatMessage): ConversationActivityState {
+type HermesActivityState = Exclude<ConversationActivityState, "partial">;
+
+function activityState(message: ChatMessage): HermesActivityState {
   if (message.content.startsWith("Using ")) return "running";
   if (message.content.startsWith("Failed ")) return "failed";
   if (message.content.startsWith("Stopped ")) return "stopped";
@@ -47,7 +49,7 @@ function activityState(message: ChatMessage): ConversationActivityState {
 }
 
 function stateLabel(
-  state: ConversationActivityState,
+  state: HermesActivityState,
   labels: { running: string; completed: string; stopped: string; failed: string },
 ): string {
   return labels[state];
@@ -55,7 +57,7 @@ function stateLabel(
 
 function persistedActivity(
   tool: string,
-  state: ConversationActivityState,
+  state: HermesActivityState,
   display: KernelConversationToolDisplay,
 ): Omit<ConversationActivityPresentation, "id" | "state"> {
   const preview = boundedText(display.preview);

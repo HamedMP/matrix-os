@@ -127,7 +127,16 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.started"),
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
-    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan"]),
+    kind: z.enum([
+      "command",
+      "file_change",
+      "mcp_tool",
+      "dynamic_tool",
+      "delegation",
+      "web_search",
+      "plan",
+      "image_inspection",
+    ]),
   }).strict(),
   z.object({
     type: z.literal("matrix.codex.tool.output"),
@@ -308,9 +317,9 @@ function startedItemEvents(
   item: z.infer<typeof CodexItemSchema>,
 ): AgentThreadEvent[] {
   if (item.type === "command_execution") return [toolStarted(context, item.id, "Run command", "command")];
-  if (item.type === "mcp_tool_call") return [toolStarted(context, item.id, "Use tool", "tool")];
-  if (item.type === "collab_tool_call") return [toolStarted(context, item.id, "Coordinate agents", "agent")];
-  if (item.type === "web_search") return [toolStarted(context, item.id, "Search web", "search")];
+  if (item.type === "mcp_tool_call") return [toolStarted(context, item.id, "Use MCP tool", "mcp_tool")];
+  if (item.type === "collab_tool_call") return [toolStarted(context, item.id, "Coordinate agents", "delegation")];
+  if (item.type === "web_search") return [toolStarted(context, item.id, "Search web", "web_search")];
   if (item.type === "todo_list") return [toolStarted(context, item.id, "Update plan", "plan")];
   return [];
 }

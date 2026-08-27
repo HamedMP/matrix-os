@@ -51,10 +51,13 @@ function isActiveRun(run: CanonicalChatRun | undefined): boolean {
 }
 
 function activityState(
-  status: Extract<CanonicalChatRunActivity, { type: "tool.progress" }>["status"],
+  status:
+    | Extract<CanonicalChatRunActivity, { type: "tool.progress" }>["status"]
+    | Extract<CanonicalChatRunActivity, { type: "agent.activity" }>["status"],
 ): ConversationActivityPresentation["state"] {
   if (status === "failed") return "failed";
   if (status === "cancelled") return "stopped";
+  if (status === "partial") return "partial";
   if (status === "completed") return "completed";
   return "running";
 }
@@ -69,17 +72,27 @@ function runPresentation(
   failure?: ConversationNoticePresentation;
 } {
   if (!run) return { work: [] };
-  const runActivities = activities
-    .filter((activity) => activity.runId === run.id)
-    .sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
+  const runActivities = activities.filter((activity) => activity.runId === run.id);
   const toolProgress = new Map<string, Extract<CanonicalChatRunActivity, { type: "tool.progress" }>>();
+  const agentActivities = new Map<string, Extract<CanonicalChatRunActivity, { type: "agent.activity" }>>();
+  const activityOrder: Array<{ type: "tool" | "agent"; id: string }> = [];
   const toolOutput = new Map<string, string[]>();
   const streamed = new Map<string, { text: string; occurredAt: string }>();
   let runError: Extract<CanonicalChatRunActivity, { type: "run.error" }> | undefined;
 
   for (const activity of runActivities) {
     if (activity.type === "tool.progress") {
+      if (!toolProgress.has(activity.toolCallId)) {
+        activityOrder.push({ type: "tool", id: activity.toolCallId });
+      }
       toolProgress.set(activity.toolCallId, activity);
+    } else if (activity.type === "agent.activity") {
+      const current = agentActivities.get(activity.activityId);
+      if (!current) activityOrder.push({ type: "agent", id: activity.activityId });
+      agentActivities.set(activity.activityId, {
+        ...activity,
+        id: current?.id ?? activity.id,
+      });
     } else if (activity.type === "tool.output") {
       const output = toolOutput.get(activity.toolCallId) ?? [];
       output.push(activity.text);
@@ -95,16 +108,33 @@ function runPresentation(
     }
   }
 
-  const activityRows: ConversationActivityPresentation[] = [...toolProgress.values()].map((activity) => {
+  const activityRows: ConversationActivityPresentation[] = [];
+  for (const entry of activityOrder) {
+    if (entry.type === "agent") {
+      const activity = agentActivities.get(entry.id);
+      if (!activity) continue;
+      activityRows.push({
+        id: activity.id,
+        kind: activity.kind,
+        state: activityState(activity.status),
+        label: activity.label,
+        ...(activity.summary
+          ? { detail: activity.summary, preview: activity.summary, previewKind: "text" as const }
+          : {}),
+      });
+      continue;
+    }
+    const activity = toolProgress.get(entry.id);
+    if (!activity) continue;
     const detail = toolOutput.get(activity.toolCallId)?.join("\n");
-    return {
+    activityRows.push({
       id: activity.id,
       kind: "tool",
       state: activityState(activity.status),
       label: activity.label,
       ...(detail ? { detail, preview: detail, previewKind: "text" as const } : {}),
-    };
-  });
+    });
+  }
   const work: ConversationWorkPresentation[] = activityRows.length > 0
     ? [{ kind: "activity-group", id: `${run.id}:activities`, activities: activityRows }]
     : [];

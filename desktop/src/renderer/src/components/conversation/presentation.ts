@@ -17,8 +17,22 @@ export interface ConversationMessagePresentation {
   attachments?: ConversationAttachmentPresentation[];
 }
 
-export type ConversationActivityKind = "command" | "read" | "edit" | "search" | "tool";
-export type ConversationActivityState = "running" | "completed" | "stopped" | "failed";
+export type ConversationActivityKind =
+  | "phase"
+  | "reasoning"
+  | "plan"
+  | "command"
+  | "file_change"
+  | "mcp_tool"
+  | "dynamic_tool"
+  | "delegation"
+  | "web_search"
+  | "image_inspection"
+  | "read"
+  | "edit"
+  | "search"
+  | "tool";
+export type ConversationActivityState = "running" | "completed" | "partial" | "stopped" | "failed";
 
 export interface ConversationActivityPresentation {
   id: string;
