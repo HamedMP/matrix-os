@@ -14,9 +14,16 @@ import { createCanonicalCliEventQueue } from "./cli-process.js";
 const HermesChatStateSchema = z.object({
   sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/),
 }).strict();
-const GatewaySessionSchema = z.object({
+const GatewayLiveSessionSchema = z.object({
   session_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/),
+}).passthrough();
+const GatewayCreatedSessionSchema = GatewayLiveSessionSchema.extend({
   stored_session_id: HermesChatStateSchema.shape.sessionId,
+}).passthrough();
+const GatewayResumedSessionSchema = GatewayLiveSessionSchema.extend({
+  stored_session_id: HermesChatStateSchema.shape.sessionId.optional(),
+  session_key: HermesChatStateSchema.shape.sessionId.optional(),
+  resumed: HermesChatStateSchema.shape.sessionId.optional(),
 }).passthrough();
 const GatewayEventSchema = z.object({
   jsonrpc: z.literal("2.0"),
@@ -412,23 +419,28 @@ export function createHermesChatProviderAdapter(options: {
       };
       try {
         await runStep(client.waitUntilReady(options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS));
-        const sessionResult = GatewaySessionSchema.parse(await runStep(
-          resumeState
-            ? client.request("session.resume", {
+        if (resumeState) {
+          const sessionResult = GatewayResumedSessionSchema.parse(await runStep(client.request("session.resume", {
               session_id: resumeState.sessionId,
               cols: 120,
               omit_messages: true,
-            }, options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS)
-            : client.request("session.create", {
+            }, options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS)));
+          liveSessionId = sessionResult.session_id;
+          storedSessionId = sessionResult.stored_session_id
+            ?? sessionResult.session_key
+            ?? sessionResult.resumed
+            ?? resumeState.sessionId;
+        } else {
+          const sessionResult = GatewayCreatedSessionSchema.parse(await runStep(client.request("session.create", {
               cols: 120,
               cwd: input.executionRoot ?? options.homePath,
               source: "desktop",
               provider: selected.provider,
               model: selected.model,
-            }, options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
-        ));
-        liveSessionId = sessionResult.session_id;
-        storedSessionId = sessionResult.stored_session_id;
+            }, options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS)));
+          liveSessionId = sessionResult.session_id;
+          storedSessionId = sessionResult.stored_session_id;
+        }
         await runStep(client.request("config.set", {
           key: "yolo",
           value: "1",

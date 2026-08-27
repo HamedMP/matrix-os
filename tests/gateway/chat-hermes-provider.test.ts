@@ -54,6 +54,7 @@ function result(request: Record<string, unknown>, value: unknown) {
 
 function gatewayHarness(options: {
   storedSessionId?: string;
+  resumeUsesOfficialResponseShape?: boolean;
   wrongCreateResponseFirst?: boolean;
   ignoreTerm?: boolean;
   ignoreInterrupt?: boolean;
@@ -71,10 +72,16 @@ function gatewayHarness(options: {
         stored_session_id: options.storedSessionId ?? "stored_session",
       })));
     } else if (method === "session.resume") {
-      queueMicrotask(() => child.frame(result(request, {
-        session_id: "live_session",
-        stored_session_id: options.storedSessionId ?? "stored_session",
-      })));
+      queueMicrotask(() => child.frame(result(request, options.resumeUsesOfficialResponseShape
+        ? {
+            session_id: "live_session",
+            resumed: options.storedSessionId ?? "stored_session",
+            session_key: options.storedSessionId ?? "stored_session",
+          }
+        : {
+            session_id: "live_session",
+            stored_session_id: options.storedSessionId ?? "stored_session",
+          })));
     } else if (method === "config.set") {
       queueMicrotask(() => child.frame(result(request, { key: "yolo", value: "1", scope: "session" })));
     } else if (method === "prompt.submit") {
@@ -156,19 +163,53 @@ describe("Hermes canonical Chat Provider adapter", () => {
     await expect(events.next()).resolves.toMatchObject({ done: true });
   });
 
-  it("resumes only the durable stored session while preserving its stored provider selection", async () => {
-    const { child, spawnFn } = gatewayHarness({ storedSessionId: "stored_session" });
-    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
-    const events = adapter.resume!({ ...baseInput, resumeState: { sessionId: "stored_session" } })[Symbol.asyncIterator]();
-    const first = events.next();
-    await waitForRequest(child, "prompt.submit");
+  it("continues a durable session across fresh gateway processes using Hermes' official resume response", async () => {
+    const first = gatewayHarness({ storedSessionId: "stored_session" });
+    const firstAdapter = createHermesChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: first.spawnFn,
+    });
+    const firstEvents = firstAdapter.start(baseInput)[Symbol.asyncIterator]();
+    const firstTerminal = firstEvents.next();
+    await waitForRequest(first.child, "prompt.submit");
+    first.child.frame(event("message.complete", "live_session", { text: "remember alpha", status: "success" }));
+    await expect(firstTerminal).resolves.toMatchObject({
+      value: { type: "assistant.delta", delta: "remember alpha" },
+    });
+    const stateEvent = await firstEvents.next();
+    expect(stateEvent).toMatchObject({
+      value: { type: "state.updated", state: { sessionId: "stored_session" } },
+    });
+    await expect(firstEvents.next()).resolves.toMatchObject({
+      value: { type: "run.completed", outcome: "completed" },
+    });
+    await expect(firstEvents.next()).resolves.toMatchObject({ done: true });
 
-    const resumeRequest = child.stdin.writes.find((request) => request.method === "session.resume")!;
+    const second = gatewayHarness({
+      storedSessionId: "stored_session",
+      resumeUsesOfficialResponseShape: true,
+    });
+    const secondAdapter = createHermesChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: second.spawnFn,
+    });
+    const events = secondAdapter.resume!({
+      ...baseInput,
+      prompt: "what should you remember?",
+      parts: [{ type: "text", text: "what should you remember?" }],
+      resumeState: stateEvent.value?.type === "state.updated"
+        ? stateEvent.value.state
+        : { sessionId: "unexpected" },
+    })[Symbol.asyncIterator]();
+    const resumedFirstEvent = events.next();
+    await waitForRequest(second.child, "prompt.submit");
+
+    const resumeRequest = second.child.stdin.writes.find((request) => request.method === "session.resume")!;
     expect(resumeRequest.params).toEqual({ session_id: "stored_session", cols: 120, omit_messages: true });
-    expect(child.stdin.writes.some((request) => request.method === "session.create")).toBe(false);
-    child.frame(event("message.delta", "live_session", { text: "continued" }));
-    await expect(first).resolves.toMatchObject({ value: { type: "assistant.delta", delta: "continued" } });
-    child.frame(event("message.complete", "live_session", { text: "continued", status: "success" }));
+    expect(second.child.stdin.writes.some((request) => request.method === "session.create")).toBe(false);
+    second.child.frame(event("message.delta", "live_session", { text: "alpha" }));
+    await expect(resumedFirstEvent).resolves.toMatchObject({ value: { type: "assistant.delta", delta: "alpha" } });
+    second.child.frame(event("message.complete", "live_session", { text: "alpha", status: "success" }));
     await expect(events.next()).resolves.toMatchObject({ value: { type: "run.completed", outcome: "completed" } });
     await expect(events.next()).resolves.toMatchObject({ done: true });
   });
