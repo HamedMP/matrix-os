@@ -58,7 +58,7 @@ export default function DesktopSurfaceFrame({
     : (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app";
-  const terminalOwnsChrome = tab.kind === "terminal" || tab.kind === "terminals";
+  const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "terminal" || tab.kind === "terminals";
   const paneActive = interactive && !(isNativeEmbed && overlayOpen);
   const interactionCleanupRef = useRef<(() => void) | null>(null);
 
@@ -146,11 +146,11 @@ export default function DesktopSurfaceFrame({
     <OSWindow
       surfaceId={tab.id}
       sidebarWidth={undefined}
-      safeAreaLayout={terminalOwnsChrome ? "sidebar" : "pane"}
+      safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBar={isWindow ? (
         <TopBar
-          chromePlacement={terminalOwnsChrome ? "sidebar" : "full-width"}
-          sidebarWidth={terminalOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
+          chromePlacement={sidebarOwnsChrome ? "sidebar" : "full-width"}
+          sidebarWidth={sidebarOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
           onClose={onClose}
           onMinimize={onMinimize}
           onMaximize={onMaximize}

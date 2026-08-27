@@ -385,9 +385,9 @@ export function CanonicalChatWorkspace({
     </>
   );
 
-  if (projectId === null && globalView === "index") {
-    return (
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-slot="canonical-chat-workspace">
+  return (
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-slot="canonical-chat-workspace">
+      {projectId === null ? (
         <CanonicalChatIndex
           items={controller.items}
           query={query}
@@ -402,36 +402,7 @@ export function CanonicalChatWorkspace({
           }}
           onNewChat={startNewChat}
         />
-        <DeleteConversationDialog
-          conversation={deleteTarget}
-          deleting={deleting}
-          error={deleteError}
-          onCancel={() => {
-            if (deleting) return;
-            setDeleteTarget(null);
-            setDeleteError(null);
-          }}
-          onConfirm={() => {
-            if (!deleteTarget || deleting) return;
-            setDeleting(true);
-            void controller.deleteChat(deleteTarget.id).then((deleted) => {
-              if (deleted) {
-                onChatDeleted?.(deleteTarget.id);
-                setDeleteTarget(null);
-                setDeleteError(null);
-              } else {
-                setDeleteError("The Chat could not be deleted. Try again.");
-              }
-            }).finally(() => setDeleting(false));
-          }}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-slot="canonical-chat-workspace">
-      {projectId ? <aside
+      ) : <aside
         aria-label="Project chats"
         className="flex w-[260px] shrink-0 flex-col border-r p-3"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
@@ -497,7 +468,7 @@ export function CanonicalChatWorkspace({
             <p className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
           ) : null}
         </div>
-      </aside> : null}
+      </aside>}
       <SharedChatSurface
         ariaLabel={projectId ? "Project Chat" : "Global Chat"}
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
@@ -531,12 +502,37 @@ export function CanonicalChatWorkspace({
                 What should we build today?
               </h1>
             </div>
-            <ChatStarterCards onSelect={setDraft} />
+            <ChatStarterCards layout="two-by-two" onSelect={setDraft} />
             {composer}
           </div>
         )}
       </SharedChatSurface>
       {inspector}
+      {projectId === null ? (
+        <DeleteConversationDialog
+          conversation={deleteTarget}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={() => {
+            if (deleting) return;
+            setDeleteTarget(null);
+            setDeleteError(null);
+          }}
+          onConfirm={() => {
+            if (!deleteTarget || deleting) return;
+            setDeleting(true);
+            void controller.deleteChat(deleteTarget.id).then((deleted) => {
+              if (deleted) {
+                onChatDeleted?.(deleteTarget.id);
+                setDeleteTarget(null);
+                setDeleteError(null);
+              } else {
+                setDeleteError("The Chat could not be deleted. Try again.");
+              }
+            }).finally(() => setDeleting(false));
+          }}
+        />
+      ) : null}
     </div>
   );
 }

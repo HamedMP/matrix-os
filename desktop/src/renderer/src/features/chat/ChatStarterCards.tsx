@@ -7,9 +7,15 @@ const STARTERS = [
   { label: "Fix issues and failures", Icon: Bug, tone: "var(--warning)" },
 ] as const;
 
-export function ChatStarterCards({ onSelect }: { onSelect: (prompt: string) => void }) {
+export function ChatStarterCards({
+  layout = "responsive",
+  onSelect,
+}: {
+  layout?: "responsive" | "two-by-two";
+  onSelect: (prompt: string) => void;
+}) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-slot="chat-starter-cards">
+    <div className={`grid grid-cols-2 gap-3 ${layout === "responsive" ? "sm:grid-cols-4" : ""}`} data-slot="chat-starter-cards">
       {STARTERS.map(({ label, Icon, tone }) => (
         <button
           key={label}
