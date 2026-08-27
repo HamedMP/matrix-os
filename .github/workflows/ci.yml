@@ -41,13 +41,13 @@ jobs:
             if timeout --foreground --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
               git -c http.extraheader="AUTHORIZATION: basic $auth_header" \
                 fetch --no-tags --prune --no-recurse-submodules --depth=1 \
-                origin "+${GITHUB_REF}:refs/remotes/origin/ci" \
+                origin "$GITHUB_SHA" \
               && git checkout --force --detach "$GITHUB_SHA"; then
               echo "Checkout fetch succeeded on attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
               exit 0
             fi
 
-            rm -f .git/index.lock .git/shallow.lock .git/refs/remotes/origin/ci.lock
+            rm -f .git/index.lock .git/shallow.lock
             if [ "$attempt" -eq "$CHECKOUT_MAX_ATTEMPTS" ]; then
               echo "::error::Checkout fetch failed after $CHECKOUT_MAX_ATTEMPTS attempts"
               exit 1

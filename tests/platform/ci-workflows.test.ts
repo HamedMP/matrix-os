@@ -53,6 +53,10 @@ function runChangeDetectionCheckout(
     `#!/usr/bin/env bash
 set -euo pipefail
 if [[ " $* " == *" fetch "* ]]; then
+  if [[ " $* " != *" $GITHUB_SHA "* ]]; then
+    echo "fetch did not request the event commit" >&2
+    exit 64
+  fi
   attempt=0
   if [ -f "$FAKE_GIT_FETCH_ATTEMPTS" ]; then
     attempt="$(cat "$FAKE_GIT_FETCH_ATTEMPTS")"
