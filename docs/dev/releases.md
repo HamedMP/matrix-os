@@ -23,6 +23,26 @@ and CI validation. The platform service image is intentionally separate: Cloud
 Run requires a container image, but customer VPSes never install or update from
 that image.
 
+### GitHub Packages policy
+
+GitHub Packages is a registry, not a catalog for every downloadable Matrix OS
+artifact. A package is justified only when its registry-native format gives an
+operator or integrator a supported pull path. Publishing placeholder containers
+for installers would create a second, misleading source of truth.
+
+| Surface | GitHub Packages decision | Reason |
+| --- | --- | --- |
+| CLI | Do not duplicate today | npm is the install authority; Homebrew and versioned GitHub binaries cover the other supported install paths. A GitHub npm mirror would also require a different owner scope from `@finnaai/matrix`. |
+| Customer runtime host bundle | Keep R2 plus Platform Postgres authoritative | The updater consumes an immutable tarball, checksum, incremental manifest, and DB-backed channel metadata. An OCI mirror is useful only after it carries the same digest/provenance and has a concrete operator pull workflow. |
+| Platform | Do not mirror today | Google Artifact Registry remains the deploy authority. Reconsider a read-only GHCR mirror only after a named consumer and exact deployed-digest, provenance, retention, verification, and rollback contract exist. |
+| Desktop | Use GitHub Releases, not Packages | Signed/notarized macOS installers, the Linux AppImage, blockmaps, and updater manifests are release assets rather than registry packages. |
+| Mobile | Use native testing tracks and EAS, not Packages | No public App Store or Google Play install route is documented today. Operator releases use TestFlight, Google Play internal testing, EAS Build, and compatible EAS Update channels. |
+
+Before adding a GHCR mirror, define its consumer, immutable tag/digest mapping,
+retention policy, visibility, provenance/attestation, verification command, and
+rollback relationship to the authoritative release lane. Do not publish a
+second build of the same version merely to populate the repository sidebar.
+
 ## Engineer Summary
 
 - `main` is the source of truth. A push to `main` runs `.github/workflows/host-bundle-release.yml`.

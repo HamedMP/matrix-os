@@ -15,6 +15,7 @@
 <p align="center">
   <a href="https://matrix-os.com">Website</a> ·
   <a href="https://matrix-os.com/docs">Docs</a> ·
+  <a href="docs/dev/releases.md">Releases</a> ·
   <a href="https://matrix-os.com/whitepaper">Whitepaper</a> ·
   <a href="https://matrix-os.com/skills.md">Agent setup</a> ·
   <a href="https://deepwiki.com/HamedMP/matrix-os">DeepWiki</a> ·
@@ -24,6 +25,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg?style=for-the-badge" alt="AGPL-3.0 License"></a>
+  <a href="https://github.com/HamedMP/matrix-os/stargazers"><img src="https://img.shields.io/github/stars/HamedMP/matrix-os?style=for-the-badge" alt="GitHub stars"></a>
   <a href="https://matrix-os.com"><img src="https://img.shields.io/badge/Live-matrix--os.com-D06F25?style=for-the-badge" alt="matrix-os.com"></a>
   <a href="https://matrix-os.com/skills.md"><img src="https://img.shields.io/badge/Agent_Setup-skills.md-434E3F?style=for-the-badge" alt="Agent setup"></a>
   <a href="https://skills.sh/HamedMP/matrix-os"><img src="https://skills.sh/b/HamedMP/matrix-os" alt="skills.sh"></a>
@@ -58,6 +60,21 @@ Matrix OS is the foundation for **Web 4**: a unified environment where operating
 ---
 
 ## Install Matrix OS
+
+Matrix OS ships through product-scoped release lanes rather than one ambiguous
+repository package. Use the artifact native to the surface you are installing:
+
+| Surface | Supported distribution |
+|---------|------------------------|
+| Managed cloud | [matrix-os.com](https://matrix-os.com) provisions a VPS-native runtime |
+| Self-hosted runtime | Verified host bundle through the manual VPS installer below |
+| CLI | npm, Homebrew, install script, and versioned GitHub release binaries |
+| Desktop | Signed/notarized macOS installers, Linux AppImage, and updater metadata in GitHub Releases |
+| Mobile | No public store install link is documented yet; operator releases use TestFlight, Google Play internal testing, and compatible EAS updates |
+| Hosted platform | Immutable Google Artifact Registry image deployed to Cloud Run; not a customer runtime image |
+
+See [Release artifacts and channels](docs/dev/releases.md#release-artifact-inventory)
+for the source of truth and rollback boundary of every lane.
 
 ### Managed Matrix Cloud
 
