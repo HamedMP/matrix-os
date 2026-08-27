@@ -111,6 +111,7 @@ export interface ChatRunEventsTable {
   id: string;
   chat_id: string;
   run_id: string;
+  receive_seq: Generated<number>;
   event: JsonValue;
   occurred_at: Timestamp;
 }
@@ -335,9 +336,50 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
       id TEXT PRIMARY KEY,
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
       run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+      receive_seq BIGINT,
       event JSONB NOT NULL,
       occurred_at TIMESTAMPTZ NOT NULL
     )
+  `.execute(db);
+  await sql`
+    CREATE SEQUENCE IF NOT EXISTS chat_run_events_receive_seq_seq
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_run_events
+    ADD COLUMN IF NOT EXISTS receive_seq BIGINT
+  `.execute(db);
+  await sql`
+    ALTER SEQUENCE chat_run_events_receive_seq_seq
+    OWNED BY chat_run_events.receive_seq
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_run_events
+    ALTER COLUMN receive_seq SET DEFAULT nextval('chat_run_events_receive_seq_seq')
+  `.execute(db);
+  await sql`
+    WITH base AS (
+      SELECT COALESCE(max(receive_seq), 0) AS maximum
+      FROM chat_run_events
+    ), ranked AS (
+      SELECT id, row_number() OVER (ORDER BY occurred_at, id) AS offset
+      FROM chat_run_events
+      WHERE receive_seq IS NULL
+    )
+    UPDATE chat_run_events AS events
+    SET receive_seq = base.maximum + ranked.offset
+    FROM base, ranked
+    WHERE events.id = ranked.id
+  `.execute(db);
+  await sql`
+    SELECT setval(
+      'chat_run_events_receive_seq_seq',
+      GREATEST(COALESCE((SELECT max(receive_seq) FROM chat_run_events), 0), 1),
+      EXISTS(SELECT 1 FROM chat_run_events)
+    )
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_run_events
+    ALTER COLUMN receive_seq SET NOT NULL
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_run_adapter_state (
@@ -408,6 +450,7 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_project ON chats(owner_type, owner_id, project_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_page ON chat_messages(chat_id, seq)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_run_events_run_occurred ON chat_run_events(run_id, occurred_at, id)`.execute(db);
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_run_events_receive_seq ON chat_run_events(receive_seq)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_search ON chat_messages USING GIN (to_tsvector('simple', search_text)) WHERE state = 'committed'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
 }

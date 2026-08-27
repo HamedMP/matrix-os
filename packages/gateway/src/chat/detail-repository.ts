@@ -78,7 +78,7 @@ export class ChatDetailRepository {
     const activityRows = runIds.length === 0 ? [] : await this.kysely.selectFrom("chat_run_events").selectAll()
       .where("chat_id", "=", parsedChatId)
       .where("run_id", "in", runIds)
-      .orderBy("occurred_at", "desc")
+      .orderBy("receive_seq", "desc")
       .limit(500)
       .execute();
     activityRows.reverse();

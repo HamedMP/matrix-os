@@ -199,6 +199,45 @@ describe("canonical coding Chat Provider adapter", () => {
     ]);
   });
 
+  it("normalizes legacy persisted tool kinds without losing generic compatibility", async () => {
+    const fake = fakeStore([
+      event({
+        type: "tool.started",
+        eventId: "evt_legacy_tool",
+        toolCallId: "legacy_tool",
+        displayName: "Use tool",
+        kind: "tool",
+      }),
+      event({
+        type: "tool.started",
+        eventId: "evt_legacy_agent",
+        toolCallId: "legacy_agent",
+        displayName: "Coordinate agents",
+        kind: "agent",
+      }),
+      event({
+        type: "tool.started",
+        eventId: "evt_legacy_search",
+        toolCallId: "legacy_search",
+        displayName: "Search web",
+        kind: "search",
+      }),
+      event({ type: "thread.completed", eventId: "evt_legacy_complete", outcome: "completed" }),
+    ]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+
+    const events = [];
+    for await (const candidate of adapter.start(input())) events.push(candidate);
+
+    expect(events).toEqual([
+      { type: "state.updated", state: { conversationId: "thread_native" } },
+      expect.objectContaining({ type: "tool.progress", toolCallId: "legacy_tool" }),
+      expect.objectContaining({ type: "agent.activity", activityId: "legacy_agent", kind: "delegation" }),
+      expect.objectContaining({ type: "agent.activity", activityId: "legacy_search", kind: "web_search" }),
+      { type: "run.completed", outcome: "completed" },
+    ]);
+  });
+
   it("resumes and cancels only the same persisted coding thread", async () => {
     const accepted = event({
       type: "turn.accepted",

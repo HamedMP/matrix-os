@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
@@ -69,6 +69,17 @@ interface ActiveRun {
 
 function id(prefix: "cturn_" | "run_" | "msg_" | "activity_"): string {
   return `${prefix}${randomUUID().replaceAll("-", "")}`;
+}
+
+function runActivityId(runId: string, event: Record<string, unknown>): string {
+  if (event.type !== "agent.activity" || typeof event.activityId !== "string") {
+    return id("activity_");
+  }
+  const digest = createHash("sha256")
+    .update(`${runId}\u0000${event.activityId}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `activity_agent_${digest}`;
 }
 
 function safeError(
@@ -708,7 +719,7 @@ export class CanonicalChatOrchestrator {
   ): Promise<void> {
     const activities = events.map((event) => CanonicalChatRunActivitySchema.parse({
       ...event,
-      id: id("activity_"),
+      id: runActivityId(run.id, event),
       chatId: run.chatId,
       runId: run.id,
       occurredAt,

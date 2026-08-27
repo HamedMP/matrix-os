@@ -113,13 +113,14 @@ function runPresentation(
     if (entry.type === "agent") {
       const activity = agentActivities.get(entry.id);
       if (!activity) continue;
+      const detail = activity.summary ?? toolOutput.get(activity.activityId)?.join("\n");
       activityRows.push({
         id: activity.id,
         kind: activity.kind,
         state: activityState(activity.status),
         label: activity.label,
-        ...(activity.summary
-          ? { detail: activity.summary, preview: activity.summary, previewKind: "text" as const }
+        ...(detail
+          ? { detail, preview: detail, previewKind: "text" as const }
           : {}),
       });
       continue;

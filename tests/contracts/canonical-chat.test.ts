@@ -289,6 +289,54 @@ describe("canonical Chat contracts", () => {
       label: "Updated /home/matrix/private",
       status: "completed",
     }).success).toBe(false);
+
+    for (const unsafeLabel of [
+      "AWS_SECRET_ACCESS_KEY=supersecret",
+      "Authorization: Basic dXNlcjpwYXNz",
+      "Cookie: session=abc123",
+      "Set-Cookie: session=abc123",
+      "X-API-Key: supersecret",
+      "API key: supersecret",
+      "client_secret=supersecret",
+      "access token: supersecret",
+      "session credential=supersecret",
+    ]) {
+      expect(CanonicalChatRunActivitySchema.safeParse({
+        id: "activity_typed_unsafe_label",
+        chatId: "chat_demo",
+        runId: "run_demo",
+        occurredAt: now,
+        type: "agent.activity",
+        activityId: "typed_unsafe_label",
+        kind: "reasoning",
+        label: unsafeLabel,
+        status: "completed",
+      }).success).toBe(false);
+      expect(CanonicalChatRunActivitySchema.safeParse({
+        id: "activity_typed_unsafe_summary",
+        chatId: "chat_demo",
+        runId: "run_demo",
+        occurredAt: now,
+        type: "agent.activity",
+        activityId: "typed_unsafe_summary",
+        kind: "reasoning",
+        label: "Reviewed configuration",
+        status: "completed",
+        summary: unsafeLabel,
+      }).success).toBe(false);
+    }
+    expect(CanonicalChatRunActivitySchema.parse({
+      id: "activity_typed_provider_summary",
+      chatId: "chat_demo",
+      runId: "run_demo",
+      occurredAt: now,
+      type: "agent.activity",
+      activityId: "typed_provider_summary",
+      kind: "reasoning",
+      label: "Compare OpenAI and Anthropic adapters",
+      status: "completed",
+      summary: "The Postgres transaction preserved canonical activity.",
+    })).toMatchObject({ type: "agent.activity", kind: "reasoning" });
   });
 
   it("describes a Driver and Instance whose controls are capability-derived", () => {

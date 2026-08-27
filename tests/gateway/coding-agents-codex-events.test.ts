@@ -290,4 +290,22 @@ describe("Codex structured event normalization", () => {
       delta: "Working on it.",
     });
   });
+
+  it("accepts legacy persisted app-server tool kinds", () => {
+    const legacy = [
+      ["tool", "tool"],
+      ["agent", "agent"],
+      ["search", "search"],
+    ] as const;
+
+    expect(legacy.map(([kind], index) => parseCodexExecJsonLine(JSON.stringify({
+      type: "matrix.codex.tool.started",
+      toolCallId: `legacy_tool_${index}`,
+      displayName: "Legacy activity",
+      kind,
+    }), context).events[0])).toEqual(legacy.map(([, kind]) => expect.objectContaining({
+      type: "tool.started",
+      kind,
+    })));
+  });
 });

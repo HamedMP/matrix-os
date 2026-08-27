@@ -133,9 +133,89 @@ describe("ChatRepository", () => {
     ]);
     const activityIndex = await sql<{ indexname: string }>`
       SELECT indexname FROM pg_indexes
-      WHERE schemaname = 'public' AND indexname = 'idx_chat_run_events_run_occurred'
+      WHERE schemaname = 'public' AND indexname = 'idx_chat_run_events_receive_seq'
     `.execute(repository.kysely);
-    expect(activityIndex.rows).toEqual([{ indexname: "idx_chat_run_events_run_occurred" }]);
+    expect(activityIndex.rows).toEqual([{ indexname: "idx_chat_run_events_receive_seq" }]);
+    const activityColumns = await sql<{ column_name: string; is_nullable: string }>`
+      SELECT column_name, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'chat_run_events'
+        AND column_name = 'receive_seq'
+    `.execute(repository.kysely);
+    expect(activityColumns.rows).toEqual([{ column_name: "receive_seq", is_nullable: "NO" }]);
+  });
+
+  it("replays Run activity by durable receive order instead of timestamps or ids", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_activity_receive_order",
+      clientRequestId: "req_create_activity_receive_order",
+      title: "Activity receive order",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    const received = [
+      { ...activity(created.chat.id, acceptedRun.id, 1), occurredAt: "2026-08-25T00:00:03.000Z" },
+      { ...activity(created.chat.id, acceptedRun.id, 9), occurredAt: "2026-08-25T00:00:01.000Z" },
+      { ...activity(created.chat.id, acceptedRun.id, 5), occurredAt: "2026-08-25T00:00:02.000Z" },
+    ];
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, received.slice(0, 2));
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, received.slice(2));
+
+    expect((await repository.exportChat(owner, created.chat.id))?.activities.map((event) => event.id))
+      .toEqual(received.map((event) => event.id));
+    const ordinals = await repository.kysely.selectFrom("chat_run_events")
+      .select(["id", "receive_seq"])
+      .where("run_id", "=", acceptedRun.id)
+      .orderBy("receive_seq")
+      .execute();
+    expect(ordinals).toEqual(received.map((event, index) => ({ id: event.id, receive_seq: index + 1 })));
+  });
+
+  it("backfills a legacy activity table before allocating new receive ordinals", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_activity_legacy_order",
+      clientRequestId: "req_create_activity_legacy_order",
+      title: "Legacy activity order",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      { ...activity(created.chat.id, acceptedRun.id, 2), occurredAt: "2026-08-25T00:00:02.000Z" },
+      { ...activity(created.chat.id, acceptedRun.id, 1), occurredAt: "2026-08-25T00:00:01.000Z" },
+    ]);
+    await sql`ALTER TABLE chat_run_events DROP COLUMN receive_seq`.execute(repository.kysely);
+
+    await repository.bootstrap();
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      { ...activity(created.chat.id, acceptedRun.id, 3), occurredAt: "2026-08-25T00:00:00.000Z" },
+    ]);
+
+    const rows = await repository.kysely.selectFrom("chat_run_events")
+      .select(["id", "receive_seq"])
+      .orderBy("receive_seq")
+      .execute();
+    expect(rows).toEqual([
+      { id: "activity_1", receive_seq: 1 },
+      { id: "activity_2", receive_seq: 2 },
+      { id: "activity_3", receive_seq: 3 },
+    ]);
   });
 
   it("creates idempotently, isolates owners, and commits the outbox atomically", async () => {
@@ -630,6 +710,87 @@ describe("ChatRepository", () => {
       .where("run_id", "=", acceptedRun.id)
       .executeTakeFirstOrThrow();
     expect(Number(count.count)).toBe(500);
+  });
+
+  it("updates typed activity in place without moving or consuming receive capacity", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_typed_activity_update",
+      clientRequestId: "req_create_typed_activity_update",
+      title: "Typed activity update",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    const stable: CanonicalChatRunActivity = {
+      id: "activity_agent_stable",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: "2026-08-25T00:00:01.000Z",
+      type: "agent.activity",
+      activityId: "plan_stable",
+      kind: "plan",
+      label: "Execute plan",
+      status: "running",
+    };
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      stable,
+      activity(created.chat.id, acceptedRun.id, 1),
+    ]);
+    const original = await repository.kysely.selectFrom("chat_run_events")
+      .select(["id", "receive_seq"])
+      .where("id", "=", stable.id)
+      .executeTakeFirstOrThrow();
+    const filler = Array.from({ length: 498 }, (_, index) => activity(
+      created.chat.id,
+      acceptedRun.id,
+      index + 2,
+    ));
+    await repository.kysely.insertInto("chat_run_events").values(filler.map((event) => ({
+      id: event.id,
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      event: sql`${JSON.stringify(event)}::jsonb`,
+      occurred_at: event.occurredAt,
+    }))).execute();
+
+    await expect(repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
+      ...stable,
+      occurredAt: "2026-08-25T00:00:02.000Z",
+      status: "completed",
+      summary: "All steps completed.",
+    }, {
+      ...stable,
+      occurredAt: "2026-08-25T00:00:03.000Z",
+      status: "partial",
+      summary: "One follow-up remains.",
+    }])).resolves.toBe(2);
+
+    const rows = await repository.kysely.selectFrom("chat_run_events")
+      .select(["id", "receive_seq", "event"])
+      .where("run_id", "=", acceptedRun.id)
+      .orderBy("receive_seq")
+      .execute();
+    expect(rows).toHaveLength(500);
+    expect(rows[0]).toMatchObject({ id: stable.id, receive_seq: original.receive_seq });
+    expect(rows[0]?.event).toMatchObject({
+      type: "agent.activity",
+      activityId: "plan_stable",
+      status: "partial",
+      summary: "One follow-up remains.",
+    });
+    expect(rows[1]).toMatchObject({ id: "activity_1" });
+    await expect(repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
+      ...stable,
+      id: "activity_1",
+      status: "completed",
+    }])).rejects.toBeInstanceOf(ChatConflictError);
   });
 
   it("keeps adapter state behind the exact Driver and Instance boundary", async () => {

@@ -847,7 +847,7 @@ export class ChatRepository {
       this.kysely.selectFrom("chat_messages").selectAll().where("chat_id", "=", chatId).orderBy("seq").execute(),
       this.kysely.selectFrom("chat_turns").selectAll().where("chat_id", "=", chatId).orderBy("created_at").execute(),
       this.kysely.selectFrom("chat_runs").selectAll().where("chat_id", "=", chatId).orderBy("created_at").execute(),
-      this.kysely.selectFrom("chat_run_events").selectAll().where("chat_id", "=", chatId).orderBy("occurred_at").execute(),
+      this.kysely.selectFrom("chat_run_events").selectAll().where("chat_id", "=", chatId).orderBy("receive_seq").execute(),
       this.kysely.selectFrom("chat_attachments").selectAll().where("chat_id", "=", chatId).orderBy("created_at").execute(),
     ]);
     return {

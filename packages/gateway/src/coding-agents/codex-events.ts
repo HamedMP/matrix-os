@@ -130,6 +130,9 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     kind: z.enum([
       "command",
       "file_change",
+      "tool",
+      "agent",
+      "search",
       "mcp_tool",
       "dynamic_tool",
       "delegation",

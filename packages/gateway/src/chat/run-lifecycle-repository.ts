@@ -248,30 +248,51 @@ export class ChatRunLifecycleRepository {
       const count = await trx.selectFrom("chat_run_events").select(({ fn }) => fn.countAll().as("count"))
         .where("run_id", "=", runId).executeTakeFirstOrThrow();
       const activityIds = [...new Set(activities.map((activity) => activity.id))];
-      const existing = await trx.selectFrom("chat_run_events").select(["id", "chat_id", "run_id"])
+      const existing = await trx.selectFrom("chat_run_events").select(["id", "chat_id", "run_id", "event"])
         .where("id", "in", activityIds).execute();
       if (existing.some((row) => row.chat_id !== chatId || row.run_id !== runId)) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
+      const existingById = new Map(existing.map((row) => [row.id, row]));
+      if (activities.some((activity) => {
+        if (activity.type !== "agent.activity") return false;
+        const prior = existingById.get(activity.id);
+        if (!prior) return false;
+        const persisted = CanonicalChatRunActivitySchema.safeParse(prior.event);
+        return !persisted.success || persisted.data.type !== "agent.activity"
+          || persisted.data.activityId !== activity.activityId;
+      })) {
+        throw new ChatConflictError(chatId, Number(current.revision));
+      }
       const unseenCount = activityIds.length - existing.length;
       if (Number(count.count) + unseenCount > 500) throw new ChatConflictError(chatId, Number(current.revision));
-      let inserted = 0;
+      let changed = 0;
       for (const activity of activities) {
-        const row = await trx.insertInto("chat_run_events").values({
+        const insert = trx.insertInto("chat_run_events").values({
           id: activity.id,
           chat_id: chatId,
           run_id: runId,
           event: jsonb(activity),
           occurred_at: activity.occurredAt,
-        }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
-        if (row) inserted += 1;
+        });
+        const row = await (activity.type === "agent.activity"
+          ? insert.onConflict((oc) => oc.column("id").doUpdateSet({
+              event: jsonb(activity),
+              occurred_at: activity.occurredAt,
+            }))
+          : insert.onConflict((oc) => oc.column("id").doNothing()))
+          .returning("id")
+          .executeTakeFirst();
+        if (row) {
+          changed += 1;
+        }
       }
-      if (inserted > 0) {
+      if (changed > 0) {
         const revision = Number(current.revision) + 1;
         await trx.updateTable("chats").set({ revision, updated_at: sql`now()` }).where("id", "=", chatId).execute();
         await insertOutbox(trx, owner, chatId, revision, "run.activity", { runId });
       }
-      return inserted;
+      return changed;
     });
   }
 

@@ -289,6 +289,57 @@ describe("CanonicalChatOrchestrator", () => {
     }));
   });
 
+  it("assigns one stable persisted identity to updates for the same typed activity", async () => {
+    await repository.create(owner, {
+      id: "chat_typed_activity_updates",
+      clientRequestId: "req_create_typed_activity_updates",
+      title: "Typed activity updates",
+    });
+    const provider = adapter(async function* () {
+      yield {
+        type: "agent.activity",
+        activityId: "plan_stable",
+        kind: "plan",
+        label: "Execute plan",
+        status: "running",
+      };
+      yield {
+        type: "agent.activity",
+        activityId: "plan_stable",
+        kind: "plan",
+        label: "Execute plan",
+        status: "partial",
+        summary: "Two steps completed.",
+      };
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_typed_activity_updates", {
+      clientRequestId: "req_typed_activity_updates_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "Show updates" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const typed = (await repository.exportChat(owner, "chat_typed_activity_updates"))?.activities
+      .filter((activity) => activity.type === "agent.activity");
+    expect(typed).toEqual([expect.objectContaining({
+      id: expect.stringMatching(/^activity_agent_[a-f0-9]{32}$/),
+      activityId: "plan_stable",
+      status: "partial",
+      summary: "Two steps completed.",
+    })]);
+  });
+
   it("does not reconcile a committed Run while its dispatch registration is pending", async () => {
     await repository.create(owner, {
       id: "chat_pending_dispatch",
