@@ -337,10 +337,10 @@ describe("draft chat replaces the selected thread", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
     await screen.findByText("What should we work on?");
 
-    fireEvent.click(screen.getByRole("button", { name: "Review my recent changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review code and suggest changes" }));
 
     const composer = await screen.findByLabelText("Message new chat");
-    await waitFor(() => expect(composer.textContent).toBe("Review my recent changes"));
+    await waitFor(() => expect(composer.textContent).toBe("Review code and suggest changes"));
     // Exactly one composer exists — the draft pane never duplicates the form.
     expect(screen.getAllByLabelText("Message new chat")).toHaveLength(1);
     expect(screen.queryByLabelText("Agent run prompt")).toBeNull();

@@ -193,9 +193,9 @@ describe("ProjectChatsView hero empty state", () => {
     expect(await screen.findByText("What should we work on?")).toBeTruthy();
     // The draft composer (same floating bar threads use) sits under the hero.
     expect(screen.getByLabelText("Message new chat")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Fix a failing test" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Review my recent changes" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Explore the codebase" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     // The rail and the type-to-start affordance survive the hero swap.
     expect(screen.getByRole("navigation", { name: "Project conversations" })).toBeTruthy();
     expect(screen.getByText("Start typing to begin a new chat")).toBeTruthy();
@@ -286,10 +286,10 @@ describe("ProjectChatsView hero empty state", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByText("What should we work on?");
 
-    fireEvent.click(screen.getByRole("button", { name: "Review my recent changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review code and suggest changes" }));
 
     const prompt = await screen.findByLabelText("Message new chat");
-    await waitFor(() => expect(prompt.textContent).toBe("Review my recent changes"));
+    await waitFor(() => expect(prompt.textContent).toBe("Review code and suggest changes"));
     // The chip seeds the draft in place — never a second inspector copy.
     expect(screen.getAllByLabelText("Message new chat")).toHaveLength(1);
   });
