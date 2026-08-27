@@ -325,7 +325,7 @@ function toolPresentation(type) {
 
 function toolOutcome(status) {
   if (status === undefined || status === "completed") return "success";
-  if (status === "declined" || status === "cancelled") return "cancelled";
+  if (status === "declined" || status === "cancelled" || status === "interrupted") return "cancelled";
   return "failed";
 }
 

@@ -319,6 +319,8 @@ describe("Codex app-server control runtime", () => {
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-mcp-item', type: 'mcpToolCall', status: 'completed' } } }));",
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-dynamic-item', type: 'dynamicToolCall', status: 'inProgress' } } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-dynamic-item', type: 'dynamicToolCall', status: 'completed' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-collab-item', type: 'collabAgentToolCall', status: 'inProgress' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-collab-item', type: 'collabAgentToolCall', status: 'interrupted' } } }));",
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-final-item', type: 'agentMessage', text: '', phase: 'final_answer' } } }));",
       "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-final-item', delta: 'The repository is ready.' } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-final-item', type: 'agentMessage', text: 'The repository is ready.', phase: 'final_answer' } } }));",
@@ -362,6 +364,8 @@ describe("Codex app-server control runtime", () => {
         "tool.completed",
         "tool.started",
         "tool.completed",
+        "tool.started",
+        "tool.completed",
         "assistant.text.delta",
         "assistant.text.completed",
       ]);
@@ -375,6 +379,8 @@ describe("Codex app-server control runtime", () => {
         mcpCompleted,
         dynamicStarted,
         dynamicCompleted,
+        collabStarted,
+        collabCompleted,
         finalDelta,
         finalCompleted,
       ] = events;
@@ -390,6 +396,8 @@ describe("Codex app-server control runtime", () => {
       expect(mcpCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
       expect(dynamicStarted).toMatchObject({ type: "tool.started", displayName: "Use dynamic tool", kind: "dynamic_tool" });
       expect(dynamicCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
+      expect(collabStarted).toMatchObject({ type: "tool.started", displayName: "Coordinate agents", kind: "delegation" });
+      expect(collabCompleted).toMatchObject({ type: "tool.completed", outcome: "cancelled" });
       expect(finalDelta).toMatchObject({ type: "assistant.text.delta", delta: "The repository is ready." });
       expect(finalCompleted).toMatchObject({
         type: "assistant.text.completed",
