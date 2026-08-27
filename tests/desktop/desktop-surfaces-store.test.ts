@@ -127,12 +127,29 @@ describe("desktop surfaces store", () => {
     useDesktopSurfaces.getState().maximizeToTab("terminal");
     expect(useDesktopSurfaces.getState().workspaceView).toBe("tabs");
 
-    useDesktopSurfaces.getState().showDesktop();
+    useDesktopSurfaces.getState().setWorkspaceView("desktop");
     expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
     expect(useDesktopSurfaces.getState().surfaces.terminal?.mode).toBe("tab");
 
     useDesktopSurfaces.getState().activateSurface("terminal");
     expect(useDesktopSurfaces.getState().workspaceView).toBe("tabs");
+  });
+
+  it("toggles show desktop while preserving each surface's presentation", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["home", "chat"], { width: 1200, height: 760 });
+    useDesktopSurfaces.getState().maximizeToTab("chat");
+
+    useDesktopSurfaces.getState().showDesktop();
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual(["home", "chat"]);
+    expect(useDesktopSurfaces.getState().desktopTransition?.phase).toBe("hiding");
+    expect(useDesktopSurfaces.getState().surfaces.home?.mode).toBe("window");
+    expect(useDesktopSurfaces.getState().surfaces.chat?.mode).toBe("tab");
+
+    useDesktopSurfaces.getState().showDesktop();
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual([]);
+    expect(useDesktopSurfaces.getState().desktopTransition?.phase).toBe("restoring");
+    expect(useDesktopSurfaces.getState().surfaces.home?.mode).toBe("window");
+    expect(useDesktopSurfaces.getState().surfaces.chat?.mode).toBe("tab");
   });
 
   it("returns to the desktop when a window is activated or the last tab surface disappears", () => {

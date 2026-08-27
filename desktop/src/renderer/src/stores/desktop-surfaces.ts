@@ -24,6 +24,11 @@ export interface DesktopSurface {
   zIndex: number;
 }
 
+export interface DesktopTransition {
+  phase: "hiding" | "restoring";
+  surfaceIds: string[];
+}
+
 const DESKTOP_GAP = 12;
 const MIN_WINDOW_WIDTH = 440;
 const MIN_WINDOW_HEIGHT = 300;
@@ -77,8 +82,12 @@ interface DesktopSurfacesState {
   surfaces: Record<string, DesktopSurface>;
   nextZIndex: number;
   workspaceView: "desktop" | "tabs";
+  desktopHiddenSurfaceIds: string[];
+  desktopTransition: DesktopTransition | null;
   reconcileTabs(tabIds: readonly string[], viewport: DesktopViewport, constrainToViewport?: boolean): void;
   showDesktop(): void;
+  finishDesktopTransition(): void;
+  setWorkspaceView(view: "desktop" | "tabs"): void;
   activateSurface(tabId: string): void;
   focusSurface(tabId: string): void;
   minimizeSurface(tabId: string): void;
@@ -136,6 +145,8 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
   surfaces: {},
   nextZIndex: DESKTOP_Z_INDEX.nativeDesktopWindowStart,
   workspaceView: "desktop",
+  desktopHiddenSurfaceIds: [],
+  desktopTransition: null,
 
   reconcileTabs: (tabIds, viewport, constrainToViewport = true) => set((state) => {
     const retained = new Set(tabIds);
@@ -184,7 +195,29 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
       : { surfaces, nextZIndex, workspaceView };
   }),
 
-  showDesktop: () => set({ workspaceView: "desktop" }),
+  showDesktop: () => set((state) => {
+    if (state.desktopHiddenSurfaceIds.length > 0) {
+      return {
+        desktopHiddenSurfaceIds: [],
+        desktopTransition: { phase: "restoring", surfaceIds: state.desktopHiddenSurfaceIds },
+        workspaceView: "desktop",
+      };
+    }
+
+    const visibleSurfaceIds = Object.values(state.surfaces)
+      .filter((surface) => surface.mode === "window" || surface.mode === "tab")
+      .map((surface) => surface.tabId);
+    if (visibleSurfaceIds.length === 0) return { workspaceView: "desktop", desktopTransition: null };
+    return {
+      desktopHiddenSurfaceIds: visibleSurfaceIds,
+      desktopTransition: { phase: "hiding", surfaceIds: visibleSurfaceIds },
+      workspaceView: "desktop",
+    };
+  }),
+
+  finishDesktopTransition: () => set({ desktopTransition: null }),
+
+  setWorkspaceView: (view) => set({ workspaceView: view }),
 
   activateSurface: (tabId) => set((state) => {
     const surface = state.surfaces[tabId];

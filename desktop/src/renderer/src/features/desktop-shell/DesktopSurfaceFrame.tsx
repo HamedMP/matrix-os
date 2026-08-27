@@ -9,6 +9,7 @@ import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
 import type {
   DesktopSurface,
   DesktopSurfaceBounds,
+  DesktopTransition,
 } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import { TabErrorBoundary, TabPane } from "../mission-control/TabContent";
@@ -19,6 +20,26 @@ import {
   TopBar,
 } from "./OSWindow";
 
+function desktopWindowMotion(tabId: string, bounds: DesktopSurfaceBounds): CSSProperties {
+  let hash = 0;
+  for (const character of tabId) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  const direction = Math.abs(hash) % 3;
+  const variation = (Math.abs(hash >> 3) % 37) - 18;
+  const shell = typeof document !== "undefined"
+    ? document.querySelector<HTMLElement>("[data-native-desktop-shell]")
+    : null;
+  const viewportWidth = shell?.clientWidth || (typeof window !== "undefined" ? window.innerWidth : 1280);
+  const edge = direction === 0
+    ? { x: `${variation}px`, y: `${24 - bounds.y - bounds.height}px` }
+    : direction === 1
+      ? { x: `${24 - bounds.x - bounds.width}px`, y: `${variation}px` }
+      : { x: `${viewportWidth - 24 - bounds.x}px`, y: `${variation}px` };
+  return {
+    "--desktop-exit-x": edge.x,
+    "--desktop-exit-y": edge.y,
+  } as CSSProperties;
+}
+
 export default function DesktopSurfaceFrame({
   tab,
   surface,
@@ -28,6 +49,8 @@ export default function DesktopSurfaceFrame({
   presentation,
   interactionScale = 1,
   workspaceRevision = "",
+  desktopTransition = null,
+  desktopHiddenSurfaceIds = [],
   onFocus,
   onClose,
   onMinimize,
@@ -42,6 +65,8 @@ export default function DesktopSurfaceFrame({
   presentation: NativeDesktopMode;
   interactionScale?: number;
   workspaceRevision?: string;
+  desktopTransition?: DesktopTransition | null;
+  desktopHiddenSurfaceIds?: readonly string[];
   onFocus: () => void;
   onClose: () => void;
   onMinimize: () => void;
@@ -51,11 +76,17 @@ export default function DesktopSurfaceFrame({
   const isCanvas = presentation === "canvas";
   const isDesktopWindow = surface.mode === "window";
   const isTabbed = !isCanvas && surface.mode === "tab";
+  const isDesktopTransition = !isCanvas
+    && desktopTransition?.surfaceIds.includes(surface.tabId) === true;
+  const isDesktopHidden = !isCanvas
+    && desktopHiddenSurfaceIds?.includes(surface.tabId) === true;
   const isWindow = isDesktopWindow
+    || isDesktopHidden
+    || isDesktopTransition
     || (isCanvas && surface.mode !== "closed" && surface.mode !== "minimized");
   const visible = isCanvas
     ? isWindow
-    : (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
+    : isDesktopHidden || isDesktopTransition || (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app";
   const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "terminal" || tab.kind === "terminals";
@@ -130,6 +161,17 @@ export default function DesktopSurfaceFrame({
     height: `${surface.bounds.height}px`,
     zIndex: surface.zIndex,
     display: visible ? "flex" : "none",
+    ...(isDesktopTransition ? {
+      ...desktopWindowMotion(surface.tabId, surface.bounds),
+      animation: desktopTransition?.phase === "hiding"
+        ? "native-desktop-window-hide 280ms cubic-bezier(0.22, 1, 0.36, 1) both"
+        : "native-desktop-window-show 280ms cubic-bezier(0.22, 1, 0.36, 1) both",
+      pointerEvents: "none",
+    } : isDesktopHidden ? {
+      ...desktopWindowMotion(surface.tabId, surface.bounds),
+      transform: "translate3d(var(--desktop-exit-x), var(--desktop-exit-y), 0)",
+      pointerEvents: "none",
+    } : {}),
     borderRadius: "var(--radius-lg)",
     border: `1px solid ${active ? "var(--border-default)" : "var(--border-subtle)"}`,
     boxShadow: active ? "var(--shadow-3)" : "var(--shadow-2)",

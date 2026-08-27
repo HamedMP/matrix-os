@@ -6,6 +6,16 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
+
+@keyframes native-desktop-window-hide {
+  from { opacity: 1; transform: translate3d(0, 0, 0); }
+  to { opacity: 1; transform: translate3d(var(--desktop-exit-x), var(--desktop-exit-y), 0); }
+}
+
+@keyframes native-desktop-window-show {
+  from { opacity: 1; transform: translate3d(var(--desktop-exit-x), var(--desktop-exit-y), 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
 @import "./chat.css";
 
 /* Map tokens into Tailwind v4 theme so utilities like bg-surface work. */

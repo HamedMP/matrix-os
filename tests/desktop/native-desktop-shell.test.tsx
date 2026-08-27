@@ -147,6 +147,19 @@ describe("native desktop shell", () => {
     expect(await screen.findByText("Change background…")).toBeTruthy();
   });
 
+  it("toggles show desktop when the empty desktop surface is clicked", () => {
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+
+    const terminalTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "terminals");
+    expect(terminalTab).toBeTruthy();
+    fireEvent.click(screen.getByTestId("native-desktop-workspace"));
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toContain(terminalTab!.id);
+
+    fireEvent.click(screen.getByTestId("native-desktop-workspace"));
+    expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("window");
+  });
+
   it("loads the configured wallpaper through the authenticated API and revokes it on runtime change", async () => {
     mockLoadedWallpaperImage();
     const createObjectURL = vi.fn(() => "blob:desktop-wallpaper");
@@ -299,6 +312,9 @@ describe("native desktop shell", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
     expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "Browser" })).toBeTruthy();
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toContain(terminalTab!.id);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
     expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("tab");
 
     fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));

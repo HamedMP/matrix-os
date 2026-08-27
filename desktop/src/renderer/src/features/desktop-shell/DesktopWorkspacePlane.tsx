@@ -17,11 +17,13 @@ function isInsideCanvasSurface(target: EventTarget | null): boolean {
 type DesktopWorkspacePlaneProps = {
   mode: NativeDesktopMode;
   children: ReactNode;
+  onBackgroundClick?: () => void;
 } & Omit<ComponentPropsWithoutRef<"div">, "children">;
 
 const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlaneProps>(function DesktopWorkspacePlane({
   mode,
   children,
+  onBackgroundClick,
   ...triggerProps
 }, ref) {
   const panX = useNativeDesktopMode((state) => state.panX);
@@ -79,6 +81,12 @@ const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlanePr
   };
 
   const canvas = mode === "canvas";
+  const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (mode !== "desktop") return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("[data-desktop-surface],button,input,a")) return;
+    onBackgroundClick?.();
+  };
   return (
     <div
       {...triggerProps}
@@ -93,6 +101,7 @@ const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlanePr
       } : undefined}
       onPointerDown={startPan}
       onWheel={zoomCanvas}
+      onClick={onClick}
     >
       <div
         data-testid="native-desktop-workspace-plane"
