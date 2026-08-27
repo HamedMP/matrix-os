@@ -62,6 +62,7 @@ export const DOCKER_FULL_STACK_SERVICES = [
 ];
 
 export const dockerFullStackCommands = {
+  prepare: ["docker", "volume", "create", "matrixos-ai-auth"],
   start: [...COMPOSE, "up", "--detach", "--build"],
   cleanup: [...COMPOSE, "down", "--remove-orphans"],
 };
@@ -147,6 +148,10 @@ export async function smokeDockerFullStack({
       cause: error,
     });
   }
+  await runCommand(
+    dockerFullStackCommands.prepare[0],
+    dockerFullStackCommands.prepare.slice(1),
+  );
   let startAttempted = false;
   try {
     startAttempted = true;

@@ -159,7 +159,11 @@ services:
       test: wget -qO- http://localhost:4000/health || exit 1
       interval: 10s
       timeout: 3s
-      start_period: 30s
+      # A fresh dev-node-modules volume installs the workspace and builds the
+      # bundled apps before the gateway starts. Slow disks can legitimately
+      # take several minutes; successful probes still mark the service healthy
+      # immediately, so this only prevents false failures during cold boot.
+      start_period: 5m
     restart: unless-stopped
 
   # --- Full stack profile ---
@@ -254,9 +258,10 @@ services:
       - ./distro/conduit.toml:/etc/conduit.toml:ro
       - conduit-data:/var/lib/matrix-conduit
     healthcheck:
-      test: ["CMD-SHELL", "exit 0"]
-      interval: 30s
-      timeout: 3s
+      # Conduit's distroless image has no /bin/sh, so CMD-SHELL probes always
+      # fail even while the Matrix HTTP endpoint is healthy. The bounded full
+      # stack smoke verifies /_matrix/client/versions from the host instead.
+      disable: true
     restart: unless-stopped
 
   # --- Observability profile ---

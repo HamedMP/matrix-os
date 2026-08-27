@@ -55,6 +55,7 @@ describe("local development contracts", () => {
         depends_on?: Record<string, unknown>;
         env_file?: string[];
         environment?: string[];
+        healthcheck?: { disable?: boolean; start_period?: string };
       }>;
     };
     const environment = (service: string) => compose.services[service]?.environment ?? [];
@@ -67,7 +68,13 @@ describe("local development contracts", () => {
     );
     expect(environment("platform").some((value) => value.startsWith("PLATFORM_DB_PATH="))).toBe(false);
     expect(compose.services.platform.depends_on).toHaveProperty("postgres");
+    expect(compose.services.dev.healthcheck?.start_period).toBe("5m");
+    expect(compose.services.conduit.healthcheck).toEqual({ disable: true });
     const pkg = readJson("package.json") as { scripts: Record<string, string> };
+    expect(pkg.scripts["docker:prepare"]).toBe("docker volume create matrixos-ai-auth");
+    for (const script of ["docker", "docker:full", "docker:all", "docker:multi"]) {
+      expect(pkg.scripts[script], script).toMatch(/^bun run docker:prepare && /);
+    }
     expect(pkg.scripts["docker:full"]).toContain("--env-file .env.docker");
   });
 
@@ -82,6 +89,12 @@ describe("local development contracts", () => {
       "conduit",
     ]);
     expect(dockerFullStackCommands.start).toContain("up");
+    expect(dockerFullStackCommands.prepare).toEqual([
+      "docker",
+      "volume",
+      "create",
+      "matrixos-ai-auth",
+    ]);
     expect(dockerFullStackCommands.cleanup).toContain("down");
     expect(dockerFullStackCommands.cleanup).not.toContain("-v");
   });

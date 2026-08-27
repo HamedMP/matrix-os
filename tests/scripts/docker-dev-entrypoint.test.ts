@@ -25,4 +25,20 @@ describe("Docker development entrypoint dependency layout", () => {
       expect(command).toContain("--config.enableGlobalVirtualStore=false");
     }
   });
+
+  it("builds the brand workspace before starting the shell", () => {
+    const entrypoint = readFileSync(
+      join(root, "distro/docker-dev-entrypoint.sh"),
+      "utf8",
+    );
+    const brandBuild = entrypoint.indexOf(
+      "pnpm --filter @matrix-os/brand build",
+    );
+    const shellStart = entrypoint.indexOf(
+      "pnpm --filter shell exec next dev -p 3000",
+    );
+
+    expect(brandBuild).toBeGreaterThan(-1);
+    expect(shellStart).toBeGreaterThan(brandBuild);
+  });
 });
