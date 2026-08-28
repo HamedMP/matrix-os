@@ -43,6 +43,7 @@ interface ShellSessionsState {
   authoritativeRevision: number;
   load(api: ApiClient): Promise<ShellSessionSummary[] | null>;
   create(api: ApiClient): Promise<ShellSessionSummary | null>;
+  adoptCreatedSession(name: string): void;
   deleteSession(api: ApiClient, name: string): Promise<boolean>;
   rename(api: ApiClient, name: string, nextName: string): Promise<boolean>;
   reorder(api: ApiClient, fromName: string, toName: string): Promise<boolean>;
@@ -268,7 +269,10 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
       const name = nextShellName();
       try {
-        const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name, cwd: DEFAULT_CWD });
+        const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
+          name,
+          cwd: DEFAULT_CWD,
+        });
         if (!isCurrentRuntimeGeneration(generation)) return null;
         const createdName = typeof response.name === "string" && isValidShellSessionName(response.name) ? response.name : name;
         let created: ShellSessionSummary = {
@@ -319,6 +323,23 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     }
     set({ creating: false, error: "server" });
     return null;
+  },
+
+  adoptCreatedSession: (name) => {
+    if (!isValidShellSessionName(name)) return;
+    set((state) => (
+      state.sessions.some((session) => session.name === name)
+        ? state
+        : {
+            sessions: [{
+              name,
+              status: "active",
+              placement: "active",
+              attachCommand: shellConnectCommand(name),
+            }, ...state.sessions],
+            authoritativeRevision: state.authoritativeRevision + 1,
+          }
+    ));
   },
 
   deleteSession: async (api, name) => {

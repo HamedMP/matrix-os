@@ -11,6 +11,7 @@ import { useProviderSetup } from "../../desktop/src/renderer/src/features/chat/u
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 
 function instance(driverKind: CanonicalProviderDriverKind): CanonicalProviderInstanceDescriptor {
   return {
@@ -81,6 +82,7 @@ function TerminalHarness({ api }: { api: ApiClient }) {
 describe("system harness setup routing", () => {
   beforeEach(() => {
     useTabs.setState(useTabs.getInitialState(), true);
+    useShellSessions.setState(useShellSessions.getInitialState(), true);
     useUi.setState({ requestedSettingsSection: null });
   });
 
@@ -110,5 +112,6 @@ describe("system harness setup routing", () => {
     })));
     expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminals")).toBe(true);
     expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-opencode");
+    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-setup-opencode"]);
   });
 });

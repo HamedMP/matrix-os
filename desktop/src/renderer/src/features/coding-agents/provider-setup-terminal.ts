@@ -6,6 +6,7 @@ import type {
 } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
 import { useTabs } from "../../stores/tabs";
+import { useShellSessions } from "../../stores/shell-sessions";
 import { providerSupportsSetupAction } from "./provider-readiness";
 
 const MAX_PROVIDER_SETUP_ACTIONS = 10;
@@ -99,6 +100,7 @@ export async function openProviderSetupTerminal(
     const sessionName = typeof response.name === "string" && SESSION_NAME_PATTERN.test(response.name)
       ? response.name
       : requestedSessionName;
+    useShellSessions.getState().adoptCreatedSession(sessionName);
     openTab({ kind: "terminals", title: "Terminal" });
     useTabs.getState().requestTerminalSession(sessionName);
     return true;
