@@ -1,4 +1,4 @@
-import { Maximize2, Minus, X, ArrowExpand01 } from "@renderer/lib/hugeicons";
+import { Minus, X, ArrowExpand01 } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,
