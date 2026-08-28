@@ -7,10 +7,17 @@ import { CustomerVpsError } from '../../packages/platform/src/customer-vps-error
 import { issueSyncJwt } from '../../packages/platform/src/sync-jwt.js';
 import {
   getOnboardingFirstRun,
+  claimCheckoutAttempt,
   insertUserMachine,
   upsertBillingOverride,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
+import {
+  admitPrebillingIntent,
+  authorizePrebillingIntent,
+  createPrebillingIntent,
+  markPrebillingPreparationFailed,
+} from '../../packages/platform/src/prebilling-provisioning-store.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 const SECRET = 'test-platform-jwt-secret-at-least-32-chars-long';
@@ -146,6 +153,43 @@ describe('platform/journey-routes', () => {
       expect(res.status).toBe(200);
       expect((await res.json()).status).toBe('started');
       expect(provisionRuntime).toHaveBeenCalledWith('user_123', 'primary');
+    });
+
+    it('retries the checkout-bound intent instead of starting legacy post-payment provisioning', async () => {
+      await claimCheckoutAttempt(db, {
+        id: 'checkout-1', clerkUserId: 'user_123', runtimeSlot: 'primary',
+        planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1',
+        serverType: 'cpx32', developerTools: ['codex'], createdAt: '2026-06-11T11:55:00.000Z',
+      });
+      await createPrebillingIntent(db, {
+        id: 'intent-1', checkoutAttemptId: 'checkout-1', clerkUserId: 'user_123', runtimeSlot: 'primary',
+        planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1',
+        serverType: 'cpx32', developerTools: ['codex'], createdAt: '2026-06-11T11:55:00.000Z',
+      });
+      await admitPrebillingIntent(db, {
+        intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: '2026-06-11T12:30:00.000Z',
+        reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000,
+        now: '2026-06-11T11:56:00.000Z',
+      });
+      await db.transaction((trx) => authorizePrebillingIntent(trx, {
+        intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary',
+        now: '2026-06-11T11:57:00.000Z',
+      }));
+      await markPrebillingPreparationFailed(db, {
+        intentId: 'intent-1', now: '2026-06-11T11:58:00.000Z', errorCode: 'provider_timeout',
+      });
+      const provisionRuntime = vi.fn(async () => {});
+      const resumePrebillingPreparation = vi.fn(async () => true);
+      const app = routes({ provisionRuntime, resumePrebillingPreparation });
+
+      const res = await app.request('/api/journey/retry-provision', { method: 'POST' });
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe('started');
+      expect(resumePrebillingPreparation).toHaveBeenCalledWith({
+        intentId: 'intent-1', clerkUserId: 'user_123',
+      });
+      expect(provisionRuntime).not.toHaveBeenCalled();
     });
 
     it('maps billing_required to 402', async () => {

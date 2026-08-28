@@ -59,10 +59,10 @@ describe("DotGrid OS-design gating", () => {
     expect(useDotGrid.getState().enabled).toBe(true);
   });
 
-  it("does not silently suppress the grid in the hidden legacy Desktop mode", () => {
+  it("keeps the canonical Desktop wallpaper free of the Canvas dot grid", () => {
     useDesktopMode.setState({ mode: "desktop", previousMode: "canvas" });
     const { container } = render(<DotGrid />);
-    expect(container.querySelector("canvas")).not.toBeNull();
+    expect(container.querySelector("canvas")).toBeNull();
   });
 
   it("renders the grid canvas in the neumorphic design", () => {

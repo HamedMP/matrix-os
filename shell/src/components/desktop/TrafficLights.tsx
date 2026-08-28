@@ -1,3 +1,5 @@
+import { ArrowExpand01, Minus, X } from "@/lib/hugeicons";
+
 export function TrafficLights({
   onClose,
   onMinimize,
@@ -8,42 +10,43 @@ export function TrafficLights({
   onFullscreen?: () => void;
 }) {
   return (
-    <div className="group/traffic flex items-center gap-1.5 mr-2">
+    <div className="group/traffic mr-2 flex items-center gap-1.5">
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
           onClose();
         }}
-        className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
+        className="flex size-3 items-center justify-center rounded-full bg-[#ff5f57] transition-colors hover:brightness-90"
         aria-label="Close"
       >
-        <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
-          x
-        </span>
+        <X aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
       </button>
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
           onMinimize();
         }}
-        className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors"
+        className="flex size-3 items-center justify-center rounded-full bg-[#febc2e] transition-colors hover:brightness-90"
         aria-label="Minimize"
       >
-        <span className="text-[9px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
-          -
-        </span>
+        <Minus aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
       </button>
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
           onFullscreen?.();
         }}
-        className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
+        className="flex size-3 items-center justify-center rounded-full bg-[#28c840] transition-colors hover:brightness-90"
         aria-label="Fullscreen"
-      />
+      >
+        <ArrowExpand01 aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
+      </button>
     </div>
   );
 }

@@ -414,6 +414,9 @@ importers:
       monaco-editor:
         specifier: ^0.56.0
         version: 0.56.0
+      posthog-js:
+        specifier: ^1.376.0
+        version: 1.376.0
       react:
         specifier: 19.2.6
         version: 19.2.6

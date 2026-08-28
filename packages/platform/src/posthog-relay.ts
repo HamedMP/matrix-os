@@ -15,6 +15,7 @@ const POSTHOG_RELAY_FORWARD_HEADERS = new Set([
   'origin',
   'referer',
   'user-agent',
+  'x-conversations-token',
 ]);
 
 export interface PostHogRelayDependencies {

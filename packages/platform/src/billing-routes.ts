@@ -198,6 +198,11 @@ export interface PrebillingCheckoutCoordinator {
     checkoutAttemptId: string;
     clerkUserId: string;
   }): Promise<boolean>;
+  resumePreparation(input: {
+    intentId: string;
+    clerkUserId: string;
+  }): Promise<boolean>;
+  reconcilePreparations(): Promise<{ checked: number; resumed: number }>;
   authorizeSubscription(
     db: PlatformDB,
     input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
@@ -455,9 +460,6 @@ export function createBillingRoutes(options: {
               && recoveredPlan.interval === parsed.data.interval
               && recoveredRegion.data === parsed.data.regionSlug
             ) {
-              if (parsed.data.runtimeSlot === 'primary' && options.prebilling) {
-                return preparedCheckoutResponse(c, clerkUserId, attempt.attempt, true);
-              }
               return c.json({ url: session.url }, 200);
             }
             return c.json({
@@ -474,7 +476,7 @@ export function createBillingRoutes(options: {
       }
       if (!attempt.claimed) {
         if (attempt.selectionMatches && attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl) {
-          return preparedCheckoutResponse(c, clerkUserId, attempt.attempt, true);
+          return c.json({ url: attempt.attempt.checkoutUrl }, 200);
         }
         if (
           !attempt.selectionMatches
@@ -550,22 +552,18 @@ export function createBillingRoutes(options: {
             stripeSessionId: session.id,
             stripeSessionExpiresAt: session.expiresAt ?? preparation.expiresAt,
           });
-          if (!started) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+          if (!started) {
+            console.warn('[billing] prebilling preparation deferred');
+          }
         } catch (err: unknown) {
           console.warn('[billing] prebilling preparation unavailable:', err instanceof Error ? err.name : typeof err);
-          return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
         }
       }
       emitTelemetry(BILLING_CHECKOUT_CREATED_EVENT, {
         distinctId: clerkUserId,
         properties: checkoutProperties,
       });
-      return preparedCheckoutResponse(c, clerkUserId, {
-        ...attempt.attempt,
-        stripeSessionId: session.id,
-        checkoutUrl: session.url,
-        status: 'open',
-      });
+      return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] checkout creation failed:', err instanceof Error ? err.message : String(err));
       emitTelemetry(BILLING_CHECKOUT_FAILED_EVENT, {
@@ -710,6 +708,7 @@ export function createBillingRoutes(options: {
       return c.json({ error: 'Invalid webhook' }, 400);
     }
 
+    let preparationToResume: { intentId: string; clerkUserId: string } | undefined;
     try {
       const webhookProcessedAt = now();
       const result = await runBillingWebhookTransaction(options.db, async (trx) => {
@@ -917,12 +916,18 @@ export function createBillingRoutes(options: {
           && getRuntimeAccessDecision(summary, webhookProcessedAt).runtimeProxyAllowed
         ) {
           if (!options.prebilling) throw new Error('prebilling_authorization_unavailable');
-          await options.prebilling.authorizeSubscription(trx, {
+          const authorization = await options.prebilling.authorizeSubscription(trx, {
             intentId: projection.prebillingIntentId,
             clerkUserId: projection.clerkUserId,
             runtimeSlot: projection.runtimeSlot,
             now: webhookProcessedAt.toISOString(),
           });
+          if (!authorization.authorized) {
+            preparationToResume = {
+              intentId: projection.prebillingIntentId,
+              clerkUserId: projection.clerkUserId,
+            };
+          }
         }
         emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
           distinctId: entitlement.clerkUserId,
@@ -962,6 +967,14 @@ export function createBillingRoutes(options: {
         }
         return { received: true, processed: true };
       });
+      if (preparationToResume && options.prebilling) {
+        void options.prebilling.resumePreparation(preparationToResume).catch((err: unknown) => {
+          console.error(
+            `[billing] paid preparation kick failed intent=${preparationToResume?.intentId ?? 'unknown'}`,
+            err instanceof Error ? err.name : typeof err,
+          );
+        });
+      }
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));

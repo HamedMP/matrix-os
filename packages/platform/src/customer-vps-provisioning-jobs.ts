@@ -369,7 +369,7 @@ export async function failProvisioningJob(
           revision = revision + 1,
           updated_at = ${now}
       WHERE id = (SELECT prebilling_intent_id FROM failed_job)
-        AND state = 'preparing'
+        AND state IN ('preparing', 'payment_settling')
       RETURNING id
     )
     SELECT EXISTS(SELECT 1 FROM failed_job) AS failed

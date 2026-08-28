@@ -3,7 +3,7 @@ import { Button, IconButton } from "../../../design/primitives";
 import { getThemeVariant, unifiedThemes } from "../../../design/themes";
 import { resolveThemeMode, type ThemeMode } from "../../../design/themes/apply";
 import { MAX_ZOOM, MIN_ZOOM, useAppearance, ZOOM_STEP } from "../../../stores/appearance";
-import { Card, SectionHeader } from "./section-kit";
+import { Card, SettingsSectionHeader } from "./section-kit";
 
 function ThemeSwatch({ themeId, mode, selected, onSelect, onArrowKey }: {
   themeId: string;
@@ -87,7 +87,7 @@ export default function AppearanceSection() {
 
   return (
     <>
-      <SectionHeader title="Appearance" description="How Matrix OS looks on this machine." />
+      <SettingsSectionHeader title="Appearance" description="How Matrix OS looks on this machine." />
       <Card>
         <span className="text-sm" style={{ color: "var(--text-secondary)" }}>Mode</span>
         <div className="flex gap-2">

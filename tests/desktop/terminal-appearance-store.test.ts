@@ -15,8 +15,8 @@ describe("Terminal appearance store", () => {
     };
   });
 
-  it("defaults Terminal to dark before persisted state hydrates", () => {
-    expect(useTerminalAppearance.getState()).toMatchObject({ mode: "dark", hydrated: false });
+  it("defaults Terminal chrome to Matrix OS Dark before persisted state hydrates", () => {
+    expect(useTerminalAppearance.getState()).toMatchObject({ appThemeId: "matrix-dark", hydrated: false });
   });
 
   it("loads a saved light preference without reading the global Desktop appearance", async () => {
@@ -27,16 +27,16 @@ describe("Terminal appearance store", () => {
 
     await useTerminalAppearance.getState().load();
 
-    expect(useTerminalAppearance.getState()).toMatchObject({ mode: "light", hydrated: true });
+    expect(useTerminalAppearance.getState()).toMatchObject({ appThemeId: "light", hydrated: true });
     expect(window.operator.invoke).toHaveBeenCalledWith("state:get", { key: "terminalAppearance" });
   });
 
-  it("falls back to dark when persisted state is absent or invalid", async () => {
+  it("falls back to Matrix OS Dark when persisted state is absent or invalid", async () => {
     window.operator.invoke = vi.fn(async () => ({ value: { mode: "system" } }));
 
     await useTerminalAppearance.getState().load();
 
-    expect(useTerminalAppearance.getState()).toMatchObject({ mode: "dark", hydrated: true });
+    expect(useTerminalAppearance.getState()).toMatchObject({ appThemeId: "matrix-dark", hydrated: true });
   });
 
   it("preserves a newer explicit selection when startup hydration resolves late", async () => {
@@ -51,20 +51,20 @@ describe("Terminal appearance store", () => {
     });
 
     const load = useTerminalAppearance.getState().load();
-    useTerminalAppearance.getState().setMode("light");
+    useTerminalAppearance.getState().setAppThemeId("light");
     resolveLoad?.({ value: { mode: "dark" } });
     await load;
 
-    expect(useTerminalAppearance.getState()).toMatchObject({ mode: "light", hydrated: true });
+    expect(useTerminalAppearance.getState()).toMatchObject({ appThemeId: "light", hydrated: true });
   });
 
-  it("persists an explicit Terminal-only mode change", () => {
-    useTerminalAppearance.getState().setMode("light");
+  it("persists an explicit Terminal-only app theme change", () => {
+    useTerminalAppearance.getState().setAppThemeId("matrix");
 
-    expect(useTerminalAppearance.getState().mode).toBe("light");
+    expect(useTerminalAppearance.getState().appThemeId).toBe("matrix");
     expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
       key: "terminalAppearance",
-      value: { mode: "light" },
+      value: { appThemeId: "matrix" },
     });
   });
 });

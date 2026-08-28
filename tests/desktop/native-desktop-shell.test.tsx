@@ -263,7 +263,7 @@ describe("native desktop shell", () => {
 
     expect(screen.getByRole("dialog", { name: "Chat window" })).toBeTruthy();
     expect(screen.getByText("Chat content")).toBeTruthy();
-    expect(document.querySelector("[data-os-window-chrome-placement]")?.textContent).toBe("");
+    expect(document.querySelector("[data-os-window-chrome-placement]")?.textContent).toBe("Chat");
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
@@ -311,6 +311,11 @@ describe("native desktop shell", () => {
     expect(settingsTab).toBeTruthy();
     expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]?.mode).toBe("window");
     expect(screen.getByRole("dialog", { name: "Settings window" })).toBeTruthy();
+    const settingsWindow = screen.getByRole("dialog", { name: "Settings window" });
+    expect(settingsWindow.querySelector("[data-os-window-sidebar]")).toBeTruthy();
+    const settingsTitle = within(settingsWindow).getByRole("heading", { name: "Settings" });
+    expect(settingsTitle.closest("[data-settings-sidebar-title]")?.querySelector("svg")).toBeTruthy();
+    expect(within(settingsWindow).getByRole("button", { name: "Account" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
 
     fireEvent.click(getWindowControl("Settings", "Maximize"));
@@ -784,12 +789,12 @@ describe("native desktop shell", () => {
     const dragHandle = screen.getByTestId("desktop-window-drag-handle");
     expect(dragHandle.classList.contains("titlebar-drag")).toBe(false);
     expect(dragHandle.classList.contains("z-20")).toBe(true);
-    expect(getWindowControl("Files", "Close").style.background)
-      .toBe("var(--surface-primary, #FFFEFC)");
-    expect(getWindowControl("Files", "Minimize").style.background)
-      .toBe("var(--surface-primary, #FFFEFC)");
-    expect(getWindowControl("Files", "Maximize").style.background)
-      .toBe("var(--surface-primary, #FFFEFC)");
+    expect(getWindowControl("Files", "Close").className).toContain("bg-[#ff5f57]");
+    expect(getWindowControl("Files", "Minimize").className).toContain("bg-[#febc2e]");
+    expect(getWindowControl("Files", "Maximize").className).toContain("bg-[#28c840]");
+    expect(getWindowControl("Files", "Close").querySelector("svg")).toBeTruthy();
+    expect(getWindowControl("Files", "Minimize").querySelector("svg")).toBeTruthy();
+    expect(getWindowControl("Files", "Maximize").querySelector("svg")).toBeTruthy();
 
     fireEvent.pointerDown(dragHandle, { button: 0, clientX: 400, clientY: 180 });
     fireEvent.pointerMove(window, { clientX: 480, clientY: 225 });

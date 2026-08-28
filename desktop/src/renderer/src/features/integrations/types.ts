@@ -2,16 +2,27 @@
 // (/api/integrations* — packages/gateway/src/integrations/routes.ts, either
 // served directly by the gateway or proxied to the platform). The renderer
 // only ever handles display-safe fields: no tokens, no scopes beyond counts,
-// no provider error text. Remote logo URLs are deliberately dropped — the
-// desktop renders icon initials instead of remote images.
+// no provider error text. Logo URLs are accepted only from the HTTPS catalog
+// response and remain display-only.
 
 export const MAX_AVAILABLE_INTEGRATIONS = 200;
 export const MAX_CONNECTED_INTEGRATIONS = 200;
+const PIPEDREAM_LOGO_SERVICES = new Set([
+  "gmail",
+  "google_calendar",
+  "google_drive",
+  "github",
+  "linear",
+  "slack",
+  "discord",
+]);
 
 export interface AvailableIntegration {
   id: string;
   name: string;
   category: string;
+  description?: string;
+  logoUrl?: string;
 }
 
 export interface ConnectedIntegration {
@@ -61,6 +72,19 @@ function asTrimmedString(value: unknown, maxLength: number): string | null {
   return trimmed.length > 0 && trimmed.length <= maxLength ? trimmed : null;
 }
 
+function asHttpsUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || !URL.canParse(value)) return undefined;
+  return new URL(value).protocol === "https:" ? value : undefined;
+}
+
+export function displayIntegrationName(value: string): string {
+  return value
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(" ");
+}
+
 export function parseAvailableIntegrations(value: unknown): AvailableIntegration[] {
   const list = asList(value, ["services", "available"]);
   const out: AvailableIntegration[] = [];
@@ -71,7 +95,17 @@ export function parseAvailableIntegrations(value: unknown): AvailableIntegration
     if (!id) continue;
     const name = asTrimmedString(record.name, 100) ?? id;
     const category = asTrimmedString(record.category, 64) ?? "other";
-    out.push({ id, name, category });
+    const description = asTrimmedString(record.description, 180);
+    const logoUrl = asHttpsUrl(record.logoUrl)
+      ?? asHttpsUrl(record.logo_url)
+      ?? (PIPEDREAM_LOGO_SERVICES.has(id) ? `https://pipedream.com/s.v0/${id}/logo/48` : undefined);
+    out.push({
+      id,
+      name,
+      category,
+      ...(description ? { description } : {}),
+      ...(logoUrl ? { logoUrl } : {}),
+    });
   }
   return out;
 }

@@ -46,6 +46,7 @@ import {
 import { formatShellDisplayName } from "./TerminalSidebarItems";
 import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
+import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./DesktopTerminalWorkspace";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
@@ -231,10 +232,12 @@ interface TerminalAppProps {
    * canonical-sizing WebSockets. Canvas uses this while a window is minimized.
    */
   suspended?: boolean;
+  /** Use the native Desktop session workspace inside a web OS window. */
+  desktopParity?: boolean;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal shell component; extraction tracked separately. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
-export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false, desktopParity = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
@@ -272,6 +275,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
   const [mobileInputActive, setMobileInputActive] = useState(false);
+  const [desktopSessionState, setDesktopSessionState] = useState<{ count: number; ready: boolean }>({ count: 0, ready: false });
 
   const containerRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<Tab[]>(tabs);
@@ -870,6 +874,15 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const activeTab = tabs.find(t => t.id === activeTabId);
+  const handleDesktopSessionStateChange = useCallback((next: { count: number; ready: boolean }) => {
+    setDesktopSessionState((current) => (
+      current.count === next.count && current.ready === next.ready ? current : next
+    ));
+  }, []);
+  const createDesktopShell = async () => {
+    const name = await createShellSessionTab("Shell", DEFAULT_CWD);
+    if (name) setDesktopSessionState({ count: 1, ready: true });
+  };
 
   // Construct store-compatible interface for child components
   const storeApi = {
@@ -958,8 +971,22 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
           style={{ background: "var(--terminal-app-body-bg)" }}
         >
-          <LocalTerminalSidebar canvasZoom={canvasZoom} />
-          {activeTab ? (
+          <div
+            className={desktopParity && desktopSessionState.count === 0 ? "hidden" : "contents"}
+            aria-hidden={desktopParity && desktopSessionState.count === 0 ? "true" : undefined}
+          >
+            <LocalTerminalSidebar
+              canvasZoom={canvasZoom}
+              desktopParity={desktopParity}
+              onDesktopSessionStateChange={desktopParity ? handleDesktopSessionStateChange : undefined}
+            />
+          </div>
+          {desktopParity && desktopSessionState.count === 0 ? (
+            <DesktopTerminalEmptyState
+              ready={desktopSessionState.ready}
+              onCreate={() => void createDesktopShell()}
+            />
+          ) : activeTab ? (
             <div
               data-testid="terminal-content-surface"
               className="flex-1 min-w-0 min-h-0 flex"
@@ -982,6 +1009,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                     }
                   : {})}
               >
+                {desktopParity ? (
+                  <DesktopTerminalSessionHeader title={activeTab.label} />
+                ) : null}
                 {!suspended ? (
                   <PaneGrid
                     paneTree={activeTab.paneTree}

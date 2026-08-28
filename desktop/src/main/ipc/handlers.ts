@@ -30,6 +30,7 @@ export interface HandlerContext {
   checkUpdate: () => Promise<DesktopUpdateSnapshot>;
   getUpdateSnapshot: () => DesktopUpdateSnapshot;
   installUpdate: () => Promise<boolean> | boolean;
+  toggleWindowMaximize: () => void;
   getWhatsNew: () => Promise<{
     release: DesktopReleaseNotes | null;
     shouldOpen: boolean;
@@ -224,6 +225,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("app:set-zoom", ({ factor }, event) => {
     zoomTarget(event)?.setZoomFactor(factor);
     return { factor };
+  });
+  handle("window:toggle-maximize", () => {
+    ctx.toggleWindowMaximize();
+    return { ok: true };
   });
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),
