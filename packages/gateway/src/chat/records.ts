@@ -222,7 +222,10 @@ export function toRun(row: Selectable<ChatRunsTable>): CanonicalChatRun {
 }
 
 export function toActivity(row: Selectable<ChatRunEventsTable>): CanonicalChatRunActivity | null {
-  const event = parseJson<unknown>(row.event);
+  const storedEvent = parseJson<unknown>(row.event);
+  const event = row.run_seq === null || typeof storedEvent !== "object" || storedEvent === null
+    ? storedEvent
+    : { ...storedEvent, sequence: Number(row.run_seq) };
   const parsed = CanonicalChatRunActivitySchema.safeParse(event);
   if (parsed.success) return parsed.data;
   if (

@@ -355,6 +355,7 @@ const CanonicalChatRunActivityBaseSchema = z.object({
   id: canonicalReferenceId(128),
   chatId: CanonicalChatIdSchema,
   runId: CanonicalChatRunIdSchema,
+  sequence: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   occurredAt: IsoTimestampSchema,
 });
 

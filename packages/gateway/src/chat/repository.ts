@@ -485,11 +485,18 @@ export class ChatRepository {
           terminalSessionId: sessionId,
           terminalSessionCreatedAt: sessionCreatedAt,
         });
+        const latestSequence = await trx.selectFrom("chat_run_events")
+          .select(({ fn }) => fn.max("run_seq").as("sequence"))
+          .where("run_id", "=", runId)
+          .executeTakeFirst();
+        const sequence = Number(latestSequence?.sequence ?? 0) + 1;
+        const sequenced = CanonicalChatRunActivitySchema.parse({ ...activity, sequence });
         await trx.insertInto("chat_run_events").values({
-          id: activity.id,
+          id: sequenced.id,
           chat_id: chatId,
           run_id: runId,
-          event: jsonb(activity),
+          run_seq: sequence,
+          event: jsonb(sequenced),
           occurred_at: occurredAt,
         }).execute();
       }
@@ -1107,7 +1114,8 @@ export class ChatRepository {
       this.kysely.selectFrom("chat_messages").selectAll().where("chat_id", "=", chatId).orderBy("seq").execute(),
       this.kysely.selectFrom("chat_turns").selectAll().where("chat_id", "=", chatId).orderBy("created_at").execute(),
       this.kysely.selectFrom("chat_runs").selectAll().where("chat_id", "=", chatId).orderBy("created_at").execute(),
-      this.kysely.selectFrom("chat_run_events").selectAll().where("chat_id", "=", chatId).orderBy("occurred_at").execute(),
+      this.kysely.selectFrom("chat_run_events").selectAll().where("chat_id", "=", chatId)
+        .orderBy("occurred_at").orderBy("run_id").orderBy("run_seq").orderBy("id").execute(),
       this.kysely.selectFrom("chat_attachments").selectAll().where("chat_id", "=", chatId).orderBy("created_at").execute(),
     ]);
     return {

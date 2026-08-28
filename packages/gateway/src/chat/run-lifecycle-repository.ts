@@ -270,6 +270,7 @@ export class ChatRunLifecycleRepository {
           .select(["id", "event"])
           .where("run_id", "=", runId)
           .orderBy("occurred_at")
+          .orderBy("run_seq")
           .orderBy("id")
           .execute();
         const evictedIds = candidates.flatMap((row) => {
@@ -281,27 +282,40 @@ export class ChatRunLifecycleRepository {
         }
         await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
       }
+      const latestSequence = await trx.selectFrom("chat_run_events")
+        .select(({ fn }) => fn.max("run_seq").as("sequence"))
+        .where("run_id", "=", runId)
+        .executeTakeFirst();
+      const existingIds = new Set(existing.map((row) => row.id));
+      let nextSequence = Number(latestSequence?.sequence ?? 0);
       let inserted = 0;
       for (const activity of activities) {
+        if (existingIds.has(activity.id)) continue;
+        nextSequence += 1;
+        const sequenced = CanonicalChatRunActivitySchema.parse({
+          ...activity,
+          sequence: nextSequence,
+        });
         const row = await trx.insertInto("chat_run_events").values({
-          id: activity.id,
+          id: sequenced.id,
           chat_id: chatId,
           run_id: runId,
-          event: jsonb(activity),
-          occurred_at: activity.occurredAt,
+          run_seq: nextSequence,
+          event: jsonb(sequenced),
+          occurred_at: sequenced.occurredAt,
         }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
         if (row) {
           inserted += 1;
-          if (activity.type === "terminal.bound") {
+          if (sequenced.type === "terminal.bound") {
             await trx.insertInto("chat_terminal_bindings").values({
               chat_id: chatId,
-              session_id: activity.terminalSessionId,
-              session_created_at: activity.terminalSessionCreatedAt,
+              session_id: sequenced.terminalSessionId,
+              session_created_at: sequenced.terminalSessionCreatedAt,
               run_id: runId,
-              bound_at: activity.occurredAt,
+              bound_at: sequenced.occurredAt,
             }).onConflict((conflict) => conflict.columns(["chat_id", "session_id"]).doUpdateSet({
               run_id: runId,
-              session_created_at: activity.terminalSessionCreatedAt,
+              session_created_at: sequenced.terminalSessionCreatedAt,
             })).execute();
           }
         }

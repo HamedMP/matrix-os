@@ -80,6 +80,9 @@ export class ChatDetailRepository {
       .where("chat_id", "=", parsedChatId)
       .where("run_id", "in", runIds)
       .orderBy("occurred_at", "desc")
+      .orderBy("run_id", "desc")
+      .orderBy("run_seq", "desc")
+      .orderBy("id", "desc")
       .limit(500)
       .execute();
     activityRows.reverse();
