@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
 import DesktopSupportWidget from "@desktop/renderer/src/features/support/DesktopSupportWidget";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 
 const posthogClient = vi.hoisted(() => ({
   conversations: {
     hide: vi.fn(),
+    isAvailable: vi.fn(() => true),
+    show: vi.fn(),
   },
   identify: vi.fn(),
   init: vi.fn(),
@@ -17,6 +20,34 @@ const posthogClient = vi.hoisted(() => ({
 
 vi.mock("posthog-js/dist/conversations", () => ({}));
 vi.mock("posthog-js/dist/module.no-external", () => ({ default: posthogClient }));
+vi.mock("@desktop/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
+  default: () => <button type="button">Main computer</button>,
+}));
+vi.mock("@desktop/renderer/src/features/mission-control/AccountMenu", () => ({
+  default: () => <button type="button" aria-label="Open account menu">Avatar</button>,
+}));
+
+function renderPostHogLauncher(): HTMLDivElement {
+  let container = document.getElementById("ph-conversations-widget-container") as HTMLDivElement | null;
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "ph-conversations-widget-container";
+    document.body.appendChild(container);
+  }
+  container.replaceChildren();
+  const launcher = document.createElement("button");
+  launcher.type = "button";
+  launcher.setAttribute("aria-label", "Open chat");
+  launcher.addEventListener("click", () => {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.setAttribute("aria-label", "Close");
+    close.addEventListener("click", renderPostHogLauncher);
+    container?.replaceChildren(close);
+  });
+  container.appendChild(launcher);
+  return container;
+}
 
 describe("Desktop support widget", () => {
   beforeEach(() => {
@@ -37,6 +68,7 @@ describe("Desktop support widget", () => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    document.getElementById("ph-conversations-widget-container")?.remove();
   });
 
   it("fails closed when PostHog cannot initialize", async () => {
@@ -96,5 +128,39 @@ describe("Desktop support widget", () => {
 
     await waitFor(() => expect(posthogClient.conversations.hide).toHaveBeenCalledTimes(1));
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens support from beside the avatar without leaving the default launcher", async () => {
+    posthogClient.conversations.hide.mockImplementation(() => {
+      document.getElementById("ph-conversations-widget-container")?.remove();
+    });
+    posthogClient.conversations.show.mockImplementation(() => {
+      renderPostHogLauncher();
+    });
+
+    render(
+      <>
+        <DesktopSupportWidget />
+        <DesktopModeControls />
+      </>,
+    );
+
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+    renderPostHogLauncher();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
+
+    expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
+      .toEqual(["Main computer", "Support", "Open account menu"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+
+    await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => expect(document.getElementById("ph-conversations-widget-container")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
   });
 });

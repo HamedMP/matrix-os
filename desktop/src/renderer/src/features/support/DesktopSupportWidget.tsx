@@ -7,6 +7,15 @@ type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 
 let initialized = false;
 let activeIdentity: string | null = null;
+let allowPostHogWidget = false;
+let launcherObserver: MutationObserver | null = null;
+let openSupportPromise: Promise<boolean> | null = null;
+let closeButtonWithCleanup: HTMLButtonElement | null = null;
+
+const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
+const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
+const POSTHOG_CLOSE_SELECTOR = 'button[aria-label="Close"]';
+const SUPPORT_OPEN_TIMEOUT_MS = 10_000;
 
 function errorKind(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
@@ -15,6 +24,10 @@ function errorKind(error: unknown): string {
 function configuredToken(): string | null {
   const token = import.meta.env.VITE_POSTHOG_PROJECT_TOKEN?.trim();
   return token || null;
+}
+
+export function isDesktopSupportConfigured(): boolean {
+  return configuredToken() !== null;
 }
 
 function configuredUiHost(): string {
@@ -32,13 +45,119 @@ function relayUrl(platformHost: string): string | null {
   }
 }
 
-function hideAndResetSupport(): void {
-  if (!initialized || activeIdentity === null) return;
+function hidePostHogWidget(): void {
   try {
     posthog.conversations.hide();
   } catch (error: unknown) {
     console.warn("[desktop-support] Failed to hide PostHog widget:", errorKind(error));
   }
+}
+
+function suppressDefaultLauncher(): void {
+  if (allowPostHogWidget || !document.getElementById(POSTHOG_WIDGET_ID)) return;
+  hidePostHogWidget();
+}
+
+function startLauncherObserver(): void {
+  if (launcherObserver || !document.body) return;
+  launcherObserver = new MutationObserver(suppressDefaultLauncher);
+  launcherObserver.observe(document.body, { childList: true, subtree: true });
+  suppressDefaultLauncher();
+}
+
+function stopLauncherObserver(): void {
+  launcherObserver?.disconnect();
+  launcherObserver = null;
+}
+
+function waitForElement(selector: string): Promise<HTMLButtonElement | null> {
+  const existing = document.querySelector<HTMLButtonElement>(selector);
+  if (existing) return Promise.resolve(existing);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (element: HTMLButtonElement | null) => {
+      if (settled) return;
+      settled = true;
+      observer.disconnect();
+      window.clearTimeout(timeoutId);
+      resolve(element);
+    };
+    const observer = new MutationObserver(() => {
+      const element = document.querySelector<HTMLButtonElement>(selector);
+      if (element) finish(element);
+    });
+    const timeoutId = window.setTimeout(() => finish(null), SUPPORT_OPEN_TIMEOUT_MS);
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+}
+
+async function waitForConversations(): Promise<boolean> {
+  const deadline = Date.now() + SUPPORT_OPEN_TIMEOUT_MS;
+  while (Date.now() < deadline && activeIdentity !== null) {
+    if (posthog.conversations.isAvailable()) return true;
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+function hideAfterPanelCloses(closeButton: HTMLButtonElement): void {
+  if (closeButtonWithCleanup === closeButton) return;
+  closeButtonWithCleanup = closeButton;
+  closeButton.addEventListener("click", () => {
+    closeButtonWithCleanup = null;
+    allowPostHogWidget = false;
+    queueMicrotask(hidePostHogWidget);
+  }, { once: true });
+}
+
+async function openSupportPanel(): Promise<boolean> {
+  if (!initialized || activeIdentity === null || !await waitForConversations()) return false;
+
+  allowPostHogWidget = true;
+  try {
+    posthog.conversations.show();
+
+    let closeButton = document.querySelector<HTMLButtonElement>(POSTHOG_CLOSE_SELECTOR);
+    if (!closeButton) {
+      const launcher = await waitForElement(POSTHOG_LAUNCHER_SELECTOR);
+      if (!launcher) return false;
+      launcher.click();
+      closeButton = await waitForElement(POSTHOG_CLOSE_SELECTOR);
+    }
+    if (!closeButton) return false;
+
+    hideAfterPanelCloses(closeButton);
+    return true;
+  } finally {
+    if (!document.querySelector(POSTHOG_CLOSE_SELECTOR)) {
+      allowPostHogWidget = false;
+      suppressDefaultLauncher();
+    }
+  }
+}
+
+export function openDesktopSupport(): Promise<boolean> {
+  if (!openSupportPromise) {
+    openSupportPromise = openSupportPanel()
+      .catch((error: unknown) => {
+        console.warn("[desktop-support] Support chat unavailable:", errorKind(error));
+        return false;
+      })
+      .finally(() => {
+        openSupportPromise = null;
+      });
+  }
+  return openSupportPromise;
+}
+
+function hideAndResetSupport(): void {
+  allowPostHogWidget = false;
+  stopLauncherObserver();
+  closeButtonWithCleanup = null;
+  if (!initialized) return;
+  hidePostHogWidget();
+  if (activeIdentity === null) return;
   try {
     posthog.reset();
   } catch (error: unknown) {
@@ -61,6 +180,8 @@ export default function DesktopSupportWidget() {
       hideAndResetSupport();
       return;
     }
+
+    startLauncherObserver();
 
     if (!initialized) {
       try {
@@ -101,10 +222,16 @@ export default function DesktopSupportWidget() {
         matrix_client: "desktop",
       });
       activeIdentity = identity;
+      suppressDefaultLauncher();
     } catch (error: unknown) {
       console.warn("[desktop-support] PostHog identification failed:", errorKind(error));
     }
   }, [authGeneration, displayName, handle, platformHost, status]);
+
+  useEffect(() => () => {
+    allowPostHogWidget = false;
+    stopLauncherObserver();
+  }, []);
 
   return null;
 }
