@@ -164,7 +164,7 @@ describe("TerminalView session switching", () => {
     useAppearance.setState({ mode: "light", themeId: "operator", hydrated: true });
     useTerminalAppearance.setState({
       ...useTerminalAppearance.getInitialState(),
-      themeId: "matrix-dark",
+      themeId: "dark",
       hydrated: true,
     }, true);
     useConnection.setState({

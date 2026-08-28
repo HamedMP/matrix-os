@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "../lib/operator";
+import type { ApiClient } from "../lib/api";
 import {
   DEFAULT_TERMINAL_THEME_ID,
   type TerminalThemeId,
@@ -10,29 +10,24 @@ interface TerminalAppearanceState {
   themeId: TerminalThemeId;
   hydrated: boolean;
   selectionRevision: number;
-  load: () => Promise<void>;
-  setThemeId: (themeId: TerminalThemeId) => void;
+  loadRevision: number;
+  load: (api: TerminalPreferencesApi | null) => Promise<void>;
+  setThemeId: (themeId: TerminalThemeId, api: TerminalPreferencesApi | null) => void;
+}
+
+type TerminalPreferencesApi = Pick<ApiClient, "get" | "put">;
+
+interface TerminalPreferencesResponse {
+  preferences?: { shellThemeId?: unknown };
 }
 
 function isSelectableTerminalThemeId(value: unknown): value is TerminalThemeId {
   return typeof value === "string" && TERMINAL_THEME_OPTIONS.some((option) => option.id === value);
 }
 
-function storedThemeId(value: unknown): TerminalThemeId | null {
-  if (!value || typeof value !== "object") return null;
-  const stored = value as { themeId?: unknown; appThemeId?: unknown; mode?: unknown };
-  if (isSelectableTerminalThemeId(stored.themeId)) return stored.themeId;
-  if (isSelectableTerminalThemeId(stored.appThemeId)) return stored.appThemeId;
-  if (stored.mode === "light") return "light";
-  if (stored.mode === "dark") return "matrix-dark";
-  return null;
-}
-
-function persist(themeId: TerminalThemeId): void {
-  void invoke("state:set", {
-    key: "terminalAppearance",
-    value: { themeId },
-  }).catch((error: unknown) => {
+function persist(api: TerminalPreferencesApi | null, themeId: TerminalThemeId): void {
+  if (!api) return;
+  void api.put("/api/terminal/preferences", { shellThemeId: themeId }).catch((error: unknown) => {
     console.warn(
       "[terminal-appearance] persist failed:",
       error instanceof Error ? error.message : String(error),
@@ -40,19 +35,29 @@ function persist(themeId: TerminalThemeId): void {
   });
 }
 
-export const useTerminalAppearance = create<TerminalAppearanceState>()((set) => ({
+export const useTerminalAppearance = create<TerminalAppearanceState>()((set, get) => ({
   themeId: DEFAULT_TERMINAL_THEME_ID,
   hydrated: false,
   selectionRevision: 0,
+  loadRevision: 0,
 
-  load: async () => {
+  load: async (api) => {
+    const loadRevision = get().loadRevision + 1;
+    const selectionRevision = get().selectionRevision;
+    set({ loadRevision });
+    if (!api) {
+      set({ hydrated: true });
+      return;
+    }
     try {
-      const result = await invoke("state:get", { key: "terminalAppearance" });
-      const themeId = storedThemeId(result.value);
+      const result = await api.get<TerminalPreferencesResponse>("/api/terminal/preferences");
+      const themeId = isSelectableTerminalThemeId(result.preferences?.shellThemeId)
+        ? result.preferences.shellThemeId
+        : DEFAULT_TERMINAL_THEME_ID;
       set((state) => ({
-        themeId: state.selectionRevision > 0
-          ? state.themeId
-          : themeId ?? DEFAULT_TERMINAL_THEME_ID,
+        themeId: state.loadRevision === loadRevision && state.selectionRevision === selectionRevision
+          ? themeId
+          : state.themeId,
         hydrated: true,
       }));
     } catch (error: unknown) {
@@ -60,17 +65,12 @@ export const useTerminalAppearance = create<TerminalAppearanceState>()((set) => 
         "[terminal-appearance] load failed:",
         error instanceof Error ? error.message : String(error),
       );
-      set((state) => ({
-        themeId: state.selectionRevision > 0
-          ? state.themeId
-          : DEFAULT_TERMINAL_THEME_ID,
-        hydrated: true,
-      }));
+      set((state) => state.loadRevision === loadRevision ? { hydrated: true } : {});
     }
   },
 
-  setThemeId: (themeId) => {
+  setThemeId: (themeId, api) => {
     set((state) => ({ themeId, selectionRevision: state.selectionRevision + 1 }));
-    persist(themeId);
+    persist(api, themeId);
   },
 }));

@@ -1,10 +1,12 @@
 "use client";
 
 import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type ShellThemeId, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
+import { getGatewayUrl } from "@/lib/gateway";
+import { isShellThemeId } from "@/stores/terminal-defaults";
 import { TERMINAL_THEME_OPTIONS } from "./terminal-themes";
 
 function mapLegacyThemeId(themeId: TerminalThemeId | undefined): ShellThemeId {
-  if (themeId === "light" || themeId === "dark" || themeId === "matrix") return themeId;
+  if (isShellThemeId(themeId)) return themeId;
   if (themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light") return "light";
   return "dark";
 }
@@ -19,6 +21,17 @@ export function TerminalSettingsPanel() {
   const setFontFamily = useTerminalSettings((s) => s.setFontFamily);
   const setCursorBlink = useTerminalSettings((s) => s.setCursorBlink);
   const selectedShellThemeId = mapLegacyThemeId(themeId);
+  const selectShellTheme = (next: ShellThemeId) => {
+    setThemeId(next);
+    void fetch(`${getGatewayUrl()}/api/terminal/preferences`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shellThemeId: next }),
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err: unknown) => {
+      console.warn("Failed to save shell theme preferences:", err instanceof Error ? err.message : err);
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -30,7 +43,7 @@ export function TerminalSettingsPanel() {
           id="terminal-theme"
           className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
           value={selectedShellThemeId}
-          onChange={(e) => setThemeId(e.target.value as ShellThemeId)}
+          onChange={(e) => selectShellTheme(e.target.value as ShellThemeId)}
         >
           {TERMINAL_THEME_OPTIONS.map((t) => (
             <option key={t.id} value={t.id}>

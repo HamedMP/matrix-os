@@ -19,7 +19,7 @@ const palettes = {
     brightBlack: "#A89984", brightRed: "#9D0006", brightGreen: "#79740E", brightYellow: "#AF3A03",
     brightBlue: "#076678", brightMagenta: "#8F3F71", brightCyan: "#427B58", brightWhite: "#282828",
   },
-  "matrix-dark": {
+  dark: {
     black: "#0C0C0C", red: "#D85E5E", green: "#0AD18B", yellow: "#C9A24A",
     blue: "#6AA0FF", magenta: "#B58CFF", cyan: "#00E5C0", white: "#BFBFBF",
     brightBlack: "#5B5B5B", brightRed: "#F06A6A", brightGreen: "#7FE0A0", brightYellow: "#E0A12E",
@@ -68,7 +68,7 @@ const terminalThemePresets = {
     label: "Light", background: "#FBF1C7", foreground: "#3C3836",
     cursor: "#79740E", selectionBackground: "#79740E33",
   },
-  "matrix-dark": {
+  dark: {
     label: "Matrix OS Dark", background: "#0C0C0C", foreground: "#BFBFBF",
     cursor: "#0AD18B", selectionBackground: "#00E5C033",
   },
@@ -106,7 +106,7 @@ const terminalThemePresets = {
 
 const TERMINAL_THEME_IDS = [
   "light",
-  "matrix-dark",
+  "dark",
   "matrix",
   "powerlevel10k-lean",
   "powerlevel10k-lean-8-colors",

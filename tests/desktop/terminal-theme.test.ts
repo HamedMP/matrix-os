@@ -33,7 +33,7 @@ describe("terminal theme presets", () => {
   it("keeps the existing Light, Matrix OS Dark, and Matrix shell choices", () => {
     const ids = TERMINAL_THEME_OPTIONS.map((option) => option.id);
 
-    expect(ids.slice(0, 3)).toEqual(["light", "matrix-dark", "matrix"]);
+    expect(ids.slice(0, 3)).toEqual(["light", "dark", "matrix"]);
     expect(ids).toContain(DEFAULT_TERMINAL_THEME_ID);
   });
 
@@ -73,7 +73,7 @@ describe("terminal font stacks", () => {
   it("accepts every terminal theme id in option output", () => {
     const ids: TerminalThemeId[] = TERMINAL_THEME_OPTIONS.map((option) => option.id);
 
-    expect(ids).toContain("matrix-dark");
+    expect(ids).toContain("dark");
     expect(ids).toContain("powerlevel10k-rainbow");
   });
 });

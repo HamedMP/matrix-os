@@ -187,7 +187,6 @@ export default function TerminalsTab({
   const terminalsTabId = useTabs((s) => s.tabs.find((tab) => tab.kind === "terminals")?.id);
   const renameTab = useTabs((s) => s.renameTab);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
-  const terminalAppearanceHydrated = useTerminalAppearance((s) => s.hydrated);
   const loadTerminalAppearance = useTerminalAppearance((s) => s.load);
   const [selectedName, setSelectedName] = useState<string | null>(() => mostRecentShell(shells)?.name ?? null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
@@ -204,8 +203,8 @@ export default function TerminalsTab({
   const draggingPlacementRef = useRef<ShellSessionPlacement | null>(null);
 
   useEffect(() => {
-    if (!terminalAppearanceHydrated) void loadTerminalAppearance();
-  }, [loadTerminalAppearance, terminalAppearanceHydrated]);
+    void loadTerminalAppearance(api);
+  }, [api, loadTerminalAppearance]);
 
   useEffect(() => {
     if (loading || error || authoritativeRevision === 0) return;

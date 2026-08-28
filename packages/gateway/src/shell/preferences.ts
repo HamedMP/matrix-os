@@ -18,7 +18,16 @@ const LegacyThemeIdSchema = z.enum([
   "github-light",
 ]);
 
-const ShellThemeIdSchema = z.enum(["dark", "light", "matrix"]);
+const ShellThemeIdSchema = z.enum([
+  "dark",
+  "light",
+  "matrix",
+  "powerlevel10k-lean",
+  "powerlevel10k-lean-8-colors",
+  "powerlevel10k-classic",
+  "powerlevel10k-rainbow",
+  "powerlevel10k-pure",
+]);
 
 function legacyThemeToShellTheme(themeId: z.infer<typeof LegacyThemeIdSchema> | undefined) {
   switch (themeId) {

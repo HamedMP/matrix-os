@@ -1,7 +1,8 @@
 import { dirname, join, resolve } from "node:path";
+import type { ShellThemeId } from "./preferences.js";
 
 export const MATRIX_ZELLIJ_LAYOUT_NAME = "matrix";
-export type MatrixZellijShellThemeId = "dark" | "light" | "matrix";
+export type MatrixZellijShellThemeId = ShellThemeId;
 
 export type MatrixZellijConfigPaths = {
   dir: string;
@@ -142,6 +143,11 @@ export function zellijThemeForShellTheme(themeId: MatrixZellijShellThemeId): "de
     case "matrix":
       return "matrix";
     case "dark":
+    case "powerlevel10k-lean":
+    case "powerlevel10k-lean-8-colors":
+    case "powerlevel10k-classic":
+    case "powerlevel10k-rainbow":
+    case "powerlevel10k-pure":
       return "default";
   }
 }

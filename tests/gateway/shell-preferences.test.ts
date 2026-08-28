@@ -38,6 +38,9 @@ describe("shell preferences", () => {
     expect(ShellPreferencesSchema.parse({ themeId: "one-light" })).toMatchObject({
       shellThemeId: "light",
     });
+    expect(ShellPreferencesSchema.parse({ shellThemeId: "powerlevel10k-rainbow" })).toMatchObject({
+      shellThemeId: "powerlevel10k-rainbow",
+    });
 
     expect(() => ShellPreferencesSchema.parse({ fontFamily: "../bad" })).toThrow();
     expect(() => ShellPreferencesSchema.parse({ shellThemeId: "dracula" })).toThrow();
@@ -158,15 +161,15 @@ describe("shell preferences", () => {
     const put = await app.request("/api/preferences", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shellThemeId: "matrix" }),
+      body: JSON.stringify({ shellThemeId: "powerlevel10k-classic" }),
     });
     expect(put.status).toBe(200);
-    expect(setShellTheme).toHaveBeenCalledWith("matrix");
+    expect(setShellTheme).toHaveBeenCalledWith("powerlevel10k-classic");
 
     const globalGet = await app.request("/api/preferences");
     expect(globalGet.status).toBe(200);
     await expect(globalGet.json()).resolves.toMatchObject({
-      preferences: { shellThemeId: "matrix" },
+      preferences: { shellThemeId: "powerlevel10k-classic" },
     });
 
     const sessionGet = await app.request("/api/sessions/main/preferences");
@@ -185,7 +188,7 @@ describe("shell preferences", () => {
     const globalAfterTerminalSession = await app.request("/api/preferences");
     expect(globalAfterTerminalSession.status).toBe(200);
     await expect(globalAfterTerminalSession.json()).resolves.toMatchObject({
-      preferences: { shellThemeId: "matrix" },
+      preferences: { shellThemeId: "powerlevel10k-classic" },
     });
   });
 

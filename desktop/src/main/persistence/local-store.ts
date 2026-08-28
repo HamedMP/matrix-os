@@ -23,19 +23,6 @@ const AppearanceSchema = z
   .strict();
 
 const TerminalAppearanceSchema = z.union([
-  z.strictObject({
-    themeId: z.enum([
-      "light",
-      "matrix-dark",
-      "matrix",
-      "powerlevel10k-lean",
-      "powerlevel10k-lean-8-colors",
-      "powerlevel10k-classic",
-      "powerlevel10k-rainbow",
-      "powerlevel10k-pure",
-    ]),
-  }),
-  // Read-compatible with desktop builds that themed Terminal app chrome.
   z.strictObject({ appThemeId: z.enum(["light", "matrix-dark", "matrix"]) }),
   // Read-compatible with desktop builds that only exposed a dark/light mode.
   z.strictObject({ mode: z.enum(["dark", "light"]) }),

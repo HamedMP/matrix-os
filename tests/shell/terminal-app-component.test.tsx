@@ -1248,7 +1248,9 @@ describe("TerminalApp", () => {
     expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
     expect(screen.getByText("custom · green on black")).toBeTruthy();
-    expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
+    expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(7);
+    expect(screen.getByRole("radio", { name: "P10k Lean minimal · gruvbox material" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "P10k Rainbow segmented · vivid spectrum" })).toBeTruthy();
     expect(shellThemePanel.dataset.terminalThemeMotion).toBe("forward");
     expect(shellThemePanel.style.animation).toContain("terminalThemePanelForward");
     expect(screen.getByText("RECOMMENDED").style.fontSize).toBe("8px");

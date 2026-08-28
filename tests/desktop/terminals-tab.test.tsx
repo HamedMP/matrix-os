@@ -13,6 +13,8 @@ import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance"
 import { useTerminalAppearance } from "../../desktop/src/renderer/src/stores/terminal-appearance";
 
 const terminalMounts = vi.hoisted(() => new Map<string, number>());
+const terminalPreferencesGet = vi.fn(async () => ({ preferences: { shellThemeId: "dark" } }));
+const terminalPreferencesPut = vi.fn(async () => ({ preferences: { shellThemeId: "dark" } }));
 
 vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => ({
   default: ({
@@ -54,6 +56,8 @@ function renderTab(active = true) {
 describe("TerminalsTab", () => {
   beforeEach(() => {
     terminalMounts.clear();
+    terminalPreferencesGet.mockClear();
+    terminalPreferencesPut.mockClear();
     window.operator = {
       invoke: vi.fn(async () => ({ ok: true })),
       on: vi.fn(() => () => undefined),
@@ -63,7 +67,10 @@ describe("TerminalsTab", () => {
       handle: "operator",
       platformHost: "https://platform.test",
       runtimeSlot: "primary",
-      api: {} as never,
+      api: {
+        get: terminalPreferencesGet,
+        put: terminalPreferencesPut,
+      } as never,
     });
     useSessions.setState({
       sessions: [
@@ -93,7 +100,7 @@ describe("TerminalsTab", () => {
     }, true);
     useTerminalAppearance.setState({
       ...useTerminalAppearance.getInitialState(),
-      themeId: "matrix-dark",
+      themeId: "dark",
       hydrated: true,
     }, true);
   });
@@ -126,7 +133,7 @@ describe("TerminalsTab", () => {
     const terminalApp = screen.getByTestId("desktop-terminal-app");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("");
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-theme-mode")).toBe("dark");
-    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-terminal-theme-id")).toBe("matrix-dark");
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-terminal-theme-id")).toBe("dark");
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Shell theme" }), { button: 0, ctrlKey: false });
     const rainbowTheme = (await screen.findByText("P10k Rainbow")).closest<HTMLElement>("[role='menuitemradio']");
@@ -134,6 +141,9 @@ describe("TerminalsTab", () => {
     fireEvent.click(rainbowTheme!);
 
     await waitFor(() => expect(useTerminalAppearance.getState().themeId).toBe("powerlevel10k-rainbow"));
+    expect(terminalPreferencesPut).toHaveBeenCalledWith("/api/terminal/preferences", {
+      shellThemeId: "powerlevel10k-rainbow",
+    });
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("");
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-theme-mode")).toBe("dark");
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-terminal-theme-id")).toBe("powerlevel10k-rainbow");

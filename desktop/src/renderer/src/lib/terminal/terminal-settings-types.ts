@@ -1,7 +1,7 @@
 // Copied from shell/src/stores/terminal-defaults.ts + terminal-settings.ts (spec 094 R3 reuse).
 export type TerminalThemeId =
   | "light"
-  | "matrix-dark"
+  | "dark"
   | "matrix"
   | "powerlevel10k-lean"
   | "powerlevel10k-lean-8-colors"
@@ -9,7 +9,7 @@ export type TerminalThemeId =
   | "powerlevel10k-rainbow"
   | "powerlevel10k-pure";
 
-export const DEFAULT_TERMINAL_THEME_ID: TerminalThemeId = "matrix-dark";
+export const DEFAULT_TERMINAL_THEME_ID: TerminalThemeId = "dark";
 
 export const TERMINAL_FONT_FAMILIES = [
   "MesloLGS NF",

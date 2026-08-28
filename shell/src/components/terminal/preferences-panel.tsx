@@ -3,13 +3,14 @@
 import { useEffect } from "react";
 import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type ShellThemeId, type TerminalCursorStyle, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getGatewayUrl } from "@/lib/gateway";
+import { isShellThemeId } from "@/stores/terminal-defaults";
 import { TERMINAL_THEME_OPTIONS } from "./terminal-themes";
 
 const CURSOR_OPTIONS: TerminalCursorStyle[] = ["block", "bar", "underline"];
 
 function mapLegacyThemeId(themeId: TerminalThemeId | undefined): ShellThemeId | null {
   if (!themeId) return null;
-  if (themeId === "dark" || themeId === "light" || themeId === "matrix") return themeId;
+  if (isShellThemeId(themeId)) return themeId;
   if (themeId === "system") return null;
   if (themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light") return "light";
   if (themeId === "one-dark" || themeId === "catppuccin-mocha" || themeId === "dracula" || themeId === "solarized-dark" || themeId === "nord" || themeId === "github-dark") return "dark";
@@ -55,8 +56,6 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
           cursorStyle: TerminalCursorStyle;
           smoothScroll: boolean;
         }> }).preferences;
-        const nextTheme = preferences.shellThemeId ?? mapLegacyThemeId(preferences.themeId);
-        if (nextTheme) setThemeId(nextTheme);
         if (preferences.fontFamily) setFontFamily(preferences.fontFamily);
         if (typeof preferences.ligatures === "boolean") setLigatures(preferences.ligatures);
         if (preferences.cursorStyle) setCursorStyle(preferences.cursorStyle);
@@ -68,10 +67,9 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
     return () => {
       cancelled = true;
     };
-  }, [sessionName, setCursorStyle, setFontFamily, setLigatures, setSmoothScroll, setThemeId]);
+  }, [sessionName, setCursorStyle, setFontFamily, setLigatures, setSmoothScroll]);
 
   const persist = (patch: Partial<{
-    shellThemeId: ShellThemeId;
     fontFamily: TerminalFontFamily;
     ligatures: boolean;
     cursorStyle: TerminalCursorStyle;
@@ -85,7 +83,6 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        shellThemeId: mapLegacyThemeId(state.themeId) ?? "dark",
         fontFamily: state.fontFamily,
         ligatures: state.ligatures,
         cursorStyle: state.cursorStyle,
@@ -95,6 +92,18 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
       signal: AbortSignal.timeout(10_000),
     }).catch((err: unknown) => {
       console.warn("Failed to save terminal preferences:", err instanceof Error ? err.message : err);
+    });
+  };
+
+  const persistGlobalShellTheme = (shellThemeId: ShellThemeId) => {
+    if (typeof fetch !== "function") return;
+    void fetch(`${getGatewayUrl()}/api/terminal/preferences`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shellThemeId }),
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err: unknown) => {
+      console.warn("Failed to save shell theme preferences:", err instanceof Error ? err.message : err);
     });
   };
 
@@ -111,7 +120,7 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
           onChange={(event) => {
             const next = event.target.value as ShellThemeId;
             setThemeId(next);
-            persist({ shellThemeId: next });
+            persistGlobalShellTheme(next);
           }}
         >
           {TERMINAL_THEME_OPTIONS.map((option) => (

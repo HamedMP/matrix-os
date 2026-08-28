@@ -2,6 +2,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Check, Sparkles } from "@renderer/lib/hugeicons";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { useConnection } from "../../stores/connection";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import {
   getTerminalThemePreset,
@@ -14,6 +15,7 @@ function isTerminalThemeId(value: string): value is TerminalThemeId {
 }
 
 export function DesktopTerminalThemePicker() {
+  const api = useConnection((state) => state.api);
   const themeId = useTerminalAppearance((state) => state.themeId);
   const setThemeId = useTerminalAppearance((state) => state.setThemeId);
 
@@ -54,7 +56,7 @@ export function DesktopTerminalThemePicker() {
           <DropdownMenu.RadioGroup
             value={themeId}
             onValueChange={(value) => {
-              if (isTerminalThemeId(value)) setThemeId(value);
+              if (isTerminalThemeId(value)) setThemeId(value, api);
             }}
           >
             {TERMINAL_THEME_OPTIONS.map((option) => {
