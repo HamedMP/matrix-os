@@ -16,6 +16,7 @@ const posthogClient = vi.hoisted(() => ({
   identify: vi.fn(),
   init: vi.fn(),
   reset: vi.fn(),
+  set_config: vi.fn(),
 }));
 
 vi.mock("posthog-js/dist/conversations", () => ({}));
@@ -194,5 +195,63 @@ describe("Desktop support widget", () => {
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
+  });
+
+  it("rebinds support to the selected runtime relay", async () => {
+    render(<DesktopSupportWidget />);
+
+    act(() => {
+      useConnection.setState({
+        platformHost: "https://preview.matrix-os.com",
+        authGeneration: 2,
+      });
+    });
+
+    await waitFor(() => {
+      expect(posthogClient.set_config).toHaveBeenCalledWith({
+        api_host: "https://preview.matrix-os.com/relay",
+      });
+    });
+    expect(posthogClient.reset).toHaveBeenCalledTimes(1);
+    expect(posthogClient.identify).toHaveBeenLastCalledWith("neo", {
+      $name: "Neo",
+      matrix_client: "desktop",
+    });
+  });
+
+  it("does not finish an old support open after sign-out", async () => {
+    posthogClient.conversations.hide.mockImplementation(() => {
+      document.getElementById("ph-conversations-widget-container")?.remove();
+    });
+    posthogClient.conversations.show.mockImplementation(() => undefined);
+
+    render(
+      <>
+        <DesktopSupportWidget />
+        <DesktopModeControls />
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+    await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
+    const resetCallsBeforeSignOut = posthogClient.reset.mock.calls.length;
+
+    act(() => {
+      useConnection.setState({
+        status: "signed-out",
+        handle: null,
+        displayName: null,
+        imageUrl: null,
+        api: null,
+      });
+    });
+    await waitFor(() => {
+      expect(posthogClient.reset.mock.calls.length).toBeGreaterThan(resetCallsBeforeSignOut);
+    });
+
+    renderPostHogLauncher();
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
   });
 });

@@ -7,9 +7,12 @@ type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 
 let initialized = false;
 let activeIdentity: string | null = null;
+let activeApiHost: string | null = null;
 let allowPostHogWidget = false;
 let launcherObserver: MutationObserver | null = null;
 let openSupportPromise: Promise<boolean> | null = null;
+let supportLifecycleGeneration = 0;
+let cancelPendingElementWait: (() => void) | null = null;
 
 const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
 const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
@@ -77,7 +80,19 @@ function stopLauncherObserver(): void {
   launcherObserver = null;
 }
 
-function waitForElement(selector: string): Promise<HTMLButtonElement | null> {
+function invalidatePendingSupportOpen(): void {
+  supportLifecycleGeneration += 1;
+  cancelPendingElementWait?.();
+  cancelPendingElementWait = null;
+  openSupportPromise = null;
+}
+
+function supportOpenIsCurrent(generation: number): boolean {
+  return generation === supportLifecycleGeneration && initialized && activeIdentity !== null;
+}
+
+function waitForElement(selector: string, generation: number): Promise<HTMLButtonElement | null> {
+  if (!supportOpenIsCurrent(generation)) return Promise.resolve(null);
   const existing = document.querySelector<HTMLButtonElement>(selector);
   if (existing) return Promise.resolve(existing);
 
@@ -88,45 +103,53 @@ function waitForElement(selector: string): Promise<HTMLButtonElement | null> {
       settled = true;
       observer.disconnect();
       window.clearTimeout(timeoutId);
+      if (cancelPendingElementWait === cancel) cancelPendingElementWait = null;
       resolve(element);
     };
+    const cancel = () => finish(null);
     const observer = new MutationObserver(() => {
+      if (!supportOpenIsCurrent(generation)) {
+        finish(null);
+        return;
+      }
       const element = document.querySelector<HTMLButtonElement>(selector);
       if (element) finish(element);
     });
     const timeoutId = window.setTimeout(() => finish(null), SUPPORT_OPEN_TIMEOUT_MS);
+    cancelPendingElementWait = cancel;
     observer.observe(document.body, { childList: true, subtree: true });
   });
 }
 
-async function waitForConversations(): Promise<boolean> {
+async function waitForConversations(generation: number): Promise<boolean> {
   const deadline = Date.now() + SUPPORT_OPEN_TIMEOUT_MS;
-  while (Date.now() < deadline && activeIdentity !== null) {
+  while (Date.now() < deadline && supportOpenIsCurrent(generation)) {
     if (posthog.conversations.isAvailable()) return true;
     await new Promise((resolve) => window.setTimeout(resolve, 100));
   }
   return false;
 }
 
-async function openSupportPanel(): Promise<boolean> {
-  if (!initialized || activeIdentity === null || !await waitForConversations()) return false;
+async function openSupportPanel(generation: number): Promise<boolean> {
+  if (!supportOpenIsCurrent(generation) || !await waitForConversations(generation)) return false;
 
   allowPostHogWidget = true;
   try {
+    if (!supportOpenIsCurrent(generation)) return false;
     posthog.conversations.show();
 
     let closeButton = document.querySelector<HTMLButtonElement>(POSTHOG_CLOSE_SELECTOR);
     if (!closeButton) {
-      const launcher = await waitForElement(POSTHOG_LAUNCHER_SELECTOR);
-      if (!launcher) return false;
+      const launcher = await waitForElement(POSTHOG_LAUNCHER_SELECTOR, generation);
+      if (!launcher || !supportOpenIsCurrent(generation)) return false;
       launcher.click();
-      closeButton = await waitForElement(POSTHOG_CLOSE_SELECTOR);
+      closeButton = await waitForElement(POSTHOG_CLOSE_SELECTOR, generation);
     }
-    if (!closeButton) return false;
+    if (!closeButton || !supportOpenIsCurrent(generation)) return false;
 
     return true;
   } finally {
-    if (!document.querySelector(POSTHOG_CLOSE_SELECTOR)) {
+    if (generation === supportLifecycleGeneration && !document.querySelector(POSTHOG_CLOSE_SELECTOR)) {
       allowPostHogWidget = false;
       suppressDefaultLauncher();
     }
@@ -135,21 +158,23 @@ async function openSupportPanel(): Promise<boolean> {
 
 export function openDesktopSupport(): Promise<boolean> {
   if (!openSupportPromise) {
-    openSupportPromise = openSupportPanel()
+    const generation = supportLifecycleGeneration;
+    const promise = openSupportPanel(generation)
       .catch((error: unknown) => {
         console.warn("[desktop-support] Support chat unavailable:", errorKind(error));
         return false;
       })
       .finally(() => {
-        openSupportPromise = null;
+        if (openSupportPromise === promise) openSupportPromise = null;
       });
+    openSupportPromise = promise;
   }
   return openSupportPromise;
 }
 
 function hideAndResetSupport(): void {
+  invalidatePendingSupportOpen();
   allowPostHogWidget = false;
-  stopLauncherObserver();
   if (!initialized) return;
   hidePostHogWidget();
   if (activeIdentity === null) return;
@@ -203,8 +228,24 @@ export default function DesktopSupportWidget() {
           rageclick: false,
         } as PostHogInitOptions);
         initialized = true;
+        activeApiHost = apiHost;
       } catch (error: unknown) {
         console.warn("[desktop-support] PostHog initialization failed:", errorKind(error));
+        return;
+      }
+    }
+
+    if (activeApiHost !== apiHost) {
+      invalidatePendingSupportOpen();
+      allowPostHogWidget = false;
+      hidePostHogWidget();
+      try {
+        if (activeIdentity !== null) posthog.reset();
+        activeIdentity = null;
+        posthog.set_config({ api_host: apiHost });
+        activeApiHost = apiHost;
+      } catch (error: unknown) {
+        console.warn("[desktop-support] PostHog relay rebind failed:", errorKind(error));
         return;
       }
     }
@@ -212,6 +253,13 @@ export default function DesktopSupportWidget() {
     const identity = `${handle}:${authGeneration}`;
     if (activeIdentity === identity) return;
     try {
+      if (activeIdentity !== null) {
+        invalidatePendingSupportOpen();
+        allowPostHogWidget = false;
+        hidePostHogWidget();
+        posthog.reset();
+        activeIdentity = null;
+      }
       posthog.identify(handle, {
         $name: displayName ?? handle,
         matrix_client: "desktop",
@@ -225,6 +273,7 @@ export default function DesktopSupportWidget() {
   }, [authGeneration, displayName, handle, platformHost, status]);
 
   useEffect(() => () => {
+    invalidatePendingSupportOpen();
     allowPostHogWidget = false;
     stopLauncherObserver();
   }, []);
