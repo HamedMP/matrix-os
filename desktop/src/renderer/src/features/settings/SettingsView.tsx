@@ -8,6 +8,7 @@ import {
   Server,
   Settings as SettingsIcon,
   Sparkles,
+  SquareTerminal,
   UserRound,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
@@ -16,7 +17,10 @@ import AppearanceSection from "./sections/AppearanceSection";
 import RuntimeSection from "./sections/RuntimeSection";
 import AgentSection from "./sections/AgentSection";
 import BillingSection from "./sections/BillingSection";
-import { IntegrationsSettingsSection } from "../integrations/IntegrationsSettingsSection";
+import IntegrationsSettingsSection from "../integrations/IntegrationsSettingsSection";
+import CliSection from "../plugins/CliSection";
+import McpServersSection from "../plugins/McpServersSection";
+import SkillsSection from "../plugins/SkillsSection";
 import CronSection from "./sections/CronSection";
 import ProvidersSection from "./sections/ProvidersSection";
 import SystemSection from "./sections/SystemSection";
@@ -29,7 +33,10 @@ export type SettingsSectionId =
   | "runtime"
   | "agent"
   | "providers"
-  | "integrations"
+  | "services"
+  | "mcps"
+  | "skills"
+  | "cli"
   | "cron"
   | "system";
 
@@ -37,10 +44,13 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
+  { id: "services", label: "Services", icon: <Blocks size={15} />, group: "Integrations" },
+  { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
+  { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
+  { id: "cli", label: "CLI", icon: <SquareTerminal size={15} />, group: "Integrations" },
   { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
   { id: "providers", label: "Providers", icon: <Bot size={15} />, group: "Machine" },
   { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
-  { id: "integrations", label: "Integrations", icon: <Blocks size={15} />, group: "Machine" },
   { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },
   { id: "system", label: "System", icon: <Cpu size={15} />, group: "Machine" },
 ];
@@ -132,7 +142,10 @@ export default function SettingsView({
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agent" ? <AgentSection /> : null}
           {section === "providers" ? <ProvidersSection /> : null}
-          {section === "integrations" ? <IntegrationsSettingsSection /> : null}
+          {section === "services" ? <IntegrationsSettingsSection /> : null}
+          {section === "mcps" ? <McpServersSection /> : null}
+          {section === "skills" ? <SkillsSection /> : null}
+          {section === "cli" ? <CliSection /> : null}
           {section === "cron" ? <CronSection /> : null}
           {section === "system" ? <SystemSection /> : null}
         </div>

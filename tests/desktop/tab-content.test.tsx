@@ -47,9 +47,6 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
 vi.mock("@desktop/renderer/src/features/files/FilesWorkspace", () => ({
   default: () => <button type="button">Files workspace</button>,
 }));
-vi.mock("@desktop/renderer/src/features/plugins/PluginsHub", () => ({
-  default: () => <button type="button">Plugins workspace</button>,
-}));
 
 describe("TabContent", () => {
   beforeEach(() => {
@@ -93,7 +90,6 @@ describe("TabContent", () => {
 
   it.each([
     ["apps", { kind: "apps" as const, title: "Apps" }],
-    ["plugins", { kind: "plugins" as const, title: "Plugins" }],
     ["chat", { kind: "chat" as const, title: "Chat" }],
     ["files", { kind: "files" as const, title: "Files" }],
     ["home", { kind: "home" as const, title: "Home" }],

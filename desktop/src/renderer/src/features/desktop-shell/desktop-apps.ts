@@ -1,5 +1,4 @@
 import {
-  Blocks,
   FolderTree,
   Globe2,
   MessageSquare,
@@ -9,7 +8,7 @@ import {
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
 
-export type DesktopAppId = "browser" | "work" | "terminal" | "files" | "plugins" | "settings";
+export type DesktopAppId = "browser" | "work" | "terminal" | "files" | "settings";
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
@@ -51,14 +50,6 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     icon: FolderTree,
     name: "Files",
     color: "var(--surface-brand-emphasis, #748E59)",
-    iconColor: "white",
-  },
-  {
-    id: "plugins",
-    kind: "plugins",
-    icon: Blocks,
-    name: "Plugins",
-    color: "#7C6DB4",
     iconColor: "white",
   },
   {

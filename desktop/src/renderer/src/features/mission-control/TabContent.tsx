@@ -7,7 +7,6 @@ import { useUi } from "../../stores/ui";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
 import SettingsView, { type SettingsSectionId } from "../settings/SettingsView";
-import PluginsHub from "../plugins/PluginsHub";
 import HomeTab from "./HomeTab";
 import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
@@ -97,8 +96,6 @@ export function TabPane({
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "settings":
       return <SettingsView section={settingsSection} onSectionChange={onSettingsSectionChange} />;
-    case "plugins":
-      return <PluginsHub />;
     default:
       return null;
   }

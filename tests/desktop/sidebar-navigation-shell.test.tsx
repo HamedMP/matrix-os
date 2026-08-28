@@ -270,13 +270,7 @@ describe("Desktop sidebar navigation shell", () => {
         ExpectedIcon,
       );
     }
-    const pluginsGlyph = screen.getByRole("button", { name: "Plugins" })
-      .querySelector<HTMLElement>('[data-figma-icon="phosphor-plugs"]');
-    expect(pluginsGlyph).toBeTruthy();
-    expect(pluginsGlyph?.style.maskImage).toContain("plugs.svg");
-    expect(pluginsGlyph?.style.maskRepeat).toBe("no-repeat");
-
-    for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Plugins", "Projects"]) {
+    for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Projects"]) {
       const icon = screen.getByRole("button", { name: label }).querySelector<HTMLElement>("[data-sidebar-icon]");
       expect(icon?.style.width).toBe("14px");
       expect(icon?.style.height).toBe("14px");
@@ -289,7 +283,6 @@ describe("Desktop sidebar navigation shell", () => {
       "Terminal",
       "Files",
       "Apps",
-      "Plugins",
       "Projects",
       "Filter recents",
       "Open account menu",
