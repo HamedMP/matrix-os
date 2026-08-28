@@ -296,9 +296,9 @@ jobs:
             exit 1
           fi
           dmgbuild_python="$(
-            find "$ELECTRON_BUILDER_CACHE" -path '*/python/bin/python3' -type f -perm -111 -print -quit
+            find "$ELECTRON_BUILDER_CACHE" -path '*/python/bin/python3' -print -quit
           )"
-          if [ -z "$dmgbuild_python" ]; then
+          if [ -z "$dmgbuild_python" ] || [ ! -x "$dmgbuild_python" ]; then
             echo "Electron Builder's bundled DMG metadata parser is missing" >&2
             exit 1
           fi

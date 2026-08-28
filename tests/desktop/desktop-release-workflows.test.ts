@@ -20,6 +20,10 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain(
       "ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.electron-builder-cache",
     );
+    expect(workflow).toContain(
+      "find \"$ELECTRON_BUILDER_CACHE\" -path '*/python/bin/python3' -print -quit",
+    );
+    expect(workflow).toContain('[ ! -x "$dmgbuild_python" ]');
     expect(workflow).toContain("from ds_store import DSStore");
     expect(workflow).toContain("from mac_alias import Alias");
     expect(workflow).toContain('icon_view.get("backgroundImageAlias")');
