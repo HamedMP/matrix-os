@@ -887,12 +887,18 @@ export const FileBrowseRequestSchema = z.object({
   cursor: FileBrowseCursorSchema.optional(),
   limit: FileListLimitSchema,
 }).strict();
+const FileBrowseEntriesSchema = z.object({
+  items: z.array(FileMetadataSchema).max(100),
+  hasMore: z.boolean(),
+  nextCursor: FileBrowseCursorSchema.optional(),
+  limit: z.number().int().min(1).max(100),
+}).strict();
 export const FileBrowseResponseSchema = z.object({
   directory: FileMetadataSchema.extend({
     kind: z.literal("directory"),
     path: FilePathSchema.optional(),
   }),
-  entries: boundedListSchema(FileMetadataSchema, 100),
+  entries: FileBrowseEntriesSchema,
 }).strict();
 export type FileBrowseRequest = z.infer<typeof FileBrowseRequestSchema>;
 export type FileBrowseResponse = z.infer<typeof FileBrowseResponseSchema>;

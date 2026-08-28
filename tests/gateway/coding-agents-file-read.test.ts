@@ -364,6 +364,35 @@ describe("coding agent file read route", () => {
     }
   });
 
+  it("paginates after a valid filename whose encoded cursor exceeds the generic cursor bound", async () => {
+    const harness = await createRouteHarness({ ownerIds: [testPrincipal.userId] });
+    try {
+      const directory = join(harness.worktreeRoot, "long-cursor");
+      const longName = `${"a".repeat(100)}.ts`;
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, longName), "export const longName = true;\n");
+      await writeFile(join(directory, "z.ts"), "export const z = true;\n");
+
+      const firstResponse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=long-cursor&limit=1`,
+      );
+      const first = await firstResponse.json();
+      expect(firstResponse.status).toBe(200);
+      expect(first.entries.nextCursor.length).toBeGreaterThan(160);
+
+      const secondResponse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=long-cursor&cursor=${first.entries.nextCursor}&limit=1`,
+      );
+      const second = await secondResponse.json();
+      expect(secondResponse.status).toBe(200);
+      expect(second.entries.items).toEqual([
+        expect.objectContaining({ path: "long-cursor/z.ts" }),
+      ]);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("marks browse results partial when skipped entries exhaust the inspect budget", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],
