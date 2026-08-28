@@ -119,6 +119,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const wmFocusWindow = useWindowManager((s) => s.focusWindow);
   const wmMoveWindow = useWindowManager((s) => s.moveWindow);
   const wmResizeWindow = useWindowManager((s) => s.resizeWindow);
+  const wmReconcileWindowsToViewport = useWindowManager((s) => s.reconcileWindowsToViewport);
   const wmGetWindow = useWindowManager((s) => s.getWindow);
   const wmSetApps = useWindowManager((s) => s.setApps);
   const wmSetWindows = useWindowManager((s) => s.setWindows);
@@ -255,6 +256,28 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     origW: number;
     origH: number;
   } | null>(null);
+  const viewportReconcilePendingRef = useRef(false);
+
+  useEffect(() => {
+    let frame: number | null = null;
+    const scheduleReconcile = () => {
+      viewportReconcilePendingRef.current = true;
+      if (dragRef.current || resizeRef.current) return;
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        viewportReconcilePendingRef.current = false;
+        wmReconcileWindowsToViewport();
+      });
+    };
+
+    window.addEventListener("resize", scheduleReconcile);
+    if (!interacting && viewportReconcilePendingRef.current) scheduleReconcile();
+    return () => {
+      window.removeEventListener("resize", scheduleReconcile);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [interacting, wmReconcileWindowsToViewport]);
 
   const generatingRef = useRef<Set<string> | null>(null);
   if (generatingRef.current === null) generatingRef.current = new Set<string>();

@@ -134,6 +134,7 @@ interface WindowManagerActions {
   restoreAndFocusWindow: (id: string) => void;
   moveWindow: (id: string, x: number, y: number) => void;
   resizeWindow: (id: string, width: number, height: number) => void;
+  reconcileWindowsToViewport: () => void;
   focusWindow: (id: string) => void;
   clearFocus: () => void;
   getWindow: (id: string) => AppWindow | undefined;
@@ -475,6 +476,28 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           };
         }),
       }));
+    },
+
+    reconcileWindowsToViewport: () => {
+      if (useDesktopMode.getState().mode === "canvas") return;
+      const currentWindows = get().windows;
+      let changed = false;
+      const windows = currentWindows.map((windowRecord) => {
+        const normalized = normalizeRestoredLayout(windowRecord.path, windowRecord);
+        if (
+          normalized.x === windowRecord.x
+          && normalized.y === windowRecord.y
+          && normalized.width === windowRecord.width
+          && normalized.height === windowRecord.height
+        ) {
+          return windowRecord;
+        }
+        changed = true;
+        return { ...windowRecord, ...normalized };
+      });
+      if (!changed) return;
+      markUserLayoutMutation();
+      set({ windows });
     },
 
     focusWindow: (id) => {

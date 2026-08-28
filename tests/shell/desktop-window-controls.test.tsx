@@ -24,7 +24,7 @@ describe("web desktop window controls", () => {
     });
   });
 
-  it("uses compact native traffic lights with hover-only glyphs", () => {
+  it("matches the desktop OS square icon controls", () => {
     render(
       <WindowControls
         title="Terminal"
@@ -39,21 +39,15 @@ describe("web desktop window controls", () => {
     const maximize = screen.getByRole("button", { name: "Maximize Terminal" });
 
     for (const control of [close, minimize, maximize]) {
-      expect(control.className).toContain("size-5");
-      expect(control.className).toContain("rounded-full");
-      expect((control as HTMLElement).style.background).toBe("");
-      expect(control.querySelector("svg")).toBeNull();
-      const light = control.querySelector<HTMLElement>("[data-window-control-light]");
-      expect(light).toBeTruthy();
-      expect(light?.className).toContain("size-3");
-      expect(light?.className).toContain("rounded-full");
-      expect(light?.querySelector("[data-window-control-glyph]")?.className).toContain("opacity-0");
-      expect(light?.querySelector("[data-window-control-glyph]")?.className).toContain("group-hover/window-controls:opacity-100");
+      expect(control.className).toContain("size-4");
+      expect(control.className).toContain("rounded-[4.8px]");
+      expect((control as HTMLElement).style.background).toBe("var(--surface-primary, #FFFEFC)");
+      expect((control as HTMLElement).style.border).toBe("0.8px solid var(--border-default, #F3F2F2)");
+      expect(control.querySelector("svg")).toBeTruthy();
+      expect(control.querySelector("[data-window-control-light]")).toBeNull();
     }
 
-    expect(close.parentElement?.className).toContain("w-16");
-    expect(close.querySelector("[data-window-control-light]")?.className).toContain("bg-[#ff5f57]");
-    expect(minimize.querySelector("[data-window-control-light]")?.className).toContain("bg-[#febc2e]");
-    expect(maximize.querySelector("[data-window-control-light]")?.className).toContain("bg-[#28c840]");
+    expect(close.parentElement?.className).toContain("gap-0.5");
+    expect(close.parentElement?.className).not.toContain("w-16");
   });
 });

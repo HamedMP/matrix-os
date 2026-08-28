@@ -167,7 +167,7 @@ export function DesktopWindow({
     >
       <CardHeader
         className={cn(
-          "flex h-[38px] flex-row items-center gap-0 space-y-0 px-3 py-0 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing",
+          "relative flex h-[38px] flex-row items-center gap-0 space-y-0 px-4 py-0 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing",
           usesTerminalChrome ? "border-b-0" : "bg-card/85",
         )}
         style={desktopWindowTitleBarStyle(usesTerminalChrome)}
@@ -179,16 +179,19 @@ export function DesktopWindow({
           onToggleFullscreen(win.id);
         }}
       >
-        <WindowControls
-          title={win.title}
-          onClose={() => onCloseWindow(win.id)}
-          onMinimize={() => onAnimateMinimize(win.id)}
-          onMaximize={() => onToggleFullscreen(win.id)}
-        />
+        <div className="absolute left-4 z-10">
+          <WindowControls
+            title={win.title}
+            onClose={() => onCloseWindow(win.id)}
+            onMinimize={() => onAnimateMinimize(win.id)}
+            onMaximize={() => onToggleFullscreen(win.id)}
+          />
+        </div>
+        <div className="w-[78px] shrink-0" aria-hidden />
         <CardTitle className="flex-1 truncate text-center text-xs font-medium text-foreground">
           {win.title}
         </CardTitle>
-        <div className="w-16 shrink-0" aria-hidden />
+        <div className="w-[78px] shrink-0" aria-hidden />
       </CardHeader>
 
       <CardContent className="relative flex-1 p-0 min-h-0">

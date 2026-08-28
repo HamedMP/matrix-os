@@ -175,6 +175,60 @@ describe("Window Manager Store", () => {
     });
   });
 
+  describe("reconcileWindowsToViewport", () => {
+    it("fits open desktop windows after the viewport shrinks", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+      useWindowManager.getState().loadLayout([{
+        path: "__file-browser__",
+        title: "Files",
+        x: 500,
+        y: 192,
+        width: 900,
+        height: 650,
+        state: "open",
+      }]);
+
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 500 });
+      useWindowManager.getState().reconcileWindowsToViewport();
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 760,
+        height: 422,
+      });
+    });
+
+    it("leaves spatial Canvas windows unchanged", () => {
+      useDesktopMode.setState({ mode: "canvas" });
+      useWindowManager.setState({
+        windows: [{
+          id: "canvas-window",
+          path: "apps/notes.html",
+          title: "Notes",
+          x: 1400,
+          y: 900,
+          width: 800,
+          height: 600,
+          minimized: false,
+          zIndex: 1,
+        }],
+      });
+
+      useWindowManager.getState().reconcileWindowsToViewport();
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 1400,
+        y: 900,
+        width: 800,
+        height: 600,
+      });
+    });
+  });
+
   describe("focusWindow", () => {
     it("brings a window to the front with highest zIndex", () => {
       const { openWindow } = useWindowManager.getState();

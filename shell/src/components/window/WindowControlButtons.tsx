@@ -1,36 +1,19 @@
 "use client";
 
+import { ArrowExpand01, Minus, X } from "@/lib/hugeicons";
 import type { MouseEvent } from "react";
 
 export type WindowControlKind = "close" | "minimize" | "maximize";
 
+const CONTROL_STYLE = {
+  background: "var(--surface-primary, #FFFEFC)",
+  border: "0.8px solid var(--border-default, #F3F2F2)",
+};
+
 function WindowControlGlyph({ kind }: { kind: WindowControlKind }) {
-  if (kind === "close") {
-    return (
-      <span data-window-control-glyph className="relative block size-2 opacity-0 transition-opacity group-hover/window-controls:opacity-100" aria-hidden="true">
-        <span className="absolute left-1/2 top-1/2 h-px w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full bg-black/60" />
-        <span className="absolute left-1/2 top-1/2 h-px w-2 -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded-full bg-black/60" />
-      </span>
-    );
-  }
-
-  if (kind === "minimize") {
-    return (
-      <span
-        data-window-control-glyph
-        className="block h-px w-2 rounded-full bg-black/60 opacity-0 transition-opacity group-hover/window-controls:opacity-100"
-        aria-hidden="true"
-      />
-    );
-  }
-
-  return (
-    <span
-      data-window-control-glyph
-      className="block size-1.5 rounded-[1px] border border-black/60 opacity-0 transition-opacity group-hover/window-controls:opacity-100"
-      aria-hidden="true"
-    />
-  );
+  if (kind === "close") return <X size={11.2} strokeWidth={1.7} />;
+  if (kind === "minimize") return <Minus size={11.2} strokeWidth={1.7} />;
+  return <ArrowExpand01 size={11.2} strokeWidth={1.7} />;
 }
 
 function WindowControlButton({
@@ -42,17 +25,13 @@ function WindowControlButton({
   label: string;
   onClick?: () => void;
 }) {
-  const lightColor = kind === "close"
-    ? "bg-[#ff5f57]"
-    : kind === "minimize"
-      ? "bg-[#febc2e]"
-      : "bg-[#28c840]";
   return (
     <button
       type="button"
       aria-label={label}
       data-window-control={kind}
-      className="flex size-5 items-center justify-center rounded-full transition-[filter,transform] hover:brightness-95 active:scale-90 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+      className="no-drag flex size-4 items-center justify-center rounded-[4.8px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+      style={CONTROL_STYLE}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event: MouseEvent<HTMLButtonElement>) => {
         event.stopPropagation();
@@ -60,12 +39,7 @@ function WindowControlButton({
       }}
       disabled={!onClick}
     >
-      <span
-        data-window-control-light
-        className={`flex size-3 items-center justify-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.16)] ${lightColor}`}
-      >
-        <WindowControlGlyph kind={kind} />
-      </span>
+      <WindowControlGlyph kind={kind} />
     </button>
   );
 }
@@ -89,7 +63,7 @@ export function WindowControlButtons({
   return (
     <div
       data-window-control-group
-      className={`group/window-controls flex w-16 shrink-0 items-center gap-0.5 ${className ?? ""}`}
+      className={`no-drag flex shrink-0 items-center gap-0.5 ${className ?? ""}`}
       onDoubleClick={(event) => event.stopPropagation()}
     >
       <WindowControlButton kind="close" label={label("Close")} onClick={onClose} />
