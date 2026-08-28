@@ -172,7 +172,8 @@ jobs:
         run: |
           set -euo pipefail
           head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
+          deployment_slug="${DEPLOYMENT_ENVIRONMENT,,}"
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:${deployment_slug}-pr-${PR_NUMBER}-${head_sha::12}"
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
             --config cloudbuild.platform.yaml \
