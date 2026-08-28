@@ -53,6 +53,8 @@ describe("web desktop window controls", () => {
     expect(close.querySelector("svg")).toBeTruthy();
     expect(minimize.querySelector("svg")).toBeTruthy();
     expect(fullscreen.querySelector("svg")).toBeTruthy();
+    expect(close.querySelector("svg")?.getAttribute("class")).toContain("text-black/0");
+    expect(close.querySelector("svg")?.getAttribute("class")).toContain("group-hover/traffic:text-black/60");
     expect(close.parentElement?.className).toContain("gap-1.5");
   });
 

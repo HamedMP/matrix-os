@@ -59,7 +59,7 @@ export function TrafficLights({
           onClose();
         }}
       >
-        <X aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
+        <X aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
       </button>
       <button
         type="button"
@@ -71,7 +71,7 @@ export function TrafficLights({
           onMinimize();
         }}
       >
-        <Minus aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
+        <Minus aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
       </button>
       <button
         type="button"
@@ -83,7 +83,7 @@ export function TrafficLights({
           onMaximize();
         }}
       >
-        <ArrowExpand01 aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
+        <ArrowExpand01 aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
       </button>
     </div>
   );

@@ -21,7 +21,7 @@ export function TrafficLights({
         className="flex size-3 items-center justify-center rounded-full bg-[#ff5f57] transition-colors hover:brightness-90"
         aria-label="Close"
       >
-        <X aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
+        <X aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
       </button>
       <button
         type="button"
@@ -33,7 +33,7 @@ export function TrafficLights({
         className="flex size-3 items-center justify-center rounded-full bg-[#febc2e] transition-colors hover:brightness-90"
         aria-label="Minimize"
       >
-        <Minus aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
+        <Minus aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
       </button>
       <button
         type="button"
@@ -45,7 +45,7 @@ export function TrafficLights({
         className="flex size-3 items-center justify-center rounded-full bg-[#28c840] transition-colors hover:brightness-90"
         aria-label="Fullscreen"
       >
-        <ArrowExpand01 aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
+        <ArrowExpand01 aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
       </button>
     </div>
   );

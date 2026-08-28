@@ -56,6 +56,8 @@ describe("Electron OS window chrome", () => {
     expect(closeButton.querySelector("svg")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Minimize" }).querySelector("svg")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Maximize" }).querySelector("svg")).toBeTruthy();
+    expect(closeButton.querySelector("svg")?.getAttribute("class")).toContain("text-black/0");
+    expect(closeButton.querySelector("svg")?.getAttribute("class")).toContain("group-hover/traffic:text-black/60");
     expect(closeButton.parentElement?.className).toContain("gap-1.5");
 
     fireEvent.click(closeButton);
