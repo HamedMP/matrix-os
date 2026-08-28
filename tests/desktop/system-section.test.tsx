@@ -76,6 +76,31 @@ describe("desktop system updates", () => {
     expect(screen.getByRole("status", { name: /Installing v2026\.08\.28/i })).not.toBeNull();
   });
 
+  it("continues update polling when mounted in StrictMode", async () => {
+    let installed = false;
+    const api = {
+      ...makeApi(),
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/system/info") {
+          return installed
+            ? { release: { version: "v2026.08.28", channel: "stable" } }
+            : { release: { version: "v2026.08.20", channel: "stable" } };
+        }
+        if (path === "/api/system/update?channel=stable") return { latest: { version: "v2026.08.28", channel: "stable" }, updateAvailable: true };
+        if (path === "/api/system/releases?channel=stable") return { releases: [] };
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+      post: vi.fn(async () => { installed = true; return { ok: true, version: "v2026.08.28" }; }),
+    };
+    useConnection.setState({ api: api as never });
+    render(<React.StrictMode><SystemSection /></React.StrictMode>);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upgrade" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    await waitFor(() => expect(screen.getByText("Update installed successfully.")).not.toBeNull());
+  });
+
   it("does not treat an unchanged channel subscription as an installed channel update", async () => {
     const api = makeApi();
     useConnection.setState({ api: api as never });

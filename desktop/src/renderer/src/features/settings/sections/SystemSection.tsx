@@ -132,9 +132,12 @@ export default function SystemSection() {
     return () => { cancelled = true; };
   }, [api, loadReleases, runtimeSlot]);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+    };
   }, []);
 
   const waitForInstallation = async (target: {
