@@ -14,6 +14,17 @@ function readPngDimensions(path: string): { width: number; height: number } {
 }
 
 describe("desktop packaging", () => {
+  it("uses an electron-builder version that preserves branded DMG backgrounds", () => {
+    const packageJson = JSON.parse(
+      readFileSync(join(process.cwd(), "desktop/package.json"), "utf8"),
+    ) as { devDependencies?: Record<string, string> };
+    const version = packageJson.devDependencies?.["electron-builder"];
+
+    expect(version).toMatch(/^~?\d+\.\d+\.\d+$/);
+    const [major, minor, patch] = version!.replace(/^~/, "").split(".").map(Number);
+    expect(major * 1_000_000 + minor * 1_000 + patch).toBeGreaterThanOrEqual(26_005_000);
+  });
+
   it("registers canonical and legacy macOS URL schemes", () => {
     const raw = readFileSync(join(process.cwd(), "desktop/electron-builder.yml"), "utf8");
     const config = parse(raw) as {

@@ -201,10 +201,29 @@ jobs:
         run: |
           set -euo pipefail
           dmg_path="desktop/dist/${ARTIFACT_BASE}.dmg"
-          mount_dir="$(mktemp -d)"
+          mount_dir=""
+          volume_name=""
+          finder_window_open=false
           copy_dir="$(mktemp -d)"
           app_pid=""
           update_server_pid=""
+          close_finder_window() {
+            if [ "$finder_window_open" = true ] && [ -n "$volume_name" ]; then
+              osascript - "$volume_name" <<'APPLESCRIPT' >/dev/null 2>&1 || true
+          on run argv
+            set volumeName to item 1 of argv
+            tell application "Finder"
+              if exists disk volumeName then
+                try
+                  close container window of disk volumeName
+                end try
+              end if
+            end tell
+          end run
+          APPLESCRIPT
+            fi
+            finder_window_open=false
+          }
           cleanup() {
             if [ -n "$app_pid" ]; then
               kill "$app_pid" 2>/dev/null || true
@@ -214,11 +233,21 @@ jobs:
               kill "$update_server_pid" 2>/dev/null || true
               wait "$update_server_pid" 2>/dev/null || true
             fi
-            hdiutil detach "$mount_dir" -quiet || true
-            rm -rf "$mount_dir" "$copy_dir"
+            close_finder_window
+            if [ -n "$mount_dir" ]; then
+              hdiutil detach "$mount_dir" -quiet || true
+            fi
+            rm -rf "$copy_dir"
           }
           trap cleanup EXIT
-          hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly
+          attach_output="$(hdiutil attach "$dmg_path" -nobrowse -readonly)"
+          mount_dir="$(printf '%s\n' "$attach_output" | awk -F '\t' '$NF ~ /^\/Volumes\// { print $NF; exit }')"
+          if [ -z "$mount_dir" ] || [ "${mount_dir#/Volumes/}" = "$mount_dir" ]; then
+            printf '%s\n' "$attach_output" >&2
+            echo "DMG did not mount at a native /Volumes path" >&2
+            exit 1
+          fi
+          volume_name="${mount_dir#/Volumes/}"
           if [ ! -L "$mount_dir/Applications" ]; then
             echo "DMG is missing the Applications install link" >&2
             exit 1
@@ -228,6 +257,45 @@ jobs:
             echo "DMG Applications link points to an unexpected target" >&2
             exit 1
           fi
+          open "$mount_dir"
+          finder_window_open=true
+          background_picture="missing value"
+          for _ in {1..20}; do
+            background_picture="$(osascript - "$volume_name" <<'APPLESCRIPT'
+          on run argv
+            set volumeName to item 1 of argv
+            tell application "Finder"
+              if not (exists disk volumeName) then return "missing value"
+              set volumeWindow to container window of disk volumeName
+              if current view of volumeWindow is not icon view then return "missing value"
+              set backgroundPicture to background picture of icon view options of volumeWindow
+              if backgroundPicture is missing value then return "missing value"
+              return POSIX path of (backgroundPicture as alias)
+            end tell
+          end run
+          APPLESCRIPT
+            )" || background_picture="missing value"
+            if [ -n "$background_picture" ] && [ "$background_picture" != "missing value" ]; then
+              break
+            fi
+            sleep 0.5
+          done
+          if [ -z "$background_picture" ] || [ "$background_picture" = "missing value" ]; then
+            echo "DMG Finder background picture is missing value" >&2
+            exit 1
+          fi
+          case "$background_picture" in
+            "$mount_dir"/.background/*) ;;
+            *)
+              echo "DMG Finder background picture resolves outside .background" >&2
+              exit 1
+              ;;
+          esac
+          if [ ! -f "$background_picture" ]; then
+            echo "DMG Finder background picture points to a missing file" >&2
+            exit 1
+          fi
+          close_finder_window
           ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"
           if [ ! -x "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" ]; then
             echo "Copied macOS app is missing executable entrypoint" >&2
