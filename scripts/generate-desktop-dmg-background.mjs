@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  fonts as brandFonts,
+  desktopFonts,
   lightFg,
   palette as brandPalette,
 } from "../packages/brand/src/tokens.ts";
@@ -22,11 +22,16 @@ let sharp;
 let dependencyRoot;
 for (const candidateRoot of candidateRoots) {
   const packagePath = resolve(candidateRoot, "node_modules/sharp/package.json");
-  const fontPath = resolve(
+  const fontRoot = resolve(
     candidateRoot,
-    "node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff2",
+    "node_modules/@expo-google-fonts/bricolage-grotesque",
   );
-  if (existsSync(packagePath) && existsSync(fontPath)) {
+  const fontPaths = [
+    resolve(fontRoot, "400Regular/BricolageGrotesque_400Regular.ttf"),
+    resolve(fontRoot, "600SemiBold/BricolageGrotesque_600SemiBold.ttf"),
+    resolve(fontRoot, "700Bold/BricolageGrotesque_700Bold.ttf"),
+  ];
+  if (existsSync(packagePath) && fontPaths.every(existsSync)) {
     sharp = createRequire(packagePath)("sharp");
     dependencyRoot = candidateRoot;
     break;
@@ -35,7 +40,7 @@ for (const candidateRoot of candidateRoots) {
 
 if (!sharp || !dependencyRoot) {
   throw new Error(
-    "The DMG generator dependencies are not installed in this worktree. Run `pnpm install`, or set MATRIX_REPO_ROOT to a checkout that has both sharp and Instrument Serif installed.",
+    "The DMG generator dependencies are not installed in this worktree. Run `pnpm install`, or set MATRIX_REPO_ROOT to a checkout that has both sharp and Bricolage Grotesque installed.",
   );
 }
 
@@ -50,30 +55,43 @@ const palette = {
 const width = 720;
 const height = 520;
 const logoPath = resolve(root, "desktop/src/renderer/src/assets/matrix-logo.svg");
-const serifFontDirectory = resolve(
+const displayFontDirectory = resolve(
   dependencyRoot,
-  "node_modules/@fontsource/instrument-serif/files",
+  "node_modules/@expo-google-fonts/bricolage-grotesque",
 );
-const serifFontRegularPath = resolve(
-  serifFontDirectory,
-  "instrument-serif-latin-400-normal.woff2",
+const displayFontRegularPath = resolve(
+  displayFontDirectory,
+  "400Regular/BricolageGrotesque_400Regular.ttf",
+);
+const displayFontSemiBoldPath = resolve(
+  displayFontDirectory,
+  "600SemiBold/BricolageGrotesque_600SemiBold.ttf",
+);
+const displayFontBoldPath = resolve(
+  displayFontDirectory,
+  "700Bold/BricolageGrotesque_700Bold.ttf",
 );
 const outputPath = resolve(root, "desktop/build/dmg-background.png");
 const outputRetinaPath = resolve(root, "desktop/build/dmg-background@2x.png");
 
-for (const assetPath of [logoPath, serifFontRegularPath]) {
+for (const assetPath of [
+  logoPath,
+  displayFontRegularPath,
+  displayFontSemiBoldPath,
+  displayFontBoldPath,
+]) {
   if (!existsSync(assetPath)) {
     throw new Error(`Required Matrix brand asset is missing: ${assetPath}`);
   }
 }
 
-const serifFontRegular = await readFile(serifFontRegularPath);
+const [displayFontRegular, displayFontSemiBold, displayFontBold] = await Promise.all([
+  readFile(displayFontRegularPath),
+  readFile(displayFontSemiBoldPath),
+  readFile(displayFontBoldPath),
+]);
 
-function resolveCssFontFamily(value) {
-  return value.replace(/^var\([^)]*\),\s*/, "");
-}
-
-const displayFontFamily = resolveCssFontFamily(brandFonts.display);
+const displayFontFamily = desktopFonts.display;
 
 function backgroundSvg() {
   return `
@@ -97,9 +115,19 @@ function backgroundSvg() {
         </filter>
         <style>
           @font-face {
-            font-family: "Instrument Serif";
-            src: url("data:font/woff2;base64,${serifFontRegular.toString("base64")}") format("woff2");
+            font-family: "Bricolage Grotesque";
+            src: url("data:font/ttf;base64,${displayFontRegular.toString("base64")}") format("truetype");
             font-weight: 400;
+          }
+          @font-face {
+            font-family: "Bricolage Grotesque";
+            src: url("data:font/ttf;base64,${displayFontSemiBold.toString("base64")}") format("truetype");
+            font-weight: 600;
+          }
+          @font-face {
+            font-family: "Bricolage Grotesque";
+            src: url("data:font/ttf;base64,${displayFontBold.toString("base64")}") format("truetype");
+            font-weight: 700;
           }
           .display { font-family: ${displayFontFamily}; }
         </style>
@@ -110,7 +138,7 @@ function backgroundSvg() {
       <rect width="${width}" height="${height}" fill="url(#emberGlow)"/>
       <rect x="0.5" y="0.5" width="719" height="519" rx="1" fill="none" stroke="${palette.light}" stroke-opacity="0.08"/>
 
-      <text class="display" x="360" y="105" fill="${palette.light}" font-size="42" font-weight="400" text-anchor="middle" letter-spacing="-0.4">Install Matrix OS</text>
+      <text class="display" x="360" y="105" fill="${palette.light}" font-size="42" font-weight="700" text-anchor="middle" letter-spacing="-1.2">Install Matrix OS</text>
       <text class="display" x="360" y="140" fill="${palette.cream}" fill-opacity="0.78" font-size="17" font-weight="400" text-anchor="middle">Drag Matrix OS to Applications</text>
 
       <circle cx="190" cy="322" r="78" fill="${palette.light}" fill-opacity="0.018" stroke="${palette.light}" stroke-opacity="0.045"/>
@@ -120,7 +148,7 @@ function backgroundSvg() {
       <path d="M301 322H414" stroke="${palette.ember}" stroke-width="5" stroke-linecap="round"/>
       <path d="M396 303L415 322L396 341" fill="none" stroke="${palette.ember}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 
-      <text class="display" x="360" y="472" fill="${palette.cream}" fill-opacity="0.46" font-size="12" font-weight="400" text-anchor="middle" letter-spacing="1.4">YOUR PRIVATE AI COMPUTER</text>
+      <text class="display" x="360" y="472" fill="${palette.cream}" fill-opacity="0.46" font-size="12" font-weight="600" text-anchor="middle" letter-spacing="1.4">YOUR PRIVATE AI COMPUTER</text>
     </svg>
   `;
 }

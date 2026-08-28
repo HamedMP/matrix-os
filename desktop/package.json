@@ -69,6 +69,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@expo-google-fonts/bricolage-grotesque": "^0.4.1",
     "@matrix-os/contracts": "workspace:*",
     "@tailwindcss/vite": "^4.1.18",
     "@types/react": "^19",
