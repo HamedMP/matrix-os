@@ -266,12 +266,16 @@ jobs:
             set volumeName to item 1 of argv
             tell application "Finder"
               if not (exists disk volumeName) then return "missing value"
-              set volumeWindow to container window of disk volumeName
-              if current view of volumeWindow is not icon view then return "missing value"
-              set backgroundPicture to background picture of icon view options of volumeWindow
-              if backgroundPicture is missing value then return "missing value"
-              return POSIX path of (backgroundPicture as alias)
+              tell disk volumeName
+                set volumeWindow to container window
+                if current view of volumeWindow is not icon view then return "missing value"
+                set viewOptions to icon view options of volumeWindow
+                set viewOptionsProperties to properties of viewOptions
+                set backgroundPicture to background picture of viewOptionsProperties
+                if backgroundPicture is missing value then return "missing value"
+              end tell
             end tell
+            return POSIX path of (backgroundPicture as alias)
           end run
           APPLESCRIPT
             )" || background_picture="missing value"
