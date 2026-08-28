@@ -509,6 +509,53 @@ describe("WorkRail", () => {
     expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("invalidates a pending pin across an away-and-back tab round-trip", async () => {
+    let resolveOriginalPin!: (record: CanonicalChatRecord) => void;
+    const originalPinRequest = new Promise<CanonicalChatRecord>((resolve) => {
+      resolveOriginalPin = resolve;
+    });
+    const replacementPinRequest = new Promise<CanonicalChatRecord>(() => {});
+    const client = {
+      list: vi.fn(async () => ({ items: [recent] })),
+      updateUserState: vi.fn()
+        .mockImplementationOnce(() => originalPinRequest)
+        .mockImplementationOnce(() => replacementPinRequest),
+    } as unknown as CanonicalChatClient;
+    const props = {
+      client,
+      projects: [] as Project[],
+      activeChatId: "chat_same_route",
+      onNewGlobalChat: vi.fn(),
+      onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(),
+      onCollapse: vi.fn(),
+    };
+    const { rerender } = render(<WorkRail {...props} active />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pin Recent global" }));
+    await waitFor(() => expect(client.updateUserState).toHaveBeenCalledOnce());
+
+    rerender(<WorkRail {...props} active={false} />);
+    rerender(<WorkRail {...props} active />);
+    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+    const replacementPin = await screen.findByRole("button", { name: "Pin Recent global" });
+    await waitFor(() => expect((replacementPin as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(replacementPin);
+    await waitFor(() => expect(client.updateUserState).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveOriginalPin(record("chat_recent", "Recent global", {
+        pinned: true,
+        updatedAt: "2026-08-28T10:01:00.000Z",
+      }));
+      await originalPinRequest;
+    });
+
+    expect(screen.queryByRole("button", { name: "Unpin Recent global" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("shows Pin and Delete in the Chat context menu", async () => {
     setup();
     const recentChat = await screen.findByRole("button", { name: "Recent global" });

@@ -77,7 +77,7 @@ export function WorkRail({
   const [deletingChat, setDeletingChat] = useState(false);
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
-  const routeScope = `${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
+  const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
   if (routeScopeRef.current.key !== routeScope || routeScopeRef.current.client !== client) {
     routeScopeRef.current = {
