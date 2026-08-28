@@ -277,6 +277,7 @@ import { X as XData } from "@hugeicons/core-free-icons";
 import { CancelCircleIcon as XCircleIconData } from "@hugeicons/core-free-icons";
 import { XIcon as XIconData } from "@hugeicons/core-free-icons";
 import { Zap as ZapData } from "@hugeicons/core-free-icons";
+import { ArrowExpand01Icon as ArrowExpand01Data } from "@hugeicons/core-free-icons";
 
 export type LucideProps = Omit<ComponentProps<typeof HugeiconsIcon>, "icon">;
 export type LucideIcon = ComponentType<LucideProps>;
@@ -563,3 +564,4 @@ export const X: LucideIcon = createIcon(XData);
 export const XCircleIcon: LucideIcon = createIcon(XCircleIconData);
 export const XIcon: LucideIcon = createIcon(XIconData);
 export const Zap: LucideIcon = createIcon(ZapData);
+export const ArrowExpand01: LucideIcon = createIcon(ArrowExpand01Data);

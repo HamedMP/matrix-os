@@ -1,4 +1,4 @@
-import { Maximize2, Minus, X } from "@renderer/lib/hugeicons";
+import { Minus, X, ArrowExpand01 } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,
@@ -60,7 +60,7 @@ export function TrafficLights({
     <div className="no-drag flex items-center gap-0.5">
       <button type="button" aria-label={controlLabel("Close")} className={controlClass} style={controlStyle} onClick={onClose}><X size={11.2} strokeWidth={1.7} /></button>
       <button type="button" aria-label={controlLabel("Minimize")} className={controlClass} style={controlStyle} onClick={onMinimize}><Minus size={11.2} strokeWidth={1.7} /></button>
-      <button type="button" aria-label={controlLabel("Maximize")} className={controlClass} style={controlStyle} onClick={onMaximize}><Maximize2 size={11.2} strokeWidth={1.7} /></button>
+      <button type="button" aria-label={controlLabel("Maximize")} className={controlClass} style={controlStyle} onClick={onMaximize}><ArrowExpand01 size={11.2} strokeWidth={1.7} /></button>
     </div>
   );
 }

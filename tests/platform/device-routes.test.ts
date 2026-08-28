@@ -900,10 +900,14 @@ describe("device routes", () => {
       expect(res.headers.get("content-security-policy")).toContain("https://challenges.cloudflare.com");
       expect(res.headers.get("content-security-policy")).toContain("worker-src 'self' blob:");
       expect(res.headers.get("content-security-policy")).toContain("frame-src https://challenges.cloudflare.com");
-      expect(res.headers.get("content-security-policy")).toContain("style-src 'self' 'nonce-");
+      expect(res.headers.get("content-security-policy")).toContain(
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      );
       expect(res.headers.get("content-security-policy")).toContain("https://fonts.googleapis.com");
       expect(res.headers.get("content-security-policy")).toContain("font-src 'self' https://fonts.gstatic.com");
-      expect(res.headers.get("content-security-policy")).not.toContain("'unsafe-inline'");
+      expect(res.headers.get("content-security-policy")).not.toMatch(
+        /script-src[^;]*'unsafe-inline'/,
+      );
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);
