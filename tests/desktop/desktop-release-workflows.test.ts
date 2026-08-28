@@ -93,6 +93,14 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain("desktop/dist/*.blockmap");
   });
 
+  it("gives the macOS renderer build enough heap for the release bundle", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+
+    expect(workflow).toMatch(
+      /- name: Build desktop app\n\s+env:\n\s+NODE_OPTIONS: --max-old-space-size=4096\n\s+run: pnpm --filter desktop build/,
+    );
+  });
+
   it("lets the mac matrix arch control electron-builder outputs", () => {
     const config = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
 
