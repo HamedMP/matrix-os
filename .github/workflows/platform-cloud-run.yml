@@ -56,8 +56,13 @@ jobs:
       CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}
       ATS_BOOKING_BASE_URL: ${{ vars.ATS_BOOKING_BASE_URL }}
       GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}
-      MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}
-      MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '7' }}
+      MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
+      MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
+      MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'
+      MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100'
+      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '1' }}
+      MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS || '254000' }}
+      MATRIX_PREBILLING_PROVISIONING_COSTS: ${{ vars.MATRIX_PREBILLING_PROVISIONING_COSTS || 'cpx22:92900;cpx32:169900;cpx52:254000' }}
       POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
@@ -108,6 +113,18 @@ jobs:
           esac
           if ! [[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]; then
             echo "MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30." >&2
+            exit 1
+          fi
+          if ! [[ "$MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE" =~ ^[1-9][0-9]*$ ]]; then
+            echo "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE must be a positive integer." >&2
+            exit 1
+          fi
+          if ! [[ "$MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS must be a positive integer." >&2
+            exit 1
+          fi
+          if ! [[ "$MATRIX_PREBILLING_PROVISIONING_COSTS" =~ ^cpx22:[1-9][0-9]*\;cpx32:[1-9][0-9]*\;cpx52:[1-9][0-9]*$ ]]; then
+            echo "MATRIX_PREBILLING_PROVISIONING_COSTS must define cpx22, cpx32, and cpx52." >&2
             exit 1
           fi
 
@@ -524,7 +541,7 @@ jobs:
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
-            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_BACKGROUND_WORKERS_ENABLED=false,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync,GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=false,GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0${ats_env_bindings}" \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_BACKGROUND_WORKERS_ENABLED=false,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS=${MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS},MATRIX_PREBILLING_PROVISIONING_COSTS=${MATRIX_PREBILLING_PROVISIONING_COSTS},POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync,GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=false,GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0${ats_env_bindings}" \
             --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest${ats_secret_bindings}" \
             --format=json); then
             exit 1
@@ -546,6 +563,30 @@ jobs:
           echo "Resolved candidate revision $candidate_revision at $candidate_url"
           echo "CANDIDATE_URL=$candidate_url" >> "$GITHUB_ENV"
           echo "CANDIDATE_REVISION=$candidate_revision" >> "$GITHUB_ENV"
+
+      - name: Verify deployed prebilling contract
+        run: |
+          set -euo pipefail
+          revision_json="$(gcloud run revisions describe "$CANDIDATE_REVISION" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json)"
+          required_prebilling_env=(
+            MATRIX_PREBILLING_PROVISIONING_ENABLED
+            MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT
+            MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE
+            MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS
+            MATRIX_PREBILLING_PROVISIONING_COSTS
+          )
+          for name in "${required_prebilling_env[@]}"; do
+            expected="${!name}"
+            actual="$(printf '%s\n' "$revision_json" | jq -r --arg name "$name" \
+              '.spec.containers[0].env[]? | select(.name == $name) | .value // empty')"
+            if [ "$actual" != "$expected" ]; then
+              echo "prebilling deployment contract is missing or incorrect for $name" >&2
+              exit 1
+            fi
+          done
 
       - name: Smoke candidate revision
         run: |
@@ -694,7 +735,7 @@ jobs:
             --no-traffic \
             --min-instances "$min_instances" \
             --no-cpu-throttling \
-            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=true,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=false,GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0" \
+            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=true,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS=${MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS},MATRIX_PREBILLING_PROVISIONING_COSTS=${MATRIX_PREBILLING_PROVISIONING_COSTS},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=false,GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0" \
             --format=json)"
           production_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "production-candidate") | .revisionName // empty' | head -1)"
           if [ -z "$production_revision" ]; then

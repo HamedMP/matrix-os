@@ -140,9 +140,9 @@ describe("local store", () => {
   it("persists only a bounded Terminal-local light or dark preference", async () => {
     const store = createLocalStore({ dir: await makeDir() });
 
-    await store.set("terminalAppearance", { mode: "light" });
+    await store.set("terminalAppearance", { appThemeId: "light" });
 
-    expect(await store.get("terminalAppearance")).toEqual({ mode: "light" });
+    expect(await store.get("terminalAppearance")).toEqual({ appThemeId: "light" });
     await expect(store.setUnknown("terminalAppearance", { mode: "system" })).rejects.toThrow();
     await expect(store.setUnknown("terminalAppearance", { mode: "dark", themeId: "dracula" })).rejects.toThrow();
   });

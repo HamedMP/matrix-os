@@ -1,17 +1,28 @@
 import type { ReactNode } from "react";
 
-export function SectionHeader({ title, description }: { title: string; description?: string }) {
+export function SettingsSectionHeader({
+  title,
+  description,
+  className = "",
+}: {
+  title: string;
+  description?: string;
+  className?: string;
+}) {
   return (
-    <div className="mb-5 flex flex-col gap-1">
-      <h3 className="text-xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
+    <div data-testid="settings-section-header" className={`mb-6 flex flex-col gap-1 ${className}`}>
+      <h3 data-testid="settings-section-header-title" className="text-lg font-normal tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>
         {title}
       </h3>
       {description ? (
-        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{description}</p>
+        <p data-testid="settings-section-header-description" className="text-sm font-normal" style={{ color: "var(--text-secondary)" }}>{description}</p>
       ) : null}
     </div>
   );
 }
+
+// Compatibility export for inactive/legacy settings sections.
+export const SectionHeader = SettingsSectionHeader;
 
 export function Card({ children }: { children: ReactNode }) {
   return (

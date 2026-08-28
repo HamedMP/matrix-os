@@ -18,7 +18,7 @@ import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
 const AVAILABLE = [
   { id: "gmail", name: "Gmail", category: "google", icon: "mail", logoUrl: "https://x.test/g.png", actions: {} },
-  { id: "slack", name: "Slack", category: "communication", icon: "chat", actions: {} },
+  { id: "slack", name: "Slack", category: "communication", icon: "chat", logoUrl: "https://x.test/slack.png", actions: {} },
 ];
 
 const CONNECTIONS = [
@@ -56,8 +56,26 @@ describe("parseAvailableIntegrations", () => {
   it("parses the gateway array shape and keeps only display-safe fields", () => {
     const parsed = parseAvailableIntegrations(AVAILABLE);
     expect(parsed).toEqual([
-      { id: "gmail", name: "Gmail", category: "google" },
+      { id: "gmail", name: "Gmail", category: "google", logoUrl: "https://x.test/g.png" },
+      { id: "slack", name: "Slack", category: "communication", logoUrl: "https://x.test/slack.png" },
+    ]);
+  });
+
+  it("rejects non-HTTPS integration logos", () => {
+    expect(parseAvailableIntegrations([
+      { id: "safe", name: "Safe", category: "other", logoUrl: "https://cdn.test/safe.png" },
+      { id: "insecure", name: "Insecure", category: "other", logoUrl: "http://cdn.test/insecure.png" },
+    ])).toEqual([
+      { id: "safe", name: "Safe", category: "other", logoUrl: "https://cdn.test/safe.png" },
+      { id: "insecure", name: "Insecure", category: "other" },
+    ]);
+  });
+
+  it("uses the Pipedream logo fallback when Slack has no logo in the catalog response", () => {
+    expect(parseAvailableIntegrations([
       { id: "slack", name: "Slack", category: "communication" },
+    ])).toEqual([
+      { id: "slack", name: "Slack", category: "communication", logoUrl: "https://pipedream.com/s.v0/slack/logo/48" },
     ]);
   });
 
@@ -73,7 +91,12 @@ describe("parseAvailableIntegrations", () => {
       "junk",
       null,
     ]);
-    expect(parsed).toEqual([{ id: "github", name: "github", category: "developer" }]);
+    expect(parsed).toEqual([{
+      id: "github",
+      name: "github",
+      category: "developer",
+      logoUrl: "https://pipedream.com/s.v0/github/logo/48",
+    }]);
   });
 
   it("caps the catalog to a bounded size", () => {

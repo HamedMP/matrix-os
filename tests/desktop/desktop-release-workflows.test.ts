@@ -74,6 +74,15 @@ describe("desktop release workflows", () => {
     expect(config).not.toContain("MATRIX_DESKTOP_UPDATE_CHANNEL ?? process.env.OPERATOR_UPDATE_CHANNEL");
   });
 
+  it("injects the public PostHog support configuration into every packaged Desktop build", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+
+    expect(workflow.match(/VITE_POSTHOG_PROJECT_TOKEN:/g)).toHaveLength(2);
+    expect(workflow.match(/VITE_POSTHOG_HOST:/g)).toHaveLength(2);
+    expect(workflow).toContain("vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY");
+    expect(workflow).toContain("vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com'");
+  });
+
   it("keeps raw workspace TypeScript out of the packaged app archive", () => {
     const builder = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
 

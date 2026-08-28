@@ -27,6 +27,13 @@ describe("cloud workspace runtime gates", () => {
     expect(dockerfile).toContain("hermes-agent/${HERMES_VERSION}/scripts/install.sh");
   });
 
+  it("pins the verified Codex release in the development container", () => {
+    const dockerfile = readFileSync(join(root, "Dockerfile.dev"), "utf-8");
+
+    expect(dockerfile).toContain(`ARG CODEX_VERSION=${CODEX_VERIFIED_VERSION}`);
+    expect(dockerfile).toContain('"@openai/codex@${CODEX_VERSION}"');
+  });
+
   it("pins the Alpine-compatible Hermes release in legacy Docker images", () => {
     const dockerfiles = [
       readFileSync(join(root, "Dockerfile"), "utf-8"),

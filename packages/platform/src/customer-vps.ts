@@ -92,7 +92,11 @@ import {
   type NewProvisioningJob,
   type ProvisioningPayload,
 } from './customer-vps-provisioning-jobs.js';
-import { bindPrebillingIntentMachine, validatePrebillingProvisioningIntent } from './prebilling-provisioning-store.js';
+import {
+  bindPrebillingIntentMachine,
+  markPrebillingIntentReady,
+  validatePrebillingProvisioningIntent,
+} from './prebilling-provisioning-store.js';
 import { isProvisioningJobAuthorized, persistProvisioningClaimMutation } from './customer-vps-prebilling.js';
 import {
   chooseProvisioningImage,
@@ -2279,6 +2283,18 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           },
         );
         if (!registered) throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
+        if (row.prebillingIntentId) {
+          const markedReady = await markPrebillingIntentReady(trx, {
+            intentId: row.prebillingIntentId,
+            machineId: row.machineId,
+            clerkUserId: row.clerkUserId,
+            runtimeSlot: row.runtimeSlot,
+            now: lastSeenAt,
+          });
+          if (!markedReady) {
+            throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+          }
+        }
         if (row.recoveryOldServerId !== null) {
           await enqueueProviderDeletionTx(trx, {
             providerServerId: row.recoveryOldServerId,

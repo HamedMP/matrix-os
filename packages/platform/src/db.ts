@@ -540,6 +540,7 @@ export interface PrebillingProvisioningIntentsTable {
   cleanup_claimed_at: string | null;
   cleanup_lease_expires_at: string | null;
   ready_at: string | null;
+  payment_confirmed_at: string | null;
   authorized_at: string | null;
   cleaned_at: string | null;
   last_error_code: string | null;
@@ -1136,7 +1137,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS activation_state TEXT NOT NULL DEFAULT 'authorized'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS prebilling_intent_id TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS activation_authorized_at TEXT`.execute(db);
-  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_prebilling_intent ON user_machines(prebilling_intent_id) WHERE prebilling_intent_id IS NOT NULL`.execute(db);
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_active_prebilling_intent ON user_machines(prebilling_intent_id) WHERE prebilling_intent_id IS NOT NULL AND deleted_at IS NULL`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_prebilling_intent`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
   await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
@@ -1268,6 +1270,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       cleanup_claimed_at TEXT,
       cleanup_lease_expires_at TEXT,
       ready_at TEXT,
+      payment_confirmed_at TEXT,
       authorized_at TEXT,
       cleaned_at TEXT,
       last_error_code TEXT,
@@ -1275,6 +1278,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       updated_at TEXT NOT NULL
     )
   `.execute(db);
+  await sql`ALTER TABLE prebilling_provisioning_intents ADD COLUMN IF NOT EXISTS payment_confirmed_at TEXT`.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_prebilling_intents_active_owner_slot
     ON prebilling_provisioning_intents(clerk_user_id, runtime_slot)
@@ -4390,6 +4394,31 @@ export async function finalizeCheckoutAttempt(
   return existing?.status === 'open'
     && existing.stripe_session_id === stripeSessionId
     && existing.checkout_url === checkoutUrl;
+}
+
+export async function abandonCreatingCheckoutAttempt(
+  db: PlatformDB,
+  id: string,
+  resolvedAt: string,
+): Promise<boolean> {
+  await db.ready;
+  return db.transaction(async (trx) => {
+    const abandoned = await trx.executor
+      .updateTable('billing_checkout_attempts')
+      .set({ status: 'abandoned', resolved_at: resolvedAt })
+      .where('id', '=', id)
+      .where('status', '=', 'creating')
+      .where('stripe_session_id', 'is', null)
+      .returning('id')
+      .executeTakeFirst();
+    if (!abandoned) return false;
+    await trx.executor
+      .updateTable('billing_trial_accounts')
+      .set({ trial_checkout_attempt_id: null, updated_at: resolvedAt })
+      .where('trial_checkout_attempt_id', '=', id)
+      .execute();
+    return true;
+  });
 }
 
 export async function getLatestCheckoutAttempt(

@@ -5,6 +5,7 @@ import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { z } from 'zod/v4';
 import { appOrigin, resolveReturnPath } from './origins.js';
 import {
+  abandonCreatingCheckoutAttempt,
   claimCardTrialCheckoutAttempt,
   claimCheckoutAttempt,
   cancelOutstandingBillingRuntimeActions,
@@ -53,7 +54,7 @@ import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schem
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
 const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
-export const MATRIX_CARD_TRIAL_DAYS = 7;
+export const MATRIX_CARD_TRIAL_DAYS = 3;
 const MatrixCardTrialDaysSchema = z.string()
   .regex(/^[0-9]+$/)
   .transform(Number)
@@ -113,6 +114,10 @@ const PortalRequestSchema = z.object({
 
 const BillingStatusQuerySchema = z.object({
   runtimeSlot: RuntimeSlotSchema.optional(),
+}).strict();
+
+const CheckoutPreparationStatusQuerySchema = z.object({
+  attemptId: z.uuid(),
 }).strict();
 
 export interface StripeCheckoutSessionInput {
@@ -184,13 +189,24 @@ export interface PrebillingCheckoutCoordinator {
     intentId: string;
     stripeSessionId: string;
     stripeSessionExpiresAt: string;
-  }): Promise<void>;
+  }): Promise<boolean>;
+  getPreparationStatus(input: {
+    checkoutAttemptId: string;
+    clerkUserId: string;
+  }): Promise<'preparing' | 'ready' | 'failed'>;
+  retryPreparation(input: {
+    checkoutAttemptId: string;
+    clerkUserId: string;
+  }): Promise<boolean>;
+  resumePreparation(input: {
+    intentId: string;
+    clerkUserId: string;
+  }): Promise<boolean>;
+  reconcilePreparations(): Promise<{ checked: number; resumed: number }>;
   authorizeSubscription(
     db: PlatformDB,
     input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
-  ): Promise<{ authorized: boolean; machineId: string | null; needsFallback: boolean }>;
-  ensureFallback(input: { intentId: string }): Promise<void>;
-  reconcileFallbacks?(): Promise<{ checked: number; completed: number; failed: number }>;
+  ): Promise<{ authorized: boolean; machineId: string | null }>;
   expireCheckout(
     db: PlatformDB,
     input: { stripeSessionId: string; intentId?: string; clerkUserId?: string; now: string },
@@ -218,6 +234,8 @@ export function createBillingRoutes(options: {
   const app = new Hono();
   const env = options.env ?? process.env;
   const cardTrialDays = resolveCardTrialDays(env);
+  const primaryPrebillingRequired = env.CUSTOMER_VPS_ENABLED === 'true'
+    && env.MATRIX_BILLING_PROVIDER === 'stripe';
   const now = options.now ?? (() => new Date());
   const persistEntitlement = options.upsertEntitlement ?? upsertBillingEntitlement;
 
@@ -241,6 +259,46 @@ export function createBillingRoutes(options: {
       console.warn(`[billing] ${route} auth resolution failed:`, err instanceof Error ? err.name : typeof err);
       return null;
     }
+  }
+
+  async function preparedCheckoutResponse(
+    c: Context,
+    clerkUserId: string,
+    attempt: NonNullable<Awaited<ReturnType<typeof getActiveCheckoutAttempt>>>,
+    retryFailed = false,
+  ) {
+    if (attempt.runtimeSlot !== 'primary') {
+      if (!attempt.checkoutUrl) throw new Error('checkout_url_missing');
+      return c.json({ url: attempt.checkoutUrl }, 200);
+    }
+    if (!options.prebilling) {
+      if (primaryPrebillingRequired) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      if (!attempt.checkoutUrl) throw new Error('checkout_url_missing');
+      return c.json({ url: attempt.checkoutUrl }, 200);
+    }
+    let status = await options.prebilling.getPreparationStatus({
+      checkoutAttemptId: attempt.id,
+      clerkUserId,
+    });
+    if (status === 'failed' && retryFailed) {
+      const restarted = await options.prebilling.retryPreparation({
+        checkoutAttemptId: attempt.id,
+        clerkUserId,
+      });
+      if (restarted) {
+        status = await options.prebilling.getPreparationStatus({
+          checkoutAttemptId: attempt.id,
+          clerkUserId,
+        });
+      }
+    }
+    if (status === 'preparing') {
+      return c.json({ status: 'preparing', attemptId: attempt.id }, 202);
+    }
+    if (status !== 'ready' || !attempt.checkoutUrl) {
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
+    return c.json({ url: attempt.checkoutUrl }, 200);
   }
 
   app.post('/checkout', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), async (c) => {
@@ -331,6 +389,9 @@ export function createBillingRoutes(options: {
         : undefined;
       if (parsed.data.serverType && parsed.data.serverType !== serverType) {
         return c.json({ error: 'Invalid request' }, 400);
+      }
+      if (primaryPrebillingRequired && parsed.data.runtimeSlot === 'primary' && !options.prebilling) {
+        return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
       }
       const checkoutClaim = {
         clerkUserId,
@@ -458,6 +519,10 @@ export function createBillingRoutes(options: {
           console.warn('[billing] prebilling intent unavailable:', err instanceof Error ? err.name : typeof err);
         }
       }
+      if (options.prebilling && parsed.data.runtimeSlot === 'primary' && !preparation) {
+        await abandonCreatingCheckoutAttempt(options.db, attempt.attempt.id, currentTime.toISOString());
+        return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      }
       const session = await options.stripe.createCheckoutSession({
         idempotencyKey: attempt.attempt.id,
         clerkUserId,
@@ -482,11 +547,14 @@ export function createBillingRoutes(options: {
       }
       if (preparation) {
         try {
-          await options.prebilling?.startPreparation({
+          const started = await options.prebilling?.startPreparation({
             intentId: preparation.intentId,
             stripeSessionId: session.id,
             stripeSessionExpiresAt: session.expiresAt ?? preparation.expiresAt,
           });
+          if (!started) {
+            console.warn('[billing] prebilling preparation deferred');
+          }
         } catch (err: unknown) {
           console.warn('[billing] prebilling preparation unavailable:', err instanceof Error ? err.name : typeof err);
         }
@@ -506,6 +574,23 @@ export function createBillingRoutes(options: {
           http_status: 503,
         },
       });
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
+  });
+
+  app.get('/checkout/status', async (c) => {
+    const clerkUserId = await resolveRouteClerkUserId(c, 'checkout status');
+    if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
+    const parsed = CheckoutPreparationStatusQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+    try {
+      const attempt = await getActiveCheckoutAttempt(options.db, clerkUserId, 'primary');
+      if (!attempt || attempt.id !== parsed.data.attemptId) {
+        return c.json({ error: 'Checkout unavailable' }, 404);
+      }
+      return preparedCheckoutResponse(c, clerkUserId, attempt);
+    } catch (err: unknown) {
+      console.error('[billing] checkout status failed:', err instanceof Error ? err.name : typeof err);
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
@@ -623,9 +708,9 @@ export function createBillingRoutes(options: {
       return c.json({ error: 'Invalid webhook' }, 400);
     }
 
+    let preparationToResume: { intentId: string; clerkUserId: string } | undefined;
     try {
       const webhookProcessedAt = now();
-      let fallbackIntentId: string | undefined;
       const result = await runBillingWebhookTransaction(options.db, async (trx) => {
         const inserted = await insertBillingWebhookEvent(trx, {
           stripeEventId: event.id,
@@ -830,13 +915,19 @@ export function createBillingRoutes(options: {
           && projection.prebillingIntentId
           && getRuntimeAccessDecision(summary, webhookProcessedAt).runtimeProxyAllowed
         ) {
-          const authorization = await options.prebilling?.authorizeSubscription(trx, {
+          if (!options.prebilling) throw new Error('prebilling_authorization_unavailable');
+          const authorization = await options.prebilling.authorizeSubscription(trx, {
             intentId: projection.prebillingIntentId,
             clerkUserId: projection.clerkUserId,
             runtimeSlot: projection.runtimeSlot,
             now: webhookProcessedAt.toISOString(),
           });
-          if (authorization?.needsFallback) fallbackIntentId = projection.prebillingIntentId;
+          if (!authorization.authorized) {
+            preparationToResume = {
+              intentId: projection.prebillingIntentId,
+              clerkUserId: projection.clerkUserId,
+            };
+          }
         }
         emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
           distinctId: entitlement.clerkUserId,
@@ -876,15 +967,14 @@ export function createBillingRoutes(options: {
         }
         return { received: true, processed: true };
       });
-      if (!fallbackIntentId && 'duplicate' in result && result.duplicate && isSubscriptionEvent(event.type)) {
-        const subscription = event.data.object && typeof event.data.object === 'object'
-          ? event.data.object as { status?: unknown; metadata?: unknown }
-          : undefined;
-        if (['active', 'trialing', 'past_due'].includes(String(subscription?.status))) {
-          fallbackIntentId = readPrebillingIntentIdFromStripeMetadata(subscription?.metadata) ?? undefined;
-        }
+      if (preparationToResume && options.prebilling) {
+        void options.prebilling.resumePreparation(preparationToResume).catch((err: unknown) => {
+          console.error(
+            `[billing] paid preparation kick failed intent=${preparationToResume?.intentId ?? 'unknown'}`,
+            err instanceof Error ? err.name : typeof err,
+          );
+        });
       }
-      if (fallbackIntentId) await options.prebilling?.ensureFallback({ intentId: fallbackIntentId });
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));

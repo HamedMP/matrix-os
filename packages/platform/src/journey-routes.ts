@@ -7,6 +7,7 @@ import {
   type PlatformDB,
 } from './db.js';
 import { loadJourney, type JourneyReadinessAnnotation } from './journey.js';
+import { getActivePrebillingIntent } from './prebilling-provisioning-store.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { verifySyncJwt } from './sync-jwt.js';
@@ -91,6 +92,8 @@ export interface JourneyRoutesOptions {
   resolveUserId: (c: Context) => Promise<string | null>;
   /** Triggers a provisioning attempt (billing-checked). Absent when provisioning is unavailable. */
   provisionRuntime?: (clerkUserId: string, runtimeSlot: string) => Promise<void>;
+  /** Resumes the immutable checkout-bound intent; never creates a second provisioning identity. */
+  resumePrebillingPreparation?: (input: { intentId: string; clerkUserId: string }) => Promise<boolean>;
   /**
    * Verifies the gateway->platform first-run report's per-handle token
    * (constant-time). main.ts supplies
@@ -171,7 +174,7 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
     const runtimeSlot = parsed.data.runtimeSlot ?? 'primary';
 
-    if (!options.provisionRuntime) {
+    if (!options.provisionRuntime && !options.resumePrebillingPreparation) {
       return c.json({ error: 'provisioning_unavailable' }, 503);
     }
 
@@ -180,6 +183,21 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       const existing = await getActiveUserMachineByClerkId(options.db, clerkUserId, runtimeSlot);
       if (existing && LIVE_MACHINE_STATUSES.has(existing.status)) {
         return c.json({ status: 'in_progress', journey: await buildJourney(clerkUserId, runtimeSlot) }, 200);
+      }
+      const prebillingIntent = await getActivePrebillingIntent(options.db, clerkUserId, runtimeSlot);
+      if (prebillingIntent) {
+        if (!options.resumePrebillingPreparation) {
+          return c.json({ error: 'provisioning_unavailable' }, 503);
+        }
+        const resumed = await options.resumePrebillingPreparation({
+          intentId: prebillingIntent.id,
+          clerkUserId,
+        });
+        if (!resumed) return c.json({ error: 'provisioning_unavailable' }, 503);
+        return c.json({ status: 'started', journey: await buildJourney(clerkUserId, runtimeSlot) }, 200);
+      }
+      if (!options.provisionRuntime) {
+        return c.json({ error: 'provisioning_unavailable' }, 503);
       }
       await options.provisionRuntime(clerkUserId, runtimeSlot);
       return c.json({ status: 'started', journey: await buildJourney(clerkUserId, runtimeSlot) }, 200);

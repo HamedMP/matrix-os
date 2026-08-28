@@ -36,6 +36,8 @@ export interface AppEntry {
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
+const DESKTOP_WINDOW_MARGIN = 20;
+const DESKTOP_HEADER_HEIGHT = 38;
 const MAX_CLOSED_ENTRIES = 50;
 const LAYOUT_FETCH_TIMEOUT_MS = 10_000;
 
@@ -49,11 +51,63 @@ function getMinimumWindowSize(path: string): { width: number; height: number } {
     : { width: MIN_WIDTH, height: MIN_HEIGHT };
 }
 
+function getEffectiveMinimumWindowSize(path: string): { width: number; height: number } {
+  const preferred = getMinimumWindowSize(path);
+  const mode = useDesktopMode.getState().mode;
+  if (mode === "canvas") return preferred;
+
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
+  const availableWidth = Math.max(1, vw - (DESKTOP_WINDOW_MARGIN * 2));
+  const availableHeight = Math.max(
+    1,
+    vh - topInset - (DESKTOP_WINDOW_MARGIN * 2),
+  );
+  return {
+    width: Math.min(preferred.width, availableWidth),
+    height: Math.min(preferred.height, availableHeight),
+  };
+}
+
 interface ClosedLayout {
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+function normalizeRestoredLayout(path: string, layout: ClosedLayout): ClosedLayout {
+  const mode = useDesktopMode.getState().mode;
+  if (mode === "canvas") return layout;
+
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
+  const minSize = getEffectiveMinimumWindowSize(path);
+  const width = Math.min(
+    Math.max(layout.width, minSize.width),
+    Math.max(minSize.width, vw - (DESKTOP_WINDOW_MARGIN * 2)),
+  );
+  const height = Math.min(
+    Math.max(layout.height, minSize.height),
+    Math.max(minSize.height, vh - topInset - (DESKTOP_WINDOW_MARGIN * 2)),
+  );
+  const wasWide = layout.width >= vw * 0.8;
+  const targetX = wasWide ? Math.round((vw - width) / 2) : layout.x;
+  const maxX = Math.max(DESKTOP_WINDOW_MARGIN, vw - width - DESKTOP_WINDOW_MARGIN);
+  const maxY = Math.max(
+    DESKTOP_WINDOW_MARGIN,
+    vh - topInset - height - DESKTOP_WINDOW_MARGIN,
+  );
+
+  return {
+    ...layout,
+    width,
+    height,
+    x: Math.min(Math.max(targetX, DESKTOP_WINDOW_MARGIN), maxX),
+    y: Math.min(Math.max(layout.y, DESKTOP_WINDOW_MARGIN), maxY),
+  };
 }
 
 interface WindowManagerState {
@@ -79,6 +133,7 @@ interface WindowManagerActions {
   restoreAndFocusWindow: (id: string) => void;
   moveWindow: (id: string, x: number, y: number) => void;
   resizeWindow: (id: string, width: number, height: number) => void;
+  reconcileWindowsToViewport: () => void;
   focusWindow: (id: string) => void;
   clearFocus: () => void;
   getWindow: (id: string) => AppWindow | undefined;
@@ -153,24 +208,27 @@ function debouncedSave(state: WindowManagerState) {
 function computeDefaultWindowSize(path: string): { width: number; height: number } {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const minSize = getMinimumWindowSize(path);
+  const minSize = getEffectiveMinimumWindowSize(path);
   return {
     width: Math.round(Math.min(1200, Math.max(minSize.width, vw * 0.6))),
     height: Math.round(Math.min(900, Math.max(minSize.height, vh * 0.7))),
   };
 }
 
-// Float a fresh window centered on the viewport (dev/desktop modes). A small
-// per-window step keeps stacked opens from perfectly overlapping while staying
-// near the middle — never marching off to the right like the canvas cascade.
-function centeredWindowPosition(path: string, offsetIndex: number): { x: number; y: number } {
+// Float every fresh window at the exact center in dev/desktop modes. The dock
+// already exposes every running app, so offsetting later windows only produces
+// visibly asymmetric outer margins. Canvas keeps its separate spatial cascade.
+function centeredWindowPosition(path: string): { x: number; y: number } {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const topInset = useDesktopMode.getState().mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
   const { width, height } = computeDefaultWindowSize(path);
-  const step = (offsetIndex % 6) * 28;
   return {
-    x: Math.max(20, Math.round((vw - width) / 2) + step),
-    y: Math.max(20, Math.round((vh - height) / 2) + step),
+    x: Math.max(DESKTOP_WINDOW_MARGIN, Math.round((vw - width) / 2)),
+    y: Math.max(
+      DESKTOP_WINDOW_MARGIN,
+      Math.round((vh - topInset - height) / 2),
+    ),
   };
 }
 
@@ -181,8 +239,9 @@ function createWindowRecord(
   fallbackX: number,
   fallbackY: number,
 ): AppWindow {
-  const saved = state.closedLayouts.get(path);
-  const minSize = getMinimumWindowSize(path);
+  const storedLayout = state.closedLayouts.get(path);
+  const saved = storedLayout ? normalizeRestoredLayout(path, storedLayout) : undefined;
+  const minSize = getEffectiveMinimumWindowSize(path);
   const { width: defaultWidth, height: defaultHeight } = computeDefaultWindowSize(path);
 
   return {
@@ -272,7 +331,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             fallbackY = rightmost.y;
           }
         } else {
-          const pos = centeredWindowPosition(path, visible.length);
+          const pos = centeredWindowPosition(path);
           fallbackX = pos.x;
           fallbackY = pos.y;
         }
@@ -319,7 +378,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
         const exclusivePos = useDesktopMode.getState().mode === "canvas"
           ? { x: dockXOffset + 20, y: 48 }
-          : centeredWindowPosition(path, 0);
+          : centeredWindowPosition(path);
         const nextWindow = createWindowRecord(
           { ...state, windows: zState.windows, nextZ: zState.nextZ },
           name,
@@ -408,7 +467,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
       set((state) => ({
         windows: state.windows.map((w) => {
           if (w.id !== id) return w;
-          const minSize = getMinimumWindowSize(w.path);
+          const minSize = getEffectiveMinimumWindowSize(w.path);
           return {
             ...w,
             width: Math.max(minSize.width, width),
@@ -416,6 +475,28 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           };
         }),
       }));
+    },
+
+    reconcileWindowsToViewport: () => {
+      if (useDesktopMode.getState().mode === "canvas") return;
+      const currentWindows = get().windows;
+      let changed = false;
+      const windows = currentWindows.map((windowRecord) => {
+        const normalized = normalizeRestoredLayout(windowRecord.path, windowRecord);
+        if (
+          normalized.x === windowRecord.x
+          && normalized.y === windowRecord.y
+          && normalized.width === windowRecord.width
+          && normalized.height === windowRecord.height
+        ) {
+          return windowRecord;
+        }
+        changed = true;
+        return { ...windowRecord, ...normalized };
+      });
+      if (!changed) return;
+      markUserLayoutMutation();
+      set({ windows });
     },
 
     focusWindow: (id) => {
@@ -455,26 +536,25 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         let z = state.nextZ;
 
         for (const s of saved) {
+          const restored = normalizeRestoredLayout(s.path, s);
           if (s.state === "closed") {
             newClosed.add(s.path);
-            const minSize = getMinimumWindowSize(s.path);
             newLayouts.set(s.path, {
-              x: s.x,
-              y: s.y,
-              width: Math.max(s.width, minSize.width),
-              height: Math.max(s.height, minSize.height),
+              x: restored.x,
+              y: restored.y,
+              width: restored.width,
+              height: restored.height,
             });
             continue;
           }
-          const minSize = getMinimumWindowSize(s.path);
           newWindows.push({
             id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             title: s.title,
             path: s.path,
-            x: s.x,
-            y: s.y,
-            width: Math.max(s.width, minSize.width),
-            height: Math.max(s.height, minSize.height),
+            x: restored.x,
+            y: restored.y,
+            width: restored.width,
+            height: restored.height,
             minimized: s.state === "minimized",
             zIndex: z++,
           });
