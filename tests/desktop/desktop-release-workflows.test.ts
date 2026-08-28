@@ -17,13 +17,16 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('tell application "Finder" to activate');
     expect(workflow).toContain("open disk volumeName");
     expect(workflow).toContain("tell disk volumeName");
-    expect(workflow).toContain("set viewOptionsProperties to properties of viewOptions");
-    expect(workflow).toContain("set backgroundPicture to background picture of viewOptionsProperties");
-    expect(workflow).not.toContain(
-      "set backgroundPicture to background picture of icon view options of volumeWindow",
-    );
+    expect(workflow).toContain("ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache");
+    expect(workflow).toContain("from ds_store import DSStore");
+    expect(workflow).toContain("from mac_alias import Alias");
+    expect(workflow).toContain('icon_view.get("backgroundImageAlias")');
+    expect(workflow).toContain("Alias.from_bytes(background_alias)");
+    expect(workflow).toContain("set backgroundFile to POSIX file backgroundPath");
+    expect(workflow).toContain("return POSIX path of (backgroundFile as alias)");
+    expect(workflow).not.toContain("set viewOptionsProperties to properties of viewOptions");
     expect(workflow).toContain('background_picture="missing value"');
-    expect(workflow).toContain('"$mount_dir"/.background/*');
+    expect(workflow).toContain('"$mount_dir"/.background.*');
     expect(workflow).toContain('[ ! -f "$background_picture" ]');
     expect(workflow).toContain("close container window of disk volumeName");
     expect(workflow).toContain('hdiutil detach "$mount_dir" -quiet || true');

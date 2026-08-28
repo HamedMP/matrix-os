@@ -45,6 +45,7 @@ jobs:
             runner: macos-15-intel
     env:
       MATRIX_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
       VITE_POSTHOG_PROJECT_TOKEN: ${{ vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY }}
       VITE_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -268,9 +269,9 @@ jobs:
           end run
           APPLESCRIPT
           finder_window_open=true
-          background_picture="missing value"
+          finder_icon_view="missing value"
           for _ in {1..20}; do
-            background_picture="$(osascript - "$volume_name" <<'APPLESCRIPT'
+            finder_icon_view="$(osascript - "$volume_name" <<'APPLESCRIPT'
           on run argv
             set volumeName to item 1 of argv
             tell application "Finder"
@@ -278,27 +279,72 @@ jobs:
               tell disk volumeName
                 set volumeWindow to container window
                 if current view of volumeWindow is not icon view then return "missing value"
-                set viewOptions to icon view options of volumeWindow
-                set viewOptionsProperties to properties of viewOptions
-                set backgroundPicture to background picture of viewOptionsProperties
-                if backgroundPicture is missing value then return "missing value"
+                get icon view options of volumeWindow
+                return "ready"
               end tell
             end tell
-            return POSIX path of (backgroundPicture as alias)
           end run
           APPLESCRIPT
-            )" || background_picture="missing value"
-            if [ -n "$background_picture" ] && [ "$background_picture" != "missing value" ]; then
+            )" || finder_icon_view="missing value"
+            if [ "$finder_icon_view" = "ready" ]; then
               break
             fi
             sleep 0.5
           done
-          if [ -z "$background_picture" ] || [ "$background_picture" = "missing value" ]; then
+          if [ "$finder_icon_view" != "ready" ]; then
+            echo "DMG Finder icon-view settings did not become available" >&2
+            exit 1
+          fi
+          dmgbuild_python="$(
+            find "$ELECTRON_BUILDER_CACHE" -path '*/python/bin/python3' -type f -perm -111 -print -quit
+          )"
+          if [ -z "$dmgbuild_python" ]; then
+            echo "Electron Builder's bundled DMG metadata parser is missing" >&2
+            exit 1
+          fi
+          background_reference="$("$dmgbuild_python" - "$mount_dir/.DS_Store" <<'PYTHON'
+          import sys
+
+          from ds_store import DSStore
+          from mac_alias import Alias
+
+          with DSStore.open(sys.argv[1], "r") as store:
+              icon_view = store["."]["icvp"]
+
+          background_alias = icon_view.get("backgroundImageAlias")
+          if not background_alias:
+              print("missing value")
+              raise SystemExit(0)
+
+          background_target = Alias.from_bytes(background_alias).target.posix_path
+          if isinstance(background_target, bytes):
+              background_target = background_target.decode("utf-8")
+          print(background_target or "missing value")
+          PYTHON
+          )"
+          if [ -z "$background_reference" ] || [ "$background_reference" = "missing value" ]; then
             echo "DMG Finder background picture is missing value" >&2
             exit 1
           fi
+          background_candidate="$mount_dir/${background_reference#/}"
+          background_picture="missing value"
+          background_picture="$(osascript - "$background_candidate" <<'APPLESCRIPT'
+          on run argv
+            set backgroundPath to item 1 of argv
+            tell application "Finder"
+              set backgroundFile to POSIX file backgroundPath
+              if not (exists backgroundFile) then return "missing value"
+              return POSIX path of (backgroundFile as alias)
+            end tell
+          end run
+          APPLESCRIPT
+          )" || background_picture="missing value"
+          if [ -z "$background_picture" ] || [ "$background_picture" = "missing value" ]; then
+            echo "DMG Finder background picture points to a missing file" >&2
+            exit 1
+          fi
           case "$background_picture" in
-            "$mount_dir"/.background/*) ;;
+            "$mount_dir"/.background.*|"$mount_dir"/.background/*) ;;
             *)
               echo "DMG Finder background picture resolves outside .background" >&2
               exit 1
