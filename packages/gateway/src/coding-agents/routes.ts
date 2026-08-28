@@ -646,6 +646,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           projectId: c.req.query("projectId"),
           worktreeId: c.req.query("worktreeId"),
           path: c.req.query("path"),
+          cursor: c.req.query("cursor"),
           limit: c.req.query("limit"),
         });
         return c.json(FileBrowseResponseSchema.parse(await deps.files!.browseFiles(principal, request)));

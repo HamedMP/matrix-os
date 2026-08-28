@@ -301,14 +301,28 @@ describe("coding agent file read route", () => {
       expect(body.directory).toMatchObject({ path: "src", kind: "directory" });
       expect(body.entries).toMatchObject({
         hasMore: true,
+        nextCursor: "filecur_2",
         limit: 2,
       });
-      expect(body.entries.items.map((entry: { path: string }) => entry.path)).toEqual([
-        "src/index.ts",
-        "src/nested",
-      ]);
+      expect(body.entries.items).toHaveLength(2);
       expect(body.entries.items.find((entry: { path: string }) => entry.path.includes("linked"))).toBeUndefined();
       expect(JSON.stringify(body)).not.toMatch(/\/tmp\/matrix-coding-agent-files|secret|token/i);
+
+      const nextRes = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=src&cursor=${body.entries.nextCursor}&limit=2`,
+      );
+      const nextBody = await nextRes.json();
+      expect(nextRes.status).toBe(200);
+      expect([
+        ...body.entries.items,
+        ...nextBody.entries.items,
+      ].map((entry: { path: string }) => entry.path).sort()).toEqual([
+        "src/index.ts",
+        "src/nested",
+        "src/readme.md",
+      ]);
+      expect(nextBody.entries).toMatchObject({ hasMore: false, limit: 2 });
+      expect(nextBody.entries).not.toHaveProperty("nextCursor");
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }

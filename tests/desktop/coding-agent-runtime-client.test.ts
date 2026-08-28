@@ -420,11 +420,12 @@ describe("coding agent desktop runtime client", () => {
       projectId: "matrix-os",
       worktreeId: "wt_abc123def456",
       path: "packages",
+      cursor: "filecur_20",
       limit: 20,
     }, fetchFn);
 
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://runtime.test/api/coding-agents/files/browse?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages&limit=20",
+      "https://runtime.test/api/coding-agents/files/browse?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages&cursor=filecur_20&limit=20",
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({

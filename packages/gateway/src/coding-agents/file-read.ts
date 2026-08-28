@@ -30,7 +30,6 @@ const DEFAULT_FILE_WRITE_LIMIT_BYTES = 64 * 1024;
 const MAX_FILE_ETAG_BYTES = 100 * 1024 * 1024;
 const MAX_FILE_WRITE_LOCKS = 256;
 const MAX_FILE_LIST_LIMIT = 100;
-const MAX_FILE_BROWSE_INSPECTED = 500;
 const MAX_FILE_SEARCH_DIRECTORIES = 512;
 const MAX_FILE_SEARCH_ENTRIES = 2_000;
 const SKIPPED_SEARCH_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".expo"]);
@@ -156,14 +155,19 @@ function validUtf8Prefix(buffer: Buffer): Buffer {
   return Buffer.alloc(0);
 }
 
-async function readDirectoryNamesBounded(path: string, maxEntries: number): Promise<{
+async function readDirectoryNamesBounded(path: string, maxEntries: number, offset = 0): Promise<{
   names: string[];
   truncated: boolean;
 }> {
   const names: string[] = [];
   const dir = await opendir(path);
+  let skipped = 0;
   try {
     for await (const entry of dir) {
+      if (skipped < offset) {
+        skipped += 1;
+        continue;
+      }
       if (names.length >= maxEntries) {
         return { names, truncated: true };
       }
@@ -344,6 +348,9 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
       const request = FileBrowseRequestSchema.parse(rawRequest);
+      const offset = request.cursor
+        ? Number(request.cursor.slice("filecur_".length))
+        : 0;
       await assertProjectAccess({ principal, request, projects: options.projects });
       const limit = Math.min(request.limit, MAX_FILE_LIST_LIMIT);
       const worktreeRoot = await checkoutRootFor(homePath, principal, request, options.worktrees);
@@ -378,8 +385,7 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
 
-      const inspectBudget = Math.min(MAX_FILE_BROWSE_INSPECTED, Math.max(limit + 1, limit * 10));
-      const listing = await readDirectoryNamesBounded(targetReal, inspectBudget).catch((err: unknown) => {
+      const listing = await readDirectoryNamesBounded(targetReal, limit, offset).catch((err: unknown) => {
         const code = fsErrorCode(err);
         if (["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
           throw new CodingAgentFileReadError("file_not_found");
@@ -388,11 +394,10 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_unavailable");
       });
       const entries: FileMetadata[] = [];
-      let hasMore = listing.truncated;
       for (const name of listing.names.sort((a, b) => a.localeCompare(b, "en"))) {
         const absolutePath = resolve(targetReal, name);
         const responsePath = pathForResponse(request.path, name);
-        if (!responsePath || entries.length > limit) continue;
+        if (!responsePath) continue;
         try {
           const stats = await lstat(absolutePath);
           if (!isWithin(rootReal, await realpath(absolutePath))) continue;
@@ -404,10 +409,10 @@ export function createCodingAgentFileStore(options: {
             console.warn("[coding-agents] file browse entry skipped");
           }
         }
-        if (entries.length > limit) {
-          hasMore = true;
-          break;
-        }
+      }
+      const nextOffset = offset + listing.names.length;
+      if (listing.truncated && nextOffset >= 10_000) {
+        throw new CodingAgentFileReadError("file_unavailable");
       }
 
       return FileBrowseResponseSchema.parse({
@@ -417,8 +422,9 @@ export function createCodingAgentFileStore(options: {
           updatedAt: targetStats.mtime.toISOString(),
         },
         entries: {
-          items: entries.slice(0, limit),
-          hasMore: hasMore || entries.length > limit,
+          items: entries,
+          hasMore: listing.truncated,
+          ...(listing.truncated ? { nextCursor: `filecur_${nextOffset}` } : {}),
           limit,
         },
       });

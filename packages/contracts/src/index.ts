@@ -877,11 +877,17 @@ export type FileReadRequest = z.infer<typeof FileReadRequestSchema>;
 export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
 
 const FileListLimitSchema = z.coerce.number().int().min(1).max(100).default(50);
+export const FileBrowseCursorSchema = z.string()
+  .regex(/^filecur_[1-9]\d{0,4}$/)
+  .refine((value) => Number(value.slice("filecur_".length)) <= 10_000, {
+    message: "File browse cursor exceeds directory limit",
+  });
 
 export const FileBrowseRequestSchema = z.object({
   projectId: FileProjectSlugSchema,
   worktreeId: WorktreeIdSchema.optional(),
   path: FilePathSchema.optional(),
+  cursor: FileBrowseCursorSchema.optional(),
   limit: FileListLimitSchema,
 }).strict();
 export const FileBrowseResponseSchema = z.object({

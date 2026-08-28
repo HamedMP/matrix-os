@@ -27,9 +27,52 @@ type InspectorTreeDirectory = {
 };
 
 const MAX_EXPANDED_FILE_DIRECTORIES = 200;
+const MAX_PROJECT_DIRECTORY_PAGES = 100;
+const PROJECT_DIRECTORY_PAGE_SIZE = 100;
 
 function joinInspectorPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
+}
+
+async function browseProjectDirectory(
+  scope: Extract<WorkFilesScope, { kind: "project" }>,
+  path?: string,
+): Promise<FileBrowseResponse> {
+  let cursor: string | undefined;
+  let directory: FileBrowseResponse["directory"] | undefined;
+  const entries: FileBrowseResponse["entries"]["items"] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < MAX_PROJECT_DIRECTORY_PAGES; page += 1) {
+    const response = await invoke("runtime:browse-files", {
+      projectId: scope.projectId,
+      ...(scope.worktreeId ? { worktreeId: scope.worktreeId } : {}),
+      ...(path ? { path } : {}),
+      ...(cursor ? { cursor } : {}),
+      limit: PROJECT_DIRECTORY_PAGE_SIZE,
+    });
+    directory ??= response.directory;
+    for (const entry of response.entries.items) {
+      if (seen.has(entry.path)) continue;
+      seen.add(entry.path);
+      entries.push(entry);
+    }
+    if (!response.entries.hasMore) {
+      entries.sort((left, right) => (
+        left.kind === right.kind
+          ? left.path.localeCompare(right.path)
+          : left.kind === "directory" ? -1 : 1
+      ));
+      return {
+        directory,
+        entries: { items: entries, hasMore: false, limit: PROJECT_DIRECTORY_PAGE_SIZE },
+      };
+    }
+    if (!response.entries.nextCursor || response.entries.nextCursor === cursor) {
+      throw new Error("FilesUnavailable");
+    }
+    cursor = response.entries.nextCursor;
+  }
+  throw new Error("FilesUnavailable");
 }
 
 function ExpandableFileTree({
@@ -281,18 +324,13 @@ function ProjectFilesTree({
   onOpenFile?: (target: InspectorFileTarget) => void;
 }) {
   const loadDirectory = useCallback(async (path: string): Promise<InspectorTreeEntry[]> => {
-    const response = await invoke("runtime:browse-files", {
-      projectId: scope.projectId,
-      ...(scope.worktreeId ? { worktreeId: scope.worktreeId } : {}),
-      ...(path ? { path } : {}),
-      limit: 50,
-    });
+    const response = await browseProjectDirectory(scope, path || undefined);
     return response.entries.items.flatMap((entry) => (
       entry.kind === "file" || entry.kind === "directory"
         ? [{ path: entry.path, kind: entry.kind }]
         : []
     ));
-  }, [scope.projectId, scope.worktreeId]);
+  }, [scope]);
   const openFile = useCallback((path: string) => {
     onOpenFile?.({
       kind: "project",
@@ -336,12 +374,7 @@ function ProjectNavigableFilesPanel({
     setStatus("loading");
     setListing(null);
     setFile(null);
-    void invoke("runtime:browse-files", {
-      projectId: scope.projectId,
-      ...(scope.worktreeId ? { worktreeId: scope.worktreeId } : {}),
-      ...(path ? { path } : {}),
-      limit: 50,
-    }).then((response) => {
+    void browseProjectDirectory(scope, path).then((response) => {
       if (browseSequence.current !== sequence) return;
       setListing(response);
       setStatus("ready");

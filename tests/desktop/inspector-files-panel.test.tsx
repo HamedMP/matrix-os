@@ -184,11 +184,23 @@ describe("InspectorFilesPanel", () => {
     const invoke = vi.spyOn(window.operator, "invoke").mockImplementation(async (channel, request) => {
       if (channel !== "runtime:browse-files") throw new Error("Unexpected read");
       const path = (request as { path?: string }).path;
+      const cursor = (request as { cursor?: string }).cursor;
       return {
         directory: { kind: "directory", ...(path ? { path } : {}) },
-        entries: { items: path
-          ? [{ path: "src/app.ts", kind: "file", sizeBytes: 12 }]
-          : [{ path: "src", kind: "directory" }, { path: "README.md", kind: "file", sizeBytes: 8 }] },
+        entries: path
+          ? cursor
+            ? { items: [{ path: "src/worker.ts", kind: "file", sizeBytes: 8 }], hasMore: false, limit: 100 }
+            : {
+                items: [{ path: "src/app.ts", kind: "file", sizeBytes: 12 }],
+                hasMore: true,
+                nextCursor: "filecur_1",
+                limit: 100,
+              }
+          : {
+              items: [{ path: "src", kind: "directory" }, { path: "README.md", kind: "file", sizeBytes: 8 }],
+              hasMore: false,
+              limit: 100,
+            },
       };
     });
 
@@ -206,6 +218,7 @@ describe("InspectorFilesPanel", () => {
     const folder = await screen.findByRole("button", { name: "Expand folder src" });
     fireEvent.click(folder);
     fireEvent.click(await screen.findByRole("button", { name: "Open file src/app.ts" }));
+    expect(await screen.findByRole("button", { name: "Open file src/worker.ts" })).toBeTruthy();
 
     expect(folder.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("button", { name: "Open file README.md" })).toBeTruthy();
@@ -215,12 +228,18 @@ describe("InspectorFilesPanel", () => {
     }));
     expect(invoke).toHaveBeenNthCalledWith(1, "runtime:browse-files", {
       projectId: "matrix-os",
-      limit: 50,
+      limit: 100,
     });
     expect(invoke).toHaveBeenNthCalledWith(2, "runtime:browse-files", {
       projectId: "matrix-os",
       path: "src",
-      limit: 50,
+      limit: 100,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "runtime:browse-files", {
+      projectId: "matrix-os",
+      path: "src",
+      cursor: "filecur_1",
+      limit: 100,
     });
   });
 
@@ -319,13 +338,13 @@ describe("InspectorFilesPanel", () => {
     expect(invoke).toHaveBeenNthCalledWith(1, "runtime:browse-files", {
       projectId: "matrix-os",
       worktreeId: "wt_owned",
-      limit: 50,
+      limit: 100,
     });
     expect(invoke).toHaveBeenNthCalledWith(2, "runtime:browse-files", {
       projectId: "matrix-os",
       worktreeId: "wt_owned",
       path: "src",
-      limit: 50,
+      limit: 100,
     });
     expect(invoke).toHaveBeenNthCalledWith(3, "runtime:get-file-content", {
       projectId: "matrix-os",
@@ -358,7 +377,7 @@ describe("InspectorFilesPanel", () => {
 
     await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("runtime:browse-files", {
       projectId: "matrix-os",
-      limit: 50,
+      limit: 100,
     }));
   });
 
