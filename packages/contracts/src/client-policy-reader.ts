@@ -29,7 +29,7 @@ export function createClientPolicyReader(options: {
         const url = new URL('/client-policy', normalized);
         url.searchParams.set('target', options.target);
         const response = await (options.fetchFn ?? fetch)(url.toString(), { signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(10_000) : controller.signal, redirect: 'error' });
-        if (!response.ok) throw new Error('Policy unavailable');
+        if (!response.ok) { await response.body?.cancel(); throw new Error('Policy unavailable'); }
         let text = '';
         // React Native does not expose a ReadableStream on every supported runtime.
         if (response.body?.getReader) {

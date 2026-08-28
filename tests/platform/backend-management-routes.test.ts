@@ -42,6 +42,7 @@ describe('backend management route boundaries', () => {
     expect((await app.request('/machines/machine_1/override', { method: 'PUT', headers: admin, body: JSON.stringify({ until: new Date(Date.now() + 60_000).toISOString(), reason: 'Debugging', allowVersionSelection: true }) })).status).toBe(200);
     expect(await (await app.request('/machines/machine_1/policy', { headers: machine })).json()).toMatchObject({ versionSelectionAllowed: true });
     expect((await app.request('/machines/machine_1/override', { method: 'DELETE', headers: admin })).status).toBe(200);
+    expect((await app.request('/machines/machine_1/override', { method: 'DELETE', headers: admin })).status).toBe(200);
     expect(await (await app.request('/machines/machine_1/policy', { headers: machine })).json()).toMatchObject({ versionSelectionAllowed: false, holdUntil: null });
     await db.executor.updateTable('backend_management_machines').set({ status: 'offline' }).where('machine_id', '=', 'machine_1').execute();
     expect((await app.request('/machines/machine_1/retry', { method: 'POST', headers: admin, body: '{}' })).status).toBe(200);

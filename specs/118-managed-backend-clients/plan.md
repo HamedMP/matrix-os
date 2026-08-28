@@ -58,10 +58,11 @@ Building automation does not silently deploy/restart ~100 customer machines. Pro
 - Desktop production build and platform/gateway/desktop typechecks pass. Mobile
   gate and gateway-client tests pass; mobile typechecking has the same 31 native
   component typing errors on the base checkout and this worktree.
-- The rollout worker passes the configured coverage thresholds (99.19% statements,
-  96.42% branches, 100% functions/lines). Aggregate new-module coverage and full
-  repository validation remain review gates; the full unit run was interrupted
-  after host-tool incompatibilities and subprocess failures on this Mac.
+- All 167 focused Vitest tests pass. The scoped managed-backend modules pass the
+  configured coverage thresholds (99.47% statements, 95.59% branches, 100%
+  functions/lines). The 74 mobile tests and 52 legacy compatibility tests pass.
+  Full repository validation remains a review gate; the full unit run was
+  interrupted after host-tool incompatibilities and subprocess failures on this Mac.
 - Bun is unavailable locally; validation used the equivalent pnpm executables.
   Pattern checks report zero violations, with existing file-level warnings.
 - No real VPS, signed installer, store submission, or native-device smoke test

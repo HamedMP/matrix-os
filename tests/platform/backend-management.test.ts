@@ -28,6 +28,7 @@ describe('managed backend reconciliation', () => {
   }
   it('defaults off, requires CAS and keeps an audit record', async () => {
     await tick(); expect(deploy).not.toHaveBeenCalled();
+    expect((await readBackendStatus(db)).machines.every(m => m.status === 'pending' && m.attempts === 0)).toBe(true);
     const p = await enable();
     await expect(updateBackendPolicy(db, p.config, 0, new Date(now))).rejects.toThrow('conflict');
     expect(await db.executor.selectFrom('backend_management_audit').selectAll().execute()).toHaveLength(1);
@@ -59,6 +60,7 @@ describe('managed backend reconciliation', () => {
   });
   it('honors expiring holds and resumes when they expire', async () => {
     await enable();
+    await expect(setMachineOverride(db, 'machine_0', { until: new Date(now - 1).toISOString(), reason: 'Expired', allowVersionSelection: true }, new Date(now))).rejects.toThrow('expire');
     await setMachineOverride(db, 'machine_0', { until: new Date(now + 120_000).toISOString(), reason: 'Debugging', allowVersionSelection: true }, new Date(now));
     await tick(); expect(deploy.mock.calls[0][0].machineId).toBe('machine_1');
     expect((await readBackendStatus(db)).machines.find(m => m.machineId === 'machine_0')?.overrideUntil).toBe(new Date(now + 120_000).toISOString());
@@ -197,6 +199,14 @@ describe('managed backend reconciliation', () => {
     expect(await isBackendDowngrade(db, 'main-older', VERSION)).toBe(true);
     expect(await isBackendDowngrade(db, VERSION, 'main-older')).toBe(false);
     expect(await isBackendDowngrade(db, VERSION, 'unknown-legacy')).toBe(false);
+  });
+  it('paginates old customer inventory without omitting machines lacking rollout rows', async () => {
+    for (let i = 3; i < 204; i++) await insertUserMachine(db, { machineId: `machine_${i}`, clerkUserId: `user_${i}`, handle: `person-${i}`, status: 'running', provisionedAt: new Date(now).toISOString() });
+    const first = await readBackendStatus(db);
+    expect(first.machines).toHaveLength(200);
+    expect(first.nextCursor).toBeTruthy();
+    const second = await readBackendStatus(db, first.nextCursor!);
+    expect(second.machines).toHaveLength(3); expect(second.nextCursor).toBeNull();
   });
 
   it('converges a hundred legacy machines with bounded cohorts and restart-safe verification', async () => {

@@ -14,11 +14,16 @@ describe('installed client compatibility', () => {
     expect(compareClientVersions('2.2.0-2', '2.2.0-alpha')).toBe(-1);
     expect(compareClientVersions('2.2.0-beta', '2.2.0-alpha')).toBe(1);
     expect(compareClientVersions('2.2.0-alpha', '2.2.0-alpha')).toBe(0);
+    expect(compareClientVersions('2.2.0', '2.2.0-beta')).toBe(1);
+    expect(compareClientVersions('2.2.0-3', '2.2.0-2')).toBe(1);
+    expect(compareClientVersions('2.2.0-alpha', '2.2.0-2')).toBe(1);
+    expect(compareClientVersions('2.2.0-alpha', '2.2.0-beta')).toBe(-1);
   });
   it('rejects malformed policies, unsafe URLs and minimums above latest', () => {
     for (const patch of [{ minSupportedVersion: '3.0.0' }, { downloadUrl: 'https://evil.example/download' }, { downloadUrl: 'https://[broken' }, { downloadUrl: 'javascript:alert(1)' }, { latestVersion: '01.2.3' }]) {
       expect(ClientPolicySchema.safeParse({ ...policy, ...patch }).success).toBe(false);
     }
+    expect(ClientPolicySchema.safeParse({ ...policy, downloadUrl: 'https://github.com/HamedMP/matrix-os/releases/tag/desktop-stable' }).success).toBe(true);
   });
   it('allows bridge adoption before the deadline and requires upgrades afterward', () => {
     expect(evaluateClientPolicy(policy, '1.0.0', Date.parse('2026-08-28'))).toBe('recommended');

@@ -17,6 +17,14 @@ describe('client policy reader', () => {
     expect((await pending).policy).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
+  it('releases failed fetch bodies and rejects oversized native text responses', async () => {
+    const cancel = vi.fn(async () => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, body: { cancel } })));
+    expect((await createClientPolicyReader({ target: 'mobile-ios' }).read('https://app.matrix-os.com')).policy).toBeNull();
+    expect(cancel).toHaveBeenCalledOnce();
+    const fetchFn = vi.fn(async () => ({ ok: true, text: async () => 'x'.repeat(8193) }) as Response);
+    expect((await createClientPolicyReader({ target: 'mobile-ios', fetchFn }).read('https://app.matrix-os.com')).policy).toBeNull();
+  });
   it('retains validated requirements on transient errors and isolates origins', async () => {
     const fetchFn = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(response))).mockRejectedValue(new Error('offline'));
     const reader = createClientPolicyReader({ target: 'desktop-macos', fetchFn });
