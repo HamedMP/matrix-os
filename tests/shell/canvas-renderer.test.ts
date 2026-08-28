@@ -25,14 +25,6 @@ describe("Canvas Renderer Integration", () => {
     resetStores();
   });
 
-  it("canvas mode config has correct properties", () => {
-    const config = useDesktopMode.getState().getModeConfig("canvas");
-    expect(config.showDock).toBe(true);
-    expect(config.showWindows).toBe(true);
-    expect(config.showBottomPanel).toBe(false);
-    expect(config.chatPosition).toBe("sidebar");
-  });
-
   it("switching to canvas mode updates store", () => {
     useDesktopMode.getState().setMode("canvas");
     expect(useDesktopMode.getState().mode).toBe("canvas");

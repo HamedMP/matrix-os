@@ -91,10 +91,6 @@ vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
   ConnectionIndicator: () => <div data-testid="connection-indicator" data-variant="toast" />,
 }));
 
-vi.mock("../../shell/src/components/AmbientClock.js", () => ({
-  AmbientClock: () => null,
-}));
-
 vi.mock("../../shell/src/components/MenuBar.js", () => ({
   MenuBar: ({ children }: { children?: React.ReactNode }) => <div data-menu-bar>{children}</div>,
 }));
@@ -119,10 +115,6 @@ vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
   BillingTrialNotification: () => <div data-testid="billing-trial-notification" />,
 }));
 
-vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
-  DeveloperModeDashboard: () => null,
-}));
-
 function jsonResponse(body: unknown) {
   return Promise.resolve(new Response(JSON.stringify(body), {
     status: 200,
@@ -138,7 +130,7 @@ describe("Desktop shell notifications", () => {
     });
     act(() => {
       useDesktopMode.setState({
-        mode: "dev",
+        mode: "canvas",
         previousMode: null,
         _hydrated: true,
       });

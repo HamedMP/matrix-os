@@ -9,7 +9,7 @@ describe("reconcileDesignApps", () => {
   it("rechecks cancellation after parsing before applying refreshed apps", async () => {
     const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
     const effectStart = source.indexOf("// The gateway re-filters design-scoped apps");
-    const effectEnd = source.indexOf("const visibleWindowCount", effectStart);
+    const effectEnd = source.indexOf("const openPrCanvas", effectStart);
     const effectSource = source.slice(effectStart, effectEnd);
 
     expect(effectSource).toMatch(

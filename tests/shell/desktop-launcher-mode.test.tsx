@@ -73,10 +73,6 @@ vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
   ConnectionIndicator: () => null,
 }));
 
-vi.mock("../../shell/src/components/AmbientClock.js", () => ({
-  AmbientClock: () => null,
-}));
-
 vi.mock("../../shell/src/components/MenuBar.js", () => ({
   MenuBar: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
 }));
@@ -99,10 +95,6 @@ vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
 
 vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
   BillingTrialNotification: () => null,
-}));
-
-vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
-  DeveloperModeDashboard: () => null,
 }));
 
 function jsonResponse(body: unknown) {
@@ -144,7 +136,7 @@ function createMemoryStorage(): Storage {
   };
 }
 
-function resetShellMode(mode: "canvas" | "dev", hydrated: boolean) {
+function resetShellMode(mode: "canvas" | "desktop", hydrated: boolean) {
   desktopModeStore.setState({
     mode,
     previousMode: null,
@@ -198,17 +190,6 @@ describe("Desktop launcher dock button by mode", () => {
     expect(await screen.findByTestId("dock-tasks")).toBeTruthy();
   });
 
-  it("keeps the launcher visible in developer mode", async () => {
-    resetShellMode("dev", true);
-
-    render(<DesktopComponent />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("dock-tasks")).toBeTruthy();
-      expect(screen.getByTestId("dock-settings")).toBeTruthy();
-    });
-  });
-
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
@@ -226,7 +207,7 @@ describe("Desktop launcher dock button by mode", () => {
       if (url.includes("/api/shell/bootstrap")) return new Promise(() => undefined);
       return jsonResponse({});
     }));
-    resetShellMode("dev", true);
+    resetShellMode("desktop", true);
 
     render(<DesktopComponent cacheScope={scope} />);
 
@@ -267,7 +248,7 @@ describe("Desktop launcher dock button by mode", () => {
       }
       return jsonResponse({});
     }));
-    resetShellMode("dev", true);
+    resetShellMode("desktop", true);
 
     render(<DesktopComponent cacheScope={scope} />);
 
@@ -294,7 +275,7 @@ describe("Desktop launcher dock button by mode", () => {
       }
       return jsonResponse({});
     }));
-    resetShellMode("dev", true);
+    resetShellMode("desktop", true);
 
     const { rerender } = render(<DesktopComponent />);
     await waitFor(() => {

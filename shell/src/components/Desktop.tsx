@@ -8,14 +8,8 @@ import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { saveDesktopConfigPatch } from "@/hooks/useDesktopConfig";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
-import {
-  parseDesktopFirstRunStatus,
-  shouldApplyInitialDesktopDefaults,
-  shouldShowDeveloperDashboard,
-  type DesktopFirstRunStatus,
-} from "@/lib/desktop-first-run";
+import { parseDesktopFirstRunStatus, type DesktopFirstRunStatus } from "@/lib/desktop-first-run";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
 import { Settings } from "./Settings";
@@ -29,7 +23,6 @@ import {
 import { SettingsIcon, MessageSquareIcon, LayoutGridIcon } from "@/lib/hugeicons";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
-import { AmbientClock } from "./AmbientClock";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
 import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
@@ -43,7 +36,6 @@ import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { BillingTrialNotification } from "./BillingTrialNotification";
-import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
@@ -62,7 +54,6 @@ import {
   type ShellSnapshotScope,
 } from "@/lib/shell-snapshot-cache";
 import {
-  DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
   normalizeBuiltInAppPath,
   normalizeBuiltInLayoutWindow,
@@ -87,16 +78,6 @@ const GATEWAY_URL = getGatewayUrl();
 // and destabilize every memo/callback that depends on `pinnedApps`. Treated as
 // read-only by convention; consumers always build new arrays rather than mutate.
 const EMPTY_PINNED_APPS: string[] = [];
-async function markOnboardingComplete() {
-  const res = await fetch(`${getGatewayUrl()}/api/settings/onboarding-complete`, {
-    method: "POST",
-    signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    throw new Error("onboarding complete request failed");
-  }
-}
-
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
 
@@ -139,7 +120,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
-  const firstRunStatusRef = useRef<DesktopFirstRunStatus>("checking");
   // Shell hydration always uses the shared Matrix brand surface. Theme-specific
   // OS boot screens are reserved for actual OS-session transitions so this
   // account → journey → Desktop handoff cannot visually swap designs.
@@ -185,7 +165,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         if (!res.ok) throw new Error("onboarding status unavailable");
         const nextStatus = parseDesktopFirstRunStatus(await res.json());
         if (!cancelled) {
-          firstRunStatusRef.current = nextStatus;
           setFirstRunStatus(nextStatus);
         }
       })
@@ -194,7 +173,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           console.warn("[desktop] first-run status check failed:", err);
         }
         if (!cancelled) {
-          firstRunStatusRef.current = "ready";
           setFirstRunStatus("ready");
         }
       })
@@ -207,23 +185,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       controller.abort();
     };
   }, []);
-
-  const completeOnboarding = () => {
-    if (!shouldApplyInitialDesktopDefaults(firstRunStatusRef.current)) return;
-    firstRunStatusRef.current = "ready";
-    setFirstRunStatus("ready");
-    void markOnboardingComplete().catch((err: unknown) => {
-      console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
-    });
-    void saveDesktopConfigPatch({
-      background: { type: "wallpaper", name: "moraine-lake.jpg" },
-      dock,
-      pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
-      dockOrder,
-    }).catch((err: unknown) => {
-      console.warn("[desktop] initial desktop config persist failed:", err instanceof Error ? err.message : String(err));
-    });
-  };
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435); a fresh function each render would re-register every command-palette entry on every render
   const animateMinimize = useCallback((id: string) => {
@@ -781,8 +742,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const previousMode = useDesktopMode((s) => s.previousMode);
   const setDesktopMode = useDesktopMode((s) => s.setMode);
   const visibleModes = useDesktopMode((s) => s.visibleModes);
-  const getModeConfig = useDesktopMode((s) => s.getModeConfig);
-  const modeConfig = getModeConfig(desktopMode);
   const themeStyle = useThemeStyle();
   // Windows designs replace the mac menu bar + dock with a bottom taskbar.
   const isWindowsDesign = themeStyle === "winxp" || themeStyle === "win11";
@@ -824,16 +783,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     })();
     return () => { cancelled = true; };
   }, [themeStyle, wmSetApps]);
-  const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
-  // Developer Fast Path dashboard removed (off-brand + redundant with the
-  // new Set up your workspace checklist). Dev mode opens to the terminal.
-  void shouldShowDeveloperDashboard;
-  const developerDashboardVisible = false;
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
-  const selectDesktopMode = (mode: DesktopMode) => {
-    setDesktopMode(mode);
-    if (!getModeConfig(mode).showLauncher) setTaskBoardOpen(false);
-  };
 
   // Cascade windows back to the viewport when leaving canvas. Canvas
   // positions use a wide grid that extends off-screen in other modes.
@@ -877,14 +827,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     return () => clearTimeout(t);
   }, [vocalActive]);
 
-  const modes = visibleModes();
-  const cycleMode = () => {
-    const idx = modes.findIndex((m) => m.id === desktopMode);
-    // If current mode is hidden or not found, jump to the first visible mode.
-    const nextIdx = idx < 0 ? 0 : (idx + 1) % modes.length;
-    setDesktopMode(modes[nextIdx].id);
-  };
-
   const toggleMcRef = useRef(() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); });
   const openWindowRef = useRef(openWindow);
   useEffect(() => {
@@ -900,7 +842,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       keywords: ["mode", "layout", m.id, m.description],
       execute: () => {
         setDesktopMode(m.id);
-        if (!m.showLauncher) setTaskBoardOpen(false);
       },
     }));
 
@@ -1147,7 +1088,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       <OsSessionHost />
       <div className="relative flex-1 flex flex-col md:flex-row">
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
-        {modeConfig.showDock && desktopMode !== "desktop" && !isWindowsDesign && <div
+        {desktopMode !== "desktop" && !isWindowsDesign && <div
           className={[
             "hidden md:block fixed z-[55]",
             dock.position === "left" && "left-0 top-0 h-full",
@@ -1353,7 +1294,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                   );
                 })}
                 </div>
-                {modeConfig.showLauncher && (
+                {(
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -1481,7 +1422,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         </div>}
 
         {/* Mobile dock (bottom tab bar) */}
-        {modeConfig.showDock && desktopMode !== "desktop" && (
+        {desktopMode !== "desktop" && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             {!HERMES_CHAT_HIDDEN && (
             <button
@@ -1504,7 +1445,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               )}
             </button>
             )}
-            {modeConfig.showLauncher && (
+            {(
               <button
                 type="button"
                 onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
@@ -1608,41 +1549,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             onRemoveFromCanvas={removeFromCanvas}
           />
 
-          {!modeConfig.showWindows && modeConfig.id === "ambient" && (
-            <AmbientClock onSwitchMode={cycleMode} />
-          )}
-
-          {!modeConfig.showWindows && modeConfig.id !== "ambient" && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
-                <p className="text-sm text-muted-foreground mb-1">
-                  {modeConfig.label} mode
-                </p>
-                <button
-                  type="button"
-                  onClick={cycleMode}
-                  className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
-                >
-                  Switch mode
-                </button>
-              </div>
-            </div>
-          )}
-
-          {developerDashboardVisible && (
-            <DeveloperModeDashboard
-              onOpenTerminal={() => {
-                completeOnboarding();
-                focusOrOpen("Terminal", "__terminal__");
-              }}
-              onSwitchCanvas={() => {
-                setDesktopMode("canvas");
-                setManualSetupVisible(true);
-              }}
-            />
-          )}
-
-          {modeConfig.showWindows && desktopMode === "canvas" && (
+          {desktopMode === "canvas" && (
             <CanvasRenderer>
               {manualSetupVisible && (
                 <SetupChecklist onOpenTerminal={openSetupTerminal} />
@@ -1659,7 +1566,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             />
           )}
 
-          {modeConfig.showWindows && desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
+          {desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <p className="text-sm text-white/50 drop-shadow-md">
@@ -1672,7 +1579,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           {/* Desktop: positioned windows; Mobile: full-screen cards.
               We render minimized windows too (display:none) so iframe state,
               terminal sockets, and React state survive minimize -> restore. */}
-          {modeConfig.showWindows && desktopMode !== "canvas" && windows.map((win) => (
+          {desktopMode !== "canvas" && windows.map((win) => (
             <DesktopWindow
               key={win.id}
               win={win}
