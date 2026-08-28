@@ -23,7 +23,9 @@ export function useActiveAppShortcuts(
   useEffect(() => {
     if (!active) return;
     const onShortcut = (event: Event) => {
-      const shortcutEvent = event as CustomEvent<ActiveAppShortcut>;
+      if (!(event instanceof CustomEvent)) return;
+      const shortcutEvent = event as CustomEvent<unknown>;
+      if (shortcutEvent.detail !== "new-tab" && shortcutEvent.detail !== "close-tab") return;
       if (handlerRef.current(shortcutEvent.detail)) shortcutEvent.preventDefault();
     };
     window.addEventListener(ACTIVE_APP_SHORTCUT_EVENT, onShortcut);

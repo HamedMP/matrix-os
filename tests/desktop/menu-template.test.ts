@@ -190,7 +190,7 @@ describe("createAppMenuTemplate", () => {
       { items: appItems, label: "Close Selected App", accelerator: "Cmd+Q", action: "close-app" },
       { items: fileItems, label: "New Tab", accelerator: "Cmd+T", action: "new-tab" },
       { items: fileItems, label: "Close Tab", accelerator: "Cmd+W", action: "close-tab" },
-      { items: fileItems, label: "New Task", accelerator: "Cmd+N", action: "new-context" },
+      { items: fileItems, label: "New", accelerator: "Cmd+N", action: "new-context" },
     ] as const;
 
     for (const { items, label, accelerator, action } of cases) {
@@ -206,7 +206,7 @@ describe("createAppMenuTemplate", () => {
     expect(appItems.some((item) => "role" in item && item.role === "quit")).toBe(false);
     expect(fileItems.some((item) => "role" in item && item.role === "close")).toBe(false);
     const quitItem = appItems.find((item) => "label" in item && item.label === "Quit Matrix OS");
-    expect(quitItem && "accelerator" in quitItem ? quitItem.accelerator : null).toBe("Cmd+Shift+Q");
+    expect(quitItem && "accelerator" in quitItem ? quitItem.accelerator : undefined).toBeUndefined();
     if (!quitItem || !("click" in quitItem) || typeof quitItem.click !== "function") {
       throw new Error("Quit Matrix OS is not clickable");
     }

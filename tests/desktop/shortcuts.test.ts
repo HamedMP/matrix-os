@@ -42,19 +42,33 @@ describe("handleCloseSelectedAppShortcut", () => {
     expect(useTabs.getState().activeTabId).toBe(terminalId);
     expect(useDesktopSurfaces.getState().surfaces[terminalId]?.mode).toBe("window");
   });
+
+  it("suppresses the native shortcut without closing a hidden selected app", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
+    useDesktopSurfaces.getState().showDesktop();
+    const preventDefault = vi.fn();
+
+    handleCloseSelectedAppShortcut({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("window");
+  });
 });
 
 describe("handleNewContextShortcut", () => {
   beforeEach(() => {
     useTabs.setState(useTabs.getInitialState(), true);
     useHermesChat.setState(useHermesChat.getInitialState(), true);
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
     useUi.setState({ createTaskOpen: false });
   });
 
   it("starts a new chat when Chat is selected and keeps New Task elsewhere", () => {
     const newChat = vi.fn();
     useHermesChat.setState({ newChat });
-    useTabs.getState().openTab({ kind: "chat", title: "Existing chat", chatId: "chat-1", closable: false });
+    const chatId = useTabs.getState().openTab({ kind: "chat", title: "Existing chat", chatId: "chat-1", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([chatId], { width: 1280, height: 720 });
     const preventDefault = vi.fn();
 
     handleNewContextShortcut({ preventDefault });
@@ -69,10 +83,24 @@ describe("handleNewContextShortcut", () => {
     expect(useTabs.getState().tabs[0]?.chatId).toBeUndefined();
     expect(useUi.getState().createTaskOpen).toBe(false);
 
-    useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([chatId, filesId], { width: 1280, height: 720 });
     handleNewContextShortcut({ preventDefault: vi.fn() });
     expect(newChat).toHaveBeenCalledOnce();
     expect(useUi.getState().createTaskOpen).toBe(true);
+  });
+
+  it("does not create a chat for a hidden Chat surface", () => {
+    const newChat = vi.fn();
+    useHermesChat.setState({ newChat });
+    const chatId = useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([chatId], { width: 1280, height: 720 });
+    useDesktopSurfaces.getState().showDesktop();
+
+    handleNewContextShortcut({ preventDefault: vi.fn() });
+
+    expect(newChat).not.toHaveBeenCalled();
+    expect(useUi.getState().createTaskOpen).toBe(false);
   });
 });
 

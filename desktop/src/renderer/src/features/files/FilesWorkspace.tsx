@@ -71,16 +71,36 @@ export default function FilesWorkspace({ active = true }: { active?: boolean }) 
       : tab));
   }, []);
 
+  const clearTabState = useCallback((tabId: string) => {
+    setSelections((current) => {
+      const remaining = { ...current };
+      delete remaining[tabId];
+      return remaining;
+    });
+    setRefreshes((current) => {
+      const remaining = { ...current };
+      delete remaining[tabId];
+      return remaining;
+    });
+    setNewFolderRequest((current) => current?.tabId === tabId ? null : current);
+  }, []);
+
+  const createFolderTab = useCallback((path: string, title = pathTitle(path)) => {
+    const tab = { id: `files-folder-${nextTabId.current++}`, path, title };
+    const evictedTab = tabs.length >= MAX_FILE_TABS ? tabs[0] : undefined;
+    setTabs([...tabs, tab].slice(-MAX_FILE_TABS));
+    setActiveTabId(tab.id);
+    if (evictedTab) clearTabState(evictedTab.id);
+  }, [clearTabState, tabs]);
+
   const openFolderTab = useCallback((path: string, title = pathTitle(path)) => {
     const existing = tabs.find((tab) => tab.path === path);
     if (existing) {
       setActiveTabId(existing.id);
       return;
     }
-    const tab = { id: `files-folder-${nextTabId.current++}`, path, title };
-    setTabs([...tabs, tab].slice(-MAX_FILE_TABS));
-    setActiveTabId(tab.id);
-  }, [tabs]);
+    createFolderTab(path, title);
+  }, [createFolderTab, tabs]);
 
   const closeTab = useCallback((tabId: string) => {
     if (tabs.length === 1) return;
@@ -90,27 +110,19 @@ export default function FilesWorkspace({ active = true }: { active?: boolean }) 
     if (activeTabId === tabId) {
       setActiveTabId(next[Math.max(0, index - 1)]?.id ?? next[0]!.id);
     }
-    setSelections((current) => {
-      const next = { ...current };
-      delete next[tabId];
-      return next;
-    });
-    setNewFolderRequest((current) => current?.tabId === tabId ? null : current);
-  }, [activeTabId, tabs]);
+    clearTabState(tabId);
+  }, [activeTabId, clearTabState, tabs]);
 
   useActiveAppShortcuts(active, (action) => {
     if (action === "new-tab") {
-      const tab = {
-        id: `files-folder-${nextTabId.current++}`,
-        path: "",
-        title: "Matrix home",
-      };
-      setTabs((current) => [...current, tab].slice(-MAX_FILE_TABS));
-      setActiveTabId(tab.id);
+      createFolderTab("", "Matrix home");
       return true;
     }
-    closeTab(activeTabId);
-    return true;
+    if (action === "close-tab") {
+      closeTab(activeTabId);
+      return true;
+    }
+    return false;
   });
 
   const requestNewFolder = useCallback((tabId: string, parentPath: string) => {
@@ -172,7 +184,7 @@ export default function FilesWorkspace({ active = true }: { active?: boolean }) 
             </div>
           );
         })}
-        <button type="button" aria-label="Open Matrix home in new tab" onClick={() => openFolderTab("", "Matrix home")} className="mb-1 flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}><Plus size={15} /></button>
+        <button type="button" aria-label="Open Matrix home in new tab" onClick={() => createFolderTab("", "Matrix home")} className="mb-1 flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}><Plus size={15} /></button>
       </div>
       <div data-testid="files-workspace-panes" data-layout={previewSelection ? "preview" : "browser"} className={`grid min-h-0 flex-1 grid-cols-1 overflow-hidden ${previewSelection ? "grid-rows-[minmax(220px,40%)_minmax(0,1fr)] md:grid-cols-[minmax(320px,3fr)_minmax(300px,2fr)] md:grid-rows-1" : "grid-rows-1"}`} style={{ background: "var(--bg-surface)" }}>
         <div data-testid="files-home-content" className="flex min-h-0 min-w-0 flex-col">

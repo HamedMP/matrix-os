@@ -24,6 +24,29 @@ export interface DesktopSurface {
   zIndex: number;
 }
 
+export function topmostVisibleDesktopSurfaceId(
+  tabIds: readonly string[],
+  surfaces: Readonly<Record<string, DesktopSurface>>,
+  excludedTabId: string,
+): string | null {
+  let fallbackId: string | null = null;
+  let fallbackZIndex = Number.NEGATIVE_INFINITY;
+  for (const tabId of tabIds) {
+    const surface = surfaces[tabId];
+    if (
+      tabId !== excludedTabId
+      && surface
+      && surface.mode !== "minimized"
+      && surface.mode !== "closed"
+      && surface.zIndex > fallbackZIndex
+    ) {
+      fallbackId = tabId;
+      fallbackZIndex = surface.zIndex;
+    }
+  }
+  return fallbackId;
+}
+
 export interface DesktopTransition {
   phase: "hiding" | "restoring";
   surfaceIds: string[];

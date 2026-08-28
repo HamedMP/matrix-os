@@ -340,8 +340,11 @@ export default function TerminalsTab({
       void createShell();
       return true;
     }
-    if (selectedRef.current) closeShellTab(selectedRef.current);
-    return true;
+    if (action === "close-tab") {
+      if (selectedRef.current) closeShellTab(selectedRef.current);
+      return true;
+    }
+    return false;
   });
 
   const moveShell = async (shell: ShellSessionSummary, placement: ShellSessionPlacement) => {

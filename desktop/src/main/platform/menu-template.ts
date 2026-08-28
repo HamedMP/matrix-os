@@ -104,7 +104,6 @@ export function createAppMenuTemplate({
         },
         {
           label: `Quit ${appName}`,
-          accelerator: "Cmd+Shift+Q",
           click: quitApp,
         },
       ],
@@ -113,7 +112,7 @@ export function createAppMenuTemplate({
       label: "File",
       submenu: [
         {
-          label: "New Task",
+          label: "New",
           accelerator: "Cmd+N",
           click: () => send("menu:action", { action: "new-context" }),
         },

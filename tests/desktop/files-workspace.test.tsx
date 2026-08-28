@@ -134,6 +134,14 @@ describe("Files workspace", () => {
     act(() => expect(dispatchActiveAppShortcut("new-tab")).toBe(true));
     expect(screen.getAllByRole("tab", { name: "Matrix home" })).toHaveLength(2);
 
+    act(() => {
+      window.dispatchEvent(new CustomEvent("matrix:active-app-shortcut", {
+        cancelable: true,
+        detail: "unsupported",
+      }));
+    });
+    expect(screen.getAllByRole("tab", { name: "Matrix home" })).toHaveLength(2);
+
     act(() => expect(dispatchActiveAppShortcut("close-tab")).toBe(true));
     expect(screen.getAllByRole("tab", { name: "Matrix home" })).toHaveLength(1);
   });
