@@ -78,8 +78,13 @@ export function WorkRail({
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const routeScope = `${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
-  const routeScopeRef = useRef(routeScope);
-  routeScopeRef.current = routeScope;
+  const routeScopeRef = useRef({ key: routeScope, generation: 0 });
+  if (routeScopeRef.current.key !== routeScope) {
+    routeScopeRef.current = {
+      key: routeScope,
+      generation: routeScopeRef.current.generation + 1,
+    };
+  }
   const model = useMemo(() => buildWorkRailModel(records, projects), [projects, records]);
 
   useEffect(() => {
@@ -109,7 +114,7 @@ export function WorkRail({
   const updatePinned = (record: CanonicalChatRecord) => {
     if (!client || pinning[record.chat.id]) return;
     const pinned = !record.chat.userState?.pinned;
-    const requestRouteScope = routeScopeRef.current;
+    const requestRouteGeneration = routeScopeRef.current.generation;
     setPinError(null);
     setPinning((current) => ({ ...current, [record.chat.id]: true }));
     void client.updateUserState(record.chat.id, { pinned }).then((updated) => {
@@ -121,7 +126,7 @@ export function WorkRail({
         "[work] Chat pin update failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      if (routeScopeRef.current === requestRouteScope) {
+      if (routeScopeRef.current.generation === requestRouteGeneration) {
         setPinError("Chat pin could not be updated.");
       }
     }).finally(() => {

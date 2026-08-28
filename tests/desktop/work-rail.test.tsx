@@ -385,6 +385,8 @@ describe("WorkRail", () => {
 
     rerender(<WorkRail {...props} activeChatId="chat_after" />);
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+    rerender(<WorkRail {...props} activeChatId="chat_before" />);
+    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(3));
     rejectPin(new Error("private gateway detail"));
 
     await waitFor(() => expect(warn).toHaveBeenCalledWith(
