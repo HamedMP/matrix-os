@@ -6,6 +6,9 @@ import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
+import { useHermesChat } from "../../stores/hermes-chat";
+import { dispatchActiveAppShortcut } from "./app-shortcuts";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 
 interface CloseTabShortcutState {
@@ -90,6 +93,49 @@ export function handleCloseTabShortcut(
   }
 }
 
+export function handleCloseSelectedAppShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+): void {
+  event.preventDefault();
+  const tabs = useTabs.getState();
+  if (!tabs.activeTabId) return;
+  const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
+  if (!activeTab) return;
+  const surfaces = useDesktopSurfaces.getState();
+  const fallback = Object.values(surfaces.surfaces)
+    .filter((surface) => (
+      surface.tabId !== activeTab.id
+      && surface.mode !== "closed"
+      && surface.mode !== "minimized"
+    ))
+    .toSorted((left, right) => right.zIndex - left.zIndex)[0];
+
+  if (activeTab.closable) tabs.closeTab(activeTab.id);
+  else surfaces.closeSurface(activeTab.id);
+  if (!fallback) return;
+  tabs.focusTab(fallback.tabId);
+  surfaces.activateSurface(fallback.tabId);
+}
+
+export function handleNewContextShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+): void {
+  event.preventDefault();
+  const tabs = useTabs.getState();
+  const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
+  if (activeTab?.kind !== "chat") {
+    useUi.getState().setCreateTaskOpen(true);
+    return;
+  }
+  useHermesChat.getState().newChat();
+  tabs.openTab({
+    kind: "chat",
+    title: "Chat",
+    chatView: "draft",
+    closable: false,
+  });
+}
+
 export function handleCycleTabShortcut(
   event: Pick<KeyboardEvent, "preventDefault">,
   tabs: CycleTabShortcutState,
@@ -163,6 +209,14 @@ export function useGlobalShortcuts(): void {
         handleNewAgentRunShortcut(e, ui, useCodingAgentWorkspace.getState());
         return;
       }
+      if (meta && !e.altKey && !e.shiftKey && key === "q") {
+        handleCloseSelectedAppShortcut(e);
+        return;
+      }
+      if (meta && !e.altKey && !e.shiftKey && key === "n") {
+        handleNewContextShortcut(e);
+        return;
+      }
       if (meta && key === "p") {
         e.preventDefault();
         ui.setQuickOpenOpen(!ui.quickOpenOpen);
@@ -178,15 +232,14 @@ export function useGlobalShortcuts(): void {
         tabs.openTab({ kind: "chat", title: "Hermes", closable: false });
         return;
       }
-      // New tab → Home.
-      if (meta && key === "t") {
+      if (meta && !e.altKey && !e.shiftKey && key === "t") {
         e.preventDefault();
-        tabs.openTab(HOSTED_SHELL_TAB_SPEC);
+        dispatchActiveAppShortcut("new-tab");
         return;
       }
-      // Close the active tab.
-      if (meta && key === "w") {
-        handleCloseTabShortcut(e, tabs);
+      if (meta && !e.altKey && !e.shiftKey && key === "w") {
+        e.preventDefault();
+        dispatchActiveAppShortcut("close-tab");
         return;
       }
       // Toggle sidebar (⌘B, like Codex; ⌘\ also works).
@@ -210,6 +263,15 @@ export function useGlobalShortcuts(): void {
     const offAction = onEvent("menu:action", ({ action }) => {
       const ui = useUi.getState();
       if (action === "new-task") ui.setCreateTaskOpen(true);
+      if (action === "new-context") {
+        handleNewContextShortcut({ preventDefault: () => undefined });
+      }
+      if (action === "close-app") {
+        handleCloseSelectedAppShortcut({ preventDefault: () => undefined });
+      }
+      if (action === "new-tab" || action === "close-tab") {
+        dispatchActiveAppShortcut(action);
+      }
       if (action === "new-thread") {
         handleNewAgentRunShortcut({ preventDefault: () => undefined }, ui, useCodingAgentWorkspace.getState());
       }

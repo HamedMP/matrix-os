@@ -11,6 +11,7 @@ import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { dispatchActiveAppShortcut } from "../../desktop/src/renderer/src/features/mission-control/app-shortcuts";
 
 const LIST: Record<string, { entries: Array<{ name: string; type: string }> }> = {
   "/api/files/list?path=": {
@@ -124,6 +125,17 @@ describe("Files workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
     expect(await screen.findByRole("region", { name: "File preview" })).toBeTruthy();
     expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("preview");
+  });
+
+  it("creates and closes Files tabs through active-app shortcuts", async () => {
+    render(<Tooltip.Provider><FilesWorkspace active /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open workspaces" });
+
+    act(() => expect(dispatchActiveAppShortcut("new-tab")).toBe(true));
+    expect(screen.getAllByRole("tab", { name: "Matrix home" })).toHaveLength(2);
+
+    act(() => expect(dispatchActiveAppShortcut("close-tab")).toBe(true));
+    expect(screen.getAllByRole("tab", { name: "Matrix home" })).toHaveLength(1);
   });
 
   it("shows the designed empty-folder preview state", async () => {

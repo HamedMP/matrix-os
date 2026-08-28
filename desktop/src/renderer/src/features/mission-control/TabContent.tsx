@@ -69,7 +69,7 @@ export function TabPane({
     case "terminals":
       return <TerminalsTab active={active} visible={visible} />;
     case "files":
-      return <FilesWorkspace />;
+      return <FilesWorkspace active={active} />;
     case "apps":
       return <AppLauncher />;
     case "projects":

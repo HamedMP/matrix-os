@@ -435,7 +435,19 @@ export const EVENT_CHANNELS = {
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
   "app:zoom-changed": ZoomFactorResultSchema,
   "menu:action": z
-    .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open", "refresh-home"]) })
+    .object({
+      action: z.enum([
+        "new-task",
+        "new-thread",
+        "new-context",
+        "new-tab",
+        "close-tab",
+        "close-app",
+        "palette",
+        "quick-open",
+        "refresh-home",
+      ]),
+    })
     .strict(),
   "menu:navigate": z.object({ kind: z.enum(["settings", "board", "project", "terminals"]) }).strict(),
 } as const;

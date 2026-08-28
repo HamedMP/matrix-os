@@ -31,6 +31,7 @@ export function installAppMenu(
     send,
     adjustZoom,
     checkForUpdates,
+    quitApp: () => app.quit(),
   });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

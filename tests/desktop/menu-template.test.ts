@@ -13,6 +13,7 @@ describe("createAppMenuTemplate", () => {
         send,
         adjustZoom: vi.fn(),
         checkForUpdates,
+        quitApp: vi.fn(),
       });
       const appMenu = template.find((item) => item.label === "Matrix OS");
       const updateItem = Array.isArray(appMenu?.submenu)
@@ -39,6 +40,7 @@ describe("createAppMenuTemplate", () => {
         send,
         adjustZoom: vi.fn(),
         checkForUpdates: vi.fn(),
+        quitApp: vi.fn(),
       });
       const viewMenu = template.find((item) => item.label === "View");
       const submenu = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
@@ -65,6 +67,7 @@ describe("createAppMenuTemplate", () => {
       send,
       adjustZoom: vi.fn(),
       checkForUpdates: vi.fn(),
+      quitApp: vi.fn(),
     });
 
     const viewMenu = template.find((item) => item.label === "View");
@@ -92,6 +95,7 @@ describe("createAppMenuTemplate", () => {
       send,
       adjustZoom: vi.fn(),
       checkForUpdates: vi.fn(),
+      quitApp: vi.fn(),
     });
 
     const fileMenu = template.find((item) => item.label === "File");
@@ -118,6 +122,7 @@ describe("createAppMenuTemplate", () => {
       send: vi.fn(),
       adjustZoom,
       checkForUpdates: vi.fn(),
+      quitApp: vi.fn(),
     });
 
     const viewMenu = template.find((item) => item.label === "View");
@@ -154,6 +159,7 @@ describe("createAppMenuTemplate", () => {
       send: vi.fn(),
       adjustZoom: vi.fn(),
       checkForUpdates: vi.fn(),
+      quitApp: vi.fn(),
     });
 
     const viewMenu = template.find((item) => item.label === "View");
@@ -162,5 +168,49 @@ describe("createAppMenuTemplate", () => {
       : null;
 
     expect(agentsItem).toBeUndefined();
+  });
+
+  it("routes app and tab accelerators into Matrix OS instead of closing Electron", () => {
+    const send = vi.fn();
+    const quitApp = vi.fn();
+    const template = createAppMenuTemplate({
+      appName: "Matrix OS",
+      isPackaged: true,
+      openExternal: vi.fn(),
+      send,
+      adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(),
+      quitApp,
+    });
+    const appMenu = template.find((item) => item.label === "Matrix OS");
+    const appItems = Array.isArray(appMenu?.submenu) ? appMenu.submenu : [];
+    const fileMenu = template.find((item) => item.label === "File");
+    const fileItems = Array.isArray(fileMenu?.submenu) ? fileMenu.submenu : [];
+    const cases = [
+      { items: appItems, label: "Close Selected App", accelerator: "Cmd+Q", action: "close-app" },
+      { items: fileItems, label: "New Tab", accelerator: "Cmd+T", action: "new-tab" },
+      { items: fileItems, label: "Close Tab", accelerator: "Cmd+W", action: "close-tab" },
+      { items: fileItems, label: "New Task", accelerator: "Cmd+N", action: "new-context" },
+    ] as const;
+
+    for (const { items, label, accelerator, action } of cases) {
+      const item = items.find((candidate) => "label" in candidate && candidate.label === label);
+      expect(item && "accelerator" in item ? item.accelerator : null).toBe(accelerator);
+      if (!item || !("click" in item) || typeof item.click !== "function") {
+        throw new Error(`${label} is not clickable`);
+      }
+      item.click({} as never, {} as never, {} as never);
+      expect(send).toHaveBeenLastCalledWith("menu:action", { action });
+    }
+
+    expect(appItems.some((item) => "role" in item && item.role === "quit")).toBe(false);
+    expect(fileItems.some((item) => "role" in item && item.role === "close")).toBe(false);
+    const quitItem = appItems.find((item) => "label" in item && item.label === "Quit Matrix OS");
+    expect(quitItem && "accelerator" in quitItem ? quitItem.accelerator : null).toBe("Cmd+Shift+Q");
+    if (!quitItem || !("click" in quitItem) || typeof quitItem.click !== "function") {
+      throw new Error("Quit Matrix OS is not clickable");
+    }
+    quitItem.click({} as never, {} as never, {} as never);
+    expect(quitApp).toHaveBeenCalledOnce();
   });
 });

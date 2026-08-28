@@ -2,9 +2,11 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  handleCloseSelectedAppShortcut,
   handleCycleTabShortcut,
   handleCloseTabShortcut,
   handleMenuNavigate,
+  handleNewContextShortcut,
   handleNewAgentRunShortcut,
   handleTerminalFocusShortcut,
   isTerminalFocusShortcut,
@@ -12,10 +14,67 @@ import {
 import { useProjectChatLauncher } from "@desktop/renderer/src/lib/project-chat";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
+import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
+import { useHermesChat } from "@desktop/renderer/src/stores/hermes-chat";
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "@desktop/renderer/src/stores/project-workspaces";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
+
+describe("handleCloseSelectedAppShortcut", () => {
+  beforeEach(() => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+  });
+
+  it("closes the selected Matrix app surface and focuses the topmost remaining app", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useTabs.getState().focusTab(filesId);
+    useDesktopSurfaces.getState().activateSurface(filesId);
+    const preventDefault = vi.fn();
+
+    handleCloseSelectedAppShortcut({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("closed");
+    expect(useTabs.getState().activeTabId).toBe(terminalId);
+    expect(useDesktopSurfaces.getState().surfaces[terminalId]?.mode).toBe("window");
+  });
+});
+
+describe("handleNewContextShortcut", () => {
+  beforeEach(() => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useHermesChat.setState(useHermesChat.getInitialState(), true);
+    useUi.setState({ createTaskOpen: false });
+  });
+
+  it("starts a new chat when Chat is selected and keeps New Task elsewhere", () => {
+    const newChat = vi.fn();
+    useHermesChat.setState({ newChat });
+    useTabs.getState().openTab({ kind: "chat", title: "Existing chat", chatId: "chat-1", closable: false });
+    const preventDefault = vi.fn();
+
+    handleNewContextShortcut({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(newChat).toHaveBeenCalledOnce();
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "chat",
+      title: "Chat",
+      chatView: "draft",
+    });
+    expect(useTabs.getState().tabs[0]?.chatId).toBeUndefined();
+    expect(useUi.getState().createTaskOpen).toBe(false);
+
+    useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    handleNewContextShortcut({ preventDefault: vi.fn() });
+    expect(newChat).toHaveBeenCalledOnce();
+    expect(useUi.getState().createTaskOpen).toBe(true);
+  });
+});
 
 describe("handleCloseTabShortcut", () => {
   it("prevents the native window close even when the active tab is not closable", () => {

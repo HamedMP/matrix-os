@@ -6,6 +6,7 @@ import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowser";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
+import { useActiveAppShortcuts } from "../mission-control/app-shortcuts";
 
 export { resolveActivePath } from "./FilePreviewPane";
 export type { FileSelection } from "./FilePreviewPane";
@@ -30,7 +31,7 @@ function joinPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
 }
 
-export default function FilesWorkspace() {
+export default function FilesWorkspace({ active = true }: { active?: boolean }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const [tabs, setTabs] = useState<FileTab[]>([HOME_TAB]);
@@ -96,6 +97,21 @@ export default function FilesWorkspace() {
     });
     setNewFolderRequest((current) => current?.tabId === tabId ? null : current);
   }, [activeTabId, tabs]);
+
+  useActiveAppShortcuts(active, (action) => {
+    if (action === "new-tab") {
+      const tab = {
+        id: `files-folder-${nextTabId.current++}`,
+        path: "",
+        title: "Matrix home",
+      };
+      setTabs((current) => [...current, tab].slice(-MAX_FILE_TABS));
+      setActiveTabId(tab.id);
+      return true;
+    }
+    closeTab(activeTabId);
+    return true;
+  });
 
   const requestNewFolder = useCallback((tabId: string, parentPath: string) => {
     setNewFolderRequest({ parentPath, tabId, runtimeSlot, authGeneration });

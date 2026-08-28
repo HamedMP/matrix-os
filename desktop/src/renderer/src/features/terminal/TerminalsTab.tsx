@@ -25,6 +25,7 @@ import {
 } from "../../stores/shell-sessions";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { useActiveAppShortcuts } from "../mission-control/app-shortcuts";
 import {
   reconcileShellSessionSnapshot,
   syncShellSessions,
@@ -333,6 +334,15 @@ export default function TerminalsTab({
     setSelectedName(nextName);
     setLiveSessionName(nextName);
   };
+
+  useActiveAppShortcuts(active, (action) => {
+    if (action === "new-tab") {
+      void createShell();
+      return true;
+    }
+    if (selectedRef.current) closeShellTab(selectedRef.current);
+    return true;
+  });
 
   const moveShell = async (shell: ShellSessionSummary, placement: ShellSessionPlacement) => {
     if (!api || !markShellBusy(shell.name)) return;
