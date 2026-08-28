@@ -10,7 +10,6 @@ import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance";
-import { dispatchActiveAppShortcut } from "../../desktop/src/renderer/src/features/mission-control/app-shortcuts";
 
 const terminalMounts = vi.hoisted(() => new Map<string, number>());
 
@@ -530,24 +529,6 @@ describe("TerminalsTab", () => {
 
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api));
     expect(createWorkspace).not.toHaveBeenCalled();
-  });
-
-  it("creates and closes terminal tabs through active-app shortcuts", async () => {
-    const createShell = vi.fn().mockResolvedValue({ name: "matrix-created", status: "active" });
-    useShellSessions.setState({
-      create: createShell,
-      sessions: [{ name: "matrix-main", status: "active" }],
-    });
-    renderTab();
-    await screen.findByTestId("terminal-view-matrix-main");
-
-    act(() => expect(dispatchActiveAppShortcut("new-tab")).toBe(true));
-    await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api));
-
-    act(() => expect(dispatchActiveAppShortcut("close-tab")).toBe(true));
-    await waitFor(() => expect(
-      screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active"),
-    ).toBe("false"));
   });
 
   it("requires confirmation before deleting a shell", async () => {

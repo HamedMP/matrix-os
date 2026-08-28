@@ -3,11 +3,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   handleCloseSelectedAppShortcut,
+  handleCloseTopLevelTabShortcut,
   handleCycleTabShortcut,
-  handleCloseTabShortcut,
   handleMenuNavigate,
   handleNewContextShortcut,
   handleNewAgentRunShortcut,
+  handleNewTopLevelTabShortcut,
   handleTerminalFocusShortcut,
   isTerminalFocusShortcut,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
@@ -69,6 +70,69 @@ describe("handleCloseSelectedAppShortcut", () => {
   });
 });
 
+describe("top-level app tab shortcuts", () => {
+  beforeEach(() => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+  });
+
+  it("opens a new top-level Terminal tab without requesting a shell session", () => {
+    const terminalId = useTabs.getState().openTab({
+      kind: "terminals",
+      title: "Terminal",
+      closable: false,
+    });
+    useDesktopSurfaces.getState().reconcileTabs([terminalId], { width: 1280, height: 720 });
+    const preventDefault = vi.fn();
+
+    expect(handleNewTopLevelTabShortcut({ preventDefault })).toBe(true);
+
+    const state = useTabs.getState();
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(state.tabs).toHaveLength(2);
+    expect(state.tabs.map((tab) => tab.kind)).toEqual(["terminals", "terminals"]);
+    expect(state.tabs[1]).toMatchObject({ title: "Terminal", closable: true });
+    expect(state.activeTabId).toBe(state.tabs[1]?.id);
+    expect(state.terminalSessionRequest).toBeNull();
+    expect(useDesktopSurfaces.getState()).toMatchObject({ workspaceView: "tabs" });
+    expect(Object.values(useDesktopSurfaces.getState().surfaces).map((surface) => surface.mode))
+      .toEqual(["tab", "tab"]);
+  });
+
+  it("opens and closes a fresh top-level Files tab without changing folder tabs", () => {
+    const filesId = useTabs.getState().openTab({
+      kind: "files",
+      title: "Files",
+      slug: "files",
+      closable: false,
+    });
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
+
+    expect(handleNewTopLevelTabShortcut({ preventDefault: vi.fn() })).toBe(true);
+    const duplicateId = useTabs.getState().activeTabId;
+    expect(useTabs.getState().tabs).toHaveLength(2);
+    expect(duplicateId).not.toBe(filesId);
+
+    handleCloseTopLevelTabShortcut({ preventDefault: vi.fn() });
+
+    expect(useTabs.getState().tabs).toHaveLength(1);
+    expect(useTabs.getState().activeTabId).toBe(filesId);
+    expect(useDesktopSurfaces.getState().surfaces[duplicateId!]?.mode).toBe("closed");
+  });
+
+  it("does not invent a new top-level tab for unsupported apps", () => {
+    const settingsId = useTabs.getState().openTab({
+      kind: "settings",
+      title: "Settings",
+      closable: false,
+    });
+    useDesktopSurfaces.getState().reconcileTabs([settingsId], { width: 1280, height: 720 });
+
+    expect(handleNewTopLevelTabShortcut({ preventDefault: vi.fn() })).toBe(false);
+    expect(useTabs.getState().tabs).toHaveLength(1);
+  });
+});
+
 describe("handleNewContextShortcut", () => {
   beforeEach(() => {
     useTabs.setState(useTabs.getInitialState(), true);
@@ -87,19 +151,26 @@ describe("handleNewContextShortcut", () => {
     handleNewContextShortcut({ preventDefault });
 
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(newChat).toHaveBeenCalledOnce();
+    expect(newChat).not.toHaveBeenCalled();
+    expect(useTabs.getState().tabs).toHaveLength(2);
     expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "chat",
+      title: "Existing chat",
+      chatId: "chat-1",
+    });
+    expect(useTabs.getState().tabs[1]).toMatchObject({
       kind: "chat",
       title: "Chat",
       chatView: "draft",
+      closable: true,
     });
-    expect(useTabs.getState().tabs[0]?.chatId).toBeUndefined();
+    expect(useTabs.getState().tabs[1]?.chatId).toBeUndefined();
     expect(useUi.getState().createTaskOpen).toBe(false);
 
     const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
     useDesktopSurfaces.getState().reconcileTabs([chatId, filesId], { width: 1280, height: 720 });
     handleNewContextShortcut({ preventDefault: vi.fn() });
-    expect(newChat).toHaveBeenCalledOnce();
+    expect(newChat).not.toHaveBeenCalled();
     expect(useUi.getState().createTaskOpen).toBe(true);
   });
 
@@ -114,42 +185,6 @@ describe("handleNewContextShortcut", () => {
 
     expect(newChat).not.toHaveBeenCalled();
     expect(useUi.getState().createTaskOpen).toBe(false);
-  });
-});
-
-describe("handleCloseTabShortcut", () => {
-  it("prevents the native window close even when the active tab is not closable", () => {
-    const preventDefault = vi.fn();
-    const closeTab = vi.fn();
-
-    handleCloseTabShortcut(
-      { preventDefault },
-      {
-        activeTabId: "home",
-        tabs: [{ id: "home", closable: false }],
-        closeTab,
-      },
-    );
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(closeTab).not.toHaveBeenCalled();
-  });
-
-  it("prevents default and closes the active tab when it is closable", () => {
-    const preventDefault = vi.fn();
-    const closeTab = vi.fn();
-
-    handleCloseTabShortcut(
-      { preventDefault },
-      {
-        activeTabId: "task",
-        tabs: [{ id: "task", closable: true }],
-        closeTab,
-      },
-    );
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(closeTab).toHaveBeenCalledWith("task");
   });
 });
 

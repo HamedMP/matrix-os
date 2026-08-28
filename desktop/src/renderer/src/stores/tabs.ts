@@ -1,7 +1,8 @@
 // Tab workspace: terminals, tasks, boards, and agent threads open as tabs that
 // stay mounted (cached) while inactive, so switching never tears down a running
-// terminal or loses editor state. Identity-keyed open() focuses an existing tab
-// instead of duplicating it.
+// terminal or loses editor state. Identity-keyed openTab() focuses an existing
+// tab; openTabInstance() is the explicit user gesture for a separate top-level
+// app tab with independent mounted UI state.
 import { create } from "zustand";
 
 export type TabKind =
@@ -126,6 +127,7 @@ interface TabsState {
   terminalSessionRequest: TerminalSessionRequest | null;
   terminalSessionRequestSequence: number;
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
+  openTabInstance(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
   openTabAtHistoryRoot(
     spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
     detailKinds: readonly TabKind[],
@@ -151,6 +153,29 @@ interface TabsState {
   setRecentFilter(filter: RecentViewFilter): void;
   renameTab(id: string, title: string): void;
   renameTerminalSession(fromName: string, toName: string): void;
+}
+
+function appendNewTab(state: TabsState, tab: Tab): Partial<TabsState> {
+  let tabs = [...state.tabs, tab];
+  if (tabs.length > MAX_TABS) {
+    const victim = tabs.find((candidate) => (
+      candidate.closable && candidate.id !== tab.id && candidate.id !== state.activeTabId
+    ));
+    if (victim) tabs = tabs.filter((candidate) => candidate.id !== victim.id);
+  }
+  const retainedTabIds = Object.fromEntries(tabs.map((candidate) => [candidate.id, true]));
+  const victimIds: Record<string, true> = {};
+  for (const existingTab of state.tabs) {
+    if (!retainedTabIds[existingTab.id]) victimIds[existingTab.id] = true;
+  }
+  const pruned = Object.keys(victimIds).length > 0
+    ? pruneHistory(state.viewHistory, state.historyIndex, victimIds)
+    : historyPatch(state.viewHistory, state.historyIndex);
+  return {
+    tabs,
+    activeTabId: tab.id,
+    ...recordHistory(pruned.viewHistory, pruned.historyIndex, tab.id),
+  };
 }
 
 let counter = 0;
@@ -198,27 +223,15 @@ export const useTabs = create<TabsState>()((set, get) => ({
     counter += 1;
     const id = `tab-${counter}`;
     const tab: Tab = { ...spec, id, closable: spec.closable ?? true };
-    set((state) => {
-      // Evict the oldest closable, non-active tab when over the cap.
-      let tabs = [...state.tabs, tab];
-      if (tabs.length > MAX_TABS) {
-        const victim = tabs.find((t) => t.closable && t.id !== id && t.id !== state.activeTabId);
-        if (victim) tabs = tabs.filter((t) => t.id !== victim.id);
-      }
-      const retainedTabIds = Object.fromEntries(tabs.map((candidate) => [candidate.id, true]));
-      const victimIds: Record<string, true> = {};
-      for (const existingTab of state.tabs) {
-        if (!retainedTabIds[existingTab.id]) victimIds[existingTab.id] = true;
-      }
-      const pruned = Object.keys(victimIds).length > 0
-        ? pruneHistory(state.viewHistory, state.historyIndex, victimIds)
-        : historyPatch(state.viewHistory, state.historyIndex);
-      return {
-        tabs,
-        activeTabId: id,
-        ...recordHistory(pruned.viewHistory, pruned.historyIndex, id),
-      };
-    });
+    set((state) => appendNewTab(state, tab));
+    return id;
+  },
+
+  openTabInstance: (spec) => {
+    counter += 1;
+    const id = `tab-${counter}`;
+    const tab: Tab = { ...spec, id, closable: spec.closable ?? true };
+    set((state) => appendNewTab(state, tab));
     return id;
   },
 

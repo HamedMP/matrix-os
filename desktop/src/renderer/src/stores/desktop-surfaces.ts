@@ -115,6 +115,7 @@ interface DesktopSurfacesState {
   focusSurface(tabId: string): void;
   minimizeSurface(tabId: string): void;
   maximizeToTab(tabId: string): void;
+  openSiblingTab(sourceTabId: string, newTabId: string): void;
   restoreSurface(tabId: string): void;
   restoreAsWindow(tabId: string): void;
   closeSurface(tabId: string): void;
@@ -319,6 +320,39 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     }),
     workspaceView: "tabs",
   })),
+
+  openSiblingTab: (sourceTabId, newTabId) => set((state) => {
+    const source = state.surfaces[sourceTabId];
+    if (!source) return state;
+    const surfaces: Record<string, DesktopSurface> = {
+      ...state.surfaces,
+      [sourceTabId]: {
+        ...source,
+        mode: "tab",
+        restoreMode: "tab",
+      },
+      [newTabId]: {
+        ...source,
+        tabId: newTabId,
+        mode: "tab",
+        restoreMode: "tab",
+      },
+    };
+    const focused = nextFocusedState({ surfaces, nextZIndex: state.nextZIndex }, newTabId, {
+      mode: "tab",
+      restoreMode: "tab",
+    });
+    return {
+      ...focused,
+      ...syncDesktopHiddenState(
+        state,
+        focused.surfaces,
+        state.desktopHiddenSurfaceIds.filter((id) => id !== sourceTabId && id !== newTabId),
+        state.desktopTransition?.surfaceIds.filter((id) => id !== sourceTabId && id !== newTabId),
+      ),
+      workspaceView: "tabs",
+    };
+  }),
 
   restoreSurface: (tabId) => set((state) => {
     const surface = state.surfaces[tabId];

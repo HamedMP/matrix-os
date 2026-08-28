@@ -7,21 +7,13 @@ import {
 import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
-import { useTabs } from "../../stores/tabs";
+import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import {
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
 } from "../../stores/desktop-surfaces";
-import { useHermesChat } from "../../stores/hermes-chat";
-import { dispatchActiveAppShortcut } from "./app-shortcuts";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
-
-interface CloseTabShortcutState {
-  activeTabId: string | null;
-  tabs: Array<{ id: string; closable: boolean }>;
-  closeTab(id: string): void;
-}
 
 interface CycleTabShortcutState {
   activeTabId: string | null;
@@ -87,18 +79,6 @@ export function handleMenuNavigate(kind: string): void {
   useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);
 }
 
-export function handleCloseTabShortcut(
-  event: Pick<KeyboardEvent, "preventDefault">,
-  tabs: CloseTabShortcutState,
-): void {
-  event.preventDefault();
-  if (!tabs.activeTabId) return;
-  const tab = tabs.tabs.find((t) => t.id === tabs.activeTabId);
-  if (tab?.closable) {
-    tabs.closeTab(tabs.activeTabId);
-  }
-}
-
 export function handleCloseSelectedAppShortcut(
   event: Pick<KeyboardEvent, "preventDefault">,
 ): void {
@@ -113,8 +93,8 @@ export function handleCloseSelectedAppShortcut(
     activeTab.id,
   );
 
+  surfaces.closeSurface(activeTab.id);
   if (activeTab.closable) tabs.closeTab(activeTab.id);
-  else surfaces.closeSurface(activeTab.id);
   if (!fallbackId) return;
   tabs.focusTab(fallbackId);
   surfaces.activateSurface(fallbackId);
@@ -137,31 +117,68 @@ function activeShortcutTab() {
     : undefined;
 }
 
-export function handleActiveAppTabShortcut(
+function topLevelTabSpec(activeTab: Tab) {
+  if (activeTab.kind === "files") {
+    return {
+      kind: "files" as const,
+      title: activeTab.title,
+      slug: activeTab.slug,
+      closable: true,
+    };
+  }
+  if (activeTab.kind === "terminals" || activeTab.kind === "terminal") {
+    return {
+      kind: "terminals" as const,
+      title: "Terminal",
+      closable: true,
+    };
+  }
+  return null;
+}
+
+function openTopLevelTab(
+  activeTab: Tab,
+  spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
+): string {
+  const tabs = useTabs.getState();
+  const newTabId = tabs.openTabInstance(spec);
+  useDesktopSurfaces.getState().openSiblingTab(activeTab.id, newTabId);
+  return newTabId;
+}
+
+export function handleNewTopLevelTabShortcut(
   event: Pick<KeyboardEvent, "preventDefault">,
-  action: "new-tab" | "close-tab",
 ): boolean {
   event.preventDefault();
-  return activeShortcutTab() ? dispatchActiveAppShortcut(action) : false;
+  const activeTab = activeShortcutTab();
+  if (!activeTab) return false;
+  const spec = topLevelTabSpec(activeTab);
+  if (!spec) return false;
+  openTopLevelTab(activeTab, spec);
+  return true;
+}
+
+export function handleCloseTopLevelTabShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+): void {
+  handleCloseSelectedAppShortcut(event);
 }
 
 export function handleNewContextShortcut(
   event: Pick<KeyboardEvent, "preventDefault">,
 ): void {
   event.preventDefault();
-  const tabs = useTabs.getState();
   const activeTab = activeShortcutTab();
   if (!activeTab) return;
   if (activeTab?.kind !== "chat") {
     useUi.getState().setCreateTaskOpen(true);
     return;
   }
-  useHermesChat.getState().newChat();
-  tabs.openTab({
+  openTopLevelTab(activeTab, {
     kind: "chat",
     title: "Chat",
     chatView: "draft",
-    closable: false,
+    closable: true,
   });
 }
 
@@ -262,11 +279,11 @@ export function useGlobalShortcuts(): void {
         return;
       }
       if (meta && !e.altKey && !e.shiftKey && key === "t") {
-        handleActiveAppTabShortcut(e, "new-tab");
+        handleNewTopLevelTabShortcut(e);
         return;
       }
       if (meta && !e.altKey && !e.shiftKey && key === "w") {
-        handleActiveAppTabShortcut(e, "close-tab");
+        handleCloseTopLevelTabShortcut(e);
         return;
       }
       // Toggle sidebar (⌘B, like Codex; ⌘\ also works).
@@ -297,7 +314,11 @@ export function useGlobalShortcuts(): void {
         handleCloseSelectedAppShortcut({ preventDefault: () => undefined });
       }
       if (action === "new-tab" || action === "close-tab") {
-        handleActiveAppTabShortcut({ preventDefault: () => undefined }, action);
+        if (action === "new-tab") {
+          handleNewTopLevelTabShortcut({ preventDefault: () => undefined });
+        } else {
+          handleCloseTopLevelTabShortcut({ preventDefault: () => undefined });
+        }
       }
       if (action === "new-thread") {
         handleNewAgentRunShortcut({ preventDefault: () => undefined }, ui, useCodingAgentWorkspace.getState());
