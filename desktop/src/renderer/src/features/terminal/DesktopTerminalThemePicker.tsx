@@ -25,7 +25,8 @@ export function DesktopTerminalThemePicker() {
         <button
           type="button"
           aria-label="Shell theme"
-          className="inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium outline-none transition-transform hover:scale-[1.02] focus-visible:ring-2"
+          disabled={!api}
+          className="inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium outline-none transition-transform hover:scale-[1.02] focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
           style={{
             background: "var(--bg-surface)",
             borderColor: "var(--border-subtle)",
@@ -56,7 +57,7 @@ export function DesktopTerminalThemePicker() {
           <DropdownMenu.RadioGroup
             value={themeId}
             onValueChange={(value) => {
-              if (isTerminalThemeId(value)) setThemeId(value, api);
+              if (api && isTerminalThemeId(value)) setThemeId(value, api);
             }}
           >
             {TERMINAL_THEME_OPTIONS.map((option) => {
@@ -65,6 +66,7 @@ export function DesktopTerminalThemePicker() {
                 <DropdownMenu.RadioItem
                   key={option.id}
                   value={option.id}
+                  disabled={!api}
                   className="flex cursor-default items-center gap-3 rounded-lg px-2 py-2 outline-none data-[highlighted]:bg-[var(--bg-hover)]"
                   style={{ background: option.id === themeId ? "var(--bg-selected)" : undefined }}
                 >

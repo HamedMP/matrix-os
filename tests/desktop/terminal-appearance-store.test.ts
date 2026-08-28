@@ -43,13 +43,46 @@ describe("Terminal appearance store", () => {
     expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "powerlevel10k-pure", hydrated: true });
   });
 
-  it("persists a supported shell palette through global terminal preferences", () => {
+  it("persists a supported shell palette through global terminal preferences", async () => {
     const api = createApi();
     useTerminalAppearance.getState().setThemeId("powerlevel10k-classic", api);
 
     expect(useTerminalAppearance.getState().themeId).toBe("powerlevel10k-classic");
-    expect(api.put).toHaveBeenCalledWith("/api/terminal/preferences", {
-      shellThemeId: "powerlevel10k-classic",
+    await vi.waitFor(() => {
+      expect(api.put).toHaveBeenCalledWith("/api/terminal/preferences", {
+        shellThemeId: "powerlevel10k-classic",
+      });
     });
+  });
+
+  it("ignores a shell palette selection while the runtime API is unavailable", () => {
+    useTerminalAppearance.getState().setThemeId("matrix", null);
+
+    expect(useTerminalAppearance.getState()).toMatchObject({
+      themeId: "dark",
+      selectionRevision: 0,
+    });
+  });
+
+  it("serializes rapid shell palette writes in selection order", async () => {
+    let resolveFirst: (() => void) | undefined;
+    const api = createApi();
+    api.put = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      }))
+      .mockResolvedValue({ preferences: { shellThemeId: "powerlevel10k-pure" } });
+
+    useTerminalAppearance.getState().setThemeId("powerlevel10k-classic", api);
+    useTerminalAppearance.getState().setThemeId("powerlevel10k-pure", api);
+
+    await Promise.resolve();
+    expect(api.put).toHaveBeenCalledTimes(1);
+    resolveFirst?.();
+    await vi.waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
+    expect(api.put.mock.calls.map(([, body]) => body)).toEqual([
+      { shellThemeId: "powerlevel10k-classic" },
+      { shellThemeId: "powerlevel10k-pure" },
+    ]);
   });
 });

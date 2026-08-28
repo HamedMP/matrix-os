@@ -150,6 +150,15 @@ describe("TerminalsTab", () => {
     expect(useAppearance.getState().mode).toBe("dark");
   });
 
+  it("disables shell theme selection while the runtime API is unavailable", () => {
+    useConnection.setState({ api: null });
+    useShellSessions.setState({ sessions: [], loading: false, error: null });
+
+    renderTab();
+
+    expect(screen.getByRole("button", { name: "Shell theme" }).hasAttribute("disabled")).toBe(true);
+  });
+
   it("opens the most recently active session instead of showing an unselected overview", async () => {
     useShellSessions.setState({
       sessions: [
