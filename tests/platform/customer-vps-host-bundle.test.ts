@@ -914,19 +914,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
     expect(workflow).toContain('if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then');
     expect(workflow.indexOf('Immediate fleet visibility for ${HANDLE}: ${status}'))
-      .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + PREVIEW_PROVISION_TIMEOUT_SECONDS))'));
-  });
-
-  it('preview VPS workflow waits through registration expiry and reports the terminal failure code', () => {
-    const root = process.cwd();
-    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-    const deployJob = workflow.slice(workflow.indexOf('  deploy:'), workflow.indexOf('  cleanup:'));
-
-    expect(deployJob).toContain('timeout-minutes: 90');
-    expect(deployJob).toContain('PREVIEW_PROVISION_TIMEOUT_SECONDS: 3900');
-    expect(deployJob).toContain('deadline=$((SECONDS + PREVIEW_PROVISION_TIMEOUT_SECONDS))');
-    expect(deployJob).toContain(`failure_code="$(jq -r '.failureCode // "unknown"' <<< "$machine")"`);
-    expect(deployJob).toContain('Provisioning failed for ${HANDLE} (code: ${failure_code})');
+      .toBeLessThan(workflow.indexOf('PREVIEW_MACHINE_ID="$accepted_machine_id" ./scripts/wait-preview-provisioning.sh'));
   });
 
   it('preview VPS workflow safely resumes an existing active preview', () => {
@@ -956,13 +944,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('preview VPS workflow excludes soft-retired rows from every fleet lookup', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const provisioningWait = readFileSync(join(root, 'scripts/wait-preview-provisioning.sh'), 'utf8');
 
     expect(workflow.match(/select\(\.handle == \$h and \.status != "deleted" and \.deletedAt == null\)/g))
       .toHaveLength(2);
     expect(workflow).toContain(
       'select(.handle == $h and .machineId == $id and .runtimeSlot == $h and .deletedAt == null)',
     );
-    expect(workflow).toContain('select(.handle == $h and .machineId == $id and .deletedAt == null)');
+    expect(provisioningWait).toContain('select(.handle == $h and .machineId == $id and .deletedAt == null)');
     expect(workflow).toContain(
       'select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)',
     );
