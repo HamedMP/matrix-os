@@ -35,7 +35,7 @@ function makeApi() {
       }
       throw new Error(`Unexpected GET ${path}`);
     }),
-    post: vi.fn(async () => ({ ok: true, status: "started" })),
+    post: vi.fn(async () => ({ ok: true, status: "started", version: "v2026.08.28" })),
     getText: vi.fn(),
     getBlob: vi.fn(),
     patch: vi.fn(),
@@ -104,7 +104,7 @@ describe("desktop system updates", () => {
         if (path === "/api/system/releases?channel=stable") return { releases: [] };
         throw new Error(`Unexpected GET ${path}`);
       }),
-      post: vi.fn(async () => { installed = true; return { ok: true }; }),
+      post: vi.fn(async () => { installed = true; return { ok: true, version: "v2026.08.28" }; }),
     };
     useConnection.setState({ api: api as never });
     render(<SystemSection />);
@@ -130,7 +130,7 @@ describe("desktop system updates", () => {
         if (path === "/api/system/releases?channel=stable") return { releases: [] };
         throw new Error(`Unexpected GET ${path}`);
       }),
-      post: vi.fn(async () => { updateStarted = true; return { ok: true }; }),
+      post: vi.fn(async () => { updateStarted = true; return { ok: true, version: "v2026.08.28" }; }),
     };
     useConnection.setState({ api: api as never });
     render(<SystemSection />);
@@ -142,6 +142,76 @@ describe("desktop system updates", () => {
       .filter(([path]) => path === "/api/system/info").length).toBeGreaterThanOrEqual(2));
     expect(screen.getByRole("status", { name: /Installing v2026\.08\.28/i })).not.toBeNull();
     expect(screen.queryByText("Update installed successfully.")).toBeNull();
+  });
+
+  it("accepts the version resolved when starting a channel update", async () => {
+    let updateStarted = false;
+    const api = {
+      ...makeApi(),
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/system/info") {
+          return updateStarted
+            ? { release: { version: "v2026.08.29", channel: "stable" } }
+            : { release: { version: "v2026.08.20", channel: "stable" } };
+        }
+        if (path === "/api/system/update?channel=stable") return { latest: { version: "v2026.08.28", channel: "stable" }, updateAvailable: true };
+        if (path === "/api/system/releases?channel=stable") return { releases: [] };
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+      post: vi.fn(async () => { updateStarted = true; return { ok: true, version: "v2026.08.29" }; }),
+    };
+    useConnection.setState({ api: api as never });
+    render(<SystemSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upgrade" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    await waitFor(() => expect(screen.getByText("Update installed successfully.")).not.toBeNull());
+  });
+
+  it("invalidates release data while the active runtime has no API", async () => {
+    const stableUpdate = deferred<unknown>();
+    const stableReleases = deferred<unknown>();
+    const api = {
+      ...makeApi(),
+      get: vi.fn((path: string) => {
+        if (path === "/api/system/info") return Promise.resolve({ release: { version: "v2026.08.20", channel: "stable" } });
+        if (path === "/api/system/update?channel=stable") return stableUpdate.promise;
+        if (path === "/api/system/releases?channel=stable") return stableReleases.promise;
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+    };
+    useConnection.setState({ api: api as never, runtimeSlot: "primary" });
+    render(<SystemSection />);
+
+    await waitFor(() => expect((api.get as ReturnType<typeof vi.fn>).mock.calls
+      .some(([path]) => path === "/api/system/releases?channel=stable")).toBe(true));
+    await act(async () => {
+      useConnection.setState({ api: null, runtimeSlot: "review" });
+      stableUpdate.resolve({ latest: { version: "v2026.08.28", channel: "stable" }, updateAvailable: true });
+      stableReleases.resolve({ releases: [{ version: "v2026.08.28", channel: "stable" }] });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryAllByText("v2026.08.28")).toHaveLength(0);
+  });
+
+  it("does not show an old runtime's failed update on the new runtime", async () => {
+    const pendingUpdate = deferred<unknown>();
+    const api = { ...makeApi(), post: vi.fn(() => pendingUpdate.promise) };
+    useConnection.setState({ api: api as never, runtimeSlot: "primary" });
+    render(<SystemSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upgrade" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+    await act(async () => {
+      advanceRuntimeGeneration();
+      useConnection.setState({ runtimeSlot: "review" });
+      pendingUpdate.resolve(Promise.reject(new Error("request failed")));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.queryByText("The update could not be started.")).toBeNull());
   });
 
   it("ignores an update poll after the active runtime changes", async () => {

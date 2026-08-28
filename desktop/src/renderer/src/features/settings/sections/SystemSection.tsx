@@ -106,14 +106,18 @@ export default function SystemSection() {
   }, [api]);
 
   useEffect(() => {
-    if (!api) return;
     let cancelled = false;
     releaseRequestRef.current += 1;
     if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
     pollTimeoutRef.current = null;
+    setState({ info: null, error: false });
+    setUpdate(null);
+    setReleaseList(null);
+    setLoadingReleases(false);
     setInstallingVersion(null);
     setUpgradeMessage(null);
     setUpgradeError(null);
+    if (!api) return () => { cancelled = true; };
     api.get<SystemInfo>("/api/system/info").then((info) => {
       if (cancelled) return;
       setState({ info, error: false });
@@ -170,19 +174,25 @@ export default function SystemSection() {
 
   const startUpgrade = async (version?: string) => {
     if (!api) return;
-    const targetVersion = version ?? latest?.version;
-    if (!targetVersion) return;
     const runtimeGeneration = captureRuntimeGeneration();
-    setInstallingVersion(targetVersion);
+    setInstallingVersion(version ?? selectedChannel);
     setUpgradeError(null);
     setUpgradeMessage(version ? `Installing ${version}…` : `Switching to the ${selectedChannel} channel…`);
     try {
-      await api.post("/api/system/update", version ? { version } : { channel: selectedChannel }, { timeoutMs: 10_000 });
+      const result = await api.post<{ version?: string }>(
+        "/api/system/update",
+        version ? { version } : { channel: selectedChannel },
+        { timeoutMs: 10_000 },
+      );
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
+      const targetVersion = version ?? result.version;
+      if (!targetVersion) throw new Error("Update target missing from response");
+      setInstallingVersion(targetVersion);
       setUpgradeMessage("Update started. Waiting for the new version to finish installing…");
       void waitForInstallation({ version: targetVersion, runtimeGeneration });
     } catch (err: unknown) {
       console.warn("[settings] start system update failed:", err instanceof Error ? err.message : String(err));
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       setUpgradeError("The update could not be started.");
       setUpgradeMessage(null);
       setInstallingVersion(null);
