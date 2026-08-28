@@ -1,3 +1,6 @@
+import { createSystemUpdateRoutes } from './system-update-routes.js';
+import { createManagedUpdatePolicy } from './managed-update-policy.js';
+import { createManagedServiceHealth } from './managed-service-health.js';
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
@@ -181,18 +184,7 @@ import { collectSystemActivity } from "./system-activity/collector.js";
 import { CleanupCandidateRegistry, executeCleanupAction } from "./system-activity/cleanup.js";
 import { ActivityHistoryStore, AutoCleanupPolicyStore } from "./system-activity/history.js";
 import { createSystemActivityRoutes } from "./system-activity/routes.js";
-import {
-  checkForSystemUpdate,
-  listSystemReleases,
-  parseInternalUpgradeTarget,
-  readSystemUpdateFailure,
-  resolveInternalUpgradeInstallTarget,
-  resolveInternalUpgradeStartTarget,
-  resolveSystemUpdateChannel,
-  startSystemUpdate,
-  startSystemUpdateRepair,
-  writeInternalUpgradeTrigger,
-} from "./system-update.js";
+import { writeInternalUpgradeTrigger } from "./system-update.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
@@ -3871,45 +3863,14 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(report);
   });
 
-  app.get("/api/system/info", (c) => {
+  const managedUpdatePolicy = createManagedUpdatePolicy();
+  const managedServiceHealth = createManagedServiceHealth();
+  app.get("/api/system/info", async (c) => {
     const info = getSystemInfo(homePath, { model: config.model });
     const today = new Date().toISOString().slice(0, 10);
-    return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
-  });
-
-  app.get("/api/system/update", async (c) => {
-    const info = getSystemInfo(homePath, { model: config.model });
-    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
-      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
-      installedChannel: info.release?.channel,
-    });
-    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
-    const result = await checkForSystemUpdate({
-      installed: info.release ?? {
-        version: info.version,
-        gitCommit: info.build.sha,
-        gitRef: info.build.ref,
-        buildTime: info.build.date,
-      },
-      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
-      channel,
-    });
-    const installError = await readSystemUpdateFailure();
-    return c.json({ ...result, installError });
-  });
-
-  app.get("/api/system/releases", async (c) => {
-    const info = getSystemInfo(homePath, { model: config.model });
-    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
-      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
-      installedChannel: info.release?.channel,
-    });
-    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
-    const result = await listSystemReleases({
-      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
-      channel,
-    });
-    return c.json(result);
+    return c.json({ ...info, managedUpdates: managedUpdatePolicy.managed,
+      ...(managedUpdatePolicy.managed ? { managedServiceHealth: await managedServiceHealth() } : {}),
+      versionSelectionAllowed: await managedUpdatePolicy.selectionAllowed(), todayCost: interactionLogger.totalCost(today) });
   });
 
   app.post("/system/backup", bodyLimit({ maxSize: 1024 }), (c) => {
@@ -3925,77 +3886,14 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ error: "Backup trigger not implemented" }, 501);
   });
 
-  async function startUpdateFromRequest(c: Context) {
-    let body: unknown = {};
-    try {
-      body = await c.req.json();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        console.warn("[system-update] Failed to parse update request:", err);
-      }
-    }
-    const info = getSystemInfo(homePath, { model: config.model });
-    const parsedTarget = resolveInternalUpgradeStartTarget(body, {
-      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
-      installedChannel: info.release?.channel,
-    });
-    if (!parsedTarget.ok) return c.json({ error: "Invalid request" }, 400);
-
-    let installTarget: Extract<typeof parsedTarget.target, { type: "version" }>;
-    try {
-      installTarget = await resolveInternalUpgradeInstallTarget({
-        target: parsedTarget.target,
-        platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
-      });
-    } catch (err: unknown) {
-      console.warn("[system-update] Failed to resolve requested update version:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: "Update is unavailable" }, 503);
-    }
-
-    const result = await startSystemUpdate({ target: installTarget });
-    if (!result.ok) {
-      return c.json({ error: "Update not configured" }, 503);
-    }
-    const targetProperty =
-      parsedTarget.target.type === "channel"
-        ? { channel: parsedTarget.target.value, version: installTarget.value }
-        : { version: parsedTarget.target.value };
-    void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
-      distinctId: ownerTelemetryDistinctId,
-      properties: {
-        ...targetProperty,
-        targetType: parsedTarget.target.type,
-        handle: process.env.MATRIX_HANDLE,
-      },
-    }).catch((err: unknown) => {
-      const kind = err instanceof Error ? err.name : typeof err;
-      console.warn(`[posthog] Failed to queue system update event: ${kind}`);
-    });
-    return c.json({ ok: true, status: result.status, ...targetProperty }, 202);
-  }
-
-  app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);
-
-  app.post("/api/system/update/repair", upgradeBodyLimit, async (c) => {
-    const result = await startSystemUpdateRepair();
-    if (!result.ok) {
-      return c.json({ error: "Update repair not configured" }, 503);
-    }
-    void posthogErrorTracker.captureEvent("matrix_system_update_repair_requested", {
-      distinctId: ownerTelemetryDistinctId,
-      properties: {
-        handle: process.env.MATRIX_HANDLE,
-      },
-    }).catch((err: unknown) => {
-      const kind = err instanceof Error ? err.name : typeof err;
-      console.warn(`[posthog] Failed to queue system update repair event: ${kind}`);
-    });
-    return c.json({ ok: true, status: result.status }, 202);
-  });
-
-  app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
-    return startUpdateFromRequest(c);
-  });
+  app.route("/api/system", createSystemUpdateRoutes({
+    getInfo: () => getSystemInfo(homePath, { model: config.model }),
+    policy: managedUpdatePolicy,
+    isBusy: () => dispatcher.activeCount > 0 || dispatcher.queueLength > 0,
+    capture: (event, properties) => posthogErrorTracker.captureEvent(event, {
+      distinctId: ownerTelemetryDistinctId, properties,
+    }),
+  }));
 
   const usageTracker = createUsageTracker(homePath);
 
@@ -4388,6 +4286,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
 
   app.post("/api/internal/upgrade", upgradeBodyLimit, async (c) => {
+    if (!await managedUpdatePolicy.canSelect(c.req.header("authorization"), c.req.header("x-matrix-customer-proxy"))) return c.json({ error: "Updates are managed automatically" }, 403);
     const upgradeToken = process.env.UPGRADE_TOKEN;
     if (!upgradeToken) return c.json({ error: "UPGRADE_TOKEN not configured" }, 503);
     const auth = c.req.header("authorization");

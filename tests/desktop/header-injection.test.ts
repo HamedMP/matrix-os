@@ -81,6 +81,12 @@ function headerSession() {
 }
 
 describe("installHeaderInjection", () => {
+  it("sends native client compatibility metadata only to the selected gateway", () => {
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => "matrix-token", () => GATEWAY, "null", { target: "desktop-macos", version: "1.2.3" });
+    expect(fire(`${GATEWAY}/api/apps`)).toMatchObject({ "x-matrix-client-target": "desktop-macos", "x-matrix-client-version": "1.2.3" });
+    expect(fire("https://outside.example/api/apps")).toEqual({});
+  });
   it("sets the trusted Matrix OS referrer for packaged Support widget calls", () => {
     const { session, fire } = headerSession();
     installHeaderInjection(session, () => null, () => GATEWAY, "null");

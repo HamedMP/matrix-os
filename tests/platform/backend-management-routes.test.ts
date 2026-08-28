@@ -1,0 +1,45 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db';
+import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper';
+import { createBackendManagementRoutes, createClientPolicyRoutes } from '../../packages/platform/src/backend-management-routes';
+const secret = 'platform-admin-secret';
+describe('backend management route boundaries', () => {
+  let db: PlatformDB;
+  beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
+  afterEach(async () => { await destroyTestPlatformDb(db); });
+  it('requires operator auth, validates input and rejects stale policy writes', async () => {
+    const app = createBackendManagementRoutes({ db, platformSecret: secret });
+    expect((await app.request('/status')).status).toBe(401);
+    const request = (body: unknown) => app.request('/policy', { method: 'PUT', headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    expect((await request({ revision: 0, config: { enabled: false } })).status).toBe(200);
+    expect((await request({ revision: 0, config: { enabled: false } })).status).toBe(409);
+    expect((await request({ revision: 1, config: { batchSize: 1000 } })).status).toBe(400);
+    expect((await request({ padding: 'x'.repeat(33_000) })).status).toBe(413);
+  });
+  it('keeps client policy public and no-store, with unknown clients allowed during migration', async () => {
+    const app = createClientPolicyRoutes({ db });
+    const response = await app.request('/?target=mobile-ios');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    expect(await response.json()).toEqual({ schemaVersion: 1, revision: 0, policy: null });
+    expect((await app.request('/?target=invalid')).status).toBe(400);
+  });
+  it('rejects nonexistent canaries and unknown bridge artifacts without changing policy', async () => {
+    const app = createBackendManagementRoutes({ db, platformSecret: secret });
+    for (const config of [{ enabled: true, canaryMachineIds: ['missing'] }, { bootstrapVersion: 'v2026.01.01-1' }]) {
+      expect((await app.request('/policy', { method: 'PUT', headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ revision: 0, config }) })).status).toBe(400);
+    }
+  });
+  it('scopes support policy to a machine bearer and lets operators revoke a hold', async () => {
+    await insertUserMachine(db, { machineId: 'machine_1', clerkUserId: 'user_1', handle: 'person', status: 'running', provisionedAt: new Date().toISOString() });
+    const app = createBackendManagementRoutes({ db, platformSecret: secret });
+    const admin = { authorization: `Bearer ${secret}` };
+    const machine = { authorization: `Bearer ${buildPlatformVerificationToken('person', secret)}` };
+    expect((await app.request('/machines/machine_1/policy', { headers: admin })).status).toBe(401);
+    expect((await app.request('/machines/machine_1/override', { method: 'PUT', headers: admin, body: JSON.stringify({ until: new Date(Date.now() + 60_000).toISOString(), reason: 'Debugging', allowVersionSelection: true }) })).status).toBe(200);
+    expect(await (await app.request('/machines/machine_1/policy', { headers: machine })).json()).toMatchObject({ versionSelectionAllowed: true });
+    expect((await app.request('/machines/machine_1/override', { method: 'DELETE', headers: admin })).status).toBe(200);
+    expect(await (await app.request('/machines/machine_1/policy', { headers: machine })).json()).toMatchObject({ versionSelectionAllowed: false, holdUntil: null });
+  });
+});

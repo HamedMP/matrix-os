@@ -1,3 +1,4 @@
+import { ClientPolicyResponseSchema } from '@matrix-os/contracts';
 // Single source of truth for the renderer ↔ trusted-core IPC contract
 // (specs/094-electron-macos-shell/contracts/ipc-contract.md). Both main and
 // preload import this module; every channel is validated on both sides
@@ -377,6 +378,7 @@ export const INVOKE_CHANNELS = {
       .strict(),
     response: Ok,
   },
+  "update:compatibility": { request: Empty, response: ClientPolicyResponseSchema.extend({ version: z.string().max(64) }) },
   "update:check": {
     request: Empty,
     response: DesktopUpdateSnapshotSchema,

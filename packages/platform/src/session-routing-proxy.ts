@@ -12,6 +12,7 @@ export const APP_ASSET_ROUTE_TOKEN_PARAM = 'matrix_asset_token';
 export const APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS = [APP_ASSET_ROUTE_TOKEN_PARAM] as const;
 
 const SENSITIVE_PROXY_HEADERS = new Set([
+  'x-matrix-customer-proxy',
   'authorization',
   'cookie',
   EDGE_SECRET_HEADER,

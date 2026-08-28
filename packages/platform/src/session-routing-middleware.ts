@@ -1,3 +1,4 @@
+import { allowManagedUpdateProxy } from './managed-update-proxy.js';
 import { randomBytes } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import type Dockerode from 'dockerode';
@@ -471,6 +472,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
       if (platformSecret) {
+        if (!await allowManagedUpdateProxy(db, runningMachine.machineId, c.req.method, c.req.path)) return c.json({ error: 'Updates are managed automatically' }, 403);
+        headers.set('x-matrix-customer-proxy', '1');
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(handle, platformSecret)}`);
       }
 
@@ -729,6 +732,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       // runtime credential. The gateway authorizes this exact stream path by
       // validating its opaque token against the live native-app session.
       if (platformSecret && !explicitVmRouteHasNativeAppStreamCapability) {
+        if (!await allowManagedUpdateProxy(db, machine.machineId, c.req.method, c.req.path)) return c.json({ error: 'Updates are managed automatically' }, 403);
+        headers.set('x-matrix-customer-proxy', '1');
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`);
         if (identity.userId) {
           headers.set('x-platform-user-id', identity.userId);
@@ -877,6 +882,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         headers.set('connection', 'close');
       }
       if (platformSecret) {
+        if (!await allowManagedUpdateProxy(db, runningMachine.machineId, c.req.method, c.req.path)) return c.json({ error: 'Updates are managed automatically' }, 403);
+        headers.set('x-matrix-customer-proxy', '1');
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
         const platformUserId =
           identity.source === 'static-route' ? runningMachine.clerkUserId : identity.userId;
@@ -1061,6 +1068,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('connection', 'close');
     }
     if (platformSecret && isAppDomain) {
+      headers.set('x-matrix-customer-proxy', '1');
       headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
       const platformUserId =
         identity.source === 'static-route' ? record.clerkUserId : identity.userId;

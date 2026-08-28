@@ -55,6 +55,15 @@ describe("desktop system updates", () => {
     vi.restoreAllMocks();
   });
 
+  it("hides backend version selection for managed customers", async () => {
+    const api = makeApi();
+    api.get.mockImplementation(async () => ({ managedUpdates: true, versionSelectionAllowed: false }) as never);
+    useConnection.setState({ api: api as never });
+    render(<SystemSection />);
+    await waitFor(() => expect(screen.getByText("Updates are managed automatically.")).toBeTruthy());
+    expect(screen.queryByLabelText("Release channel")).toBeNull();
+  });
+
   it("loads release channels and available versions", async () => {
     render(<SystemSection />);
 

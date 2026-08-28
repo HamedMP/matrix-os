@@ -19,6 +19,8 @@ interface SystemRelease {
 }
 
 interface SystemInfo {
+  managedUpdates?: boolean;
+  versionSelectionAllowed?: boolean;
   version?: string;
   updateChannel?: string;
   runtime?: { handle?: string; runtimeSlot?: string; machineId?: string };
@@ -126,7 +128,7 @@ export default function SystemSection() {
       setState({ info, error: false });
       const installedChannel = channel(info.updateChannel ?? info.release?.channel);
       setSelectedChannel(installedChannel);
-      void loadReleases(installedChannel);
+      if (!info.managedUpdates || info.versionSelectionAllowed) void loadReleases(installedChannel);
     }).catch((err: unknown) => {
       if (cancelled || request !== systemInfoRequestRef.current || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.warn("[settings] load system info failed:", err instanceof Error ? err.message : String(err));
@@ -226,7 +228,10 @@ export default function SystemSection() {
         )}
       </Card>
 
-      <Card>
+      {info?.managedUpdates && !info.versionSelectionAllowed ? <Card>
+        <p>Updates are managed automatically.</p>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Your cloud computer follows the stable backend release. App updates are separate.</p>
+      </Card> : <Card>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h4 className="text-md font-normal" style={{ color: "var(--text-primary)" }}>Updates</h4>
@@ -306,7 +311,7 @@ export default function SystemSection() {
             );
           })}
         </div>
-      </Card>
+      </Card>}
     </>
   );
 }

@@ -2,6 +2,10 @@
 
 Complete guide for deploying Matrix OS on Hetzner. Production Matrix OS is VPS-native: one VPS per user, host-level Matrix services, local owner-controlled Postgres, Cloudflare routing, R2 backups, and no user runtime containers.
 
+Automatic stable updates and migration of existing machines are described in
+[Managed backend releases](managed-backend.md). Use its reviewed canary and cohort
+workflow instead of a fleet-wide manual deploy when managed updates are enabled.
+
 ## Production Rule: VPS-Native Only
 
 Effective 2026-05-06, production user runtime is **per-user VPS only**.
