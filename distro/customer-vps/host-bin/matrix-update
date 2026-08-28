@@ -45,6 +45,10 @@ case "${1:-apply}" in
     echo "Rollback triggered. Tailing sync-agent log (Ctrl-C to stop)..."
     ;;
   repair)
+    # A failed update can replace this launcher while the long-running agent
+    # still has older updater functions loaded. Reload it before exposing the
+    # repair trigger so stale code cannot consume the retry.
+    sudo /usr/bin/timeout --signal=KILL 30 /usr/bin/systemctl restart matrix-sync-agent.service
     touch /opt/matrix/app/.update-repair-now
     echo "Update repair triggered. Tailing sync-agent log (Ctrl-C to stop)..."
     ;;
