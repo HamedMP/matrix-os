@@ -97,7 +97,8 @@ export function handleCloseSelectedAppShortcut(
   surfaces.closeSurface(activeTab.id);
   if (activeTab.closable) tabs.closeTab(activeTab.id);
   if (!fallbackId) {
-    if (!activeTab.closable) tabs.clearActiveTab(activeTab.id);
+    const selectedTabId = useTabs.getState().activeTabId;
+    if (selectedTabId) tabs.clearActiveTab(selectedTabId);
     return;
   }
   tabs.focusTab(fallbackId);

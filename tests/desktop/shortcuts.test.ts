@@ -56,6 +56,25 @@ describe("handleCloseSelectedAppShortcut", () => {
     expect(useTabs.getState().activeTabId).toBeNull();
   });
 
+  it("does not reselect a closed retained app after closing its fallback", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({
+      kind: "terminals",
+      title: "Terminal",
+      closable: true,
+    });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useTabs.getState().focusTab(filesId);
+    useDesktopSurfaces.getState().activateSurface(filesId);
+
+    handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+    handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("closed");
+    expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([filesId]);
+    expect(useTabs.getState().activeTabId).toBeNull();
+  });
+
   it("suppresses the native shortcut without closing a hidden selected app", () => {
     const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
     useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
