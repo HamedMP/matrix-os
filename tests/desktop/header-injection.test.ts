@@ -109,6 +109,16 @@ describe("installHeaderInjection", () => {
     expect(headers.Referer).toBeUndefined();
   });
 
+  it("keeps the official Matrix OS referrer when a packaged build targets a preview gateway", () => {
+    const previewGateway = "https://pr-1366---matrix-platform-preview.example.run.app";
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => null, () => previewGateway, "null");
+
+    const headers = fire(`${previewGateway}/relay/api/conversations/v1/widget/message`);
+
+    expect(headers.Referer).toBe("https://app.matrix-os.com/");
+  });
+
   it("preserves gateway Authorization injection alongside the packaged Support referrer", () => {
     const { session, fire } = headerSession();
     installHeaderInjection(session, () => "matrix-token", () => GATEWAY, "null");

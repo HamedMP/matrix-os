@@ -28,6 +28,8 @@ interface SessionLike {
   webRequest: WebRequestLike;
 }
 
+const MATRIX_SUPPORT_REFERRER = "https://app.matrix-os.com/";
+
 function normalizeWsScheme(url: URL): string {
   if (url.protocol === "ws:") return "http:";
   if (url.protocol === "wss:") return "https:";
@@ -126,19 +128,14 @@ export function installHeaderInjection(
       details.requestHeaders["Authorization"] = `Bearer ${token}`;
     }
     if (rendererOrigin === "null" && shouldInjectAuth(details.url, gatewayOrigin)) {
-      try {
-        const request = new URL(details.url);
-        const gateway = gatewayOrigin ? new URL(gatewayOrigin) : null;
-        if (
-          gateway &&
-          (request.protocol === "http:" || request.protocol === "https:") &&
-          request.pathname.startsWith("/relay/api/conversations/v1/widget/")
-        ) {
-          details.requestHeaders.Referer = `${gateway.origin}/`;
-        }
-      } catch (error: unknown) {
-        if (!(error instanceof TypeError)) throw error;
-        // Invalid URLs already fail shouldInjectAuth; keep the request unchanged.
+      // shouldInjectAuth has already parsed and validated this URL against the
+      // active gateway origin, so constructing it here cannot fail.
+      const request = new URL(details.url);
+      if (
+        (request.protocol === "http:" || request.protocol === "https:") &&
+        request.pathname.startsWith("/relay/api/conversations/v1/widget/")
+      ) {
+        details.requestHeaders.Referer = MATRIX_SUPPORT_REFERRER;
       }
     }
     callback({ requestHeaders: details.requestHeaders });
