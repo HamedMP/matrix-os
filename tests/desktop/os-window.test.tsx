@@ -48,9 +48,13 @@ describe("Electron OS window chrome", () => {
     expect(screen.queryByText("Terminal")).toBeNull();
 
     const closeButton = screen.getByRole("button", { name: "Close" });
-    expect(closeButton.className).toContain("size-4");
-    expect(closeButton.className).toContain("rounded-[4.8px]");
-    expect((closeButton as HTMLElement).style.background).toBe("var(--surface-primary, #FFFEFC)");
+    expect(closeButton.className).toContain("size-3");
+    expect(closeButton.className).toContain("rounded-full");
+    expect(closeButton.className).toContain("bg-[#ff5f57]");
+    expect(screen.getByRole("button", { name: "Minimize" }).className).toContain("bg-[#febc2e]");
+    expect(screen.getByRole("button", { name: "Maximize" }).className).toContain("bg-[#28c840]");
+    expect(closeButton.querySelector("svg")).toBeNull();
+    expect(closeButton.parentElement?.className).toContain("gap-1.5");
 
     fireEvent.click(closeButton);
     expect(onClose).toHaveBeenCalledOnce();
@@ -69,7 +73,7 @@ describe("Electron OS window chrome", () => {
       </OSWindow>,
     );
 
-    expect((screen.getByTestId("sidebar-safe-view") as HTMLElement).style.paddingTop).toBe("38px");
+    expect((screen.getByTestId("sidebar-safe-view") as HTMLElement).style.paddingTop).toBe("48px");
     expect((screen.getByTestId("pane-safe-view") as HTMLElement).style.paddingTop).toBe("");
 
     rerender(
@@ -78,7 +82,7 @@ describe("Electron OS window chrome", () => {
       </OSWindow>,
     );
 
-    expect((container.querySelector('[data-os-window-safe-view="pane"]') as HTMLElement).style.paddingTop).toBe("38px");
+    expect((container.querySelector('[data-os-window-safe-view="pane"]') as HTMLElement).style.paddingTop).toBe("48px");
 
     rerender(
       <OSWindow surfaceId="project-tab" safeAreaLayout="pane">

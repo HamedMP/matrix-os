@@ -191,6 +191,7 @@ export default function DesktopSurfaceFrame({
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBar={isWindow ? (
         <TopBar
+          title={tab.title}
           chromePlacement={sidebarOwnsChrome ? "sidebar" : "full-width"}
           sidebarWidth={sidebarOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
           onClose={onClose}
