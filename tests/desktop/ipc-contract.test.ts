@@ -885,6 +885,7 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ key: "desktopShell", value: { mode: "canvas" } }).success).toBe(true);
     expect(schema.safeParse({ key: "terminalAppearance", value: { mode: "dark" } }).success).toBe(true);
     expect(schema.safeParse({ key: "terminalAppearance", value: { appThemeId: "matrix" } }).success).toBe(true);
+    expect(schema.safeParse({ key: "terminalAppearance", value: { themeId: "powerlevel10k-pure" } }).success).toBe(true);
     expect(schema.safeParse({
       key: "projectViews",
       value: {

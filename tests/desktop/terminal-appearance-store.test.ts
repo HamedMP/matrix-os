@@ -15,28 +15,28 @@ describe("Terminal appearance store", () => {
     };
   });
 
-  it("defaults Terminal chrome to Matrix OS Dark before persisted state hydrates", () => {
-    expect(useTerminalAppearance.getState()).toMatchObject({ appThemeId: "matrix-dark", hydrated: false });
+  it("defaults the shell palette to Matrix OS Dark before persisted state hydrates", () => {
+    expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "matrix-dark", hydrated: false });
   });
 
-  it("loads a saved light preference without reading the global Desktop appearance", async () => {
+  it("loads a saved shell palette without changing the global Desktop appearance", async () => {
     window.operator.invoke = vi.fn(async (channel: string) => {
-      if (channel === "state:get") return { value: { mode: "light" } };
+      if (channel === "state:get") return { value: { themeId: "powerlevel10k-rainbow" } };
       return { ok: true };
     });
 
     await useTerminalAppearance.getState().load();
 
-    expect(useTerminalAppearance.getState()).toMatchObject({ appThemeId: "light", hydrated: true });
+    expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "powerlevel10k-rainbow", hydrated: true });
     expect(window.operator.invoke).toHaveBeenCalledWith("state:get", { key: "terminalAppearance" });
   });
 
-  it("falls back to Matrix OS Dark when persisted state is absent or invalid", async () => {
-    window.operator.invoke = vi.fn(async () => ({ value: { mode: "system" } }));
+  it("migrates the old app-chrome preference into the equivalent shell palette", async () => {
+    window.operator.invoke = vi.fn(async () => ({ value: { appThemeId: "matrix" } }));
 
     await useTerminalAppearance.getState().load();
 
-    expect(useTerminalAppearance.getState()).toMatchObject({ appThemeId: "matrix-dark", hydrated: true });
+    expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "matrix", hydrated: true });
   });
 
   it("preserves a newer explicit selection when startup hydration resolves late", async () => {
@@ -51,20 +51,20 @@ describe("Terminal appearance store", () => {
     });
 
     const load = useTerminalAppearance.getState().load();
-    useTerminalAppearance.getState().setAppThemeId("light");
+    useTerminalAppearance.getState().setThemeId("powerlevel10k-pure");
     resolveLoad?.({ value: { mode: "dark" } });
     await load;
 
-    expect(useTerminalAppearance.getState()).toMatchObject({ appThemeId: "light", hydrated: true });
+    expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "powerlevel10k-pure", hydrated: true });
   });
 
-  it("persists an explicit Terminal-only app theme change", () => {
-    useTerminalAppearance.getState().setAppThemeId("matrix");
+  it("persists an explicit shell palette change", () => {
+    useTerminalAppearance.getState().setThemeId("dracula");
 
-    expect(useTerminalAppearance.getState().appThemeId).toBe("matrix");
+    expect(useTerminalAppearance.getState().themeId).toBe("dracula");
     expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
       key: "terminalAppearance",
-      value: { appThemeId: "matrix" },
+      value: { themeId: "dracula" },
     });
   });
 });

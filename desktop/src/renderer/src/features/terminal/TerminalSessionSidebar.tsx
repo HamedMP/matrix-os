@@ -32,24 +32,18 @@ export function TerminalSessionSidebar({
       data-terminal-session-sidebar
       className="flex h-full min-h-0 w-full flex-col"
     >
-      <aside
-        className="flex h-full min-h-0 w-full flex-col"
-        style={{ background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" }}
-      >
-      <div className="flex shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--terminal-drawer-border)" }}>
+      <aside className="flex h-full min-h-0 w-full flex-col">
+      <div className="flex shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-subtle)" }}>
         <div className="flex min-w-0 items-center gap-1">
           <SquareTerminal size={16} aria-hidden="true" />
-          <h1 className="truncate text-base font-medium tracking-[-0.4px]">Terminal</h1>
+          <h1 className="truncate text-base font-medium tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>Terminal</h1>
         </div>
         <button
           type="button"
           aria-label="New terminal session"
           disabled={disabled || creating}
           className="flex size-6 shrink-0 items-center justify-center rounded-md disabled:opacity-50"
-          style={{
-            background: "var(--terminal-drawer-primary-button-bg)",
-            color: "var(--terminal-drawer-primary-button-fg)",
-          }}
+          style={{ background: "var(--accent)", color: "var(--text-on-accent)" }}
           onClick={onCreate}
         >
           <Plus size={16} aria-hidden="true" />
@@ -59,35 +53,31 @@ export function TerminalSessionSidebar({
         {sessions.map((session) => {
           const selected = selectedName === session.name;
           return (
-            <li key={session.name} className="group/session relative shrink-0 border-b" style={{ borderColor: "var(--terminal-drawer-border)" }}>
+            <li key={session.name} className="group/session relative shrink-0 border-b" style={{ borderColor: "var(--border-subtle)" }}>
               <button
                 type="button"
                 aria-label={`Open ${session.name}`}
                 aria-current={selected || undefined}
-                className="flex min-h-11 w-full min-w-0 items-center gap-1.5 px-4 py-3 pr-24 text-left hover:bg-[var(--terminal-drawer-card-bg)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset"
-                style={{
-                  background: selected ? "var(--terminal-drawer-card-selected-bg)" : "transparent",
-                  color: "var(--terminal-drawer-fg)",
-                }}
+                className="flex min-h-11 w-full min-w-0 items-center gap-1.5 px-4 py-3 pr-24 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                style={{ background: selected ? "var(--bg-hover)" : "transparent" }}
                 onClick={() => onSelect(session)}
               >
                 <span
                   data-terminal-session-status={isActive(session) ? "active" : "inactive"}
                   className="size-2.5 shrink-0 rounded-full"
-                  style={{ background: isActive(session) ? "var(--terminal-drawer-selected-stripe)" : "var(--terminal-drawer-muted)" }}
+                  style={{ background: isActive(session) ? "var(--success)" : "var(--text-tertiary)" }}
                 />
-                <span className="min-w-0 flex-1 truncate text-sm leading-5">
+                <span className="min-w-0 flex-1 truncate text-sm leading-5" style={{ color: "var(--text-primary)" }}>
                   {session.name}
                 </span>
               </button>
-              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs transition-opacity group-hover/session:opacity-0" style={{ color: "var(--terminal-drawer-muted)" }}>
+              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs transition-opacity group-hover/session:opacity-0" style={{ color: "var(--text-tertiary)" }}>
                 {relativeSessionActivity(session.updatedAt)}
               </span>
               <button
                 type="button"
                 aria-label={`Delete ${session.name}`}
-                className="absolute right-3 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-[var(--terminal-drawer-card-bg)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 group-hover/session:opacity-100"
-                style={{ color: "var(--terminal-drawer-destructive-fg)" }}
+                className="absolute right-3 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md bg-[var(--bg-surface)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] group-hover/session:opacity-100"
                 onClick={() => onDelete(session)}
               >
                 <Trash2 size={14} aria-hidden="true" />
@@ -96,7 +86,7 @@ export function TerminalSessionSidebar({
           );
         })}
       </ul>
-      <footer className="shrink-0 border-t p-3" style={{ borderColor: "var(--terminal-drawer-border)" }}>
+      <footer className="shrink-0 border-t p-3" style={{ borderColor: "var(--border-subtle)" }}>
         <DesktopTerminalThemePicker />
       </footer>
       </aside>

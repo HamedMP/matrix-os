@@ -1,4 +1,5 @@
 import { getTerminalThemePreset } from "../../lib/terminal/terminal-themes";
+import type { TerminalThemeId } from "../../lib/terminal/terminal-settings-types";
 
 export type TerminalAppearanceMode = "dark" | "light";
 
@@ -39,12 +40,6 @@ export function getTerminalAppearanceTokens(
   return TERMINAL_APPEARANCE_TOKENS[mode];
 }
 
-export function getDesktopTerminalXtermTheme(mode: TerminalAppearanceMode) {
-  const tokens = getTerminalAppearanceTokens(mode);
-  const preset = getTerminalThemePreset(mode === "dark" ? "one-dark" : "one-light");
-  return {
-    ...preset,
-    background: tokens.surface,
-    foreground: tokens.text,
-  };
+export function getDesktopTerminalXtermTheme(themeId: TerminalThemeId) {
+  return getTerminalThemePreset(themeId);
 }

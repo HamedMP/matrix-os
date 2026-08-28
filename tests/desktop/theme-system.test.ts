@@ -27,6 +27,7 @@ describe("unified theme registry", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain(DEFAULT_THEME_ID);
     expect(ids).toContain("matrix");
+    expect(ids).toContain("matrix-neon");
 
     for (const theme of unifiedThemes) {
       expect(theme.name.length).toBeGreaterThan(0);
@@ -71,6 +72,7 @@ describe("unified theme registry", () => {
     expect(getUnifiedTheme("does-not-exist").id).toBe(DEFAULT_THEME_ID);
     expect(isThemeId("does-not-exist")).toBe(false);
     expect(isThemeId("matrix")).toBe(true);
+    expect(isThemeId("matrix-neon")).toBe(true);
     expect(getThemeTerminalColors("matrix", "dark").background.length).toBeGreaterThan(0);
   });
 });

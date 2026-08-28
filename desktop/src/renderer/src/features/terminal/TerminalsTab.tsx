@@ -33,7 +33,6 @@ import TerminalView from "./TerminalView";
 import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
 import { relativeSessionActivity } from "./terminal-session-activity";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
-import { getDesktopTerminalAppCssVars } from "./terminal-app-theme";
 
 const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
 const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -188,10 +187,8 @@ export default function TerminalsTab({
   const terminalsTabId = useTabs((s) => s.tabs.find((tab) => tab.kind === "terminals")?.id);
   const renameTab = useTabs((s) => s.renameTab);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
-  const appThemeId = useTerminalAppearance((s) => s.appThemeId);
   const terminalAppearanceHydrated = useTerminalAppearance((s) => s.hydrated);
   const loadTerminalAppearance = useTerminalAppearance((s) => s.load);
-  const terminalAppCssVars = getDesktopTerminalAppCssVars(appThemeId);
   const [selectedName, setSelectedName] = useState<string | null>(() => mostRecentShell(shells)?.name ?? null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
   const [openedSessionNames, setOpenedSessionNames] = useState<string[]>([]);
@@ -451,12 +448,11 @@ export default function TerminalsTab({
       data-testid="desktop-terminal-app"
       className="relative flex min-h-0 flex-1 overflow-hidden"
       style={{
-        ...terminalAppCssVars,
-        background: "var(--terminal-app-window-bg)",
-        color: "var(--terminal-chrome-fg)",
+        background: "var(--bg-app)",
+        color: "var(--text-primary)",
       }}
     >
-      <div className="w-[280px] min-w-[200px] max-w-[280px] shrink-0 border-r" style={{ borderColor: "var(--terminal-drawer-border)" }}>
+      <div className="w-[280px] min-w-[200px] max-w-[280px] shrink-0 border-r" style={{ borderColor: "var(--border-subtle)" }}>
         <TerminalSessionSidebar
           sessions={shells}
           selectedName={selectedName}
@@ -474,7 +470,7 @@ export default function TerminalsTab({
           active={active && overviewSelected}
           visible={visible && overviewSelected}
           className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
-          background="var(--terminal-app-body-bg)"
+          background="var(--bg-surface)"
           style={{ borderRadius: 8 }}
         >
         <div className="flex min-h-0 flex-1 items-center justify-center p-6">
@@ -522,25 +518,25 @@ export default function TerminalsTab({
               active={active && selected}
               visible={visible && selected}
               className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
-              background="var(--terminal-app-body-bg)"
+              background="var(--bg-surface)"
               style={{ borderRadius: 8 }}
             >
             <header
               className="flex shrink-0 items-center justify-between border-b px-4 py-4"
-              style={{ borderColor: "var(--terminal-chrome-border)", background: "var(--terminal-app-body-bg)" }}
+              style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
             >
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-xs font-medium leading-[19.5px]" style={{ color: "var(--terminal-chrome-fg)" }}>{shellTitle(shell)}</h1>
-                <p className="mt-1 truncate text-xs leading-4 tracking-[0.12px]" style={{ color: "var(--terminal-chrome-muted)" }}>
+                <h1 className="truncate text-xs font-medium leading-[19.5px]" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</h1>
+                <p className="mt-1 truncate text-xs leading-4 tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
                   Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
                 </p>
               </div>
               <span
                 className="inline-flex h-5 items-center justify-center rounded-[26px] border px-2 py-0.5 text-xs font-medium leading-4"
                 style={{
-                  borderColor: "var(--terminal-chrome-badge-border)",
-                  background: "var(--terminal-chrome-badge-bg)",
-                  color: activeStatus ? "var(--terminal-chrome-accent)" : "var(--terminal-chrome-muted)",
+                  borderColor: "var(--border-subtle)",
+                  background: "var(--bg-selected)",
+                  color: activeStatus ? "var(--success)" : "var(--text-tertiary)",
                 }}
               >
                 {statusLabel}
@@ -550,7 +546,7 @@ export default function TerminalsTab({
               <div
                 data-terminal-viewport
                 className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
-                style={{ background: "var(--terminal-app-body-bg)" }}
+                style={{ background: "var(--bg-surface)" }}
               >
                 <TerminalView
                   sessionName={sessionName}

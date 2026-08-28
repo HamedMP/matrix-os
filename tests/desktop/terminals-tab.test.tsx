@@ -23,6 +23,7 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
     active?: boolean;
   }) => {
     const themeMode = useAppearance((state) => state.mode);
+    const terminalThemeId = useTerminalAppearance((state) => state.themeId);
     React.useEffect(() => {
       terminalMounts.set(sessionName, (terminalMounts.get(sessionName) ?? 0) + 1);
       return () => {
@@ -34,6 +35,7 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
         data-testid={`terminal-view-${sessionName}`}
         data-active={active ? "true" : "false"}
         data-theme-mode={themeMode}
+        data-terminal-theme-id={terminalThemeId}
       >
         Terminal {sessionName}
       </div>
@@ -91,7 +93,7 @@ describe("TerminalsTab", () => {
     }, true);
     useTerminalAppearance.setState({
       ...useTerminalAppearance.getInitialState(),
-      appThemeId: "matrix-dark",
+      themeId: "matrix-dark",
       hydrated: true,
     }, true);
   });
@@ -112,7 +114,7 @@ describe("TerminalsTab", () => {
     expect(document.querySelector("[data-terminal-overview] h1")).toBeNull();
   });
 
-  it("changes native Terminal app chrome without changing the inner shell theme", async () => {
+  it("changes only the inner shell palette while native Terminal chrome stays on Desktop tokens", async () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active" }],
       loading: false,
@@ -122,17 +124,19 @@ describe("TerminalsTab", () => {
     renderTab();
 
     const terminalApp = screen.getByTestId("desktop-terminal-app");
-    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#15180F");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("");
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-theme-mode")).toBe("dark");
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-terminal-theme-id")).toBe("matrix-dark");
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Theme" }), { button: 0, ctrlKey: false });
-    const lightTheme = (await screen.findByText("Warm paper")).closest<HTMLElement>("[role='menuitemradio']");
-    expect(lightTheme).not.toBeNull();
-    fireEvent.click(lightTheme!);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Shell theme" }), { button: 0, ctrlKey: false });
+    const rainbowTheme = (await screen.findByText("P10k Rainbow")).closest<HTMLElement>("[role='menuitemradio']");
+    expect(rainbowTheme).not.toBeNull();
+    fireEvent.click(rainbowTheme!);
 
-    await waitFor(() => expect(useTerminalAppearance.getState().appThemeId).toBe("light"));
-    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#E9E9D8");
+    await waitFor(() => expect(useTerminalAppearance.getState().themeId).toBe("powerlevel10k-rainbow"));
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("");
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-theme-mode")).toBe("dark");
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-terminal-theme-id")).toBe("powerlevel10k-rainbow");
     expect(useAppearance.getState().mode).toBe("dark");
   });
 
@@ -186,7 +190,7 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
   });
 
-  it("uses the compact session header while keeping the app theme control in the sidebar", () => {
+  it("uses the compact session header while keeping the shell theme control in the sidebar", () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active", createdAt: "2026-08-26T09:41:00.000Z" }],
     });
@@ -199,9 +203,9 @@ describe("TerminalsTab", () => {
     expect(screen.getByText(/Started at .*main computer/).className).toContain("text-xs");
     const active = screen.getByText("Active");
     expect(active.className).toContain("h-5");
-    expect((active as HTMLElement).style.background).toBe("var(--terminal-chrome-badge-bg)");
+    expect((active as HTMLElement).style.background).toBe("var(--bg-selected)");
     expect(screen.queryByRole("group", { name: "Terminal theme" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Theme" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Shell theme" })).toBeTruthy();
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-theme-mode"))
       .toBe("dark");
   });

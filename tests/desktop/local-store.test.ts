@@ -137,12 +137,12 @@ describe("local store", () => {
     await expect(store.setUnknown("desktopShell", { mode: "canvas", privateState: true })).rejects.toThrow();
   });
 
-  it("persists only a bounded Terminal-local light or dark preference", async () => {
+  it("persists only a bounded Terminal-local shell palette", async () => {
     const store = createLocalStore({ dir: await makeDir() });
 
-    await store.set("terminalAppearance", { appThemeId: "light" });
+    await store.set("terminalAppearance", { themeId: "powerlevel10k-rainbow" });
 
-    expect(await store.get("terminalAppearance")).toEqual({ appThemeId: "light" });
+    expect(await store.get("terminalAppearance")).toEqual({ themeId: "powerlevel10k-rainbow" });
     await expect(store.setUnknown("terminalAppearance", { mode: "system" })).rejects.toThrow();
     await expect(store.setUnknown("terminalAppearance", { mode: "dark", themeId: "dracula" })).rejects.toThrow();
   });
