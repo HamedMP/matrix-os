@@ -358,6 +358,34 @@ describe("WorkRail", () => {
     expect(warn).toHaveBeenCalledWith("[work] Chat pin update failed:", "Error");
   });
 
+  it("clears a stale pin error when the next route reload fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ items: [recent] })
+        .mockRejectedValueOnce(new Error("route reload failed")),
+      updateUserState: vi.fn(async () => { throw new Error("private gateway detail"); }),
+    } as unknown as CanonicalChatClient;
+    const props = {
+      client,
+      projects: [] as Project[],
+      active: true,
+      onNewGlobalChat: vi.fn(),
+      onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(),
+      onCollapse: vi.fn(),
+    };
+    const { rerender } = render(<WorkRail {...props} activeChatId="chat_before" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pin Recent global" }));
+    expect(await screen.findByText("Chat pin could not be updated.")).toBeTruthy();
+
+    rerender(<WorkRail {...props} activeChatId="chat_after" />);
+    expect(await screen.findByText("Chats could not be loaded.")).toBeTruthy();
+    expect(screen.queryByText("Chat pin could not be updated.")).toBeNull();
+  });
+
   it("does not surface a pin failure from a previous route", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     let rejectPin!: (error: Error) => void;

@@ -90,10 +90,10 @@ export function WorkRail({
   useEffect(() => {
     let current = true;
     if (!client || !active) return () => { current = false; };
+    setPinError(null);
     setStatus("loading");
     void loadWorkRailChats(client).then((loaded) => {
       if (!current) return;
-      setPinError(null);
       setRecords(loaded);
       setStatus("ready");
     }).catch((error: unknown) => {
