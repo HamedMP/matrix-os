@@ -424,6 +424,43 @@ describe("WorkRail", () => {
     expect(screen.queryByText("Chat pin could not be updated.")).toBeNull();
   });
 
+  it("does not surface a pin failure from a replaced client", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let rejectPin!: (error: Error) => void;
+    const pinRequest = new Promise<never>((_resolve, reject) => {
+      rejectPin = reject;
+    });
+    const originalClient = {
+      list: vi.fn(async () => ({ items: [recent] })),
+      updateUserState: vi.fn(() => pinRequest),
+    } as unknown as CanonicalChatClient;
+    const replacementClient = {
+      list: vi.fn(async () => ({ items: [recent] })),
+      updateUserState: vi.fn(),
+    } as unknown as CanonicalChatClient;
+    const props = {
+      projects: [] as Project[],
+      active: true,
+      activeChatId: "chat_same_route",
+      onNewGlobalChat: vi.fn(),
+      onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(),
+      onCollapse: vi.fn(),
+    };
+    const { rerender } = render(<WorkRail {...props} client={originalClient} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pin Recent global" }));
+    await waitFor(() => expect(originalClient.updateUserState).toHaveBeenCalledOnce());
+
+    rerender(<WorkRail {...props} client={replacementClient} />);
+    await waitFor(() => expect(replacementClient.list).toHaveBeenCalledOnce());
+    rejectPin(new Error("private gateway detail"));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Pin Recent global" })).toBeTruthy());
+    expect(screen.queryByText("Chat pin could not be updated.")).toBeNull();
+  });
+
   it("shows Pin and Delete in the Chat context menu", async () => {
     setup();
     const recentChat = await screen.findByRole("button", { name: "Recent global" });
