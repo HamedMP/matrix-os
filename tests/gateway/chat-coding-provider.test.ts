@@ -219,6 +219,58 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(events).toEqual([{ type: "run.completed", outcome: "completed" }]);
   });
 
+  it("drains a healthy long Codex stream without treating total event IDs as backlog", async () => {
+    let sink: Sink | undefined;
+    const store = {
+      createThread: vi.fn(async () => {
+        let next = 0;
+        const publishBatch = () => {
+          const events = Array.from({ length: Math.min(10, 1_100 - next) }, (_, offset) => event({
+            type: "assistant.text.delta",
+            eventId: `evt_long_${next + offset}`,
+            messageId: "msg_native",
+            delta: "x",
+          }));
+          next += events.length;
+          sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events });
+          if (next < 1_100) {
+            setTimeout(publishBatch, 0);
+          } else {
+            setTimeout(() => sink?.({
+              ownerId: owner.ownerId,
+              threadId: "thread_native",
+              events: [event({
+                type: "thread.completed",
+                eventId: "evt_long_complete",
+                outcome: "completed",
+              })],
+            }), 0);
+          }
+        };
+        setTimeout(publishBatch, 0);
+        return { snapshot: snapshot([]), existing: false };
+      }),
+      acceptTurn: vi.fn(),
+      getThread: vi.fn(),
+      abortThread: vi.fn(),
+      registerEventSink: vi.fn((candidate: Sink) => {
+        sink = candidate;
+        return { dispose: vi.fn() };
+      }),
+    } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store });
+    const events = [];
+
+    for await (const candidate of adapter.start(input({ signal: AbortSignal.timeout(5_000) }))) {
+      events.push(candidate);
+    }
+
+    expect(events.filter((candidate) => candidate.type === "assistant.delta")
+      .map((candidate) => candidate.type === "assistant.delta" ? candidate.delta : "")
+      .join("")).toBe("x".repeat(1_100));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("surfaces event overflow even when the shared thread store isolates sink failures", async () => {
     let sink: Sink | undefined;
     const overflow = Array.from({ length: 501 }, (_, index) => event({

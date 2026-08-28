@@ -74,10 +74,35 @@ describe("Claude canonical Chat Provider adapter", () => {
         type: "state.updated",
         state: { sessionId: "claude_session", model: "claude-sonnet-4-6" },
       },
-      { type: "assistant.delta", delta: "hello " },
-      { type: "assistant.delta", delta: "world" },
+      { type: "assistant.delta", delta: "hello world" },
       { type: "run.completed", outcome: "completed" },
     ]);
+  });
+
+  it("coalesces a healthy long Claude text stream instead of failing on total event count", async () => {
+    const deltas = Array.from({ length: 600 }, () => JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", delta: { type: "text_delta", text: "x" } },
+    }));
+    const spawnFn = vi.fn(() => child([
+      ...deltas,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "x".repeat(600),
+        session_id: "claude_long_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events.filter((event) => event.type === "assistant.delta")
+      .map((event) => event.type === "assistant.delta" ? event.delta : "")
+      .join("")).toBe("x".repeat(600));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
   });
 
   it("executes with the owner Claude credential environment", async () => {

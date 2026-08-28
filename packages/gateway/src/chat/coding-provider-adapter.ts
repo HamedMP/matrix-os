@@ -20,6 +20,7 @@ import {
 } from "./provider-adapter.js";
 
 const MAX_BUFFERED_EVENTS = 500;
+const MAX_RECENT_EVENT_IDS = MAX_BUFFERED_EVENTS * 2;
 
 type CodingThreads = Pick<
   CodingAgentThreadStore & CodingAgentTurnStore,
@@ -208,15 +209,16 @@ async function* normalizedEvents(
   initial: AgentThreadEvent[],
   inbox: ThreadEventInbox,
 ): AsyncGenerator<CanonicalProviderRunEvent> {
-  const seen = new Set<string>();
+  const recentEventIds = new Set<string>();
   let batch: AgentThreadEvent[] | null = initial;
   while (batch !== null) {
     for (const event of batch) {
-      if (seen.has(event.eventId)) continue;
-      if (seen.size >= MAX_BUFFERED_EVENTS * 2) {
-        throw new Error("Canonical coding Provider event history exceeded");
+      if (recentEventIds.has(event.eventId)) continue;
+      if (recentEventIds.size >= MAX_RECENT_EVENT_IDS) {
+        const oldest = recentEventIds.values().next().value;
+        if (oldest !== undefined) recentEventIds.delete(oldest);
       }
-      seen.add(event.eventId);
+      recentEventIds.add(event.eventId);
       for (const normalized of normalizeEvent(event)) {
         yield normalized;
         if (normalized.type === "run.completed") return;

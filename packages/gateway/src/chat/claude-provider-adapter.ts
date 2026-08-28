@@ -114,6 +114,28 @@ export function createClaudeChatProviderAdapter(options: {
     let sawResult = false;
     let resultFailed = false;
     let emittedState = resumeState;
+    let pendingDelta = "";
+    let deltaFlushScheduled = false;
+
+    const flushPendingDelta = () => {
+      deltaFlushScheduled = false;
+      if (!pendingDelta) return;
+      const text = pendingDelta;
+      pendingDelta = "";
+      for (const delta of outputChunks(text)) {
+        queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+      }
+    };
+
+    const enqueueDelta = (delta: string) => {
+      pendingDelta += delta;
+      if (pendingDelta.length >= 4_000) {
+        flushPendingDelta();
+      } else if (!deltaFlushScheduled) {
+        deltaFlushScheduled = true;
+        queueMicrotask(flushPendingDelta);
+      }
+    };
 
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
@@ -122,6 +144,7 @@ export function createClaudeChatProviderAdapter(options: {
         line.session_id !== emittedState?.sessionId
         || (line.model !== undefined && line.model !== emittedState.model)
       )) {
+        flushPendingDelta();
         const state = ClaudeChatStateSchema.parse({
           sessionId: line.session_id,
           ...(line.model ? { model: line.model } : {}),
@@ -136,7 +159,7 @@ export function createClaudeChatProviderAdapter(options: {
         : undefined;
       if (delta) {
         streamedText = true;
-        queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+        enqueueDelta(delta);
       }
       if (line.type === "result") {
         sawResult = true;
@@ -171,6 +194,7 @@ export function createClaudeChatProviderAdapter(options: {
       },
     }).then(() => {
       if (buffered.trim()) parseLine(buffered);
+      flushPendingDelta();
       emitBufferedResult();
       queue.push(CanonicalProviderRunEventSchema.parse(!sawResult || resultFailed
         ? {
@@ -186,6 +210,7 @@ export function createClaudeChatProviderAdapter(options: {
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
     }).catch((error: unknown) => {
+      flushPendingDelta();
       if (sawResult && !resultFailed) {
         console.warn(
           "[chat-claude] Claude CLI exited non-zero after a successful result:",
