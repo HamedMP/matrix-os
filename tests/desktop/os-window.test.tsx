@@ -53,7 +53,9 @@ describe("Electron OS window chrome", () => {
     expect(closeButton.className).toContain("bg-[#ff5f57]");
     expect(screen.getByRole("button", { name: "Minimize" }).className).toContain("bg-[#febc2e]");
     expect(screen.getByRole("button", { name: "Maximize" }).className).toContain("bg-[#28c840]");
-    expect(closeButton.querySelector("svg")).toBeNull();
+    expect(closeButton.querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Minimize" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Maximize" }).querySelector("svg")).toBeTruthy();
     expect(closeButton.parentElement?.className).toContain("gap-1.5");
 
     fireEvent.click(closeButton);

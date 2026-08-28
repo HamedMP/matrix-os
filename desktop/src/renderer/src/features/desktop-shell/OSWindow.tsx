@@ -1,3 +1,4 @@
+import { ArrowExpand01, Minus, X } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,
@@ -58,7 +59,7 @@ export function TrafficLights({
           onClose();
         }}
       >
-        <span className="text-[8px] leading-none font-bold text-black/0 transition-colors group-hover/traffic:text-black/60">x</span>
+        <X aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
       </button>
       <button
         type="button"
@@ -70,7 +71,7 @@ export function TrafficLights({
           onMinimize();
         }}
       >
-        <span className="text-[9px] leading-none font-bold text-black/0 transition-colors group-hover/traffic:text-black/60">-</span>
+        <Minus aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
       </button>
       <button
         type="button"
@@ -82,7 +83,7 @@ export function TrafficLights({
           onMaximize();
         }}
       >
-        <span className="text-[8px] leading-none font-bold text-black/0 transition-colors group-hover/traffic:text-black/60">+</span>
+        <ArrowExpand01 aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/65" />
       </button>
     </div>
   );

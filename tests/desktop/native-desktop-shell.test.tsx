@@ -756,6 +756,9 @@ describe("native desktop shell", () => {
     expect(getWindowControl("Files", "Close").className).toContain("bg-[#ff5f57]");
     expect(getWindowControl("Files", "Minimize").className).toContain("bg-[#febc2e]");
     expect(getWindowControl("Files", "Maximize").className).toContain("bg-[#28c840]");
+    expect(getWindowControl("Files", "Close").querySelector("svg")).toBeTruthy();
+    expect(getWindowControl("Files", "Minimize").querySelector("svg")).toBeTruthy();
+    expect(getWindowControl("Files", "Maximize").querySelector("svg")).toBeTruthy();
 
     fireEvent.pointerDown(dragHandle, { button: 0, clientX: 400, clientY: 180 });
     fireEvent.pointerMove(window, { clientX: 480, clientY: 225 });

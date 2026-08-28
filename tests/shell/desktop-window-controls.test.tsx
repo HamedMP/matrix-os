@@ -50,7 +50,9 @@ describe("web desktop window controls", () => {
     expect(close.className).toContain("bg-[#ff5f57]");
     expect(minimize.className).toContain("bg-[#febc2e]");
     expect(fullscreen.className).toContain("bg-[#28c840]");
-    expect(close.querySelector("svg")).toBeNull();
+    expect(close.querySelector("svg")).toBeTruthy();
+    expect(minimize.querySelector("svg")).toBeTruthy();
+    expect(fullscreen.querySelector("svg")).toBeTruthy();
     expect(close.parentElement?.className).toContain("gap-1.5");
   });
 
