@@ -183,9 +183,7 @@ function applyNoFrameHeaders(
   const captchaDirectives = options.allowClerkCaptcha
     ? " worker-src 'self' blob:; frame-src https://challenges.cloudflare.com;"
     : '';
-  const styleSrc = scriptNonce
-    ? `'self' 'nonce-${scriptNonce}' https://fonts.googleapis.com`
-    : `'self' 'unsafe-inline' https://fonts.googleapis.com`;
+  const styleSrc = `'self' 'unsafe-inline' https://fonts.googleapis.com`;
   c.header(
     'Content-Security-Policy',
     `frame-ancestors 'none'; script-src ${scriptSrc}${captchaSrc};${captchaDirectives} style-src ${styleSrc}; font-src 'self' https://fonts.gstatic.com; object-src 'none'; base-uri 'none'`,

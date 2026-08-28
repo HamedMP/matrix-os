@@ -230,7 +230,6 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     ctx.toggleWindowMaximize();
     return { ok: true };
   });
-
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),
   }));

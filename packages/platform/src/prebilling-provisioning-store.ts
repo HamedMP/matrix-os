@@ -329,34 +329,130 @@ export async function bindPrebillingIntentMachine(
   return Boolean(row);
 }
 
+/** Marks an exact fenced machine ready only after its registration transaction
+ * has made the machine running. The intent and machine transition together, so
+ * checkout can never observe readiness ahead of durable runtime registration. */
+export async function markPrebillingIntentReady(
+  db: PlatformDB,
+  input: {
+    intentId: string;
+    machineId: string;
+    clerkUserId: string;
+    runtimeSlot: string;
+    now: string;
+  },
+): Promise<boolean> {
+  await db.ready;
+  const updated = await sql<{ ready: boolean }>`
+    WITH marked AS (
+      UPDATE prebilling_provisioning_intents AS intent
+      SET state = 'ready_waiting_for_billing',
+          ready_at = ${input.now},
+          revision = intent.revision + 1,
+          updated_at = ${input.now}
+      WHERE intent.id = ${input.intentId}
+        AND intent.machine_id = ${input.machineId}
+        AND intent.clerk_user_id = ${input.clerkUserId}
+        AND intent.runtime_slot = ${input.runtimeSlot}
+        AND intent.state = 'preparing'
+        AND EXISTS (
+          SELECT 1
+          FROM user_machines AS machine
+          WHERE machine.machine_id = ${input.machineId}
+            AND machine.prebilling_intent_id = intent.id
+            AND machine.clerk_user_id = intent.clerk_user_id
+            AND machine.runtime_slot = intent.runtime_slot
+            AND machine.status = 'running'
+            AND machine.activation_state = 'awaiting_billing'
+            AND machine.deleted_at IS NULL
+        )
+      RETURNING intent.id
+    )
+    SELECT EXISTS(SELECT 1 FROM marked) OR EXISTS(
+      SELECT 1
+      FROM prebilling_provisioning_intents AS intent
+      JOIN user_machines AS machine ON machine.machine_id = intent.machine_id
+      WHERE intent.id = ${input.intentId}
+        AND intent.machine_id = ${input.machineId}
+        AND intent.clerk_user_id = ${input.clerkUserId}
+        AND intent.runtime_slot = ${input.runtimeSlot}
+        AND intent.state = 'authorized'
+        AND machine.status = 'running'
+        AND machine.activation_state = 'authorized'
+        AND machine.deleted_at IS NULL
+    ) AS ready
+  `.execute(db.executor);
+  return updated.rows[0]?.ready ?? false;
+}
+
+export async function markPrebillingPreparationFailed(
+  db: PlatformDB,
+  input: { intentId: string; now: string; errorCode: string },
+): Promise<boolean> {
+  await db.ready;
+  const updated = await db.executor.updateTable('prebilling_provisioning_intents').set((eb) => ({
+    state: 'preparation_failed',
+    reserved_hourly_cost_micros: 0,
+    last_error_code: input.errorCode.slice(0, 64),
+    revision: eb('revision', '+', 1),
+    updated_at: input.now,
+  })).where('id', '=', input.intentId)
+    .where('state', '=', 'preparing')
+    .returning('id').executeTakeFirst();
+  return Boolean(updated);
+}
+
+export async function resetPrebillingPreparationForRetry(
+  db: PlatformDB,
+  input: { intentId: string; clerkUserId: string; now: string },
+): Promise<boolean> {
+  await db.ready;
+  const updated = await db.executor.updateTable('prebilling_provisioning_intents').set((eb) => ({
+    state: 'awaiting_checkout',
+    reserved_hourly_cost_micros: 0,
+    last_error_code: null,
+    revision: eb('revision', '+', 1),
+    updated_at: input.now,
+  })).where('id', '=', input.intentId)
+    .where('clerk_user_id', '=', input.clerkUserId)
+    .where('state', 'in', ['preparation_failed', 'preparation_deferred'])
+    .where('stripe_session_id', 'is not', null)
+    .where('stripe_session_expires_at', '>', input.now)
+    .returning('id').executeTakeFirst();
+  return Boolean(updated);
+}
+
 /** Must be called inside the signed billing projection transaction. */
 export async function authorizePrebillingIntent(
   db: PlatformDB,
   input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
-): Promise<{ authorized: boolean; machineId: string | null; needsFallback: boolean }> {
+): Promise<{ authorized: boolean; machineId: string | null }> {
   await db.ready;
   const current = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
     .where('id', '=', input.intentId)
     .where('clerk_user_id', '=', input.clerkUserId)
     .where('runtime_slot', '=', input.runtimeSlot)
     .forUpdate().executeTakeFirst();
-  if (!current) return { authorized: false, machineId: null, needsFallback: false };
+  if (!current) throw new Error('prebilling_intent_not_found');
   const intent = mapIntent(current);
   if (intent.state === 'authorized') {
-    return { authorized: true, machineId: intent.machineId, needsFallback: intent.machineId === null };
+    if (!intent.machineId) throw new Error('prebilling_machine_not_ready');
+    return { authorized: true, machineId: intent.machineId };
   }
-  if (intent.machineId) {
-    const activated = await db.executor.updateTable('user_machines').set({
-      activation_state: 'authorized',
-      activation_authorized_at: input.now,
-    }).where('machine_id', '=', intent.machineId)
-      .where('prebilling_intent_id', '=', intent.id)
-      .where('clerk_user_id', '=', input.clerkUserId)
-      .where('runtime_slot', '=', input.runtimeSlot)
-      .where('activation_state', '=', 'awaiting_billing')
-      .returning('machine_id').executeTakeFirst();
-    if (!activated) throw new Error('prebilling_machine_activation_mismatch');
+  if (intent.state !== 'ready_waiting_for_billing' || !intent.machineId) {
+    throw new Error('prebilling_machine_not_ready');
   }
+  const activated = await db.executor.updateTable('user_machines').set({
+    activation_state: 'authorized',
+    activation_authorized_at: input.now,
+  }).where('machine_id', '=', intent.machineId)
+    .where('prebilling_intent_id', '=', intent.id)
+    .where('clerk_user_id', '=', input.clerkUserId)
+    .where('runtime_slot', '=', input.runtimeSlot)
+    .where('status', '=', 'running')
+    .where('activation_state', '=', 'awaiting_billing')
+    .returning('machine_id').executeTakeFirst();
+  if (!activated) throw new Error('prebilling_machine_activation_mismatch');
   const authorized = await db.executor.updateTable('prebilling_provisioning_intents').set({
     state: 'authorized',
     authorized_at: input.now,
@@ -367,7 +463,7 @@ export async function authorizePrebillingIntent(
   }).where('id', '=', intent.id).where('revision', '=', intent.revision)
     .returning('id').executeTakeFirst();
   if (!authorized) throw new Error('prebilling_authorization_conflict');
-  return { authorized: true, machineId: intent.machineId, needsFallback: intent.machineId === null };
+  return { authorized: true, machineId: intent.machineId };
 }
 
 /** Must be called inside the verified Stripe webhook transaction. */

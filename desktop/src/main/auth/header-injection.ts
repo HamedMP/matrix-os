@@ -28,6 +28,8 @@ interface SessionLike {
   webRequest: WebRequestLike;
 }
 
+const MATRIX_SUPPORT_REFERRER = "https://app.matrix-os.com/";
+
 function normalizeWsScheme(url: URL): string {
   if (url.protocol === "ws:") return "http:";
   if (url.protocol === "wss:") return "https:";
@@ -117,11 +119,24 @@ export function installHeaderInjection(
   rendererSession: SessionLike,
   getToken: () => string | null,
   getGatewayOrigin: () => string | null,
+  rendererOrigin: string,
 ): void {
   rendererSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const gatewayOrigin = getGatewayOrigin();
     const token = getToken();
-    if (token && shouldInjectAuth(details.url, getGatewayOrigin())) {
+    if (token && shouldInjectAuth(details.url, gatewayOrigin)) {
       details.requestHeaders["Authorization"] = `Bearer ${token}`;
+    }
+    if (rendererOrigin === "null" && shouldInjectAuth(details.url, gatewayOrigin)) {
+      // shouldInjectAuth has already parsed and validated this URL against the
+      // active gateway origin, so constructing it here cannot fail.
+      const request = new URL(details.url);
+      if (
+        (request.protocol === "http:" || request.protocol === "https:") &&
+        request.pathname.startsWith("/relay/api/conversations/v1/widget/")
+      ) {
+        details.requestHeaders.Referer = MATRIX_SUPPORT_REFERRER;
+      }
     }
     callback({ requestHeaders: details.requestHeaders });
   });
@@ -173,7 +188,7 @@ export function installGatewayCors(
       responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
       responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
       responseHeaders["Access-Control-Allow-Headers"] = [
-        "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename",
+        "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename, X-Conversations-Token",
       ];
       responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
     }

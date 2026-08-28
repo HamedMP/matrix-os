@@ -428,6 +428,14 @@ describe("Desktop navigation header", () => {
     expect(window.operator.invoke).not.toHaveBeenCalledWith("window:toggle-maximize", {});
   });
 
+  it("leaves the native titlebar drag region available for OS window gestures", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    expect(screen.getByRole("banner").classList.contains("titlebar-drag")).toBe(true);
+    expect(screen.getByRole("tablist", { name: "Workspace tabs" })
+      .classList.contains("titlebar-drag")).toBe(true);
+  });
+
   it("uses Figma-style native top-bar controls without a mode switcher", () => {
     render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
 

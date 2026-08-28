@@ -1,5 +1,6 @@
 import AccountMenu from "../mission-control/AccountMenu";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
+import DesktopSupportButton from "../support/DesktopSupportButton";
 
 export default function DesktopModeControls() {
   return (
@@ -7,6 +8,7 @@ export default function DesktopModeControls() {
       <div className="relative w-[156px]">
         <RuntimeComputerMenu collapsed={false} />
       </div>
+      <DesktopSupportButton />
       <AccountMenu collapsed compact />
     </div>
   );

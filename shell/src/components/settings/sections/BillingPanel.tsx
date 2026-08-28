@@ -34,6 +34,7 @@ import type {
 } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import { waitForPreparedCheckout } from "@/lib/billing-checkout-preparation";
 import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsStep";
 import {
   defaultDeveloperTools,
@@ -70,11 +71,12 @@ const regionGroupLabels: Record<string, string> = {
   "ap-southeast": "Asia Pacific",
 };
 const includedHighlights = [
-  "Dedicated VPS attached right after checkout",
+  "Dedicated VPS prepared before checkout",
   "Your files and data persist across restarts",
   "Change tier or cancel anytime in the billing portal",
 ] as const;
 const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
+const BILLING_PREPARATION_TIMEOUT_MS = 370_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const acceptedPaymentMarks = ["Visa", "Mastercard"] as const;
 const billingPlanNames: Record<string, string> = {
@@ -210,7 +212,7 @@ function CheckoutPanel({
     setCheckoutError(null);
     captureBillingTelemetry("checkout_intent", telemetryPropertiesRef.current);
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
+    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_PREPARATION_TIMEOUT_MS);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear the abort timeout and reset `checkoutLoading` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
       const response = await fetch("/billing/checkout", {
@@ -237,7 +239,19 @@ function CheckoutPanel({
           error_kind: err instanceof Error ? err.name : typeof err,
         });
         return null;
-      })) as { code?: unknown; selection?: unknown; url?: unknown } | null;
+      })) as { attemptId?: unknown; code?: unknown; selection?: unknown; status?: unknown; url?: unknown } | null;
+      if (response.status === 202 && body?.status === "preparing") {
+        if (typeof body.attemptId !== "string" || body.attemptId.length === 0) {
+          reportCheckoutError("invalid_preparation_response");
+          return;
+        }
+        const prepared = await waitForPreparedCheckout({
+          attemptId: body.attemptId,
+          signal: controller.signal,
+        });
+        (onCheckoutNavigate ?? ((target: string) => window.location.assign(target)))(prepared.url);
+        return;
+      }
       if (!response.ok) {
         if (response.status === 409 && body?.code === "checkout_selection_conflict") {
           const message = checkoutSelectionConflictMessage(body.selection);
@@ -297,7 +311,7 @@ function CheckoutPanel({
               ? "Add your card in Stripe Checkout. You will not be charged today."
               : mode === "device-setup"
               ? "Review your plan and region here. Stripe opens only after you choose Continue to pay."
-              : "Secure checkout opens before Matrix provisions this computer."}
+              : "Matrix prepares this computer before secure checkout opens."}
           </p>
         </div>
       )}
@@ -389,7 +403,7 @@ function CheckoutPanel({
           <CreditCardIcon className="size-4" aria-hidden="true" />
         )}
         {checkoutLoading
-          ? "Opening checkout"
+          ? "Preparing computer"
           : checkoutBypassed
           ? "Continue setup"
           : trialDurationDays !== null

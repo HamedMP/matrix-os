@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { sql } from 'kysely';
 import { z } from 'zod/v4';
 import type { PlatformDB } from './db.js';
 
@@ -348,19 +349,30 @@ export async function failProvisioningJob(
   errorCode: string,
 ): Promise<boolean> {
   await db.ready;
-  const row = await db.executor
-    .updateTable('provisioning_jobs')
-    .set({
-      status: 'failed',
-      encrypted_payload: null,
-      lease_expires_at: null,
-      updated_at: now,
-      completed_at: now,
-      last_error_code: errorCode.slice(0, 64),
-    })
-    .where('job_id', '=', jobId)
-    .where('status', '=', 'running')
-    .returning('job_id')
-    .executeTakeFirst();
-  return Boolean(row);
+  const boundedErrorCode = errorCode.slice(0, 64);
+  const result = await sql<{ failed: boolean }>`
+    WITH failed_job AS (
+      UPDATE provisioning_jobs
+      SET status = 'failed',
+          encrypted_payload = NULL,
+          lease_expires_at = NULL,
+          updated_at = ${now},
+          completed_at = ${now},
+          last_error_code = ${boundedErrorCode}
+      WHERE job_id = ${jobId} AND status = 'running'
+      RETURNING prebilling_intent_id
+    ), failed_intent AS (
+      UPDATE prebilling_provisioning_intents
+      SET state = 'preparation_failed',
+          reserved_hourly_cost_micros = 0,
+          last_error_code = ${boundedErrorCode},
+          revision = revision + 1,
+          updated_at = ${now}
+      WHERE id = (SELECT prebilling_intent_id FROM failed_job)
+        AND state = 'preparing'
+      RETURNING id
+    )
+    SELECT EXISTS(SELECT 1 FROM failed_job) AS failed
+  `.execute(db.executor);
+  return result.rows[0]?.failed ?? false;
 }

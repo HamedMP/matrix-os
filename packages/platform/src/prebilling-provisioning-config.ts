@@ -38,6 +38,24 @@ function parseCosts(value: string | undefined): ReadonlyMap<string, number> {
   }
 }
 
+function parseCompactCosts(value: string | undefined): ReadonlyMap<string, number> {
+  if (!value) return new Map();
+  try {
+    const entries = value.split(';').filter(Boolean).map((entry) => {
+      const separator = entry.indexOf(':');
+      if (separator <= 0) throw new Error('invalid_prebilling_cost_entry');
+      return [entry.slice(0, separator), Number(entry.slice(separator + 1))] as const;
+    });
+    if (entries.length > MAX_COST_ENTRIES) return new Map();
+    return new Map(Object.entries(CostMapSchema.parse(Object.fromEntries(entries))));
+  } catch (err: unknown) {
+    if (err instanceof z.ZodError || (err instanceof Error && err.message === 'invalid_prebilling_cost_entry')) {
+      return new Map();
+    }
+    throw err;
+  }
+}
+
 export function loadPrebillingProvisioningConfig(env: NodeJS.ProcessEnv): PrebillingProvisioningConfig {
   const enabled = env.MATRIX_PREBILLING_PROVISIONING_ENABLED === 'true';
   return {
@@ -57,7 +75,9 @@ export function loadPrebillingProvisioningConfig(env: NodeJS.ProcessEnv): Prebil
     // otherwise valid checkout is not rejected after spending a few seconds
     // in transit.
     leaseMs: 31 * 60 * 1_000,
-    serverHourlyCostMicros: parseCosts(env.MATRIX_PREBILLING_PROVISIONING_COSTS_JSON),
+    serverHourlyCostMicros: env.MATRIX_PREBILLING_PROVISIONING_COSTS
+      ? parseCompactCosts(env.MATRIX_PREBILLING_PROVISIONING_COSTS)
+      : parseCosts(env.MATRIX_PREBILLING_PROVISIONING_COSTS_JSON),
   };
 }
 
