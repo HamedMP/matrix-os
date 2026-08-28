@@ -10,7 +10,6 @@ let activeIdentity: string | null = null;
 let allowPostHogWidget = false;
 let launcherObserver: MutationObserver | null = null;
 let openSupportPromise: Promise<boolean> | null = null;
-let closeButtonWithCleanup: HTMLButtonElement | null = null;
 
 const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
 const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
@@ -54,7 +53,10 @@ function hidePostHogWidget(): void {
 }
 
 function suppressDefaultLauncher(): void {
-  if (allowPostHogWidget || !document.getElementById(POSTHOG_WIDGET_ID)) return;
+  if (
+    allowPostHogWidget ||
+    !document.querySelector(`#${POSTHOG_WIDGET_ID} ${POSTHOG_LAUNCHER_SELECTOR}`)
+  ) return;
   hidePostHogWidget();
 }
 
@@ -101,16 +103,6 @@ async function waitForConversations(): Promise<boolean> {
   return false;
 }
 
-function hideAfterPanelCloses(closeButton: HTMLButtonElement): void {
-  if (closeButtonWithCleanup === closeButton) return;
-  closeButtonWithCleanup = closeButton;
-  closeButton.addEventListener("click", () => {
-    closeButtonWithCleanup = null;
-    allowPostHogWidget = false;
-    queueMicrotask(hidePostHogWidget);
-  }, { once: true });
-}
-
 async function openSupportPanel(): Promise<boolean> {
   if (!initialized || activeIdentity === null || !await waitForConversations()) return false;
 
@@ -127,7 +119,10 @@ async function openSupportPanel(): Promise<boolean> {
     }
     if (!closeButton) return false;
 
-    hideAfterPanelCloses(closeButton);
+    // Once the provider panel is open, re-arm launcher suppression. This does
+    // not hide the panel itself; it only removes PostHog's default launcher if
+    // closing or re-rendering the panel brings that button back.
+    allowPostHogWidget = false;
     return true;
   } finally {
     if (!document.querySelector(POSTHOG_CLOSE_SELECTOR)) {
@@ -154,7 +149,6 @@ export function openDesktopSupport(): Promise<boolean> {
 function hideAndResetSupport(): void {
   allowPostHogWidget = false;
   stopLauncherObserver();
-  closeButtonWithCleanup = null;
   if (!initialized) return;
   hidePostHogWidget();
   if (activeIdentity === null) return;

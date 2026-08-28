@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildRendererCsp,
   installGatewayCors,
+  installHeaderInjection,
   shouldInjectAuth,
 } from "@desktop/main/auth/header-injection";
 
@@ -54,6 +55,73 @@ function corsSession() {
   };
 }
 
+type BeforeSendHeadersListener = (
+  details: { url: string; requestHeaders: Record<string, string> },
+  callback: (response: { requestHeaders: Record<string, string> }) => void,
+) => void;
+
+function headerSession() {
+  let listener: BeforeSendHeadersListener | null = null;
+  const session = {
+    webRequest: {
+      onBeforeSendHeaders: (l: BeforeSendHeadersListener) => {
+        listener = l;
+      },
+      onHeadersReceived: () => undefined,
+    },
+  };
+  return {
+    session,
+    fire(url: string, requestHeaders: Record<string, string> = {}) {
+      const cb = vi.fn();
+      listener?.({ url, requestHeaders }, cb);
+      return cb.mock.calls[0]?.[0]?.requestHeaders ?? {};
+    },
+  };
+}
+
+describe("installHeaderInjection", () => {
+  it("sets the trusted Matrix OS referrer for packaged Support widget calls", () => {
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => null, () => GATEWAY, "null");
+
+    const headers = fire(`${GATEWAY}/relay/api/conversations/v1/widget/message`);
+
+    expect(headers.Referer).toBe("https://app.matrix-os.com/");
+  });
+
+  it("does not add the Support referrer to analytics or unrelated requests", () => {
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => null, () => GATEWAY, "null");
+
+    expect(fire(`${GATEWAY}/relay/i/v0/e/`).Referer).toBeUndefined();
+    expect(fire(`${GATEWAY}/api/apps`).Referer).toBeUndefined();
+    expect(fire("https://eu.i.posthog.com/api/conversations/v1/widget/message").Referer)
+      .toBeUndefined();
+  });
+
+  it("does not rewrite Support referrers for the localhost development renderer", () => {
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => null, () => GATEWAY, "http://localhost:5173");
+
+    const headers = fire(`${GATEWAY}/relay/api/conversations/v1/widget/message`);
+
+    expect(headers.Referer).toBeUndefined();
+  });
+
+  it("preserves gateway Authorization injection alongside the packaged Support referrer", () => {
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => "matrix-token", () => GATEWAY, "null");
+
+    const headers = fire(`${GATEWAY}/relay/api/conversations/v1/widget/messages/ticket-1`);
+
+    expect(headers).toEqual({
+      Authorization: "Bearer matrix-token",
+      Referer: "https://app.matrix-os.com/",
+    });
+  });
+});
+
 describe("installGatewayCors", () => {
   it("adds Access-Control-Allow-Origin for gateway responses", () => {
     const { session, fire } = corsSession();
@@ -63,6 +131,7 @@ describe("installGatewayCors", () => {
     expect(res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]).toContain("Authorization");
     expect(res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]).toContain("x-runtime-slot");
     expect(res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]).toContain("X-Matrix-Filename");
+    expect(res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]).toContain("X-Conversations-Token");
     expect(res.responseHeaders?.["Access-Control-Allow-Credentials"]).toEqual(["true"]);
     expect(res.responseHeaders?.["content-type"]).toEqual(["application/json"]);
   });

@@ -158,9 +158,22 @@ describe("Desktop support widget", () => {
     expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    // PostHog can re-render its panel while it is open. Replacing the close
+    // control exercises the user-visible contract without relying on a
+    // listener remaining attached to one provider-owned DOM node.
+    const close = screen.getByRole("button", { name: "Close" });
+    const replacementClose = close.cloneNode(true) as HTMLButtonElement;
+    replacementClose.addEventListener("click", renderPostHogLauncher);
+    close.replaceWith(replacementClose);
+    fireEvent.click(replacementClose);
 
     await waitFor(() => expect(document.getElementById("ph-conversations-widget-container")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+
+    await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
   });
 });

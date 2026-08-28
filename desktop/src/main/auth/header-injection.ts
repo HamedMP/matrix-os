@@ -117,11 +117,29 @@ export function installHeaderInjection(
   rendererSession: SessionLike,
   getToken: () => string | null,
   getGatewayOrigin: () => string | null,
+  rendererOrigin: string,
 ): void {
   rendererSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const gatewayOrigin = getGatewayOrigin();
     const token = getToken();
-    if (token && shouldInjectAuth(details.url, getGatewayOrigin())) {
+    if (token && shouldInjectAuth(details.url, gatewayOrigin)) {
       details.requestHeaders["Authorization"] = `Bearer ${token}`;
+    }
+    if (rendererOrigin === "null" && shouldInjectAuth(details.url, gatewayOrigin)) {
+      try {
+        const request = new URL(details.url);
+        const gateway = gatewayOrigin ? new URL(gatewayOrigin) : null;
+        if (
+          gateway &&
+          (request.protocol === "http:" || request.protocol === "https:") &&
+          request.pathname.startsWith("/relay/api/conversations/v1/widget/")
+        ) {
+          details.requestHeaders.Referer = `${gateway.origin}/`;
+        }
+      } catch (error: unknown) {
+        if (!(error instanceof TypeError)) throw error;
+        // Invalid URLs already fail shouldInjectAuth; keep the request unchanged.
+      }
     }
     callback({ requestHeaders: details.requestHeaders });
   });
@@ -173,7 +191,7 @@ export function installGatewayCors(
       responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
       responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
       responseHeaders["Access-Control-Allow-Headers"] = [
-        "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename",
+        "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename, X-Conversations-Token",
       ];
       responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
     }
