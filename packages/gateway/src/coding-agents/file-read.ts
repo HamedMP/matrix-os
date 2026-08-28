@@ -203,6 +203,10 @@ function decodeFileBrowseCursor(cursor: string | undefined): string | undefined 
   return name;
 }
 
+function compareFileBrowseNames(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
 async function readDirectoryNamesPage(
   path: string,
   maxEntries: number,
@@ -217,7 +221,7 @@ async function readDirectoryNamesPage(
       if (inspected > MAX_FILE_BROWSE_ENTRIES) {
         throw new CodingAgentFileReadError("file_unavailable");
       }
-      if (afterName && entry.name.localeCompare(afterName, "en") <= 0) continue;
+      if (afterName && compareFileBrowseNames(entry.name, afterName) <= 0) continue;
       names.push(entry.name);
     }
   } finally {
@@ -227,7 +231,7 @@ async function readDirectoryNamesPage(
       }
     });
   }
-  names.sort((left, right) => left.localeCompare(right, "en"));
+  names.sort(compareFileBrowseNames);
   return {
     names: names.slice(0, maxEntries),
     truncated: names.length > maxEntries,

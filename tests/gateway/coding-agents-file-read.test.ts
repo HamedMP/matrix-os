@@ -393,6 +393,30 @@ describe("coding agent file read route", () => {
     }
   });
 
+  it("does not skip a byte-distinct filename that is locale-equal to the cursor", async () => {
+    const harness = await createRouteHarness({ ownerIds: [testPrincipal.userId] });
+    try {
+      const directory = join(harness.worktreeRoot, "unicode-cursor");
+      const filename = "é.ts";
+      const cursorName = "e\u0301.ts";
+      const cursor = `filecur_${Buffer.from(cursorName, "utf8").toString("hex")}`;
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, filename), "export const unicodeName = true;\n");
+
+      const response = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=unicode-cursor&cursor=${cursor}&limit=1`,
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.entries.items).toEqual([
+        expect.objectContaining({ path: `unicode-cursor/${filename}` }),
+      ]);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("marks browse results partial when skipped entries exhaust the inspect budget", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],
