@@ -199,6 +199,7 @@ interface TabsState {
     id: string,
     route: { chatId?: string; chatView: "index" | "draft" | "conversation"; title: string },
   ): void;
+  clearActiveTab(id: string): void;
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
   focusTab(id: string): void;
@@ -373,6 +374,10 @@ export const useTabs = create<TabsState>()((set, get) => ({
         }
       : tab),
   })),
+
+  clearActiveTab: (id) => set((state) => (
+    state.activeTabId === id ? { activeTabId: null } : state
+  )),
 
   closeTab: (id) =>
     set((state) => {

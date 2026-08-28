@@ -44,6 +44,18 @@ describe("handleCloseSelectedAppShortcut", () => {
     expect(useDesktopSurfaces.getState().surfaces[terminalId]?.mode).toBe("window");
   });
 
+  it("clears the selected tab when closing the only non-closable app surface", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
+    const preventDefault = vi.fn();
+
+    handleCloseSelectedAppShortcut({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("closed");
+    expect(useTabs.getState().activeTabId).toBeNull();
+  });
+
   it("suppresses the native shortcut without closing a hidden selected app", () => {
     const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
     useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
