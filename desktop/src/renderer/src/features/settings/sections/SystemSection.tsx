@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "../../../stores/connection";
 import { AlertTriangle, ArrowUpCircleIcon, LoaderCircle, RefreshCw } from "../../../lib/hugeicons";
 import { Card, Empty, Row, SettingsSectionHeader } from "./section-kit";
 
 const RELEASE_CHANNELS = ["stable", "canary", "beta", "dev"] as const;
 type ReleaseChannel = typeof RELEASE_CHANNELS[number];
+const UPDATE_POLL_INTERVAL_MS = 5_000;
+const UPDATE_POLL_TIMEOUT_MS = 5 * 60_000;
 
 interface SystemRelease {
   version?: string;
@@ -73,6 +75,8 @@ export default function SystemSection() {
   const [installingVersion, setInstallingVersion] = useState<string | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
   const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadReleases = useCallback(async (nextChannel: ReleaseChannel) => {
     if (!api) return;
@@ -112,6 +116,45 @@ export default function SystemSection() {
     return () => { cancelled = true; };
   }, [api, loadReleases]);
 
+  useEffect(() => () => {
+    mountedRef.current = false;
+    if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+  }, []);
+
+  const waitForInstallation = async (target: { version?: string; channel?: ReleaseChannel }) => {
+    if (!api) return;
+    const startedAt = Date.now();
+    const poll = async (): Promise<void> => {
+      if (!mountedRef.current) return;
+      try {
+        const info = await api.get<SystemInfo>("/api/system/info");
+        if (!mountedRef.current) return;
+        const installedVersion = info.release?.version ?? info.version;
+        const installedChannel = channel(info.updateChannel ?? info.release?.channel);
+        const installed = target.version
+          ? installedVersion === target.version
+          : installedChannel === target.channel;
+        if (installed) {
+          setState({ info, error: false });
+          setInstallingVersion(null);
+          setUpgradeMessage("Update installed successfully.");
+          void loadReleases(selectedChannel);
+          return;
+        }
+      } catch (err: unknown) {
+        console.warn("[settings] poll system update failed:", err instanceof Error ? err.message : String(err));
+      }
+      if (Date.now() - startedAt >= UPDATE_POLL_TIMEOUT_MS) {
+        setInstallingVersion(null);
+        setUpgradeError("The update is taking longer than expected. Check the System pane again shortly.");
+        setUpgradeMessage(null);
+        return;
+      }
+      pollTimeoutRef.current = setTimeout(() => void poll(), UPDATE_POLL_INTERVAL_MS);
+    };
+    await poll();
+  };
+
   const startUpgrade = async (version?: string) => {
     if (!api) return;
     setInstallingVersion(version ?? selectedChannel);
@@ -119,7 +162,8 @@ export default function SystemSection() {
     setUpgradeMessage(version ? `Installing ${version}…` : `Switching to the ${selectedChannel} channel…`);
     try {
       await api.post("/api/system/update", version ? { version } : { channel: selectedChannel }, { timeoutMs: 10_000 });
-      setUpgradeMessage("Update started. Your computer will restart when installation is complete.");
+      setUpgradeMessage("Update started. Waiting for the new version to finish installing…");
+      void waitForInstallation(version ? { version } : { channel: selectedChannel });
     } catch (err: unknown) {
       console.warn("[settings] start system update failed:", err instanceof Error ? err.message : String(err));
       setUpgradeError("The update could not be started.");
