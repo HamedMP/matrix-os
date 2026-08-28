@@ -99,6 +99,33 @@ describe("top-level app tab shortcuts", () => {
       .toEqual(["tab", "tab"]);
   });
 
+  it("opens a new top-level Chat tab", () => {
+    const chatId = useTabs.getState().openTab({
+      kind: "chat",
+      title: "Chat",
+      chatView: "draft",
+      closable: false,
+    });
+    useDesktopSurfaces.getState().reconcileTabs([chatId], { width: 1280, height: 720 });
+    const preventDefault = vi.fn();
+
+    expect(handleNewTopLevelTabShortcut({ preventDefault })).toBe(true);
+
+    const state = useTabs.getState();
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(state.tabs).toHaveLength(2);
+    expect(state.tabs.map((tab) => tab.kind)).toEqual(["chat", "chat"]);
+    expect(state.tabs[1]).toMatchObject({
+      title: "Chat",
+      chatView: "draft",
+      closable: true,
+    });
+    expect(state.activeTabId).toBe(state.tabs[1]?.id);
+    expect(useDesktopSurfaces.getState()).toMatchObject({ workspaceView: "tabs" });
+    expect(Object.values(useDesktopSurfaces.getState().surfaces).map((surface) => surface.mode))
+      .toEqual(["tab", "tab"]);
+  });
+
   it("opens and closes a fresh top-level Files tab without changing folder tabs", () => {
     const filesId = useTabs.getState().openTab({
       kind: "files",

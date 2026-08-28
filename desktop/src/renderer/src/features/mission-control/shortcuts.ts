@@ -134,6 +134,14 @@ function topLevelTabSpec(activeTab: Tab) {
       closable: true,
     };
   }
+  if (activeTab.kind === "chat") {
+    return {
+      kind: "chat" as const,
+      title: "Chat",
+      chatView: "draft" as const,
+      closable: true,
+    };
+  }
   return null;
 }
 
