@@ -80,6 +80,7 @@ export default function SystemSection() {
   const mountedRef = useRef(true);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const releaseRequestRef = useRef(0);
+  const systemInfoRequestRef = useRef(0);
 
   const loadReleases = useCallback(async (nextChannel: ReleaseChannel) => {
     if (!api) return;
@@ -107,6 +108,8 @@ export default function SystemSection() {
 
   useEffect(() => {
     let cancelled = false;
+    const request = ++systemInfoRequestRef.current;
+    const runtimeGeneration = captureRuntimeGeneration();
     releaseRequestRef.current += 1;
     if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
     pollTimeoutRef.current = null;
@@ -119,13 +122,13 @@ export default function SystemSection() {
     setUpgradeError(null);
     if (!api) return () => { cancelled = true; };
     api.get<SystemInfo>("/api/system/info").then((info) => {
-      if (cancelled) return;
+      if (cancelled || request !== systemInfoRequestRef.current || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       setState({ info, error: false });
       const installedChannel = channel(info.updateChannel ?? info.release?.channel);
       setSelectedChannel(installedChannel);
       void loadReleases(installedChannel);
     }).catch((err: unknown) => {
-      if (cancelled) return;
+      if (cancelled || request !== systemInfoRequestRef.current || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.warn("[settings] load system info failed:", err instanceof Error ? err.message : String(err));
       setState((current) => ({ ...current, error: true }));
     });

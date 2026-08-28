@@ -221,6 +221,33 @@ describe("desktop system updates", () => {
     expect(screen.queryAllByText("v2026.08.28")).toHaveLength(0);
   });
 
+  it("does not apply a late system-info channel from a previous runtime", async () => {
+    const pendingInfo = deferred<unknown>();
+    let infoRequests = 0;
+    const api = {
+      ...makeApi(),
+      get: vi.fn((path: string) => {
+        if (path === "/api/system/info") {
+          infoRequests += 1;
+          return infoRequests === 1 ? pendingInfo.promise : Promise.reject(new Error("new runtime unavailable"));
+        }
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+    };
+    useConnection.setState({ api: api as never, runtimeSlot: "primary" });
+    render(<SystemSection />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/system/info"));
+
+    await act(async () => {
+      advanceRuntimeGeneration();
+      useConnection.setState({ runtimeSlot: "review" });
+      pendingInfo.resolve({ updateChannel: "canary", release: { version: "v2026.08.20", channel: "canary" } });
+      await Promise.resolve();
+    });
+
+    expect((screen.getByLabelText("Release channel") as HTMLSelectElement).value).toBe("stable");
+  });
+
   it("does not show an old runtime's failed update on the new runtime", async () => {
     const pendingUpdate = deferred<unknown>();
     const api = { ...makeApi(), post: vi.fn(() => pendingUpdate.promise) };
