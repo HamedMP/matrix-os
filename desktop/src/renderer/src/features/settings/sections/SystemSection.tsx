@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "../../../stores/connection";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../../stores/runtime-generation";
 import { AlertTriangle, ArrowUpCircleIcon, LoaderCircle, RefreshCw } from "../../../lib/hugeicons";
 import { Card, Empty, Row, SettingsSectionHeader } from "./section-kit";
 
@@ -67,6 +68,7 @@ function compareReleaseToInstalled(version: string | undefined, installed: strin
 
 export default function SystemSection() {
   const api = useConnection((s) => s.api);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const [state, setState] = useState<{ info: SystemInfo | null; error: boolean }>({ info: null, error: false });
   const [selectedChannel, setSelectedChannel] = useState<ReleaseChannel>("stable");
   const [update, setUpdate] = useState<SystemUpdateStatus | null>(null);
@@ -106,6 +108,12 @@ export default function SystemSection() {
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
+    releaseRequestRef.current += 1;
+    if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+    pollTimeoutRef.current = null;
+    setInstallingVersion(null);
+    setUpgradeMessage(null);
+    setUpgradeError(null);
     api.get<SystemInfo>("/api/system/info").then((info) => {
       if (cancelled) return;
       setState({ info, error: false });
@@ -118,7 +126,7 @@ export default function SystemSection() {
       setState((current) => ({ ...current, error: true }));
     });
     return () => { cancelled = true; };
-  }, [api, loadReleases]);
+  }, [api, loadReleases, runtimeSlot]);
 
   useEffect(() => () => {
     mountedRef.current = false;
@@ -129,20 +137,19 @@ export default function SystemSection() {
     version?: string;
     channel?: ReleaseChannel;
     previousVersion?: string;
+    runtimeGeneration: number;
   }) => {
     if (!api) return;
     const startedAt = Date.now();
     const poll = async (): Promise<void> => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || !isCurrentRuntimeGeneration(target.runtimeGeneration)) return;
       try {
         const info = await api.get<SystemInfo>("/api/system/info");
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || !isCurrentRuntimeGeneration(target.runtimeGeneration)) return;
         const installedVersion = info.release?.version;
-        const installedChannel = channel(info.release?.channel);
         const installed = target.version
           ? installedVersion === target.version
-          : installedChannel === target.channel
-            && installedVersion !== undefined
+          : installedVersion !== undefined
             && installedVersion !== target.previousVersion;
         if (installed) {
           setState({ info, error: false });
@@ -154,6 +161,7 @@ export default function SystemSection() {
       } catch (err: unknown) {
         console.warn("[settings] poll system update failed:", err instanceof Error ? err.message : String(err));
       }
+      if (!isCurrentRuntimeGeneration(target.runtimeGeneration)) return;
       if (Date.now() - startedAt >= UPDATE_POLL_TIMEOUT_MS) {
         setInstallingVersion(null);
         setUpgradeError("The update is taking longer than expected. Check the System pane again shortly.");
@@ -168,13 +176,17 @@ export default function SystemSection() {
   const startUpgrade = async (version?: string) => {
     if (!api) return;
     const previousVersion = state.info?.release?.version;
+    const runtimeGeneration = captureRuntimeGeneration();
     setInstallingVersion(version ?? selectedChannel);
     setUpgradeError(null);
     setUpgradeMessage(version ? `Installing ${version}…` : `Switching to the ${selectedChannel} channel…`);
     try {
       await api.post("/api/system/update", version ? { version } : { channel: selectedChannel }, { timeoutMs: 10_000 });
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       setUpgradeMessage("Update started. Waiting for the new version to finish installing…");
-      void waitForInstallation(version ? { version } : { channel: selectedChannel, previousVersion });
+      void waitForInstallation(version
+        ? { version, runtimeGeneration }
+        : { channel: selectedChannel, previousVersion, runtimeGeneration });
     } catch (err: unknown) {
       console.warn("[settings] start system update failed:", err instanceof Error ? err.message : String(err));
       setUpgradeError("The update could not be started.");

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SystemSection from "../../desktop/src/renderer/src/features/settings/sections/SystemSection";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -87,6 +88,65 @@ describe("desktop system updates", () => {
       .filter(([path]) => path === "/api/system/info").length).toBeGreaterThanOrEqual(2));
     expect(screen.getByRole("status", { name: /Installing stable/i })).not.toBeNull();
     expect(screen.queryByText("Update installed successfully.")).toBeNull();
+  });
+
+  it("accepts a changed installed release even when its artifact channel differs", async () => {
+    let installed = false;
+    const api = {
+      ...makeApi(),
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/system/info") {
+          return installed
+            ? { release: { version: "v2026.08.28", channel: "dev" } }
+            : { release: { version: "v2026.08.20", channel: "stable" } };
+        }
+        if (path === "/api/system/update?channel=stable") return { latest: { version: "v2026.08.28", channel: "stable" }, updateAvailable: true };
+        if (path === "/api/system/releases?channel=stable") return { releases: [] };
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+      post: vi.fn(async () => { installed = true; return { ok: true }; }),
+    };
+    useConnection.setState({ api: api as never });
+    render(<SystemSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upgrade" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    await waitFor(() => expect(screen.getByText("Update installed successfully.")).not.toBeNull());
+    expect(screen.queryByRole("status", { name: /Installing stable/i })).toBeNull();
+  });
+
+  it("ignores an update poll after the active runtime changes", async () => {
+    const pendingPoll = deferred<unknown>();
+    let infoRequests = 0;
+    const api = {
+      ...makeApi(),
+      get: vi.fn((path: string) => {
+        if (path === "/api/system/info") {
+          infoRequests += 1;
+          return infoRequests === 1
+            ? Promise.resolve({ release: { version: "v2026.08.20", channel: "stable" } })
+            : pendingPoll.promise;
+        }
+        if (path === "/api/system/update?channel=stable") return Promise.resolve({ latest: { version: "v2026.08.28", channel: "stable" }, updateAvailable: true });
+        if (path === "/api/system/releases?channel=stable") return Promise.resolve({ releases: [] });
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+    };
+    useConnection.setState({ api: api as never, runtimeSlot: "primary" });
+    render(<SystemSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upgrade" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+    await waitFor(() => expect(infoRequests).toBe(2));
+    await act(async () => {
+      advanceRuntimeGeneration();
+      useConnection.setState({ runtimeSlot: "review" });
+      pendingPoll.resolve({ release: { version: "v2026.08.28", channel: "stable" } });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.queryByText("Update installed successfully.")).toBeNull());
   });
 
   it("keeps the newest channel's releases when an earlier request finishes last", async () => {
