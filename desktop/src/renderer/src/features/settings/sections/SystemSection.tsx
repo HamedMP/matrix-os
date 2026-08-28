@@ -134,9 +134,7 @@ export default function SystemSection() {
   }, []);
 
   const waitForInstallation = async (target: {
-    version?: string;
-    channel?: ReleaseChannel;
-    previousVersion?: string;
+    version: string;
     runtimeGeneration: number;
   }) => {
     if (!api) return;
@@ -147,10 +145,7 @@ export default function SystemSection() {
         const info = await api.get<SystemInfo>("/api/system/info");
         if (!mountedRef.current || !isCurrentRuntimeGeneration(target.runtimeGeneration)) return;
         const installedVersion = info.release?.version;
-        const installed = target.version
-          ? installedVersion === target.version
-          : installedVersion !== undefined
-            && installedVersion !== target.previousVersion;
+        const installed = installedVersion === target.version;
         if (installed) {
           setState({ info, error: false });
           setInstallingVersion(null);
@@ -175,18 +170,17 @@ export default function SystemSection() {
 
   const startUpgrade = async (version?: string) => {
     if (!api) return;
-    const previousVersion = state.info?.release?.version;
+    const targetVersion = version ?? latest?.version;
+    if (!targetVersion) return;
     const runtimeGeneration = captureRuntimeGeneration();
-    setInstallingVersion(version ?? selectedChannel);
+    setInstallingVersion(targetVersion);
     setUpgradeError(null);
     setUpgradeMessage(version ? `Installing ${version}…` : `Switching to the ${selectedChannel} channel…`);
     try {
       await api.post("/api/system/update", version ? { version } : { channel: selectedChannel }, { timeoutMs: 10_000 });
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       setUpgradeMessage("Update started. Waiting for the new version to finish installing…");
-      void waitForInstallation(version
-        ? { version, runtimeGeneration }
-        : { channel: selectedChannel, previousVersion, runtimeGeneration });
+      void waitForInstallation({ version: targetVersion, runtimeGeneration });
     } catch (err: unknown) {
       console.warn("[settings] start system update failed:", err instanceof Error ? err.message : String(err));
       setUpgradeError("The update could not be started.");

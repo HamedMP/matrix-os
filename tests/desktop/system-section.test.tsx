@@ -86,7 +86,7 @@ describe("desktop system updates", () => {
 
     await waitFor(() => expect((api.get as ReturnType<typeof vi.fn>).mock.calls
       .filter(([path]) => path === "/api/system/info").length).toBeGreaterThanOrEqual(2));
-    expect(screen.getByRole("status", { name: /Installing stable/i })).not.toBeNull();
+    expect(screen.getByRole("status", { name: /Installing v2026\.08\.28/i })).not.toBeNull();
     expect(screen.queryByText("Update installed successfully.")).toBeNull();
   });
 
@@ -114,6 +114,34 @@ describe("desktop system updates", () => {
 
     await waitFor(() => expect(screen.getByText("Update installed successfully.")).not.toBeNull());
     expect(screen.queryByRole("status", { name: /Installing stable/i })).toBeNull();
+  });
+
+  it("does not report a channel update as installed for an unrelated version", async () => {
+    let updateStarted = false;
+    const api = {
+      ...makeApi(),
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/system/info") {
+          return updateStarted
+            ? { release: { version: "v2026.08.27", channel: "dev" } }
+            : { release: { version: "v2026.08.20", channel: "stable" } };
+        }
+        if (path === "/api/system/update?channel=stable") return { latest: { version: "v2026.08.28", channel: "stable" }, updateAvailable: true };
+        if (path === "/api/system/releases?channel=stable") return { releases: [] };
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+      post: vi.fn(async () => { updateStarted = true; return { ok: true }; }),
+    };
+    useConnection.setState({ api: api as never });
+    render(<SystemSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upgrade" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    await waitFor(() => expect((api.get as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([path]) => path === "/api/system/info").length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByRole("status", { name: /Installing v2026\.08\.28/i })).not.toBeNull();
+    expect(screen.queryByText("Update installed successfully.")).toBeNull();
   });
 
   it("ignores an update poll after the active runtime changes", async () => {
