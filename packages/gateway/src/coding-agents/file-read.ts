@@ -185,22 +185,31 @@ async function readDirectoryNamesBounded(path: string, maxEntries: number, offse
   }
 }
 
-function encodeFileBrowseCursor(name: string): string {
-  return `filecur_${Buffer.from(name, "utf8").toString("hex")}`;
+type DecodedFileBrowseCursor = {
+  directoryRevision: string;
+  afterName: string;
+};
+
+function encodeFileBrowseCursor(name: string, directoryRevision: string): string {
+  return `filecur_${directoryRevision}_${Buffer.from(name, "utf8").toString("hex")}`;
 }
 
-function decodeFileBrowseCursor(cursor: string | undefined): string | undefined {
+function decodeFileBrowseCursor(cursor: string | undefined): DecodedFileBrowseCursor | undefined {
   if (!cursor) return undefined;
   const encoded = cursor.slice("filecur_".length);
-  const name = Buffer.from(encoded, "hex").toString("utf8");
+  const separator = encoded.indexOf("_");
+  const directoryRevision = encoded.slice(0, separator);
+  const encodedName = encoded.slice(separator + 1);
+  const name = Buffer.from(encodedName, "hex").toString("utf8");
   if (
-    Buffer.from(name, "utf8").toString("hex") !== encoded
+    !/^[0-9a-f]{1,32}$/.test(directoryRevision)
+    || Buffer.from(name, "utf8").toString("hex") !== encodedName
     || name.includes("/")
     || name.includes("\0")
   ) {
     throw new CodingAgentFileReadError("file_not_found");
   }
-  return name;
+  return { directoryRevision, afterName: name };
 }
 
 function compareFileBrowseNames(left: string, right: string): number {
@@ -236,6 +245,25 @@ async function readDirectoryNamesPage(
     names: names.slice(0, maxEntries),
     truncated: names.length > maxEntries,
   };
+}
+
+async function readStableDirectoryNamesPage(
+  path: string,
+  maxEntries: number,
+  cursor?: DecodedFileBrowseCursor,
+): Promise<{ names: string[]; truncated: boolean; directoryRevision: string }> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const revisionBefore = (await lstat(path, { bigint: true })).mtimeNs.toString(16);
+    const afterName = cursor?.directoryRevision === revisionBefore
+      ? cursor.afterName
+      : undefined;
+    const listing = await readDirectoryNamesPage(path, maxEntries, afterName);
+    const revisionAfter = (await lstat(path, { bigint: true })).mtimeNs.toString(16);
+    if (revisionBefore === revisionAfter) {
+      return { ...listing, directoryRevision: revisionAfter };
+    }
+  }
+  throw new CodingAgentFileReadError("file_unavailable");
 }
 
 function pathForRequest(base: string, requestPath?: string): string {
@@ -403,7 +431,7 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
       const request = FileBrowseRequestSchema.parse(rawRequest);
-      const afterName = decodeFileBrowseCursor(request.cursor);
+      const cursor = decodeFileBrowseCursor(request.cursor);
       await assertProjectAccess({ principal, request, projects: options.projects });
       const limit = Math.min(request.limit, MAX_FILE_LIST_LIMIT);
       const worktreeRoot = await checkoutRootFor(homePath, principal, request, options.worktrees);
@@ -442,7 +470,7 @@ export function createCodingAgentFileStore(options: {
         MAX_FILE_BROWSE_ENTRIES,
         Math.max(limit + 1, limit * FILE_BROWSE_INSPECT_MULTIPLIER),
       );
-      const listing = await readDirectoryNamesPage(targetReal, inspectLimit, afterName).catch((err: unknown) => {
+      const listing = await readStableDirectoryNamesPage(targetReal, inspectLimit, cursor).catch((err: unknown) => {
         const code = fsErrorCode(err);
         if (["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
           throw new CodingAgentFileReadError("file_not_found");
@@ -489,7 +517,7 @@ export function createCodingAgentFileStore(options: {
           items: items.map((entry) => entry.metadata),
           hasMore,
           ...(hasMore && nextCursorName
-            ? { nextCursor: encodeFileBrowseCursor(nextCursorName) }
+            ? { nextCursor: encodeFileBrowseCursor(nextCursorName, listing.directoryRevision) }
             : {}),
           limit,
         },

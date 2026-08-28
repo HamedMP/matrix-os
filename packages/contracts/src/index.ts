@@ -878,7 +878,7 @@ export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
 
 const FileListLimitSchema = z.coerce.number().int().min(1).max(100).default(50);
 export const FileBrowseCursorSchema = z.string()
-  .regex(/^filecur_(?:[0-9a-f]{2}){1,255}$/);
+  .regex(/^filecur_[0-9a-f]{1,32}_(?:[0-9a-f]{2}){1,255}$/);
 
 export const FileBrowseRequestSchema = z.object({
   projectId: FileProjectSlugSchema,
