@@ -38,5 +38,6 @@ describe("TerminalSessionSidebar", () => {
     expect(container.querySelector('[data-terminal-session-status="active"]')).toBeTruthy();
     expect(container.querySelector('[data-terminal-session-status="inactive"]')).toBeTruthy();
     expect(screen.getByRole("list", { name: "Terminal sessions" }).className).toContain("overflow-y-auto");
+    expect(screen.queryByRole("button", { name: "Shell theme" })).toBeNull();
   });
 });

@@ -6,12 +6,19 @@ import { cleanup, createEvent, fireEvent, render, screen } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopWorkspacePlane from "@desktop/renderer/src/features/desktop-shell/DesktopWorkspacePlane";
 import { DesktopTerminalThemePicker } from "@desktop/renderer/src/features/terminal/DesktopTerminalThemePicker";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { useTerminalAppearance } from "@desktop/renderer/src/stores/terminal-appearance";
 
 beforeEach(() => {
   useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
   useTerminalAppearance.setState(useTerminalAppearance.getInitialState(), true);
+  useConnection.setState({
+    api: {
+      get: vi.fn(async () => ({ preferences: { shellThemeId: "dark" } })),
+      put: vi.fn(async () => ({ preferences: { shellThemeId: "light" } })),
+    } as never,
+  });
   window.operator = {
     invoke: vi.fn(async () => ({ ok: true })),
     on: vi.fn(() => () => undefined),
@@ -55,11 +62,11 @@ describe("workspace background event boundary", () => {
         <div data-desktop-surface="terminal"><DesktopTerminalThemePicker /></div>
       </DesktopWorkspacePlane>,
     );
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Theme" }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Shell theme" }), { button: 0, ctrlKey: false });
     const option = await screen.findByRole("menuitemradio", { name: /Light/ });
     expect(option.closest("[data-desktop-surface]")).toBeNull();
     fireEvent.click(option);
-    expect(useTerminalAppearance.getState().appThemeId).toBe("light");
+    expect(useTerminalAppearance.getState().themeId).toBe("light");
     expect(onBackgroundClick).not.toHaveBeenCalled();
   });
 

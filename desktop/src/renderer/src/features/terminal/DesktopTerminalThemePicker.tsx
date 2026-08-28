@@ -1,5 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, Sparkles } from "@renderer/lib/hugeicons";
+import { Check, Palette } from "@renderer/lib/hugeicons";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
@@ -25,24 +25,24 @@ export function DesktopTerminalThemePicker() {
         <button
           type="button"
           aria-label="Shell theme"
+          title="Shell theme"
           disabled={!api}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium outline-none transition-transform hover:scale-[1.02] focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+          className="inline-flex size-7 shrink-0 items-center justify-center rounded-md border outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             background: "var(--bg-surface)",
             borderColor: "var(--border-subtle)",
             color: "var(--text-primary)",
           }}
         >
-          <Sparkles size={14} aria-hidden="true" />
-          Shell theme
+          <Palette size={14} aria-hidden="true" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           aria-label="Shell theme"
-          side="top"
-          align="start"
-          sideOffset={8}
+          side="bottom"
+          align="end"
+          sideOffset={6}
           className="max-h-[min(440px,calc(100vh-32px))] min-w-[270px] overflow-y-auto rounded-xl border p-2 shadow-xl"
           style={{
             zIndex: DESKTOP_Z_INDEX.popover,

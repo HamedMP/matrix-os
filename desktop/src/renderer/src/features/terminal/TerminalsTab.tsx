@@ -33,6 +33,7 @@ import TerminalView from "./TerminalView";
 import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
 import { relativeSessionActivity } from "./terminal-session-activity";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
+import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
 
 const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
 const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -521,7 +522,7 @@ export default function TerminalsTab({
               style={{ borderRadius: 8 }}
             >
             <header
-              className="flex shrink-0 items-center justify-between border-b px-4 py-4"
+              className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-4"
               style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
             >
               <div className="min-w-0 flex-1">
@@ -530,16 +531,19 @@ export default function TerminalsTab({
                   Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
                 </p>
               </div>
-              <span
-                className="inline-flex h-5 items-center justify-center rounded-[26px] border px-2 py-0.5 text-xs font-medium leading-4"
-                style={{
-                  borderColor: "var(--border-subtle)",
-                  background: "var(--bg-selected)",
-                  color: activeStatus ? "var(--success)" : "var(--text-tertiary)",
-                }}
-              >
-                {statusLabel}
-              </span>
+              <div data-terminal-header-actions className="no-drag relative flex shrink-0 items-center gap-2">
+                <span
+                  className="inline-flex h-5 items-center justify-center rounded-[26px] border px-2 py-0.5 text-xs font-medium leading-4"
+                  style={{
+                    borderColor: "var(--border-subtle)",
+                    background: "var(--bg-selected)",
+                    color: activeStatus ? "var(--success)" : "var(--text-tertiary)",
+                  }}
+                >
+                  {statusLabel}
+                </span>
+                <DesktopTerminalThemePicker />
+              </div>
             </header>
             <div data-terminal-detail className="flex min-h-0 flex-1">
               <div

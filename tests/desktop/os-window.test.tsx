@@ -27,7 +27,7 @@ describe("Electron OS window chrome", () => {
     expect(container.querySelector("[data-os-window-top-bar-overlay]")?.className).toContain("absolute");
   });
 
-  it("keeps a full-width transparent gesture layer when Terminal controls use the sidebar", () => {
+  it("scopes the transparent gesture layer to the chrome-owning sidebar", () => {
     const onClose = vi.fn();
     const { container } = render(
       <TopBar
@@ -39,9 +39,13 @@ describe("Electron OS window chrome", () => {
       />,
     );
 
-    const gestureLayer = container.querySelector("[data-os-window-gesture-layer]");
+    const gestureLayer = container.querySelector("[data-os-window-gesture-layer]") as HTMLElement;
     expect(gestureLayer).toBeTruthy();
     expect(gestureLayer?.className).toContain("z-20");
+    expect(gestureLayer.className).toContain("left-0");
+    expect(gestureLayer.className).toContain("inset-y-0");
+    expect(gestureLayer.className).not.toContain("inset-0");
+    expect(gestureLayer.style.width).toBe("280px");
     expect((container.querySelector('[data-os-window-chrome-placement="sidebar"]') as HTMLElement).style.width).toBe("280px");
     expect(gestureLayer?.className).not.toContain("bg-");
     expect(container.querySelector("[data-os-window-traffic-lights]")?.className).toContain("z-30");
@@ -118,6 +122,20 @@ describe("Electron OS window chrome", () => {
     const closedInspector = screen.getByRole("button", { name: "Toggle inspector" });
     expect(closedNavigation.parentElement?.className).not.toContain("ml-auto");
     expect(closedInspector.parentElement?.className).toContain("ml-auto");
+  });
+
+  it("keeps the gesture layer full width for full-width window chrome", () => {
+    const { container } = render(
+      <TopBar
+        onClose={vi.fn()}
+        onMinimize={vi.fn()}
+        onMaximize={vi.fn()}
+        onDragStart={vi.fn()}
+      />,
+    );
+
+    const gestureLayer = container.querySelector("[data-os-window-gesture-layer]") as HTMLElement;
+    expect(gestureLayer.style.width).toBe("100%");
   });
 
   it("applies topbar clearance only to the safe area for each window layout", () => {

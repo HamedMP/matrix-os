@@ -3,7 +3,6 @@ import { Plus, SquareTerminal, Trash2 } from "@renderer/lib/hugeicons";
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
 import { OSWindowSafeView } from "../desktop-shell/OSWindow";
 import { relativeSessionActivity } from "./terminal-session-activity";
-import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
 
 function isActive(shell: ShellSessionSummary): boolean {
   return shell.status === "active" || shell.visualStatus === "running";
@@ -86,9 +85,6 @@ export function TerminalSessionSidebar({
           );
         })}
       </ul>
-      <footer className="shrink-0 border-t p-3" style={{ borderColor: "var(--border-subtle)" }}>
-        <DesktopTerminalThemePicker />
-      </footer>
       </aside>
     </OSWindowSafeView>
   );
