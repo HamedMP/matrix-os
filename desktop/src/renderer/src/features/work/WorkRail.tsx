@@ -10,7 +10,7 @@ import {
   Plus,
   Trash2,
 } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ContextMenu } from "../../design/primitives";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
 import type { Project } from "../../stores/board";
@@ -77,6 +77,9 @@ export function WorkRail({
   const [deletingChat, setDeletingChat] = useState(false);
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
+  const routeScope = `${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
+  const routeScopeRef = useRef(routeScope);
+  routeScopeRef.current = routeScope;
   const model = useMemo(() => buildWorkRailModel(records, projects), [projects, records]);
 
   useEffect(() => {
@@ -106,6 +109,7 @@ export function WorkRail({
   const updatePinned = (record: CanonicalChatRecord) => {
     if (!client || pinning[record.chat.id]) return;
     const pinned = !record.chat.userState?.pinned;
+    const requestRouteScope = routeScopeRef.current;
     setPinError(null);
     setPinning((current) => ({ ...current, [record.chat.id]: true }));
     void client.updateUserState(record.chat.id, { pinned }).then((updated) => {
@@ -117,7 +121,9 @@ export function WorkRail({
         "[work] Chat pin update failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      setPinError("Chat pin could not be updated.");
+      if (routeScopeRef.current === requestRouteScope) {
+        setPinError("Chat pin could not be updated.");
+      }
     }).finally(() => {
       setPinning((current) => {
         const next = { ...current };
