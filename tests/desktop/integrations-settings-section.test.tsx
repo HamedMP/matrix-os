@@ -165,6 +165,11 @@ describe("desktop integrations settings section", () => {
     expect(screen.getByTestId("integration-action-slack").getAttribute("data-state")).toBe("connected");
     expect(screen.getByTestId("integration-action-github").getAttribute("data-state")).toBe("available");
     expect(screen.getByTestId("integration-connect-github").className).toContain("rounded-[8px]");
+    expect(Array.from(screen.getByTestId("integrations-grid").querySelectorAll("[data-testid^='integration-card-']")).map((card) => card.getAttribute("data-testid"))).toEqual([
+      "integration-card-slack",
+      "integration-card-github",
+      "integration-card-linear",
+    ]);
   });
 
   it("capitalizes service ids in the connected section when no catalog name exists", async () => {

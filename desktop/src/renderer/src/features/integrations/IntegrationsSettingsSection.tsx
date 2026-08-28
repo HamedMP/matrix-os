@@ -198,7 +198,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
 
   const catalogServices = useMemo(() => {
     const known = new Set(available.map((service) => service.id));
-    return [
+    const services = [
       ...available,
       ...connections
         .filter((connection) => !known.has(connection.service))
@@ -208,6 +208,11 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
           category: "other",
         })),
     ];
+    return services.sort((left, right) => {
+      const leftConnected = connections.some((connection) => connection.service === left.id);
+      const rightConnected = connections.some((connection) => connection.service === right.id);
+      return Number(rightConnected) - Number(leftConnected);
+    });
   }, [available, connections]);
 
   let body: ReactNode;
