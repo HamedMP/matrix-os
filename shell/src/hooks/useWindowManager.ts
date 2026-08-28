@@ -59,15 +59,14 @@ function getEffectiveMinimumWindowSize(path: string): { width: number; height: n
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
+  const availableWidth = Math.max(1, vw - (DESKTOP_WINDOW_MARGIN * 2));
+  const availableHeight = Math.max(
+    1,
+    vh - topInset - (DESKTOP_WINDOW_MARGIN * 2),
+  );
   return {
-    width: Math.min(
-      preferred.width,
-      Math.max(MIN_WIDTH, vw - (DESKTOP_WINDOW_MARGIN * 2)),
-    ),
-    height: Math.min(
-      preferred.height,
-      Math.max(MIN_HEIGHT, vh - topInset - (DESKTOP_WINDOW_MARGIN * 2)),
-    ),
+    width: Math.min(preferred.width, availableWidth),
+    height: Math.min(preferred.height, availableHeight),
   };
 }
 

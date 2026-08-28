@@ -202,6 +202,32 @@ describe("Window Manager Store", () => {
       });
     });
 
+    it("shrinks below the preferred minimum when the desktop is extremely short", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 640 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 250 });
+      useWindowManager.getState().loadLayout([{
+        path: "__file-browser__",
+        title: "Files",
+        x: 40,
+        y: 40,
+        width: 600,
+        height: 480,
+        state: "open",
+      }]);
+
+      useWindowManager.getState().reconcileWindowsToViewport();
+
+      const windowRecord = useWindowManager.getState().windows[0];
+      expect(windowRecord).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 600,
+        height: 172,
+      });
+      expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(230);
+    });
+
     it("leaves spatial Canvas windows unchanged", () => {
       useDesktopMode.setState({ mode: "canvas" });
       useWindowManager.setState({
