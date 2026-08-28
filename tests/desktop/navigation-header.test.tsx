@@ -29,7 +29,9 @@ describe("Desktop navigation header", () => {
     useHermesChat.setState(useHermesChat.getInitialState(), true);
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+  });
 
   it("builds contextual root and nested breadcrumbs", () => {
     const project: Tab = {
@@ -403,6 +405,14 @@ describe("Desktop navigation header", () => {
     expect(screen.getByRole("tab", { name: "Desktop" })).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Actions for Browser" })).toBeNull();
+  });
+
+  it("leaves the native titlebar drag region available for OS window gestures", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    expect(screen.getByRole("banner").classList.contains("titlebar-drag")).toBe(true);
+    expect(screen.getByRole("tablist", { name: "Workspace tabs" })
+      .classList.contains("titlebar-drag")).toBe(true);
   });
 
   it("uses Figma-style native top-bar controls without a mode switcher", () => {
