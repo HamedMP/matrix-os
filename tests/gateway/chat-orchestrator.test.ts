@@ -439,7 +439,13 @@ describe("CanonicalChatOrchestrator", () => {
       clientRequestId: "req_create_cancelled",
       title: "Cancelled",
     });
+    let partialPersisted!: () => void;
+    const persisted = new Promise<void>((resolve) => {
+      partialPersisted = resolve;
+    });
     const provider = adapter(async function* (input) {
+      yield { type: "assistant.delta", delta: "durable partial before cancellation" };
+      partialPersisted();
       await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
       yield { type: "assistant.delta", delta: "late output" };
       yield { type: "run.completed", outcome: "aborted" };
@@ -458,6 +464,7 @@ describe("CanonicalChatOrchestrator", () => {
       interactionMode: "default",
       permissionMode: "supervised",
     });
+    await persisted;
 
     const cancelled = await orchestrator.cancelRun(owner, "chat_cancelled", admitted.run.id);
     expect(cancelled).toMatchObject({ cancellation: "aborted", run: { status: "aborted" } });
@@ -466,7 +473,11 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
 
     const snapshot = await repository.exportChat(owner, "chat_cancelled");
-    expect(snapshot?.messages).toHaveLength(1);
+    expect(snapshot?.messages).toHaveLength(2);
+    expect(snapshot?.messages.find((message) => message.runId === admitted.run.id)).toMatchObject({
+      state: "failed",
+      parts: [{ type: "text", text: "durable partial before cancellation" }],
+    });
     expect(snapshot?.runs[0]).toMatchObject({ status: "aborted", outcome: "aborted" });
     expect(snapshot?.activities.some((activity) =>
       activity.type === "assistant.delta" && activity.delta === "late output"

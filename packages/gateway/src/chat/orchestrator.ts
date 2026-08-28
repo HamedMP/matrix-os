@@ -609,6 +609,9 @@ export class CanonicalChatOrchestrator {
         ? adapter.resume({ ...input, resumeState })
         : adapter.start(input);
       for await (const rawEvent of events) {
+        if (controller.signal.aborted) {
+          throw new Error("Provider emitted an event after cancellation");
+        }
         const event = CanonicalProviderRunEventSchema.parse(rawEvent);
         if (terminal) throw new Error("Provider emitted an event after completion");
         if (event.type === "state.updated") {
