@@ -914,7 +914,19 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
     expect(workflow).toContain('if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then');
     expect(workflow.indexOf('Immediate fleet visibility for ${HANDLE}: ${status}'))
-      .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + 600))'));
+      .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + PREVIEW_PROVISION_TIMEOUT_SECONDS))'));
+  });
+
+  it('preview VPS workflow waits through registration expiry and reports the terminal failure code', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const deployJob = workflow.slice(workflow.indexOf('  deploy:'), workflow.indexOf('  cleanup:'));
+
+    expect(deployJob).toContain('timeout-minutes: 90');
+    expect(deployJob).toContain('PREVIEW_PROVISION_TIMEOUT_SECONDS: 3900');
+    expect(deployJob).toContain('deadline=$((SECONDS + PREVIEW_PROVISION_TIMEOUT_SECONDS))');
+    expect(deployJob).toContain(`failure_code="$(jq -r '.failureCode // "unknown"' <<< "$machine")"`);
+    expect(deployJob).toContain('Provisioning failed for ${HANDLE} (code: ${failure_code})');
   });
 
   it('preview VPS workflow safely resumes an existing active preview', () => {

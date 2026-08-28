@@ -228,7 +228,7 @@ jobs:
     needs: [gate, build]
     if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
@@ -239,6 +239,7 @@ jobs:
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
+      PREVIEW_PROVISION_TIMEOUT_SECONDS: 3900
       HANDLE: ${{ needs.gate.outputs.handle }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
     steps:
@@ -355,17 +356,22 @@ jobs:
 
           if [ "$status" = "provisioning" ]; then
             echo "Waiting for the VPS to come up..."
-            deadline=$((SECONDS + 600))
+            deadline=$((SECONDS + PREVIEW_PROVISION_TIMEOUT_SECONDS))
             while true; do
               sleep 15
-              status="$(curl -fsS --max-time 30 \
+              machine="$(curl -fsS --max-time 30 \
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-                jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
-                  '[.machines[] | select(.handle == $h and .machineId == $id and .deletedAt == null)] | .[0].status // "absent"')"
+                jq -c --arg h "$HANDLE" --arg id "$accepted_machine_id" \
+                  '[.machines[] | select(.handle == $h and .machineId == $id and .deletedAt == null)] | (.[0] // {status: "absent", failureCode: null})')"
+              status="$(jq -r '.status' <<< "$machine")"
               [ "$status" = "running" ] && break
               if [ "$status" = "failed" ]; then
-                echo "Provisioning failed for ${HANDLE}" >&2
+                failure_code="$(jq -r '.failureCode // "unknown"' <<< "$machine")"
+                if ! printf '%s' "$failure_code" | grep -Eq '^[a-z][a-z0-9_]{0,63}$'; then
+                  failure_code=unknown
+                fi
+                echo "Provisioning failed for ${HANDLE} (code: ${failure_code})" >&2
                 exit 1
               fi
               if [ "$SECONDS" -ge "$deadline" ]; then

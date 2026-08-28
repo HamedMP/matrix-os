@@ -117,6 +117,15 @@ describe('platform/customer-vps', () => {
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
   });
 
+  it('keeps the one-time registration token valid through the bounded clean bootstrap window', () => {
+    const config = loadCustomerVpsConfig({});
+
+    expect(config.registrationTokenTtlMs).toBe(60 * 60 * 1000);
+    expect(loadCustomerVpsConfig({
+      CUSTOMER_VPS_REGISTRATION_TOKEN_TTL_MS: '1800000',
+    }).registrationTokenTtlMs).toBe(30 * 60 * 1000);
+  });
+
   it('does not use the private PostHog ingest host as the public browser host', () => {
     const config = loadCustomerVpsConfig({
       POSTHOG_HOST: 'https://eu.i.posthog.com',
