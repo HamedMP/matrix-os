@@ -6,6 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SystemSection from "../../desktop/src/renderer/src/features/settings/sections/SystemSection";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 function makeApi() {
   return {
     baseUrl: "https://app.matrix-os.com",
@@ -67,5 +73,49 @@ describe("desktop system updates", () => {
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/system/update", { version: "v2026.08.28" }, expect.anything()));
     expect(screen.getByRole("status", { name: /Installing v2026\.08\.28/i })).not.toBeNull();
+  });
+
+  it("does not treat an unchanged channel subscription as an installed channel update", async () => {
+    const api = makeApi();
+    useConnection.setState({ api: api as never });
+    render(<SystemSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upgrade" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    await waitFor(() => expect((api.get as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([path]) => path === "/api/system/info").length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByRole("status", { name: /Installing stable/i })).not.toBeNull();
+    expect(screen.queryByText("Update installed successfully.")).toBeNull();
+  });
+
+  it("keeps the newest channel's releases when an earlier request finishes last", async () => {
+    const stableUpdate = deferred<unknown>();
+    const stableReleases = deferred<unknown>();
+    const api = {
+      ...makeApi(),
+      get: vi.fn((path: string) => {
+        if (path === "/api/system/info") return Promise.resolve({ release: { version: "v2026.08.20", channel: "stable" } });
+        if (path === "/api/system/update?channel=stable") return stableUpdate.promise;
+        if (path === "/api/system/releases?channel=stable") return stableReleases.promise;
+        if (path === "/api/system/update?channel=canary") return Promise.resolve({ latest: { version: "v2026.08.29-canary", channel: "canary" }, updateAvailable: true });
+        if (path === "/api/system/releases?channel=canary") return Promise.resolve({ releases: [{ version: "v2026.08.29-canary", channel: "canary" }] });
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+    };
+    useConnection.setState({ api: api as never });
+    render(<SystemSection />);
+
+    await waitFor(() => expect((api.get as ReturnType<typeof vi.fn>).mock.calls
+      .some(([path]) => path === "/api/system/releases?channel=stable")).toBe(true));
+    fireEvent.change(screen.getByLabelText("Release channel"), { target: { value: "canary" } });
+    await waitFor(() => expect(screen.getAllByText("v2026.08.29-canary").length).toBeGreaterThan(0));
+
+    stableUpdate.resolve({ latest: { version: "v2026.08.28", channel: "stable" }, updateAvailable: true });
+    stableReleases.resolve({ releases: [{ version: "v2026.08.28", channel: "stable" }] });
+    await Promise.resolve();
+
+    expect(screen.getAllByText("v2026.08.29-canary").length).toBeGreaterThan(0);
+    expect(screen.queryByText("v2026.08.28")).toBeNull();
   });
 });

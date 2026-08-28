@@ -77,9 +77,11 @@ export default function SystemSection() {
   const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const releaseRequestRef = useRef(0);
 
   const loadReleases = useCallback(async (nextChannel: ReleaseChannel) => {
     if (!api) return;
+    const request = ++releaseRequestRef.current;
     setLoadingReleases(true);
     setUpgradeError(null);
     try {
@@ -87,15 +89,17 @@ export default function SystemSection() {
         api.get<SystemUpdateStatus>(`/api/system/update?channel=${nextChannel}`),
         api.get<ReleaseList>(`/api/system/releases?channel=${nextChannel}`),
       ]);
+      if (request !== releaseRequestRef.current) return;
       setUpdate(nextUpdate);
       setReleaseList(nextReleases);
     } catch (err: unknown) {
+      if (request !== releaseRequestRef.current) return;
       console.warn("[settings] load system releases failed:", err instanceof Error ? err.message : String(err));
       setUpgradeError("Release information is unavailable.");
       setUpdate(null);
       setReleaseList(null);
     } finally {
-      setLoadingReleases(false);
+      if (request === releaseRequestRef.current) setLoadingReleases(false);
     }
   }, [api]);
 
@@ -121,7 +125,11 @@ export default function SystemSection() {
     if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
   }, []);
 
-  const waitForInstallation = async (target: { version?: string; channel?: ReleaseChannel }) => {
+  const waitForInstallation = async (target: {
+    version?: string;
+    channel?: ReleaseChannel;
+    previousVersion?: string;
+  }) => {
     if (!api) return;
     const startedAt = Date.now();
     const poll = async (): Promise<void> => {
@@ -129,11 +137,13 @@ export default function SystemSection() {
       try {
         const info = await api.get<SystemInfo>("/api/system/info");
         if (!mountedRef.current) return;
-        const installedVersion = info.release?.version ?? info.version;
-        const installedChannel = channel(info.updateChannel ?? info.release?.channel);
+        const installedVersion = info.release?.version;
+        const installedChannel = channel(info.release?.channel);
         const installed = target.version
           ? installedVersion === target.version
-          : installedChannel === target.channel;
+          : installedChannel === target.channel
+            && installedVersion !== undefined
+            && installedVersion !== target.previousVersion;
         if (installed) {
           setState({ info, error: false });
           setInstallingVersion(null);
@@ -157,13 +167,14 @@ export default function SystemSection() {
 
   const startUpgrade = async (version?: string) => {
     if (!api) return;
+    const previousVersion = state.info?.release?.version;
     setInstallingVersion(version ?? selectedChannel);
     setUpgradeError(null);
     setUpgradeMessage(version ? `Installing ${version}…` : `Switching to the ${selectedChannel} channel…`);
     try {
       await api.post("/api/system/update", version ? { version } : { channel: selectedChannel }, { timeoutMs: 10_000 });
       setUpgradeMessage("Update started. Waiting for the new version to finish installing…");
-      void waitForInstallation(version ? { version } : { channel: selectedChannel });
+      void waitForInstallation(version ? { version } : { channel: selectedChannel, previousVersion });
     } catch (err: unknown) {
       console.warn("[settings] start system update failed:", err instanceof Error ? err.message : String(err));
       setUpgradeError("The update could not be started.");

@@ -35,7 +35,7 @@ export function AvailableServiceCard({
   connection?: ConnectedIntegration;
   connections?: ConnectedIntegration[];
   onConnect: () => void;
-  onDisconnect?: () => void;
+  onDisconnect?: (connection: ConnectedIntegration) => void;
 }) {
   const description = service.description ?? INTEGRATION_DESCRIPTIONS[service.id] ?? "Connect this service to extend your agent.";
   const actionIsConnected = connected && connection !== undefined && onDisconnect !== undefined;
@@ -70,6 +70,23 @@ export function AvailableServiceCard({
             ))}
           </span>
         ) : null}
+        {connections.length > 1 && onDisconnect ? (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {connections.map((account) => (
+              <button
+                key={account.id}
+                type="button"
+                className="rounded border px-1.5 py-0.5 text-xs"
+                style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
+                aria-label={`Disconnect ${displayIntegrationName(account.accountLabel)}`}
+                disabled={disabled}
+                onClick={() => onDisconnect(account)}
+              >
+                {displayIntegrationName(account.accountLabel)} ×
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       {actionIsConnected ? (
         <div
@@ -100,7 +117,7 @@ export function AvailableServiceCard({
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
-              onDisconnect();
+              onDisconnect(connection);
             }}
           >
             <span className="sr-only">Disconnect</span>

@@ -367,6 +367,19 @@ describe("desktop integrations settings section", () => {
     expect(screen.queryByText(/Disconnect Work\?/)).toBeNull();
   });
 
+  it("disconnects the selected account when a service has multiple connections", async () => {
+    const api = makeApi({ connections: [GMAIL_CONNECTION, NEW_GMAIL_CONNECTION] });
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Disconnect Personal" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect Personal" }));
+    await waitFor(() => expect(screen.getByText(/Disconnect Personal\?/)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /^Disconnect$/ }));
+
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/integrations/${NEW_CONN_ID}`));
+  });
+
   it("keeps the account and shows generic copy when disconnect fails", async () => {
     const api = makeApi({ deleteError: new AppError("server") });
     useConnection.setState({ api: api as never });

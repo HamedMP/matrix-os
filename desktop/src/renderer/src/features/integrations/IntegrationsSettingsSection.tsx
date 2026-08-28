@@ -253,7 +253,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
                     connecting={connectingService === service.id}
                     disabled={connectingService !== null}
                     onConnect={() => void handleConnect(service.id)}
-                    onDisconnect={connection ? () => setConfirmId(connection.id) : undefined}
+                    onDisconnect={(target) => setConfirmId(target.id)}
                   />
                 );
               })}
