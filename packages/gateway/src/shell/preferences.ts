@@ -143,11 +143,16 @@ export class ShellPreferencesStore {
     return next;
   }
 
-  async updateGlobal(input: unknown): Promise<ShellPreferences> {
+  async updateGlobal(
+    input: unknown,
+    afterSave?: (preferences: ShellPreferences) => Promise<void>,
+  ): Promise<ShellPreferences> {
     const patch = ShellPreferencesPatchSchema.parse(input);
     const update = this.globalUpdateQueue.then(async () => {
       const current = await this.loadGlobal();
-      return this.saveGlobal({ ...current, ...patch });
+      const next = await this.saveGlobal({ ...current, ...patch });
+      await afterSave?.(next);
+      return next;
     });
     this.globalUpdateQueue = update.then(
       () => undefined,

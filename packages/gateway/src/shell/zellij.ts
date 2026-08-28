@@ -299,6 +299,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   }>();
   const zellijConfigPaths = deps.homePath ? matrixZellijConfigPaths(deps.homePath) : null;
   let ensureConfigPromise: Promise<void> | null = null;
+  let shellThemeUpdateQueue: Promise<void> = Promise.resolve();
   let shellThemeId: MatrixZellijShellThemeId = "dark";
 
   function cacheFocusedPaneRuntime(
@@ -639,9 +640,16 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       return { kdl };
     },
     async setShellTheme(themeId) {
-      shellThemeId = themeId;
-      ensureConfigPromise = null;
-      await ensureMatrixZellijConfig();
+      const update = shellThemeUpdateQueue.then(async () => {
+        shellThemeId = themeId;
+        ensureConfigPromise = null;
+        await ensureMatrixZellijConfig();
+      });
+      shellThemeUpdateQueue = update.then(
+        () => undefined,
+        () => undefined,
+      );
+      await update;
     },
   };
 }

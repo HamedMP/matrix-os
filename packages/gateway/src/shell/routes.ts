@@ -589,10 +589,13 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
           503,
         );
       }
-      const preferences = await deps.preferences.updateGlobal(await c.req.json());
-      if (deps.shellThemeConfig) {
-        await deps.shellThemeConfig.setShellTheme(preferences.shellThemeId);
-      }
+      const shellThemeConfig = deps.shellThemeConfig;
+      const preferences = await deps.preferences.updateGlobal(
+        await c.req.json(),
+        shellThemeConfig
+          ? (next) => shellThemeConfig.setShellTheme(next.shellThemeId)
+          : undefined,
+      );
       return c.json({ preferences });
     } catch (err) {
       return safeError(c, err);

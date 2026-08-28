@@ -7,6 +7,7 @@ import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
 import {
   ShellPreferencesSchema,
   ShellPreferencesStore,
+  type ShellPreferences,
 } from "../../packages/gateway/src/shell/preferences.js";
 
 const roots: string[] = [];
@@ -85,6 +86,45 @@ describe("shell preferences", () => {
       shellThemeId: "matrix",
       fontFamily: "Fira Code",
     });
+  });
+
+  it("serializes global preference side effects with their persisted updates", async () => {
+    const root = await tempRoot();
+    const store = new ShellPreferencesStore({ homePath: root });
+    const order: string[] = [];
+    let appliedTheme = "dark";
+    let releaseFirstApply: (() => void) | undefined;
+
+    const first = store.updateGlobal(
+      { shellThemeId: "matrix" },
+      async (preferences: ShellPreferences) => {
+        order.push(`${preferences.shellThemeId}:start`);
+        await new Promise<void>((resolve) => {
+          releaseFirstApply = resolve;
+        });
+        appliedTheme = preferences.shellThemeId;
+        order.push(`${preferences.shellThemeId}:end`);
+      },
+    );
+    await vi.waitFor(() => expect(order).toEqual(["matrix:start"]));
+
+    const second = store.updateGlobal(
+      { shellThemeId: "light" },
+      async (preferences: ShellPreferences) => {
+        order.push(`${preferences.shellThemeId}:start`);
+        appliedTheme = preferences.shellThemeId;
+        order.push(`${preferences.shellThemeId}:end`);
+      },
+    );
+    await Promise.resolve();
+    expect(order).toEqual(["matrix:start"]);
+
+    releaseFirstApply?.();
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(["matrix:start", "matrix:end", "light:start", "light:end"]);
+    expect(appliedTheme).toBe("light");
+    await expect(store.loadGlobal()).resolves.toMatchObject({ shellThemeId: "light" });
   });
 
   it("renames per-session preferences without overwriting another preference file", async () => {
@@ -219,6 +259,33 @@ describe("shell preferences", () => {
     await expect(globalAfterTerminalSession.json()).resolves.toMatchObject({
       preferences: { shellThemeId: "powerlevel10k-classic" },
     });
+  });
+
+  it("routes global shell theme application through the serialized preference update", async () => {
+    const root = await tempRoot();
+    const preferences = new ShellPreferencesStore({ homePath: root });
+    const updateGlobal = vi.spyOn(preferences, "updateGlobal");
+    const setShellTheme = vi.fn(async () => {});
+    const app = new Hono();
+    app.route("/api", createShellRoutes({
+      registry: {
+        list: vi.fn(async () => []),
+        create: vi.fn(),
+        delete: vi.fn(),
+      },
+      preferences,
+      shellThemeConfig: { setShellTheme },
+    }));
+
+    const response = await app.request("/api/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shellThemeId: "matrix" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(updateGlobal.mock.calls[0]?.[1]).toEqual(expect.any(Function));
+    expect(setShellTheme).toHaveBeenCalledWith("matrix");
   });
 
   it("serves PATCH session UI state with validation and body limits", async () => {
