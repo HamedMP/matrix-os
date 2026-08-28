@@ -30,7 +30,7 @@ import {
   asIso,
   jsonb,
   messageSearchText,
-  toActivity,
+  toActivities,
   toChatRecord,
   toLegacyImport,
   toMessage,
@@ -1104,7 +1104,7 @@ export class ChatRepository {
       messages: messages.map(toMessage),
       turns: turns.map(toTurn),
       runs: runs.map(toRun),
-      activities: activities.map(toActivity),
+      activities: toActivities(activities),
       attachments: attachments.map((row) => ({
         id: row.id,
         messageId: row.message_id,

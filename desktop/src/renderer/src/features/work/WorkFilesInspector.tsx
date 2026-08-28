@@ -292,7 +292,7 @@ function WorkInspectorContent({
     event.preventDefault();
     const bounds = splitRef.current?.getBoundingClientRect();
     if (!bounds) return;
-    const move = (moveEvent: PointerEvent) => resizeFileList(bounds.right - moveEvent.clientX);
+    const move = (moveEvent: PointerEvent) => resizeFileList(moveEvent.clientX - bounds.left);
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
@@ -414,6 +414,40 @@ function WorkInspectorContent({
           data-layout={selected.kind === "terminal" ? "terminal" : selectedFile ? "split" : "files-only"}
           className="flex min-h-0 flex-1"
         >
+          {selected.kind === "files" ? (
+            <section
+              aria-label="Files"
+              className={selectedFile
+                ? "flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden"
+                : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}
+              style={{
+                ...(selectedFile ? { width: fileListWidth } : {}),
+                background: "var(--bg-sunken)",
+              }}
+            >
+              <InspectorFilesPanel scope={scope} browserOnly forceList onOpenFile={openFile} />
+            </section>
+          ) : null}
+          {selected.kind === "files" && selectedFile ? (
+            <div
+              role="separator"
+              aria-label="Resize file list"
+              aria-orientation="vertical"
+              aria-valuemin={MIN_FILE_LIST_WIDTH}
+              aria-valuemax={820}
+              aria-valuenow={Math.round(fileListWidth)}
+              tabIndex={0}
+              className="group/file-resize relative z-10 w-2 shrink-0 cursor-col-resize outline-none"
+              onPointerDown={startFileListResize}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                event.preventDefault();
+                resizeFileList(fileListWidth + (event.key === "ArrowRight" ? 16 : -16));
+              }}
+            >
+              <span className="absolute inset-y-0 left-[3px] w-px bg-[var(--border-subtle)] group-hover/file-resize:bg-[var(--accent)]" />
+            </div>
+          ) : null}
           <div
             className={selected.kind === "files" && !selectedFile
               ? "hidden"
@@ -450,40 +484,6 @@ function WorkInspectorContent({
               </div>
             ))}
           </div>
-          {selected.kind === "files" && selectedFile ? (
-            <div
-              role="separator"
-              aria-label="Resize file list"
-              aria-orientation="vertical"
-              aria-valuemin={MIN_FILE_LIST_WIDTH}
-              aria-valuemax={820}
-              aria-valuenow={Math.round(fileListWidth)}
-              tabIndex={0}
-              className="group/file-resize relative z-10 w-2 shrink-0 cursor-col-resize outline-none"
-              onPointerDown={startFileListResize}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-                event.preventDefault();
-                resizeFileList(fileListWidth + (event.key === "ArrowLeft" ? 16 : -16));
-              }}
-            >
-              <span className="absolute inset-y-0 left-[3px] w-px bg-[var(--border-subtle)] group-hover/file-resize:bg-[var(--accent)]" />
-            </div>
-          ) : null}
-          {selected.kind === "files" ? (
-            <section
-              aria-label="Files"
-              className={selectedFile
-                ? "flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden"
-                : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}
-              style={{
-                ...(selectedFile ? { width: fileListWidth } : {}),
-                background: "var(--bg-sunken)",
-              }}
-            >
-              <InspectorFilesPanel scope={scope} browserOnly forceList onOpenFile={openFile} />
-            </section>
-          ) : null}
         </div>
       </aside>
     </Tooltip.Provider>

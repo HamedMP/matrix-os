@@ -1058,6 +1058,81 @@ describe("ChatRepository", () => {
       .resolves.toBeNull();
   });
 
+  it("loads legacy Chat detail while omitting an unverifiable terminal binding activity", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_legacy_terminal_activity",
+      clientRequestId: "req_create_legacy_terminal_activity",
+      title: "Legacy terminal activity",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input, "req_legacy_terminal_turn");
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: created.chat.revision,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.kysely.insertInto("chat_run_events").values({
+      id: "activity_legacy_terminal_without_incarnation",
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      event: {
+        id: "activity_legacy_terminal_without_incarnation",
+        chatId: created.chat.id,
+        runId: acceptedRun.id,
+        occurredAt: now,
+        type: "terminal.bound",
+        terminalSessionId: "terminal_legacy",
+      },
+      occurred_at: now,
+    }).execute();
+
+    const detail = await repository.getDetailPage(owner, created.chat.id, { limit: 200 });
+    const exported = await repository.exportChat(owner, created.chat.id);
+
+    expect(detail).not.toBeNull();
+    expect(detail?.activities).toEqual([]);
+    expect(exported?.activities).toEqual([]);
+  });
+
+  it("rejects malformed terminal binding activity instead of weakening incarnation checks", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_malformed_terminal_activity",
+      clientRequestId: "req_create_malformed_terminal_activity",
+      title: "Malformed terminal activity",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input, "req_malformed_terminal_turn");
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: created.chat.revision,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.kysely.insertInto("chat_run_events").values({
+      id: "activity_terminal_with_invalid_incarnation",
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      event: {
+        id: "activity_terminal_with_invalid_incarnation",
+        chatId: created.chat.id,
+        runId: acceptedRun.id,
+        occurredAt: now,
+        type: "terminal.bound",
+        terminalSessionId: "terminal_invalid",
+        terminalSessionCreatedAt: "not-an-iso-timestamp",
+      },
+      occurred_at: now,
+    }).execute();
+
+    await expect(repository.getDetailPage(owner, created.chat.id, { limit: 200 }))
+      .rejects.toThrow("Invalid ISO datetime");
+  });
+
   it("hard-deletes all content once and preserves only a content-free tombstone", async () => {
     const created = await repository.create(owner, {
       id: "chat_delete",

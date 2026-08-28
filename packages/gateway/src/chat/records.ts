@@ -220,8 +220,29 @@ export function toRun(row: Selectable<ChatRunsTable>): CanonicalChatRun {
   });
 }
 
-export function toActivity(row: Selectable<ChatRunEventsTable>): CanonicalChatRunActivity {
-  return CanonicalChatRunActivitySchema.parse(parseJson(row.event));
+export function toActivity(row: Selectable<ChatRunEventsTable>): CanonicalChatRunActivity | null {
+  const event = parseJson<unknown>(row.event);
+  const parsed = CanonicalChatRunActivitySchema.safeParse(event);
+  if (parsed.success) return parsed.data;
+  if (
+    typeof event === "object"
+    && event !== null
+    && "type" in event
+    && event.type === "terminal.bound"
+    && !("terminalSessionCreatedAt" in event)
+  ) {
+    return null;
+  }
+  return CanonicalChatRunActivitySchema.parse(event);
+}
+
+export function toActivities(
+  rows: readonly Selectable<ChatRunEventsTable>[],
+): CanonicalChatRunActivity[] {
+  return rows.flatMap((row) => {
+    const activity = toActivity(row);
+    return activity ? [activity] : [];
+  });
 }
 
 export function toOutbox(row: Selectable<ChatOutboxTable>): ChatOutboxEvent {

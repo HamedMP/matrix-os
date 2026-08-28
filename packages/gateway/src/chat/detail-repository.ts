@@ -9,7 +9,7 @@ import {
 import type { Kysely } from "kysely";
 import type { ChatDatabase } from "./database.js";
 import {
-  toActivity,
+  toActivities,
   toMessage,
   toRun,
   toTurn,
@@ -94,7 +94,7 @@ export class ChatDetailRepository {
       messages: selectedMessageRows.map(toMessage),
       turns: turnRows.map(toTurn),
       runs: runRows.map(toRun),
-      activities: activityRows.map(toActivity),
+      activities: toActivities(activityRows),
       terminalSessionIds: terminalBindings.reverse().map((binding) => binding.session_id),
       ...(hasOlder && selectedMessageRows[0]
         ? { nextBeforeSeq: Number(selectedMessageRows[0].seq) }

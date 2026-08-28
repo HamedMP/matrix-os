@@ -244,14 +244,17 @@ describe("Work Files and Terminal inspector", () => {
 
   it("resizes the file list beside an open preview with an accessible divider", async () => {
     const { chatDetail, project } = projectDetail("chat_first");
-    render(<WorkFilesInspector detail={chatDetail} projects={[project]} active />);
+    const { container } = render(<WorkFilesInspector detail={chatDetail} projects={[project]} active />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Open file README.md" }));
     await screen.findByText("README");
 
+    const panes = container.querySelector('[data-layout="split"]');
+    expect(panes?.children[0]?.getAttribute("aria-label")).toBe("Files");
+    expect(panes?.children[2]?.querySelector('[aria-label="File preview"]')).not.toBeNull();
     const divider = screen.getByRole("separator", { name: "Resize file list" });
     expect(divider.getAttribute("aria-valuenow")).toBe("300");
-    fireEvent.keyDown(divider, { key: "ArrowLeft" });
+    fireEvent.keyDown(divider, { key: "ArrowRight" });
     expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
   });
 
