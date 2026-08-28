@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/platform-cloud-run.yml"
       - "packages/platform/**"
       - "packages/observability/**"
       - "packages/clerk-sync/**"
@@ -67,6 +66,10 @@ jobs:
       - name: Validate deployment configuration
         run: |
           set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" != "production" ]; then
+            echo "Platform Cloud Run only accepts the production environment." >&2
+            exit 1
+          fi
           missing=()
           for name in \
             GCP_PROJECT_ID \

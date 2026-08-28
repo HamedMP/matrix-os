@@ -365,6 +365,9 @@ describe('CI workflows', () => {
 
     expect(production).toMatch(/options:\s*\n\s*- production/);
     expect(production).not.toMatch(/options:\s*\n(?:\s*- [^\n]+\n)*\s*- staging/);
+    expect(production).toContain('if [ "$DEPLOY_ENVIRONMENT" != "production" ]; then');
+    expect(production).toContain('Platform Cloud Run only accepts the production environment.');
+    expect(production).not.toContain('- ".github/workflows/platform-cloud-run.yml"');
 
     expect(isolated).toContain('deployment_environment:');
     expect(isolated).toMatch(/deployment_environment:[\s\S]*?options:[\s\S]*?- Preview[\s\S]*?- staging/);
@@ -523,11 +526,12 @@ describe('CI workflows', () => {
     expect(platformWorkflow).toContain('_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST');
   });
 
-  it('redeploys the platform when the Cloud Run workflow itself changes', () => {
+  it('requires explicit dispatch after platform workflow-only changes', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
-    expect(workflow).toContain('- ".github/workflows/platform-cloud-run.yml"');
+    expect(workflow).not.toContain('- ".github/workflows/platform-cloud-run.yml"');
+    expect(workflow).toContain('workflow_dispatch:');
   });
 
   it('verifies platform Cloud Run promotion sends all traffic to the production-role revision', () => {
