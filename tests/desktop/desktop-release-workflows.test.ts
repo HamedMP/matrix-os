@@ -13,7 +13,9 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('attach_output="$(hdiutil attach "$dmg_path" -nobrowse -readonly)"');
     expect(workflow).toContain("/^\\/Volumes\\//");
     expect(workflow).not.toContain('-mountpoint "$mount_dir"');
-    expect(workflow).toContain('open "$mount_dir"');
+    expect(workflow).not.toContain('open "$mount_dir"');
+    expect(workflow).toContain('tell application "Finder" to activate');
+    expect(workflow).toContain("open disk volumeName");
     expect(workflow).toContain("tell disk volumeName");
     expect(workflow).toContain("set viewOptionsProperties to properties of viewOptions");
     expect(workflow).toContain("set backgroundPicture to background picture of viewOptionsProperties");
