@@ -257,7 +257,16 @@ jobs:
             echo "DMG Applications link points to an unexpected target" >&2
             exit 1
           fi
-          open "$mount_dir"
+          osascript - "$volume_name" <<'APPLESCRIPT'
+          on run argv
+            set volumeName to item 1 of argv
+            tell application "Finder" to activate
+            tell application "Finder"
+              if not (exists disk volumeName) then error "mounted DMG is unavailable in Finder"
+              open disk volumeName
+            end tell
+          end run
+          APPLESCRIPT
           finder_window_open=true
           background_picture="missing value"
           for _ in {1..20}; do
