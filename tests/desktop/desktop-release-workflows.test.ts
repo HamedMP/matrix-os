@@ -14,7 +14,12 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain("/^\\/Volumes\\//");
     expect(workflow).not.toContain('-mountpoint "$mount_dir"');
     expect(workflow).toContain('open "$mount_dir"');
-    expect(workflow).toContain("background picture of icon view options");
+    expect(workflow).toContain("tell disk volumeName");
+    expect(workflow).toContain("set viewOptionsProperties to properties of viewOptions");
+    expect(workflow).toContain("set backgroundPicture to background picture of viewOptionsProperties");
+    expect(workflow).not.toContain(
+      "set backgroundPicture to background picture of icon view options of volumeWindow",
+    );
     expect(workflow).toContain('background_picture="missing value"');
     expect(workflow).toContain('"$mount_dir"/.background/*');
     expect(workflow).toContain('[ ! -f "$background_picture" ]');
