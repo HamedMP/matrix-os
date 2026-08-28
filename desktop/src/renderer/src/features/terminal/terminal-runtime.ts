@@ -10,11 +10,12 @@ let manager: AttachManager | null = null;
 export function getAttachManager(): AttachManager {
   if (!manager) {
     manager = new AttachManager({
-      createSocket: (sessionName: string, events: ShellSocketEvents) => {
+      createSocket: (sessionName: string, events: ShellSocketEvents, chatId?: string) => {
         const { platformHost, runtimeSlot } = useConnection.getState();
         return new ShellSocket({
           baseUrl: platformHost,
           sessionName,
+          chatId,
           runtimeSlot,
           clientClass: "hard",
           events,

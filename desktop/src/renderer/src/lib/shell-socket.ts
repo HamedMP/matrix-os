@@ -35,6 +35,7 @@ export interface ShellSocketEvents {
 export interface ShellSocketOptions {
   baseUrl: string;
   sessionName?: string;
+  chatId?: string;
   cwd?: string;
   runtimeSlot: string;
   clientClass?: "hard" | "soft";
@@ -277,6 +278,9 @@ export class ShellSocket {
       this.opts.runtimeSlot !== "primary"
         ? `&runtime=${encodeURIComponent(this.opts.runtimeSlot)}`
         : "";
+    const chatSuffix = this.opts.chatId
+      ? `&chat=${encodeURIComponent(this.opts.chatId)}`
+      : "";
     const sessionName = isReconnect
       ? (this.attachedSessionName ?? this.opts.sessionName ?? null)
       : (this.opts.sessionName ?? null);
@@ -286,7 +290,7 @@ export class ShellSocket {
       const sizingSuffix = this.opts.clientClass && size
         ? `&client=${this.opts.clientClass}&cols=${size.cols}&rows=${size.rows}&lease=exclusive`
         : "";
-      return `${base}/ws/terminal/session?session=${encodeURIComponent(sessionName)}&fromSeq=${fromSeq}${runtimeSuffix}${sizingSuffix}`;
+      return `${base}/ws/terminal/session?session=${encodeURIComponent(sessionName)}&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}`;
     }
     return `${base}/ws/terminal?cwd=${encodeURIComponent(this.opts.cwd ?? "")}${runtimeSuffix}`;
   }

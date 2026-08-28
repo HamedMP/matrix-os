@@ -200,6 +200,30 @@ describe("ShellSocket URL building", () => {
     expect(LIVE_TAIL_FROM_SEQ).toBe(9_007_199_254_740_991);
   });
 
+  it("includes encoded Chat authorization on initial, reconnect, and detach attach URLs", () => {
+    const h = createHarness({ chatId: "chat_selected-one" });
+    connectAndAttach(h);
+    expect(h.sockets[0]?.url).toContain("&chat=chat_selected-one");
+
+    h.latest().frame({ type: "output", seq: 41, data: "x" });
+    h.latest().serverClose();
+    h.timers.advance(500);
+    expect(h.latest().url).toContain("session=main&fromSeq=42&chat=chat_selected-one");
+
+    h.socket.detach();
+    expect(h.sockets).toHaveLength(3);
+    expect(h.latest().url).toContain("&chat=chat_selected-one");
+  });
+
+  it("keeps standalone session URLs unchanged when no Chat context is supplied", () => {
+    const h = createHarness();
+    h.socket.connect();
+    expect(h.latest().url).toBe(
+      `wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+    );
+    expect(h.latest().url).not.toContain("chat=");
+  });
+
   it("declares a hard client size and applies authority-confirmed grid changes", () => {
     const h = createHarness({ clientClass: "hard" });
     h.socket.resize(132, 36);

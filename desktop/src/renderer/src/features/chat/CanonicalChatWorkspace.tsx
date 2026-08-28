@@ -4,6 +4,7 @@ import type {
 import type {
   AgentProviderSummary,
   CanonicalChatMessagePart,
+  CanonicalChatDetailResponse,
   CanonicalProviderCatalog,
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
@@ -82,8 +83,11 @@ export function CanonicalChatWorkspace({
   initialView,
   projectLabel,
   active,
+  externalNavigation = false,
   catalog,
   inspector,
+  renderInspector,
+  inspectorExclusive = false,
   onProjectChanged,
   onActiveChatChanged,
   onChatDeleted,
@@ -95,8 +99,11 @@ export function CanonicalChatWorkspace({
   initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
   active: boolean;
+  externalNavigation?: boolean;
   catalog?: CanonicalProviderCatalog;
   inspector?: ReactNode;
+  renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
+  inspectorExclusive?: boolean;
   onProjectChanged?: (chatId: string, projectId: string | null, title: string) => void;
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
   onChatDeleted?: (chatId: string) => void;
@@ -407,7 +414,7 @@ export function CanonicalChatWorkspace({
       data-slot="canonical-chat-workspace"
       data-layout={workspaceLayout}
     >
-      {projectId === null ? (
+      {!externalNavigation && (projectId === null ? (
         <CanonicalChatIndex
           items={controller.items}
           activeChatId={controller.activeChatId}
@@ -491,10 +498,12 @@ export function CanonicalChatWorkspace({
             <p className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
           ) : null}
         </div>
-      </aside>}
+      </aside>)}
       <SharedChatSurface
         ariaLabel={projectId ? "Project Chat" : "Global Chat"}
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
+        aria-hidden={inspectorExclusive || undefined}
+        inert={inspectorExclusive || undefined}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
         {...attachments.paneProps}
       >
@@ -520,9 +529,13 @@ export function CanonicalChatWorkspace({
         ) : projectId === null ? (
           <div
             data-slot="chat-new-chat-content"
-            className={`flex min-h-0 flex-1 flex-col ${workspaceLayout === "narrow" ? "overflow-y-auto" : ""}`}
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
           >
-            <div className={`flex min-h-0 flex-1 items-center justify-center ${workspaceLayout === "narrow" ? "px-3 py-3" : "px-5 py-8"}`}>
+            <div
+              data-slot="chat-starter-scroll"
+              className={`flex min-h-0 flex-1 justify-center ${workspaceLayout === "narrow" ? "items-start overflow-y-auto px-3 py-3" : "items-center px-5 py-8"}`}
+              style={workspaceLayout === "narrow" ? { scrollbarGutter: "stable" } : undefined}
+            >
               <div className="w-full max-w-[480px]">
                 <ChatStarterCards
                   layout="two-by-two"
@@ -552,7 +565,7 @@ export function CanonicalChatWorkspace({
           </div>
         )}
       </SharedChatSurface>
-      {inspector}
+      {renderInspector ? (controller.detail ? renderInspector(controller.detail) : null) : inspector}
       {projectId === null ? (
         <DeleteConversationDialog
           conversation={deleteTarget}

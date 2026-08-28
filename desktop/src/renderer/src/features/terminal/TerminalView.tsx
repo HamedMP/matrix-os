@@ -58,6 +58,7 @@ function applyTerminalSurfaceTheme(element: HTMLElement | undefined, background:
 
 interface TerminalViewProps {
   sessionName: string;
+  chatId?: string;
   // When false, the xterm stays mounted (buffer preserved) but the live socket
   // is released so only the focused terminal holds a VPS attachment.
   active?: boolean;
@@ -67,6 +68,7 @@ interface TerminalViewProps {
 // react-doctor-disable-next-line react-doctor/no-giant-component -- This component owns one xterm instance and its coupled attach, resize, link, paste, and teardown lifecycle. Splitting those effects across child components would obscure single-resource ownership; visual theme helpers and menus remain extracted.
 export default function TerminalView({
   sessionName,
+  chatId,
   active = true,
   onRecreate,
 }: TerminalViewProps) {
@@ -277,12 +279,12 @@ export default function TerminalView({
         setExitCode(code);
         setSocketState("ended");
       },
-    }, { cols: terminal.cols, rows: terminal.rows });
+    }, { cols: terminal.cols, rows: terminal.rows }, chatId);
     attachmentRef.current = attachment;
     let lastRecentActivityAt = 0;
     const dataDisposable = terminal.onData((data) => {
       const now = Date.now();
-      if (now - lastRecentActivityAt >= RECENT_ACTIVITY_THROTTLE_MS) {
+      if (!chatId && now - lastRecentActivityAt >= RECENT_ACTIVITY_THROTTLE_MS) {
         lastRecentActivityAt = now;
         useTabs.getState().recordRecentTerminal(sessionName, sessionName);
       }
@@ -297,7 +299,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, active, closeTerminalContextMenu, leaseAttempt]);
+  }, [sessionName, chatId, active, closeTerminalContextMenu, leaseAttempt]);
 
   useEffect(() => {
     const host = hostRef.current;

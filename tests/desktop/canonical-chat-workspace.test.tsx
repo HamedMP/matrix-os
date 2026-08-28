@@ -129,6 +129,29 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
   });
 
+  it.each([
+    ["Global", null, "Global chats"],
+    ["Project", "matrix-os", "Project chats"],
+  ] as const)("suppresses the legacy %s navigation when an external rail owns Chat selection", async (
+    _name,
+    projectId,
+    navigationLabel,
+  ) => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId={projectId}
+        projectLabel={projectId ? "Matrix OS" : undefined}
+        active
+        catalog={providerCatalog}
+        externalNavigation
+      />,
+    );
+
+    expect(await screen.findByRole("region", { name: projectId ? "Project Chat" : "Global Chat" })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: navigationLabel })).toBeNull();
+  });
+
   it("matches the Figma typography for the Global Chat rail and starter actions", async () => {
     render(
       <CanonicalChatWorkspace
@@ -207,14 +230,18 @@ describe("CanonicalChatWorkspace", () => {
     const workspace = document.querySelector<HTMLElement>('[data-slot="canonical-chat-workspace"]');
     const index = screen.getByRole("complementary", { name: "Global chats" }).parentElement;
     const starters = document.querySelector<HTMLElement>('[data-slot="chat-starter-cards"]');
+    const starterScroll = document.querySelector<HTMLElement>('[data-slot="chat-starter-scroll"]');
     const composer = document.querySelector<HTMLElement>('[data-slot="shared-chat-composer"] .prompt-card');
     const newChatContent = document.querySelector<HTMLElement>('[data-slot="chat-new-chat-content"]');
     expect(workspace?.getAttribute("data-layout")).toBe("narrow");
     expect(workspace?.className).toContain("flex-col");
     expect(index?.getAttribute("data-layout")).toBe("narrow");
-    expect(starters?.className).toContain("grid-cols-2");
-    expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toContain("min-h-24");
-    expect(newChatContent?.className).toContain("overflow-y-auto");
+    expect(starters?.className).toContain("grid-cols-1");
+    expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toContain("min-h-20");
+    expect(starterScroll?.className).toContain("overflow-y-auto");
+    expect(starterScroll?.className).toContain("items-start");
+    expect(starterScroll?.style.scrollbarGutter).toBe("stable");
+    expect(newChatContent?.className).toContain("overflow-hidden");
     expect(composer?.getAttribute("data-layout")).toBe("narrow");
   });
 
@@ -487,6 +514,27 @@ describe("CanonicalChatWorkspace", () => {
     );
 
     expect(await screen.findByRole("region", { name: "Project Chat" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
+  });
+
+  it("makes the Chat surface inert while a narrow inspector pane is exclusive", async () => {
+    const { container } = render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        active
+        catalog={providerCatalog}
+        inspectorExclusive
+        inspector={<aside aria-label="Conversation tools">Inspector</aside>}
+      />,
+    );
+
+    await screen.findByRole("button", { name: snapshot.chat.title });
+    const chat = container.querySelector<HTMLElement>("[data-slot='shared-chat-surface']");
+    expect(chat).toBeTruthy();
+    expect(chat?.getAttribute("aria-hidden")).toBe("true");
+    expect(chat?.hasAttribute("inert")).toBe(true);
     expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
   });
 

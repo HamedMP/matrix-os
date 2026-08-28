@@ -56,6 +56,62 @@ describe("Electron OS window chrome", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("places Chat pane controls and title in the shared top row without window controls when maximized", () => {
+    render(
+      <TopBar
+        title="Release planning"
+        leftActions={<button type="button">Toggle navigation</button>}
+        rightActions={<button type="button">Toggle inspector</button>}
+        leftPaneWidth={260}
+        rightPaneWidth={640}
+        showWindowControls={false}
+      />,
+    );
+
+    expect(screen.getByText("Release planning")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Toggle navigation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Toggle inspector" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Close Release planning" })).toBeNull();
+    const chromeGrid = screen.getByTestId("os-window-chrome-grid");
+    expect(chromeGrid.className).toContain("border-b");
+    expect((chromeGrid as HTMLElement).style.gridTemplateColumns).toBe("260px minmax(0, 1fr) 640px");
+    const title = screen.getByText("Release planning");
+    expect(title.parentElement?.className).toContain("justify-start");
+    expect(title.parentElement?.className).toContain("text-[15px]");
+  });
+
+  it("mirrors open pane toggles at their inner edges and closed toggles at the window edges", () => {
+    const { rerender } = render(
+      <TopBar
+        leftActions={<button type="button">Toggle navigation</button>}
+        rightActions={<button type="button">Toggle inspector</button>}
+        leftPaneWidth={260}
+        rightPaneWidth={640}
+        showWindowControls={false}
+      />,
+    );
+
+    const openNavigation = screen.getByRole("button", { name: "Toggle navigation" });
+    const openInspector = screen.getByRole("button", { name: "Toggle inspector" });
+    expect(openNavigation.parentElement?.className).toContain("ml-auto");
+    expect(openInspector.parentElement?.parentElement?.className).toContain("justify-start");
+
+    rerender(
+      <TopBar
+        leftActions={<button type="button">Toggle navigation</button>}
+        rightActions={<button type="button">Toggle inspector</button>}
+        leftPaneWidth={0}
+        rightPaneWidth={0}
+        showWindowControls={false}
+      />,
+    );
+
+    const closedNavigation = screen.getByRole("button", { name: "Toggle navigation" });
+    const closedInspector = screen.getByRole("button", { name: "Toggle inspector" });
+    expect(closedNavigation.parentElement?.className).not.toContain("ml-auto");
+    expect(closedInspector.parentElement?.className).toContain("ml-auto");
+  });
+
   it("applies topbar clearance only to the safe area for each window layout", () => {
     const { container, rerender } = render(
       <OSWindow

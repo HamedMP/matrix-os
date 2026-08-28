@@ -1,5 +1,5 @@
-import type { AgentProviderSummary } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
@@ -353,10 +353,16 @@ export default function ChatTab({
   active = true,
   initialChatId,
   initialView,
+  externalNavigation = false,
+  renderInspector,
+  inspectorExclusive = false,
 }: {
   active?: boolean;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
+  externalNavigation?: boolean;
+  renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
+  inspectorExclusive?: boolean;
 }) {
   const api = useConnection((state) => state.api);
   return (
@@ -366,6 +372,9 @@ export default function ChatTab({
       initialChatId={initialChatId}
       initialView={initialView}
       active={active}
+      externalNavigation={externalNavigation}
+      renderInspector={renderInspector}
+      inspectorExclusive={inspectorExclusive}
       fallback={<LegacyChatTab />}
     />
   );

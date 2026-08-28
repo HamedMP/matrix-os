@@ -119,6 +119,21 @@ describe("canonical Chat client", () => {
     })).resolves.toEqual(movedRecord);
   });
 
+  it("updates durable Chat pin state through the owner-scoped endpoint", async () => {
+    const pinned = {
+      ...record,
+      chat: {
+        ...record.chat,
+        userState: { readThroughSeq: 0, pinned: true, muted: false },
+      },
+    };
+    const patch = vi.fn(async () => pinned);
+    const client = createCanonicalChatClient(api({ patch }));
+
+    await expect(client.updateUserState(record.chat.id, { pinned: true })).resolves.toEqual(pinned);
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/user-state", { pinned: true });
+  });
+
   it("deletes a Chat through the canonical Gateway endpoint", async () => {
     const remove = vi.fn(async () => ({
       chatId: record.chat.id,

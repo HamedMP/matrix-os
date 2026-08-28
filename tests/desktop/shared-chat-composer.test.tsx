@@ -229,6 +229,10 @@ describe("SharedChatComposer", () => {
     expect(screen.getByLabelText("Reasoning")).toBeTruthy();
     expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     expect(screen.getByLabelText("Permission mode")).toBeTruthy();
+    const settings = screen.getByRole("button", { name: "Chat settings" });
+    expect(settings.className).toContain("@max-[42rem]/chat-composer:flex");
+    expect(container.querySelector('[data-slot="composer-secondary-controls"]')?.className)
+      .toContain("@max-[42rem]/chat-composer:hidden");
     expect(container.querySelector(".prompt-card")?.classList.contains("overflow-hidden"))
       .toBe(false);
   });

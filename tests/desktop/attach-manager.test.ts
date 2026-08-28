@@ -18,6 +18,7 @@ class FakeSocketControl implements SocketControl {
   constructor(
     readonly sessionName: string,
     readonly events: ShellSocketEvents,
+    readonly chatId?: string,
   ) {}
 
   connect(): void {
@@ -74,8 +75,8 @@ function createManager(bufferCacheCap?: number): {
   const created: FakeSocketControl[] = [];
   const manager = new AttachManager({
     bufferCacheCap,
-    createSocket: (sessionName, events) => {
-      const socket = new FakeSocketControl(sessionName, events);
+    createSocket: (sessionName, events, chatId) => {
+      const socket = new FakeSocketControl(sessionName, events, chatId);
       created.push(socket);
       return socket;
     },
@@ -91,6 +92,14 @@ describe("AttachManager single-active invariant", () => {
     expect(created).toHaveLength(1);
     expect(created[0]?.connected).toBe(1);
     expect(manager.activeSessionName).toBe("alpha");
+  });
+
+  it("forwards optional canonical Chat authorization context to the socket", () => {
+    const { manager, created } = createManager();
+    manager.attach("alpha", recordingEvents().events, undefined, "chat_selected");
+
+    expect(created[0]?.chatId).toBe("chat_selected");
+    expect(created[0]?.connected).toBe(1);
   });
 
   it("attaching B detaches and disposes A's socket", () => {
