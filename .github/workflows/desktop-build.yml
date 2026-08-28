@@ -331,11 +331,11 @@ jobs:
           background_picture="$(osascript - "$background_candidate" <<'APPLESCRIPT'
           on run argv
             set backgroundPath to item 1 of argv
+            set backgroundFile to POSIX file backgroundPath as alias
             tell application "Finder"
-              set backgroundFile to POSIX file backgroundPath
               if not (exists backgroundFile) then return "missing value"
-              return POSIX path of (backgroundFile as alias)
             end tell
+            return POSIX path of backgroundFile
           end run
           APPLESCRIPT
           )" || background_picture="missing value"
