@@ -17,34 +17,13 @@ import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
-import { WindowControlButtons } from "@/components/window/WindowControlButtons";
+import { TrafficLights } from "./DesktopDockControls";
 
 export function hasActiveWindowInteraction(
   drag: unknown | null,
   resize: unknown | null,
 ): boolean {
   return drag !== null || resize !== null;
-}
-
-export function WindowControls({
-  title,
-  onClose,
-  onMinimize,
-  onMaximize,
-}: {
-  title: string;
-  onClose: () => void;
-  onMinimize: () => void;
-  onMaximize: () => void;
-}) {
-  return (
-    <WindowControlButtons
-      title={title}
-      onClose={onClose}
-      onMinimize={onMinimize}
-      onMaximize={onMaximize}
-    />
-  );
 }
 
 export function desktopWindowTop(y: number, topInset: number): string {
@@ -54,8 +33,9 @@ export function desktopWindowTop(y: number, topInset: number): string {
 export function desktopWindowTitleBarStyle(usesTerminalChrome: boolean): CSSProperties {
   const centeredSpacing: CSSProperties = {
     alignItems: "center",
-    paddingTop: 0,
-    paddingBottom: 0,
+    height: 48,
+    paddingTop: 10,
+    paddingBottom: 10,
   };
 
   return usesTerminalChrome ? {
@@ -174,7 +154,7 @@ export function DesktopWindow({
     >
       <CardHeader
         className={cn(
-          "relative flex h-[38px] flex-row items-center gap-0 space-y-0 px-4 py-0 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing",
+          "relative flex shrink-0 flex-row items-center gap-0 space-y-0 px-4 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing",
           usesTerminalChrome ? "border-b-0" : "bg-card/85",
         )}
         style={desktopWindowTitleBarStyle(usesTerminalChrome)}
@@ -188,11 +168,10 @@ export function DesktopWindow({
         }}
       >
         <div className="absolute left-4 z-10">
-          <WindowControls
-            title={win.title}
+          <TrafficLights
             onClose={() => onCloseWindow(win.id)}
             onMinimize={() => onAnimateMinimize(win.id)}
-            onMaximize={() => onToggleFullscreen(win.id)}
+            onFullscreen={() => onToggleFullscreen(win.id)}
           />
         </div>
         <div className="w-[78px] shrink-0" aria-hidden />

@@ -9,8 +9,8 @@ import {
   desktopWindowTitleBarStyle,
   desktopWindowTop,
   hasActiveWindowInteraction,
-  WindowControls,
 } from "@/components/desktop/DesktopWindow";
+import { TrafficLights } from "@/components/desktop/DesktopDockControls";
 import type { AppWindow } from "@/hooks/useWindowManager";
 
 vi.mock("@/components/AppViewer", () => ({
@@ -25,37 +25,33 @@ describe("web desktop window controls", () => {
   it("centers title-bar content with equal vertical clearance", () => {
     expect(desktopWindowTitleBarStyle(false)).toMatchObject({
       alignItems: "center",
-      paddingTop: 0,
-      paddingBottom: 0,
+      height: 48,
+      paddingTop: 10,
+      paddingBottom: 10,
       borderBottom: "1px solid var(--border)",
     });
   });
 
-  it("matches the desktop OS square icon controls", () => {
+  it("keeps Main's colored macOS traffic lights in the web desktop", () => {
     render(
-      <WindowControls
-        title="Terminal"
+      <TrafficLights
         onClose={vi.fn()}
         onMinimize={vi.fn()}
-        onMaximize={vi.fn()}
+        onFullscreen={vi.fn()}
       />,
     );
 
-    const close = screen.getByRole("button", { name: "Close Terminal" });
-    const minimize = screen.getByRole("button", { name: "Minimize Terminal" });
-    const maximize = screen.getByRole("button", { name: "Maximize Terminal" });
+    const close = screen.getByRole("button", { name: "Close" });
+    const minimize = screen.getByRole("button", { name: "Minimize" });
+    const fullscreen = screen.getByRole("button", { name: "Fullscreen" });
 
-    for (const control of [close, minimize, maximize]) {
-      expect(control.className).toContain("size-4");
-      expect(control.className).toContain("rounded-[4.8px]");
-      expect((control as HTMLElement).style.background).toBe("var(--surface-primary, #FFFEFC)");
-      expect((control as HTMLElement).style.border).toBe("0.8px solid var(--border-default, #F3F2F2)");
-      expect(control.querySelector("svg")).toBeTruthy();
-      expect(control.querySelector("[data-window-control-light]")).toBeNull();
-    }
-
-    expect(close.parentElement?.className).toContain("gap-0.5");
-    expect(close.parentElement?.className).not.toContain("w-16");
+    expect(close.className).toContain("size-3");
+    expect(close.className).toContain("rounded-full");
+    expect(close.className).toContain("bg-[#ff5f57]");
+    expect(minimize.className).toContain("bg-[#febc2e]");
+    expect(fullscreen.className).toContain("bg-[#28c840]");
+    expect(close.querySelector("svg")).toBeNull();
+    expect(close.parentElement?.className).toContain("gap-1.5");
   });
 
   it("ends header drags and corner resizes when the browser cancels the pointer", () => {
