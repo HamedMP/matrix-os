@@ -77,7 +77,7 @@ import {
   type ShellBootstrap,
 } from "./desktop/desktop-app-routing";
 import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
-import { DesktopWindow } from "./desktop/DesktopWindow";
+import { DesktopWindow, hasActiveWindowInteraction } from "./desktop/DesktopWindow";
 import { WebDesktopSurface } from "./desktop/WebDesktopSurface";
 import { Reorder } from "framer-motion";
 
@@ -738,7 +738,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   const onDragEnd = () => {
     dragRef.current = null;
-    setInteracting(false);
+    setInteracting(hasActiveWindowInteraction(dragRef.current, resizeRef.current));
   };
 
   const onResizeStart = (id: string, e: React.PointerEvent) => {
@@ -770,7 +770,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   const onResizeEnd = () => {
     resizeRef.current = null;
-    setInteracting(false);
+    setInteracting(hasActiveWindowInteraction(dragRef.current, resizeRef.current));
   };
 
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);

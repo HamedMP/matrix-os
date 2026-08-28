@@ -19,6 +19,13 @@ import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { WindowControlButtons } from "@/components/window/WindowControlButtons";
 
+export function hasActiveWindowInteraction(
+  drag: unknown | null,
+  resize: unknown | null,
+): boolean {
+  return drag !== null || resize !== null;
+}
+
 export function WindowControls({
   title,
   onClose,

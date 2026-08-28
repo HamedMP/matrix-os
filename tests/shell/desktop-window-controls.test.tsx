@@ -8,6 +8,7 @@ import {
   DesktopWindow,
   desktopWindowTitleBarStyle,
   desktopWindowTop,
+  hasActiveWindowInteraction,
   WindowControls,
 } from "@/components/desktop/DesktopWindow";
 import type { AppWindow } from "@/hooks/useWindowManager";
@@ -99,5 +100,14 @@ describe("web desktop window controls", () => {
 
     expect(onDragEnd).toHaveBeenCalledOnce();
     expect(onResizeEnd).toHaveBeenCalledOnce();
+  });
+
+  it("stays interactive until both overlapping pointer interactions finish", () => {
+    const drag = { id: "drag" };
+    const resize = { id: "resize" };
+
+    expect(hasActiveWindowInteraction(null, resize)).toBe(true);
+    expect(hasActiveWindowInteraction(drag, null)).toBe(true);
+    expect(hasActiveWindowInteraction(null, null)).toBe(false);
   });
 });
