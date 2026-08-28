@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db';
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper';
@@ -7,7 +7,7 @@ const secret = 'platform-admin-secret';
 describe('backend management route boundaries', () => {
   let db: PlatformDB;
   beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
-  afterEach(async () => { await destroyTestPlatformDb(db); });
+  afterEach(async () => { vi.restoreAllMocks(); await destroyTestPlatformDb(db); });
   it('requires operator auth, validates input and rejects stale policy writes', async () => {
     const app = createBackendManagementRoutes({ db, platformSecret: secret });
     expect((await app.request('/status')).status).toBe(401);
@@ -16,6 +16,8 @@ describe('backend management route boundaries', () => {
     expect((await request({ revision: 0, config: { enabled: false } })).status).toBe(409);
     expect((await request({ revision: 1, config: { batchSize: 1000 } })).status).toBe(400);
     expect((await request({ padding: 'x'.repeat(33_000) })).status).toBe(413);
+    const status = await app.request('/status', { headers: { authorization: `Bearer ${secret}` } });
+    expect(status.status).toBe(200); expect(await status.json()).toMatchObject({ policy: { revision: 1 }, machines: [] });
   });
   it('keeps client policy public and no-store, with unknown clients allowed during migration', async () => {
     const app = createClientPolicyRoutes({ db });
@@ -41,5 +43,20 @@ describe('backend management route boundaries', () => {
     expect(await (await app.request('/machines/machine_1/policy', { headers: machine })).json()).toMatchObject({ versionSelectionAllowed: true });
     expect((await app.request('/machines/machine_1/override', { method: 'DELETE', headers: admin })).status).toBe(200);
     expect(await (await app.request('/machines/machine_1/policy', { headers: machine })).json()).toMatchObject({ versionSelectionAllowed: false, holdUntil: null });
+    await db.executor.updateTable('backend_management_machines').set({ status: 'offline' }).where('machine_id', '=', 'machine_1').execute();
+    expect((await app.request('/machines/machine_1/retry', { method: 'POST', headers: admin, body: '{}' })).status).toBe(200);
+    expect((await app.request('/machines/machine_1/retry', { method: 'POST', headers: admin, body: '{}' })).status).toBe(409);
+    expect((await app.request('/machines/missing/override', { method: 'DELETE', headers: admin })).status).toBe(404);
+    expect((await app.request('/machines/machine_1/override', { method: 'PUT', headers: admin, body: JSON.stringify({ until: '2020-01-01T00:00:00.000Z', reason: 'Expired', allowVersionSelection: true }) })).status).toBe(400);
+    expect((await app.request('/machines/missing/override', { method: 'PUT', headers: admin, body: JSON.stringify({ until: new Date(Date.now() + 60_000).toISOString(), reason: 'Missing', allowVersionSelection: true }) })).status).toBe(404);
+  });
+  it('keeps configuration and database failures generic instead of reporting missing data', async () => {
+    const missing = createBackendManagementRoutes({ db, platformSecret: '' });
+    expect((await missing.request('/status')).status).toBe(503);
+    expect((await missing.request('/machines/machine_1/policy')).status).toBe(503);
+    vi.spyOn(db.executor, 'selectFrom').mockImplementation(() => { throw new Error('private database failure'); });
+    for (const response of [await createClientPolicyRoutes({ db }).request('/?target=mobile-ios'), await createBackendManagementRoutes({ db, platformSecret: secret }).request('/status', { headers: { authorization: `Bearer ${secret}` } })]) {
+      expect(response.status).toBe(503); expect(await response.text()).not.toContain('private');
+    }
   });
 });

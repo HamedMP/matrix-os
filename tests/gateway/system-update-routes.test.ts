@@ -6,9 +6,9 @@ import * as updates from '../../packages/gateway/src/system-update';
 vi.mock('../../packages/gateway/src/system-update', async importOriginal => ({
   ...await importOriginal<object>(), startSystemUpdate: vi.fn(async () => ({ ok: true, status: 'started' })),
 }));
-function app(busy = false) {
+function app(busy = false, capture = vi.fn(async () => undefined)) {
   return createSystemUpdateRoutes({ getInfo: () => ({ release: { version: 'v2026.08.01-1', channel: 'stable' } }) as never,
-    policy: createManagedUpdatePolicy({ env: { MATRIX_MACHINE_ID: 'machine_1', UPGRADE_TOKEN: 'operator' } }), isBusy: () => busy, capture: vi.fn(async () => undefined) });
+    policy: createManagedUpdatePolicy({ env: { MATRIX_MACHINE_ID: 'machine_1', UPGRADE_TOKEN: 'operator' } }), isBusy: () => busy, capture });
 }
 const req = (body: unknown, auth = 'customer') => ({ method: 'POST', headers: { authorization: `Bearer ${auth}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 describe('managed update route wiring', () => {
@@ -62,5 +62,13 @@ describe('managed update route wiring', () => {
     vi.mocked(startSystemUpdate).mockResolvedValueOnce({ ok: false } as never);
     expect((await app().request('/update', req({ version: 'v2026.08.28-1' }, 'operator'))).status).toBe(503);
     expect((await app().request('/update', req({ version: '../bad' }, 'operator'))).status).toBe(400);
+  });
+  it('keeps accepted updates successful if telemetry is unavailable', async () => {
+    vi.spyOn(updates, 'startSystemUpdateRepair').mockResolvedValue({ ok: true, status: 'started' } as never);
+    const capture = vi.fn(async () => { throw new Error('telemetry unavailable'); });
+    for (const path of ['/update', '/update/repair']) {
+      expect((await app(false, capture).request(path, req({ version: 'v2026.08.28-1' }, 'operator'))).status).toBe(202);
+    }
+    expect(capture).toHaveBeenCalledTimes(2);
   });
 });

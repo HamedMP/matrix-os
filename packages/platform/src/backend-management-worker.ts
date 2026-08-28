@@ -68,15 +68,19 @@ export async function reconcileManagedBackend(deps: ManagedBackendDeps): Promise
     const verified = await db.executor.selectFrom('backend_management_machines as b').innerJoin('user_machines as m', 'm.machine_id', 'b.machine_id')
       .select('b.machine_id').where('b.desired_version', '=', version).where('b.status', '=', 'current')
       .where('m.deleted_at', 'is', null).where('m.status', '=', 'running').where('m.provisioning_class', '=', 'customer')
-      .$if(policy.config.canaryMachineIds.length > 0, q => q.where('b.machine_id', 'in', policy.config.canaryMachineIds)).limit(10).execute();
+      .where(eb => eb.or([eb('b.override_until', 'is', null), eb('b.override_until', '<=', at.toISOString())]))
+      .$if(policy.config.canaryMachineIds.length > 0, q => q.where('b.machine_id', 'in', policy.config.canaryMachineIds)).orderBy('b.machine_id').limit(10).execute();
     const hasVerified = policy.config.canaryMachineIds.length ? policy.config.canaryMachineIds.every(id => verified.some(row => row.machine_id === id)) : verified.length > 0;
+    const gateIds = policy.config.canaryMachineIds.length ? policy.config.canaryMachineIds : verified.slice(0, 1).map(row => row.machine_id);
+    const gateFilter = gateIds.length ? gateIds : ['']; // Avoid empty SQL IN; machine IDs cannot be empty.
     let budget = inflight.length ? 0 : hasVerified ? policy.config.batchSize : 1;
     const rows = await db.executor.selectFrom('backend_management_machines as b').innerJoin('user_machines as m', 'm.machine_id', 'b.machine_id')
       .selectAll('b').select(['m.handle', 'm.public_ipv4'])
       .where('m.deleted_at', 'is', null).where('m.provisioning_class', '=', 'customer').where('m.status', '=', 'running')
-      .where('b.next_check_at', '<=', at.toISOString()).where('b.status', '!=', 'blocked')
+      .where(eb => eb.or([eb('b.next_check_at', '<=', at.toISOString()), eb.and([eb('b.status', '=', 'current'), eb('b.machine_id', 'in', gateFilter)])])).where('b.status', '!=', 'blocked')
       .where(eb => eb.or([eb('b.override_until', 'is', null), eb('b.override_until', '<=', at.toISOString())]))
-      .orderBy(sql`CASE WHEN b.status IN ('updating', 'soaking') THEN 0 ELSE 1 END`).orderBy('b.next_check_at').orderBy('b.machine_id').limit(20).execute();
+      .orderBy(eb => eb.case().when('b.status', 'in', ['updating', 'soaking']).then(0).when('b.machine_id', 'in', gateFilter).then(1).else(2).end())
+      .orderBy('b.next_check_at').orderBy('b.machine_id').limit(20).execute();
     for (const row of rows) {
       if (!await ownsLease()) return;
       const currentPolicy = await readBackendPolicy(db);
@@ -108,8 +112,8 @@ export async function reconcileManagedBackend(deps: ManagedBackendDeps): Promise
       if (observed.healthy && observed.version === version) {
         const started = row.healthy_since ?? date.toISOString();
         const soaked = date.getTime() - Date.parse(started) >= policy.config.soakSeconds * 1000;
-        await save({ observed_version: version, last_seen_at: date.toISOString(), healthy_since: started,
-          status: soaked ? 'current' : 'soaking', error_code: null, next_check_at: after(soaked ? 300_000 : 60_000) });
+        if (!await save({ observed_version: version, last_seen_at: date.toISOString(), healthy_since: started,
+          status: soaked ? 'current' : 'soaking', error_code: null, next_check_at: after(soaked ? 300_000 : 60_000) })) return;
         // An already-current canary must soak before allowing the next cohort.
         if (!soaked) budget = 0;
         continue;
@@ -124,6 +128,7 @@ export async function reconcileManagedBackend(deps: ManagedBackendDeps): Promise
       }
       if (!observed.healthy) {
         await save({ status: 'offline', error_code: 'unreachable', next_check_at: after(300_000), healthy_since: null });
+        if (gateIds.includes(row.machine_id)) budget = 0;
         continue;
       }
       if (!policy.config.bootstrapVersion && await isBackendDowngrade(db, version, observed.version)) {
@@ -132,6 +137,9 @@ export async function reconcileManagedBackend(deps: ManagedBackendDeps): Promise
         continue;
       }
       await save({ observed_version: observed.version, last_seen_at: date.toISOString(), healthy_since: null, status: 'pending', next_check_at: after(60_000) });
+      // A canary that drifted after verification must be reinstalled and soaked
+      // alone before any additional cohort can proceed.
+      if (gateIds.includes(row.machine_id) && row.status === 'current') budget = Math.min(budget, 1);
       if (budget <= 0) continue;
       if (!hasVerified && policy.config.canaryMachineIds.length && !policy.config.canaryMachineIds.includes(row.machine_id)) continue;
       const latestPolicy = await readBackendPolicy(db);

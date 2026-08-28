@@ -119,6 +119,27 @@ describe('managed backend reconciliation', () => {
     now += 300_000; await tick();
     expect(deploy.mock.calls.every(call => call[0].machineId === 'machine_1')).toBe(true);
   });
+  it('checks a previously verified canary before each new cohort and stops on degraded health', async () => {
+    const p = await enable();
+    await updateBackendPolicy(db, { ...p.config, canaryMachineIds: ['machine_0'] }, p.revision, new Date(now));
+    probe.mockImplementation(async machine => ({ healthy: true, version: machine.machineId === 'machine_0' ? VERSION : 'v2026.07.01-1' }));
+    await tick(); now += 60_000; await tick();
+    expect((await readBackendStatus(db)).machines.find(m => m.machineId === 'machine_0')?.status).toBe('current');
+    await setMachineOverride(db, 'machine_0', { until: new Date(now + 120_000).toISOString(), reason: 'Canary diagnostics', allowVersionSelection: true }, new Date(now));
+    now += 60_000; await tick(); expect(deploy).not.toHaveBeenCalled();
+    probe.mockImplementation(async machine => ({ healthy: machine.machineId !== 'machine_0', version: 'v2026.07.01-1' }));
+    now += 60_000; await tick();
+    expect(deploy).not.toHaveBeenCalled();
+  });
+  it('repairs a drifted automatically chosen canary alone before another cohort', async () => {
+    await enable();
+    probe.mockImplementation(async machine => ({ healthy: true, version: machine.machineId === 'machine_0' ? VERSION : 'v2026.07.01-1' }));
+    await tick(); now += 60_000; await tick();
+    probe.mockResolvedValue({ healthy: true, version: 'v2026.07.01-1' });
+    now += 60_000; await tick();
+    expect(deploy).toHaveBeenCalledTimes(1);
+    expect(deploy.mock.calls[0][0].machineId).toBe('machine_0');
+  });
 
   it('does not automatically downgrade a recognized newer installed release', async () => {
     await enable(); probe.mockResolvedValue({ version: 'v2026.09.01-1', healthy: true });

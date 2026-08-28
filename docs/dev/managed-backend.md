@@ -48,6 +48,8 @@ hosts while attempting a staged migration.
    Bridge hosts also report bounded systemd checks for shell and sync-agent;
    both must be active alongside the responding gateway. These checks are not a
    substitute for the canary's functional smoke test.
+   Previously verified canaries are checked again before new cohorts; a support
+   hold or degraded health on a designated canary prevents further fan-out.
 6. Check the canary with old and new clients: sign-in, Canvas, terminal reconnect,
    active agent recovery, files, chat and user preferences. First bridge installs
    on legacy hosts can interrupt active work; the old binary cannot acquire the

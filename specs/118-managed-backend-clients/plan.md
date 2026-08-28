@@ -49,3 +49,23 @@ policy helper. Direct operator traffic still uses the existing machine bearer.
 ## Boundaries
 
 Building automation does not silently deploy/restart ~100 customer machines. Production activation, mobile store publishing and desktop signing require existing release credentials/approvals. Existing machine subscription channels are not trusted as desired state; the platform's stable target wins after bootstrap. Owner data and PostgreSQL are never restored as part of binary rollback. Preserve backward compatibility until fleet and client observations justify retiring it.
+
+## Local validation and outstanding release gates
+
+- Tested the existing update contract, real platform session/explicit-VM proxy
+  wiring, support authorization, outage handling, and a simulated 100-machine
+  bridge rollout. Verified canaries are rechecked before subsequent cohorts.
+- Desktop production build and platform/gateway/desktop typechecks pass. Mobile
+  gate and gateway-client tests pass; mobile typechecking has the same 31 native
+  component typing errors on the base checkout and this worktree.
+- The rollout worker passes the configured coverage thresholds (99.19% statements,
+  96.42% branches, 100% functions/lines). Aggregate new-module coverage and full
+  repository validation remain review gates; the full unit run was interrupted
+  after host-tool incompatibilities and subprocess failures on this Mac.
+- Bun is unavailable locally; validation used the equivalent pnpm executables.
+  Pattern checks report zero violations, with existing file-level warnings.
+- No real VPS, signed installer, store submission, or native-device smoke test
+  has been run. Keep fleet activation and minimum-version increases disabled.
+- Required GitHub publication is pending explicit upload approval. The separate
+  public-docs PR also requires access to `FinnaAI/matrix-os-site`; its proposed
+  content is preserved in `public-documentation.md`.
