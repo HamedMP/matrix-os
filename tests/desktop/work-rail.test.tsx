@@ -326,6 +326,8 @@ describe("WorkRail", () => {
       "[work] Chat pin update failed:",
       "Error",
     ));
+    expect(screen.queryByText("Chats could not be loaded.")).toBeNull();
+    expect(screen.getByText("Chat pin could not be updated.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(false);
   });
 

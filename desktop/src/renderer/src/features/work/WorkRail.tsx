@@ -72,6 +72,7 @@ export function WorkRail({
   });
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [pinning, setPinning] = useState<Record<string, boolean>>({});
+  const [pinError, setPinError] = useState<string | null>(null);
   const [deleteChatTarget, setDeleteChatTarget] = useState<CanonicalChatRecord | null>(null);
   const [deletingChat, setDeletingChat] = useState(false);
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
@@ -104,6 +105,7 @@ export function WorkRail({
   const updatePinned = (record: CanonicalChatRecord) => {
     if (!client || pinning[record.chat.id]) return;
     const pinned = !record.chat.userState?.pinned;
+    setPinError(null);
     setPinning((current) => ({ ...current, [record.chat.id]: true }));
     void client.updateUserState(record.chat.id, { pinned }).then((updated) => {
       setRecords((current) => current.map((candidate) => (
@@ -114,7 +116,7 @@ export function WorkRail({
         "[work] Chat pin update failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      setStatus("error");
+      setPinError("Chat pin could not be updated.");
     }).finally(() => {
       setPinning((current) => {
         const next = { ...current };
@@ -315,6 +317,9 @@ export function WorkRail({
         ) : null}
         {status === "error" ? (
           <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Chats could not be loaded.</p>
+        ) : null}
+        {pinError ? (
+          <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>{pinError}</p>
         ) : null}
       </div>
       <DeleteConversationDialog
