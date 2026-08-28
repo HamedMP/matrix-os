@@ -19,6 +19,7 @@ import { DisconnectConfirmDialog } from "./DisconnectConfirmDialog";
 import { EmptyCatalogState, ErrorState, LoadingSkeleton, UnavailableState } from "./IntegrationStatusViews";
 import { useIntegrations } from "./integrations-store";
 import { displayIntegrationName } from "./types";
+import { SettingsSectionHeader } from "../settings/sections/section-kit";
 
 const GENERIC_ERROR = categoryMessage("server");
 
@@ -270,15 +271,12 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
 
   return (
     <>
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h3 className="text-base font-normal tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>
-            Integrations
-          </h3>
-          <p className="text-xs font-normal" style={{ color: "var(--text-secondary)" }}>
-            Connect extra services to extend your agent's capabilities.
-          </p>
-        </div>
+      <div className="flex items-start justify-between gap-4">
+        <SettingsSectionHeader
+          className="mb-0"
+          title="Integrations"
+          description="Connect extra services to extend your agent's capabilities."
+        />
         {status === "ready" ? <RefreshButton onClick={refresh} /> : null}
       </div>
 

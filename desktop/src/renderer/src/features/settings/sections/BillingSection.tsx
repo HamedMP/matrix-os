@@ -4,7 +4,7 @@ import { z } from "zod/v4";
 import { Button } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
-import { Card, Row, SectionHeader } from "./section-kit";
+import { Card, Row, SettingsSectionHeader } from "./section-kit";
 
 const BillingEntitlementSchema = z
   .object({
@@ -216,7 +216,7 @@ export default function BillingSection() {
 
   return (
     <>
-      <SectionHeader
+      <SettingsSectionHeader
         title="Billing"
         description="Manage hosted runtime billing through the native Matrix session."
       />

@@ -1,7 +1,7 @@
 import { Button } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
-import { Card, Row, SectionHeader } from "./section-kit";
+import { Card, Row, SettingsSectionHeader } from "./section-kit";
 
 function initialsFor(name: string): string {
   return name
@@ -23,7 +23,7 @@ export default function AccountSection() {
 
   return (
     <>
-      <SectionHeader title="Account" description="Your Matrix OS identity and session." />
+      <SettingsSectionHeader title="Account" description="Your Matrix OS identity and session." />
       <Card>
         <div className="flex items-center gap-3">
           <div

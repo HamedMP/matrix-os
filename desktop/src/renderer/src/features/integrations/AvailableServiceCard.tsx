@@ -48,10 +48,10 @@ export function AvailableServiceCard({
     >
       <IntegrationIcon name={service.name} logoUrl={service.logoUrl} testId={`integration-icon-${service.id}`} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm" style={{ color: "var(--text-primary)" }}>
+        <p className="truncate text-md" style={{ color: "var(--text-primary)" }}>
           {service.name}
         </p>
-        <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+        <p className="truncate text-sm" style={{ color: "var(--text-tertiary)" }}>
           {description}
         </p>
         <span className="sr-only">

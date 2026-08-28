@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useConnection } from "../../../stores/connection";
-import { Card, Empty, Row, SectionHeader } from "./section-kit";
+import { Card, Empty, Row, SettingsSectionHeader } from "./section-kit";
 
 interface SystemInfo {
   version?: string;
@@ -45,7 +45,7 @@ export default function SystemSection() {
 
   return (
     <>
-      <SectionHeader title="System" description="Your cloud computer at a glance." />
+      <SettingsSectionHeader title="System" description="Your cloud computer at a glance." />
       <Card>
         {state.error ? <Empty text="System info unavailable." /> : (
           <>

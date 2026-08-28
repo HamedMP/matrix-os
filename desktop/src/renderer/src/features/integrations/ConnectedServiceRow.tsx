@@ -38,7 +38,7 @@ export function ConnectedServiceRow({
       <IntegrationIcon name={serviceName} logoUrl={logoUrl} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+          <p className="truncate text-md font-medium" style={{ color: "var(--text-primary)" }}>
             {displayIntegrationName(connection.accountLabel)}
           </p>
           <StatusDot color={statusColor(connection.status)} />
@@ -47,11 +47,11 @@ export function ConnectedServiceRow({
           </span>
         </div>
         {connection.accountEmail ? (
-          <p className="truncate text-xs" style={{ color: "var(--text-secondary)" }}>
+          <p className="truncate text-sm" style={{ color: "var(--text-secondary)" }}>
             {connection.accountEmail}
           </p>
         ) : null}
-        <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+        <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>
           {serviceName}
           {connectedDate ? ` · Connected ${connectedDate}` : ""}
         </p>

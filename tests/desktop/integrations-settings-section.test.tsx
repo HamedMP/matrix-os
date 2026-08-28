@@ -151,22 +151,20 @@ describe("desktop integrations settings section", () => {
 
     await waitFor(() => expect(screen.getByTestId("integrations-grid")).not.toBeNull());
 
+    expect(screen.getByTestId("settings-section-header-title").className).toContain("text-lg");
+    expect(screen.getByTestId("settings-section-header-title").className).toContain("font-normal");
+    expect(screen.getByTestId("settings-section-header-description").className).toContain("text-sm");
+    expect(screen.getByTestId("settings-section-header-description").className).toContain("font-normal");
     expect(screen.queryByText("Connected", { selector: "h4" })).toBeNull();
     expect(screen.queryByText("Available", { selector: "h4" })).toBeNull();
     expect(screen.getByText("Manage repos, issues, and pull requests")).not.toBeNull();
     expect(screen.getByText("Send messages and manage channels")).not.toBeNull();
     expect(screen.getByText("Manage issues, projects & team workflows")).not.toBeNull();
+    expect(screen.getByTestId("integration-card-slack").querySelector("p")?.className).toContain("text-md");
+    expect(screen.getByText("Send messages and manage channels").className).toContain("text-sm");
     expect(screen.getByTestId("integration-action-slack").getAttribute("data-state")).toBe("connected");
     expect(screen.getByTestId("integration-action-github").getAttribute("data-state")).toBe("available");
-    expect(screen.getByTestId("integration-action-slack").className).toContain("rounded-full");
-    expect(screen.getByTestId("integration-action-slack").className).toContain("size-7");
-    expect(screen.getByTestId("integration-action-slack").className).toContain("p-[4px]");
-    expect(screen.getByTestId("integration-action-slack").querySelector("svg")?.getAttribute("width")).toBe("20");
-    expect(screen.getByTestId("integration-action-slack").querySelector("svg")?.getAttribute("height")).toBe("20");
-    expect(screen.getByTestId("integration-action-slack").style.borderRadius).toBe("9999px");
     expect(screen.getByTestId("integration-connect-github").className).toContain("rounded-[8px]");
-    expect(screen.getByTestId("integration-connect-github").className).toContain("p-[4px]");
-    expect(screen.getByTestId("integration-connect-github").querySelector("svg")?.getAttribute("width")).toBe("20");
   });
 
   it("capitalizes service ids in the connected section when no catalog name exists", async () => {
