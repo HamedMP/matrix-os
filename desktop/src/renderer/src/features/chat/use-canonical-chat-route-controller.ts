@@ -9,6 +9,8 @@ import { diagnosticErrorKind } from "../../lib/errors";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
+const ACTIVE_RUN_POLL_MS = 200;
+const ACTIVE_RUN_MAX_RETRY_MS = 2_000;
 
 function detailWithRecord(
   detail: CanonicalChatDetailResponse,
@@ -36,6 +38,7 @@ export function useCanonicalChatRouteController({
   const [status, setStatus] = useState<CanonicalChatRouteStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const activeChatIdRef = useRef<string | null>(initialChatId);
+  const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
   const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
@@ -45,6 +48,12 @@ export function useCanonicalChatRouteController({
     try {
       const loaded = await client.getDetail(chatId, { limit: 200 });
       if (sequence !== detailRequestSequence.current) return null;
+      const current = detailRef.current;
+      if (current?.record.chat.id === loaded.record.chat.id
+        && current.record.chat.revision > loaded.record.chat.revision) {
+        return current;
+      }
+      detailRef.current = loaded;
       setDetail(loaded);
       setError(null);
       return loaded;
@@ -74,7 +83,10 @@ export function useCanonicalChatRouteController({
         activeChatIdRef.current = next;
         return next;
       });
-      if (page.items.length === 0) setDetail(null);
+      if (page.items.length === 0) {
+        detailRef.current = null;
+        setDetail(null);
+      }
     } catch (error: unknown) {
       console.warn("[canonical-chat] list load failed:", diagnosticErrorKind(error));
       if (sequence !== listRequestSequence.current) return;
@@ -93,6 +105,7 @@ export function useCanonicalChatRouteController({
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
     setItems([]);
+    detailRef.current = null;
     setDetail(null);
     setActiveChatId(initialChatId);
     activeChatIdRef.current = initialChatId;
@@ -110,11 +123,22 @@ export function useCanonicalChatRouteController({
     if (!active || !activeChatId || !detail?.record.activeRun) return;
     let cancelled = false;
     let timeout: number | undefined;
-    const poll = () => {
+    let consecutiveFailures = 0;
+    const poll = (delay = ACTIVE_RUN_POLL_MS) => {
       timeout = window.setTimeout(async () => {
         const loaded = await loadDetail(activeChatId);
-        if (!cancelled && loaded?.record.activeRun) poll();
-      }, 200);
+        if (cancelled) return;
+        if (!loaded) {
+          consecutiveFailures += 1;
+          poll(Math.min(
+            ACTIVE_RUN_POLL_MS * (2 ** consecutiveFailures),
+            ACTIVE_RUN_MAX_RETRY_MS,
+          ));
+          return;
+        }
+        consecutiveFailures = 0;
+        if (loaded.record.activeRun) poll();
+      }, delay);
     };
     poll();
     return () => {
@@ -127,6 +151,7 @@ export function useCanonicalChatRouteController({
     detailRequestSequence.current += 1;
     setActiveChatId(chatId);
     activeChatIdRef.current = chatId;
+    detailRef.current = null;
     setDetail(null);
     setError(null);
   }, []);
@@ -145,7 +170,11 @@ export function useCanonicalChatRouteController({
         projectId: targetProjectId,
       });
       if (!isCurrentScope()) return null;
-      setDetail((current) => current ? detailWithRecord(current, record) : current);
+      setDetail((current) => {
+        const next = current ? detailWithRecord(current, record) : current;
+        detailRef.current = next;
+        return next;
+      });
       setItems((current) => current.map((item) => (
         item.chat.id === record.chat.id ? record : item
       )));
@@ -201,6 +230,7 @@ export function useCanonicalChatRouteController({
       };
       setActiveChatId(admitted.record.chat.id);
       activeChatIdRef.current = admitted.record.chat.id;
+      detailRef.current = next;
       setDetail(next);
       setItems((existing) => [
         admitted.record,

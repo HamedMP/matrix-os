@@ -266,6 +266,85 @@ describe("canonical Chat route controller", () => {
     }
   });
 
+  it("retries after one transient detail failure and converges on the completed Run", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const runningRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 1 },
+        activeRun: { runId: "run_retry", turnId: "turn_retry", status: "running" as const },
+      };
+      const completedRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 3 },
+      };
+      const getDetail = vi.fn()
+        .mockResolvedValueOnce({ ...detail, record: runningRecord })
+        .mockRejectedValueOnce(new TypeError("temporary schema mismatch"))
+        .mockResolvedValueOnce({ ...detail, record: completedRecord });
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.detail?.record.chat.revision).toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      expect(getDetail).toHaveBeenCalledTimes(3);
+      expect(result.current.detail?.record.chat.revision).toBe(3);
+      expect(result.current.detail?.record.activeRun).toBeUndefined();
+      expect(result.current.error).toBeNull();
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects an older revision while an active Run continues polling", async () => {
+    vi.useFakeTimers();
+    try {
+      const recordAt = (revision: number, activeRun = true) => ({
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision },
+        ...(activeRun ? {
+          activeRun: { runId: "run_revision", turnId: "turn_revision", status: "running" as const },
+        } : {}),
+      });
+      const getDetail = vi.fn()
+        .mockResolvedValueOnce({ ...detail, record: recordAt(5) })
+        .mockResolvedValueOnce({ ...detail, record: recordAt(4) })
+        .mockResolvedValueOnce({ ...detail, record: recordAt(6, false) });
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [recordAt(5)] })),
+        getDetail,
+      });
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.detail?.record.chat.revision).toBe(5);
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(result.current.detail?.record.chat.revision).toBe(5);
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(result.current.detail?.record.chat.revision).toBe(6);
+      expect(getDetail).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps polling an admitted Project Run until the completed assistant message is visible", async () => {
     const projectRecord = {
       ...globalRecord,
