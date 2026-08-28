@@ -337,6 +337,10 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
               placement: "active",
               attachCommand: shellConnectCommand(name),
             }, ...state.sessions],
+            // A session-list fetch that started before this confirmed create
+            // can return a stale snapshot without the new session. Advance
+            // the sequence so it cannot overwrite this optimistic entry.
+            loadSequence: state.loadSequence + 1,
             authoritativeRevision: state.authoritativeRevision + 1,
           }
     ));
