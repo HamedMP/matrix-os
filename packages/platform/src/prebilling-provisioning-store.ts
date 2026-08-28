@@ -42,6 +42,7 @@ export interface PrebillingProvisioningIntent {
   stripeSessionExpiresAt: string | null;
   leaseExpiresAt: string | null;
   reservedHourlyCostMicros: number;
+  paymentConfirmedAt: string | null;
   authorizedAt: string | null;
   cleanedAt: string | null;
   lastErrorCode: string | null;
@@ -88,6 +89,7 @@ function mapIntent(row: PrebillingProvisioningIntentsTable): PrebillingProvision
     stripeSessionExpiresAt: row.stripe_session_expires_at,
     leaseExpiresAt: row.lease_expires_at,
     reservedHourlyCostMicros: Number(row.reserved_hourly_cost_micros),
+    paymentConfirmedAt: row.payment_confirmed_at,
     authorizedAt: row.authorized_at,
     cleanedAt: row.cleaned_at,
     lastErrorCode: row.last_error_code,
@@ -190,6 +192,31 @@ export async function getActivePrebillingIntent(
   return row ? mapIntent(row) : undefined;
 }
 
+export async function listPaidPrebillingIntentsNeedingPreparation(
+  db: PlatformDB,
+  updatedBefore: string,
+  limit = 20,
+): Promise<PrebillingProvisioningIntent[]> {
+  await db.ready;
+  const rows = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
+    .where('payment_confirmed_at', 'is not', null)
+    .where('state', 'in', ['payment_settling', 'preparation_failed'])
+    .where('updated_at', '<=', updatedBefore)
+    .where((eb) => eb.or([
+      eb('machine_id', 'is', null),
+      eb.exists(
+        eb.selectFrom('user_machines as machine').select('machine.machine_id')
+          .whereRef('machine.machine_id', '=', 'prebilling_provisioning_intents.machine_id')
+          .where('machine.status', '=', 'failed')
+          .where('machine.deleted_at', 'is', null),
+      ),
+    ]))
+    .orderBy('updated_at', 'asc')
+    .limit(Math.max(1, Math.min(100, Math.trunc(limit))))
+    .execute();
+  return rows.map(mapIntent);
+}
+
 export async function createPrebillingIntent(
   db: PlatformDB,
   input: NewPrebillingIntent,
@@ -216,6 +243,7 @@ export async function createPrebillingIntent(
     cleanup_claimed_at: null,
     cleanup_lease_expires_at: null,
     ready_at: null,
+    payment_confirmed_at: null,
     authorized_at: null,
     cleaned_at: null,
     last_error_code: null,
@@ -249,6 +277,26 @@ export async function admitPrebillingIntent(
     if (currentIntent.state === 'preparing') {
       return { intent: currentIntent, admitted: true, reason: 'admitted' as const };
     }
+    if (
+      currentIntent.paymentConfirmedAt !== null
+      && ['awaiting_checkout', 'payment_settling', 'preparation_failed', 'preparation_deferred']
+        .includes(currentIntent.state)
+    ) {
+      const row = await trx.executor.updateTable('prebilling_provisioning_intents').set({
+        state: 'payment_settling',
+        stripe_session_id: currentIntent.stripeSessionId ?? input.stripeSessionId,
+        stripe_session_expires_at: currentIntent.stripeSessionExpiresAt ?? input.stripeSessionExpiresAt,
+        lease_expires_at: null,
+        reserved_hourly_cost_micros: 0,
+        last_error_code: null,
+        revision: current.revision + 1,
+        updated_at: input.now,
+      }).where('id', '=', input.intentId)
+        .where('revision', '=', current.revision)
+        .where('payment_confirmed_at', 'is not', null)
+        .returningAll().executeTakeFirstOrThrow();
+      return { intent: mapIntent(row), admitted: true, reason: 'admitted' as const };
+    }
     if (currentIntent.state !== 'awaiting_checkout') {
       return { intent: currentIntent, admitted: false, reason: 'capacity' as const };
     }
@@ -257,6 +305,7 @@ export async function admitPrebillingIntent(
              COALESCE(SUM(reserved_hourly_cost_micros), 0)::text AS reserved_cost
       FROM prebilling_provisioning_intents
       WHERE state IN (${sql.join(ACTIVE_CAPACITY_STATES)})
+        AND payment_confirmed_at IS NULL
     `.execute(trx.executor);
     const activeCount = Number(totals.rows[0]?.active_count ?? 0);
     const reservedCost = Number(totals.rows[0]?.reserved_cost ?? 0);
@@ -296,6 +345,7 @@ export async function validatePrebillingProvisioningIntent(
   if (!row) return undefined;
   const intent = mapIntent(row);
   const leaseIsValid = intent.state === 'authorized'
+    || (intent.state === 'payment_settling' && intent.paymentConfirmedAt !== null)
     || (intent.state === 'preparing'
       && intent.leaseExpiresAt !== null
       && Date.parse(intent.leaseExpiresAt) > Date.parse(input.now));
@@ -322,9 +372,16 @@ export async function bindPrebillingIntentMachine(
     revision: input.expectedRevision + 1,
     updated_at: input.now,
   }).where('id', '=', input.intentId)
-    .where('state', '=', 'preparing')
+    .where('state', 'in', ['preparing', 'payment_settling'])
     .where('revision', '=', input.expectedRevision)
-    .where('machine_id', 'is', null)
+    .where((eb) => eb.or([
+      eb('machine_id', 'is', null),
+      eb.exists(
+        eb.selectFrom('user_machines').select('machine_id')
+          .whereRef('user_machines.machine_id', '=', 'prebilling_provisioning_intents.machine_id')
+          .where('user_machines.deleted_at', 'is not', null),
+      ),
+    ]))
     .returning('id').executeTakeFirst();
   return Boolean(row);
 }
@@ -344,17 +401,14 @@ export async function markPrebillingIntentReady(
 ): Promise<boolean> {
   await db.ready;
   const updated = await sql<{ ready: boolean }>`
-    WITH marked AS (
-      UPDATE prebilling_provisioning_intents AS intent
-      SET state = 'ready_waiting_for_billing',
-          ready_at = ${input.now},
-          revision = intent.revision + 1,
-          updated_at = ${input.now}
+    WITH eligible AS (
+      SELECT intent.id, intent.payment_confirmed_at
+      FROM prebilling_provisioning_intents AS intent
       WHERE intent.id = ${input.intentId}
         AND intent.machine_id = ${input.machineId}
         AND intent.clerk_user_id = ${input.clerkUserId}
         AND intent.runtime_slot = ${input.runtimeSlot}
-        AND intent.state = 'preparing'
+        AND intent.state IN ('preparing', 'payment_settling')
         AND EXISTS (
           SELECT 1
           FROM user_machines AS machine
@@ -366,6 +420,52 @@ export async function markPrebillingIntentReady(
             AND machine.activation_state = 'awaiting_billing'
             AND machine.deleted_at IS NULL
         )
+      FOR UPDATE
+    ), activated AS (
+      UPDATE user_machines AS machine
+      SET activation_state = CASE
+            WHEN eligible.payment_confirmed_at IS NOT NULL THEN 'authorized'
+            ELSE machine.activation_state
+          END,
+          activation_authorized_at = CASE
+            WHEN eligible.payment_confirmed_at IS NOT NULL
+              THEN COALESCE(machine.activation_authorized_at, ${input.now})
+            ELSE machine.activation_authorized_at
+          END
+      FROM eligible
+      WHERE machine.machine_id = ${input.machineId}
+        AND machine.prebilling_intent_id = eligible.id
+        AND machine.clerk_user_id = ${input.clerkUserId}
+        AND machine.runtime_slot = ${input.runtimeSlot}
+        AND machine.status = 'running'
+        AND machine.activation_state = 'awaiting_billing'
+        AND machine.deleted_at IS NULL
+      RETURNING machine.machine_id
+    ), marked AS (
+      UPDATE prebilling_provisioning_intents AS intent
+      SET state = CASE
+            WHEN eligible.payment_confirmed_at IS NOT NULL THEN 'authorized'
+            ELSE 'ready_waiting_for_billing'
+          END,
+          ready_at = COALESCE(intent.ready_at, ${input.now}),
+          authorized_at = CASE
+            WHEN eligible.payment_confirmed_at IS NOT NULL
+              THEN COALESCE(intent.authorized_at, ${input.now})
+            ELSE intent.authorized_at
+          END,
+          lease_expires_at = CASE
+            WHEN eligible.payment_confirmed_at IS NOT NULL THEN NULL
+            ELSE intent.lease_expires_at
+          END,
+          reserved_hourly_cost_micros = CASE
+            WHEN eligible.payment_confirmed_at IS NOT NULL THEN 0
+            ELSE intent.reserved_hourly_cost_micros
+          END,
+          revision = intent.revision + 1,
+          updated_at = ${input.now}
+      FROM eligible, activated
+      WHERE intent.id = eligible.id
+        AND activated.machine_id = ${input.machineId}
       RETURNING intent.id
     )
     SELECT EXISTS(SELECT 1 FROM marked) OR EXISTS(
@@ -376,9 +476,12 @@ export async function markPrebillingIntentReady(
         AND intent.machine_id = ${input.machineId}
         AND intent.clerk_user_id = ${input.clerkUserId}
         AND intent.runtime_slot = ${input.runtimeSlot}
-        AND intent.state = 'authorized'
+        AND intent.state IN ('ready_waiting_for_billing', 'authorized')
         AND machine.status = 'running'
-        AND machine.activation_state = 'authorized'
+        AND machine.activation_state = CASE
+          WHEN intent.state = 'authorized' THEN 'authorized'
+          ELSE 'awaiting_billing'
+        END
         AND machine.deleted_at IS NULL
     ) AS ready
   `.execute(db.executor);
@@ -397,7 +500,7 @@ export async function markPrebillingPreparationFailed(
     revision: eb('revision', '+', 1),
     updated_at: input.now,
   })).where('id', '=', input.intentId)
-    .where('state', '=', 'preparing')
+    .where('state', 'in', ['preparing', 'payment_settling'])
     .returning('id').executeTakeFirst();
   return Boolean(updated);
 }
@@ -416,6 +519,7 @@ export async function resetPrebillingPreparationForRetry(
   })).where('id', '=', input.intentId)
     .where('clerk_user_id', '=', input.clerkUserId)
     .where('state', 'in', ['preparation_failed', 'preparation_deferred'])
+    .where('payment_confirmed_at', 'is', null)
     .where('stripe_session_id', 'is not', null)
     .where('stripe_session_expires_at', '>', input.now)
     .returning('id').executeTakeFirst();
@@ -440,7 +544,28 @@ export async function authorizePrebillingIntent(
     return { authorized: true, machineId: intent.machineId };
   }
   if (intent.state !== 'ready_waiting_for_billing' || !intent.machineId) {
-    throw new Error('prebilling_machine_not_ready');
+    if (![
+      'awaiting_checkout',
+      'preparing',
+      'payment_settling',
+      'preparation_failed',
+      'preparation_deferred',
+    ].includes(intent.state)) {
+      throw new Error('prebilling_intent_not_payable');
+    }
+    if (intent.state !== 'payment_settling' || intent.paymentConfirmedAt === null) {
+      const settling = await db.executor.updateTable('prebilling_provisioning_intents').set({
+        state: 'payment_settling',
+        payment_confirmed_at: intent.paymentConfirmedAt ?? input.now,
+        lease_expires_at: null,
+        reserved_hourly_cost_micros: 0,
+        revision: intent.revision + 1,
+        updated_at: input.now,
+      }).where('id', '=', intent.id).where('revision', '=', intent.revision)
+        .returning('id').executeTakeFirst();
+      if (!settling) throw new Error('prebilling_payment_settling_conflict');
+    }
+    return { authorized: false, machineId: intent.machineId };
   }
   const activated = await db.executor.updateTable('user_machines').set({
     activation_state: 'authorized',
@@ -455,6 +580,7 @@ export async function authorizePrebillingIntent(
   if (!activated) throw new Error('prebilling_machine_activation_mismatch');
   const authorized = await db.executor.updateTable('prebilling_provisioning_intents').set({
     state: 'authorized',
+    payment_confirmed_at: intent.paymentConfirmedAt ?? input.now,
     authorized_at: input.now,
     lease_expires_at: null,
     reserved_hourly_cost_micros: 0,
@@ -486,7 +612,7 @@ export async function cleanupExpiredPrebillingCheckout(
     .forUpdate().executeTakeFirst();
   if (!current) return { cleaned: false, intentId: null };
   const intent = mapIntent(current);
-  if (intent.state === 'authorized' || intent.state === 'cleaned') {
+  if (intent.paymentConfirmedAt !== null || intent.state === 'authorized' || intent.state === 'cleaned') {
     return { cleaned: false, intentId: intent.id };
   }
   if (intent.machineId) {

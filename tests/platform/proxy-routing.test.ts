@@ -11,6 +11,7 @@ import {
   insertUserMachine,
   updateContainerStatus,
   upsertBillingEntitlement,
+  upsertBillingOverride,
 } from "../../packages/platform/src/db.js";
 import {
   buildPostAuthRedirectPath,
@@ -23,6 +24,11 @@ import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 import { shouldServePlatformRuntimeShell } from "../../packages/platform/src/session-routing-middleware.js";
 import type { CustomerVpsService } from "../../packages/platform/src/customer-vps.js";
+import {
+  admitPrebillingIntent,
+  authorizePrebillingIntent,
+  createPrebillingIntent,
+} from "../../packages/platform/src/prebilling-provisioning-store.js";
 import {
   JWT_SECRET,
   cleanupProxyRoutingTest,
@@ -2063,6 +2069,117 @@ describe("platform proxy routing", () => {
       runtimeSlot: "primary",
       developerTools: ["claude-code"],
     }, DETACHED_PROVISION_OPTIONS);
+  });
+
+  it("converges an old post-payment provision request onto the checkout-bound intent", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertCheckoutAttempt(db, {
+      id: "checkout_prebilling",
+      clerkUserId: "user_prebilling",
+      stripeSessionId: "cs_prebilling",
+      checkoutUrl: "https://checkout.stripe.test/cs_prebilling",
+      runtimeSlot: "primary",
+      planSlug: "matrix_builder",
+      billingInterval: "monthly",
+      regionSlug: "region_fsn1",
+      serverType: "cpx32",
+      status: "paid",
+      developerTools: ["codex", "claude-code"],
+      createdAt: "2026-08-28T11:55:00.000Z",
+    });
+    await createPrebillingIntent(db, {
+      id: "intent_prebilling",
+      checkoutAttemptId: "checkout_prebilling",
+      clerkUserId: "user_prebilling",
+      runtimeSlot: "primary",
+      planSlug: "matrix_builder",
+      billingInterval: "monthly",
+      regionSlug: "region_fsn1",
+      serverType: "cpx32",
+      developerTools: ["codex", "claude-code"],
+      createdAt: "2026-08-28T11:55:00.000Z",
+    });
+    await admitPrebillingIntent(db, {
+      intentId: "intent_prebilling",
+      stripeSessionId: "cs_prebilling",
+      stripeSessionExpiresAt: "2026-08-28T12:30:00.000Z",
+      reservedHourlyCostMicros: 50_000,
+      maxActive: 1,
+      maxHourlyCostMicros: 50_000,
+      now: "2026-08-28T11:56:00.000Z",
+    });
+    await db.transaction((trx) => authorizePrebillingIntent(trx, {
+      intentId: "intent_prebilling",
+      clerkUserId: "user_prebilling",
+      runtimeSlot: "primary",
+      now: "2026-08-28T11:57:00.000Z",
+    }));
+    await upsertBillingEntitlement(db, {
+      clerkUserId: "user_prebilling", source: "stripe", planSlug: "matrix_builder", status: "active",
+      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
+      defaultServerType: "cpx32", allowedServerTypes: ["cpx32"],
+      stripeSubscriptionId: "sub_prebilling", stripePriceId: "price_builder_monthly",
+      gracePeriodEndsAt: null, effectiveFrom: "2026-08-28T11:57:00.000Z",
+      effectiveUntil: null, updatedAt: "2026-08-28T11:57:00.000Z",
+    });
+    await upsertBillingOverride(db, {
+      id: "override_prebilling", clerkUserId: "user_prebilling", planSlug: "matrix_builder", status: "active",
+      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
+      defaultServerType: "cpx32", allowedServerTypes: ["cpx32"],
+      reason: "test", createdBy: "test", expiresAt: null, revokedAt: null,
+      createdAt: "2026-08-28T11:57:00.000Z",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      username: "prebilling-user", first_name: "Prebilling", last_name: "User",
+      primary_email_address_id: "email_1",
+      email_addresses: [{ id: "email_1", email_address: "prebilling@example.com" }],
+    }));
+    const customerVpsService = {
+      provision: vi.fn(),
+      provisionForCheckout: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff987",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+      setPrebillingFallbackReconciler: vi.fn(),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue({ sub: "user_prebilling" }) }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: {
+        ...process.env,
+        CLERK_SECRET_KEY: "sk_test_matrix",
+        MATRIX_BILLING_PROVIDER: "stripe",
+        MATRIX_STRIPE_BILLING_ENABLED: "true",
+        MATRIX_PREBILLING_PROVISIONING_ENABLED: "true",
+        MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: "100",
+        MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: "1",
+        MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: "50000",
+        MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
+      },
+    });
+    expect(customerVpsService.setPrebillingFallbackReconciler).toHaveBeenCalledOnce();
+
+    const response = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session", "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "provisioning",
+      intentId: "intent_prebilling",
+      runtimeSlot: "primary",
+    });
+    expect(customerVpsService.provisionForCheckout).toHaveBeenCalledWith(expect.anything(), "intent_prebilling", {
+      dispatch: "detached",
+    });
+    expect(customerVpsService.provision).not.toHaveBeenCalled();
   });
 
   it("does not block hosted runtime provisioning when Clerk returns an empty avatar URL", async () => {

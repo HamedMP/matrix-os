@@ -5,6 +5,7 @@ import {
   getAccessibleActiveUserMachineByClerkId,
   getRunningUserMachineByClerkId,
   insertUserMachine,
+  updateUserMachine,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
 import {
@@ -19,6 +20,8 @@ import {
   createPrebillingIntent,
   cleanupExpiredPrebillingCheckout,
   getPrebillingIntentByCheckoutAttempt,
+  listPaidPrebillingIntentsNeedingPreparation,
+  markPrebillingPreparationFailed,
   markPrebillingIntentReady,
   resetPrebillingPreparationForRetry,
 } from '../../packages/platform/src/prebilling-provisioning-store.js';
@@ -149,6 +152,144 @@ describe('platform prebilling provisioning foundation', () => {
     await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-2')).resolves.toMatchObject({
       state: 'awaiting_checkout',
       lastErrorCode: null,
+    });
+  });
+
+  it('resumes the same paid intent even when unpaid preparation capacity is full', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await seedCheckout('checkout-2', 'user_456');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    await createIntent('intent-2', 'checkout-2', 'user_456');
+    await admitPrebillingIntent(db, {
+      intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
+      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+    });
+    await admitPrebillingIntent(db, {
+      intentId: 'intent-2', stripeSessionId: 'cs_2', stripeSessionExpiresAt: EXPIRES_AT,
+      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+    });
+    await db.transaction((trx) => authorizePrebillingIntent(trx, {
+      intentId: 'intent-2',
+      clerkUserId: 'user_456',
+      runtimeSlot: 'primary',
+      now: '2026-08-24T10:01:00.000Z',
+    }));
+
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff456',
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff457',
+    ];
+    const provisioningJobIds = [
+      '721c3ef8-23f6-47e4-a890-6f6dc1475456',
+      '721c3ef8-23f6-47e4-a890-6f6dc1475457',
+    ];
+    const service = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_SECRET: 'platform-secret',
+        HETZNER_API_TOKEN: 'provider-token',
+        S3_ACCESS_KEY_ID: 'r2-access-key',
+        S3_SECRET_ACCESS_KEY: 'r2-secret-key',
+        S3_ENDPOINT: 'https://r2.example',
+        R2_BUCKET: 'matrixos-sync',
+      }),
+      hetzner: createMockHetznerClient(),
+      systemStore: createMockCustomerVpsSystemStore(),
+      machineIdFactory: () => machineIds.shift() ?? 'unexpected-machine-id',
+      provisioningJobIdFactory: () => provisioningJobIds.shift() ?? 'unexpected-job-id',
+      tokenFactory: () => ({
+        token: 'registration-token',
+        hash: hashRegistrationToken('registration-token'),
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+      postgresPasswordFactory: () => 'postgres-secret',
+      now: () => new Date('2026-08-24T10:02:00.000Z'),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(null),
+      scheduleProvisioningDispatch: vi.fn(),
+    });
+    const provisionForCheckout = vi.spyOn(service, 'provisionForCheckout');
+    const coordinator = createPrebillingProvisioningCoordinator({
+      db,
+      config: loadPrebillingProvisioningConfig({
+        MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
+        MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
+        MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '1',
+        MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '50000',
+        MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
+      }),
+      customerVpsService: service,
+      resolveIdentity: vi.fn().mockResolvedValue({ handle: 'bob' }),
+      now: () => new Date('2026-08-24T10:02:00.000Z'),
+    });
+
+    await expect(listPaidPrebillingIntentsNeedingPreparation(
+      db,
+      '2026-08-24T10:02:00.000Z',
+    )).resolves.toEqual([expect.objectContaining({ id: 'intent-2', state: 'payment_settling' })]);
+    await expect(coordinator.resumePreparation({
+      intentId: 'intent-2',
+      clerkUserId: 'user_456',
+    })).resolves.toBe(true);
+
+    expect(provisionForCheckout).toHaveBeenCalledOnce();
+    expect(provisionForCheckout).toHaveBeenCalledWith(expect.objectContaining({
+      clerkUserId: 'user_456',
+      runtimeSlot: 'primary',
+      serverType: 'cpx32',
+      location: 'fsn1',
+    }), 'intent-2', { dispatch: 'detached' });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-2')).resolves.toMatchObject({
+      id: 'intent-2',
+      state: 'payment_settling',
+      paymentConfirmedAt: '2026-08-24T10:01:00.000Z',
+      reservedHourlyCostMicros: 0,
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff456',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_456', 'primary')).resolves.toMatchObject({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff456',
+      prebillingIntentId: 'intent-2',
+      activationState: 'awaiting_billing',
+    });
+    await expect(listPaidPrebillingIntentsNeedingPreparation(
+      db,
+      '2026-08-24T10:03:00.000Z',
+    )).resolves.toEqual([]);
+
+    await updateUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff456', {
+      status: 'failed',
+      failureCode: 'provider_timeout',
+      failureAt: '2026-08-24T10:03:00.000Z',
+    });
+    await markPrebillingPreparationFailed(db, {
+      intentId: 'intent-2',
+      now: '2026-08-24T10:03:00.000Z',
+      errorCode: 'provider_timeout',
+    });
+    await expect(listPaidPrebillingIntentsNeedingPreparation(
+      db,
+      '2026-08-24T10:04:00.000Z',
+    )).resolves.toEqual([expect.objectContaining({ id: 'intent-2', state: 'preparation_failed' })]);
+
+    await expect(coordinator.resumePreparation({
+      intentId: 'intent-2',
+      clerkUserId: 'user_456',
+    })).resolves.toBe(true);
+    expect(provisionForCheckout).toHaveBeenCalledTimes(2);
+    expect(provisionForCheckout.mock.calls.map(([, intentId]) => intentId)).toEqual([
+      'intent-2',
+      'intent-2',
+    ]);
+    await expect(getActiveUserMachineByClerkId(db, 'user_456', 'primary')).resolves.toMatchObject({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff457',
+      prebillingIntentId: 'intent-2',
+      activationState: 'awaiting_billing',
+      attempt: 2,
+    });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-2')).resolves.toMatchObject({
+      id: 'intent-2',
+      state: 'payment_settling',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff457',
+      paymentConfirmedAt: '2026-08-24T10:01:00.000Z',
     });
   });
 
@@ -385,7 +526,7 @@ describe('platform prebilling provisioning foundation', () => {
     })).resolves.toBeDefined();
   });
 
-  it('atomically authorizes only the exact owner-bound prepared machine', async () => {
+  it('records payment first and atomically authorizes the exact machine when it becomes ready', async () => {
     await seedCheckout('checkout-1', 'user_123');
     await createIntent('intent-1', 'checkout-1', 'user_123');
     const admitted = await admitPrebillingIntent(db, {
@@ -424,7 +565,15 @@ describe('platform prebilling provisioning foundation', () => {
 
     await expect(db.transaction((trx) => authorizePrebillingIntent(trx, {
       intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
-    }))).rejects.toThrow('prebilling_machine_not_ready');
+    }))).resolves.toEqual({
+      authorized: false,
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+    });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'payment_settling',
+      paymentConfirmedAt: CREATED_AT,
+    });
+    await expect(getAccessibleActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
     await expect(db.transaction((trx) => markPrebillingIntentReady(trx, {
       intentId: 'intent-1',
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -432,17 +581,78 @@ describe('platform prebilling provisioning foundation', () => {
       runtimeSlot: 'primary',
       now: CREATED_AT,
     }))).resolves.toBe(true);
-    await expect(db.transaction((trx) => authorizePrebillingIntent(trx, {
-      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
-    }))).resolves.toEqual({
-      authorized: true,
-      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'authorized',
+      paymentConfirmedAt: CREATED_AT,
+      authorizedAt: CREATED_AT,
     });
     await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toMatchObject({
       activationState: 'authorized',
       activationAuthorizedAt: CREATED_AT,
     });
     await expect(getRunningUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeDefined();
+    await expect(getAccessibleActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeDefined();
+  });
+
+  it('keeps a ready machine fenced until payment authorizes that same machine', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    const admitted = await admitPrebillingIntent(db, {
+      intentId: 'intent-1',
+      stripeSessionId: 'cs_1',
+      stripeSessionExpiresAt: EXPIRES_AT,
+      reservedHourlyCostMicros: 50_000,
+      maxActive: 1,
+      maxHourlyCostMicros: 50_000,
+      now: CREATED_AT,
+    });
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      provisioningClass: 'customer',
+      accessClerkUserIds: [],
+      status: 'running',
+      imageVersion: 'dev',
+      developerTools: ['codex', 'claude-code'],
+      registrationTokenHash: null,
+      registrationTokenExpiresAt: null,
+      provisionedAt: CREATED_AT,
+      activationState: 'awaiting_billing',
+      prebillingIntentId: 'intent-1',
+    });
+    expect(await bindPrebillingIntentMachine(db, {
+      intentId: 'intent-1',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      expectedRevision: admitted.intent.revision,
+      now: CREATED_AT,
+    })).toBe(true);
+
+    await expect(db.transaction((trx) => markPrebillingIntentReady(trx, {
+      intentId: 'intent-1',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      now: CREATED_AT,
+    }))).resolves.toBe(true);
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'ready_waiting_for_billing',
+      paymentConfirmedAt: null,
+    });
+    await expect(getAccessibleActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
+
+    await expect(db.transaction((trx) => authorizePrebillingIntent(trx, {
+      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
+    }))).resolves.toEqual({
+      authorized: true,
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+    });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'authorized',
+      paymentConfirmedAt: CREATED_AT,
+      authorizedAt: CREATED_AT,
+    });
     await expect(getAccessibleActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeDefined();
   });
 
@@ -471,6 +681,27 @@ describe('platform prebilling provisioning foundation', () => {
     await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
     await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
       state: 'cleaned', machineId: null, reservedHourlyCostMicros: 0,
+    });
+  });
+
+  it('never lets a late checkout-expiry event clean a payment-confirmed intent', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    await admitPrebillingIntent(db, {
+      intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
+      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+    });
+    await expect(db.transaction((trx) => authorizePrebillingIntent(trx, {
+      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
+    }))).resolves.toEqual({ authorized: false, machineId: null });
+
+    await expect(db.transaction((trx) => cleanupExpiredPrebillingCheckout(trx, {
+      stripeSessionId: 'cs_1', now: EXPIRES_AT,
+    }))).resolves.toEqual({ cleaned: false, intentId: 'intent-1' });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'payment_settling',
+      paymentConfirmedAt: CREATED_AT,
+      cleanedAt: null,
     });
   });
 

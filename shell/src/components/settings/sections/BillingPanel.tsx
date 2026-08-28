@@ -34,7 +34,6 @@ import type {
 } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
-import { waitForPreparedCheckout } from "@/lib/billing-checkout-preparation";
 import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsStep";
 import {
   defaultDeveloperTools,
@@ -239,19 +238,7 @@ function CheckoutPanel({
           error_kind: err instanceof Error ? err.name : typeof err,
         });
         return null;
-      })) as { attemptId?: unknown; code?: unknown; selection?: unknown; status?: unknown; url?: unknown } | null;
-      if (response.status === 202 && body?.status === "preparing") {
-        if (typeof body.attemptId !== "string" || body.attemptId.length === 0) {
-          reportCheckoutError("invalid_preparation_response");
-          return;
-        }
-        const prepared = await waitForPreparedCheckout({
-          attemptId: body.attemptId,
-          signal: controller.signal,
-        });
-        (onCheckoutNavigate ?? ((target: string) => window.location.assign(target)))(prepared.url);
-        return;
-      }
+      })) as { code?: unknown; selection?: unknown; url?: unknown } | null;
       if (!response.ok) {
         if (response.status === 409 && body?.code === "checkout_selection_conflict") {
           const message = checkoutSelectionConflictMessage(body.selection);
@@ -403,7 +390,7 @@ function CheckoutPanel({
           <CreditCardIcon className="size-4" aria-hidden="true" />
         )}
         {checkoutLoading
-          ? "Preparing computer"
+          ? "Opening secure checkout"
           : checkoutBypassed
           ? "Continue setup"
           : trialDurationDays !== null
@@ -1342,8 +1329,8 @@ function BillingPanelInner({
               : "Manage your hosted Matrix computer"}
           </h3>
           <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
-            Choose the plan for your hosted runtime. Billing starts in Stripe before Matrix
-            attaches a dedicated VPS.
+            Choose your computer and developer tools once. Matrix starts preparing it while
+            you complete secure billing in Stripe.
           </p>
         </div>
 
