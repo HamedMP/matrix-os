@@ -223,10 +223,13 @@ export function CanonicalChatWorkspace({
 
   useEffect(() => {
     const record = controller.detail?.record;
-    if (!record || reportedChatId.current === record.chat.id) return;
+    const routedChatId = initialChatId ?? controller.activeChatId;
+    if (!record
+      || record.chat.id !== routedChatId
+      || reportedChatId.current === record.chat.id) return;
     reportedChatId.current = record.chat.id;
     onActiveChatChanged?.(record.chat.id, record.chat.title);
-  }, [controller.detail?.record, onActiveChatChanged]);
+  }, [controller.activeChatId, controller.detail?.record, initialChatId, onActiveChatChanged]);
 
   const context = projectContext(
     controller.detail?.record.projectId ?? draftProjectId ?? projectId ?? undefined,
