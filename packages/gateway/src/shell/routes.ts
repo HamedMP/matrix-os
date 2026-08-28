@@ -589,11 +589,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
           503,
         );
       }
-      const current = await deps.preferences.loadGlobal();
-      const preferences = await deps.preferences.saveGlobal({
-        ...current,
-        ...(await c.req.json()),
-      });
+      const preferences = await deps.preferences.updateGlobal(await c.req.json());
       if (deps.shellThemeConfig) {
         await deps.shellThemeConfig.setShellTheme(preferences.shellThemeId);
       }

@@ -21,7 +21,7 @@ interface TerminalPreferencesResponse {
   preferences?: { shellThemeId?: unknown };
 }
 
-const persistQueues = new WeakMap<TerminalPreferencesApi, Promise<void>>();
+let persistQueue: Promise<void> = Promise.resolve();
 
 function isSelectableTerminalThemeId(value: unknown): value is TerminalThemeId {
   return typeof value === "string" && TERMINAL_THEME_OPTIONS.some((option) => option.id === value);
@@ -29,18 +29,13 @@ function isSelectableTerminalThemeId(value: unknown): value is TerminalThemeId {
 
 function persist(api: TerminalPreferencesApi | null, themeId: TerminalThemeId): void {
   if (!api) return;
-  const previous = persistQueues.get(api) ?? Promise.resolve();
-  const next = previous.then(async () => {
+  persistQueue = persistQueue.then(async () => {
     await api.put("/api/terminal/preferences", { shellThemeId: themeId });
   }).catch((error: unknown) => {
     console.warn(
       "[terminal-appearance] persist failed:",
       error instanceof Error ? error.message : String(error),
     );
-  });
-  persistQueues.set(api, next);
-  void next.finally(() => {
-    if (persistQueues.get(api) === next) persistQueues.delete(api);
   });
 }
 

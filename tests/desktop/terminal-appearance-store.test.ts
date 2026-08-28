@@ -85,4 +85,25 @@ describe("Terminal appearance store", () => {
       { shellThemeId: "powerlevel10k-pure" },
     ]);
   });
+
+  it("keeps shell palette writes ordered across ApiClient replacement", async () => {
+    let resolveFirst: (() => void) | undefined;
+    const firstApi = createApi();
+    firstApi.put = vi.fn(() => new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    }));
+    const replacementApi = createApi();
+
+    useTerminalAppearance.getState().setThemeId("matrix", firstApi);
+    useTerminalAppearance.getState().setThemeId("powerlevel10k-rainbow", replacementApi);
+
+    await Promise.resolve();
+    expect(firstApi.put).toHaveBeenCalledTimes(1);
+    expect(replacementApi.put).not.toHaveBeenCalled();
+    resolveFirst?.();
+    await vi.waitFor(() => expect(replacementApi.put).toHaveBeenCalledWith(
+      "/api/terminal/preferences",
+      { shellThemeId: "powerlevel10k-rainbow" },
+    ));
+  });
 });

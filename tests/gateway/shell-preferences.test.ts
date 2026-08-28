@@ -58,6 +58,35 @@ describe("shell preferences", () => {
     });
   });
 
+  it("serializes global preference patches so concurrent clients cannot lose fields", async () => {
+    const root = await tempRoot();
+    const store = new ShellPreferencesStore({ homePath: root });
+    let releaseFirstSave: (() => void) | undefined;
+    const originalSaveGlobal = store.saveGlobal.bind(store);
+    const saveGlobal = vi.spyOn(store, "saveGlobal")
+      .mockImplementationOnce(async (input) => {
+        await new Promise<void>((resolve) => {
+          releaseFirstSave = resolve;
+        });
+        return originalSaveGlobal(input);
+      })
+      .mockImplementation((input) => originalSaveGlobal(input));
+
+    const first = store.updateGlobal({ shellThemeId: "matrix" });
+    await vi.waitFor(() => expect(saveGlobal).toHaveBeenCalledTimes(1));
+    const second = store.updateGlobal({ fontFamily: "Fira Code" });
+    await Promise.resolve();
+    expect(saveGlobal).toHaveBeenCalledTimes(1);
+
+    releaseFirstSave?.();
+    await Promise.all([first, second]);
+
+    await expect(store.loadGlobal()).resolves.toMatchObject({
+      shellThemeId: "matrix",
+      fontFamily: "Fira Code",
+    });
+  });
+
   it("renames per-session preferences without overwriting another preference file", async () => {
     const root = await tempRoot();
     const store = new ShellPreferencesStore({ homePath: root });

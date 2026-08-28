@@ -28,6 +28,16 @@ const ShellThemeIdSchema = z.enum([
   "powerlevel10k-rainbow",
   "powerlevel10k-pure",
 ]);
+const TerminalFontFamilySchema = z.enum(["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"]);
+const TerminalCursorStyleSchema = z.enum(["block", "bar", "underline"]);
+
+export const ShellPreferencesPatchSchema = z.object({
+  shellThemeId: ShellThemeIdSchema.optional(),
+  fontFamily: TerminalFontFamilySchema.optional(),
+  ligatures: z.boolean().optional(),
+  cursorStyle: TerminalCursorStyleSchema.optional(),
+  smoothScroll: z.boolean().optional(),
+}).strict();
 
 function legacyThemeToShellTheme(themeId: z.infer<typeof LegacyThemeIdSchema> | undefined) {
   switch (themeId) {
@@ -58,9 +68,9 @@ export const ShellPreferencesSchema = z.preprocess((input) => {
   };
 }, z.object({
   shellThemeId: ShellThemeIdSchema.default("dark"),
-  fontFamily: z.enum(["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"]).default("MesloLGS NF"),
+  fontFamily: TerminalFontFamilySchema.default("MesloLGS NF"),
   ligatures: z.boolean().default(true),
-  cursorStyle: z.enum(["block", "bar", "underline"]).default("block"),
+  cursorStyle: TerminalCursorStyleSchema.default("block"),
   smoothScroll: z.boolean().default(true),
 }));
 
@@ -80,6 +90,7 @@ export interface ShellPreferencesStoreOptions {
 export class ShellPreferencesStore {
   private readonly preferencesDir: string;
   private readonly renameFileOps: NonNullable<ShellPreferencesStoreOptions["renameFileOps"]>;
+  private globalUpdateQueue: Promise<void> = Promise.resolve();
 
   constructor(options: ShellPreferencesStoreOptions) {
     this.preferencesDir = options.preferencesDir ?? join(options.homePath, "system", "shell-preferences");
@@ -130,6 +141,19 @@ export class ShellPreferencesStore {
     const next = ShellPreferencesSchema.parse(input);
     await writeUtf8FileAtomic(this.globalPath(), JSON.stringify(next, null, 2));
     return next;
+  }
+
+  async updateGlobal(input: unknown): Promise<ShellPreferences> {
+    const patch = ShellPreferencesPatchSchema.parse(input);
+    const update = this.globalUpdateQueue.then(async () => {
+      const current = await this.loadGlobal();
+      return this.saveGlobal({ ...current, ...patch });
+    });
+    this.globalUpdateQueue = update.then(
+      () => undefined,
+      () => undefined,
+    );
+    return update;
   }
 
   async rename(fromName: string, toName: string): Promise<void> {
