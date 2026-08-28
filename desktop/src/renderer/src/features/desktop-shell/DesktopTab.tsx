@@ -55,7 +55,7 @@ export default function DesktopTab({
         aria-selected={selected}
         title={label}
         data-desktop-tab
-        className="flex h-full shrink-0 items-center justify-center border-l p-3 outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+        className="no-drag flex h-full shrink-0 items-center justify-center border-l p-3 outline-none transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
         style={{ ...tabBorderStyle(isLast), ...colors, height: "var(--titlebar-height)" }}
         onClick={onClick}
         onDoubleClick={onDoubleClick}
@@ -68,7 +68,7 @@ export default function DesktopTab({
   return (
     <div
       data-desktop-tab
-      className="group flex h-full min-w-[132px] max-w-[220px] shrink-0 items-center gap-2 border-l px-3 text-xs outline-none transition-colors hover:bg-[var(--bg-hover)]"
+      className="titlebar-drag group flex h-full min-w-[132px] max-w-[220px] shrink-0 items-center gap-2 border-l px-3 text-xs outline-none transition-colors hover:bg-[var(--bg-hover)]"
       style={{ ...tabBorderStyle(isLast), ...colors, height: "var(--titlebar-height)" }}
     >
       <button
@@ -76,7 +76,7 @@ export default function DesktopTab({
         role="tab"
         aria-label={label}
         aria-selected={selected}
-        className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none"
+        className="no-drag flex min-w-0 flex-1 items-center gap-2 text-left outline-none"
         onClick={onClick}
         onDoubleClick={onDoubleClick}
         onKeyDown={(event) => activateFromKeyboard(event, onClick)}
@@ -89,7 +89,7 @@ export default function DesktopTab({
           type="button"
           aria-label={`Minimize ${label} tab`}
           title={`Minimize ${label}`}
-          className="flex size-5 shrink-0 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
+          className="no-drag flex size-5 shrink-0 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
           onClick={(event) => {
             event.stopPropagation();
             onMinimize();
@@ -103,7 +103,7 @@ export default function DesktopTab({
           type="button"
           aria-label={`Close ${label}`}
           title={`Close ${label}`}
-          className="flex size-5 shrink-0 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
+          className="no-drag flex size-5 shrink-0 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
           onClick={(event) => {
             event.stopPropagation();
             onClose();
