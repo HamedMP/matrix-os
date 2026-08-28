@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -13,6 +14,8 @@ import type {
 } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import { TabErrorBoundary, TabPane } from "../mission-control/TabContent";
+import { isSettingsSectionId, SettingsSidebar, type SettingsSectionId } from "../settings/SettingsView";
+import { useUi } from "../../stores/ui";
 import type { NativeDesktopMode } from "../../stores/native-desktop-mode";
 import {
   OSWindow,
@@ -89,7 +92,14 @@ export default function DesktopSurfaceFrame({
     : isDesktopHidden || isDesktopTransition || (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app";
-  const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "terminal" || tab.kind === "terminals";
+  const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "terminal" || tab.kind === "terminals" || tab.kind === "settings";
+  const requestedSettingsSection = useUi((state) => state.requestedSettingsSection);
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("account");
+  useEffect(() => {
+    if (tab.kind !== "settings" || !requestedSettingsSection) return;
+    if (isSettingsSectionId(requestedSettingsSection)) setSettingsSection(requestedSettingsSection);
+    useUi.getState().clearRequestedSettingsSection();
+  }, [requestedSettingsSection, tab.kind]);
   const paneActive = interactive && !(isNativeEmbed && overlayOpen);
   const interactionCleanupRef = useRef<(() => void) | null>(null);
 
@@ -187,7 +197,10 @@ export default function DesktopSurfaceFrame({
   return (
     <OSWindow
       surfaceId={tab.id}
-      sidebarWidth={undefined}
+      sidebarWidth={tab.kind === "settings" ? 208 : undefined}
+      sidebar={tab.kind === "settings" ? (
+        <SettingsSidebar section={settingsSection} onSectionChange={setSettingsSection} />
+      ) : undefined}
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBar={isWindow ? (
         <TopBar
@@ -226,6 +239,8 @@ export default function DesktopSurfaceFrame({
             visible={visible}
             layoutRevision={layoutRevision}
             visualScale={presentation === "canvas" ? interactionScale : 1}
+            settingsSection={tab.kind === "settings" ? settingsSection : undefined}
+            onSettingsSectionChange={tab.kind === "settings" ? setSettingsSection : undefined}
           />
         </TabErrorBoundary>
       </div>

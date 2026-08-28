@@ -279,6 +279,11 @@ describe("native desktop shell", () => {
     expect(settingsTab).toBeTruthy();
     expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]?.mode).toBe("window");
     expect(screen.getByRole("dialog", { name: "Settings window" })).toBeTruthy();
+    const settingsWindow = screen.getByRole("dialog", { name: "Settings window" });
+    expect(settingsWindow.querySelector("[data-os-window-sidebar]")).toBeTruthy();
+    const settingsTitle = within(settingsWindow).getByRole("heading", { name: "Settings" });
+    expect(settingsTitle.closest("[data-settings-sidebar-title]")?.querySelector("svg")).toBeTruthy();
+    expect(within(settingsWindow).getByRole("button", { name: "Account" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
 
     fireEvent.click(getWindowControl("Settings", "Maximize"));

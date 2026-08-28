@@ -7,7 +7,7 @@ import { useUi } from "../../stores/ui";
 import ProjectTab from "../project/ProjectTab";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
-import SettingsView from "../settings/SettingsView";
+import SettingsView, { type SettingsSectionId } from "../settings/SettingsView";
 import PluginsHub from "../plugins/PluginsHub";
 import HomeTab from "./HomeTab";
 import ChatTab from "../chat/ChatTab";
@@ -54,12 +54,16 @@ export function TabPane({
   visible = active,
   layoutRevision,
   visualScale = 1,
+  settingsSection,
+  onSettingsSectionChange,
 }: {
   tab: Tab;
   active: boolean;
   visible?: boolean;
   layoutRevision?: string;
   visualScale?: number;
+  settingsSection?: SettingsSectionId;
+  onSettingsSectionChange?: (section: SettingsSectionId) => void;
 }) {
   switch (tab.kind) {
     case "home":
@@ -87,7 +91,7 @@ export function TabPane({
     case "terminal":
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "settings":
-      return <SettingsView />;
+      return <SettingsView section={settingsSection} onSectionChange={onSettingsSectionChange} />;
     case "plugins":
       return <PluginsHub />;
     default:

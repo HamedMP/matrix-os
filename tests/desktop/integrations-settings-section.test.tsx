@@ -22,7 +22,7 @@ const NEW_CONN_ID = "8e4a7a2f-3c4d-5b6e-9f0a-1b2c3d4e5f60";
 
 const AVAILABLE = [
   { id: "gmail", name: "Gmail", category: "google", icon: "mail", logoUrl: "https://cdn.test/gmail.png", actions: {} },
-  { id: "github", name: "GitHub", category: "developer", icon: "code", actions: {} },
+  { id: "github", name: "GitHub", category: "developer", icon: "code", logoUrl: "https://cdn.test/github.png", actions: {} },
 ];
 
 const GMAIL_CONNECTION = {
@@ -122,15 +122,60 @@ describe("desktop integrations settings section", () => {
     expect(screen.getByTestId("integrations-loading")).not.toBeNull();
   });
 
-  it("lists available services with icon initials and no remote images", async () => {
+  it("lists available services with their Pipedream logo and an initial fallback", async () => {
     const { container } = render(<IntegrationsSettingsSection />);
     await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());
 
     expect(screen.getByText("GitHub")).not.toBeNull();
     expect(screen.getByText("google")).not.toBeNull();
-    // Icon initial tile, never the remote logoUrl from the proxy payload.
-    expect(screen.getByTestId("integration-icon-gmail").textContent).toBe("G");
-    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByTestId("integration-icon-gmail").getAttribute("src"))
+      .toBe("https://cdn.test/gmail.png");
+    expect(screen.getByTestId("integration-icon-gmail").className).not.toContain("rounded");
+    expect(screen.getByTestId("integration-icon-gmail").className).toContain("object-fill");
+    expect(screen.getByTestId("integration-icon-gmail-container").className).toContain("rounded");
+    expect(screen.getByTestId("integration-icon-github").getAttribute("src"))
+      .toBe("https://cdn.test/github.png");
+  });
+
+  it("renders the Figma-style unified integration grid", async () => {
+    const api = makeApi({
+      available: [
+        { id: "github", name: "GitHub", category: "developer", logoUrl: "https://cdn.test/github.png", actions: {} },
+        { id: "slack", name: "Slack", category: "communication", logoUrl: "https://cdn.test/slack.png", actions: {} },
+        { id: "linear", name: "Linear", category: "project_management", logoUrl: "https://cdn.test/linear.png", actions: {} },
+      ],
+      connections: [{ ...GMAIL_CONNECTION, service: "slack", account_label: "Slack" }],
+    });
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection />);
+
+    await waitFor(() => expect(screen.getByTestId("integrations-grid")).not.toBeNull());
+
+    expect(screen.queryByText("Connected", { selector: "h4" })).toBeNull();
+    expect(screen.queryByText("Available", { selector: "h4" })).toBeNull();
+    expect(screen.getByText("Manage repos, issues, and pull requests")).not.toBeNull();
+    expect(screen.getByText("Send messages and manage channels")).not.toBeNull();
+    expect(screen.getByText("Manage issues, projects & team workflows")).not.toBeNull();
+    expect(screen.getByTestId("integration-action-slack").getAttribute("data-state")).toBe("connected");
+    expect(screen.getByTestId("integration-action-github").getAttribute("data-state")).toBe("available");
+    expect(screen.getByTestId("integration-action-slack").className).toContain("rounded-full");
+    expect(screen.getByTestId("integration-action-slack").className).toContain("size-7");
+    expect(screen.getByTestId("integration-action-slack").className).toContain("p-[4px]");
+    expect(screen.getByTestId("integration-action-slack").querySelector("svg")?.getAttribute("width")).toBe("20");
+    expect(screen.getByTestId("integration-action-slack").querySelector("svg")?.getAttribute("height")).toBe("20");
+    expect(screen.getByTestId("integration-action-slack").style.borderRadius).toBe("9999px");
+    expect(screen.getByTestId("integration-connect-github").className).toContain("rounded-[8px]");
+    expect(screen.getByTestId("integration-connect-github").className).toContain("p-[4px]");
+    expect(screen.getByTestId("integration-connect-github").querySelector("svg")?.getAttribute("width")).toBe("20");
+  });
+
+  it("capitalizes service ids in the connected section when no catalog name exists", async () => {
+    useConnection.setState({
+      api: makeApi({ available: [], connections: [{ ...GMAIL_CONNECTION, service: "google_calendar" }] }) as never,
+    });
+    render(<IntegrationsSettingsSection />);
+
+    await waitFor(() => expect(screen.getByText(/Google Calendar/)).not.toBeNull());
   });
 
   it("shows connected accounts with label, email, and status", async () => {
@@ -139,6 +184,16 @@ describe("desktop integrations settings section", () => {
 
     expect(screen.getByText("work@example.com")).not.toBeNull();
     expect(screen.getByText("active")).not.toBeNull();
+  });
+
+  it("capitalizes raw connection labels in the connected section", async () => {
+    useConnection.setState({
+      api: makeApi({ connections: [{ ...GMAIL_CONNECTION, account_label: "gmail" }] }) as never,
+    });
+    render(<IntegrationsSettingsSection />);
+
+    await waitFor(() => expect(screen.getAllByText("Gmail").length).toBeGreaterThan(0));
+    expect(screen.queryByText(/^gmail$/)).toBeNull();
   });
 
   it("renders the shared Refresh recipe in the section header and reloads on click", async () => {

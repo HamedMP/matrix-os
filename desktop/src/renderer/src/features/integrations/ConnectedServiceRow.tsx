@@ -2,7 +2,7 @@
 // date, and the disconnect affordance. Only display-safe proxy fields.
 import { Button, StatusDot } from "../../design/primitives";
 import { IntegrationIcon } from "./IntegrationIcon";
-import type { ConnectedIntegration } from "./types";
+import { displayIntegrationName, type ConnectedIntegration } from "./types";
 
 function statusColor(status: string): string {
   if (status === "active") return "var(--status-complete)";
@@ -19,11 +19,13 @@ function formatConnectedAt(iso: string): string | null {
 export function ConnectedServiceRow({
   connection,
   serviceName,
+  logoUrl,
   disconnecting,
   onDisconnect,
 }: {
   connection: ConnectedIntegration;
   serviceName: string;
+  logoUrl?: string;
   disconnecting: boolean;
   onDisconnect: () => void;
 }) {
@@ -33,11 +35,11 @@ export function ConnectedServiceRow({
       className="flex items-center gap-3 rounded-xl border p-3"
       style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
     >
-      <IntegrationIcon name={serviceName} />
+      <IntegrationIcon name={serviceName} logoUrl={logoUrl} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-            {connection.accountLabel}
+            {displayIntegrationName(connection.accountLabel)}
           </p>
           <StatusDot color={statusColor(connection.status)} />
           <span className="text-xs capitalize" style={{ color: "var(--text-tertiary)" }}>
