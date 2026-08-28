@@ -248,7 +248,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
                     key={service.id}
                     service={service}
                     connected={connection !== undefined}
-                    connection={connection}
+                    connection={serviceConnections.length === 1 ? connection : undefined}
                     connections={serviceConnections}
                     connecting={connectingService === service.id}
                     disabled={connectingService !== null}

@@ -38,7 +38,9 @@ export function AvailableServiceCard({
   onDisconnect?: (connection: ConnectedIntegration) => void;
 }) {
   const description = service.description ?? INTEGRATION_DESCRIPTIONS[service.id] ?? "Connect this service to extend your agent.";
-  const actionIsConnected = connected && connection !== undefined && onDisconnect !== undefined;
+  // A card-level hover action is only unambiguous for one account. Services
+  // with several accounts expose an explicit disconnect control per account.
+  const actionIsConnected = connected && connections.length === 1 && connection !== undefined && onDisconnect !== undefined;
 
   return (
     <div
