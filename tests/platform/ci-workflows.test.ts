@@ -371,11 +371,17 @@ describe('CI workflows', () => {
 
     expect(isolated).toContain('deployment_environment:');
     expect(isolated).toMatch(/deployment_environment:[\s\S]*?options:[\s\S]*?- Preview[\s\S]*?- staging/);
+    expect(isolated).toContain("'invalid-preview-environment'");
+    expect(isolated).toContain('case "$DEPLOYMENT_ENVIRONMENT" in');
+    expect(isolated).toContain('Preview|staging) ;;');
+    expect(isolated).toContain('Unsupported preview deployment environment:');
     expect(isolated).toContain("DEPLOYMENT_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}");
-    expect(isolated).toContain("environment: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}");
+    expect(isolated).not.toContain("environment: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}");
     expect(isolated).toContain('if [ "$DEPLOYMENT_ENVIRONMENT" = "staging" ]; then');
     expect(isolated).toContain('staging configuration is required; refusing a no-op deployment.');
     expect(isolated).toContain('matrix-platform-staging');
+    expect(isolated).toContain('matrix-platform-preview');
+    expect(isolated).toContain('Preview must deploy only to the dedicated matrix-platform-preview service.');
     expect(isolated).toContain('matrix-platform-preview-runner@matrix-os-1144.iam.gserviceaccount.com');
     expect(isolated).toContain('PLATFORM_DATABASE_URL=platform-database-url-staging:latest');
     expect(isolated).toContain('STRIPE_SECRET_KEY=stripe-secret-key-test:latest');

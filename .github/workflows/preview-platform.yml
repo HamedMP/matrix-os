@@ -70,7 +70,11 @@ jobs:
          (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview-platform')))))
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}
+    environment: >-
+      ${{ github.event_name != 'workflow_dispatch' && 'Preview' ||
+          inputs.deployment_environment == 'Preview' && 'Preview' ||
+          inputs.deployment_environment == 'staging' && 'staging' ||
+          'invalid-preview-environment' }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
@@ -87,6 +91,13 @@ jobs:
         id: config
         run: |
           set -euo pipefail
+          case "$DEPLOYMENT_ENVIRONMENT" in
+            Preview|staging) ;;
+            *)
+              echo "Unsupported preview deployment environment: ${DEPLOYMENT_ENVIRONMENT}" >&2
+              exit 1
+              ;;
+          esac
           if [ -z "${CLOUD_RUN_PREVIEW_SERVICE:-}" ]; then
             if [ "$DEPLOYMENT_ENVIRONMENT" = "staging" ]; then
               echo "staging configuration is required; refusing a no-op deployment." >&2
@@ -121,6 +132,14 @@ jobs:
             esac
             echo "REVISION_TAG=staging-${PR_NUMBER}" >> "$GITHUB_ENV"
           else
+            if [ "$CLOUD_RUN_PREVIEW_SERVICE" != "matrix-platform-preview" ]; then
+              echo "Preview must deploy only to the dedicated matrix-platform-preview service." >&2
+              exit 1
+            fi
+            if [ "$CLOUD_RUN_SERVICE_ACCOUNT" != "matrix-platform-preview-runner@matrix-os-1144.iam.gserviceaccount.com" ]; then
+              echo "Preview must use the preview runtime service account." >&2
+              exit 1
+            fi
             echo "REVISION_TAG=pr-${PR_NUMBER}" >> "$GITHUB_ENV"
           fi
           case "$MATRIX_CARD_TRIALS_ENABLED" in
