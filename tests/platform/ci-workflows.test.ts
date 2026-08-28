@@ -376,7 +376,7 @@ describe('CI workflows', () => {
     expect(isolated).toContain('Preview|staging) ;;');
     expect(isolated).toContain('Unsupported preview deployment environment:');
     expect(isolated).toContain('deployment_slug="${DEPLOYMENT_ENVIRONMENT,,}"');
-    expect(isolated).toContain('matrix-platform:${deployment_slug}-pr-${PR_NUMBER}-${head_sha::12}');
+    expect(isolated).toContain('matrix-platform:${deployment_slug}-pr-${PR_NUMBER}-${head_sha::12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}');
     expect(isolated).toContain("DEPLOYMENT_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}");
     expect(isolated).not.toContain("environment: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}");
     expect(isolated).toContain('if [ "$DEPLOYMENT_ENVIRONMENT" = "staging" ]; then');
