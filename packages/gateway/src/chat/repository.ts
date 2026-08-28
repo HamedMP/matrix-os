@@ -1034,6 +1034,17 @@ export class ChatRepository {
     return this.runLifecycle.appendRunActivities(ownerInput, chatId, runId, input);
   }
 
+  async appendAssistantDelta(ownerInput: ChatOwner, input: {
+    chatId: string;
+    runId: string;
+    messageId: string;
+    seq: number;
+    delta: string;
+    createdAt: string;
+  }): Promise<CanonicalChatMessage> {
+    return this.runLifecycle.appendAssistantDelta(ownerInput, input);
+  }
+
   async finishRun(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;

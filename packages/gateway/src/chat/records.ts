@@ -43,6 +43,7 @@ export type ChatOutboxEventType =
   | "chat.user_state_updated"
   | "turn.accepted"
   | "run.activity"
+  | "run.message"
   | "chat.terminal_bound"
   | "run.completed"
   | "run.failed"

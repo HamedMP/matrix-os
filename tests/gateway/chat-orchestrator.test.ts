@@ -165,8 +165,6 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.activities.map((activity) => activity.type)).toEqual([
       "run.status",
       "turn.status",
-      "assistant.delta",
-      "assistant.delta",
       "run.status",
     ]);
   });
@@ -728,6 +726,9 @@ describe("CanonicalChatOrchestrator", () => {
     const snapshot = await repository.exportChat(owner, "chat_reconcile_overflow");
     expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
     expect(snapshot?.activities).toHaveLength(500);
+    expect(snapshot?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.error" }),
+    ]));
   });
 
   it("limits one owner to eight concurrent Runs without consuming the global registry", async () => {
@@ -775,7 +776,7 @@ describe("CanonicalChatOrchestrator", () => {
     expect(rejected?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
   });
 
-  it("commits successful output when terminal activity exceeds the persisted limit", async () => {
+  it("commits successful output at the former text-delta activity boundary", async () => {
     await repository.create(owner, {
       id: "chat_terminal_activity_overflow",
       clientRequestId: "req_create_terminal_activity_overflow",
@@ -809,10 +810,10 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "assistant", state: "committed", parts: [{ type: "text", text: "x".repeat(498) }] }),
     ]));
-    expect(snapshot?.activities).toHaveLength(500);
+    expect(snapshot?.activities).toHaveLength(3);
   });
 
-  it("terminalizes a Run when normalized activity exceeds the persisted limit", async () => {
+  it("terminalizes a Run when semantic activity exceeds the persisted limit", async () => {
     await repository.create(owner, {
       id: "chat_activity_overflow",
       clientRequestId: "req_create_activity_overflow",
@@ -820,7 +821,12 @@ describe("CanonicalChatOrchestrator", () => {
     });
     const provider = adapter(async function* () {
       for (let index = 0; index < 501; index += 1) {
-        yield { type: "assistant.delta", delta: "x" };
+        yield {
+          type: "tool.progress",
+          toolCallId: `tool_${index}`,
+          label: `Tool ${index}`,
+          status: "running",
+        };
       }
       yield { type: "run.completed", outcome: "completed" };
     });
@@ -843,6 +849,10 @@ describe("CanonicalChatOrchestrator", () => {
 
     const snapshot = await repository.exportChat(owner, "chat_activity_overflow");
     expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+    expect(snapshot?.activities.length).toBeLessThanOrEqual(500);
+    expect(snapshot?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.error" }),
+    ]));
     expect(orchestrator.activeCount).toBe(0);
   });
 

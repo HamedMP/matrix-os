@@ -151,6 +151,7 @@ export class CanonicalChatOrchestrator {
       | "admitTurn"
       | "markRunRunning"
       | "appendRunActivities"
+      | "appendAssistantDelta"
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
@@ -625,11 +626,14 @@ export class CanonicalChatOrchestrator {
             throw new Error("Provider assistant output exceeded the canonical limit");
           }
           text += event.delta;
-          await this.persistActivities(owner, run, [{
-            type: "assistant.delta",
+          await this.options.repository.appendAssistantDelta(owner, {
+            chatId: run.chatId,
+            runId: run.id,
             messageId: `msg_${run.id.slice("run_".length)}_assistant`,
+            seq: outputSeq,
             delta: event.delta,
-          }]);
+            createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
+          });
         } else if (event.type === "run.completed") {
           terminal = event;
         } else {

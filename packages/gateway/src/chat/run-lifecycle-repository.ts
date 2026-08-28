@@ -21,6 +21,7 @@ import {
   jsonb,
   messageSearchText,
   toActivity,
+  toMessage,
   toRun,
   type ChatOutboxEventType,
   type ChatOwner,
@@ -43,6 +44,12 @@ function requireSafeRef(value: string): string {
 function preview(message: CanonicalChatMessage): string | null {
   const text = message.parts.find((part) => part.type === "text");
   return text?.type === "text" ? text.text.slice(0, 280) : null;
+}
+
+function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
+  return activity.type === "run.error"
+    || (activity.type === "run.status"
+      && ["completed", "failed", "aborted"].includes(activity.status));
 }
 
 async function selectOwnedChat(
@@ -254,7 +261,26 @@ export class ChatRunLifecycleRepository {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
       const unseenCount = activityIds.length - existing.length;
-      if (Number(count.count) + unseenCount > 500) throw new ChatConflictError(chatId, Number(current.revision));
+      const overflow = Number(count.count) + unseenCount - 500;
+      if (overflow > 0) {
+        if (!activities.some(isTerminalActivity)) {
+          throw new ChatConflictError(chatId, Number(current.revision));
+        }
+        const candidates = await trx.selectFrom("chat_run_events")
+          .select(["id", "event"])
+          .where("run_id", "=", runId)
+          .orderBy("occurred_at")
+          .orderBy("id")
+          .execute();
+        const evictedIds = candidates.flatMap((row) => {
+          const persisted = CanonicalChatRunActivitySchema.safeParse(row.event);
+          return persisted.success && !isTerminalActivity(persisted.data) ? [row.id] : [];
+        }).slice(0, overflow);
+        if (evictedIds.length !== overflow) {
+          throw new ChatConflictError(chatId, Number(current.revision));
+        }
+        await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
+      }
       let inserted = 0;
       for (const activity of activities) {
         const row = await trx.insertInto("chat_run_events").values({
@@ -289,6 +315,104 @@ export class ChatRunLifecycleRepository {
     });
   }
 
+  async appendAssistantDelta(ownerInput: ChatOwner, input: {
+    chatId: string;
+    runId: string;
+    messageId: string;
+    seq: number;
+    delta: string;
+    createdAt: string;
+  }): Promise<CanonicalChatMessage> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.runId, input.messageId].forEach(requireSafeRef);
+    const createdAt = new Date(input.createdAt).toISOString();
+    return this.transact(async (trx) => {
+      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      if (!chat) throw new ChatNotFoundError(chatId);
+      const run = await trx.selectFrom("chat_runs").selectAll()
+        .where("id", "=", input.runId)
+        .where("chat_id", "=", chatId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!run) throw new ChatNotFoundError(chatId);
+      if (!ACTIVE_RUNS.includes(run.status as typeof ACTIVE_RUNS[number])) {
+        throw new ChatRunNotActiveError(chatId, input.runId);
+      }
+      const existing = await trx.selectFrom("chat_messages").selectAll()
+        .where("id", "=", input.messageId)
+        .forUpdate()
+        .executeTakeFirst();
+      let next: CanonicalChatMessage;
+      let inserted = false;
+      if (existing) {
+        const current = toMessage(existing);
+        const text = current.parts.length === 1 && current.parts[0]?.type === "text"
+          ? current.parts[0].text
+          : undefined;
+        if (current.chatId !== chatId || current.runId !== input.runId
+          || current.turnId !== run.turn_id || current.role !== "assistant"
+          || current.state !== "pending" || current.seq !== input.seq || text === undefined) {
+          throw new ChatConflictError(chatId, Number(chat.revision));
+        }
+        next = CanonicalChatMessageSchema.parse({
+          ...current,
+          parts: [{ type: "text", text: `${text}${input.delta}` }],
+        });
+        await trx.updateTable("chat_messages").set({
+          parts: jsonb(next.parts),
+          byte_count: encoded.encode(JSON.stringify(next)).byteLength,
+          search_text: messageSearchText(next),
+        }).where("id", "=", next.id).execute();
+      } else {
+        const latest = await trx.selectFrom("chat_messages")
+          .select(({ fn }) => fn.max("seq").as("seq"))
+          .where("chat_id", "=", chatId)
+          .executeTakeFirst();
+        if (input.seq !== Number(latest?.seq ?? 0) + 1) {
+          throw new ChatConflictError(chatId, Number(chat.revision));
+        }
+        next = CanonicalChatMessageSchema.parse({
+          id: input.messageId,
+          chatId,
+          seq: input.seq,
+          role: "assistant",
+          state: "pending",
+          turnId: run.turn_id,
+          runId: input.runId,
+          parts: [{ type: "text", text: input.delta }],
+          createdAt,
+        });
+        await trx.insertInto("chat_messages").values({
+          id: next.id,
+          chat_id: next.chatId,
+          seq: next.seq,
+          role: next.role,
+          state: next.state,
+          turn_id: next.turnId ?? null,
+          run_id: next.runId ?? null,
+          parts: jsonb(next.parts),
+          byte_count: encoded.encode(JSON.stringify(next)).byteLength,
+          search_text: messageSearchText(next),
+          created_at: next.createdAt,
+        }).execute();
+        inserted = true;
+      }
+      const revision = Number(chat.revision) + 1;
+      await trx.updateTable("chats").set({
+        revision,
+        ...(inserted ? { message_count: sql<number>`message_count + 1` } : {}),
+        last_message_preview: preview(next),
+        updated_at: createdAt,
+      }).where("id", "=", chatId).execute();
+      await insertOutbox(trx, owner, chatId, revision, "run.message", {
+        runId: input.runId,
+        messageId: input.messageId,
+      });
+      return next;
+    });
+  }
+
   async finishRun(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;
@@ -308,8 +432,34 @@ export class ChatRunLifecycleRepository {
       if (!ACTIVE_RUNS.includes(current.status as typeof ACTIVE_RUNS[number])) {
         return { run: toRun(current), transitioned: false };
       }
-      if (output !== undefined) {
-        const expectedState = input.outcome === "completed" ? "committed" : "failed";
+      const expectedState = input.outcome === "completed" ? "committed" : "failed";
+      const pendingRow = await trx.selectFrom("chat_messages").selectAll()
+        .where("chat_id", "=", input.chatId)
+        .where("run_id", "=", input.runId)
+        .where("role", "=", "assistant")
+        .forUpdate()
+        .executeTakeFirst();
+      let finalizedOutput: CanonicalChatMessage | undefined;
+      let insertedOutput = false;
+      if (pendingRow) {
+        const pending = toMessage(pendingRow);
+        if (pending.state !== "pending") {
+          throw new ChatConflictError(input.chatId, Number(chat.revision));
+        }
+        if (output !== undefined && (output.id !== pending.id || output.seq !== pending.seq)) {
+          throw new ChatConflictError(input.chatId, Number(chat.revision));
+        }
+        finalizedOutput = CanonicalChatMessageSchema.parse({
+          ...(output ?? pending),
+          state: expectedState,
+        });
+        await trx.updateTable("chat_messages").set({
+          state: expectedState,
+          parts: jsonb(finalizedOutput.parts),
+          byte_count: encoded.encode(JSON.stringify(finalizedOutput)).byteLength,
+          search_text: messageSearchText(finalizedOutput),
+        }).where("id", "=", pending.id).execute();
+      } else if (output !== undefined) {
         if (output.chatId !== input.chatId || output.runId !== input.runId
           || output.turnId !== current.turn_id || output.role !== "assistant"
           || output.state !== expectedState) {
@@ -335,6 +485,8 @@ export class ChatRunLifecycleRepository {
           search_text: messageSearchText(output),
           created_at: output.createdAt,
         }).execute();
+        finalizedOutput = output;
+        insertedOutput = true;
       }
       const updated = await trx.updateTable("chat_runs").set({
         status: input.outcome,
@@ -350,9 +502,9 @@ export class ChatRunLifecycleRepository {
       const revision = Number(chat.revision) + 1;
       await trx.updateTable("chats").set({
         revision,
-        ...(output === undefined ? {} : {
-          message_count: sql<number>`message_count + 1`,
-          last_message_preview: preview(output),
+        ...(finalizedOutput === undefined ? {} : {
+          ...(insertedOutput ? { message_count: sql<number>`message_count + 1` } : {}),
+          last_message_preview: preview(finalizedOutput),
         }),
         attention: input.outcome === "failed" ? "failed" : "none",
         updated_at: completedAt,
