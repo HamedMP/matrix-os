@@ -216,6 +216,7 @@ export default function DesktopSupportWidget() {
         matrix_client: "desktop",
       });
       activeIdentity = identity;
+      hidePostHogWidget();
       suppressDefaultLauncher();
     } catch (error: unknown) {
       console.warn("[desktop-support] PostHog identification failed:", errorKind(error));

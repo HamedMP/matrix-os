@@ -49,6 +49,21 @@ function renderPostHogLauncher(): HTMLDivElement {
   return container;
 }
 
+function renderPersistedOpenPostHogPanel(): HTMLDivElement {
+  let container = document.getElementById("ph-conversations-widget-container") as HTMLDivElement | null;
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "ph-conversations-widget-container";
+    document.body.appendChild(container);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.setAttribute("aria-label", "Close");
+  close.addEventListener("click", renderPostHogLauncher);
+  container.replaceChildren(close);
+  return container;
+}
+
 describe("Desktop support widget", () => {
   beforeEach(() => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "phc_desktop_test");
@@ -115,6 +130,7 @@ describe("Desktop support widget", () => {
       $name: "Neo",
       matrix_client: "desktop",
     });
+    expect(posthogClient.conversations.hide).toHaveBeenCalledTimes(1);
 
     act(() => {
       useConnection.setState({
@@ -126,7 +142,7 @@ describe("Desktop support widget", () => {
       });
     });
 
-    await waitFor(() => expect(posthogClient.conversations.hide).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(posthogClient.conversations.hide).toHaveBeenCalledTimes(2));
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
   });
 
@@ -138,6 +154,10 @@ describe("Desktop support widget", () => {
       renderPostHogLauncher();
     });
 
+    // PostHog persists its own open/closed state. A previous open session must
+    // not make support cover the Desktop immediately after the next sign-in.
+    renderPersistedOpenPostHogPanel();
+
     render(
       <>
         <DesktopSupportWidget />
@@ -146,7 +166,7 @@ describe("Desktop support widget", () => {
     );
 
     await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
-    renderPostHogLauncher();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Close" })).toBeNull());
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
