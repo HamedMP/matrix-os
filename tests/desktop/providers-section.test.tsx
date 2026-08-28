@@ -130,9 +130,11 @@ describe("ProvidersSection", () => {
         expect.objectContaining({ cmd: "codex login", cwd: "projects" }),
       ),
     );
-    expect(
-      useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Sign in"),
-    ).toBe(true);
+    await waitFor(() =>
+      expect(
+        useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Sign in"),
+      ).toBe(true),
+    );
   });
 
   it("shows a generic setup error when the terminal cannot be opened", async () => {

@@ -687,10 +687,12 @@ describe("ChatTab", () => {
       "/api/terminal/sessions",
       expect.objectContaining({ cmd: "claude" }),
     ));
-    expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
-      kind: "terminal",
-      title: "Connect Claude",
-    }));
+    await waitFor(() =>
+      expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
+        kind: "terminal",
+        title: "Connect Claude",
+      })),
+    );
   });
 
   it("persists Global Chat effort and permission selections", async () => {

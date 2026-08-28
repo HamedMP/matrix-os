@@ -865,7 +865,11 @@ describe("AgentSection", () => {
       cmd: "matrix setup codex",
       cwd: "projects",
     })));
-    expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Connect Codex")).toBe(true);
+    await waitFor(() =>
+      expect(
+        useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Connect Codex"),
+      ).toBe(true),
+    );
   });
 
   it("refreshes runtime provider setup status after runtime changes", async () => {
