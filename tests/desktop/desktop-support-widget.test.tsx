@@ -154,10 +154,6 @@ describe("Desktop support widget", () => {
       renderPostHogLauncher();
     });
 
-    // PostHog persists its own open/closed state. A previous open session must
-    // not make support cover the Desktop immediately after the next sign-in.
-    renderPersistedOpenPostHogPanel();
-
     render(
       <>
         <DesktopSupportWidget />
@@ -166,6 +162,9 @@ describe("Desktop support widget", () => {
     );
 
     await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+    // PostHog restores persisted widget state asynchronously after identity
+    // setup. A previous open session must not cover the Desktop after login.
+    renderPersistedOpenPostHogPanel();
     await waitFor(() => expect(screen.queryByRole("button", { name: "Close" })).toBeNull());
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
 

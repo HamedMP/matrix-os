@@ -53,10 +53,15 @@ function hidePostHogWidget(): void {
 }
 
 function suppressDefaultLauncher(): void {
-  if (
-    allowPostHogWidget ||
-    !document.querySelector(`#${POSTHOG_WIDGET_ID} ${POSTHOG_LAUNCHER_SELECTOR}`)
-  ) return;
+  const widget = document.getElementById(POSTHOG_WIDGET_ID);
+  const launcher = widget?.querySelector(POSTHOG_LAUNCHER_SELECTOR);
+  const panel = widget?.querySelector(POSTHOG_CLOSE_SELECTOR);
+  if (!launcher && !panel) return;
+
+  if (allowPostHogWidget) {
+    if (openSupportPromise || panel) return;
+    allowPostHogWidget = false;
+  }
   hidePostHogWidget();
 }
 
@@ -119,10 +124,6 @@ async function openSupportPanel(): Promise<boolean> {
     }
     if (!closeButton) return false;
 
-    // Once the provider panel is open, re-arm launcher suppression. This does
-    // not hide the panel itself; it only removes PostHog's default launcher if
-    // closing or re-rendering the panel brings that button back.
-    allowPostHogWidget = false;
     return true;
   } finally {
     if (!document.querySelector(POSTHOG_CLOSE_SELECTOR)) {
