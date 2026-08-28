@@ -5,7 +5,7 @@ import type {
   SafeSetupAction,
 } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
-import type { useTabs } from "../../stores/tabs";
+import { useTabs } from "../../stores/tabs";
 import { providerSupportsSetupAction } from "./provider-readiness";
 
 const MAX_PROVIDER_SETUP_ACTIONS = 10;
@@ -99,7 +99,8 @@ export async function openProviderSetupTerminal(
     const sessionName = typeof response.name === "string" && SESSION_NAME_PATTERN.test(response.name)
       ? response.name
       : requestedSessionName;
-    openTab({ kind: "terminal", sessionName, title: setup.label });
+    openTab({ kind: "terminals", title: "Terminal" });
+    useTabs.getState().requestTerminalSession(sessionName);
     return true;
   } catch (err: unknown) {
     console.error(`[${logPrefix}] Failed to open provider setup terminal:`, err instanceof Error ? err.name : typeof err);

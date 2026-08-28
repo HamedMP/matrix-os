@@ -4,8 +4,7 @@
 // route lists MCP servers today (kernel wires mcpServers internally in
 // packages/kernel/src/options.ts), so the section is an HONEST empty state:
 // it explains that MCP servers are configured on the Matrix computer and
-// offers the canonical terminal path (POST /api/terminal/sessions + terminal
-// tab, the same flow as provider setup terminals).
+// offers the canonical Terminal app path (the shared terminal overview tab).
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,46 +61,38 @@ describe("desktop plugins MCP servers section", () => {
     expect(screen.getByRole("button", { name: /Open terminal/i })).not.toBeNull();
   });
 
-  it("opens a terminal session so the user can manage MCP servers", async () => {
+  it("opens the new Terminal app without creating a separate session", async () => {
     const api = makeApi();
     useConnection.setState({ api: api as never });
     render(<McpServersSection />);
 
     fireEvent.click(screen.getByRole("button", { name: /Open terminal/i }));
 
-    await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith("/api/terminal/sessions", {
-        name: "plugins-mcp",
-        cwd: "projects",
-      }),
-    );
+    await waitFor(() => expect(useTabs.getState().tabs).toHaveLength(1));
+    expect(api.post).not.toHaveBeenCalled();
     const tabs = useTabs.getState().tabs;
-    expect(tabs.some((tab) => tab.kind === "terminal" && tab.sessionName === "plugins-mcp")).toBe(true);
+    expect(tabs.some((tab) => tab.kind === "terminals" && tab.title === "Terminal")).toBe(true);
   });
 
-  it("shows generic copy and does not open a tab when the session cannot be created", async () => {
+  it("opens the Terminal app even when no API session can be created", async () => {
     const api = makeApi({ postError: new AppError("server") });
     useConnection.setState({ api: api as never });
     render(<McpServersSection />);
 
     fireEvent.click(screen.getByRole("button", { name: /Open terminal/i }));
 
-    await waitFor(() =>
-      expect(screen.getByText("Something went wrong. Please try again.")).not.toBeNull(),
-    );
-    expect(useTabs.getState().tabs).toHaveLength(0);
+    await waitFor(() => expect(useTabs.getState().tabs).toHaveLength(1));
+    expect(api.post).not.toHaveBeenCalled();
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "terminals", title: "Terminal" });
   });
 
-  it("shows the misconfigured copy when no computer is connected", async () => {
+  it("opens the Terminal app when no computer is connected", async () => {
     useConnection.setState({ api: null as never });
     render(<McpServersSection />);
 
     fireEvent.click(screen.getByRole("button", { name: /Open terminal/i }));
 
-    await waitFor(() =>
-      expect(
-        screen.getByText("No computer is connected. Select a runtime to continue."),
-      ).not.toBeNull(),
-    );
+    await waitFor(() => expect(useTabs.getState().tabs).toHaveLength(1));
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "terminals", title: "Terminal" });
   });
 });

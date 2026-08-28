@@ -2,43 +2,14 @@
 // gateway route lists MCP servers today (the kernel wires mcpServers
 // internally per agent run in packages/kernel/src/options.ts), so there is
 // nothing real to render. The section says where MCP servers live and hands
-// off to the canonical terminal session for managing them.
+// off to the canonical Terminal app for managing them.
 import { Server } from "@renderer/lib/hugeicons";
-import { useState } from "react";
-import { categoryMessage } from "../../../../shared/app-error";
 import { Button } from "../../design/primitives";
-import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { openPluginsTerminal } from "./open-plugins-terminal";
 
-const MCP_TERMINAL_SESSION = "plugins-mcp";
-
 export function McpServersSection() {
-  const api = useConnection((s) => s.api);
   const openTab = useTabs((s) => s.openTab);
-  const [busy, setBusy] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const handleOpenTerminal = async (): Promise<void> => {
-    if (busy) return;
-    if (!api) {
-      setErrorMessage(categoryMessage("misconfigured"));
-      return;
-    }
-    setBusy(true);
-    setErrorMessage(null);
-    try {
-      const opened = await openPluginsTerminal(api, openTab, {
-        sessionName: MCP_TERMINAL_SESSION,
-        title: "MCP servers",
-      });
-      // "runtime-changed" is not a failure: the session was created on the
-      // computer the user just left, so there is nothing to apologise for.
-      if (opened === "failed") setErrorMessage(categoryMessage("server"));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <>
@@ -64,13 +35,10 @@ export function McpServersSection() {
           edit MCP servers in your agent configuration.
         </p>
         <div className="mt-2">
-          <Button variant="primary" disabled={busy} onClick={() => void handleOpenTerminal()}>
-            {busy ? "Opening…" : "Open terminal"}
+          <Button variant="primary" onClick={() => openPluginsTerminal(openTab)}>
+            Open terminal
           </Button>
         </div>
-        {errorMessage ? (
-          <p className="text-xs" style={{ color: "var(--danger)" }}>{errorMessage}</p>
-        ) : null}
       </div>
     </>
   );

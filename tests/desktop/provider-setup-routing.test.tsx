@@ -108,6 +108,7 @@ describe("system harness setup routing", () => {
       cwd: "projects",
       cmd: "sh -lc 'opencode'",
     })));
-    expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminal")).toBe(true);
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminals")).toBe(true);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-opencode");
   });
 });

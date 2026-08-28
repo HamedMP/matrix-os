@@ -555,10 +555,10 @@ describe("CommandPalette", () => {
       });
     });
     expect(openTab).toHaveBeenCalledWith({
-      kind: "terminal",
-      sessionName: "matrix-setup-codex-a1b2c3",
-      title: "Install Codex",
+      kind: "terminals",
+      title: "Terminal",
     });
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-codex-a1b2c3");
   });
 
   it("uses distinct setup session names for similar provider setup actions", async () => {
