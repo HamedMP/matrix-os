@@ -110,12 +110,10 @@ describe("tailwind text scale bridge", () => {
   });
 });
 
-describe("Desktop sidebar geometry tokens", () => {
+describe("Desktop shell geometry tokens", () => {
   const root = themeBlock(readRendererFile("design", "tokens.css"), ":root");
-  it("defines the Figma sidebar and shell geometry", () => {
+  it("defines the current titlebar and shared row/menu geometry", () => {
     expect(tokenValue(root, "--titlebar-height")).toBe("38px");
-    expect(tokenValue(root, "--sidebar-expanded-width")).toBe("240px");
-    expect(tokenValue(root, "--sidebar-collapsed-width")).toBe("0px");
     expect(tokenValue(root, "--sidebar-row-height")).toBe("28px");
     expect(tokenValue(root, "--sidebar-menu-width")).toBe("248px");
   });
