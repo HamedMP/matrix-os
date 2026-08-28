@@ -49,8 +49,16 @@ describe("self-host server installer", () => {
     expect(script).toContain("Preparing runtime permissions");
     expect(script).toContain("[ -d /opt/matrix/runtime/node ]");
     expect(script).toContain("chown -R root:matrix /opt/matrix/runtime/node");
-    expect(script).toContain("chmod -R g+rwX /opt/matrix/runtime/node");
-    expect(script).toContain('find /opt/matrix/runtime/node -type d -exec chmod g+s {} +');
+    expect(script).toContain("chmod 1775 /opt/matrix/runtime");
+    expect(script).toContain("chmod 0755 /opt/matrix/runtime/node");
+    expect(script).toContain("chmod -R g+rwX /opt/matrix/runtime/node/lib/node_modules");
+    expect(script).toContain("chmod 3775 /opt/matrix/runtime/node/bin");
+    expect(script).toContain("chown root:root /opt/matrix/runtime/node/bin/node");
+    expect(script).toContain("chmod 0755 /opt/matrix/runtime/node/bin/node");
+    expect(script).toContain(
+      'find /opt/matrix/runtime/node/lib/node_modules -type d -exec chmod g+s {} +',
+    );
+    expect(script).not.toMatch(/chmod -R g\+rwX \/opt\/matrix\/runtime\/node(?:\s|$)/);
     expect(script).toContain("Runtime permissions ready");
     expect(script).toContain("sudo -iu matrix");
   });

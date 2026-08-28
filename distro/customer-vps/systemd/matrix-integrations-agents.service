@@ -12,6 +12,7 @@ Group=root
 Environment=MATRIX_RUNTIME_USER=matrix
 Environment=MATRIX_RUNTIME_HOME=/home/matrix/home
 Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
+ExecStartPre=/opt/matrix/bin/matrix-repair-host-runtime
 ExecStart=/opt/matrix/bin/matrix-register-integrations-mcp all
 Restart=on-failure
 RestartSec=60

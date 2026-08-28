@@ -118,9 +118,17 @@ run_npm_install() {
 }
 
 node_prefix_chmod() {
-  "$@" chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
-  if ! "$@" find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} + 2>/dev/null; then
+  "$@" chmod -R g+rwX "$NODE_PREFIX/lib/node_modules"
+  if ! "$@" find "$NODE_PREFIX/lib/node_modules" -type d -exec chmod g+s {} + 2>/dev/null; then
     log "warning: unable to apply setgid bit to node prefix directories"
+  fi
+  if [ "$(id -u)" = "0" ] || [ "$#" -gt 0 ]; then
+    "$@" chown root:"${MATRIX_RUNTIME_GROUP:-$MATRIX_RUNTIME_USER}" "$MATRIX_RUNTIME_DIR" "$NODE_PREFIX" "$NODE_PREFIX/bin"
+    "$@" chmod 1775 "$MATRIX_RUNTIME_DIR"
+    "$@" chmod 0755 "$NODE_PREFIX"
+    "$@" chmod 3775 "$NODE_PREFIX/bin"
+    "$@" chown root:root "$NODE_PREFIX/bin/node"
+    "$@" chmod 0755 "$NODE_PREFIX/bin/node"
   fi
 }
 
