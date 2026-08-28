@@ -295,6 +295,22 @@ describe("TerminalView session switching", () => {
     unsubscribe();
   });
 
+  it("never publishes Chat-bound input as a standalone Terminal recent or tab", () => {
+    render(<TerminalView sessionName="chat-shell" chatId="chat_selected" />);
+    const terminal = createdTerminals.at(-1)!;
+    const initialTabs = useTabs.getState().tabs;
+    const recentUpdates = vi.fn();
+    const unsubscribe = useTabs.subscribe(recentUpdates);
+
+    act(() => terminal.dataCallback?.("pnpm test\r"));
+
+    expect(attachmentWrite).toHaveBeenCalledWith("pnpm test\r");
+    expect(useTabs.getState().recentViews).toEqual([]);
+    expect(useTabs.getState().tabs).toEqual(initialTabs);
+    expect(recentUpdates).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
   it("preserves the ended banner when re-activating an ended terminal", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" active />);
     const alphaEvents = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;

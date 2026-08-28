@@ -877,19 +877,28 @@ export type FileReadRequest = z.infer<typeof FileReadRequestSchema>;
 export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
 
 const FileListLimitSchema = z.coerce.number().int().min(1).max(100).default(50);
+export const FileBrowseCursorSchema = z.string()
+  .regex(/^filecur_[0-9a-f]{1,32}_(?:[0-9a-f]{2}){1,255}$/);
 
 export const FileBrowseRequestSchema = z.object({
   projectId: FileProjectSlugSchema,
   worktreeId: WorktreeIdSchema.optional(),
   path: FilePathSchema.optional(),
+  cursor: FileBrowseCursorSchema.optional(),
   limit: FileListLimitSchema,
+}).strict();
+const FileBrowseEntriesSchema = z.object({
+  items: z.array(FileMetadataSchema).max(100),
+  hasMore: z.boolean(),
+  nextCursor: FileBrowseCursorSchema.optional(),
+  limit: z.number().int().min(1).max(100),
 }).strict();
 export const FileBrowseResponseSchema = z.object({
   directory: FileMetadataSchema.extend({
     kind: z.literal("directory"),
     path: FilePathSchema.optional(),
   }),
-  entries: boundedListSchema(FileMetadataSchema, 100),
+  entries: FileBrowseEntriesSchema,
 }).strict();
 export type FileBrowseRequest = z.infer<typeof FileBrowseRequestSchema>;
 export type FileBrowseResponse = z.infer<typeof FileBrowseResponseSchema>;

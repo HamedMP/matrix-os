@@ -97,6 +97,7 @@ export interface AttachOptions {
 export interface ZellijAdapter {
   health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
   listSessions(): Promise<string[]>;
+  getSessionCreatedAt?(name: string): Promise<string | null>;
   focusedPaneRuntime(name: string): Promise<FocusedPaneRuntimeObservation>;
   createSession(options: CreateSessionOptions): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;

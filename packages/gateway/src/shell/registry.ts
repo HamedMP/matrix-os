@@ -32,9 +32,11 @@ const ShellSessionReferenceSchema = z.object({
 });
 const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
 const MAX_CONCURRENT_SESSION_DECORATIONS = 8;
+const VERIFIED_RUNTIME_INCARNATION = Symbol("verified-runtime-incarnation");
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
+  getSessionCreatedAt?(name: string): Promise<string | null>;
   focusedPaneRuntime?(name: string): Promise<FocusedPaneRuntimeObservation>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
@@ -98,6 +100,7 @@ export type ShellSession = Omit<PersistedShellSession, "cwd"> & {
   aliases: ShellSessionAlias[];
   references: ShellSessionReference[];
   recoverable: boolean;
+  incarnationVerified: boolean;
   recoveryReason?: "missing_runtime_session";
   /** Agent currently observed in the focused pane, not the persisted launch provider. */
   agent?: AgentKind;
@@ -161,13 +164,16 @@ export class ShellRegistry {
 
       for (const name of live) {
         const existing = file.sessions[name];
+        const runtimeCreatedAt = await this.runtimeCreatedAt(name);
         const session: PersistedShellSession = {
           ...(existing ?? this.adoptSession(name, now)),
+          ...(runtimeCreatedAt ? { createdAt: runtimeCreatedAt } : {}),
+          ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
           status: "active" as const,
           updatedAt: existing?.status === "active" ? existing.updatedAt : now,
         };
         activeSessions.push(session);
-        if (!existing || existing.status !== "active") {
+        if (!existing || existing.status !== "active" || existing.createdAt !== session.createdAt) {
           file.sessions[name] = session;
           changed = true;
         }
@@ -195,12 +201,15 @@ export class ShellRegistry {
       }
       const now = new Date().toISOString();
       const existing = file.sessions[targetName];
+      const runtimeCreatedAt = await this.runtimeCreatedAt(targetName);
       const session: PersistedShellSession = {
         ...(existing ?? this.adoptSession(targetName, now)),
+        ...(runtimeCreatedAt ? { createdAt: runtimeCreatedAt } : {}),
+        ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
         status: "active" as const,
         updatedAt: existing?.status === "active" ? existing.updatedAt : now,
       };
-      if (!existing || existing.status !== "active") {
+      if (!existing || existing.status !== "active" || existing.createdAt !== session.createdAt) {
         file.sessions[targetName] = session;
         await this.write(file);
       }
@@ -214,6 +223,7 @@ export class ShellRegistry {
     layout?: string;
     cmd?: string;
     agent?: AgentKind;
+    exclusive?: boolean;
   }): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const name = validateSessionName(input.name);
@@ -226,6 +236,9 @@ export class ShellRegistry {
       let changed = await this.markMissingMetadataExited(file, live);
 
       if (live.has(name)) {
+        if (input.exclusive) {
+          throw shellError("session_exists", "Session already exists", 409);
+        }
         const now = new Date().toISOString();
         const session: PersistedShellSession = {
           ...(file.sessions[name] ?? this.adoptSession(name, now)),
@@ -244,10 +257,12 @@ export class ShellRegistry {
       }
       await this.options.adapter.createSession({ name, cwd, layout: layoutName, cmd: input.cmd });
       const now = new Date().toISOString();
+      const runtimeCreatedAt = await this.runtimeCreatedAt(name);
       const session: PersistedShellSession = {
         name,
         status: "active",
-        createdAt: now,
+        createdAt: runtimeCreatedAt ?? now,
+        ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
         updatedAt: now,
         layoutName,
         tabs: [],
@@ -476,8 +491,11 @@ export class ShellRegistry {
 
       for (const name of live) {
         const existing = file.sessions[name];
+        const runtimeCreatedAt = await this.runtimeCreatedAt(name);
         const session: PersistedShellSession = {
           ...(existing ?? this.adoptSession(name, now)),
+          ...(runtimeCreatedAt ? { createdAt: runtimeCreatedAt } : {}),
+          ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
           status: "active",
           updatedAt: existing?.status === "active" ? existing.updatedAt : now,
         };
@@ -516,6 +534,26 @@ export class ShellRegistry {
       placement: "active",
       lastSeenSeq: null,
     };
+  }
+
+  private async runtimeCreatedAt(name: string): Promise<string | null> {
+    if (!this.options.adapter.getSessionCreatedAt) {
+      return null;
+    }
+    try {
+      const candidate = await this.options.adapter.getSessionCreatedAt(name);
+      const parsed = z.iso.datetime().safeParse(candidate);
+      if (!parsed.success) {
+        return null;
+      }
+      return parsed.data;
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] runtime session incarnation unavailable:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
   }
 
   private async decorateSession(session: PersistedShellSession, file?: RegistryFile): Promise<ShellSession> {
@@ -580,6 +618,7 @@ export class ShellRegistry {
       aliases: file ? this.aliasesForTarget(file, session.name) : [],
       references,
       recoverable,
+      incarnationVerified: Reflect.get(session, VERIFIED_RUNTIME_INCARNATION) === true,
       ...(recoverable ? { recoveryReason: "missing_runtime_session" as const } : {}),
     };
   }

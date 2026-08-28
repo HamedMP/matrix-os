@@ -264,7 +264,21 @@ export class ChatRunLifecycleRepository {
           event: jsonb(activity),
           occurred_at: activity.occurredAt,
         }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
-        if (row) inserted += 1;
+        if (row) {
+          inserted += 1;
+          if (activity.type === "terminal.bound") {
+            await trx.insertInto("chat_terminal_bindings").values({
+              chat_id: chatId,
+              session_id: activity.terminalSessionId,
+              session_created_at: activity.terminalSessionCreatedAt,
+              run_id: runId,
+              bound_at: activity.occurredAt,
+            }).onConflict((conflict) => conflict.columns(["chat_id", "session_id"]).doUpdateSet({
+              run_id: runId,
+              session_created_at: activity.terminalSessionCreatedAt,
+            })).execute();
+          }
+        }
       }
       if (inserted > 0) {
         const revision = Number(current.revision) + 1;

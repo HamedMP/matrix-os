@@ -21,15 +21,19 @@ const STATUS_COLOR: Record<string, string> = {
  */
 export function InspectorTerminalPanel({
   summary,
+  sessions: providedSessions,
+  chatId,
   active = true,
   emptyMessage = "No terminal sessions.",
 }: {
-  summary: RuntimeSummary;
+  summary?: RuntimeSummary;
+  sessions?: readonly TerminalSessionSummary[];
+  chatId?: string;
   active?: boolean;
   emptyMessage?: string;
 }) {
   const [embeddedId, setEmbeddedId] = useState<string | null>(null);
-  const sessions = summary.terminalSessions.items;
+  const sessions = providedSessions ?? summary?.terminalSessions.items ?? [];
   // The embedded session must still exist and stay attachable; a refresh that
   // ends or detaches it drops the embed back to the list in the same render.
   const embedded = embeddedId
@@ -65,7 +69,7 @@ export function InspectorTerminalPanel({
           className="flex min-h-[240px] min-w-0 flex-1 flex-col overflow-hidden rounded-md border"
           style={{ borderColor: "var(--border-subtle)" }}
         >
-          <TerminalView key={embedded.name} sessionName={embedded.name} active={active} />
+          <TerminalView key={`${chatId ?? "standalone"}:${embedded.name}`} sessionName={embedded.name} chatId={chatId} active={active} />
         </div>
       </div>
     );

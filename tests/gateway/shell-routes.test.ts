@@ -51,6 +51,69 @@ describe("gateway shell routes", () => {
     });
   });
 
+  it.each(["/api/sessions", "/api/terminal/sessions"])(
+    "excludes Chat-bound sessions and retains manual sessions at %s",
+    async (path) => {
+      const listChatBoundSessionIds = vi.fn(async (_principal, names: readonly string[]) => (
+        names.filter((name) => name === "workspace-bound")
+      ));
+      const app = appWithRegistry({
+        list: vi.fn(async () => [
+          { name: "workspace-bound", status: "active" },
+          { name: "manual-shell", status: "active" },
+        ]),
+        create: vi.fn(),
+        delete: vi.fn(),
+      }, undefined, {
+        getPrincipal: () => ({ userId: "user_a", source: "jwt" }),
+        listChatBoundSessionIds,
+      });
+
+      const response = await app.request(path);
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        sessions: [{ name: "manual-shell", status: "active" }],
+      });
+      expect(listChatBoundSessionIds).toHaveBeenCalledWith(
+        { userId: "user_a", source: "jwt" },
+        ["workspace-bound", "manual-shell"],
+      );
+    },
+  );
+
+  it("fails closed when Chat-bound session filtering fails", async () => {
+    const app = appWithRegistry({
+      list: vi.fn(async () => [{ name: "possibly-bound", status: "active" }]),
+      create: vi.fn(),
+      delete: vi.fn(),
+    }, undefined, {
+      getPrincipal: () => ({ userId: "user_a", source: "jwt" }),
+      listChatBoundSessionIds: vi.fn(async () => {
+        throw new Error("private database failure");
+      }),
+    });
+
+    const response = await app.request("/api/terminal/sessions");
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: { code: "shell_failed", message: "Request failed" },
+    });
+  });
+
+  it("preserves normal listing when canonical Chat storage is not configured", async () => {
+    const app = appWithRegistry({
+      list: vi.fn(async () => [{ name: "manual-shell", status: "active" }]),
+      create: vi.fn(),
+      delete: vi.fn(),
+    });
+
+    await expect((await app.request("/api/terminal/sessions")).json()).resolves.toEqual({
+      sessions: [{ name: "manual-shell", status: "active" }],
+    });
+  });
+
   it("serves canonical terminal sessions routes under /api/terminal", async () => {
     const registry = {
       list: vi.fn(async () => [{ name: "main", status: "active" }]),
@@ -72,6 +135,114 @@ describe("gateway shell routes", () => {
 
     expect(registry.create).toHaveBeenCalledWith({ name: "setup" });
     expect(registry.delete).toHaveBeenCalledWith("setup", { force: true });
+  });
+
+  it("creates a Chat-bound session at the server-resolved root before exposing it", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async (input: { name: string }) => ({
+        name: input.name,
+        createdAt: "2026-08-28T10:00:00.000Z",
+      })),
+      delete: vi.fn(async () => undefined),
+    };
+    const chatTerminals = {
+      prepare: vi.fn(async () => ({ runId: "run_selected", cwd: "worktrees/matrix/wt_owned" })),
+      bind: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, {
+      getPrincipal: () => ({ userId: "user_a", source: "jwt" }),
+      chatTerminals,
+    });
+
+    const response = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "chat-calm-otter", chatId: "chat_selected" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(chatTerminals.prepare).toHaveBeenCalledWith(
+      { userId: "user_a", source: "jwt" },
+      "chat_selected",
+    );
+    expect(registry.create).toHaveBeenCalledWith({
+      name: "chat-calm-otter",
+      cwd: "worktrees/matrix/wt_owned",
+      exclusive: true,
+    });
+    expect(chatTerminals.bind).toHaveBeenCalledWith(
+      { userId: "user_a", source: "jwt" },
+      {
+        chatId: "chat_selected",
+        runId: "run_selected",
+        sessionId: "chat-calm-otter",
+        sessionCreatedAt: "2026-08-28T10:00:00.000Z",
+      },
+    );
+  });
+
+  it("creates and binds a Chat terminal before the Chat has its first run", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async (input: { name: string }) => ({
+        name: input.name,
+        createdAt: "2026-08-28T10:00:00.000Z",
+      })),
+      delete: vi.fn(async () => undefined),
+    };
+    const chatTerminals = {
+      prepare: vi.fn(async () => ({})),
+      bind: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, {
+      getPrincipal: () => ({ userId: "user_a", source: "jwt" }),
+      chatTerminals,
+    });
+
+    const response = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "chat-new-draft", chatId: "chat_empty" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(registry.create).toHaveBeenCalledWith({
+      name: "chat-new-draft",
+      exclusive: true,
+    });
+    expect(chatTerminals.bind.mock.calls[0]).toStrictEqual([
+      { userId: "user_a", source: "jwt" },
+      {
+        chatId: "chat_empty",
+        sessionId: "chat-new-draft",
+        sessionCreatedAt: "2026-08-28T10:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("removes a just-created session when its Chat binding cannot be persisted", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async (input: { name: string }) => ({ name: input.name })),
+      delete: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, {
+      getPrincipal: () => ({ userId: "user_a", source: "jwt" }),
+      chatTerminals: {
+        prepare: vi.fn(async () => ({ runId: "run_selected" })),
+        bind: vi.fn(async () => { throw new Error("private database failure"); }),
+      },
+    });
+
+    const response = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "chat-cleanup", chatId: "chat_selected" }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(registry.delete).toHaveBeenCalledWith("chat-cleanup", { force: true });
   });
 
   it("serves reconciled aliases and stale pane recovery through the terminal sessions route", async () => {

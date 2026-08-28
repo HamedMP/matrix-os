@@ -109,6 +109,7 @@ import {
   mapRequestPrincipalError,
   ownerScopeFromPrincipal,
   requireRequestPrincipal,
+  type RequestPrincipal,
 } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
@@ -140,6 +141,7 @@ import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import { createCanonicalChatRoutes } from "./chat/routes.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
+import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
@@ -256,6 +258,11 @@ import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
 import { ChatRepository } from "./chat/repository.js";
+import {
+  createGatewayChatTerminalWiring,
+  parseTerminalSizingParams,
+} from "./chat/terminal-wiring.js";
+import { authorizeStandaloneTerminalAttach } from "./chat/terminal-authorization.js";
 import { MessagingKyselyRepository } from "./messages/repository.js";
 import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
@@ -290,7 +297,6 @@ import {
   LayoutStore,
   ScrollbackStore,
   ShellPreferencesStore,
-  createPendingTerminalInputQueue,
   createShellCommandRunner,
   createTerminalAcceptanceRoutes,
   createShellSessionReaper,
@@ -439,6 +445,14 @@ export async function createGateway(config: GatewayConfig) {
         controller: userSystemdTerminalController,
       })
     : createZellijAdapter({ homePath });
+  const chatZellijAdapter = userSystemdTerminalController && terminalRuntimeGeneration
+    ? createUserSystemdZellijAdapter({
+        homePath,
+        generation: terminalRuntimeGeneration,
+        controller: userSystemdTerminalController,
+        includeWorkspaceSessions: true,
+      })
+    : zellijAdapter;
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
@@ -446,6 +460,14 @@ export async function createGateway(config: GatewayConfig) {
     scrollbackStore: shellScrollbackStore,
     preferencesStore: shellPreferencesStore,
   });
+  const chatZellijShellRegistry = chatZellijAdapter === zellijAdapter
+    ? zellijShellRegistry
+    : new ZellijShellRegistry({
+        homePath,
+        adapter: chatZellijAdapter,
+        persistPath: join(homePath, "system", "chat-shell-sessions.json"),
+        scrollbackStore: shellScrollbackStore,
+      });
   const symphonyRunner = createSymphonyRunner({ homePath });
   const initialSymphonyPort = await resolveInitialSymphonyPort(symphonyRunner);
   if (initialSymphonyPort) {
@@ -461,6 +483,18 @@ export async function createGateway(config: GatewayConfig) {
       });
     },
   });
+  const chatZellijShellWs = chatZellijShellRegistry === zellijShellRegistry
+    ? zellijShellWs
+    : createShellWsHandler({
+        registry: chatZellijShellRegistry,
+        adapter: chatZellijAdapter,
+        scrollbackStore: shellScrollbackStore,
+        persistCanonicalSize: (name, size) => {
+          void chatZellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
+            console.warn("[shell] Chat canonical size persist failed:", err instanceof Error ? err.message : String(err));
+          });
+        },
+      });
   const shellSessionReaper = createShellSessionReaper({ registry: zellijShellRegistry });
   shellSessionReaper.start();
   const forwardTunnelHub = createForwardTunnelHub();
@@ -1794,6 +1828,13 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellCommandRunner = createShellCommandRunner({ homePath });
+  const chatTerminalWiring = createGatewayChatTerminalWiring({
+    repository: chatRepository,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+    registry: chatZellijShellRegistry,
+    shellWs: chatZellijShellWs,
+    onUnexpectedSendFailure: logUnexpectedWsSendFailure,
+  });
   const shellRouteDeps = {
     homePath,
     registry: zellijShellRegistry,
@@ -1805,6 +1846,34 @@ export async function createGateway(config: GatewayConfig) {
     commandRunner: shellCommandRunner,
     terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
+    chatTerminals: {
+      prepare: async (principal: RequestPrincipal, chatId: string) => {
+        if (!chatRepository || !canonicalChatExecutionRoots) {
+          throw new Error("Chat terminal dependencies are unavailable");
+        }
+        return createChatTerminalSessionService({
+          homePath,
+          repository: chatRepository,
+          executionRoots: canonicalChatExecutionRoots,
+        }).prepare(principal, chatId);
+      },
+      bind: async (principal: RequestPrincipal, input: {
+        chatId: string;
+        runId?: string;
+        sessionId: string;
+        sessionCreatedAt: string;
+      }) => {
+        if (!chatRepository || !canonicalChatExecutionRoots) {
+          throw new Error("Chat terminal dependencies are unavailable");
+        }
+        return createChatTerminalSessionService({
+          homePath,
+          repository: chatRepository,
+          executionRoots: canonicalChatExecutionRoots,
+        }).bind(principal, input);
+      },
+    },
+    ...chatTerminalWiring.shellRouteDeps,
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();
   const systemActivityHistory = new ActivityHistoryStore({ homePath });
@@ -2384,114 +2453,7 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
-  const parseTerminalSizingParams = (
-    query: (name: string) => string | undefined,
-  ): { clientClass?: "hard" | "soft"; declaredSize?: { cols: number; rows: number } } => {
-    const clientParam = query("client");
-    const clientClass = clientParam === "hard" || clientParam === "soft" ? clientParam : undefined;
-    const colsParam = query("cols");
-    const rowsParam = query("rows");
-    const cols = colsParam && /^\d{1,3}$/.test(colsParam) ? Number(colsParam) : null;
-    const rows = rowsParam && /^\d{1,3}$/.test(rowsParam) ? Number(rowsParam) : null;
-    const declaredSize =
-      cols && rows && cols >= 1 && cols <= 500 && rows >= 1 && rows <= 200
-        ? { cols, rows }
-        : undefined;
-    return { clientClass, declaredSize };
-  };
-
-
-  app.get(
-    "/ws/terminal/session",
-    upgradeWebSocket((c) => {
-      const namedSession = c.req.query("session");
-      const fromSeqParam = c.req.query("fromSeq");
-      const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
-      const exclusiveLease = c.req.query("lease") === "exclusive";
-      let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
-      let namedSocketClosed = false;
-      const pendingInput = createPendingTerminalInputQueue();
-
-      return {
-        onOpen(_evt, ws) {
-          if (!namedSession) {
-            ws.send(JSON.stringify({
-              type: "error",
-              code: "invalid_request",
-              message: "Invalid request",
-            }));
-            ws.close();
-            return;
-          }
-          const fromSeq =
-            typeof fromSeqParam === "string" && /^\d+$/.test(fromSeqParam)
-              ? Number(fromSeqParam)
-              : 0;
-          void zellijShellWs.open({
-            ws,
-            session: namedSession,
-            fromSeq,
-            clientClass: sizingParams.clientClass,
-            declaredSize: sizingParams.declaredSize,
-            exclusiveLease,
-          }).then((session) => {
-            if (namedSocketClosed) {
-              session.onClose();
-              return;
-            }
-            namedHandle = session;
-            pendingInput.drain((raw) => {
-              session.onMessage(raw);
-            });
-          }).catch((err: unknown) => {
-            console.warn("[shell] terminal session attach failed:", err instanceof Error ? err.message : String(err));
-            pendingInput.clear();
-            if (namedSocketClosed) {
-              return;
-            }
-            try {
-              ws.send(JSON.stringify({
-                type: "error",
-                code: "attach_failed",
-                message: "Shell attach failed",
-              }));
-            } catch (sendErr: unknown) {
-              logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
-            }
-            ws.close();
-          });
-        },
-        onMessage(evt, ws) {
-          const raw = shellWsMessageDataToString(evt.data);
-          if (raw === null) {
-            return;
-          }
-          if (namedHandle) {
-            namedHandle.onMessage(raw);
-            return;
-          }
-          if (!pendingInput.enqueue(raw)) {
-            try {
-              ws.send(JSON.stringify({
-                type: "error",
-                code: "buffer_overflow",
-                message: "Input buffer overflow before session was ready",
-              }));
-            } catch (sendErr: unknown) {
-              logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
-            }
-            ws.close();
-          }
-        },
-        onClose() {
-          namedSocketClosed = true;
-          pendingInput.clear();
-          namedHandle?.onClose();
-          namedHandle = null;
-        },
-      };
-    }),
-  );
+  chatTerminalWiring.registerSessionRoute(app, upgradeWebSocket);
 
   if (codingAgentThreadStream) {
     app.get(
@@ -2655,14 +2617,27 @@ export async function createGateway(config: GatewayConfig) {
               typeof fromSeqParam === "string" && /^\d+$/.test(fromSeqParam)
                 ? Number(fromSeqParam)
                 : 0;
-            void zellijShellWs.open({
-              ws,
-              session: namedSession,
-              fromSeq,
-              clientClass: sizingParams.clientClass,
-              declaredSize: sizingParams.declaredSize,
-              exclusiveLease,
-            }).then((session) => {
+            void (async () => {
+              if (!chatRepository) {
+                throw new Error("Chat terminal repository unavailable");
+              }
+              const principal = requireRequestPrincipal(c);
+              if (!await authorizeStandaloneTerminalAttach({
+                repository: chatRepository,
+                owner: { type: "personal", ownerId: principal.userId },
+                sessionId: namedSession,
+              })) {
+                throw new Error("Standalone terminal attachment denied");
+              }
+              return zellijShellWs.open({
+                ws,
+                session: namedSession,
+                fromSeq,
+                clientClass: sizingParams.clientClass,
+                declaredSize: sizingParams.declaredSize,
+                exclusiveLease,
+              });
+            })().then((session) => {
               if (namedSocketClosed) {
                 session.onClose();
                 return;
@@ -3054,6 +3029,7 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     codingAgentThreadStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+    ...chatTerminalWiring.workspaceRouteDeps,
   }));
   // Workspace sessions own /api/sessions. Keep the legacy shell mount after
   // that authoritative route so old terminal subroutes remain reachable.
@@ -4529,6 +4505,7 @@ export async function createGateway(config: GatewayConfig) {
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
       shellSessionReaper.stop();
+      if (chatZellijShellWs !== zellijShellWs) await chatZellijShellWs.dispose();
       await zellijShellWs.dispose();
       await sessionRegistry.shutdown();
       await watcher.close();

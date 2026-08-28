@@ -91,6 +91,15 @@ describe("SessionRegistry", () => {
       expect(call[0]).toBe("/bin/zsh");
     });
 
+    it("rejects shell not in allowlist and falls back to allowed env shell", () => {
+      vi.stubEnv("SHELL", "/bin/bash");
+      const mockSpawn = createMockSpawn();
+      const registry = createRegistry({}, mockSpawn);
+      registry.create("/home", "/usr/bin/python3");
+      const call = mockSpawn.mock.calls[0];
+      expect(call[0]).toBe("/bin/bash");
+    });
+
     it("defaults to zsh when SHELL is unset", () => {
       vi.stubEnv("SHELL", "");
       const mockSpawn = createMockSpawn();

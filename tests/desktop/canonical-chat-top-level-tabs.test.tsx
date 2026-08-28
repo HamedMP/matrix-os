@@ -74,8 +74,10 @@ describe("CanonicalChatRoute top-level tab ownership", () => {
     act(() => workspace.props?.onActiveChatChanged?.("chat-new", "New chat"));
 
     expect(useTabs.getState().tabs.find((tab) => tab.id === originalId)).toMatchObject({
-      title: "Existing chat",
+      kind: "work",
+      title: "Chat",
       chatId: "chat-old",
+      chatTitle: "Existing chat",
       chatView: "conversation",
       closable: false,
     });

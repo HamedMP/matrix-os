@@ -8,6 +8,28 @@ import { PromptInput } from "../../desktop/src/renderer/src/features/chat/elemen
 afterEach(cleanup);
 
 describe("PromptInput actions", () => {
+  it("keeps left and right controls on one toolbar row in narrow Chat", () => {
+    render(
+      <PromptInput
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        busy={false}
+        layout="narrow"
+        controls={<button type="button">Left control</button>}
+        trailingControls={<button type="button">Right control</button>}
+      />,
+    );
+
+    const left = screen.getByRole("button", { name: "Left control" });
+    const right = screen.getByRole("button", { name: "Right control" });
+    const toolbar = left.parentElement?.parentElement;
+    expect(toolbar).toBe(right.parentElement?.parentElement);
+    expect(toolbar?.className).toContain("items-center");
+    expect(toolbar?.className).toContain("justify-between");
+    expect(toolbar?.className).not.toContain("flex-col");
+  });
+
   it("does not render decorative buttons without handlers", () => {
     render(
       <PromptInput value="" onChange={() => {}} onSubmit={() => {}} busy={false} />,

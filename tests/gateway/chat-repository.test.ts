@@ -93,6 +93,23 @@ function activity(chatId: string, runId: string, index: number): CanonicalChatRu
   };
 }
 
+function terminalBinding(
+  chatId: string,
+  runId: string,
+  id: string,
+  terminalSessionId: string,
+): CanonicalChatRunActivity {
+  return {
+    id,
+    chatId,
+    runId,
+    occurredAt: now,
+    type: "terminal.bound",
+    terminalSessionId,
+    terminalSessionCreatedAt: now,
+  };
+}
+
 describe("ChatRepository", () => {
   let pglite: InstanceType<typeof KyselyPGlite>;
   let repository: ChatRepository;
@@ -127,6 +144,7 @@ describe("ChatRepository", () => {
       "chat_run_adapter_state",
       "chat_run_events",
       "chat_runs",
+      "chat_terminal_bindings",
       "chat_turns",
       "chat_user_state",
       "chats",
@@ -169,6 +187,179 @@ describe("ChatRepository", () => {
       throw new Error("rollback");
     })).rejects.toThrow("rollback");
     expect(await repository.get(owner, "chat_rolled_back")).toBeNull();
+  });
+
+  it("hydrates and updates owner-local Chat pin state atomically", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_pinned",
+      clientRequestId: "req_create_pinned",
+      title: "Pinned Chat",
+    });
+
+    expect(created.chat.userState).toEqual({ readThroughSeq: 0, pinned: false, muted: false });
+    await expect(repository.updateUserState(otherOwner, created.chat.id, { pinned: true }))
+      .rejects.toBeInstanceOf(ChatNotFoundError);
+
+    const pinned = await repository.updateUserState(owner, created.chat.id, { pinned: true });
+    expect(pinned.chat.userState).toEqual({ readThroughSeq: 0, pinned: true, muted: false });
+    expect((await repository.list(owner, { limit: 10 })).items[0]?.chat.userState?.pinned).toBe(true);
+    expect((await repository.get(owner, created.chat.id))?.chat.userState?.pinned).toBe(true);
+
+    const preservedUpdatedAt = "2026-08-24T00:00:00.000Z";
+    await sql`
+      UPDATE chat_user_state SET updated_at = ${preservedUpdatedAt}
+      WHERE chat_id = ${created.chat.id} AND principal_id = ${owner.ownerId}
+    `.execute(repository.kysely);
+
+    const repeated = await repository.updateUserState(owner, created.chat.id, { pinned: true });
+    const stateAfterUnchangedRequest = await repository.kysely.selectFrom("chat_user_state")
+      .select("updated_at")
+      .where("chat_id", "=", created.chat.id)
+      .where("principal_id", "=", owner.ownerId)
+      .executeTakeFirstOrThrow();
+
+    expect(repeated.chat.userState).toEqual({ readThroughSeq: 0, pinned: true, muted: false });
+    expect(new Date(stateAfterUnchangedRequest.updated_at).toISOString()).toBe(preservedUpdatedAt);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 10 })).toEqual([
+      expect.objectContaining({ eventType: "chat.created" }),
+      expect.objectContaining({
+        eventType: "chat.user_state_updated",
+        payload: { pinned: true },
+      }),
+    ]);
+  });
+
+  it("keeps legacy terminal events visible without treating them as attachable incarnations", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_terminal_owner",
+      clientRequestId: "req_terminal_owner",
+      title: "Terminal owner",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input, "req_terminal_turn");
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: created.chat.revision,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      terminalBinding(created.chat.id, acceptedRun.id, "activity_terminal", "terminal_bound"),
+    ]);
+    await repository.kysely.insertInto("chat_run_events").values({
+      id: "activity_terminal_decoy",
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      event: {
+        id: "activity_terminal_decoy",
+        chatId: created.chat.id,
+        runId: acceptedRun.id,
+        occurredAt: now,
+        type: "run.status",
+        status: "running",
+        terminalSessionId: "terminal_decoy",
+      },
+      occurred_at: now,
+    }).execute();
+    await repository.kysely.deleteFrom("chat_terminal_bindings")
+      .where("chat_id", "=", created.chat.id)
+      .where("session_id", "=", "terminal_bound")
+      .execute();
+
+    await expect(repository.getTerminalBinding(owner, created.chat.id, "terminal_bound")).resolves.toBeNull();
+    await expect(repository.getTerminalBinding(owner, created.chat.id, "terminal_decoy")).resolves.toBeNull();
+    await expect(repository.getTerminalBinding(owner, created.chat.id, "terminal_wrong")).resolves.toBeNull();
+    await expect(repository.getTerminalBinding(otherOwner, created.chat.id, "terminal_bound")).resolves.toBeNull();
+    await expect(repository.getTerminalBinding(owner, "chat_missing", "terminal_bound")).resolves.toBeNull();
+    await expect(repository.listBoundTerminalSessionIds(owner, ["terminal_bound", "terminal_decoy", "terminal_manual"]))
+      .resolves.toEqual(["terminal_bound"]);
+    await expect(repository.listBoundTerminalSessionIds(otherOwner, ["terminal_bound"]))
+      .resolves.toEqual([]);
+  });
+
+  it("keeps a persisted pin in an updateProject response", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_pinned_update_project",
+      clientRequestId: "req_create_pinned_update_project",
+      title: "Pinned Project",
+    });
+    await repository.updateUserState(owner, created.chat.id, { pinned: true });
+
+    const updated = await repository.update(owner, created.chat.id, {
+      baseRevision: created.chat.revision,
+      projectId: "project_pinned",
+    });
+
+    expect(updated.chat.userState).toEqual({ readThroughSeq: 0, pinned: true, muted: false });
+  });
+
+  it("keeps a persisted pin in a Turn admission response", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_pinned_admit_turn",
+      clientRequestId: "req_create_pinned_admit_turn",
+      title: "Pinned Turn",
+    });
+    await repository.updateUserState(owner, created.chat.id, { pinned: true });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+
+    const admitted = await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: created.chat.revision,
+      message: input,
+      turn: acceptedTurn,
+      run: run(created.chat.id, acceptedTurn),
+    });
+
+    expect(admitted.chat.chat.userState).toEqual({ readThroughSeq: 0, pinned: true, muted: false });
+  });
+
+  it("keeps a persisted pin in new and repeated retry admission responses", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_pinned_admit_retry",
+      clientRequestId: "req_create_pinned_admit_retry",
+      title: "Pinned Retry",
+    });
+    await repository.updateUserState(owner, created.chat.id, { pinned: true });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const firstRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: created.chat.revision,
+      message: input,
+      turn: acceptedTurn,
+      run: firstRun,
+    });
+    await repository.finishRun(owner, {
+      chatId: created.chat.id,
+      runId: firstRun.id,
+      outcome: "failed",
+      completedAt: "2026-08-25T00:01:00.000Z",
+    });
+    const beforeRetry = await repository.get(owner, created.chat.id);
+    expect(beforeRetry).not.toBeNull();
+    const retryRun = run(created.chat.id, acceptedTurn, 2);
+
+    const admitted = await repository.admitRetry(owner, {
+      chatId: created.chat.id,
+      turnId: acceptedTurn.id,
+      clientRequestId: "req_pinned_retry",
+      baseRevision: beforeRetry!.chat.revision,
+      run: retryRun,
+    });
+    const repeated = await repository.admitRetry(owner, {
+      chatId: created.chat.id,
+      turnId: acceptedTurn.id,
+      clientRequestId: "req_pinned_retry",
+      baseRevision: beforeRetry!.chat.revision,
+      run: { ...retryRun, id: "run_pinned_retry_duplicate" },
+    });
+
+    expect(admitted.chat.chat.userState).toEqual({ readThroughSeq: 0, pinned: true, muted: false });
+    expect(repeated.chat.chat.userState).toEqual({ readThroughSeq: 0, pinned: true, muted: false });
   });
 
   it("paginates equal microsecond timestamps with an opaque precision-safe cursor", async () => {
@@ -596,6 +787,83 @@ describe("ChatRepository", () => {
     ])).rejects.toMatchObject({ name: "ChatRunNotActiveError" });
   });
 
+  it("persists an idempotent terminal binding for a completed Chat run", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_manual_terminal",
+      clientRequestId: "req_manual_terminal",
+      title: "Manual terminal",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.finishRun(owner, {
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      outcome: "completed",
+      completedAt: "2026-08-25T00:01:00.000Z",
+    });
+
+    await expect(repository.bindTerminalSession(owner, {
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      sessionId: "chat-calm-otter",
+      sessionCreatedAt: "2026-08-28T10:00:00.000Z",
+    })).resolves.toBe(true);
+    await expect(repository.bindTerminalSession(owner, {
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      sessionId: "chat-calm-otter",
+      sessionCreatedAt: "2026-08-28T10:00:00.000Z",
+    })).resolves.toBe(false);
+    await expect(repository.bindTerminalSession(owner, {
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      sessionId: "chat-calm-otter",
+      sessionCreatedAt: "2026-08-28T10:10:00.000Z",
+    })).resolves.toBe(true);
+    await expect(repository.getTerminalBinding(owner, created.chat.id, "chat-calm-otter")).resolves.toEqual({
+      sessionCreatedAt: "2026-08-28T10:10:00.000Z",
+    });
+  });
+
+  it("persists a terminal binding before the Chat has its first Run", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_draft_terminal",
+      clientRequestId: "req_draft_terminal",
+      title: "New chat",
+      projectId: "project_stable",
+    });
+
+    await expect(repository.getChatForTerminalBinding(owner, created.chat.id)).resolves.toEqual({
+      projectId: "project_stable",
+    });
+    await expect(repository.bindTerminalSession(owner, {
+      chatId: created.chat.id,
+      sessionId: "chat-draft-terminal",
+      sessionCreatedAt: "2026-08-28T10:05:00.000Z",
+    })).resolves.toBe(true);
+    await expect(repository.bindTerminalSession(owner, {
+      chatId: created.chat.id,
+      sessionId: "chat-draft-terminal",
+      sessionCreatedAt: "2026-08-28T10:05:00.000Z",
+    })).resolves.toBe(false);
+    await expect(repository.getTerminalBinding(owner, created.chat.id, "chat-draft-terminal")).resolves.toEqual({
+      sessionCreatedAt: "2026-08-28T10:05:00.000Z",
+    });
+    await expect(repository.listBoundTerminalSessionIds(owner, ["chat-draft-terminal", "manual-shell"]))
+      .resolves.toEqual(["chat-draft-terminal"]);
+
+    const detail = await repository.getDetailPage(owner, created.chat.id, { limit: 50 });
+    expect(detail?.terminalSessionIds).toEqual(["chat-draft-terminal"]);
+  });
+
   it("charges the Run event limit only for unseen activity IDs", async () => {
     const created = await repository.create(owner, {
       id: "chat_activity_retry_capacity",
@@ -788,6 +1056,81 @@ describe("ChatRepository", () => {
     expect(older?.nextBeforeSeq).toBeUndefined();
     await expect(repository.getDetailPage(otherOwner, created.chat.id, { limit: 2 }))
       .resolves.toBeNull();
+  });
+
+  it("loads legacy Chat detail while omitting an unverifiable terminal binding activity", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_legacy_terminal_activity",
+      clientRequestId: "req_create_legacy_terminal_activity",
+      title: "Legacy terminal activity",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input, "req_legacy_terminal_turn");
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: created.chat.revision,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.kysely.insertInto("chat_run_events").values({
+      id: "activity_legacy_terminal_without_incarnation",
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      event: {
+        id: "activity_legacy_terminal_without_incarnation",
+        chatId: created.chat.id,
+        runId: acceptedRun.id,
+        occurredAt: now,
+        type: "terminal.bound",
+        terminalSessionId: "terminal_legacy",
+      },
+      occurred_at: now,
+    }).execute();
+
+    const detail = await repository.getDetailPage(owner, created.chat.id, { limit: 200 });
+    const exported = await repository.exportChat(owner, created.chat.id);
+
+    expect(detail).not.toBeNull();
+    expect(detail?.activities).toEqual([]);
+    expect(exported?.activities).toEqual([]);
+  });
+
+  it("rejects malformed terminal binding activity instead of weakening incarnation checks", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_malformed_terminal_activity",
+      clientRequestId: "req_create_malformed_terminal_activity",
+      title: "Malformed terminal activity",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input, "req_malformed_terminal_turn");
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: created.chat.revision,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.kysely.insertInto("chat_run_events").values({
+      id: "activity_terminal_with_invalid_incarnation",
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      event: {
+        id: "activity_terminal_with_invalid_incarnation",
+        chatId: created.chat.id,
+        runId: acceptedRun.id,
+        occurredAt: now,
+        type: "terminal.bound",
+        terminalSessionId: "terminal_invalid",
+        terminalSessionCreatedAt: "not-an-iso-timestamp",
+      },
+      occurred_at: now,
+    }).execute();
+
+    await expect(repository.getDetailPage(owner, created.chat.id, { limit: 200 }))
+      .rejects.toThrow("Invalid ISO datetime");
   });
 
   it("hard-deletes all content once and preserves only a content-free tombstone", async () => {

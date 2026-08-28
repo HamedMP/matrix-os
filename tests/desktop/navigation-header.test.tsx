@@ -310,7 +310,7 @@ describe("Desktop navigation header", () => {
     const activeTab = useTabs.getState().tabs.find(
       (tab) => tab.id === useTabs.getState().activeTabId,
     );
-    expect(activeTab).toMatchObject({ kind: "projects", title: "Projects" });
+    expect(activeTab).toMatchObject({ kind: "work", title: "Chat", workRoute: "projects" });
   });
 
   it("does not revisit a directly opened task after using the Projects breadcrumb", () => {

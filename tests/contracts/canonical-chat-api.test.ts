@@ -4,6 +4,7 @@ import {
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalUpdateChatUserStateRequestSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
@@ -98,6 +99,15 @@ describe("canonical Chat API contracts", () => {
     }).success).toBe(false);
   });
 
+  it("accepts only the requested durable per-user Chat state", () => {
+    expect(CanonicalUpdateChatUserStateRequestSchema.parse({ pinned: true }))
+      .toEqual({ pinned: true });
+    expect(CanonicalUpdateChatUserStateRequestSchema.safeParse({
+      pinned: true,
+      ownerId: "other_owner",
+    }).success).toBe(false);
+  });
+
   it("bounds list and detail projections for shared clients", () => {
     const record = CanonicalChatRecordSchema.parse({ chat, projectId: "project_1" });
     expect(CanonicalChatListResponseSchema.parse({
@@ -113,7 +123,11 @@ describe("canonical Chat API contracts", () => {
       turns: [],
       runs: [],
       activities: [],
-    }).record.chat.id).toBe("chat_api_test");
+      terminalSessionIds: ["chat-draft-terminal"],
+    })).toMatchObject({
+      record: { chat: { id: "chat_api_test" } },
+      terminalSessionIds: ["chat-draft-terminal"],
+    });
     expect(CanonicalChatDetailResponseSchema.safeParse({
       record,
       messages: Array.from({ length: 201 }, (_, index) => ({

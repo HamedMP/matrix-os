@@ -88,6 +88,7 @@ export function createUserSystemdZellijAdapter(options: {
   homePath: string;
   generation: string;
   controller: RuntimeController;
+  includeWorkspaceSessions?: boolean;
   terminalRuntimeRoot?: string;
   baseAdapter?: ZellijAdapter;
   adapterFactory?: (binaryPath: string) => ZellijAdapter;
@@ -110,6 +111,9 @@ export function createUserSystemdZellijAdapter(options: {
     manageConfig: false,
   }));
   const generateRuntimeId = options.runtimeIdGenerator ?? runtimeId;
+  const readableScopes = options.includeWorkspaceSessions
+    ? (["terminal", "workspace"] as const)
+    : (["terminal"] as const);
   let descriptorCache: UserSystemdTerminalDescriptor[] = [];
   const generationAdapters = new Map<string, ZellijAdapter>();
 
@@ -141,10 +145,14 @@ export function createUserSystemdZellijAdapter(options: {
   async function descriptorFor(name: string): Promise<UserSystemdTerminalDescriptor> {
     const cached = descriptorCache.find((entry) => entry.displayName === name);
     if (cached) return cached;
-    const descriptor = await options.controller.findByDisplayName("terminal", name);
-    if (!descriptor) throw shellError("session_not_found", "Session not found", 404);
-    cacheDescriptor(descriptor);
-    return descriptor;
+    for (const scope of readableScopes) {
+      const descriptor = await options.controller.findByDisplayName(scope, name);
+      if (descriptor) {
+        cacheDescriptor(descriptor);
+        return descriptor;
+      }
+    }
+    throw shellError("session_not_found", "Session not found", 404);
   }
 
   function cachedDescriptorForAttach(name: string): UserSystemdTerminalDescriptor {
@@ -162,9 +170,15 @@ export function createUserSystemdZellijAdapter(options: {
     health: () => baseAdapter.health(),
 
     async listSessions() {
-      const descriptors = await options.controller.list({ scope: "terminal", runningOnly: true });
+      const descriptors = await options.controller.list(options.includeWorkspaceSessions
+        ? { runningOnly: true }
+        : { scope: "terminal", runningOnly: true });
       descriptorCache = descriptors;
       return descriptors.map((descriptor) => descriptor.displayName);
+    },
+
+    async getSessionCreatedAt(name) {
+      return (await descriptorFor(name)).createdAt;
     },
 
     focusedPaneRuntime(name) {

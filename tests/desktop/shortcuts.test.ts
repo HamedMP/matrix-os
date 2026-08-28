@@ -114,7 +114,7 @@ describe("top-level app tab shortcuts", () => {
     const state = useTabs.getState();
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(state.tabs).toHaveLength(2);
-    expect(state.tabs.map((tab) => tab.kind)).toEqual(["chat", "chat"]);
+    expect(state.tabs.map((tab) => tab.kind)).toEqual(["work", "chat"]);
     expect(state.tabs[1]).toMatchObject({
       title: "Chat",
       chatView: "draft",
@@ -201,9 +201,11 @@ describe("handleNewContextShortcut", () => {
     expect(newChat).not.toHaveBeenCalled();
     expect(useTabs.getState().tabs).toHaveLength(2);
     expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "chat",
-      title: "Existing chat",
+      kind: "work",
+      title: "Chat",
       chatId: "chat-1",
+      chatTitle: "Existing chat",
+      workRoute: "chat",
     });
     expect(useTabs.getState().tabs[1]).toMatchObject({
       kind: "chat",
@@ -376,9 +378,10 @@ describe("handleNewAgentRunShortcut", () => {
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "project",
+      kind: "work",
+      workRoute: "project",
       projectSlug: "matrix-os",
-      title: "Matrix OS",
+      title: "Chat",
     });
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
@@ -402,7 +405,9 @@ describe("handleNewAgentRunShortcut", () => {
       useCodingAgentWorkspace.getState(),
     );
 
-    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "project")).toHaveLength(1);
+    expect(useTabs.getState().tabs.filter((tab) => (
+      tab.kind === "work" && tab.workRoute === "project"
+    ))).toHaveLength(1);
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectView.getState().viewFor("website")).toBe("overview");
@@ -459,9 +464,10 @@ describe("handleMenuNavigate", () => {
     handleMenuNavigate("board");
 
     expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "project",
+      kind: "work",
+      workRoute: "project",
       projectSlug: "matrix",
-      title: "Matrix OS",
+      title: "Chat",
     });
   });
 

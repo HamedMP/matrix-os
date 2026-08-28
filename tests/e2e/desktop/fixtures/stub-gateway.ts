@@ -622,6 +622,11 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       return;
     }
 
+    if (req.method === "GET" && path === "/api/chats") {
+      json(res, 200, { items: [] });
+      return;
+    }
+
     if (req.method === "GET" && path === "/") {
       html(
         res,

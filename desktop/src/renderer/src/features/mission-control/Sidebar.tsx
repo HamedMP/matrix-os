@@ -8,7 +8,7 @@ import {
 } from "@renderer/lib/hugeicons";
 import phosphorPlugsUrl from "../../assets/phosphor/plugs.svg?no-inline";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
-import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
+import { FILES_WORKSPACE_TAB_SPEC, isWorkRoute, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { kernelThreadAttentionCount } from "../../stores/unified-threads";
 import { useUi } from "../../stores/ui";
@@ -88,7 +88,7 @@ export default function Sidebar() {
                 icon={<MessageCircle size={14} />}
                 label="Chat"
                 collapsed={false}
-                active={activeTab?.kind === "chat"}
+                active={isWorkRoute(activeTab, "chat")}
                 badge={chatAttention}
                 onClick={openChatIndex}
               />
@@ -124,7 +124,7 @@ export default function Sidebar() {
                 icon={<FolderOpen size={14} />}
                 label="Projects"
                 collapsed={false}
-                active={activeTab?.kind === "projects" || activeTab?.kind === "project"}
+                active={isWorkRoute(activeTab, "projects") || isWorkRoute(activeTab, "project")}
                 badge={projectAttention}
                 onClick={openProjectsIndex}
               />

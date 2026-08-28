@@ -11,6 +11,7 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { openCodingAgentThread } from "../../lib/project-chat";
 import { openProjectOverview } from "../../lib/project-navigation";
 import {
+  isWorkRoute,
   useTabs,
   type RecentView,
   type RecentViewFilter,
@@ -123,29 +124,29 @@ export default function RecentViews() {
 
   const isActive = (recent: RecentView) => {
     if (recent.kind === "project") {
-      return activeTab?.kind === "project" && activeTab.projectSlug === recent.id;
+      return isWorkRoute(activeTab, "project") && activeTab?.projectSlug === recent.id;
     }
     if (recent.kind === "terminal") {
       return activeTab?.kind === "terminal" && activeTab.sessionName === recent.id;
     }
     if (recent.conversationType === "coding-agent") {
-      return activeTab?.kind === "project" && recent.id === activeCodingAgentThreadId;
+      return isWorkRoute(activeTab, "project") && recent.id === activeCodingAgentThreadId;
     }
     if (recent.conversationType === "canonical") {
       if (recent.projectId === null || recent.projectId === undefined) {
-        return activeTab?.kind === "chat" && activeTab.chatId === recent.id;
+        return isWorkRoute(activeTab, "chat") && activeTab?.chatId === recent.id;
       }
       const project = useBoard.getState().projects.find((candidate) => (
         candidate.id === recent.projectId || candidate.slug === recent.projectId
       ));
-      return activeTab?.kind === "project"
-        && activeTab.projectSlug === (project?.slug ?? recent.projectId)
-        && activeTab.chatId === recent.id;
+      return isWorkRoute(activeTab, "project")
+        && activeTab?.projectSlug === (project?.slug ?? recent.projectId)
+        && activeTab?.chatId === recent.id;
     }
     if (recent.conversationType === "hermes") {
-      return activeTab?.kind === "chat" && activeThreadId === null && recent.id === hermesSessionId;
+      return isWorkRoute(activeTab, "chat") && activeThreadId === null && recent.id === hermesSessionId;
     }
-    return activeTab?.kind === "chat" && recent.id === activeThreadId;
+    return isWorkRoute(activeTab, "chat") && recent.id === activeThreadId;
   };
 
   return (

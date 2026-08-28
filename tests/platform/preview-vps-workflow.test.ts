@@ -15,8 +15,47 @@ async function runWaitScript(machine: Record<string, unknown>, overrides: NodeJS
   const directory = await mkdtemp(join(tmpdir(), 'matrix-preview-wait-'));
   tempDirectories.push(directory);
   const curlPath = join(directory, 'curl');
+  const jqPath = join(directory, 'jq');
   await writeFile(curlPath, '#!/usr/bin/env bash\nprintf \'%s\\n\' "$FAKE_FLEET_RESPONSE"\n');
+  await writeFile(jqPath, `#!/usr/bin/env node
+const fs = require('node:fs');
+
+const args = process.argv.slice(2);
+const input = fs.readFileSync(0, 'utf8').trim();
+
+function readArg(name) {
+  for (let index = 0; index < args.length - 2; index += 1) {
+    if (args[index] === '--arg' && args[index + 1] === name) {
+      return args[index + 2];
+    }
+  }
+  return undefined;
+}
+
+if (args.includes('-c')) {
+  const payload = JSON.parse(input);
+  const handle = readArg('h');
+  const machineId = readArg('id');
+  const machine = payload.machines.find((candidate) =>
+    candidate.handle === handle && candidate.machineId === machineId && candidate.deletedAt == null
+  ) ?? { status: 'absent', failureCode: null };
+  process.stdout.write(JSON.stringify(machine) + '\\n');
+} else if (args.includes('-r')) {
+  const payload = JSON.parse(input);
+  const expression = args[args.length - 1];
+  if (expression.includes('.status')) {
+    process.stdout.write(String(payload.status) + '\\n');
+  } else if (expression.includes('.failureCode')) {
+    process.stdout.write(String(payload.failureCode ?? 'unknown') + '\\n');
+  } else {
+    process.exit(2);
+  }
+} else {
+  process.exit(2);
+}
+`);
   await chmod(curlPath, 0o755);
+  await chmod(jqPath, 0o755);
 
   return spawnSync('bash', [waitScript], {
     cwd: root,

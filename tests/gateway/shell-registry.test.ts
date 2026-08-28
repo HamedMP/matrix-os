@@ -700,6 +700,42 @@ describe("shell registry", () => {
     expect(JSON.parse(raw).sessions.stale.status).toBe("exited");
   });
 
+  it("refreshes a live session incarnation from runtime metadata", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-18T10:00:00.000Z",
+            updatedAt: "2026-06-18T10:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      getSessionCreatedAt: vi.fn(async () => "2026-06-18T11:00:00.000Z"),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.get("main")).resolves.toMatchObject({
+      createdAt: "2026-06-18T11:00:00.000Z",
+      incarnationVerified: true,
+    });
+    const raw = await readFile(persistPath, "utf-8");
+    expect(JSON.parse(raw).sessions.main.createdAt).toBe("2026-06-18T11:00:00.000Z");
+  });
+
   it("lists orphan zellij sessions missing from metadata and adopts them", async () => {
     const root = await tempRoot();
     const adapter = {
@@ -1448,6 +1484,22 @@ describe("shell registry", () => {
     await expect(registry.create({ name: "main" })).resolves.toMatchObject({
       name: "main",
       aliases: [{ name: "workspace-main", target: "main", source: "workspace" }],
+    });
+    expect(adapter.createSession).not.toHaveBeenCalled();
+  });
+
+  it("refuses to adopt an existing live session when exclusive creation is requested", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["chat-existing"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.create({ name: "chat-existing", exclusive: true })).rejects.toMatchObject({
+      code: "session_exists",
+      status: 409,
     });
     expect(adapter.createSession).not.toHaveBeenCalled();
   });

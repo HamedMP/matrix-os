@@ -38,6 +38,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const tabs = useTabs((state) => state.tabs);
   const activeTabId = useTabs((state) => state.activeTabId);
   const openTab = useTabs((state) => state.openTab);
+  const normalizeLegacyTabs = useTabs((state) => state.normalizeLegacyTabs);
   const focusTab = useTabs((state) => state.focusTab);
   const closeTab = useTabs((state) => state.closeTab);
   const surfaces = useDesktopSurfaces((state) => state.surfaces);
@@ -78,6 +79,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   useEffect(() => {
     if (launcherOpen) setLauncherMounted(true);
   }, [launcherOpen]);
+
+  useEffect(() => {
+    normalizeLegacyTabs();
+  }, [normalizeLegacyTabs]);
 
   useEffect(() => {
     if (!desktopModeHydrated) return;
@@ -153,12 +158,11 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const destinations = useMemo<DesktopDestination[]>(() => {
     const openers: Record<DesktopAppId, () => void> = {
       browser: () => openRoot(() => openTab(HOSTED_SHELL_TAB_SPEC)),
-      chat: () => openRoot(openChatIndex),
+      work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
       plugins: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
       settings: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
-      projects: () => openRoot(openProjectsIndex),
     };
     return FIXED_DESKTOP_APPS.map((app) => ({ ...app, open: openers[app.id] }));
   }, [openRoot, openTab]);

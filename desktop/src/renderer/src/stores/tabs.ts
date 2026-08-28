@@ -7,6 +7,7 @@ import { create } from "zustand";
 
 export type TabKind =
   | "home"
+  | "work"
   | "chat"
   | "projects"
   | "project"
@@ -19,6 +20,8 @@ export type TabKind =
   | "plugins"
   | "settings";
 
+export type WorkRoute = "chat" | "projects" | "project";
+
 export interface Tab {
   id: string;
   kind: TabKind;
@@ -27,12 +30,20 @@ export interface Tab {
   // Identity payload — at most one tab per (kind + key).
   projectSlug?: string;
   chatId?: string;
+  chatTitle?: string;
   chatView?: "index" | "draft" | "conversation";
+  workRoute?: WorkRoute;
   taskId?: string;
   sessionName?: string;
   slug?: string;
   appIdentity?: string;
   closable: boolean;
+}
+
+export function isWorkRoute(tab: Tab | undefined, route: WorkRoute): boolean {
+  if (!tab) return false;
+  if (tab.kind === "work") return tab.workRoute === route;
+  return tab.kind === route;
 }
 
 export type RecentViewKind = "conversation" | "terminal" | "project";
@@ -67,6 +78,7 @@ const MAX_RECENT_VIEWS = 12;
 function identityKey(
   spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "slug">,
 ): string {
+  if (spec.kind === "work") return "work";
   return [
     spec.kind,
     spec.projectSlug ?? "",
@@ -74,6 +86,56 @@ function identityKey(
     spec.sessionName ?? "",
     spec.slug ?? "",
   ].join("|");
+}
+
+type TabSpec = Omit<Tab, "id" | "closable"> & { closable?: boolean };
+
+function isWorkRouteKind(kind: TabKind): kind is "work" | "chat" | "projects" | "project" {
+  return kind === "work" || kind === "chat" || kind === "projects" || kind === "project";
+}
+
+function normalizeWorkTabSpec(spec: TabSpec): TabSpec {
+  if (!isWorkRouteKind(spec.kind)) return spec;
+  const workRoute: WorkRoute = spec.kind === "work" ? spec.workRoute ?? "chat" : spec.kind;
+  const chatTitle = workRoute !== "projects" && spec.chatId
+    ? spec.chatTitle ?? (spec.kind === "chat" ? spec.title : undefined)
+    : undefined;
+  return {
+    ...spec,
+    kind: "work",
+    title: "Chat",
+    closable: false,
+    workRoute,
+    chatTitle,
+    ...(workRoute === "project" ? {} : { projectSlug: undefined }),
+    ...(workRoute === "projects" ? { chatId: undefined, chatView: undefined } : {}),
+  };
+}
+
+function normalizeRestoredTabs(tabs: Tab[], activeTabId: string | null) {
+  const legacyWorkTabs = tabs.filter((tab) => (
+    isWorkRouteKind(tab.kind) && !(tab.kind === "chat" && tab.closable)
+  ));
+  if (legacyWorkTabs.length === 0) return null;
+  const retained = legacyWorkTabs.find((tab) => tab.id === activeTabId) ?? legacyWorkTabs.at(-1)!;
+  if (
+    legacyWorkTabs.length === 1
+    && retained.kind === "work"
+    && (retained.title === "Work" || retained.title === "Chat")
+    && retained.closable === false
+    && retained.workRoute !== undefined
+  ) return null;
+  const normalizedTab: Tab = {
+    ...normalizeWorkTabSpec(retained),
+    id: retained.id,
+    closable: false,
+  };
+  const removedIds = new Set(legacyWorkTabs.map((tab) => tab.id));
+  const nextTabs = tabs.flatMap((tab) => {
+    if (!removedIds.has(tab.id)) return [tab];
+    return tab.id === retained.id ? [normalizedTab] : [];
+  });
+  return { nextTabs, retainedId: retained.id, removedIds };
 }
 
 function historyPatch(viewHistory: string[], historyIndex: number) {
@@ -132,6 +194,7 @@ interface TabsState {
     spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
     detailKinds: readonly TabKind[],
   ): string;
+  normalizeLegacyTabs(): void;
   updateChatRoute(
     id: string,
     route: { chatId?: string; chatView: "index" | "draft" | "conversation"; title: string },
@@ -198,23 +261,41 @@ export const useTabs = create<TabsState>()((set, get) => ({
   terminalSessionRequestSequence: 0,
 
   openTab: (spec) => {
-    const key = identityKey(spec);
+    get().normalizeLegacyTabs();
+    const normalizedSpec = normalizeWorkTabSpec(spec);
+    const key = identityKey(normalizedSpec);
     const existing = get().tabs.find((t) => identityKey(t) === key);
     if (existing) {
       set((state) => {
-        const routeOwnsChatSelection = spec.kind === "chat" || spec.kind === "project";
-        const nextChatId = routeOwnsChatSelection || spec.chatId !== undefined
-          ? spec.chatId
+        const routeOwnsChatSelection = normalizedSpec.kind === "work"
+          || normalizedSpec.kind === "chat"
+          || normalizedSpec.kind === "project";
+        const nextChatId = routeOwnsChatSelection || normalizedSpec.chatId !== undefined
+          ? normalizedSpec.chatId
           : existing.chatId;
-        const nextChatView = spec.kind === "chat"
-          ? spec.chatView ?? (nextChatId ? "conversation" : "index")
+        const nextChatView = normalizedSpec.kind === "work"
+          ? normalizedSpec.workRoute === "chat"
+            ? normalizedSpec.chatView ?? (nextChatId ? "conversation" : "index")
+            : normalizedSpec.chatView
           : existing.chatView;
-        const tabs = existing.title === spec.title
+        const nextChatTitle = nextChatId ? normalizedSpec.chatTitle : undefined;
+        const tabs = existing.title === normalizedSpec.title
           && existing.chatId === nextChatId
+          && existing.chatTitle === nextChatTitle
           && existing.chatView === nextChatView
+          && existing.projectSlug === normalizedSpec.projectSlug
+          && existing.workRoute === normalizedSpec.workRoute
           ? state.tabs
           : state.tabs.map((tab) => tab.id === existing.id
-            ? { ...tab, title: spec.title, chatId: nextChatId, chatView: nextChatView }
+            ? {
+                ...tab,
+                title: normalizedSpec.title,
+                projectSlug: normalizedSpec.projectSlug,
+                chatId: nextChatId,
+                chatTitle: nextChatTitle,
+                chatView: nextChatView,
+                workRoute: normalizedSpec.workRoute,
+              }
             : tab);
         return {
           tabs,
@@ -226,7 +307,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
     }
     counter += 1;
     const id = `tab-${counter}`;
-    const tab: Tab = { ...spec, id, closable: spec.closable ?? true };
+    const tab: Tab = { ...normalizedSpec, id, closable: normalizedSpec.closable ?? true };
     set((state) => appendNewTab(state, tab));
     return id;
   },
@@ -240,6 +321,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
   },
 
   openTabAtHistoryRoot: (spec, detailKinds) => {
+    get().normalizeLegacyTabs();
     const previousState = get();
     const id = previousState.openTab(spec);
     set((state) => {
@@ -262,6 +344,24 @@ export const useTabs = create<TabsState>()((set, get) => ({
     });
     return id;
   },
+
+  normalizeLegacyTabs: () => set((state) => {
+    const normalized = normalizeRestoredTabs(state.tabs, state.activeTabId);
+    if (!normalized) return state;
+    const retainedIds = new Set(normalized.nextTabs.map((tab) => tab.id));
+    const viewHistory = state.viewHistory
+      .map((id) => normalized.removedIds.has(id) ? normalized.retainedId : id)
+      .filter((id, index, values) => retainedIds.has(id) && (index === 0 || values[index - 1] !== id));
+    const activeTabId = normalized.removedIds.has(state.activeTabId ?? "")
+      ? normalized.retainedId
+      : state.activeTabId;
+    const historyIndex = activeTabId ? viewHistory.lastIndexOf(activeTabId) : -1;
+    return {
+      tabs: normalized.nextTabs,
+      activeTabId,
+      ...historyPatch(viewHistory, historyIndex),
+    };
+  }),
 
   updateChatRoute: (id, route) => set((state) => ({
     tabs: state.tabs.map((tab) => tab.id === id && tab.kind === "chat"
@@ -295,13 +395,32 @@ export const useTabs = create<TabsState>()((set, get) => ({
 
   closeProjectTabs: (projectSlug) =>
     set((state) => {
-      const tabs = state.tabs.filter((tab) => tab.projectSlug !== projectSlug);
-      if (tabs.length === state.tabs.length) return state;
+      const projectTabs = state.tabs.filter((tab) => tab.projectSlug === projectSlug);
+      if (projectTabs.length === 0) return state;
+      const retainedWorkId = projectTabs.find((tab) => tab.kind === "work")?.id;
+      const tabs = state.tabs.flatMap((tab) => {
+        if (tab.projectSlug !== projectSlug) return [tab];
+        if (tab.id !== retainedWorkId) return [];
+        return [{
+          ...tab,
+          title: "Chat",
+          workRoute: "chat" as const,
+          projectSlug: undefined,
+          chatId: undefined,
+          chatTitle: undefined,
+          chatView: "draft" as const,
+          closable: false,
+        }];
+      });
       const home = tabs.find((tab) => tab.kind === "home");
-      const activeTabId = home?.id ?? tabs[0]?.id ?? null;
+      const activeTabId = state.activeTabId === retainedWorkId
+        ? retainedWorkId
+        : home?.id ?? tabs[0]?.id ?? null;
       const removedIds: Record<string, true> = {};
       for (const tab of state.tabs) {
-        if (tab.projectSlug === projectSlug) removedIds[tab.id] = true;
+        if (tab.projectSlug === projectSlug && tab.id !== retainedWorkId) {
+          removedIds[tab.id] = true;
+        }
       }
       const pruned = pruneHistory(state.viewHistory, state.historyIndex, removedIds);
       const navigation = activeTabId

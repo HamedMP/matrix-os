@@ -25,6 +25,7 @@ const execFileAsync = promisify(execFile);
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const baseNow = new Date("2026-07-06T12:00:00.000Z");
+const runtimeCreatedAt = "2026-07-06T12:00:00.500Z";
 
 const createBody = {
   providerId: "codex",
@@ -50,8 +51,15 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
       type: "zellij",
       status: "running",
       zellijSession: "matrix-agent-workspace-1",
+      createdAt: runtimeCreatedAt,
     },
     terminalSessionId: "term_sess_workspace_1",
+    startedAt: baseNow.toISOString(),
+    lastActivityAt: baseNow.toISOString(),
+    transcriptPath: "/home/matrix/home/system/sessions/sess_workspace_1.jsonl",
+    attachedClients: 0,
+    writeMode: "owner",
+    ownerId: ownerPrincipal.userId,
     ...overrides,
   };
 }
@@ -296,7 +304,10 @@ exec /bin/sh "$@"
     const startedEvents = Array.isArray(started) ? started : started.events;
     expect(startedEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "thread.status", status: "running" }),
-      expect.objectContaining({ type: "terminal.bound" }),
+      expect.objectContaining({
+        type: "terminal.bound",
+        terminalSessionCreatedAt: runtimeCreatedAt,
+      }),
     ]));
     expect(runtime.startSession).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({ agent: "claude" }),
@@ -384,6 +395,9 @@ exec /bin/sh "$@"
       "thread.status",
       "terminal.bound",
     ]);
+    expect(snapshot.events.items.at(-1)).toMatchObject({
+      terminalSessionCreatedAt: runtimeCreatedAt,
+    });
   });
 
   it("forwards structured review references to the workspace runtime session", async () => {

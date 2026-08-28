@@ -92,8 +92,13 @@ export function TrafficLights({
 export function TopBar({
   title,
   icon,
+  leftActions,
+  rightActions,
+  showWindowControls = true,
   chromePlacement = "full-width",
   sidebarWidth = OS_WINDOW_SIDEBAR_WIDTH,
+  leftPaneWidth,
+  rightPaneWidth,
   onClose,
   onMinimize,
   onMaximize,
@@ -101,48 +106,123 @@ export function TopBar({
 }: {
   title?: string;
   icon?: ReactNode;
+  leftActions?: ReactNode;
+  rightActions?: ReactNode;
+  showWindowControls?: boolean;
   chromePlacement?: OSWindowChromePlacement;
   sidebarWidth?: number;
-  onClose: () => void;
-  onMinimize: () => void;
-  onMaximize: () => void;
-  onDragStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  leftPaneWidth?: number;
+  rightPaneWidth?: number;
+  onClose?: () => void;
+  onMinimize?: () => void;
+  onMaximize?: () => void;
+  onDragStart?: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const controlsWidth = chromePlacement === "sidebar" ? `${sidebarWidth}px` : "100%";
+  const paneAligned = leftPaneWidth !== undefined || rightPaneWidth !== undefined;
+  const alignedLeftWidth = Math.max(0, leftPaneWidth ?? 0);
+  const alignedRightWidth = Math.max(0, rightPaneWidth ?? 0);
   const handleDoubleClick = (event: ReactPointerEvent<HTMLDivElement>) => {
     const target = event.target;
     if (target instanceof Element && target.closest("button,[role='button'],input,a")) return;
-    onMaximize();
+    onMaximize?.();
   };
 
   return (
     <div className="relative shrink-0" style={{ height: OS_WINDOW_GESTURE_HEIGHT }}>
-      <div
-        data-os-window-gesture-layer
-        data-testid="desktop-window-drag-handle"
-        className="absolute inset-0 z-20"
-        onPointerDown={onDragStart}
-        onDoubleClick={handleDoubleClick}
-      />
-      <div
-        data-os-window-chrome-placement={chromePlacement}
-        className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center px-3"
-        style={{ width: controlsWidth }}
-      >
-        {title ? (
-          <>
-            <div className="w-[78px] shrink-0" aria-hidden="true" />
-            <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
-              {icon}
-              <span className="truncate">{title}</span>
+      {onDragStart ? (
+        <div
+          data-os-window-gesture-layer
+          data-testid="desktop-window-drag-handle"
+          className="absolute inset-0 z-20"
+          onPointerDown={onDragStart}
+          onDoubleClick={handleDoubleClick}
+        />
+      ) : null}
+      {paneAligned ? (
+        <div
+          data-os-window-chrome-placement={chromePlacement}
+          data-testid="os-window-chrome-grid"
+          className="pointer-events-none absolute inset-0 z-30 grid border-b"
+          style={{
+            gridTemplateColumns: `${alignedLeftWidth}px minmax(0, 1fr) ${alignedRightWidth}px`,
+            borderColor: "var(--border-subtle)",
+          }}
+        >
+          <div
+            className={`flex min-w-0 items-center gap-2 px-3 ${alignedLeftWidth > 0 ? "border-r" : "overflow-visible"}`}
+            style={{ borderColor: "var(--border-subtle)" }}
+          >
+            {alignedLeftWidth > 0 ? (
+              <>
+                {showWindowControls && onClose && onMinimize && onMaximize ? (
+                  <div data-os-window-traffic-lights className="pointer-events-auto z-30 flex shrink-0 items-center px-1">
+                    <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
+                  </div>
+                ) : null}
+                <div className="pointer-events-auto ml-auto flex items-center gap-1">{leftActions}</div>
+              </>
+            ) : null}
+          </div>
+          <div className="flex min-w-0 items-center justify-start gap-1.5 px-3 text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>
+            {alignedLeftWidth === 0 ? (
+              <div className="pointer-events-auto flex shrink-0 items-center gap-2">
+                {showWindowControls && onClose && onMinimize && onMaximize ? (
+                  <div data-os-window-traffic-lights className="z-30 flex items-center px-1">
+                    <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
+                  </div>
+                ) : null}
+                {leftActions}
+              </div>
+            ) : null}
+            {title ? (
+              <div className="flex min-w-0 items-center justify-start gap-1.5 text-[15px] font-medium">
+                {icon}
+                <span className="truncate">{title}</span>
+              </div>
+            ) : null}
+            {alignedRightWidth === 0 ? (
+              <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1">{rightActions}</div>
+            ) : null}
+          </div>
+          <div
+            className={alignedRightWidth > 0 ? "flex min-w-0 items-center justify-start border-l px-3" : "min-w-0"}
+            style={{ borderColor: "var(--border-subtle)" }}
+          >
+            {alignedRightWidth > 0 ? <div className="pointer-events-auto flex items-center gap-1">{rightActions}</div> : null}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div
+            data-os-window-chrome-placement={chromePlacement}
+            className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center px-3"
+            style={{ width: controlsWidth }}
+          >
+            {title ? (
+              <>
+                <div className="w-28 shrink-0" aria-hidden="true" />
+                <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+                  {icon}
+                  <span className="truncate">{title}</span>
+                </div>
+                <div className="w-28" aria-hidden="true" />
+              </>
+            ) : null}
+          </div>
+          <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-between px-3">
+            <div className="pointer-events-auto flex items-center gap-2">
+              {showWindowControls && onClose && onMinimize && onMaximize ? (
+                <div data-os-window-traffic-lights className="z-30 flex items-center px-1">
+                  <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
+                </div>
+              ) : null}
+              {leftActions}
             </div>
-            <div className="w-[78px]" aria-hidden="true" />
-          </>
-        ) : null}
-      </div>
-      <div data-os-window-traffic-lights className="absolute inset-y-0 left-0 z-30 flex items-center px-4">
-        <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
-      </div>
+            <div className="pointer-events-auto flex items-center gap-1">{rightActions}</div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

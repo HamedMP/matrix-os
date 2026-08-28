@@ -1,5 +1,6 @@
 import { LayoutGrid, MessageCircle, RefreshCw } from "@renderer/lib/hugeicons";
-import { useEffect, useRef } from "react";
+import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { useEffect, useRef, type ReactNode } from "react";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
@@ -65,10 +66,16 @@ export default function ProjectTab({
   projectSlug,
   active,
   initialChatId,
+  externalNavigation = false,
+  renderInspector,
+  inspectorExclusive = false,
 }: {
   projectSlug: string;
   active: boolean;
   initialChatId?: string;
+  externalNavigation?: boolean;
+  renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
+  inspectorExclusive?: boolean;
 }) {
   const view = useProjectView((s) => s.entries[projectSlug]?.view ?? DEFAULT_PROJECT_VIEW);
   const setView = useProjectView((s) => s.setView);
@@ -194,7 +201,14 @@ export default function ProjectTab({
           viewSwitch={<ProjectViewSwitch view={view} onChange={(next) => setView(projectSlug, next)} />}
         />
       ) : view === "chats" ? (
-        <ProjectChatsView projectId={projectSlug} active={active} initialChatId={initialChatId} />
+        <ProjectChatsView
+          projectId={projectSlug}
+          active={active}
+          initialChatId={initialChatId}
+          externalNavigation={externalNavigation}
+          renderInspector={renderInspector}
+          inspectorExclusive={inspectorExclusive}
+        />
       ) : (
         <Board projectSlug={projectSlug} active={active} />
       )}

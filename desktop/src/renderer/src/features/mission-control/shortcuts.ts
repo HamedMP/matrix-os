@@ -134,7 +134,7 @@ function topLevelTabSpec(activeTab: Tab) {
       closable: true,
     };
   }
-  if (activeTab.kind === "chat") {
+  if (activeTab.kind === "chat" || (activeTab.kind === "work" && activeTab.workRoute === "chat")) {
     return {
       kind: "chat" as const,
       title: "Chat",
@@ -169,7 +169,7 @@ export function handleNewContextShortcut(
   event.preventDefault();
   const activeTab = activeShortcutTab();
   if (!activeTab) return;
-  if (activeTab?.kind !== "chat") {
+  if (activeTab.kind !== "chat" && !(activeTab.kind === "work" && activeTab.workRoute === "chat")) {
     useUi.getState().setCreateTaskOpen(true);
     return;
   }

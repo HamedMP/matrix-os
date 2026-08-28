@@ -150,7 +150,7 @@ describe("kernel wiring", () => {
     await vi.waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha"));
     const tabs = useTabs.getState();
     const active = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
-    expect(active).toMatchObject({ kind: "project", projectSlug: "matrix-os" });
+    expect(active).toMatchObject({ kind: "work", workRoute: "project", projectSlug: "matrix-os" });
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_alpha");
 
@@ -185,7 +185,10 @@ describe("kernel wiring", () => {
     expect(loadThreadSnapshot).not.toHaveBeenCalled();
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBeNull();
     const tabs = useTabs.getState();
-    expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)?.kind).toBe("chat");
+    expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)).toMatchObject({
+      kind: "work",
+      workRoute: "chat",
+    });
 
     cleanup();
   });
@@ -284,12 +287,15 @@ describe("kernel wiring", () => {
     expect(useThreads.getState().activeThreadId).toBeNull();
     expect(loadThreadSnapshot).not.toHaveBeenCalled();
     const tabs = useTabs.getState();
-    expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)?.kind).toBe("chat");
+    expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)).toMatchObject({
+      kind: "work",
+      workRoute: "chat",
+    });
 
     cleanup();
   });
 
-  it("treats the selected kernel thread as focused while the chat tab is active", () => {
+  it("treats the selected kernel thread as focused while the Work Chat route is active", () => {
     useThreads.setState({
       threads: [
         {
@@ -308,6 +314,7 @@ describe("kernel wiring", () => {
       activeThreadId: "thread-1000-1",
     });
     useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "work", workRoute: "chat" });
     const cleanup = wireKernel();
     const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
     invoke.mockClear();

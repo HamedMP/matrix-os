@@ -84,8 +84,11 @@ function normalizeEvent(event: AgentThreadEvent): CanonicalProviderRunEvent[] {
     })];
   }
   if (event.type === "terminal.bound") {
+    if (!event.terminalSessionCreatedAt) return [];
     return [CanonicalProviderRunEventSchema.parse({
-      type: "terminal.bound", terminalSessionId: event.terminalSessionId,
+      type: "terminal.bound",
+      terminalSessionId: event.terminalSessionId,
+      terminalSessionCreatedAt: event.terminalSessionCreatedAt,
     })];
   }
   if (event.type === "review.ready") {

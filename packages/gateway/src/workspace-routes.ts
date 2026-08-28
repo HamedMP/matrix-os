@@ -244,6 +244,10 @@ export function createWorkspaceRoutes(options: {
   projectLifecycleService?: ProjectLifecycleService;
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "getProjectLifecycleState" | "deleteProjectThreads">;
   getOwnerScope?: (c: Context) => OwnerScope;
+  listChatBoundSessionIds?: (
+    ownerScope: OwnerScope,
+    terminalSessionIds: readonly string[],
+  ) => Promise<readonly string[]>;
 }) {
   const app = new Hono();
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
@@ -764,7 +768,31 @@ export function createWorkspaceRoutes(options: {
       cursor: c.req.query("cursor"),
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ sessions: result.sessions, nextCursor: result.nextCursor });
+    if (!options.listChatBoundSessionIds) {
+      return c.json({ sessions: result.sessions, nextCursor: result.nextCursor });
+    }
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    try {
+      const boundedSessions = result.sessions.slice(0, 100);
+      const terminalSessionIds = boundedSessions.map((session) => session.terminalSessionId);
+      const boundIds = await options.listChatBoundSessionIds(ownerScope, terminalSessionIds);
+      const bound = new Set(boundIds.slice(0, 100));
+      return c.json({
+        sessions: boundedSessions.filter((session) => !bound.has(session.terminalSessionId)),
+        nextCursor: result.nextCursor,
+      });
+    } catch (err: unknown) {
+      console.warn(
+        "[workspace-routes] Chat terminal visibility failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json(errorBody("session_visibility_failed", "Request failed"), 500);
+    }
   });
 
   app.get("/api/sessions/:sessionId", async (c) => {

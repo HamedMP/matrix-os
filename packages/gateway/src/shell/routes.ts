@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { CanonicalChatIdSchema } from "@matrix-os/contracts";
 import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js";
 import { toShellError } from "./errors.js";
 import { SESSION_NAME_PATTERN } from "./names.js";
@@ -15,6 +16,7 @@ import {
 } from "./preferences.js";
 import type { ShellCommandRunner } from "./command-runner.js";
 import { AgentKindSchema, type AgentKind } from "./agent-session-state.js";
+import type { RequestPrincipal } from "../request-principal.js";
 
 interface SessionRegistryRoutes {
   list(): Promise<unknown[]>;
@@ -25,6 +27,7 @@ interface SessionRegistryRoutes {
     layout?: string;
     cmd?: string;
     agent?: AgentKind;
+    exclusive?: boolean;
   }): Promise<unknown>;
   delete(name: string, options?: { force?: boolean }): Promise<void>;
   rename?(name: string, nextName: string): Promise<unknown>;
@@ -34,6 +37,16 @@ interface SessionRegistryRoutes {
     lastSeenSeq?: number | null;
     visualStatus?: "running" | "finished" | "idle" | "waiting";
   }): Promise<unknown>;
+}
+
+interface ChatTerminalRoutes {
+  prepare(principal: RequestPrincipal, chatId: string): Promise<{ runId?: string; cwd?: string }>;
+  bind(principal: RequestPrincipal, input: {
+    chatId: string;
+    runId?: string;
+    sessionId: string;
+    sessionCreatedAt: string;
+  }): Promise<void>;
 }
 
 interface ShellWorkspaceRoutes {
@@ -92,6 +105,12 @@ export interface ShellRouteDeps {
   commandRunner?: ShellCommandRunner;
   terminalInput?: TerminalInputRoutes;
   sessionCreateRateLimiter?: RateLimiter;
+  getPrincipal?: (c: Context) => RequestPrincipal;
+  listChatBoundSessionIds?: (
+    principal: RequestPrincipal,
+    sessionIds: readonly string[],
+  ) => Promise<readonly string[]>;
+  chatTerminals?: ChatTerminalRoutes;
 }
 
 export const SHELL_SESSION_CREATE_RATE_LIMIT = {
@@ -108,7 +127,13 @@ const CreateSessionBodySchema = z.object({
   layout: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
   cmd: z.string().min(1).max(4096).optional(),
   agent: AgentKindSchema.optional(),
-});
+  chatId: CanonicalChatIdSchema.optional(),
+}).strict().refine((input) => input.chatId === undefined || (
+  input.cwd === undefined
+  && input.layout === undefined
+  && input.cmd === undefined
+  && input.agent === undefined
+), { message: "Chat terminals use their server-resolved workspace" });
 const SafeNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
 const SafeSessionNameSchema = z.string().regex(SESSION_NAME_PATTERN);
 const SafeLayoutNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
@@ -215,7 +240,27 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
 
   app.get("/sessions", async (c) => {
     try {
-      return c.json({ sessions: await deps.registry.list() });
+      const sessions = await deps.registry.list();
+      if (!deps.listChatBoundSessionIds) return c.json({ sessions });
+      if (!deps.getPrincipal) throw new Error("Missing shell principal dependency");
+      const visible: unknown[] = [];
+      for (let start = 0; start < sessions.length; start += 100) {
+        const chunk = sessions.slice(start, start + 100);
+        const names = chunk.flatMap((session) => (
+          session && typeof session === "object" && "name" in session
+            && typeof (session as { name?: unknown }).name === "string"
+            ? [(session as { name: string }).name]
+            : []
+        ));
+        const boundIds = await deps.listChatBoundSessionIds(deps.getPrincipal(c), names);
+        const bound = new Set(boundIds.slice(0, 100));
+        visible.push(...chunk.filter((session) => (
+          !session || typeof session !== "object" || !("name" in session)
+          || typeof (session as { name?: unknown }).name !== "string"
+          || !bound.has((session as { name: string }).name)
+        )));
+      }
+      return c.json({ sessions: visible });
     } catch (err) {
       return safeError(c, err);
     }
@@ -231,11 +276,51 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
           { "Retry-After": String(Math.ceil(SHELL_SESSION_CREATE_RATE_LIMIT.lockoutMs / 1000)) },
         );
       }
-      const session = await deps.registry.create(body);
+      const principal = body.chatId ? deps.getPrincipal?.(c) : undefined;
+      if (body.chatId && (!principal || !deps.chatTerminals)) {
+        throw new Error("Chat terminal dependencies are unavailable");
+      }
+      const binding = body.chatId && principal && deps.chatTerminals
+        ? await deps.chatTerminals.prepare(principal, body.chatId)
+        : null;
+      const sessionInput = {
+        name: body.name,
+        ...(body.chatId ? { exclusive: true } : {}),
+        ...(binding?.cwd ? { cwd: binding.cwd } : body.cwd ? { cwd: body.cwd } : {}),
+        ...(body.layout ? { layout: body.layout } : {}),
+        ...(body.cmd ? { cmd: body.cmd } : {}),
+        ...(body.agent ? { agent: body.agent } : {}),
+      };
+      const session = await deps.registry.create(sessionInput);
       const name =
         typeof session === "object" && session !== null && "name" in session
           ? String((session as { name: unknown }).name)
           : body.name;
+      const sessionCreatedAt =
+        typeof session === "object" && session !== null && "createdAt" in session
+          ? z.iso.datetime().parse((session as { createdAt: unknown }).createdAt)
+          : null;
+      if (body.chatId && principal && binding && deps.chatTerminals) {
+        try {
+          if (!sessionCreatedAt) throw new Error("Chat terminal session incarnation unavailable");
+          await deps.chatTerminals.bind(principal, {
+            chatId: body.chatId,
+            ...(binding.runId ? { runId: binding.runId } : {}),
+            sessionId: name,
+            sessionCreatedAt,
+          });
+        } catch (error: unknown) {
+          try {
+            await deps.registry.delete(name, { force: true });
+          } catch (cleanupError: unknown) {
+            console.error(
+              "[shell] Chat terminal cleanup failed:",
+              cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+            );
+          }
+          throw error;
+        }
+      }
       return c.json({ name, created: true }, 201);
     } catch (err) {
       return safeError(c, err);

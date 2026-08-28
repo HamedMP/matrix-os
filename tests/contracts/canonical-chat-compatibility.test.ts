@@ -205,6 +205,7 @@ describe("canonical Chat compatibility mappers", () => {
             occurredAt: now,
             type: "terminal.bound",
             terminalSessionId: "terminal_legacy",
+            terminalSessionCreatedAt: now,
           },
           {
             eventId: "evt_turn_status",
@@ -298,7 +299,13 @@ describe("canonical Chat compatibility mappers", () => {
           { ...base, eventId: "evt_completed_2", type: "assistant.text.completed", messageId: "assistant_two" },
           { ...base, eventId: "evt_output_2", type: "tool.output", toolCallId: "tool_two", text: "Bounded output", truncated: true },
           { ...base, eventId: "evt_review_2", type: "review.ready", reviewId: "review_two", summary: { changedFileCount: 1, additions: 3, deletions: 1, partial: false } },
-          { ...base, eventId: "evt_terminal_2", type: "terminal.bound", terminalSessionId: "terminal_two" },
+          {
+            ...base,
+            eventId: "evt_terminal_2",
+            type: "terminal.bound",
+            terminalSessionId: "terminal_two",
+            terminalSessionCreatedAt: now,
+          },
           { ...base, eventId: "evt_error_2", type: "thread.error", error: { code: "run_failed", safeMessage: "The Run stopped safely.", retryable: true, recoveryActions: ["retry"] } },
         ],
         hasMore: false,

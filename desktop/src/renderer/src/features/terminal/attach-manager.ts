@@ -21,7 +21,7 @@ export interface TerminalDimensions {
 }
 
 export interface AttachManagerOptions {
-  createSocket: (sessionName: string, events: ShellSocketEvents) => SocketControl;
+  createSocket: (sessionName: string, events: ShellSocketEvents, chatId?: string) => SocketControl;
   bufferCacheCap?: number;
 }
 
@@ -58,7 +58,12 @@ export class AttachManager {
     return this.active?.sessionName ?? null;
   }
 
-  attach(sessionName: string, events: ShellSocketEvents, initialSize?: TerminalDimensions): ActiveAttachment {
+  attach(
+    sessionName: string,
+    events: ShellSocketEvents,
+    initialSize?: TerminalDimensions,
+    chatId?: string,
+  ): ActiveAttachment {
     if (this.disposed) {
       throw new Error("AttachManager is disposed");
     }
@@ -88,7 +93,7 @@ export class AttachManager {
         if (this.isLive(generation)) events.onExit(code);
       },
     };
-    const socket = this.createSocket(sessionName, guarded);
+    const socket = this.createSocket(sessionName, guarded, chatId);
     this.active = { sessionName, socket, generation };
     if (initialSize) socket.resize(initialSize.cols, initialSize.rows);
     socket.connect();
