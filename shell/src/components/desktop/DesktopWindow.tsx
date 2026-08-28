@@ -174,6 +174,7 @@ export function DesktopWindow({
         onPointerDown={(e) => onDragStart(win.id, e)}
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
         onDoubleClick={(e) => {
           if (e.target instanceof Element && e.target.closest("button,[role='button'],input,a")) return;
           onToggleFullscreen(win.id);
@@ -250,6 +251,7 @@ export function DesktopWindow({
           onPointerDown={(e) => onResizeStart(win.id, e)}
           onPointerMove={onResizeMove}
           onPointerUp={onResizeEnd}
+          onPointerCancel={onResizeEnd}
         >
           <svg
             viewBox="0 0 16 16"
