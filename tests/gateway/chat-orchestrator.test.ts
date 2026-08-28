@@ -171,6 +171,115 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("keeps one durable pending assistant message through 501 deltas and finalizes it in place", async () => {
+    await repository.create(owner, {
+      id: "chat_lossless_long_run",
+      clientRequestId: "req_create_lossless_long_run",
+      title: "Lossless long Run",
+    });
+    let releaseProvider!: () => void;
+    let firstDeltaPersisted!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const paused = new Promise<void>((resolve) => {
+      firstDeltaPersisted = resolve;
+    });
+    const provider = adapter(async function* () {
+      yield { type: "assistant.delta", delta: "a" };
+      firstDeltaPersisted();
+      await release;
+      for (let index = 0; index < 500; index += 1) {
+        yield { type: "assistant.delta", delta: String(index % 10) };
+      }
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_lossless_long_run", {
+      clientRequestId: "req_lossless_long_run_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "stream for a long time" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await paused;
+
+    const pending = await repository.exportChat(owner, "chat_lossless_long_run");
+    const pendingAssistant = pending?.messages.find((message) => message.role === "assistant");
+    expect(pendingAssistant).toMatchObject({
+      id: `msg_${admitted.run.id.slice("run_".length)}_assistant`,
+      runId: admitted.run.id,
+      state: "pending",
+      parts: [{ type: "text", text: "a" }],
+    });
+
+    releaseProvider();
+    await orchestrator.drain();
+
+    const completed = await repository.exportChat(owner, "chat_lossless_long_run");
+    const completedAssistant = completed?.messages.find((message) => message.role === "assistant");
+    expect(completedAssistant).toMatchObject({
+      id: pendingAssistant?.id,
+      state: "committed",
+      parts: [{
+        type: "text",
+        text: `a${Array.from({ length: 500 }, (_, index) => String(index % 10)).join("")}`,
+      }],
+    });
+    expect(completed?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
+    expect(completed?.activities.map((activity) => activity.type)).toEqual([
+      "run.status",
+      "turn.status",
+      "run.status",
+    ]);
+  });
+
+  it("keeps durable partial assistant text when a Provider fails before completion", async () => {
+    await repository.create(owner, {
+      id: "chat_lossless_partial_failure",
+      clientRequestId: "req_create_lossless_partial_failure",
+      title: "Lossless partial failure",
+    });
+    const provider = adapter(async function* () {
+      yield { type: "assistant.delta", delta: "Durable partial answer" };
+      throw new Error("private Provider failure");
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_lossless_partial_failure", {
+      clientRequestId: "req_lossless_partial_failure_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "fail after partial output" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const reloaded = await repository.exportChat(owner, "chat_lossless_partial_failure");
+    expect(reloaded?.messages.find((message) => message.runId === admitted.run.id)).toMatchObject({
+      id: `msg_${admitted.run.id.slice("run_".length)}_assistant`,
+      state: "failed",
+      parts: [{ type: "text", text: "Durable partial answer" }],
+    });
+    expect(reloaded?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+    expect(reloaded?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.error" }),
+    ]));
+  });
+
   it("does not reconcile a committed Run while its dispatch registration is pending", async () => {
     await repository.create(owner, {
       id: "chat_pending_dispatch",
