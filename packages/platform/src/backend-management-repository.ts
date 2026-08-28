@@ -61,10 +61,13 @@ export async function readMachineOverride(db: PlatformDB, machineId: string, now
   await db.ready;
   const row = await db.executor.selectFrom('backend_management_machines as b')
     .innerJoin('user_machines as m', 'm.machine_id', 'b.machine_id')
-    .select(['b.override_until', 'b.allow_version_selection']).where('b.machine_id', '=', machineId)
+    .select(['b.desired_version', 'b.override_until', 'b.allow_version_selection']).where('b.machine_id', '=', machineId)
     .where('m.deleted_at', 'is', null).executeTakeFirst();
-  return { managed: true as const, versionSelectionAllowed: Boolean(row?.override_until && row.override_until > now.toISOString() && row.allow_version_selection),
-    holdUntil: row?.override_until && row.override_until > now.toISOString() ? row.override_until : null };
+  const holdUntil = row?.override_until && row.override_until > now.toISOString() ? row.override_until : null;
+  // Inventory assigns a durable desired version when the worker enrolls a host.
+  // A global pause must not hand enrolled machines back to passive channels.
+  return { managed: true as const, passiveUpdatesAllowed: !row?.desired_version && !holdUntil,
+    versionSelectionAllowed: Boolean(holdUntil && row?.allow_version_selection), holdUntil };
 }
 export async function setMachineOverride(db: PlatformDB, machineId: string, input: MachineOverride, now = new Date()) {
   const value = MachineOverrideSchema.parse(input);

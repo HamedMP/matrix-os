@@ -10,6 +10,8 @@ Keep new persistence, rollout, transport, routes, gateway policy and client comp
 
 Postgres owns rollout configuration, per-machine desired/observed state, retry schedule, leases and expiring support overrides. Only customer machines participate. Reconciliation is bounded and restart-safe, proves installed version via authenticated runtime info, and gates subsequent cohorts on a soak period. Failed installs quarantine a release until operator intervention. Unreachable machines retry every five minutes; they never count as verified. Recognized older stable pointers cannot silently downgrade installed releases; intentional downgrades use an explicit operator bridge target.
 
+Passive polling policy is extracted into `matrix-passive-update-policy`; the oversized sync agent only invokes it. Machine identity is not enrollment: a persisted desired version suppresses passive installs even while global reconciliation is paused. Unenrolled machines retain channel delivery unless a live support hold exists. Policy failures defer only the current poll. The shared client reader requires bounded streaming; mobile injects Expo fetch rather than using the non-streaming React Native fallback.
+
 Legacy bootstrap uses the existing authenticated /api/system/update contract with an immutable bridge version; a successful HTTP response is only dispatch, not completion. The reconciler verifies the observed version afterward. Unknown/broken updaters remain flagged for operator recovery; never execute arbitrary remote shell or overwrite customer files. A bridge release must be compatible with old client APIs and migrations must be additive/rollback-safe.
 
 Installed client policy is per desktop OS / mobile OS, with latest and minimum versions, enforcement date and an HTTPS allowlisted download URL. Policy updates use optimistic concurrency. Unknown older clients remain allowed during migration. Updated clients check on launch/resume and periodically; keep updater and sign-in/recovery accessible. A missing policy or platform outage must not manufacture an upgrade requirement. Cache only validated policy responses and preserve a known mandatory gate during an outage.
@@ -24,7 +26,7 @@ Installed client policy is per desktop OS / mobile OS, with latest and minimum v
 | PUT /backend-management/machines/:id/override | Platform admin bearer | Audited, expiring support hold/version-picker flag |
 | DELETE /backend-management/machines/:id/override | Platform admin bearer | Audited early revocation of support hold |
 | POST /backend-management/machines/:id/retry | Platform admin bearer | Explicitly retry quarantined machine |
-| GET /backend-management/machines/:id/policy | Per-machine platform verification token | Gateway reads support override |
+| GET /backend-management/machines/:id/policy | Per-machine platform verification token | Gateway reads support override; sync agent checks passive-update permission |
 | POST /api/system/update and /upgrade | Existing gateway auth plus managed policy | Operators deploy immutable targets; user version changes require active support override |
 
 Mutations have body limits and strict Zod schemas; errors are generic. Server probes use persisted public IPs only, reject private/invalid addresses and redirects, and have bounded body reads/timeouts. The worker stops/drains before shared DB/dispatcher shutdown. No client version header is treated as authentication.
@@ -58,15 +60,15 @@ Building automation does not silently deploy/restart ~100 customer machines. Pro
 - Desktop production build and platform/gateway/desktop typechecks pass. Mobile
   gate and gateway-client tests pass; mobile typechecking has the same 31 native
   component typing errors on the base checkout and this worktree.
-- All 167 focused Vitest tests pass. The scoped managed-backend modules pass the
-  configured coverage thresholds (99.47% statements, 95.59% branches, 100%
-  functions/lines). The 74 mobile tests and 52 legacy compatibility tests pass.
+- All 180 focused Vitest tests pass. Review-fix coverage for the client policy
+  reader and backend repository passes the configured thresholds (100%
+  statements/functions/lines, 97.53% branches). The 74 mobile tests and 52 legacy compatibility tests pass.
   Full repository validation remains a review gate; the full unit run was
   interrupted after host-tool incompatibilities and subprocess failures on this Mac.
 - Bun is unavailable locally; validation used the equivalent pnpm executables.
   Pattern checks report zero violations, with existing file-level warnings.
 - No real VPS, signed installer, store submission, or native-device smoke test
   has been run. Keep fleet activation and minimum-version increases disabled.
-- Required GitHub publication is pending explicit upload approval. The separate
-  public-docs PR also requires access to `FinnaAI/matrix-os-site`; its proposed
+- Implementation is published as draft PR #1379. The separate
+  public-docs PR requires access to `FinnaAI/matrix-os-site`; its proposed
   content is preserved in `public-documentation.md`.

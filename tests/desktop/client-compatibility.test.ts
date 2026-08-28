@@ -3,8 +3,8 @@ import { createClientPolicyReader } from '../../packages/contracts/src/client-po
 const response = { schemaVersion: 1, revision: 3, policy: { latestVersion: '2.0.0', minSupportedVersion: '1.5.0', downloadUrl: 'https://matrix-os.com/download', enforceAfter: '2026-01-01T00:00:00.000Z' } };
 describe('client policy reader', () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
-  it('supports native runtimes without streaming responses and ignores corrupt saved policy', async () => {
-    const fetchFn = vi.fn(async () => ({ ok: true, text: async () => JSON.stringify(response) }) as Response);
+  it('reads streaming native responses and ignores corrupt saved policy', async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify(response)));
     const reader = createClientPolicyReader({ target: 'mobile-ios', fetchFn, load: async () => { throw new SyntaxError('corrupt saved data'); } });
     expect(await reader.read('https://app.matrix-os.com')).toEqual(response);
   });
@@ -17,13 +17,26 @@ describe('client policy reader', () => {
     expect((await pending).policy).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('releases failed fetch bodies and rejects oversized native text responses', async () => {
+  it('releases failed fetch bodies and never buffers non-streaming responses', async () => {
     const cancel = vi.fn(async () => undefined);
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, body: { cancel } })));
     expect((await createClientPolicyReader({ target: 'mobile-ios' }).read('https://app.matrix-os.com')).policy).toBeNull();
     expect(cancel).toHaveBeenCalledOnce();
-    const fetchFn = vi.fn(async () => ({ ok: true, text: async () => 'x'.repeat(8193) }) as Response);
+    const text = vi.fn(async () => JSON.stringify(response));
+    const fetchFn = vi.fn<typeof fetch>(async () => ({ ok: true, text }) as unknown as Response);
+    const reader = createClientPolicyReader({ target: 'mobile-ios', fetchFn, load: async () => ({ origin: 'https://app.matrix-os.com', response }) });
+    expect(await reader.read('https://app.matrix-os.com')).toEqual(response);
+    expect(text).not.toHaveBeenCalled();
+    expect(fetchFn.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+  it('cancels an oversized stream before consuming its remaining chunks', async () => {
+    const cancel = vi.fn();
+    let pulls = 0;
+    const body = new ReadableStream({ pull(controller) { pulls++; controller.enqueue(new Uint8Array(4096)); }, cancel }, { highWaterMark: 0 });
+    const fetchFn = vi.fn(async () => new Response(body));
     expect((await createClientPolicyReader({ target: 'mobile-ios', fetchFn }).read('https://app.matrix-os.com')).policy).toBeNull();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(pulls).toBe(3);
   });
   it('retains validated requirements on transient errors and isolates origins', async () => {
     const fetchFn = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(response))).mockRejectedValue(new Error('offline'));

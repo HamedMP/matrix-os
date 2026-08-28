@@ -2,11 +2,14 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
 import { ClientUpgradeGate } from '../components/ClientUpgradeGate';
 import { Text } from 'react-native';
+import { fetch as expoFetch } from 'expo/fetch';
 const mockRead = jest.fn();
+const mockCreateReader = jest.fn((_options: unknown) => ({ read: (...args: unknown[]) => mockRead(...args) }));
 jest.mock('@matrix-os/contracts', () => ({
-  createClientPolicyReader: () => ({ read: (...args: unknown[]) => mockRead(...args) }),
+  createClientPolicyReader: (options: unknown) => mockCreateReader(options),
   evaluateClientPolicy: (policy: unknown) => policy ? 'required' : 'unknown',
 }));
+jest.mock('expo/fetch', () => ({ fetch: jest.fn() }));
 jest.mock('expo-application', () => ({ nativeApplicationVersion: '1.0.0' }));
 jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn(), setItem: jest.fn() }));
 describe('mobile client upgrade gate', () => {
@@ -16,6 +19,7 @@ describe('mobile client upgrade gate', () => {
     await waitFor(() => expect(screen.getByText('Update Matrix OS to continue')).toBeTruthy());
     expect(screen.queryByText('Workspace')).toBeNull();
     expect(screen.getByText('Open app store')).toBeTruthy();
+    expect(mockCreateReader).toHaveBeenCalledWith(expect.objectContaining({ fetchFn: expoFetch }));
   });
   it('does not require an update when no policy has been published', async () => {
     mockRead.mockResolvedValue({ policy: null });

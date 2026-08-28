@@ -650,9 +650,9 @@ prepare_triggered_update() {
 
 # ── Poll for updates ─────────────────────────────────────────────────
 check_for_update() {
-  # Managed hosts receive immutable targets from the durable platform rollout.
-  # Passive channel installs would bypass canary health gates and support holds.
-  if [ -n "${MATRIX_MACHINE_ID:-}" ]; then return 0; fi
+  # Identity alone is not enrollment. Keep legacy channels until the platform
+  # owns this machine's desired version; defer on policy failure and retry later.
+  if [ -n "${MATRIX_MACHINE_ID:-}" ] && ! bash "$BIN_DIR/matrix-passive-update-policy"; then return 0; fi
   local url manifest remote_version cur
   url="$(manifest_url)"
   if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then

@@ -25,6 +25,13 @@ old clients and the rollback binary; binary rollback does not restore a database
 
 Do not enable the fleet before deploying the platform migration and publishing a
 reviewed host bundle containing the new managed updater. Defaults are disabled.
+Machine identity alone does not enroll a VPS. Until the rollout worker persists
+a desired version for that machine, the new sync agent continues its channel's
+automatic/security updates. It checks the authenticated per-machine policy before
+each poll; a live support hold also suppresses passive installs. A policy outage,
+invalid response, or older platform without this endpoint defers that poll and
+retries later, so deploy the platform first. Once enrolled, a global pause does
+not re-enable passive installs that could bypass canaries or support holds.
 Use a normal/manual bridge release: older hosts still obey public `security`/`auto`
 channel manifests and cannot be constrained by the new rollout worker until they
 have the bridge. Do not promote an auto/security bridge onto a channel used by old
@@ -124,6 +131,9 @@ this change does not invent an unreleased installer or bypass app-store review.
 
 New clients check at startup/resume and each minute, retain validated policy on
 transient failures, and expose download/install actions in the upgrade gate.
+Mobile uses Expo's streaming fetch; policy bodies are capped at 8 KiB while
+reading. A missing stream aborts the request and preserves cached requirements
+instead of buffering an unbounded native response.
 API requests from identified unsupported clients receive a generic HTTP 426.
 Policy, auth and recovery remain reachable. Client version headers are hints for
 compatibility, not authentication. Legacy clients without version metadata remain

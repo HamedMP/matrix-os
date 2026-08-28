@@ -3,6 +3,7 @@ import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper';
 import { createBackendManagementRoutes, createClientPolicyRoutes } from '../../packages/platform/src/backend-management-routes';
+import { setMachineOverride, clearMachineOverride, readBackendPolicy, updateBackendPolicy } from '../../packages/platform/src/backend-management-repository';
 const secret = 'platform-admin-secret';
 describe('backend management route boundaries', () => {
   let db: PlatformDB;
@@ -50,6 +51,25 @@ describe('backend management route boundaries', () => {
     expect((await app.request('/machines/missing/override', { method: 'DELETE', headers: admin })).status).toBe(404);
     expect((await app.request('/machines/machine_1/override', { method: 'PUT', headers: admin, body: JSON.stringify({ until: '2020-01-01T00:00:00.000Z', reason: 'Expired', allowVersionSelection: true }) })).status).toBe(400);
     expect((await app.request('/machines/missing/override', { method: 'PUT', headers: admin, body: JSON.stringify({ until: new Date(Date.now() + 60_000).toISOString(), reason: 'Missing', allowVersionSelection: true }) })).status).toBe(404);
+  });
+  it('preserves channel polling until enrollment and keeps enrolled machines paused', async () => {
+    await insertUserMachine(db, { machineId: 'machine_1', clerkUserId: 'user_1', handle: 'person', status: 'running', provisionedAt: new Date().toISOString() });
+    const app = createBackendManagementRoutes({ db, platformSecret: secret });
+    const headers = { authorization: `Bearer ${buildPlatformVerificationToken('person', secret)}` };
+    const policy = async () => (await app.request('/machines/machine_1/policy', { headers })).json();
+    expect(await policy()).toMatchObject({ passiveUpdatesAllowed: true });
+    const initial = await readBackendPolicy(db);
+    await updateBackendPolicy(db, { ...initial.config, enabled: true }, initial.revision);
+    expect(await policy()).toMatchObject({ passiveUpdatesAllowed: true });
+    // A support-only row is not enrollment, but its live hold still stops polling.
+    await setMachineOverride(db, 'machine_1', { until: new Date(Date.now() + 60_000).toISOString(), reason: 'Debugging', allowVersionSelection: false });
+    expect(await policy()).toMatchObject({ passiveUpdatesAllowed: false });
+    await clearMachineOverride(db, 'machine_1');
+    expect(await policy()).toMatchObject({ passiveUpdatesAllowed: true });
+    await db.executor.updateTable('backend_management_machines').set({ desired_version: 'v2026.08.28-1' }).where('machine_id', '=', 'machine_1').execute();
+    expect(await policy()).toMatchObject({ passiveUpdatesAllowed: false });
+    await updateBackendPolicy(db, initial.config, initial.revision + 1);
+    expect(await policy()).toMatchObject({ passiveUpdatesAllowed: false });
   });
   it('keeps configuration and database failures generic instead of reporting missing data', async () => {
     const missing = createBackendManagementRoutes({ db, platformSecret: '' });

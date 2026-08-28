@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppState, Linking, Platform, Pressable, Text, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { nativeApplicationVersion } from 'expo-application';
+import { fetch as expoFetch } from 'expo/fetch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClientPolicyReader, evaluateClientPolicy, type ClientPolicyResponse } from '@matrix-os/contracts';
 
@@ -12,6 +13,7 @@ export function ClientUpgradeGate({ origin, children, allowRecovery = false }: {
   const [error, setError] = useState(false);
   const reader = useMemo(() => createClientPolicyReader({
     target: Platform.OS === 'android' ? 'mobile-android' : 'mobile-ios',
+    fetchFn: expoFetch,
     load: async () => { const value = await AsyncStorage.getItem(CACHE_KEY); return value && value.length <= 12_000 ? JSON.parse(value) : null; },
     save: value => AsyncStorage.setItem(CACHE_KEY, JSON.stringify(value)),
   }), []);
