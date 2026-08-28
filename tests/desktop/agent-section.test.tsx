@@ -851,7 +851,10 @@ describe("AgentSection", () => {
   });
 
   it("shows runtime provider setup status and opens foreground setup terminals", async () => {
-    api.post.mockResolvedValue({ name: "matrix-setup-codex" });
+    let resolveSetupSession!: (value: { name: string }) => void;
+    api.post.mockImplementation(() => new Promise<{ name: string }>((resolve) => {
+      resolveSetupSession = resolve;
+    }));
     render(<AgentSection />);
 
     expect(await screen.findByText("Coding agent providers")).toBeTruthy();
@@ -865,12 +868,10 @@ describe("AgentSection", () => {
       cmd: "matrix setup codex",
       cwd: "projects",
     })));
-    await waitFor(() =>
-      expect(
-        useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Connect Codex"),
-      ).toBe(true),
-      { timeout: 5_000 },
-    );
+    await act(async () => resolveSetupSession({ name: "matrix-setup-codex" }));
+    expect(
+      useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Connect Codex"),
+    ).toBe(true);
   });
 
   it("refreshes runtime provider setup status after runtime changes", async () => {

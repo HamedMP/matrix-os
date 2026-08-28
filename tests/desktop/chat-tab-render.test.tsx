@@ -666,7 +666,10 @@ describe("ChatTab", () => {
       status: "ready",
       refresh: vi.fn(async () => undefined),
     });
-    const post = vi.fn(async () => ({ name: "matrix-setup-claude" }));
+    let resolveSetupSession!: (value: { name: string }) => void;
+    const post = vi.fn(() => new Promise<{ name: string }>((resolve) => {
+      resolveSetupSession = resolve;
+    }));
     useConnection.setState({
       api: {
         get: vi.fn(async (path: string) => {
@@ -687,13 +690,11 @@ describe("ChatTab", () => {
       "/api/terminal/sessions",
       expect.objectContaining({ cmd: "claude" }),
     ));
-    await waitFor(() =>
-      expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
-        kind: "terminal",
-        title: "Connect Claude",
-      })),
-      { timeout: 5_000 },
-    );
+    await act(async () => resolveSetupSession({ name: "matrix-setup-claude" }));
+    expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
+      kind: "terminal",
+      title: "Connect Claude",
+    }));
   });
 
   it("persists Global Chat effort and permission selections", async () => {

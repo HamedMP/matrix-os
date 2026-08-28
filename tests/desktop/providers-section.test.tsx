@@ -120,6 +120,10 @@ describe("ProvidersSection", () => {
   });
 
   it("runs setup actions through the existing foreground terminal flow", async () => {
+    let resolveSetupSession!: (value: { name: string }) => void;
+    api.post.mockImplementation(() => new Promise<{ name: string }>((resolve) => {
+      resolveSetupSession = resolve;
+    }));
     render(<ProvidersSection />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Open provider setup Sign in" }));
@@ -130,12 +134,10 @@ describe("ProvidersSection", () => {
         expect.objectContaining({ cmd: "codex login", cwd: "projects" }),
       ),
     );
-    await waitFor(() =>
-      expect(
-        useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Sign in"),
-      ).toBe(true),
-      { timeout: 5_000 },
-    );
+    await act(async () => resolveSetupSession({ name: "matrix-setup-codex" }));
+    expect(
+      useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Sign in"),
+    ).toBe(true);
   });
 
   it("shows a generic setup error when the terminal cannot be opened", async () => {
