@@ -57,6 +57,10 @@ if [[ " $* " == *" fetch "* ]]; then
     echo "fetch did not request the event commit" >&2
     exit 64
   fi
+  if [[ " $* " == *" --depth=1 "* ]]; then
+    echo "event commit fetch must retain full history" >&2
+    exit 65
+  fi
   attempt=0
   if [ -f "$FAKE_GIT_FETCH_ATTEMPTS" ]; then
     attempt="$(cat "$FAKE_GIT_FETCH_ATTEMPTS")"
@@ -117,6 +121,28 @@ describe('CI workflows', () => {
     ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
   ] as const;
 
+  it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const superseder = readFileSync(join(root, '.github/workflows/ci-supersede.yml'), 'utf8');
+
+    expect(workflow).toContain('run-name: CI coverage-v1');
+    expect(workflow).toContain('queue: max');
+    expect(workflow).not.toContain('cancel-in-progress:');
+    expect(superseder).toContain('actions: write');
+    expect(superseder).toContain('paths-ignore:');
+    expect(superseder).toContain("- 'docs/**'");
+    expect(superseder).toContain("- 'specs/**'");
+    expect(superseder).toContain("- '**/*.md'");
+    expect(superseder).toContain(
+      'uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
+    );
+    expect(superseder).toContain(
+      'uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6',
+    );
+    expect(superseder).toContain('node scripts/ci/supersede-main-ci.mjs');
+  });
+
   it('exposes a stable aggregate CI result job for branch protection', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
@@ -138,7 +164,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
-  it('keeps CI change detection within its bounded checkout budget', () => {
+  it('plans main coverage from the last trusted frontier and wires its range into diff checks', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     const changesJob = workflow.slice(
@@ -157,6 +183,12 @@ describe('CI workflows', () => {
     expect(changesJob).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
     expect(changesJob).not.toContain('uses: actions/checkout@v6');
     expect(changesJob).not.toContain('fetch-depth: 0');
+    expect(changesJob).toContain('node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"');
+    expect(workflow).toContain('base_sha: ${{ steps.changed.outputs.base_sha }}');
+    expect(workflow).toContain('COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}');
+    expect(workflow).toContain('COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}');
+    expect(workflow).toContain('if [ "$COVERAGE_BOOTSTRAP" = "true" ]; then');
+    expect(workflow).toContain('BEFORE="$COVERAGE_BASE_SHA"');
   });
 
   it('recovers when the first change-detection checkout fetch fails transiently', () => {
@@ -226,6 +258,9 @@ describe('CI workflows', () => {
     expect(readme).toContain('host bundle release tests are blocking');
     expect(readme).toContain('React Doctor');
     expect(readme).toContain('Docs Contract Tests');
+    expect(readme).toContain('coverage frontier');
+    expect(readme).toContain('ci-supersede.yml');
+    expect(readme).toMatch(/Docs-only successors\s+queue behind broader runs/);
     expect(readme).toContain('Screenshot workflow removed');
   });
 
