@@ -6,7 +6,7 @@ import {
 import { Button } from "../../../design/primitives";
 import { useConnection } from "../../../stores/connection";
 import { useRuntimeComputers } from "../../../stores/runtime-computers";
-import { Card, Empty, SectionHeader } from "./section-kit";
+import { Card, Empty, SettingsSectionHeader } from "./section-kit";
 
 const STATUS_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -106,7 +106,7 @@ export default function RuntimeSection() {
 
   return (
     <>
-      <SectionHeader
+      <SettingsSectionHeader
         title="Computers"
         description="Choose the Matrix computer this desktop app connects to."
       />

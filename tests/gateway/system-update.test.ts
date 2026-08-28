@@ -11,6 +11,7 @@ import {
   parseInternalUpgradeTarget,
   parseUpdateVersion,
   resolveInternalUpgradeStartTarget,
+  resolveInternalUpgradeInstallTarget,
   resolveSystemUpdateChannel,
   readSystemUpdateFailure,
   startSystemUpdate,
@@ -103,6 +104,23 @@ describe("system update checks", () => {
       ok: false,
       error: "Specify either version or channel",
     });
+  });
+
+  it("pins a channel update to the manifest version resolved at request time", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      version: "v2026.08.29",
+      channel: "stable",
+    })));
+
+    await expect(resolveInternalUpgradeInstallTarget({
+      target: { type: "channel", value: "stable" },
+      platformUrl: "https://platform.matrix-os.test",
+      fetchImpl,
+    })).resolves.toEqual({ type: "version", value: "v2026.08.29" });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://platform.matrix-os.test/system-bundles/channels/stable.json",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("writes requested versions before triggering an internal upgrade", async () => {

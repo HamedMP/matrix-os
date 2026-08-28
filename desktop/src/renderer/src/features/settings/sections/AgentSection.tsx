@@ -8,7 +8,7 @@ import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
 import { useTabs } from "../../../stores/tabs";
 import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../../coding-agents/provider-setup-terminal";
-import { Card, Empty, SectionHeader } from "./section-kit";
+import { Card, Empty, SettingsSectionHeader } from "./section-kit";
 import AgentRuntimeSettingsCard from "./AgentRuntimeSettingsCard";
 
 const SOUL_PATH = "/files/system/soul.md";
@@ -467,7 +467,7 @@ export default function AgentSection() {
   const runtimeScope = useConnection((state) => `${state.runtimeSlot}:${state.authGeneration}`);
   return (
     <>
-      <SectionHeader
+      <SettingsSectionHeader
         title="Agent"
         description="Tune Matrix Chat, choose the runtime for messaging channels, authenticate providers, edit SOUL, and check which coding agents are connected."
       />

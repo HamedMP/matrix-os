@@ -56,6 +56,7 @@ describe("IPC contract", () => {
       "update:acknowledge-whats-new",
       "app:get-zoom",
       "app:set-zoom",
+      "window:toggle-maximize",
     ];
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
@@ -883,6 +884,7 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ key: "appearance", value: { theme: "dark" } }).success).toBe(true);
     expect(schema.safeParse({ key: "desktopShell", value: { mode: "canvas" } }).success).toBe(true);
     expect(schema.safeParse({ key: "terminalAppearance", value: { mode: "dark" } }).success).toBe(true);
+    expect(schema.safeParse({ key: "terminalAppearance", value: { appThemeId: "matrix" } }).success).toBe(true);
     expect(schema.safeParse({
       key: "projectViews",
       value: {

@@ -184,6 +184,7 @@ import {
   listSystemReleases,
   parseInternalUpgradeTarget,
   readSystemUpdateFailure,
+  resolveInternalUpgradeInstallTarget,
   resolveInternalUpgradeStartTarget,
   resolveSystemUpdateChannel,
   startSystemUpdate,
@@ -3964,13 +3965,24 @@ export async function createGateway(config: GatewayConfig) {
     });
     if (!parsedTarget.ok) return c.json({ error: "Invalid request" }, 400);
 
-    const result = await startSystemUpdate({ target: parsedTarget.target });
+    let installTarget: Extract<typeof parsedTarget.target, { type: "version" }>;
+    try {
+      installTarget = await resolveInternalUpgradeInstallTarget({
+        target: parsedTarget.target,
+        platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
+      });
+    } catch (err: unknown) {
+      console.warn("[system-update] Failed to resolve requested update version:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Update is unavailable" }, 503);
+    }
+
+    const result = await startSystemUpdate({ target: installTarget });
     if (!result.ok) {
       return c.json({ error: "Update not configured" }, 503);
     }
     const targetProperty =
       parsedTarget.target.type === "channel"
-        ? { channel: parsedTarget.target.value }
+        ? { channel: parsedTarget.target.value, version: installTarget.value }
         : { version: parsedTarget.target.value };
     void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
       distinctId: ownerTelemetryDistinctId,

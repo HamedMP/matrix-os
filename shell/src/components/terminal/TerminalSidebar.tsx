@@ -46,6 +46,7 @@ import {
   type WorkspaceSessionSummary,
 } from "./TerminalSidebarItems";
 import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
+import { DesktopTerminalSidebar } from "./DesktopTerminalSidebar";
 
 const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
   height: 28,
@@ -258,7 +259,15 @@ function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: Workspac
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 16 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree/agent-status UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
-export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number } = {}) {
+export function LocalTerminalSidebar({
+  canvasZoom = 1,
+  desktopParity = false,
+  onDesktopSessionStateChange,
+}: {
+  canvasZoom?: number;
+  desktopParity?: boolean;
+  onDesktopSessionStateChange?: (state: { count: number; ready: boolean }) => void;
+} = {}) {
   const ctx = useTerminalAppContext();
   const [tab, setTab] = useState<SidebarTab>("shells");
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -759,6 +768,11 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
     ? activePaneSessionId
     : null;
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
+  const desktopSessionCount = shellsAuthoritative ? shells.length : 0;
+  const desktopSessionsReady = shellsAuthoritative || Boolean(shellsError);
+  useEffect(() => {
+    onDesktopSessionStateChange?.({ count: desktopSessionCount, ready: desktopSessionsReady });
+  }, [desktopSessionCount, desktopSessionsReady, onDesktopSessionStateChange]);
   const queueFocusAfterManagedShellDelete = (shellName: string) => {
     const shellIndex = unfilteredRenderedShells.findIndex((shell) => shell.name === shellName);
     const remainingShells = unfilteredRenderedShells.filter((shell) => shell.name !== shellName);
@@ -996,6 +1010,27 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
     />
   ) : null;
   const statusDotStyles = <style>{SHELL_STATUS_DOT_CSS}</style>;
+
+  if (desktopParity) {
+    return (
+      <>
+        {statusDotStyles}
+        <DesktopTerminalSidebar
+          sessions={unfilteredRenderedShells}
+          selectedName={activeShellName}
+          creating={creatingShell}
+          onCreate={() => void createManagedShell()}
+          onOpen={openActiveShell}
+          onDelete={(shell, anchor) => setCloseConfirmationRequest({
+            shell,
+            anchorElement: anchor,
+            returnFocusElement: anchor,
+          })}
+        />
+        {closeConfirmationOverlay}
+      </>
+    );
+  }
 
   if (!ctx.sidebarOpen && !ctx.mobile) {
     const railMenuOpen = newSessionMenuAnchor === "rail";

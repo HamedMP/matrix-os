@@ -18,9 +18,35 @@ import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { TrafficLights } from "./DesktopDockControls";
-import { useThemeStyle } from "../window/useThemeStyle";
-import { resolveTitleBarVariant, usesCaptionButtons, designTitleBarContainerStyle } from "../window/title-bar-variant";
-import { DesignCaptionButtons } from "../window/DesignCaptionButtons";
+
+export function hasActiveWindowInteraction(
+  drag: unknown | null,
+  resize: unknown | null,
+): boolean {
+  return drag !== null || resize !== null;
+}
+
+export function desktopWindowTop(y: number, topInset: number): string {
+  return `${y + topInset}px`;
+}
+
+export function desktopWindowTitleBarStyle(usesTerminalChrome: boolean): CSSProperties {
+  const centeredSpacing: CSSProperties = {
+    alignItems: "center",
+    height: 48,
+    paddingTop: 10,
+    paddingBottom: 10,
+  };
+
+  return usesTerminalChrome ? {
+    ...centeredSpacing,
+    background: "var(--terminal-drawer-bg)",
+    color: "var(--terminal-drawer-fg)",
+  } : {
+    ...centeredSpacing,
+    borderBottom: "1px solid var(--border)",
+  };
+}
 
 interface DesktopWindowProps {
   win: AppWindow;
@@ -40,6 +66,7 @@ interface DesktopWindowProps {
   onResizeMove: (event: PointerEvent) => void;
   onResizeStart: (id: string, event: PointerEvent) => void;
   onToggleFullscreen: (id: string) => void;
+  topInset?: number;
 }
 
 export function DesktopWindow({
@@ -60,19 +87,19 @@ export function DesktopWindow({
   onResizeMove,
   onResizeStart,
   onToggleFullscreen,
+  topInset = 0,
 }: DesktopWindowProps) {
   const isFullscreen = win.id === fullscreenWindowId;
   const isMinimizing = minimizingIds.has(win.id);
   const isHidden = win.minimized && !isMinimizing && !isFullscreen;
-  const terminalOwnsChrome = win.path.startsWith("__terminal__");
-  const titleBarVariant = resolveTitleBarVariant(useThemeStyle());
-  const captionButtons = usesCaptionButtons(titleBarVariant);
+  const desktopParity = topInset > 0;
+  const usesTerminalChrome = win.path.startsWith("__terminal__") && !desktopParity;
 
   let dockTargetX = 0;
   let dockTargetY = 0;
   if (isMinimizing) {
     const winCenterX = win.x + win.width / 2;
-    const winCenterY = win.y + win.height / 2;
+    const winCenterY = win.y + topInset + win.height / 2;
     if (dockPosition === "left") {
       dockTargetX = -winCenterX;
       dockTargetY = (window.innerHeight / 2) - winCenterY;
@@ -87,10 +114,11 @@ export function DesktopWindow({
 
   const windowStyle = isFullscreen ? {
     zIndex: SHELL_Z_INDEX.fullscreenWindow,
+    top: `${topInset}px`,
     transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)",
   } : {
     "--win-x": `${win.x}px`,
-    "--win-y": `${win.y}px`,
+    "--win-y": desktopWindowTop(win.y, topInset),
     "--win-w": `${win.width}px`,
     "--win-h": `${win.height}px`,
     zIndex: win.zIndex,
@@ -115,10 +143,10 @@ export function DesktopWindow({
     <Card
       data-window-id={win.id}
       className={isFullscreen
-        ? "fixed inset-0 gap-0 rounded-none p-0 overflow-hidden border-0 bg-background"
+        ? "pointer-events-auto fixed inset-0 gap-0 rounded-none border-0 bg-background p-0 overflow-hidden"
         : cn(
-            "app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl",
-            terminalOwnsChrome && "border-0",
+            "app-window pointer-events-auto absolute gap-0 overflow-hidden rounded-none bg-card p-0 shadow-2xl md:rounded-xl",
+            usesTerminalChrome ? "border-0" : "border border-border",
           )
       }
       style={windowStyle}
@@ -126,53 +154,31 @@ export function DesktopWindow({
     >
       <CardHeader
         className={cn(
-          "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
-          terminalOwnsChrome ? "border-b-0" : "border-b border-border",
+          "relative flex shrink-0 flex-row items-center gap-0 space-y-0 px-4 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing",
+          usesTerminalChrome ? "border-b-0" : "bg-card/85",
         )}
-        style={terminalOwnsChrome && !captionButtons
-          ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" }
-          : designTitleBarContainerStyle(titleBarVariant)}
+        style={desktopWindowTitleBarStyle(usesTerminalChrome)}
         onPointerDown={(e) => onDragStart(win.id, e)}
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
         onDoubleClick={(e) => {
           if (e.target instanceof Element && e.target.closest("button,[role='button'],input,a")) return;
           onToggleFullscreen(win.id);
         }}
       >
-        {captionButtons ? (
-          <>
-            <CardTitle
-              className={cn(
-                "text-xs truncate flex-1",
-                titleBarVariant === "winxp" ? "font-bold text-white" : "font-medium text-foreground/70",
-              )}
-              style={titleBarVariant === "winxp"
-                ? { fontFamily: 'Tahoma, "Segoe UI", sans-serif', textShadow: "0 1px 2px rgba(0, 0, 0, 0.5)" }
-                : undefined}
-            >
-              {win.title}
-            </CardTitle>
-            <DesignCaptionButtons
-              variant={titleBarVariant}
-              onClose={() => onCloseWindow(win.id)}
-              onMinimize={() => onAnimateMinimize(win.id)}
-              onMaximize={() => onToggleFullscreen(win.id)}
-            />
-          </>
-        ) : (
-          <>
-            <TrafficLights
-              onClose={() => onCloseWindow(win.id)}
-              onMinimize={() => onAnimateMinimize(win.id)}
-              onFullscreen={() => onToggleFullscreen(win.id)}
-            />
-            <CardTitle className="text-xs font-medium truncate flex-1 text-center">
-              {win.title}
-            </CardTitle>
-            <div className="w-[78px]" aria-hidden />
-          </>
-        )}
+        <div className="absolute left-4 z-10">
+          <TrafficLights
+            onClose={() => onCloseWindow(win.id)}
+            onMinimize={() => onAnimateMinimize(win.id)}
+            onFullscreen={() => onToggleFullscreen(win.id)}
+          />
+        </div>
+        <div className="w-[78px] shrink-0" aria-hidden />
+        <CardTitle className="flex-1 truncate text-center text-xs font-medium text-foreground">
+          {win.title}
+        </CardTitle>
+        <div className="w-[78px] shrink-0" aria-hidden />
       </CardHeader>
 
       <CardContent className="relative flex-1 p-0 min-h-0">
@@ -180,6 +186,7 @@ export function DesktopWindow({
           <TerminalApp
             launchTargetId={win.id}
             embeddedChrome
+            desktopParity={desktopParity}
             windowControls={{
               close: () => onCloseWindow(win.id),
               minimize: () => onAnimateMinimize(win.id),
@@ -230,6 +237,7 @@ export function DesktopWindow({
           onPointerDown={(e) => onResizeStart(win.id, e)}
           onPointerMove={onResizeMove}
           onPointerUp={onResizeEnd}
+          onPointerCancel={onResizeEnd}
         >
           <svg
             viewBox="0 0 16 16"

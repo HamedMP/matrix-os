@@ -1,4 +1,4 @@
-import { Minus, X, ArrowExpand01 } from "@renderer/lib/hugeicons";
+import { ArrowExpand01, Minus, X } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,
@@ -9,7 +9,7 @@ import {
 } from "react";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
-export const OS_WINDOW_GESTURE_HEIGHT = 38;
+export const OS_WINDOW_GESTURE_HEIGHT = 48;
 export const OS_WINDOW_SIDEBAR_MIN_WIDTH = 200;
 export const OS_WINDOW_SIDEBAR_WIDTH = 280;
 export type OSWindowChromePlacement = "full-width" | "sidebar";
@@ -39,28 +39,52 @@ export function OSWindowSafeView({
 }
 
 export function TrafficLights({
-  title,
   onClose,
   onMinimize,
   onMaximize,
 }: {
-  title?: string;
   onClose: () => void;
   onMinimize: () => void;
   onMaximize: () => void;
 }) {
-  const controlClass = "no-drag flex size-4 items-center justify-center rounded-[4.8px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
-  const controlStyle = {
-    background: "var(--surface-primary, #FFFEFC)",
-    border: "0.8px solid var(--border-default, #F3F2F2)",
-  };
-  const controlLabel = (action: string) => title ? `${action} ${title}` : action;
-
   return (
-    <div className="no-drag flex items-center gap-0.5">
-      <button type="button" aria-label={controlLabel("Close")} className={controlClass} style={controlStyle} onClick={onClose}><X size={11.2} strokeWidth={1.7} /></button>
-      <button type="button" aria-label={controlLabel("Minimize")} className={controlClass} style={controlStyle} onClick={onMinimize}><Minus size={11.2} strokeWidth={1.7} /></button>
-      <button type="button" aria-label={controlLabel("Maximize")} className={controlClass} style={controlStyle} onClick={onMaximize}><ArrowExpand01 size={11.2} strokeWidth={1.7} /></button>
+    <div className="group/traffic no-drag flex items-center gap-1.5">
+      <button
+        type="button"
+        aria-label="Close"
+        className="no-drag flex size-3 items-center justify-center rounded-full bg-[#ff5f57] transition-colors hover:brightness-90 focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose();
+        }}
+      >
+        <X aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
+      </button>
+      <button
+        type="button"
+        aria-label="Minimize"
+        className="no-drag flex size-3 items-center justify-center rounded-full bg-[#febc2e] transition-colors hover:brightness-90 focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          onMinimize();
+        }}
+      >
+        <Minus aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
+      </button>
+      <button
+        type="button"
+        aria-label="Maximize"
+        className="no-drag flex size-3 items-center justify-center rounded-full bg-[#28c840] transition-colors hover:brightness-90 focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          onMaximize();
+        }}
+      >
+        <ArrowExpand01 aria-hidden="true" size={8} strokeWidth={1.8} className="text-black/0 transition-colors group-hover/traffic:text-black/60 group-focus-within/traffic:text-black/60" />
+      </button>
     </div>
   );
 }
@@ -117,7 +141,7 @@ export function TopBar({
         ) : null}
       </div>
       <div data-os-window-traffic-lights className="absolute inset-y-0 left-0 z-30 flex items-center px-4">
-        <TrafficLights title={title} onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
+        <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
       </div>
     </div>
   );
