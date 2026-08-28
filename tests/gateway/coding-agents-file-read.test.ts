@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -301,7 +301,7 @@ describe("coding agent file read route", () => {
       expect(body.directory).toMatchObject({ path: "src", kind: "directory" });
       expect(body.entries).toMatchObject({
         hasMore: true,
-        nextCursor: expect.stringMatching(/^filecur_[0-9a-f]+$/),
+        nextCursor: expect.stringMatching(/^filecur_[0-9a-f]+_[0-9a-f]+$/),
         limit: 2,
       });
       expect(body.entries.items).toHaveLength(2);
@@ -348,17 +348,70 @@ describe("coding agent file read route", () => {
         `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=changing&cursor=${first.entries.nextCursor}&limit=2`,
       );
       const second = await secondResponse.json();
-      const listed = [...first.entries.items, ...second.entries.items]
+      const thirdResponse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=changing&cursor=${second.entries.nextCursor}&limit=2`,
+      );
+      const third = await thirdResponse.json();
+      const listed = [...first.entries.items, ...second.entries.items, ...third.entries.items]
         .map((entry: { path: string }) => entry.path)
         .filter((path: string) => path !== removedPath)
+        .filter((path: string, index: number, items: string[]) => items.indexOf(path) === index)
         .sort();
 
       expect(firstResponse.status).toBe(200);
       expect(secondResponse.status).toBe(200);
+      expect(thirdResponse.status).toBe(200);
       expect(listed).toEqual(
         ["changing/a.ts", "changing/b.ts", "changing/c.ts", "changing/d.ts"]
           .filter((path) => path !== removedPath),
       );
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("restarts browse pagination when a file is inserted before the cursor", async () => {
+    const harness = await createRouteHarness({ ownerIds: [testPrincipal.userId] });
+    try {
+      const directory = join(harness.worktreeRoot, "inserted-before-cursor");
+      await mkdir(directory, { recursive: true });
+      for (const name of ["a.ts", "c.ts", "d.ts"]) {
+        await writeFile(join(directory, name), `export const name = "${name}";\n`);
+      }
+
+      const firstResponse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=inserted-before-cursor&limit=2`,
+      );
+      const first = await firstResponse.json();
+      await writeFile(join(directory, "b.ts"), "export const name = \"b.ts\";\n");
+      const future = new Date(Date.now() + 10_000);
+      await utimes(directory, future, future);
+
+      const secondResponse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=inserted-before-cursor&cursor=${first.entries.nextCursor}&limit=2`,
+      );
+      const second = await secondResponse.json();
+      expect(second.entries.items.map((entry: { path: string }) => entry.path)).toEqual([
+        "inserted-before-cursor/a.ts",
+        "inserted-before-cursor/b.ts",
+      ]);
+      expect(second.entries.nextCursor).toEqual(expect.stringMatching(/^filecur_[0-9a-f]+_[0-9a-f]+$/));
+      const thirdResponse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=inserted-before-cursor&cursor=${second.entries.nextCursor}&limit=2`,
+      );
+      const third = await thirdResponse.json();
+      const listed = [...first.entries.items, ...second.entries.items, ...third.entries.items]
+        .map((entry: { path: string }) => entry.path);
+
+      expect(firstResponse.status).toBe(200);
+      expect(secondResponse.status).toBe(200);
+      expect(thirdResponse.status).toBe(200);
+      expect([...new Set(listed)].sort()).toEqual([
+        "inserted-before-cursor/a.ts",
+        "inserted-before-cursor/b.ts",
+        "inserted-before-cursor/c.ts",
+        "inserted-before-cursor/d.ts",
+      ]);
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }
@@ -399,9 +452,10 @@ describe("coding agent file read route", () => {
       const directory = join(harness.worktreeRoot, "unicode-cursor");
       const filename = "é.ts";
       const cursorName = "e\u0301.ts";
-      const cursor = `filecur_${Buffer.from(cursorName, "utf8").toString("hex")}`;
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, filename), "export const unicodeName = true;\n");
+      const directoryStats = await stat(directory, { bigint: true });
+      const cursor = `filecur_${directoryStats.mtimeNs.toString(16)}_${Buffer.from(cursorName, "utf8").toString("hex")}`;
 
       const response = await harness.app.request(
         `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=unicode-cursor&cursor=${cursor}&limit=1`,
