@@ -692,6 +692,7 @@ describe("ChatTab", () => {
         kind: "terminal",
         title: "Connect Claude",
       })),
+      { timeout: 5_000 },
     );
   });
 

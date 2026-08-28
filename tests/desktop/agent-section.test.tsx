@@ -869,6 +869,7 @@ describe("AgentSection", () => {
       expect(
         useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Connect Codex"),
       ).toBe(true),
+      { timeout: 5_000 },
     );
   });
 

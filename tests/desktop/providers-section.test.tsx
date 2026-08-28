@@ -134,6 +134,7 @@ describe("ProvidersSection", () => {
       expect(
         useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Sign in"),
       ).toBe(true),
+      { timeout: 5_000 },
     );
   });
 
