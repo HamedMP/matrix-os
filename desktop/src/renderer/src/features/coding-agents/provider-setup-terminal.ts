@@ -7,6 +7,7 @@ import type {
 import type { ApiClient } from "../../lib/api";
 import { useTabs } from "../../stores/tabs";
 import { useShellSessions } from "../../stores/shell-sessions";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { providerSupportsSetupAction } from "./provider-readiness";
 
 const MAX_PROVIDER_SETUP_ACTIONS = 10;
@@ -91,12 +92,14 @@ export async function openProviderSetupTerminal(
   logPrefix = "provider-setup",
 ): Promise<boolean> {
   try {
+    const runtimeGeneration = captureRuntimeGeneration();
     const requestedSessionName = freshSetupSessionName(setup);
     const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
       name: requestedSessionName,
       cwd: "projects",
       cmd: setup.command,
     });
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
     const sessionName = typeof response.name === "string" && SESSION_NAME_PATTERN.test(response.name)
       ? response.name
       : requestedSessionName;
