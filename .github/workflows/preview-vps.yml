@@ -125,6 +125,10 @@ jobs:
             exit 1
           fi
           if [ "$action" = "deploy_existing" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "Pinned Preview deployments must run from the trusted main workflow." >&2
+              exit 1
+            fi
             if ! printf '%s' "$REQUESTED_VERSION" |
               grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$" ||
               [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then

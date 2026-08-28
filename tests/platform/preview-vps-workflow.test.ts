@@ -61,6 +61,8 @@ describe('Preview VPS provisioning workflow', () => {
         with: { ref: 'main' },
       }),
     ]);
+    expect(workflow.jobs.gate.steps.find((step: { name?: string }) => step.name === 'Decide action').run)
+      .toContain('[ "$GITHUB_REF" != "refs/heads/main" ]');
     expect(deploy.steps.find((step: { name?: string }) => step.name === 'Provision or resume preview VPS').run)
       .toContain('PREVIEW_MACHINE_ID="$accepted_machine_id" ./scripts/wait-preview-provisioning.sh');
   });
