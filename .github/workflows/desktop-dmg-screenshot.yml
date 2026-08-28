@@ -51,7 +51,6 @@ jobs:
               delay 0.25
             end repeat
             if (count of Finder windows) = 0 then error "Finder did not open the DMG window"
-            set bounds of front Finder window to {80, 80, 900, 680}
           end tell
           APPLESCRIPT
           sleep 5
