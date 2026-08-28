@@ -131,6 +131,26 @@ describe("top-level app tab shortcuts", () => {
     expect(handleNewTopLevelTabShortcut({ preventDefault: vi.fn() })).toBe(false);
     expect(useTabs.getState().tabs).toHaveLength(1);
   });
+
+  it("evicts the matching desktop surface when the top-level tab limit is reached", () => {
+    const filesId = useTabs.getState().openTab({
+      kind: "files",
+      title: "Files",
+      slug: "files",
+      closable: false,
+    });
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
+
+    for (let index = 0; index < 30; index += 1) {
+      expect(handleNewTopLevelTabShortcut({ preventDefault: vi.fn() })).toBe(true);
+    }
+
+    const retainedTabIds = new Set(useTabs.getState().tabs.map((tab) => tab.id));
+    const surfaceIds = Object.keys(useDesktopSurfaces.getState().surfaces);
+    expect(useTabs.getState().tabs).toHaveLength(24);
+    expect(surfaceIds).toHaveLength(24);
+    expect(surfaceIds.every((tabId) => retainedTabIds.has(tabId))).toBe(true);
+  });
 });
 
 describe("handleNewContextShortcut", () => {

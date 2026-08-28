@@ -132,6 +132,10 @@ interface TabsState {
     spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
     detailKinds: readonly TabKind[],
   ): string;
+  updateChatRoute(
+    id: string,
+    route: { chatId?: string; chatView: "index" | "draft" | "conversation"; title: string },
+  ): void;
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
   focusTab(id: string): void;
@@ -258,6 +262,17 @@ export const useTabs = create<TabsState>()((set, get) => ({
     });
     return id;
   },
+
+  updateChatRoute: (id, route) => set((state) => ({
+    tabs: state.tabs.map((tab) => tab.id === id && tab.kind === "chat"
+      ? {
+          ...tab,
+          title: route.title,
+          chatId: route.chatId,
+          chatView: route.chatView,
+        }
+      : tab),
+  })),
 
   closeTab: (id) =>
     set((state) => {

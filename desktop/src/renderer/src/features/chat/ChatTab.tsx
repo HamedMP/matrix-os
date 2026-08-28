@@ -351,10 +351,12 @@ function LegacyChatTab() {
 
 export default function ChatTab({
   active = true,
+  tabId,
   initialChatId,
   initialView,
 }: {
   active?: boolean;
+  tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
 }) {
@@ -363,6 +365,7 @@ export default function ChatTab({
     <CanonicalChatRoute
       api={api}
       projectId={null}
+      tabId={tabId}
       initialChatId={initialChatId}
       initialView={initialView}
       active={active}

@@ -65,7 +65,14 @@ export function TabPane({
     case "home":
       return <HomeTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "chat":
-      return <ChatTab active={active} initialChatId={tab.chatId} initialView={tab.chatView} />;
+      return (
+        <ChatTab
+          tabId={tab.id}
+          active={active}
+          initialChatId={tab.chatId}
+          initialView={tab.chatView}
+        />
+      );
     case "terminals":
       return <TerminalsTab active={active} visible={visible} />;
     case "files":

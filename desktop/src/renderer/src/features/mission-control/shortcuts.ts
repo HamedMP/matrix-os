@@ -9,6 +9,7 @@ import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
+import { openTopLevelTabInstance } from "../../stores/top-level-tabs";
 import {
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
@@ -136,16 +137,6 @@ function topLevelTabSpec(activeTab: Tab) {
   return null;
 }
 
-function openTopLevelTab(
-  activeTab: Tab,
-  spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
-): string {
-  const tabs = useTabs.getState();
-  const newTabId = tabs.openTabInstance(spec);
-  useDesktopSurfaces.getState().openSiblingTab(activeTab.id, newTabId);
-  return newTabId;
-}
-
 export function handleNewTopLevelTabShortcut(
   event: Pick<KeyboardEvent, "preventDefault">,
 ): boolean {
@@ -154,7 +145,7 @@ export function handleNewTopLevelTabShortcut(
   if (!activeTab) return false;
   const spec = topLevelTabSpec(activeTab);
   if (!spec) return false;
-  openTopLevelTab(activeTab, spec);
+  openTopLevelTabInstance(activeTab.id, spec);
   return true;
 }
 
@@ -174,7 +165,7 @@ export function handleNewContextShortcut(
     useUi.getState().setCreateTaskOpen(true);
     return;
   }
-  openTopLevelTab(activeTab, {
+  openTopLevelTabInstance(activeTab.id, {
     kind: "chat",
     title: "Chat",
     chatView: "draft",

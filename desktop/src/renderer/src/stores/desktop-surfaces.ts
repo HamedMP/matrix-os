@@ -115,7 +115,7 @@ interface DesktopSurfacesState {
   focusSurface(tabId: string): void;
   minimizeSurface(tabId: string): void;
   maximizeToTab(tabId: string): void;
-  openSiblingTab(sourceTabId: string, newTabId: string): void;
+  openSiblingTab(sourceTabId: string, newTabId: string, retainedTabIds: readonly string[]): void;
   restoreSurface(tabId: string): void;
   restoreAsWindow(tabId: string): void;
   closeSurface(tabId: string): void;
@@ -321,11 +321,15 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     workspaceView: "tabs",
   })),
 
-  openSiblingTab: (sourceTabId, newTabId) => set((state) => {
-    const source = state.surfaces[sourceTabId];
+  openSiblingTab: (sourceTabId, newTabId, retainedTabIds) => set((state) => {
+    const retained = new Set(retainedTabIds);
+    const prunedSurfaces = Object.fromEntries(
+      Object.entries(state.surfaces).filter(([tabId]) => retained.has(tabId)),
+    );
+    const source = prunedSurfaces[sourceTabId];
     if (!source) return state;
     const surfaces: Record<string, DesktopSurface> = {
-      ...state.surfaces,
+      ...prunedSurfaces,
       [sourceTabId]: {
         ...source,
         mode: "tab",
