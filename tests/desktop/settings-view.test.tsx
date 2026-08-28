@@ -7,7 +7,6 @@ import SettingsView from "../../desktop/src/renderer/src/features/settings/Setti
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useProjectLifecycle } from "../../desktop/src/renderer/src/stores/project-lifecycle";
-import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
 describe("SettingsView", () => {
   beforeEach(() => {
@@ -45,6 +44,8 @@ describe("SettingsView", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Computers" })).not.toBeNull());
     expect(screen.getByRole("heading", { name: "Account" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Channels" })).toBeNull();
   });
 
   it("opens the requested section and consumes the deep-link request", async () => {
@@ -70,6 +71,15 @@ describe("SettingsView", () => {
     expect(providers.className).not.toContain("bg-[var(--bg-selected)]");
   });
 
+  it("can render its section content without owning the sidebar navigation", async () => {
+    const { default: SettingsView } = await import("../../desktop/src/renderer/src/features/settings/SettingsView");
+
+    render(<SettingsView section="account" onSectionChange={() => {}} />);
+
+    expect(screen.queryByRole("button", { name: "Account" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Account" })).not.toBeNull();
+  });
+
   it("ignores unknown requested sections", async () => {
     useUi.getState().requestSettingsSection("not-a-section");
 
@@ -79,35 +89,4 @@ describe("SettingsView", () => {
     expect(screen.getByRole("heading", { name: "Account" })).not.toBeNull();
   });
 
-  it("manages archived projects from the Machine settings group", async () => {
-    const post = vi.fn(async () => ({ ok: true, action: "restore" }));
-    const api = {
-      baseUrl: "https://x.test",
-      get: vi.fn(async (path: string) => path.includes("visibility=archived")
-        ? { projects: [{
-            slug: "customer-app",
-            name: "Customer app",
-            kind: "folder",
-            archivedAt: "2026-08-06T13:00:00.000Z",
-          }] }
-        : { projects: [] }),
-      post,
-      patch: vi.fn(),
-      put: vi.fn(),
-      delete: vi.fn(),
-      getText: vi.fn(),
-      getBlob: vi.fn(),
-      putText: vi.fn(),
-    } as ApiClient;
-    useConnection.setState({ api });
-
-    render(<SettingsView />);
-    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
-
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Archived projects" })).not.toBeNull());
-    expect(screen.getByText("Customer app")).not.toBeNull();
-    expect(screen.getByText(/Connected folder/)).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Restore Customer app" }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/projects/customer-app/actions", { type: "restore" }));
-  });
 });

@@ -9,11 +9,19 @@ export const palette = {
   border: "#DCD9CC",
   mutedFg: "#5C5A4F",
   subtle: "#7A7768",
+  brandInk: "#1F2D1D",
+  brandTeal: "#0E3522",
+  brandGold: "#F1C379",
+  brandCoral: "#D06E53",
+  brandMuted: "#7A786B",
 } as const;
 
 export const fonts = {
   display: "var(--font-serif-display), 'Instrument Serif', Georgia, serif",
   sans: "var(--font-instrument), 'Instrument Sans', system-ui, sans-serif",
+  heading: "var(--font-bricolage), 'Bricolage Grotesque', sans-serif",
+  ui: "var(--font-geist-sans), Geist, system-ui, sans-serif",
+  machine: "var(--font-geist-mono), 'Geist Mono', monospace",
 } as const;
 
 /** Desktop and device-onboarding palette from the current Matrix product brand. */

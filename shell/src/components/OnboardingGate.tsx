@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { BillingGate } from "@/components/BillingGate";
 import { BootSequence } from "@/components/BootSequence";
+import { MatrixLoadingScreen } from "@/components/MatrixLoadingScreen";
 import { SignupBillingHandoff } from "@/components/auth/SignupBillingHandoff";
 import { normalizeDeviceReturnPath } from "@/lib/device-onboarding";
 import { navigateForOnboarding } from "@/lib/onboarding-navigation";
@@ -85,11 +86,7 @@ function OnboardingGateFallback({
     return <SignupBillingHandoff startedAt={handoffStartedAt} />;
   }
 
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
-      <output className="text-sm">Loading your Matrix computer…</output>
-    </main>
-  );
+  return <MatrixLoadingScreen />;
 }
 
 export function OnboardingGate({

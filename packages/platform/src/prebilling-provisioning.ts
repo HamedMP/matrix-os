@@ -15,6 +15,7 @@ import {
   createPrebillingIntent,
   getPrebillingIntent,
   getPrebillingIntentByCheckoutAttempt,
+  listPaidPrebillingIntentsNeedingPreparation,
   markPrebillingPreparationFailed,
   resetPrebillingPreparationForRetry,
 } from './prebilling-provisioning-store.js';
@@ -92,6 +93,17 @@ export function createPrebillingProvisioningCoordinator(options: {
       throw err;
     }
   };
+  const resumePreparation: PrebillingCheckoutCoordinator['resumePreparation'] = async (input) => {
+    const intent = await getPrebillingIntent(options.db, input.intentId);
+    if (!intent || intent.clerkUserId !== input.clerkUserId) return false;
+    if (intent.state === 'authorized' || intent.state === 'ready_waiting_for_billing') return true;
+    if (!intent.stripeSessionId || !intent.stripeSessionExpiresAt) return false;
+    return startPreparation({
+      intentId: intent.id,
+      stripeSessionId: intent.stripeSessionId,
+      stripeSessionExpiresAt: intent.stripeSessionExpiresAt,
+    });
+  };
   return {
     async createIntent(input) {
       if (!prebillingRolloutIncludesUser(options.config, input.clerkUserId)) return undefined;
@@ -124,6 +136,9 @@ export function createPrebillingProvisioningCoordinator(options: {
     async retryPreparation(input) {
       const intent = await getPrebillingIntentByCheckoutAttempt(options.db, input.checkoutAttemptId);
       if (!intent || intent.clerkUserId !== input.clerkUserId) return false;
+      if (intent.paymentConfirmedAt !== null) {
+        return resumePreparation({ intentId: intent.id, clerkUserId: input.clerkUserId });
+      }
       if (intent.state === 'preparing' || intent.state === 'ready_waiting_for_billing') return true;
       if (!intent.stripeSessionId || !intent.stripeSessionExpiresAt) return false;
       const reset = await resetPrebillingPreparationForRetry(options.db, {
@@ -141,6 +156,29 @@ export function createPrebillingProvisioningCoordinator(options: {
         stripeSessionId: intent.stripeSessionId,
         stripeSessionExpiresAt: intent.stripeSessionExpiresAt,
       });
+    },
+
+    resumePreparation,
+
+    async reconcilePreparations() {
+      const intents = await listPaidPrebillingIntentsNeedingPreparation(
+        options.db,
+        now().toISOString(),
+      );
+      let resumed = 0;
+      for (const intent of intents) {
+        try {
+          if (await resumePreparation({ intentId: intent.id, clerkUserId: intent.clerkUserId })) {
+            resumed += 1;
+          }
+        } catch (err: unknown) {
+          console.error(
+            `[prebilling] paid preparation reconciliation failed intent=${intent.id}`,
+            err instanceof Error ? err.name : typeof err,
+          );
+        }
+      }
+      return { checked: intents.length, resumed };
     },
 
     authorizeSubscription(db, input) {

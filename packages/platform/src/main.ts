@@ -519,25 +519,6 @@ export function createApp(deps: {
     getGatewayUrlForHandle,
   }));
 
-  app.route('/', createAppSessionRoutes({
-    db,
-    clerkAuth,
-    customerVpsService: deps.customerVpsService,
-    matrixProvisioner,
-    appEnv,
-    platformJwtSecret,
-    legacyContainerRoutingEnabled,
-    logRouteError: logPlatformRouteError,
-    applyNoStoreHeaders,
-    jsonCustomerVpsError,
-    stripeBillingEntitlementsEnabled,
-    resolveEffectiveBillingEntitlement,
-    selectProvisionIdentityForClerkUser,
-    ensureProvisionedPlatformUser,
-    resolveAppDomainIdentity,
-    getGatewayUrlForHandle,
-  }));
-
   const prebilling = deps.customerVpsService
     ? createPrebillingProvisioningCoordinator({
         db,
@@ -553,6 +534,34 @@ export function createApp(deps: {
         }),
       })
     : undefined;
+  if (prebilling) {
+    deps.customerVpsService?.setPrebillingFallbackReconciler?.(
+      () => prebilling.reconcilePreparations(),
+    );
+  }
+
+  app.route('/', createAppSessionRoutes({
+    db,
+    clerkAuth,
+    customerVpsService: deps.customerVpsService,
+    resumePrebillingPreparation: prebilling
+      ? (input) => prebilling.resumePreparation(input)
+      : undefined,
+    matrixProvisioner,
+    appEnv,
+    platformJwtSecret,
+    legacyContainerRoutingEnabled,
+    logRouteError: logPlatformRouteError,
+    applyNoStoreHeaders,
+    jsonCustomerVpsError,
+    stripeBillingEntitlementsEnabled,
+    resolveEffectiveBillingEntitlement,
+    selectProvisionIdentityForClerkUser,
+    ensureProvisionedPlatformUser,
+    resolveAppDomainIdentity,
+    getGatewayUrlForHandle,
+  }));
+
   app.route('/billing', createBillingRoutes({
     db,
     stripe: appEnv.STRIPE_SECRET_KEY
@@ -616,6 +625,9 @@ export function createApp(deps: {
       syncJwtSecret: platformJwtSecret ?? undefined,
     }),
     provisionRuntime: deps.customerVpsService ? provisionRuntimeForJourney : undefined,
+    resumePrebillingPreparation: prebilling
+      ? (input) => prebilling.resumePreparation(input)
+      : undefined,
     verifyInternalToken: platformSecret
       ? (handle, token) => timingSafeTokenEquals(token, buildPlatformVerificationToken(handle, platformSecret))
       : undefined,

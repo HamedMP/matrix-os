@@ -14,6 +14,10 @@ import {
 } from './db.js';
 import { getRuntimeAccessDecision, type BillingEntitlement } from './billing.js';
 import { resolveEffectiveBillingEntitlementForSlot } from './billing-entitlement-resolver.js';
+import {
+  getActivePrebillingIntent,
+  type PrebillingProvisioningIntent,
+} from './prebilling-provisioning-store.js';
 
 export const DEFAULT_SETTLING_WINDOW_MS = 10 * 60 * 1000;
 
@@ -61,6 +65,8 @@ export interface JourneyDerivationInputs {
   checkoutAttempt: BillingCheckoutAttemptRecord | null;
   /** The single non-deleted machine for the user/slot, any status, if any. */
   liveMachine: UserMachineRecord | null;
+  /** The immutable checkout-bound provisioning intent, while it is unfinished. */
+  prebillingIntent: PrebillingProvisioningIntent | null;
   firstRun: OnboardingFirstRunRecord | null;
   now: Date;
   settlingWindowMs: number;
@@ -108,7 +114,17 @@ function deriveProvisioningStage(machine: UserMachineRecord): ProvisioningStage 
  * No I/O — all inputs are pre-fetched so this is exhaustively unit-testable.
  */
 export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyState {
-  const { entitlement, checkoutAttempt, liveMachine, firstRun, now, settlingWindowMs, maxProvisionAttempts, appOrigin } = inputs;
+  const {
+    entitlement,
+    checkoutAttempt,
+    liveMachine,
+    prebillingIntent,
+    firstRun,
+    now,
+    settlingWindowMs,
+    maxProvisionAttempts,
+    appOrigin,
+  } = inputs;
   const access = getRuntimeAccessDecision(entitlement, now);
 
   if (!access.runtimeProxyAllowed) {
@@ -140,6 +156,22 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
 
   // Entitled branch.
   if (!liveMachine) {
+    if (prebillingIntent) {
+      if (prebillingIntent.state === 'preparation_failed') {
+        return {
+          phase: 'provisioning_failed',
+          detail: 'Setting up your computer ran into a problem.',
+          nextAction: { kind: 'retry_provision' },
+          failure: { retryable: true, attempt: 1 },
+        };
+      }
+      return {
+        phase: 'provisioning',
+        detail: 'Finishing your Matrix computer…',
+        nextAction: { kind: 'wait' },
+        progress: { stage: 'creating_server', startedAt: prebillingIntent.createdAt },
+      };
+    }
     return {
       phase: 'install_choices_required',
       detail: 'Choose default installs before building your Matrix computer.',
@@ -220,10 +252,11 @@ export interface LoadJourneyDeps {
  */
 export async function loadJourney(clerkUserId: string, deps: LoadJourneyDeps): Promise<JourneyState> {
   const now = (deps.now ?? (() => new Date()))();
-  const [entitlement, checkoutAttempt, liveMachine, firstRun] = await Promise.all([
+  const [entitlement, checkoutAttempt, liveMachine, prebillingIntent, firstRun] = await Promise.all([
     resolveEffectiveBillingEntitlementForSlot(deps.db, clerkUserId, now, deps.runtimeSlot, deps.env),
     getSettlingCheckoutAttempt(deps.db, clerkUserId, deps.runtimeSlot),
     getActiveUserMachineByClerkId(deps.db, clerkUserId, deps.runtimeSlot),
+    getActivePrebillingIntent(deps.db, clerkUserId, deps.runtimeSlot),
     getOnboardingFirstRun(deps.db, clerkUserId),
   ]);
 
@@ -231,6 +264,7 @@ export async function loadJourney(clerkUserId: string, deps: LoadJourneyDeps): P
     entitlement,
     checkoutAttempt: checkoutAttempt ?? null,
     liveMachine: liveMachine ?? null,
+    prebillingIntent: prebillingIntent ?? null,
     firstRun: firstRun ?? null,
     now,
     settlingWindowMs: deps.settlingWindowMs ?? DEFAULT_SETTLING_WINDOW_MS,

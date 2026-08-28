@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
@@ -345,6 +345,36 @@ describe("BillingSection", () => {
         }),
       ),
     );
+  });
+
+  it("opens secure checkout while computer preparation continues in the background", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    let resolveCheckout!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout") {
+        return await new Promise<Response>((resolve) => { resolveCheckout = resolve; });
+      }
+      return new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    const onCheckoutNavigate = vi.fn();
+    render(<BillingSection mode="provisioning" onCheckoutNavigate={onCheckoutNavigate} />);
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    expect(await screen.findByRole("button", { name: "Opening secure checkout" })).toBeTruthy();
+    await act(async () => {
+      resolveCheckout(new Response(JSON.stringify({ url: "https://checkout.stripe.test/session" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    });
+    expect(onCheckoutNavigate).toHaveBeenCalledWith("https://checkout.stripe.test/session");
   });
 
   it("closes only the picker on Escape without dismissing the Settings panel", async () => {

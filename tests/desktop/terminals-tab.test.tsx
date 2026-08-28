@@ -10,6 +10,7 @@ import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance";
+import { useTerminalAppearance } from "../../desktop/src/renderer/src/stores/terminal-appearance";
 
 const terminalMounts = vi.hoisted(() => new Map<string, number>());
 
@@ -51,6 +52,10 @@ function renderTab(active = true) {
 describe("TerminalsTab", () => {
   beforeEach(() => {
     terminalMounts.clear();
+    window.operator = {
+      invoke: vi.fn(async () => ({ ok: true })),
+      on: vi.fn(() => () => undefined),
+    };
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -84,6 +89,11 @@ describe("TerminalsTab", () => {
       mode: "dark",
       hydrated: true,
     }, true);
+    useTerminalAppearance.setState({
+      ...useTerminalAppearance.getInitialState(),
+      appThemeId: "matrix-dark",
+      hydrated: true,
+    }, true);
   });
 
   afterEach(() => {
@@ -100,6 +110,30 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("button", { name: "Search terminal sessions" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New shell" })).toBeNull();
     expect(document.querySelector("[data-terminal-overview] h1")).toBeNull();
+  });
+
+  it("changes native Terminal app chrome without changing the inner shell theme", async () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active" }],
+      loading: false,
+      error: null,
+    });
+
+    renderTab();
+
+    const terminalApp = screen.getByTestId("desktop-terminal-app");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#15180F");
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-theme-mode")).toBe("dark");
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Theme" }), { button: 0, ctrlKey: false });
+    const lightTheme = (await screen.findByText("Warm paper")).closest<HTMLElement>("[role='menuitemradio']");
+    expect(lightTheme).not.toBeNull();
+    fireEvent.click(lightTheme!);
+
+    await waitFor(() => expect(useTerminalAppearance.getState().appThemeId).toBe("light"));
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#E9E9D8");
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-theme-mode")).toBe("dark");
+    expect(useAppearance.getState().mode).toBe("dark");
   });
 
   it("opens the most recently active session instead of showing an unselected overview", async () => {
@@ -152,7 +186,7 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
   });
 
-  it("uses the Figma session header without a theme switcher", () => {
+  it("uses the compact session header while keeping the app theme control in the sidebar", () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active", createdAt: "2026-08-26T09:41:00.000Z" }],
     });
@@ -165,8 +199,9 @@ describe("TerminalsTab", () => {
     expect(screen.getByText(/Started at .*main computer/).className).toContain("text-xs");
     const active = screen.getByText("Active");
     expect(active.className).toContain("h-5");
-    expect((active as HTMLElement).style.background).toBe("var(--surface-success, #EEF7F2)");
+    expect((active as HTMLElement).style.background).toBe("var(--terminal-chrome-badge-bg)");
     expect(screen.queryByRole("group", { name: "Terminal theme" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Theme" })).toBeTruthy();
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-theme-mode"))
       .toBe("dark");
   });
