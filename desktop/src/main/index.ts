@@ -306,11 +306,6 @@ if (!gotLock) {
         },
         getUpdateSnapshot: () => updater.snapshot(),
         installUpdate: () => updater.install(),
-        toggleWindowMaximize: () => {
-          if (!mainWindow || mainWindow.isDestroyed()) return;
-          if (mainWindow.isMaximized()) mainWindow.unmaximize();
-          else mainWindow.maximize();
-        },
         getWhatsNew: async () => {
           const stored = await store.get("desktopUpdateRelease");
           if (!stored || stored.version !== app.getVersion()) {

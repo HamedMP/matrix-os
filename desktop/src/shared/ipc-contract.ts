@@ -286,7 +286,6 @@ export const INVOKE_CHANNELS = {
     request: ZoomFactorResultSchema,
     response: ZoomFactorResultSchema,
   },
-  "window:toggle-maximize": { request: Empty, response: Ok },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),
     response: z.object({ value: z.unknown() }).strict(),

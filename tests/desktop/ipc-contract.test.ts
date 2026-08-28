@@ -56,7 +56,6 @@ describe("IPC contract", () => {
       "update:acknowledge-whats-new",
       "app:get-zoom",
       "app:set-zoom",
-      "window:toggle-maximize",
     ];
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();

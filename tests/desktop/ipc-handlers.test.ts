@@ -40,7 +40,6 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     checkUpdate: vi.fn(async () => ({ status: "disabled" })),
     getUpdateSnapshot: vi.fn(() => ({ status: "disabled" })),
     installUpdate: vi.fn(() => false),
-    toggleWindowMaximize: vi.fn(),
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
     acknowledgeWhatsNew: vi.fn(async () => undefined),
     fetchRuntimeSummary: vi.fn(),
@@ -1145,13 +1144,6 @@ describe("registerIpcHandlers", () => {
 
     sender.getZoomFactor.mockReturnValue(5);
     await expect(harness.invoke("app:get-zoom", {}, { sender })).resolves.toEqual({ factor: 2 });
-  });
-
-  it("toggles the native window maximize state", async () => {
-    const harness = makeHarness();
-
-    await expect(harness.invoke("window:toggle-maximize")).resolves.toEqual({ ok: true });
-    expect(harness.ctx.toggleWindowMaximize).toHaveBeenCalledOnce();
   });
 
   it("degrades zoom channels to the default when the event has no usable sender", async () => {
