@@ -32,13 +32,15 @@ cover one slice:
 > Known gap: combining all four into one browser-reachable environment is not
 > wired yet. The GitHub `staging` deployment lane is now isolated on the
 > dedicated `matrix-platform-staging` Cloud Run service with the staging
-> database, preview runtime identity, and Stripe test-mode secrets, but it is a
-> zero-traffic control-plane smoke target rather than a public end-to-end host.
+> database, preview runtime identity, and Stripe test-mode secrets. After the
+> exact tagged revision passes image and health checks, that revision receives
+> 100% of the dedicated staging service traffic. It is still not a complete
+> public end-to-end host because the disposable-VPS hand-off is separate.
 > `preview-vps` still provisions against the **production** platform. Until a
 > reviewed staging route and disposable-VPS hand-off exist, use the split below.
 
-To deploy and smoke the isolated staging control plane from an exact branch or
-SHA without promoting traffic:
+To deploy, smoke, and promote the isolated staging control plane from an exact
+branch or SHA (traffic changes only inside `matrix-platform-staging`):
 
 ```bash
 gh workflow run preview-platform.yml --ref <branch-or-sha> \

@@ -380,6 +380,7 @@ describe('CI workflows', () => {
     expect(isolated).toContain('traffic_flags+=(--no-traffic)');
     expect(isolated).toContain('"${traffic_flags[@]}"');
     expect(isolated).toContain('--no-traffic');
+    expect(isolated).toContain('--to-revisions "${revision}=100"');
     expect(isolated).toContain('${REVISION_TAG}');
   });
 

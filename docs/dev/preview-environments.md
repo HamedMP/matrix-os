@@ -150,8 +150,9 @@ For a durable GitHub `staging` deployment, manually dispatch the same isolated
 lane with `deployment_environment=staging`. That target is hard-gated to the
 dedicated `matrix-platform-staging` Cloud Run service, the preview runtime
 service account, the staging database, and Stripe test-mode secrets. It deploys
-and smokes an exact-image, zero-traffic tagged revision; it never aliases the
-production service or its runtime identity:
+and smokes an exact-image tagged revision, then promotes that verified revision
+to 100% of the dedicated staging service traffic. It never aliases the
+production service, traffic, or runtime identity:
 
 ```bash
 gh workflow run preview-platform.yml --ref <branch-or-sha> \

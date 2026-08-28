@@ -192,7 +192,7 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy zero-traffic tagged revision to preview service
+      - name: Deploy isolated tagged revision
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
@@ -207,8 +207,7 @@ jobs:
           deploy_preview() {
             local api_origin="$1"
             local traffic_flags=()
-            if gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
-              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" >/dev/null 2>&1; then
+            if [ "$service_exists" = true ]; then
               traffic_flags+=(--no-traffic)
             fi
             gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" \
@@ -225,12 +224,25 @@ jobs:
               --quiet
           }
 
-          service_base_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+          service_lookup_error="$(mktemp)"
+          trap 'rm -f "$service_lookup_error"' EXIT
+          service_base_url=""
+          service_exists=false
+          if service_base_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-            --format='value(status.url)' 2>/dev/null || true)"
-          BOOTSTRAP_API_ORIGIN="https://preview-bootstrap.invalid"
-          if [ -z "$service_base_url" ]; then
+            --format='value(status.url)' 2>"$service_lookup_error")"; then
+            service_exists=true
+          elif grep -Fq "could not be found" "$service_lookup_error" \
+            || grep -Fq "NOT_FOUND" "$service_lookup_error"; then
+            service_exists=false
+          else
+            cat "$service_lookup_error" >&2
+            exit 1
+          fi
+          BOOTSTRAP_API_ORIGIN="$PREVIEW_PUBLIC_URL"
+          if [ "$service_exists" = false ]; then
             deploy_preview "$BOOTSTRAP_API_ORIGIN"
+            service_exists=true
             service_base_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
               --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
               --format='value(status.url)')"
@@ -275,6 +287,20 @@ jobs:
           fi
           curl --fail --silent --show-error --retry 5 --retry-all-errors \
             --connect-timeout 5 --max-time 10 "${PREVIEW_API_ORIGIN}/health" > /dev/null
+          if [ "$DEPLOYMENT_ENVIRONMENT" = "staging" ]; then
+            gcloud run services update-traffic "$CLOUD_RUN_PREVIEW_SERVICE" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+              --to-revisions "${revision}=100" --quiet
+            promoted_revision="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json \
+              | jq -r '[(.status.traffic // [])[] | select((.percent // 0) == 100) | .revisionName] | first // ""')"
+            if [ "$promoted_revision" != "$revision" ]; then
+              echo "Staging default traffic does not point to the verified revision." >&2
+              exit 1
+            fi
+            curl --fail --silent --show-error --retry 5 --retry-all-errors \
+              --connect-timeout 5 --max-time 10 "${PREVIEW_PUBLIC_URL}/health" > /dev/null
+          fi
           echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
           echo "PREVIEW_PUBLIC_URL=$PREVIEW_PUBLIC_URL" >> "$GITHUB_ENV"
           echo "PREVIEW_API_ORIGIN=$PREVIEW_API_ORIGIN" >> "$GITHUB_ENV"
