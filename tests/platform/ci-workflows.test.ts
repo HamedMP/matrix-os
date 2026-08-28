@@ -358,6 +358,28 @@ describe('CI workflows', () => {
     expect(preview).toContain('roles/secretmanager.secretAccessor');
   });
 
+  it('deploys staging through the isolated preview control-plane lane', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const isolated = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(production).toMatch(/options:\s*\n\s*- production/);
+    expect(production).not.toMatch(/options:\s*\n(?:\s*- [^\n]+\n)*\s*- staging/);
+
+    expect(isolated).toContain('deployment_environment:');
+    expect(isolated).toMatch(/deployment_environment:[\s\S]*?options:[\s\S]*?- Preview[\s\S]*?- staging/);
+    expect(isolated).toContain("DEPLOYMENT_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}");
+    expect(isolated).toContain("environment: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}");
+    expect(isolated).toContain('if [ "$DEPLOYMENT_ENVIRONMENT" = "staging" ]; then');
+    expect(isolated).toContain('staging configuration is required; refusing a no-op deployment.');
+    expect(isolated).toContain('matrix-platform-staging');
+    expect(isolated).toContain('matrix-platform-preview-runner@matrix-os-1144.iam.gserviceaccount.com');
+    expect(isolated).toContain('PLATFORM_DATABASE_URL=platform-database-url-staging:latest');
+    expect(isolated).toContain('STRIPE_SECRET_KEY=stripe-secret-key-test:latest');
+    expect(isolated).toContain('--no-traffic');
+    expect(isolated).toContain('${REVISION_TAG}');
+  });
+
   it('does not require add-on prices or focused portal configurations for platform deployment', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
@@ -429,12 +451,11 @@ describe('CI workflows', () => {
     expect(workflow).toContain('starting_after');
   });
 
-  it('keeps production platform Cloud Run warm while allowing staging to scale to zero', () => {
+  it('keeps production platform Cloud Run warm', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('DEPLOY_ENVIRONMENT: ${{ github.event_name == \'workflow_dispatch\' && inputs.environment || \'production\' }}');
-    expect(workflow).toContain('min_instances=0');
     expect(workflow).toContain('if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then');
     expect(workflow).toContain('min_instances=1');
     expect(workflow).toContain('--min-instances "$min_instances"');

@@ -41,6 +41,14 @@ on:
         description: "PR number to deploy a platform preview for"
         required: true
         type: string
+      deployment_environment:
+        description: "Isolated GitHub environment to deploy"
+        required: true
+        default: Preview
+        type: choice
+        options:
+          - Preview
+          - staging
 
 permissions:
   contents: read
@@ -48,7 +56,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-platform-${{ github.event.pull_request.number || inputs.pr }}
+  group: preview-platform-${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
 jobs:
@@ -62,15 +70,17 @@ jobs:
          (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview-platform')))))
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: Preview
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT }}
+      PREVIEW_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
       MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}
       MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '7' }}
+      DEPLOYMENT_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_environment || 'Preview' }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
     steps:
       - name: Check preview configuration
@@ -78,13 +88,40 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${CLOUD_RUN_PREVIEW_SERVICE:-}" ]; then
+            if [ "$DEPLOYMENT_ENVIRONMENT" = "staging" ]; then
+              echo "staging configuration is required; refusing a no-op deployment." >&2
+              exit 1
+            fi
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice::CLOUD_RUN_PREVIEW_SERVICE is not configured; platform previews are disabled. See specs/093-preview-environments/."
             exit 0
           fi
           if [ -z "${CLOUD_RUN_SERVICE_ACCOUNT:-}" ]; then
-            echo "CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT must be set in the Preview environment; refusing to fall back to another SA." >&2
+            echo "CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT must be set in the selected isolated environment; refusing to fall back to another SA." >&2
             exit 1
+          fi
+          if [ "$DEPLOYMENT_ENVIRONMENT" = "staging" ]; then
+            if [ "$CLOUD_RUN_PREVIEW_SERVICE" != "matrix-platform-staging" ]; then
+              echo "staging must deploy only to the dedicated matrix-platform-staging service." >&2
+              exit 1
+            fi
+            if [ "$CLOUD_RUN_SERVICE_ACCOUNT" != "matrix-platform-preview-runner@matrix-os-1144.iam.gserviceaccount.com" ]; then
+              echo "staging must use the preview runtime service account." >&2
+              exit 1
+            fi
+            if [ -z "${PREVIEW_PUBLIC_URL:-}" ]; then
+              echo "staging PLATFORM_PUBLIC_URL must be explicitly configured." >&2
+              exit 1
+            fi
+            case "$PREVIEW_PUBLIC_URL" in
+              https://app.matrix-os.com*|https://api.matrix-os.com*)
+                echo "staging must not reuse a production public origin." >&2
+                exit 1
+                ;;
+            esac
+            echo "REVISION_TAG=staging-${PR_NUMBER}" >> "$GITHUB_ENV"
+          else
+            echo "REVISION_TAG=pr-${PR_NUMBER}" >> "$GITHUB_ENV"
           fi
           case "$MATRIX_CARD_TRIALS_ENABLED" in
             true|false) ;;
@@ -174,7 +211,7 @@ jobs:
               --region "$GCP_REGION" \
               --image "$IMAGE" \
               --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
-              --tag "pr-${PR_NUMBER}" \
+              --tag "${REVISION_TAG}" \
               --no-traffic \
               --allow-unauthenticated \
               --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_API_ORIGIN=${api_origin},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN}" \
@@ -197,16 +234,16 @@ jobs:
             echo "Preview service URL is unavailable; refusing a shared control-plane fallback." >&2
             exit 1
           fi
-          PREVIEW_API_ORIGIN="https://pr-${PR_NUMBER}---${service_base_url#https://}"
+          PREVIEW_API_ORIGIN="https://${REVISION_TAG}---${service_base_url#https://}"
           deploy_preview "$PREVIEW_API_ORIGIN"
           url=""
           revision=""
           for _attempt in {1..10}; do
             desc="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
               --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json)"
-            url="$(jq -r --arg tag "pr-${PR_NUMBER}" \
+            url="$(jq -r --arg tag "$REVISION_TAG" \
               '[(.status.traffic // [])[] | select(.tag == $tag) | .url] | first // ""' <<< "$desc")"
-            revision="$(jq -r --arg tag "pr-${PR_NUMBER}" \
+            revision="$(jq -r --arg tag "$REVISION_TAG" \
               '[(.status.traffic // [])[] | select(.tag == $tag) | .revisionName] | first // ""' <<< "$desc")"
             if [ -n "$url" ] && [ -n "$revision" ]; then
               break
@@ -245,10 +282,10 @@ jobs:
           set -euo pipefail
           body="**Platform preview revision deployed**
 
-          - Browser-reachable host: ${PREVIEW_PUBLIC_URL} (route this PR's tag to it: \`gcloud run services update-traffic ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION} --to-tags pr-${PR_NUMBER}=100\`, then reset when done)
+          - Browser-reachable host: ${PREVIEW_PUBLIC_URL} (route this revision's tag to it: \`gcloud run services update-traffic ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION} --to-tags ${REVISION_TAG}=100\`, then reset when done)
           - Desktop control-plane origin: ${PREVIEW_API_ORIGIN}
           - Revision URL: ${PREVIEW_URL}
-          - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (deployed zero-traffic, tag \`pr-${PR_NUMBER}\`)
+          - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (deployed zero-traffic, tag \`${REVISION_TAG}\`)
 
           Runs as the preview runtime SA against the staging database with Stripe TEST-mode keys; production service, SA, database, and live Stripe keys are untouched."
           existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \

@@ -146,6 +146,19 @@ Hetzner token on preview); enabling it is a deliberate follow-up (a
 preview-scoped Hetzner token + VPS reaping). For that slice today, use the
 feature-VPS path in [Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
 
+For a durable GitHub `staging` deployment, manually dispatch the same isolated
+lane with `deployment_environment=staging`. That target is hard-gated to the
+dedicated `matrix-platform-staging` Cloud Run service, the preview runtime
+service account, the staging database, and Stripe test-mode secrets. It deploys
+and smokes an exact-image, zero-traffic tagged revision; it never aliases the
+production service or its runtime identity:
+
+```bash
+gh workflow run preview-platform.yml --ref <branch-or-sha> \
+  -f pr=<pr-number> \
+  -f deployment_environment=staging
+```
+
 ### One-time infrastructure setup
 
 The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe

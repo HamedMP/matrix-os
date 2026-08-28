@@ -30,12 +30,21 @@ cover one slice:
 | Provisioned shell on a real host | Disposable feature VPS | Confirms the boot -> first-run -> ready hand-off on a real customer VPS. |
 
 > Known gap: combining all four into one browser-reachable environment is not
-> wired yet (`preview-platform` is IAM-only and has no Stripe secrets;
-> `preview-vps` provisions against the **production** platform; the GitHub
-> `staging` environment is a no-traffic revision of the production service).
-> Closing it durably means either adding Stripe test secrets to
-> `matrix-platform-preview` and fronting it with auth, or standing up a
-> dedicated isolated staging platform. Until then, use the split below.
+> wired yet. The GitHub `staging` deployment lane is now isolated on the
+> dedicated `matrix-platform-staging` Cloud Run service with the staging
+> database, preview runtime identity, and Stripe test-mode secrets, but it is a
+> zero-traffic control-plane smoke target rather than a public end-to-end host.
+> `preview-vps` still provisions against the **production** platform. Until a
+> reviewed staging route and disposable-VPS hand-off exist, use the split below.
+
+To deploy and smoke the isolated staging control plane from an exact branch or
+SHA without promoting traffic:
+
+```bash
+gh workflow run preview-platform.yml --ref <branch-or-sha> \
+  -f pr=<pr-number> \
+  -f deployment_environment=staging
+```
 
 ## Slice 1 — Shell (boot sequence, auth door, origins)
 

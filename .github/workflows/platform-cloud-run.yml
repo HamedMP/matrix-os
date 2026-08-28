@@ -18,10 +18,9 @@ on:
       environment:
         description: GitHub environment to deploy
         required: true
-        default: staging
+        default: production
         type: choice
         options:
-          - staging
           - production
       promote:
         description: Promote the deployed revision to 100% traffic
