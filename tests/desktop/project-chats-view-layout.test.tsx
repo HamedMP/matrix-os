@@ -490,20 +490,13 @@ describe("ProjectChatsView hero layout", () => {
     useCodingAgentWorkspace.setState({ loadThreadSnapshot });
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("button", { name: "Show conversation tools" });
-
-    act(() => {
-      useProjectView.getState().setSelectedThread("matrix-os", null);
-      useTabs.setState({ recentViews: [] });
-    });
+    act(() => useProjectView.getState().setSelectedThread("matrix-os", null));
     await screen.findByText("What should we work on?");
     loadThreadSnapshot.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
 
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_plan"));
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_plan" }),
-    );
   });
 
   it("does not bind a cached workspace terminal while the selected thread snapshot is loading", async () => {

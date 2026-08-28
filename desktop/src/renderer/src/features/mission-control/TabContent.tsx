@@ -1,9 +1,7 @@
 import { Sparkles } from "@renderer/lib/hugeicons";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
-import RetainedPane from "../../design/RetainedPane";
-import { useTabs, type Tab } from "../../stores/tabs";
-import { useUi } from "../../stores/ui";
+import type { Tab } from "../../stores/tabs";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
 import SettingsView, { type SettingsSectionId } from "../settings/SettingsView";
@@ -12,7 +10,6 @@ import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";
-import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 import WorkTab from "../work/WorkTab";
 
 export class TabErrorBoundary extends Component<{
@@ -99,59 +96,4 @@ export function TabPane({
     default:
       return null;
   }
-}
-
-export default function TabContent() {
-  const tabs = useTabs((s) => s.tabs);
-  const activeTabId = useTabs((s) => s.activeTabId);
-  const closeTab = useTabs((s) => s.closeTab);
-  // A native embed paints above the renderer, so while a modal overlay is open
-  // we treat embeds as inactive (detached) — otherwise the palette/composer/
-  // dialogs would render behind the embed.
-  const overlayOpen = useUi(
-    (s) =>
-      s.paletteOpen ||
-      s.composerOpen ||
-      s.quickOpenOpen ||
-      s.createTaskOpen ||
-      s.createProjectOpen ||
-      s.rendererOverlayCount > 0,
-  );
-
-  if (tabs.length === 0) {
-    return (
-      <EmptyState
-        icon={<Sparkles size={28} />}
-        headline="Your workspace"
-        description="Open a project from the sidebar, attach a terminal, or start an agent. Everything opens as a tab here."
-      />
-    );
-  }
-
-  // All tabs stay mounted; only the active one is visible. Terminals and editors
-  // keep their state (and reattach on focus) instead of being torn down.
-  return (
-    <div className="relative min-h-0 flex-1">
-      {tabs.map((tab) => {
-        const active = tab.id === activeTabId;
-        // Embeds also detach while a modal overlay is open so it isn't obscured.
-        const isEmbed = tab.kind === "home" || tab.kind === "app";
-        const paneActive = active && !(isEmbed && overlayOpen);
-        return (
-          <RetainedPane
-            key={tab.id}
-            active={active}
-            className="absolute inset-0 flex min-h-0 flex-col"
-            background={SURFACE_BASE_BACKGROUND}
-            data-tab-id={tab.id}
-            data-tab-kind={tab.kind}
-          >
-            <TabErrorBoundary tabTitle={tab.title} onClose={() => closeTab(tab.id)}>
-              <TabPane tab={tab} active={paneActive} />
-            </TabErrorBoundary>
-          </RetainedPane>
-        );
-      })}
-    </div>
-  );
 }

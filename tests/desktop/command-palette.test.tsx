@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../desktop/src/renderer/src/lib/feature-flags", () => ({
   CODING_AGENTS_DESKTOP_WORKSPACE: true,
-  NATIVE_DESKTOP_WINDOW_SHELL: true,
 }));
 
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
@@ -90,7 +89,7 @@ describe("CommandPalette", () => {
       value: ResizeObserverStub,
     });
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
-    useUi.setState({ paletteOpen: true, createTaskOpen: false, createProjectOpen: false, composerOpen: false });
+    useUi.setState({ paletteOpen: true, createProjectOpen: false, composerOpen: false });
     useBoard.setState({ activeProjectSlug: null, projects: [], cardsByProject: {} });
     useSessions.setState({ sessions: [] });
     useShellSessions.setState({ ...useShellSessions.getInitialState(), load: vi.fn().mockResolvedValue(undefined) }, true);

@@ -1,9 +1,6 @@
 import { useEffect } from "react";
 import { onEvent } from "../../lib/operator";
-import {
-  CODING_AGENTS_DESKTOP_WORKSPACE,
-  NATIVE_DESKTOP_WINDOW_SHELL,
-} from "../../lib/feature-flags";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -37,12 +34,6 @@ interface NewAgentRunShortcutUiState {
 interface NewAgentRunShortcutWorkspaceState {
   summary: { capabilities: Array<{ id: string; enabled: boolean }> } | null;
   requestComposerFocus(): void;
-}
-
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
 }
 
 export function isTerminalFocusShortcut(
@@ -109,7 +100,7 @@ export function handleCloseSelectedAppShortcut(
 function activeShortcutTab() {
   const tabs = useTabs.getState();
   const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
-  if (!activeTab || !NATIVE_DESKTOP_WINDOW_SHELL) return activeTab;
+  if (!activeTab) return activeTab;
   const surfaces = useDesktopSurfaces.getState();
   return isDesktopSurfaceVisible(activeTab.id, surfaces)
     ? activeTab
@@ -168,7 +159,6 @@ export function handleNewContextShortcut(
   const activeTab = activeShortcutTab();
   if (!activeTab) return;
   if (activeTab.kind !== "chat" && !(activeTab.kind === "work" && activeTab.workRoute === "chat")) {
-    useUi.getState().setCreateTaskOpen(true);
     return;
   }
   openTopLevelTabInstance(activeTab.id, {
@@ -283,27 +273,15 @@ export function useGlobalShortcuts(): void {
         handleCloseTopLevelTabShortcut(e);
         return;
       }
-      // Toggle sidebar (⌘B, like Codex; ⌘\ also works).
-      if (meta && (key === "b" || e.key === "\\")) {
-        e.preventDefault();
-        ui.toggleSidebar();
-        return;
-      }
       // Cycle tabs with Ctrl+Tab / Ctrl+Shift+Tab.
       if (e.ctrlKey && e.key === "Tab" && tabs.tabs.length > 1) {
         handleCycleTabShortcut(e, tabs, e.shiftKey ? -1 : 1);
         return;
       }
-      if (!meta && key === "c" && !isTypingTarget(e.target)) {
-        if (ui.paletteOpen || ui.composerOpen || ui.createTaskOpen) return;
-        e.preventDefault();
-        ui.setCreateTaskOpen(true);
-      }
     };
     window.addEventListener("keydown", onKeyDown);
     const offAction = onEvent("menu:action", ({ action }) => {
       const ui = useUi.getState();
-      if (action === "new-task") ui.setCreateTaskOpen(true);
       if (action === "new-context") {
         handleNewContextShortcut({ preventDefault: () => undefined });
       }

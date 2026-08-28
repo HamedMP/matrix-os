@@ -8,7 +8,6 @@ import FilesWorkspace, {
   resolveActivePath,
 } from "../../desktop/src/renderer/src/features/files/FilesWorkspace";
 import { AppError } from "../../desktop/src/renderer/src/lib/errors";
-import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
@@ -102,14 +101,6 @@ describe("Files workspace", () => {
     vi.restoreAllMocks();
     URL.createObjectURL = originalCreate;
     URL.revokeObjectURL = originalRevoke;
-  });
-
-  it("opens from the main navigation as a stable Files tab", () => {
-    render(<Tooltip.Provider><Sidebar /></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole("button", { name: "Files" }));
-    expect(useTabs.getState().tabs).toEqual([
-      expect.objectContaining({ kind: "files", title: "Files", closable: false }),
-    ]);
   });
 
   it("keeps folders in one pane and opens a selected file in an optional preview", async () => {

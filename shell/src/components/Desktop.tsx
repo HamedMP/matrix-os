@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef, type ReactNode } from "react"
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
-import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
+import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
@@ -90,7 +90,6 @@ interface DesktopProps {
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
-  const cacheKey = cacheScope?.storageKey;
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -139,11 +138,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>> | null>(null);
   if (minimizeTimers.current === null) minimizeTimers.current = new Map();
-  const focusedWindow = windows.reduce<typeof windows[number] | undefined>(
-    (best, w) =>
-      !w.minimized && (best === undefined || w.zIndex > best.zIndex) ? w : best,
-    undefined,
-  );
 
   useEffect(() => {
     const timers = minimizeTimers.current!;

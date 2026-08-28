@@ -28,7 +28,6 @@ describe("QuickOpen", () => {
       } as never,
     });
     useUi.setState({
-      createTaskOpen: false,
       composerOpen: false,
       paletteOpen: false,
       quickOpenOpen: true,

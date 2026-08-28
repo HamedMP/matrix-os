@@ -5,7 +5,7 @@ import {
   type DesktopViewport,
 } from "../../stores/desktop-surfaces";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
-import { openChatIndex, openProjectsIndex, openTerminalIndex } from "../mission-control/navigation-roots";
+import { openChatIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
 import { FIXED_DESKTOP_APPS, type DesktopAppId } from "./desktop-apps";
 import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
@@ -46,7 +46,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const activateSurface = useDesktopSurfaces((state) => state.activateSurface);
   const minimizeSurface = useDesktopSurfaces((state) => state.minimizeSurface);
   const maximizeToTab = useDesktopSurfaces((state) => state.maximizeToTab);
-  const restoreAsWindow = useDesktopSurfaces((state) => state.restoreAsWindow);
   const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const setSurfaceBounds = useDesktopSurfaces((state) => state.setSurfaceBounds);
   const workspaceView = useDesktopSurfaces((state) => state.workspaceView);

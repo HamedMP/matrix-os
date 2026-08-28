@@ -59,10 +59,6 @@ vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
 }));
 
-vi.mock("../../shell/src/lib/open-app-tab.js", () => ({
-  openAppInStandaloneTab: vi.fn(),
-}));
-
 const terminalWindow: AppWindow = {
   id: "win-terminal",
   title: "Terminal",

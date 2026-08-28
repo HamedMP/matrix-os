@@ -90,7 +90,6 @@ export function CanonicalChatWorkspace({
   inspectorExclusive = false,
   onProjectChanged,
   onActiveChatChanged,
-  onChatDeleted,
 }: {
   api?: ApiClient;
   client: CanonicalChatClient;
@@ -106,7 +105,6 @@ export function CanonicalChatWorkspace({
   inspectorExclusive?: boolean;
   onProjectChanged?: (chatId: string, projectId: string | null, title: string) => void;
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
-  onChatDeleted?: (chatId: string) => void;
 }) {
   const projects = useBoard((state) => state.projects);
   const fallbackCatalog = useMemo(
@@ -589,7 +587,6 @@ export function CanonicalChatWorkspace({
             setDeleting(true);
             void controller.deleteChat(deleteTarget.id).then((deleted) => {
               if (deleted) {
-                onChatDeleted?.(deleteTarget.id);
                 setDeleteTarget(null);
                 setDeleteError(null);
               } else {

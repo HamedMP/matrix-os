@@ -1,196 +1,96 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import TabContent, { TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
-import { SURFACE_BASE_BACKGROUND } from "@desktop/renderer/src/design/surface";
-import { useConnection } from "@desktop/renderer/src/stores/connection";
-import { useTabs } from "@desktop/renderer/src/stores/tabs";
-import { useUi } from "@desktop/renderer/src/stores/ui";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TabPane, TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
+import DesktopSurfaceFrame from "@desktop/renderer/src/features/desktop-shell/DesktopSurfaceFrame";
+import type { Tab } from "@desktop/renderer/src/stores/tabs";
 
-const taskWorkspaceMock = vi.hoisted(() =>
-  vi.fn(({ taskId, projectSlug }: { taskId: string; projectSlug?: string }) => (
-    <button type="button">
-      Task {taskId} {projectSlug}
-    </button>
-  )),
-);
-const terminalsTabMock = vi.hoisted(() =>
-  vi.fn(({ active }: { active: boolean }) => (
-    <button type="button" data-active={String(active)}>Terminal workspace</button>
-  )),
-);
+const workTabMock = vi.hoisted(() => vi.fn(() => <div>Work</div>));
+const taskWorkspaceMock = vi.hoisted(() => vi.fn(() => <div>Task</div>));
+const terminalsTabMock = vi.hoisted(() => vi.fn(() => <div>Terminal</div>));
+const homeMock = vi.hoisted(() => vi.fn(() => <div>Browser</div>));
 
-vi.mock("@desktop/renderer/src/features/project/ProjectTab", () => ({
-  default: ({ projectSlug }: { projectSlug: string }) => (
-    <button type="button">Project {projectSlug}</button>
-  ),
-}));
-vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({
-  default: taskWorkspaceMock,
-}));
-vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: () => <button type="button">Terminal body</button>,
-}));
-vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({
-  default: terminalsTabMock,
-}));
-vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({
-  default: ({ active }: { active: boolean }) => (
-    <button type="button" data-active={String(active)}>Home workspace</button>
-  ),
-}));
-vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
-  default: () => <button type="button">Chat workspace</button>,
-}));
-vi.mock("@desktop/renderer/src/features/files/FilesWorkspace", () => ({
-  default: () => <button type="button">Files workspace</button>,
-}));
+vi.mock("@desktop/renderer/src/features/work/WorkTab", () => ({ default: workTabMock }));
+vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({ default: taskWorkspaceMock }));
+vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({ default: terminalsTabMock }));
+vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({ default: homeMock }));
 
-describe("TabContent", () => {
-  beforeEach(() => {
-    useConnection.setState({
-      status: "signed-in",
-      handle: "operator",
-      platformHost: "https://platform.test",
-      runtimeSlot: "primary",
-      api: null,
-    });
-    useTabs.setState({ tabs: [], activeTabId: null });
-    useUi.setState({ rendererOverlayCount: 0 });
-  });
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-  });
-
-  it("keeps inactive tab panes inert while they remain mounted", () => {
-    const projectId = useTabs.getState().openTab({ kind: "project", projectSlug: "alpha", title: "Alpha" });
-    useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
-    useTabs.getState().focusTab(projectId);
-
-    const { container, getByText } = render(<TabContent />);
-
-    const activePane = container.querySelector<HTMLElement>(`[data-tab-id="${projectId}"]`);
-    const hiddenPane = getByText("Terminal body").parentElement;
-
-    expect(activePane?.hasAttribute("inert")).toBe(false);
-    expect(activePane?.style.display).toBe("flex");
-    expect(activePane?.style.visibility).toBe("visible");
-    expect(activePane?.style.pointerEvents).toBe("auto");
-    expect(activePane?.style.background).toBe(SURFACE_BASE_BACKGROUND);
-    expect(hiddenPane?.hasAttribute("inert")).toBe(true);
-    expect(hiddenPane?.getAttribute("aria-hidden")).toBe("true");
-    expect(hiddenPane?.style.display).toBe("none");
-    expect(hiddenPane?.style.visibility).toBe("hidden");
-    expect(hiddenPane?.style.pointerEvents).toBe("none");
-  });
-
+describe("current desktop tab panes", () => {
   it.each([
-    ["apps", { kind: "apps" as const, title: "Apps" }],
-    ["chat", { kind: "chat" as const, title: "Chat" }],
-    ["files", { kind: "files" as const, title: "Files" }],
-    ["home", { kind: "home" as const, title: "Home" }],
-    ["project", { kind: "project" as const, projectSlug: "alpha", title: "Alpha" }],
-  ])("fully contains the retained Terminal workspace beneath the %s route", (_route, target) => {
-    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
-    const targetId = useTabs.getState().openTab(target);
-    useTabs.getState().focusTab(targetId);
-
-    const { container } = render(<TabContent />);
-    const terminalPane = container.querySelector<HTMLElement>(`[data-tab-id="${terminalId}"]`);
-    const activePane = container.querySelector<HTMLElement>(`[data-tab-id="${targetId}"]`);
-
-    expect(terminalPane).toBeTruthy();
-    expect(terminalPane?.dataset.tabKind).toBe("terminals");
-    expect(terminalPane?.style.display).toBe("none");
-    expect(terminalPane?.style.visibility).toBe("hidden");
-    expect(terminalPane?.style.pointerEvents).toBe("none");
-    expect(terminalPane?.getAttribute("aria-hidden")).toBe("true");
-    expect(terminalPane?.hasAttribute("inert")).toBe(true);
-
-    expect(activePane).toBeTruthy();
-    expect(activePane?.style.display).toBe("flex");
-    expect(activePane?.style.visibility).toBe("visible");
-    expect(activePane?.style.pointerEvents).toBe("auto");
-    expect(activePane?.style.background).toBe(SURFACE_BASE_BACKGROUND);
-    expect(activePane?.getAttribute("aria-hidden")).toBe("false");
-    expect(activePane?.hasAttribute("inert")).toBe(false);
+    ["chat", "chat"],
+    ["projects", "projects"],
+    ["project", "project"],
+    ["work", "project"],
+  ] as const)("keeps persisted %s tabs on the current Work renderer", (kind, route) => {
+    const tab: Tab = {
+      id: "work", kind, workRoute: route, projectSlug: "alpha",
+      title: "Alpha", closable: true, chatId: "chat-a", chatTitle: "Chat A",
+    };
+    render(<TabPane tab={tab} active />);
+    expect(workTabMock).toHaveBeenCalledWith(expect.objectContaining({ route, active: true }), undefined);
+    if (route === "project") {
+      expect(workTabMock).toHaveBeenCalledWith(expect.objectContaining({
+        projectSlug: "alpha", initialChatId: "chat-a", initialChatTitle: "Chat A",
+      }), undefined);
+    }
   });
 
-  it("forwards task project slugs into the task workspace", () => {
-    useTabs.getState().openTab({
-      kind: "task",
-      taskId: "task_a",
-      projectSlug: "alpha",
-      title: "Task A",
-    });
-
-    const { getByRole } = render(<TabContent />);
-
-    expect(getByRole("button", { name: "Task task_a alpha" })).toBeTruthy();
+  it("forwards task project identity to the live task workspace", () => {
+    render(<TabPane tab={{
+      id: "task", kind: "task", taskId: "task_a", projectSlug: "alpha", title: "Task A", closable: true,
+    }} active />);
     expect(taskWorkspaceMock).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: "task_a", projectSlug: "alpha", active: true }),
-      undefined,
+      expect.objectContaining({ taskId: "task_a", projectSlug: "alpha", active: true }), undefined,
     );
   });
 
-  it("propagates active ownership to the mounted Terminal workspace across native focus changes", () => {
-    const workspaceId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
-    const nativeId = useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
-    useTabs.getState().focusTab(workspaceId);
-    render(<TabContent />);
-
-    const workspace = screen.getByRole("button", { name: "Terminal workspace" });
-    expect(workspace.getAttribute("data-active")).toBe("true");
-
-    act(() => useTabs.getState().focusTab(nativeId));
-    expect(workspace.getAttribute("data-active")).toBe("false");
-
-    act(() => useTabs.getState().focusTab(workspaceId));
-    expect(workspace.getAttribute("data-active")).toBe("true");
+  it("keeps terminal visibility separate from keyboard ownership", () => {
+    const tab: Tab = { id: "terminal", kind: "terminals", title: "Terminal", closable: true };
+    const view = render(<TabPane tab={tab} active visible />);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: true, visible: true }, undefined);
+    view.rerender(<TabPane tab={tab} active={false} visible />);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: true }, undefined);
+    view.rerender(<TabPane tab={tab} active={false} visible={false} />);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: false }, undefined);
   });
 
-  it("detaches the active Home native view while a renderer overlay lease is held", () => {
-    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-    render(<TabContent />);
-
-    const home = screen.getByRole("button", { name: "Home workspace" });
-    expect(home.getAttribute("data-active")).toBe("true");
-
-    act(() => useUi.getState().acquireRendererOverlay());
-    expect(home.getAttribute("data-active")).toBe("false");
-
-    act(() => useUi.getState().releaseRendererOverlay());
-    expect(home.getAttribute("data-active")).toBe("true");
+  it.each(["desktop", "canvas"] as const)("detaches native embeds under overlays in %s", (presentation) => {
+    const tab: Tab = { id: "browser", kind: "home", title: "Browser", closable: false };
+    const props = {
+      tab,
+      surface: { tabId: tab.id, mode: "window" as const, bounds: { x: 0, y: 0, width: 800, height: 600 }, zIndex: 1 },
+      active: true, tabWorkspaceActive: false, presentation,
+      onFocus: vi.fn(), onClose: vi.fn(), onMinimize: vi.fn(), onMaximize: vi.fn(), onBoundsChange: vi.fn(),
+    };
+    const view = render(<DesktopSurfaceFrame {...props} overlayOpen={false} />);
+    expect(homeMock).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }), undefined);
+    view.rerender(<DesktopSurfaceFrame {...props} overlayOpen />);
+    expect(homeMock).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }), undefined);
+    view.rerender(<DesktopSurfaceFrame {...props} overlayOpen={false} />);
+    expect(homeMock).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }), undefined);
   });
 
-  it("renders the apps tab through the tracked AppLauncher module", () => {
-    useTabs.setState({
-      activeTabId: "apps",
-      tabs: [{ id: "apps", kind: "apps", title: "Apps", closable: true }],
-    });
-
-    render(<TabContent />);
-
+  it("renders apps through the current AppLauncher", () => {
+    render(<TabPane tab={{ id: "apps", kind: "apps", title: "Apps", closable: true }} active />);
     expect(screen.getByRole("heading", { name: /^(Apps|Loading apps)$/ })).toBeTruthy();
   });
 
-  it("contains a task panel exception without blanking the desktop renderer", () => {
+  it("contains a task panel exception without exposing private errors", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     function BrokenPanel(): React.ReactNode {
       throw new Error("private terminal failure");
     }
-
-    render(
-      <TabErrorBoundary tabTitle="Task A" onClose={vi.fn()}>
-        <BrokenPanel />
-      </TabErrorBoundary>,
-    );
-
+    render(<TabErrorBoundary tabTitle="Task A" onClose={vi.fn()}><BrokenPanel /></TabErrorBoundary>);
     expect(screen.getByRole("heading", { name: "Task A couldn't open" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Close tab" })).toBeTruthy();
     expect(screen.queryByText(/private terminal failure/i)).toBeNull();
+    vi.restoreAllMocks();
   });
 });

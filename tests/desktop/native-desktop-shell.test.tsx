@@ -94,7 +94,7 @@ describe("native desktop shell", () => {
   });
 
   it("uses a dedicated shell-background layer and presents the hosted shell as Browser", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     const browserIcon = screen.getByRole("button", { name: "Browser" });
     expect(browserIcon).toBeTruthy();
@@ -144,7 +144,7 @@ describe("native desktop shell", () => {
   });
 
   it("toggles show desktop when the empty desktop surface is clicked", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
 
     const terminalTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "terminals");
@@ -167,7 +167,7 @@ describe("native desktop shell", () => {
       getBlob: vi.fn(async () => new Blob(["wallpaper"], { type: "image/jpeg" })),
     };
     useConnection.setState({ api: firstApi as never });
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundImage)
@@ -203,7 +203,7 @@ describe("native desktop shell", () => {
       getBlob: vi.fn(async () => new Blob(["wallpaper"], { type: "image/jpeg" })),
     };
     useConnection.setState({ api: api as never });
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundImage)
         .toBe('url("blob:first-wallpaper")');
@@ -225,7 +225,7 @@ describe("native desktop shell", () => {
         .mockResolvedValueOnce({ background: { type: "solid", color: "#223344" } }),
     };
     useConnection.setState({ api: api as never });
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundColor).toBe("rgb(17, 17, 17)");
     });
@@ -244,7 +244,7 @@ describe("native desktop shell", () => {
     ["closing", () => fireEvent.click(screen.getByRole("button", { name: "Close Browser" }))],
     ["restoring", () => fireEvent.doubleClick(screen.getByRole("tab", { name: "Browser" }))],
   ])("refreshes the background after %s the maximized Browser", (_action, leaveBrowser) => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
     fireEvent.click(getWindowControl("Browser", "Maximize"));
     const before = useUi.getState().desktopBackgroundRefreshRequest;
@@ -280,8 +280,6 @@ describe("native desktop shell", () => {
         },
       ],
       activeTabId: "project",
-      viewHistory: ["chat", "projects", "project"],
-      historyIndex: 2,
     });
 
     render(<NativeDesktopShell overlayOpen={false} />);
@@ -296,11 +294,10 @@ describe("native desktop shell", () => {
         chatId: "chat-42",
       }),
     ]);
-    expect(useTabs.getState().viewHistory).toEqual(["project"]);
   });
 
   it("offers Settings as a native app and maximizes it into tabs", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     const settingsIcon = screen.getByRole("button", { name: "Settings" });
     fireEvent.doubleClick(settingsIcon);
@@ -326,7 +323,7 @@ describe("native desktop shell", () => {
   });
 
   it("opens Terminal as its own window and only adds it to the main tab strip when maximized", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
 
@@ -363,7 +360,7 @@ describe("native desktop shell", () => {
   });
 
   it("puts minimize and close controls inside each maximized tab", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
 
@@ -378,7 +375,7 @@ describe("native desktop shell", () => {
   });
 
   it("opens Chat as a floating window and only adds it to the tab strip when maximized", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
 
@@ -396,7 +393,7 @@ describe("native desktop shell", () => {
   });
 
   it("opens Apps as a transient launcher instead of a desktop app surface", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     expect(screen.queryByRole("button", { name: "Apps" })).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
@@ -428,7 +425,7 @@ describe("native desktop shell", () => {
       loading: false,
       error: null,
     });
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
     const firstIcon = screen.getByRole("button", { name: "Notes" }).querySelector("img");
@@ -451,7 +448,7 @@ describe("native desktop shell", () => {
       loading: false,
       error: null,
     });
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
 
@@ -465,7 +462,7 @@ describe("native desktop shell", () => {
   });
 
   it("opens the all-open-apps drawer from Sidebar and dismisses it by close, Escape, and backdrop", async () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     expect(screen.getByTestId("desktop-app-drawer-layer").hasAttribute("inert")).toBe(true);
     fireEvent.click(screen.getByRole("tab", { name: "Sidebar" }));
@@ -486,7 +483,7 @@ describe("native desktop shell", () => {
   });
 
   it("does not activate a preview when its close control receives a keyboard event", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
     const settingsId = useTabs.getState().activeTabId!;
     fireEvent.click(within(screen.getByRole("dialog", { name: "Settings window" })).getByRole("button", { name: "Minimize" }));
@@ -505,7 +502,7 @@ describe("native desktop shell", () => {
   });
 
   it("routes preview tiles to minimized, tabbed, and windowed apps without activating a close action", async () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
     const settingsId = useTabs.getState().activeTabId!;
     fireEvent.click(within(screen.getByRole("dialog", { name: "Settings window" })).getByRole("button", { name: "Minimize" }));
@@ -543,7 +540,7 @@ describe("native desktop shell", () => {
       loading: false,
       error: null,
     });
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
     fireEvent.click(screen.getByRole("button", { name: "Notes" }));
@@ -564,7 +561,7 @@ describe("native desktop shell", () => {
       loading: false,
       error: null,
     });
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
     fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
@@ -578,7 +575,7 @@ describe("native desktop shell", () => {
   });
 
   it("dismisses the transient launcher when its empty backdrop is clicked", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
 
     fireEvent.pointerDown(screen.getByTestId("app-launcher-backdrop"));
@@ -672,7 +669,7 @@ describe("native desktop shell", () => {
   });
 
   it("focuses Dock apps instead of minimizing them, including tabbed apps from Desktop", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     const terminalTabId = useTabs.getState().activeTabId!;
@@ -694,7 +691,7 @@ describe("native desktop shell", () => {
   });
 
   it("maximizes a window into the tab strip and restores it as a window", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
     const tabId = useTabs.getState().activeTabId!;
 
@@ -710,7 +707,7 @@ describe("native desktop shell", () => {
   });
 
   it("keeps the inert sidebar tab and windowed-dock launcher while moving the profile to the top bar", () => {
-    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
     const header = screen.getByRole("banner");
     expect(header.querySelector('[aria-label="Sidebar"]')).toBeTruthy();

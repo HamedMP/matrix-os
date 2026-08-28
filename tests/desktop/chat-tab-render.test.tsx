@@ -540,12 +540,6 @@ describe("ChatTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(send).toHaveBeenCalledWith("Continue the release check"));
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      conversationType: "hermes",
-      id: "conversation-active",
-      label: "Continue the release check",
-    });
   });
 
   it("sends Global Chat skill and project tokens as agent-readable prompt context", async () => {
@@ -841,30 +835,6 @@ describe("ChatTab", () => {
     expect(screen.getByRole("button", { name: "New chat" }).style.background).toBe("var(--accent)");
   });
 
-  it("reconciles stale Hermes Recents without removing coding-agent chats", async () => {
-    useTabs.getState().recordRecentHermesConversation("conversation-live", "Live chat");
-    useTabs.getState().recordRecentHermesConversation("conversation-deleted", "Deleted chat");
-    useTabs.getState().recordRecentConversation("thread-live", "Coding agent run");
-    useHermesChat.setState({
-      view: "index",
-      indexStatus: "ready",
-      isConversationIndexComplete: true,
-      conversations: [{
-        id: "conversation-live",
-        title: "Live chat",
-        preview: "Still here",
-        messageCount: 1,
-        createdAt: 1,
-        updatedAt: 2,
-      }],
-    });
-
-    render(<ChatTab />);
-
-    await waitFor(() => expect(useTabs.getState().recentViews.map((recent) => recent.id))
-      .toEqual(["thread-live", "conversation-live"]));
-  });
-
   it("shows loading, empty, and safe recovery states for conversation discovery", () => {
     useHermesChat.setState({ view: "index", indexStatus: "loading", conversations: [], indexError: null });
     const { rerender } = render(<ChatTab />);
@@ -980,7 +950,6 @@ describe("ChatTab", () => {
       sessionId: "conversation-created",
       messages: [],
     });
-    expect(useTabs.getState().recentViews).toEqual([]);
   });
 
   it("opens the selected canonical conversation without duplicating global navigation", async () => {
@@ -1015,6 +984,5 @@ describe("ChatTab", () => {
     expect(await screen.findByText("persistent hello")).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "Chat breadcrumb" })).toBeNull();
     expect(useHermesChat.getState().sessionId).toBe("conversation-one");
-    expect(useTabs.getState().recentViews).toEqual([]);
   });
 });

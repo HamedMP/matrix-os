@@ -145,15 +145,7 @@ describe("openProjectChat", () => {
 
     const opened = openProjectChat("matrix-os", { threadId: "thread_alpha" });
 
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
-    );
-
     await opened;
-
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
-    );
   });
 
   it("does not record a Recent when the project workspace cannot load", async () => {
@@ -175,10 +167,6 @@ describe("openProjectChat", () => {
     });
 
     await openProjectChat("matrix-os", { threadId: "thread_alpha" });
-
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
-    );
   });
 
   it("does not record a Recent when the thread snapshot cannot load", async () => {
@@ -212,10 +200,6 @@ describe("openProjectChat", () => {
     });
 
     await openProjectChat("matrix-os", { threadId: "thread_alpha" });
-
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
-    );
   });
 
   it("waits for an in-flight project workspace before recording a successful open", async () => {
@@ -262,10 +246,6 @@ describe("openProjectChat", () => {
       updatedAt: NOW,
     });
     await Promise.all([loadingWorkspace, openingConversation]);
-
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
-    );
   });
 
   it("waits for the authoritative replacement when an in-flight workspace load is superseded", async () => {
@@ -324,9 +304,6 @@ describe("openProjectChat", () => {
     await Promise.all([replacementLoad, openingConversation]);
 
     expect(settledBeforeReplacement).toBe(false);
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
-    );
   });
 
   it("does not record a Recent when the project refreshes while the thread snapshot loads", async () => {
@@ -398,9 +375,6 @@ describe("openProjectChat", () => {
     resolveWorkspace(workspace);
     await replacementLoad;
     expect(opened).toBe(false);
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
-    );
   });
 
   it("does not reload the snapshot for the already-active thread", () => {
@@ -573,10 +547,6 @@ describe("openCodingAgentThread", () => {
     useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
 
     await openCodingAgentThread("thread_unknown");
-
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_unknown" }),
-    );
   });
 });
 

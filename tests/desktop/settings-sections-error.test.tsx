@@ -3,7 +3,6 @@
 import React from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChannelsSection from "../../desktop/src/renderer/src/features/settings/sections/ChannelsSection";
 import CronSection from "../../desktop/src/renderer/src/features/settings/sections/CronSection";
 import SystemSection from "../../desktop/src/renderer/src/features/settings/sections/SystemSection";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -49,13 +48,6 @@ describe("settings data sections", () => {
 
   it.each([
     {
-      name: "channels",
-      Component: ChannelsSection,
-      unavailable: "Channels unavailable.",
-      response: [{ name: "telegram", connected: true }],
-      visible: "telegram",
-    },
-    {
       name: "cron",
       Component: CronSection,
       unavailable: "Schedules unavailable.",
@@ -87,12 +79,6 @@ describe("settings data sections", () => {
   });
 
   it.each([
-    {
-      name: "channels",
-      Component: ChannelsSection,
-      loading: "Loading channels...",
-      empty: "No channels configured yet.",
-    },
     {
       name: "cron",
       Component: CronSection,

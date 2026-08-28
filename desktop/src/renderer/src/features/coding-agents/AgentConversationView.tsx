@@ -23,7 +23,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { cn } from "../../lib/cn";
 import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
@@ -32,7 +32,6 @@ import {
   codingAgentInputActionKey,
   useCodingAgentWorkspace,
 } from "../../stores/coding-agent-workspace";
-import { useTabs } from "../../stores/tabs";
 import { useConnection } from "../../stores/connection";
 import { safeUrlTransform } from "../editor/MarkdownPreview";
 import {
@@ -660,7 +659,6 @@ function TranscriptItem({
 function ConversationComposer({
   threadId,
   projectId,
-  threadLabel,
   providerId,
   waitingForAction,
   threadBusy,
@@ -670,7 +668,6 @@ function ConversationComposer({
 }: {
   threadId: string;
   projectId?: string;
-  threadLabel: string;
   providerId: string;
   waitingForAction: boolean;
   threadBusy: boolean;
@@ -752,7 +749,6 @@ function ConversationComposer({
         ...(uploaded.attachments.length > 0 ? { attachments: uploaded.attachments } : {}),
       });
       if (sent) {
-        useTabs.getState().recordRecentConversation(threadId, threadLabel);
         setMessage("");
         setReferenceTokens([]);
         attachments.clear();
@@ -996,7 +992,6 @@ export function AgentConversationView({
           key={`composer:${snapshot.thread.id}`}
           threadId={snapshot.thread.id}
           projectId={snapshot.thread.projectId}
-          threadLabel={snapshot.thread.title}
           providerId={snapshot.thread.providerId}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
           threadBusy={running}
