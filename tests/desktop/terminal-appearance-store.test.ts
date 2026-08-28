@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useTerminalAppearance } from "@desktop/renderer/src/stores/terminal-appearance";
+import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 
 function createApi(shellThemeId = "dark") {
   return {
@@ -133,6 +134,31 @@ describe("Terminal appearance store", () => {
     resolveWrite?.();
     await load;
 
+    expect(replacementApi.get).toHaveBeenCalledWith("/api/terminal/preferences");
+    expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "matrix", hydrated: true });
+  });
+
+  it("drops a queued palette write after the runtime generation changes", async () => {
+    let resolveFirst: (() => void) | undefined;
+    const previousApi = createApi();
+    previousApi.put = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      }))
+      .mockResolvedValue({ preferences: { shellThemeId: "powerlevel10k-pure" } });
+    const replacementApi = createApi("matrix");
+
+    useTerminalAppearance.getState().setThemeId("powerlevel10k-classic", previousApi);
+    useTerminalAppearance.getState().setThemeId("powerlevel10k-pure", previousApi);
+    await Promise.resolve();
+    expect(previousApi.put).toHaveBeenCalledTimes(1);
+
+    advanceRuntimeGeneration();
+    const load = useTerminalAppearance.getState().load(replacementApi);
+    resolveFirst?.();
+    await load;
+
+    expect(previousApi.put).toHaveBeenCalledTimes(1);
     expect(replacementApi.get).toHaveBeenCalledWith("/api/terminal/preferences");
     expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "matrix", hydrated: true });
   });

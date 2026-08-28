@@ -5,6 +5,10 @@ import {
   type TerminalThemeId,
 } from "../lib/terminal/terminal-settings-types";
 import { TERMINAL_THEME_OPTIONS } from "../lib/terminal/terminal-themes";
+import {
+  captureRuntimeGeneration,
+  isCurrentRuntimeGeneration,
+} from "./runtime-generation";
 
 interface TerminalAppearanceState {
   themeId: TerminalThemeId;
@@ -29,7 +33,9 @@ function isSelectableTerminalThemeId(value: unknown): value is TerminalThemeId {
 
 function persist(api: TerminalPreferencesApi | null, themeId: TerminalThemeId): void {
   if (!api) return;
+  const runtimeGeneration = captureRuntimeGeneration();
   persistQueue = persistQueue.then(async () => {
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
     await api.put("/api/terminal/preferences", { shellThemeId: themeId });
   }).catch((error: unknown) => {
     console.warn(
