@@ -89,10 +89,13 @@ creates the immutable GitHub release with generated changelog notes. It then
 advances the selected `desktop-<channel>` pointer release. Before upload, each macOS
 build verifies its Developer ID signature, stapled notarization ticket, and
 Gatekeeper assessment; inspects the ASAR for raw workspace TypeScript; mounts
-the DMG; and launches the copied app in an isolated profile. That packaged app
-must also complete a real `electron-updater` check against a deterministic local
-Generic feed; module loading, provider configuration, or manifest-selection
-errors fail the build.
+the DMG at its native `/Volumes/...` path; opens the volume in Finder; and fails
+unless Finder resolves a non-missing icon-view background file under the DMG's
+`.background` directory. The job then closes Finder, copies the app from the
+DMG, and launches it in an isolated profile. That packaged app must also
+complete a real `electron-updater` check against a deterministic local Generic
+feed; module loading, provider configuration, manifest-selection, or branded
+DMG background errors fail the build.
 
 ## Updates
 
@@ -138,12 +141,17 @@ gh release view desktop-stable --json tagName,isPrerelease,assets
 gh release download desktop-v0.1.0 --pattern SHA256SUMS.txt --pattern desktop-release-manifest.json
 ```
 
-Install the DMG on a clean macOS user, confirm Gatekeeper opens it without an
-unidentified-developer warning, sign in, then leave it running long enough to
-observe the update check in logs. For a canary A-to-B acceptance test, install
-signed Canary A, publish signed Canary B, and verify `desktop-canary` serves a
-manifest whose artifact URLs target B's immutable release. In A, use **Check for
-Updates…** or wait for the scheduled check, wait for the blue **Update** button,
-select it, verify the app relaunches on B, and confirm **What's New** displays
-B's generated changelog exactly once. Repeat the check after relaunch and verify
-that B is reported up to date.
+Download the newly published arm64 DMG and open it on a clean macOS user. Confirm
+the approved #1255 green branded installer background appears, **Matrix OS** and
+**Applications** remain at their intended positions, and dragging Matrix OS to
+Applications succeeds. Launch the installed app and confirm Gatekeeper opens it
+without an unidentified-developer warning. This manual visual check complements
+the automated Finder-background gate; it does not replace it.
+
+For a canary A-to-B acceptance test, install signed Canary A, publish signed
+Canary B, and verify `desktop-canary` serves a manifest whose artifact URLs
+target B's immutable release. In A, use **Check for Updates…** or wait for the
+scheduled check, wait for the blue **Update** button, select it, verify the app
+relaunches on B, and confirm **What's New** displays B's generated changelog
+exactly once. Repeat the check after relaunch and verify that B is reported up
+to date.

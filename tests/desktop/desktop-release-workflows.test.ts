@@ -7,6 +7,21 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("desktop release workflows", () => {
+  it("verifies the mounted DMG background through Finder at its native volume path", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+
+    expect(workflow).toContain('attach_output="$(hdiutil attach "$dmg_path" -nobrowse -readonly)"');
+    expect(workflow).toContain("/^\\/Volumes\\//");
+    expect(workflow).not.toContain('-mountpoint "$mount_dir"');
+    expect(workflow).toContain('open "$mount_dir"');
+    expect(workflow).toContain("background picture of icon view options");
+    expect(workflow).toContain('background_picture="missing value"');
+    expect(workflow).toContain('"$mount_dir"/.background/*');
+    expect(workflow).toContain('[ ! -f "$background_picture" ]');
+    expect(workflow).toContain("close container window of disk volumeName");
+    expect(workflow).toContain('hdiutil detach "$mount_dir" -quiet || true');
+  });
+
   it("verifies packaged artifacts before renaming mac update manifests", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
@@ -38,7 +53,7 @@ describe("desktop release workflows", () => {
     expect(workflow).not.toContain("starts through Rosetta");
     expect(workflow).toContain('grep -Fq "[updates] update check completed: up to date" "$app_log"');
     expect(workflow).toContain('grep -Fq "[updates] check failed:" "$app_log"');
-    expect(workflow).toContain('hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly');
+    expect(workflow).toContain('attach_output="$(hdiutil attach "$dmg_path" -nobrowse -readonly)"');
     expect(workflow).toContain('[ ! -L "$mount_dir/Applications" ]');
     expect(workflow).toContain('applications_target="$(readlink "$mount_dir/Applications")"');
     expect(workflow).toContain('[ "$applications_target" != "/Applications" ]');
