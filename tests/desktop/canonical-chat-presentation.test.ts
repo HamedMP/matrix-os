@@ -89,4 +89,100 @@ describe("canonical Chat presentation adapter", () => {
       },
     });
   });
+
+  it("keeps failed partial text as commentary and exposes the authoritative failure", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const turn = snapshot.turns[0]!;
+    const completedAt = "2026-08-26T00:01:00.000Z";
+    const failedRun = {
+      ...run,
+      status: "failed" as const,
+      outcome: "failed" as const,
+      completedAt,
+      updatedAt: completedAt,
+    };
+    const partial = {
+      id: "msg_failed_partial",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "failed" as const,
+      turnId: turn.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text: "I changed the first half" }],
+      createdAt: completedAt,
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, partial],
+      turns: snapshot.turns,
+      runs: [failedRun],
+      activities: [{
+        id: "activity_failed",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "run.error",
+        error: { code: "run_failed", safeMessage: "The agent run failed.", retryable: true },
+        occurredAt: completedAt,
+      }],
+    });
+
+    expect(presented?.work).toContainEqual(expect.objectContaining({
+      id: partial.id,
+      kind: "message",
+      phase: "commentary",
+      markdown: "I changed the first half",
+    }));
+    expect(presented?.final).toMatchObject({
+      kind: "notice",
+      tone: "failed",
+      label: "Agent work failed",
+      markdown: "The agent run failed.",
+    });
+  });
+
+  it("keeps aborted partial text and exposes a stopped terminal notice", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const turn = snapshot.turns[0]!;
+    const completedAt = "2026-08-26T00:01:00.000Z";
+    const partial = {
+      id: "msg_aborted_partial",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "failed" as const,
+      turnId: turn.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text: "Partial work before cancellation" }],
+      createdAt: completedAt,
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, partial],
+      turns: snapshot.turns,
+      runs: [{
+        ...run,
+        status: "aborted",
+        outcome: "aborted",
+        completedAt,
+        updatedAt: completedAt,
+      }],
+      activities: [],
+    });
+
+    expect(presented?.work).toContainEqual(expect.objectContaining({
+      id: partial.id,
+      phase: "commentary",
+      markdown: "Partial work before cancellation",
+    }));
+    expect(presented?.final).toMatchObject({
+      kind: "notice",
+      tone: "stopped",
+      label: "Agent work stopped",
+      markdown: "Run was cancelled.",
+    });
+  });
 });
