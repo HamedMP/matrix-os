@@ -194,6 +194,10 @@ export interface PrebillingCheckoutCoordinator {
     checkoutAttemptId: string;
     clerkUserId: string;
   }): Promise<'preparing' | 'ready' | 'failed'>;
+  retryPreparation(input: {
+    checkoutAttemptId: string;
+    clerkUserId: string;
+  }): Promise<boolean>;
   authorizeSubscription(
     db: PlatformDB,
     input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
@@ -256,6 +260,7 @@ export function createBillingRoutes(options: {
     c: Context,
     clerkUserId: string,
     attempt: NonNullable<Awaited<ReturnType<typeof getActiveCheckoutAttempt>>>,
+    retryFailed = false,
   ) {
     if (attempt.runtimeSlot !== 'primary') {
       if (!attempt.checkoutUrl) throw new Error('checkout_url_missing');
@@ -266,10 +271,22 @@ export function createBillingRoutes(options: {
       if (!attempt.checkoutUrl) throw new Error('checkout_url_missing');
       return c.json({ url: attempt.checkoutUrl }, 200);
     }
-    const status = await options.prebilling.getPreparationStatus({
+    let status = await options.prebilling.getPreparationStatus({
       checkoutAttemptId: attempt.id,
       clerkUserId,
     });
+    if (status === 'failed' && retryFailed) {
+      const restarted = await options.prebilling.retryPreparation({
+        checkoutAttemptId: attempt.id,
+        clerkUserId,
+      });
+      if (restarted) {
+        status = await options.prebilling.getPreparationStatus({
+          checkoutAttemptId: attempt.id,
+          clerkUserId,
+        });
+      }
+    }
     if (status === 'preparing') {
       return c.json({ status: 'preparing', attemptId: attempt.id }, 202);
     }
@@ -439,7 +456,7 @@ export function createBillingRoutes(options: {
               && recoveredRegion.data === parsed.data.regionSlug
             ) {
               if (parsed.data.runtimeSlot === 'primary' && options.prebilling) {
-                return preparedCheckoutResponse(c, clerkUserId, attempt.attempt);
+                return preparedCheckoutResponse(c, clerkUserId, attempt.attempt, true);
               }
               return c.json({ url: session.url }, 200);
             }
@@ -457,7 +474,7 @@ export function createBillingRoutes(options: {
       }
       if (!attempt.claimed) {
         if (attempt.selectionMatches && attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl) {
-          return preparedCheckoutResponse(c, clerkUserId, attempt.attempt);
+          return preparedCheckoutResponse(c, clerkUserId, attempt.attempt, true);
         }
         if (
           !attempt.selectionMatches

@@ -30,4 +30,14 @@ describe('billing checkout preparation', () => {
       wait: vi.fn().mockResolvedValue(undefined),
     })).rejects.toThrow('checkout_preparation_failed');
   });
+
+  it('preserves a typed error when the status response is not JSON', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('not-json', { status: 200 }));
+    await expect(waitForPreparedCheckout({
+      attemptId: '76edda9c-1431-4777-bd55-ebfa73fa938d',
+      signal: new AbortController().signal,
+      fetcher,
+      wait: vi.fn().mockResolvedValue(undefined),
+    })).rejects.toThrow('checkout_preparation_invalid_response');
+  });
 });

@@ -41,7 +41,16 @@ export async function waitForPreparedCheckout(options: {
       headers: { accept: 'application/json' },
       signal: options.signal,
     });
-    const body = await response.json().catch(() => null) as CheckoutPreparationBody | null;
+    let body: CheckoutPreparationBody | null;
+    try {
+      body = await response.json() as CheckoutPreparationBody;
+    } catch (err: unknown) {
+      console.warn(
+        '[billing] checkout preparation response parse failed',
+        err instanceof Error ? err.name : typeof err,
+      );
+      throw new Error('checkout_preparation_invalid_response');
+    }
     if (response.ok && typeof body?.url === 'string' && body.url.length > 0) {
       return { url: body.url };
     }

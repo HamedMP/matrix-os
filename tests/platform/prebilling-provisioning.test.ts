@@ -20,6 +20,7 @@ import {
   cleanupExpiredPrebillingCheckout,
   getPrebillingIntentByCheckoutAttempt,
   markPrebillingIntentReady,
+  resetPrebillingPreparationForRetry,
 } from '../../packages/platform/src/prebilling-provisioning-store.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { createPrebillingProvisioningCoordinator } from '../../packages/platform/src/prebilling-provisioning.js';
@@ -140,6 +141,15 @@ describe('platform prebilling provisioning foundation', () => {
     expect(admitted.intent).toMatchObject({ state: 'preparing', reservedHourlyCostMicros: 50_000 });
     expect(deferred).toMatchObject({ admitted: false, reason: 'capacity' });
     expect(deferred.intent).toMatchObject({ state: 'preparation_deferred', reservedHourlyCostMicros: 0 });
+    await expect(resetPrebillingPreparationForRetry(db, {
+      intentId: 'intent-2',
+      clerkUserId: 'user_456',
+      now: CREATED_AT,
+    })).resolves.toBe(true);
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-2')).resolves.toMatchObject({
+      state: 'awaiting_checkout',
+      lastErrorCode: null,
+    });
   });
 
   it('keeps existing machines authorized by default during the additive migration', async () => {

@@ -120,6 +120,7 @@ describe('platform billing routes', () => {
         order.push('preparation');
         return true;
       }),
+      retryPreparation: vi.fn(),
       getPreparationStatus: vi.fn().mockResolvedValue('preparing' as const),
       authorizeSubscription: vi.fn(),
       expireCheckout: vi.fn(),
@@ -181,6 +182,7 @@ describe('platform billing routes', () => {
     const prebilling = {
       createIntent: vi.fn().mockResolvedValue(undefined),
       startPreparation: vi.fn(),
+      retryPreparation: vi.fn(),
       getPreparationStatus: vi.fn(),
       authorizeSubscription: vi.fn(),
       expireCheckout: vi.fn(),
@@ -219,7 +221,10 @@ describe('platform billing routes', () => {
         expiresAt: '2026-05-30T00:31:00.000Z',
       }),
       startPreparation: vi.fn().mockResolvedValue(false),
-      getPreparationStatus: vi.fn(),
+      retryPreparation: vi.fn().mockResolvedValue(true),
+      getPreparationStatus: vi.fn()
+        .mockResolvedValueOnce('failed' as const)
+        .mockResolvedValue('preparing' as const),
       authorizeSubscription: vi.fn(),
       expireCheckout: vi.fn(),
     };
@@ -246,12 +251,31 @@ describe('platform billing routes', () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'Billing unavailable', code: 'billing_unavailable' });
     expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+
+    const retry = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+    expect(retry.status).toBe(202);
+    expect(await retry.json()).toEqual({ status: 'preparing', attemptId: expect.any(String) });
+    expect(prebilling.retryPreparation).toHaveBeenCalledWith({
+      checkoutAttemptId: expect.any(String),
+      clerkUserId: 'user_123',
+    });
+    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
   });
 
   it('returns a prepared checkout URL only after owner-bound readiness', async () => {
     const prebilling = {
       createIntent: vi.fn(),
       startPreparation: vi.fn(),
+      retryPreparation: vi.fn(),
       getPreparationStatus: vi.fn()
         .mockResolvedValueOnce('preparing' as const)
         .mockResolvedValueOnce('ready' as const),
@@ -1367,6 +1391,7 @@ describe('platform billing routes', () => {
       prebilling: {
         createIntent: vi.fn(),
         startPreparation: vi.fn(),
+        retryPreparation: vi.fn(),
         getPreparationStatus: vi.fn(),
         authorizeSubscription,
         expireCheckout: vi.fn(),
@@ -1512,6 +1537,7 @@ describe('platform billing routes', () => {
       prebilling: {
         createIntent: vi.fn(),
         startPreparation: vi.fn(),
+        retryPreparation: vi.fn(),
         getPreparationStatus: vi.fn(),
         authorizeSubscription: vi.fn(),
         expireCheckout,

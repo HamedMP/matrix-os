@@ -402,6 +402,26 @@ export async function markPrebillingPreparationFailed(
   return Boolean(updated);
 }
 
+export async function resetPrebillingPreparationForRetry(
+  db: PlatformDB,
+  input: { intentId: string; clerkUserId: string; now: string },
+): Promise<boolean> {
+  await db.ready;
+  const updated = await db.executor.updateTable('prebilling_provisioning_intents').set((eb) => ({
+    state: 'awaiting_checkout',
+    reserved_hourly_cost_micros: 0,
+    last_error_code: null,
+    revision: eb('revision', '+', 1),
+    updated_at: input.now,
+  })).where('id', '=', input.intentId)
+    .where('clerk_user_id', '=', input.clerkUserId)
+    .where('state', 'in', ['preparation_failed', 'preparation_deferred'])
+    .where('stripe_session_id', 'is not', null)
+    .where('stripe_session_expires_at', '>', input.now)
+    .returning('id').executeTakeFirst();
+  return Boolean(updated);
+}
+
 /** Must be called inside the signed billing projection transaction. */
 export async function authorizePrebillingIntent(
   db: PlatformDB,
