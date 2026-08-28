@@ -44,13 +44,23 @@ describe('Preview VPS provisioning workflow', () => {
   it('budgets the job for provisioning, bounded repair, and workflow overhead', () => {
     const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
     const deploy = workflow.jobs.deploy;
+    const checkoutSteps = deploy.steps.filter((step: { uses?: string }) => step.uses === 'actions/checkout@v6');
     const provisionSeconds = Number(deploy.env.PREVIEW_PROVISION_TIMEOUT_SECONDS);
     const installSeconds = Number(deploy.env.PREVIEW_INSTALL_TIMEOUT_SECONDS);
     const workflowOverheadSeconds = 15 * 60;
 
     expect(deploy['timeout-minutes'] * 60)
       .toBeGreaterThanOrEqual(provisionSeconds + (2 * installSeconds) + workflowOverheadSeconds);
-    expect(deploy.steps.find((step: { uses?: string }) => step.uses === 'actions/checkout@v6').if).toBeUndefined();
+    expect(checkoutSteps).toEqual([
+      expect.objectContaining({
+        if: "needs.gate.outputs.action == 'deploy'",
+        with: { ref: '${{ needs.gate.outputs.head_sha }}' },
+      }),
+      expect.objectContaining({
+        if: "needs.gate.outputs.action == 'deploy_existing'",
+        with: { ref: 'main' },
+      }),
+    ]);
     expect(deploy.steps.find((step: { name?: string }) => step.name === 'Provision or resume preview VPS').run)
       .toContain('PREVIEW_MACHINE_ID="$accepted_machine_id" ./scripts/wait-preview-provisioning.sh');
   });
