@@ -91,8 +91,8 @@ export async function openProviderSetupTerminal(
   openTab: ReturnType<typeof useTabs.getState>["openTab"],
   logPrefix = "provider-setup",
 ): Promise<boolean> {
+  const runtimeGeneration = captureRuntimeGeneration();
   try {
-    const runtimeGeneration = captureRuntimeGeneration();
     const requestedSessionName = freshSetupSessionName(setup);
     const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
       name: requestedSessionName,
@@ -108,6 +108,7 @@ export async function openProviderSetupTerminal(
     useTabs.getState().requestTerminalSession(sessionName);
     return true;
   } catch (err: unknown) {
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
     console.error(`[${logPrefix}] Failed to open provider setup terminal:`, err instanceof Error ? err.name : typeof err);
     return false;
   }
