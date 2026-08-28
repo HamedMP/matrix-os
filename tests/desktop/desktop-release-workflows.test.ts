@@ -28,8 +28,13 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain("from mac_alias import Alias");
     expect(workflow).toContain('icon_view.get("backgroundImageAlias")');
     expect(workflow).toContain("Alias.from_bytes(background_alias)");
-    expect(workflow).toContain("set backgroundFile to POSIX file backgroundPath");
-    expect(workflow).toContain("return POSIX path of (backgroundFile as alias)");
+    expect(workflow).toMatch(
+      /set backgroundFile to POSIX file backgroundPath as alias\s+tell application "Finder"/,
+    );
+    expect(workflow).not.toMatch(
+      /tell application "Finder"\s+set backgroundFile to POSIX file backgroundPath/,
+    );
+    expect(workflow).toContain("return POSIX path of backgroundFile");
     expect(workflow).not.toContain("set viewOptionsProperties to properties of viewOptions");
     expect(workflow).toContain('background_picture="missing value"');
     expect(workflow).toContain('"$mount_dir"/.background.*');
