@@ -19,6 +19,8 @@ import {
   createPrebillingIntent,
   cleanupExpiredPrebillingCheckout,
   getPrebillingIntentByCheckoutAttempt,
+  markPrebillingIntentReady,
+  resetPrebillingPreparationForRetry,
 } from '../../packages/platform/src/prebilling-provisioning-store.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { createPrebillingProvisioningCoordinator } from '../../packages/platform/src/prebilling-provisioning.js';
@@ -62,6 +64,14 @@ describe('platform prebilling provisioning foundation', () => {
     });
     expect(enabled.serverHourlyCostMicros.get('cpx22')).toBe(50_000);
     expect(prebillingRolloutIncludesUser(enabled, 'user_123')).toBe(true);
+    expect(loadPrebillingProvisioningConfig({
+      MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
+      MATRIX_PREBILLING_PROVISIONING_COSTS: 'cpx22:92900;cpx32:169900;cpx52:254000',
+    }).serverHourlyCostMicros).toEqual(new Map([
+      ['cpx22', 92_900],
+      ['cpx32', 169_900],
+      ['cpx52', 254_000],
+    ]));
   });
 
   it('creates one immutable intent for a checkout and canonical selection', async () => {
@@ -131,6 +141,15 @@ describe('platform prebilling provisioning foundation', () => {
     expect(admitted.intent).toMatchObject({ state: 'preparing', reservedHourlyCostMicros: 50_000 });
     expect(deferred).toMatchObject({ admitted: false, reason: 'capacity' });
     expect(deferred.intent).toMatchObject({ state: 'preparation_deferred', reservedHourlyCostMicros: 0 });
+    await expect(resetPrebillingPreparationForRetry(db, {
+      intentId: 'intent-2',
+      clerkUserId: 'user_456',
+      now: CREATED_AT,
+    })).resolves.toBe(true);
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-2')).resolves.toMatchObject({
+      state: 'awaiting_checkout',
+      lastErrorCode: null,
+    });
   });
 
   it('keeps existing machines authorized by default during the additive migration', async () => {
@@ -220,6 +239,16 @@ describe('platform prebilling provisioning foundation', () => {
     await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
     });
+    await expect(service.register('registration-token', {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'dev',
+    })).resolves.toMatchObject({ registered: true, status: 'running' });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'ready_waiting_for_billing',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+    });
     const reconcileFallbacks = vi.fn().mockResolvedValue(undefined);
     service.setPrebillingFallbackReconciler?.(reconcileFallbacks);
     await service.reconcileProvisioning();
@@ -292,15 +321,6 @@ describe('platform prebilling provisioning foundation', () => {
       status: 'provisioning',
       etaSeconds: 90,
     });
-    const provision = vi.fn().mockImplementation(async () => {
-      await insertUserMachine(db, {
-        machineId: 'fallback-machine', clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
-        provisioningClass: 'customer', accessClerkUserIds: [], status: 'provisioning', imageVersion: 'dev',
-        developerTools: ['codex', 'claude-code'], registrationTokenHash: null,
-        registrationTokenExpiresAt: null, provisionedAt: CREATED_AT,
-      });
-      return { machineId: 'fallback-machine', status: 'provisioning' };
-    });
     const coordinator = createPrebillingProvisioningCoordinator({
       db,
       config: loadPrebillingProvisioningConfig({
@@ -310,7 +330,7 @@ describe('platform prebilling provisioning foundation', () => {
         MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '50000',
         MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
       }),
-      customerVpsService: { provisionForCheckout, provision } as never,
+      customerVpsService: { provisionForCheckout } as never,
       resolveIdentity: vi.fn().mockResolvedValue({ handle: 'alice' }),
       intentIdFactory: () => 'intent-1',
       now: () => new Date(CREATED_AT),
@@ -328,11 +348,11 @@ describe('platform prebilling provisioning foundation', () => {
       now: CREATED_AT,
     });
     expect(preparation).toEqual({ intentId: 'intent-1', expiresAt: EXPIRES_AT });
-    await coordinator.startPreparation({
+    await expect(coordinator.startPreparation({
       intentId: 'intent-1',
       stripeSessionId: 'cs_1',
       stripeSessionExpiresAt: EXPIRES_AT,
-    });
+    })).resolves.toBe(true);
 
     expect(provisionForCheckout).toHaveBeenCalledWith({
       clerkUserId: 'user_123',
@@ -342,23 +362,20 @@ describe('platform prebilling provisioning foundation', () => {
       location: 'fsn1',
       developerTools: ['codex', 'claude-code'],
     }, 'intent-1', { dispatch: 'detached' });
-    await db.transaction((trx) => coordinator.authorizeSubscription(trx, {
-      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
-    }));
-    await expect(coordinator.reconcileFallbacks()).resolves.toEqual({ checked: 1, completed: 1, failed: 0 });
-    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({ machineId: 'fallback-machine' });
-    await expect(coordinator.reconcileFallbacks()).resolves.toEqual({ checked: 0, completed: 0, failed: 0 });
-    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
-      clerkUserId: 'user_123', serverType: 'cpx32', developerTools: ['codex', 'claude-code'],
-    }), { dispatch: 'detached' });
+    await expect(coordinator.getPreparationStatus({
+      checkoutAttemptId: 'checkout-1', clerkUserId: 'user_123',
+    })).resolves.toBe('preparing');
   });
 
   it('leases fallback provisioning to one platform process', async () => {
     await seedCheckout('checkout-1', 'user_123');
     await createIntent('intent-1', 'checkout-1', 'user_123');
-    await db.transaction((trx) => authorizePrebillingIntent(trx, {
-      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
-    }));
+    // Legacy rows from before fail-closed authorization can still be claimed
+    // safely while they age out; new authorization can no longer create one.
+    await db.executor.updateTable('prebilling_provisioning_intents').set({
+      state: 'authorized',
+      authorized_at: CREATED_AT,
+    }).where('id', '=', 'intent-1').execute();
     const claims = await Promise.all([1, 2].map(() => claimAuthorizedPrebillingFallbackIntent(db, {
       intentId: 'intent-1', now: CREATED_AT, leaseExpiresAt: EXPIRES_AT,
     })));
@@ -407,10 +424,19 @@ describe('platform prebilling provisioning foundation', () => {
 
     await expect(db.transaction((trx) => authorizePrebillingIntent(trx, {
       intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
+    }))).rejects.toThrow('prebilling_machine_not_ready');
+    await expect(db.transaction((trx) => markPrebillingIntentReady(trx, {
+      intentId: 'intent-1',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      now: CREATED_AT,
+    }))).resolves.toBe(true);
+    await expect(db.transaction((trx) => authorizePrebillingIntent(trx, {
+      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
     }))).resolves.toEqual({
       authorized: true,
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
-      needsFallback: false,
     });
     await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toMatchObject({
       activationState: 'authorized',

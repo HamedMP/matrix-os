@@ -2,12 +2,14 @@ import { Hono } from 'hono';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import {
   claimBillingRuntimeAction,
+  claimCheckoutAttempt,
   completeBillingRuntimeAction,
   enqueueBillingRuntimeAction,
   getBillingEntitlement,
   getBillingSubscription,
   getBillingCustomerByClerkUserId,
   getLatestCheckoutAttempt,
+  finalizeCheckoutAttempt,
   insertUserMachine,
   listBillingRuntimeActions,
   insertCheckoutAttempt,
@@ -107,7 +109,7 @@ describe('platform billing routes', () => {
     );
   });
 
-  it('starts admitted preparation after Stripe opens and before checkout returns', async () => {
+  it('withholds Stripe checkout until the exact primary computer is ready', async () => {
     const order: string[] = [];
     const prebilling = {
       createIntent: vi.fn(async () => {
@@ -116,9 +118,11 @@ describe('platform billing routes', () => {
       }),
       startPreparation: vi.fn(async () => {
         order.push('preparation');
+        return true;
       }),
+      retryPreparation: vi.fn(),
+      getPreparationStatus: vi.fn().mockResolvedValue('preparing' as const),
       authorizeSubscription: vi.fn(),
-      ensureFallback: vi.fn(),
       expireCheckout: vi.fn(),
     };
     vi.mocked(stripe.createCheckoutSession).mockImplementation(async () => {
@@ -151,7 +155,11 @@ describe('platform billing routes', () => {
       }),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      status: 'preparing',
+      attemptId: expect.any(String),
+    });
     expect(order).toEqual(['intent', 'stripe', 'preparation']);
     expect(prebilling.createIntent).toHaveBeenCalledWith(expect.objectContaining({
       checkoutAttemptId: expect.any(String),
@@ -167,6 +175,153 @@ describe('platform billing routes', () => {
       intentId: 'intent_123',
       stripeSessionId: 'cs_test_session',
       stripeSessionExpiresAt: '2026-05-30T00:30:00.000Z',
+    });
+  });
+
+  it('fails primary checkout closed when prebilling is unavailable', async () => {
+    const prebilling = {
+      createIntent: vi.fn().mockResolvedValue(undefined),
+      startPreparation: vi.fn(),
+      retryPreparation: vi.fn(),
+      getPreparationStatus: vi.fn(),
+      authorizeSubscription: vi.fn(),
+      expireCheckout: vi.fn(),
+    };
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve('user_123'),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      prebilling,
+    }));
+
+    const response = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Billing unavailable', code: 'billing_unavailable' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+    expect(prebilling.startPreparation).not.toHaveBeenCalled();
+  });
+
+  it('never returns a Stripe URL when unpaid preparation capacity is full', async () => {
+    const prebilling = {
+      createIntent: vi.fn().mockResolvedValue({
+        intentId: 'intent_123',
+        expiresAt: '2026-05-30T00:31:00.000Z',
+      }),
+      startPreparation: vi.fn().mockResolvedValue(false),
+      retryPreparation: vi.fn().mockResolvedValue(true),
+      getPreparationStatus: vi.fn()
+        .mockResolvedValueOnce('failed' as const)
+        .mockResolvedValue('preparing' as const),
+      authorizeSubscription: vi.fn(),
+      expireCheckout: vi.fn(),
+    };
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve('user_123'),
+      prebilling,
+    }));
+
+    const response = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Billing unavailable', code: 'billing_unavailable' });
+    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+
+    const retry = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+    expect(retry.status).toBe(202);
+    expect(await retry.json()).toEqual({ status: 'preparing', attemptId: expect.any(String) });
+    expect(prebilling.retryPreparation).toHaveBeenCalledWith({
+      checkoutAttemptId: expect.any(String),
+      clerkUserId: 'user_123',
+    });
+    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+  });
+
+  it('returns a prepared checkout URL only after owner-bound readiness', async () => {
+    const prebilling = {
+      createIntent: vi.fn(),
+      startPreparation: vi.fn(),
+      retryPreparation: vi.fn(),
+      getPreparationStatus: vi.fn()
+        .mockResolvedValueOnce('preparing' as const)
+        .mockResolvedValueOnce('ready' as const),
+      authorizeSubscription: vi.fn(),
+      expireCheckout: vi.fn(),
+    };
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve('user_123'),
+      prebilling,
+    }));
+    const checkout = await claimCheckoutAttempt(db, {
+      id: '76edda9c-1431-4777-bd55-ebfa73fa938d',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      serverType: 'cpx32',
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    expect(checkout.claimed).toBe(true);
+    expect(await finalizeCheckoutAttempt(
+      db,
+      checkout.attempt.id,
+      'cs_test_session',
+      'https://checkout.stripe.test/session',
+    )).toBe(true);
+
+    const preparing = await app.request(
+      `/billing/checkout/status?attemptId=${checkout.attempt.id}`,
+    );
+    const ready = await app.request(
+      `/billing/checkout/status?attemptId=${checkout.attempt.id}`,
+    );
+
+    expect(preparing.status).toBe(202);
+    expect(await preparing.json()).toEqual({ status: 'preparing', attemptId: checkout.attempt.id });
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toEqual({ url: 'https://checkout.stripe.test/session' });
+    expect(prebilling.getPreparationStatus).toHaveBeenNthCalledWith(1, {
+      checkoutAttemptId: checkout.attempt.id,
+      clerkUserId: 'user_123',
     });
   });
 
@@ -1218,19 +1373,14 @@ describe('platform billing routes', () => {
     });
   });
 
-  it('authorizes the exact preparation and retries durable fallback after a signed active projection', async () => {
+  it('fails a signed active projection closed when the prepared machine is not ready', async () => {
     vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_prebilling', {
       runtimeSlot: 'primary',
       prebillingIntentId: 'intent_123',
     }));
-    const authorizeSubscription = vi.fn().mockResolvedValue({
-      authorized: true,
-      machineId: null,
-      needsFallback: true,
-    });
-    const ensureFallback = vi.fn()
-      .mockRejectedValueOnce(new Error('fallback enqueue unavailable'))
-      .mockResolvedValueOnce(undefined);
+    const authorizeSubscription = vi.fn().mockRejectedValue(
+      new Error('prebilling_machine_not_ready'),
+    );
     const app = new Hono();
     app.route('/billing', createBillingRoutes({
       db,
@@ -1241,8 +1391,9 @@ describe('platform billing routes', () => {
       prebilling: {
         createIntent: vi.fn(),
         startPreparation: vi.fn(),
+        retryPreparation: vi.fn(),
+        getPreparationStatus: vi.fn(),
         authorizeSubscription,
-        ensureFallback,
         expireCheckout: vi.fn(),
       },
     }));
@@ -1260,13 +1411,11 @@ describe('platform billing routes', () => {
       runtimeSlot: 'primary',
       now: '2026-05-30T00:00:00.000Z',
     });
-    expect(ensureFallback).toHaveBeenCalledWith({ intentId: 'intent_123' });
-
     const retry = await app.request('/billing/webhooks/stripe', {
       method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
     });
-    expect(retry.status).toBe(200);
-    expect(ensureFallback).toHaveBeenCalledTimes(2);
+    expect(retry.status).toBe(500);
+    expect(authorizeSubscription).toHaveBeenCalledTimes(2);
   });
 
   it('keeps subscriptions independent when one additional computer is canceled', async () => {
@@ -1388,8 +1537,9 @@ describe('platform billing routes', () => {
       prebilling: {
         createIntent: vi.fn(),
         startPreparation: vi.fn(),
+        retryPreparation: vi.fn(),
+        getPreparationStatus: vi.fn(),
         authorizeSubscription: vi.fn(),
-        ensureFallback: vi.fn(),
         expireCheckout,
       },
     }));

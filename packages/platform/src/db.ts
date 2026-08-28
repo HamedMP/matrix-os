@@ -4392,6 +4392,31 @@ export async function finalizeCheckoutAttempt(
     && existing.checkout_url === checkoutUrl;
 }
 
+export async function abandonCreatingCheckoutAttempt(
+  db: PlatformDB,
+  id: string,
+  resolvedAt: string,
+): Promise<boolean> {
+  await db.ready;
+  return db.transaction(async (trx) => {
+    const abandoned = await trx.executor
+      .updateTable('billing_checkout_attempts')
+      .set({ status: 'abandoned', resolved_at: resolvedAt })
+      .where('id', '=', id)
+      .where('status', '=', 'creating')
+      .where('stripe_session_id', 'is', null)
+      .returning('id')
+      .executeTakeFirst();
+    if (!abandoned) return false;
+    await trx.executor
+      .updateTable('billing_trial_accounts')
+      .set({ trial_checkout_attempt_id: null, updated_at: resolvedAt })
+      .where('trial_checkout_attempt_id', '=', id)
+      .execute();
+    return true;
+  });
+}
+
 export async function getLatestCheckoutAttempt(
   db: PlatformDB,
   clerkUserId: string,
