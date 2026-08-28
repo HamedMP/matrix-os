@@ -93,6 +93,9 @@ export function WorkRail({
     if (!client || !active) return () => { current = false; };
     setPinError(null);
     setPinning({});
+    setDeleteChatTarget(null);
+    setDeletingChat(false);
+    setDeleteChatError(null);
     setStatus("loading");
     void loadWorkRailChats(client).then((loaded) => {
       if (!current) return;
@@ -145,26 +148,30 @@ export function WorkRail({
   const deleteChat = async () => {
     if (!client || !deleteChatTarget || deletingChat) return;
     const target = deleteChatTarget;
+    const requestRouteGeneration = routeScopeRef.current.generation;
+    const targetProject = model.projects.find((group) => (
+      group.id === target.projectId || group.slug === target.projectId
+    ))?.project;
     setDeletingChat(true);
     setDeleteChatError(null);
     try {
       await client.delete(target.chat.id, canonicalChatRequestId());
+      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
       setRecords((current) => current.filter((record) => record.chat.id !== target.chat.id));
       setDeleteChatTarget(null);
-      onChatDeleted?.(
-        target,
-        model.projects.find((group) => (
-          group.id === target.projectId || group.slug === target.projectId
-        ))?.project,
-      );
+      onChatDeleted?.(target, targetProject);
     } catch (error: unknown) {
       console.warn(
         "[work] Chat deletion failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      setDeleteChatError("The Chat could not be deleted. Try again.");
+      if (routeScopeRef.current.generation === requestRouteGeneration) {
+        setDeleteChatError("The Chat could not be deleted. Try again.");
+      }
     } finally {
-      setDeletingChat(false);
+      if (routeScopeRef.current.generation === requestRouteGeneration) {
+        setDeletingChat(false);
+      }
     }
   };
 

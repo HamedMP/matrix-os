@@ -580,6 +580,50 @@ describe("WorkRail", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Recent global" })).toBeNull());
   });
 
+  it("ignores a delayed Chat deletion after the rail route scope changes", async () => {
+    let resolveDelete!: (value: { chatId: string; deletedAt: string }) => void;
+    const pendingDelete = new Promise<{ chatId: string; deletedAt: string }>((resolve) => {
+      resolveDelete = resolve;
+    });
+    const client = {
+      list: vi.fn(async () => ({ items: [recent] })),
+      delete: vi.fn(() => pendingDelete),
+    } as unknown as CanonicalChatClient;
+    const onChatDeleted = vi.fn();
+    const props = {
+      client,
+      projects: [] as Project[],
+      active: true,
+      onNewGlobalChat: vi.fn(),
+      onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(),
+      onCollapse: vi.fn(),
+      onChatDeleted,
+    };
+    const { rerender } = render(
+      <WorkRail {...props} activeChatId="chat_original_scope" />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Recent global" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
+    await waitFor(() => expect(client.delete).toHaveBeenCalledOnce());
+
+    rerender(<WorkRail {...props} activeChatId="chat_replacement_scope" />);
+    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveDelete({
+        chatId: recent.chat.id,
+        deletedAt: "2026-08-28T13:00:00.000Z",
+      });
+      await pendingDelete;
+    });
+
+    expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
+    expect(onChatDeleted).not.toHaveBeenCalled();
+  });
+
   it("opens Project deletion from both hover and right-click actions", async () => {
     setup();
     const project = await screen.findByRole("button", { name: "Alpha" });
