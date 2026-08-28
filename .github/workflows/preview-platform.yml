@@ -111,6 +111,16 @@ jobs:
             echo "CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT must be set in the selected isolated environment; refusing to fall back to another SA." >&2
             exit 1
           fi
+          if [ -z "${PREVIEW_PUBLIC_URL:-}" ]; then
+            echo "Preview/staging PLATFORM_PUBLIC_URL must be explicitly configured." >&2
+            exit 1
+          fi
+          case "$PREVIEW_PUBLIC_URL" in
+            https://app.matrix-os.com*|https://api.matrix-os.com*)
+              echo "Preview/staging must not reuse a production public origin." >&2
+              exit 1
+              ;;
+          esac
           if [ "$DEPLOYMENT_ENVIRONMENT" = "staging" ]; then
             if [ "$CLOUD_RUN_PREVIEW_SERVICE" != "matrix-platform-staging" ]; then
               echo "staging must deploy only to the dedicated matrix-platform-staging service." >&2
@@ -120,16 +130,6 @@ jobs:
               echo "staging must use the preview runtime service account." >&2
               exit 1
             fi
-            if [ -z "${PREVIEW_PUBLIC_URL:-}" ]; then
-              echo "staging PLATFORM_PUBLIC_URL must be explicitly configured." >&2
-              exit 1
-            fi
-            case "$PREVIEW_PUBLIC_URL" in
-              https://app.matrix-os.com*|https://api.matrix-os.com*)
-                echo "staging must not reuse a production public origin." >&2
-                exit 1
-                ;;
-            esac
             echo "REVISION_TAG=staging-${PR_NUMBER}" >> "$GITHUB_ENV"
           else
             if [ "$CLOUD_RUN_PREVIEW_SERVICE" != "matrix-platform-preview" ]; then

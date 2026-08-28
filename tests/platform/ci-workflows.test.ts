@@ -384,6 +384,8 @@ describe('CI workflows', () => {
     expect(isolated).toContain('matrix-platform-staging');
     expect(isolated).toContain('matrix-platform-preview');
     expect(isolated).toContain('Preview must deploy only to the dedicated matrix-platform-preview service.');
+    expect(isolated).toContain('Preview/staging PLATFORM_PUBLIC_URL must be explicitly configured.');
+    expect(isolated).toContain('Preview/staging must not reuse a production public origin.');
     expect(isolated).toContain('matrix-platform-preview-runner@matrix-os-1144.iam.gserviceaccount.com');
     expect(isolated).toContain('PLATFORM_DATABASE_URL=platform-database-url-staging:latest');
     expect(isolated).toContain('STRIPE_SECRET_KEY=stripe-secret-key-test:latest');
