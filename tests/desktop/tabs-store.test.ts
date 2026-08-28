@@ -282,6 +282,69 @@ describe("tabs store", () => {
     expect(useTabs.getState().tabs[0]?.chatView).toBe("conversation");
   });
 
+  it("keeps a Project Chat title for the shared Chat top row", () => {
+    useTabs.getState().openTab({
+      kind: "work",
+      title: "Chat",
+      workRoute: "project",
+      projectSlug: "matrix-os",
+      chatId: "chat_project",
+      chatTitle: "Fix release pipeline",
+    });
+
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "work",
+      workRoute: "project",
+      chatTitle: "Fix release pipeline",
+    });
+  });
+
+  it("normalizes legacy Chat, Projects, and Project entries into one retained Work route", () => {
+    const chat = useTabs.getState().openTab({
+      kind: "chat",
+      title: "Chat",
+      chatId: "global-chat",
+      closable: false,
+    });
+    const projects = useTabs.getState().openTab({
+      kind: "projects",
+      title: "Projects",
+      closable: false,
+    });
+    const projectChat = useTabs.getState().openTab({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+      chatId: "project-chat",
+      closable: false,
+    });
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      id: chat,
+      kind: "work",
+      workRoute: "project",
+      projectSlug: "matrix-os",
+      chatId: "project-chat",
+    });
+    const projectBoard = useTabs.getState().openTab({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+      closable: false,
+    });
+
+    expect([chat, projects, projectChat, projectBoard]).toEqual([chat, chat, chat, chat]);
+    expect(useTabs.getState().tabs).toEqual([
+      expect.objectContaining({
+        id: chat,
+        kind: "work",
+        title: "Chat",
+        workRoute: "project",
+        projectSlug: "matrix-os",
+        chatId: undefined,
+      }),
+    ]);
+  });
+
   it("clears the selected canonical Chat when its root route is opened", () => {
     const tabId = useTabs.getState().openTab({
       kind: "chat",
@@ -297,7 +360,7 @@ describe("tabs store", () => {
     });
 
     expect(focusedId).toBe(tabId);
-    expect(useTabs.getState().tabs[0]).toMatchObject({ title: "Chat" });
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "work", title: "Chat", workRoute: "chat" });
     expect(useTabs.getState().tabs[0]?.chatId).toBeUndefined();
     expect(useTabs.getState().tabs[0]?.chatView).toBe("index");
   });
@@ -316,9 +379,9 @@ describe("tabs store", () => {
     expect(useTabs.getState().tabs.find((tab) => tab.id === chatTabId)?.chatView).toBe("draft");
   });
 
-  it("treats different identities as distinct tabs", () => {
-    useTabs.getState().openTab({ kind: "project", projectSlug: "a", title: "A" });
-    useTabs.getState().openTab({ kind: "project", projectSlug: "b", title: "B" });
+  it("treats distinct terminal identities as distinct tabs", () => {
+    useTabs.getState().openTab({ kind: "terminal", sessionName: "a", title: "A" });
+    useTabs.getState().openTab({ kind: "terminal", sessionName: "b", title: "B" });
     expect(useTabs.getState().tabs).toHaveLength(2);
   });
 
@@ -378,6 +441,36 @@ describe("tabs store", () => {
     expect(useTabs.getState().activeTabId).toBe(home);
   });
 
+  it("retains the active Chat surface as a Global draft when its Project is removed", () => {
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    const work = useTabs.getState().openTab({
+      kind: "work",
+      title: "Chat",
+      workRoute: "project",
+      projectSlug: "repo",
+      chatId: "chat_repo",
+      chatTitle: "Repo chat",
+      chatView: "conversation",
+      closable: false,
+    });
+    useTabs.getState().openTab({ kind: "task", projectSlug: "repo", taskId: "task_1", title: "Task" });
+    useTabs.getState().focusTab(work);
+
+    useTabs.getState().closeProjectTabs("repo");
+
+    expect(useTabs.getState().activeTabId).toBe(work);
+    expect(useTabs.getState().tabs.find((tab) => tab.id === work)).toMatchObject({
+      kind: "work",
+      workRoute: "chat",
+      chatView: "draft",
+      projectSlug: undefined,
+      chatId: undefined,
+      chatTitle: undefined,
+      closable: false,
+    });
+    expect(useTabs.getState().tabs.some((tab) => tab.taskId === "task_1")).toBe(false);
+  });
+
   it("focusTab ignores unknown ids", () => {
     const id = useTabs.getState().openTab({ kind: "home", title: "Home" });
     useTabs.getState().focusTab("nope");
@@ -402,14 +495,14 @@ describe("tabs store", () => {
   });
 
   it("does not evict the previously active tab when opening beyond the cap", () => {
-    const active = useTabs.getState().openTab({ kind: "project", projectSlug: "p0", title: "P0" });
-    const oldestInactive = useTabs.getState().openTab({ kind: "project", projectSlug: "p1", title: "P1" });
+    const active = useTabs.getState().openTab({ kind: "task", taskId: "task-0", title: "P0" });
+    const oldestInactive = useTabs.getState().openTab({ kind: "task", taskId: "task-1", title: "P1" });
     for (let i = 2; i < 24; i++) {
-      useTabs.getState().openTab({ kind: "project", projectSlug: `p${i}`, title: `P${i}` });
+      useTabs.getState().openTab({ kind: "task", taskId: `task-${i}`, title: `P${i}` });
     }
     useTabs.getState().focusTab(active);
 
-    useTabs.getState().openTab({ kind: "project", projectSlug: "p24", title: "P24" });
+    useTabs.getState().openTab({ kind: "task", taskId: "task-24", title: "P24" });
 
     const state = useTabs.getState();
     expect(state.tabs).toHaveLength(24);

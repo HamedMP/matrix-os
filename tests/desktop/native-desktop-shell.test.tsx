@@ -111,16 +111,14 @@ describe("native desktop shell", () => {
     expect(browserAppIcon?.style.color).toBe("white");
     expect(screen.getByRole("button", { name: "Chat" })
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-success-emphasis, #288A5B)");
+      .toBe("var(--surface-error-emphasis, #BA5236)");
     expect(screen.getByRole("button", { name: "Terminal" })
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
       .toBe("var(--surface-warning-emphasis, #E0AA52)");
     expect(screen.getByRole("button", { name: "Files" })
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
       .toBe("var(--surface-brand-emphasis, #748E59)");
-    expect(screen.getByRole("button", { name: "Projects" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-error-emphasis, #BA5236)");
+    expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.getByRole("button", { name: "Plugins" })
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
       .toBe("rgb(124, 109, 180)");
@@ -269,6 +267,40 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
+  it("normalizes restored legacy Chat, Projects, and Project tabs into one Work surface", () => {
+    useTabs.setState({
+      tabs: [
+        { id: "chat", kind: "chat", title: "Chat", closable: false },
+        { id: "projects", kind: "projects", title: "Projects", closable: false },
+        {
+          id: "project",
+          kind: "project",
+          projectSlug: "matrix-os",
+          chatId: "chat-42",
+          title: "Matrix OS",
+          closable: false,
+        },
+      ],
+      activeTabId: "project",
+      viewHistory: ["chat", "projects", "project"],
+      historyIndex: 2,
+    });
+
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    expect(useTabs.getState().tabs).toEqual([
+      expect.objectContaining({
+        id: "project",
+        kind: "work",
+        title: "Chat",
+        workRoute: "project",
+        projectSlug: "matrix-os",
+        chatId: "chat-42",
+      }),
+    ]);
+    expect(useTabs.getState().viewHistory).toEqual(["project"]);
+  });
+
   it("offers Settings as a native app and maximizes it into tabs", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
@@ -342,22 +374,22 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
   });
 
-  it("opens Projects as a floating window and only adds it to the tab strip when maximized", () => {
+  it("opens Chat as a floating window and only adds it to the tab strip when maximized", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Projects" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
 
-    const tab = useTabs.getState().tabs.find((candidate) => candidate.kind === "projects");
+    const tab = useTabs.getState().tabs.find((candidate) => candidate.kind === "work");
     expect(tab).toBeTruthy();
     expect(useDesktopSurfaces.getState().surfaces[tab!.id]?.mode).toBe("window");
-    expect(screen.getByRole("dialog", { name: "Projects window" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Chat window" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.queryByRole("tab", { name: "Projects" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Chat" })).toBeNull();
 
-    fireEvent.click(getWindowControl("Projects", "Maximize"));
+    fireEvent.click(getWindowControl("Chat", "Maximize"));
 
     expect(useDesktopSurfaces.getState().surfaces[tab!.id]?.mode).toBe("tab");
-    expect(screen.getByRole("tab", { name: "Projects" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("opens Apps as a transient launcher instead of a desktop app surface", () => {
@@ -573,13 +605,13 @@ describe("native desktop shell", () => {
     expect(runningApps.className).toContain("[scrollbar-width:none]");
     expect(runningApps.className).toContain("[&::-webkit-scrollbar]:hidden");
     expect(runningApps.className).not.toContain("pb-2");
-    const chatButton = screen.getByRole("button", { name: "Focus Chat" });
-    expect(chatButton.className).not.toContain("hover:-translate-y-0.5");
-    expect(chatButton.querySelector("[data-desktop-app-icon]")?.className)
+    const workButton = screen.getByRole("button", { name: "Focus Chat" });
+    expect(workButton.className).not.toContain("hover:-translate-y-0.5");
+    expect(workButton.querySelector("[data-desktop-app-icon]")?.className)
       .toContain("group-hover:-translate-y-0.5");
-    expect(chatButton.parentElement?.className).toContain("flex-col");
-    expect(chatButton.parentElement?.className).toContain("gap-0.5");
-    expect(chatButton.parentElement?.querySelector("[data-taskbar-running-indicator]"))
+    expect(workButton.parentElement?.className).toContain("flex-col");
+    expect(workButton.parentElement?.className).toContain("gap-0.5");
+    expect(workButton.parentElement?.querySelector("[data-taskbar-running-indicator]"))
       .toBeTruthy();
   });
 
@@ -731,16 +763,15 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
 
-    const chatWindow = screen.getByRole("dialog", { name: "Chat window" });
+    const workWindow = screen.getByRole("dialog", { name: "Chat window" });
     const terminalWindow = screen.getByRole("dialog", { name: "Terminal window" });
-    const chatChrome = chatWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
+    const workChrome = workWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
     const terminalChrome = terminalWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
-    expect(chatChrome).toBeTruthy();
-    expect(chatChrome?.style.width).toBe("280px");
+    expect(workChrome).toBeNull();
     expect(terminalChrome?.style.width).toBe("280px");
     expect(screen.getByText("Chat content")).toBeTruthy();
     expect(screen.getByText("Terminal content")).toBeTruthy();
-    expect(screen.getByTestId("desktop-surface-content-chat").hasAttribute("inert")).toBe(true);
+    expect(screen.getByTestId("desktop-surface-content-work").hasAttribute("inert")).toBe(true);
     expect(screen.getByTestId("desktop-surface-content-terminals").hasAttribute("inert")).toBe(false);
   });
 

@@ -180,6 +180,7 @@ export function CanonicalChatWorkspace({
       && previous.projectId === projectId
     ) return;
     previousRoute.current = { initialChatId, initialView, projectId };
+    reportedChatId.current = initialChatId ?? null;
     if (projectId !== null) return;
     setGlobalView(initialView ?? (initialChatId ? "conversation" : "index"));
   }, [initialChatId, initialView, projectId]);
@@ -324,7 +325,7 @@ export function CanonicalChatWorkspace({
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
     setDraftProjectId(projectId);
-    if (projectId === null) setGlobalView("draft");
+    setGlobalView("draft");
   };
 
   const selectChat = (chatId: string) => {
@@ -332,7 +333,7 @@ export function CanonicalChatWorkspace({
     const selected = controller.items.find((item) => item.chat.id === chatId);
     reportedChatId.current = chatId;
     onActiveChatChanged?.(chatId, selected?.chat.title);
-    if (projectId === null) setGlobalView("conversation");
+    setGlobalView("conversation");
   };
 
   const composer = (
@@ -377,8 +378,8 @@ export function CanonicalChatWorkspace({
           />
         )}
         onNewChat={startNewChat}
-        placeholder={controller.detail ? "Reply to chat…" : "How can I help you today?"}
-        ariaLabel={controller.detail ? "Reply to chat" : "Start a chat"}
+        placeholder={globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
+        ariaLabel={globalView === "conversation" ? "Reply to chat" : "Start a chat"}
         leadingControls={(
           <ConversationContextPicker
             context={context}
@@ -512,7 +513,7 @@ export function CanonicalChatWorkspace({
             {controller.error}
           </div>
         ) : null}
-        {controller.detail ? (
+        {controller.detail && globalView === "conversation" ? (
           <>
             <ConversationTranscript turns={transcript} callbacks={{ copyText }} />
             <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">{composer}</div>

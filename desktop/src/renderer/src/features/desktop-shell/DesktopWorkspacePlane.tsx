@@ -84,6 +84,9 @@ const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlanePr
   const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (mode !== "desktop") return;
     const target = event.target;
+    // React events from Radix/other portals still bubble through their logical
+    // component tree. They are not clicks on this workspace DOM plane.
+    if (target instanceof Node && !event.currentTarget.contains(target)) return;
     if (target instanceof Element && target.closest("[data-desktop-surface],button,input,a")) return;
     onBackgroundClick?.();
   };

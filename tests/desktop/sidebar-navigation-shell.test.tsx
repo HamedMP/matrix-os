@@ -161,12 +161,13 @@ describe("Desktop sidebar navigation shell", () => {
     expect(useTabs.getState().tabs.filter((tab) => tab.kind === "terminal" && tab.sessionName === "dev")).toHaveLength(1);
   });
 
-  it("opens a recent conversation in Chat and restores its selection", () => {
+  it("opens a recent conversation in Work and restores its selection", () => {
     renderSidebar();
 
     fireEvent.click(screen.getByRole("button", { name: "Open recent Fix navigation" }));
 
-    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)).toMatchObject({ kind: "chat" });
+    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId))
+      .toMatchObject({ kind: "work", workRoute: "chat" });
     expect(useThreads.getState().activeThreadId).toBe("thread-1");
   });
 
@@ -195,7 +196,7 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByRole("button", { name: "Open recent Trip planning" }).getAttribute("aria-current")).toBeNull();
   });
 
-  it("uses the global Chat navigation to return to the canonical inbox", () => {
+  it("uses the legacy Chat navigation to return to the Work inbox", () => {
     useHermesChat.setState({ view: "conversation", sessionId: "conversation-two" });
     useTabs.getState().openTab({
       kind: "chat",
@@ -210,7 +211,7 @@ describe("Desktop sidebar navigation shell", () => {
     expect(useHermesChat.getState().view).toBe("index");
     expect(useThreads.getState().activeThreadId).toBeNull();
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId))
-      .toMatchObject({ kind: "chat", title: "Chat", chatId: undefined, chatView: "index" });
+      .toMatchObject({ kind: "work", title: "Chat", workRoute: "chat", chatId: undefined, chatView: "index" });
     expect(useTabs.getState().recentViews.some((recent) => recent.id === "hermes"))
       .toBe(false);
   });
@@ -302,22 +303,23 @@ describe("Desktop sidebar navigation shell", () => {
     const projects = screen.getByRole("button", { name: "Projects" });
     fireEvent.click(projects);
     expect(projects.getAttribute("aria-current")).toBe("page");
-    expect(useTabs.getState().tabs.find((tab) => tab.kind === "projects")).toBeTruthy();
+    expect(useTabs.getState().tabs.find((tab) => tab.kind === "work" && tab.workRoute === "projects")).toBeTruthy();
   });
 
-  it("opens and focuses one canonical Projects index tab", () => {
+  it("opens legacy Projects inside the retained Work tab", () => {
     renderSidebar();
 
     const projects = screen.getByRole("button", { name: "Projects" });
     fireEvent.click(projects);
 
-    const first = useTabs.getState().tabs.find((tab) => tab.kind === "projects");
+    const first = useTabs.getState().tabs.find((tab) => tab.kind === "work");
     expect(first).toBeTruthy();
     expect(useTabs.getState().activeTabId).toBe(first?.id);
+    expect(first).toMatchObject({ workRoute: "projects" });
     expect(projects.getAttribute("aria-current")).toBe("page");
 
     fireEvent.click(projects);
-    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "projects")).toHaveLength(1);
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "work")).toHaveLength(1);
     expect(useTabs.getState().activeTabId).toBe(first?.id);
   });
 
@@ -339,7 +341,7 @@ describe("Desktop sidebar navigation shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
     expect(useTabs.getState().tabs.find(
       (tab) => tab.id === useTabs.getState().activeTabId,
-    )).toMatchObject({ kind: "projects" });
+    )).toMatchObject({ kind: "work", workRoute: "projects" });
 
     act(() => useTabs.getState().goBack());
     expect(useTabs.getState().activeTabId).toBe(home);

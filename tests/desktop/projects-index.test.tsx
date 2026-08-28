@@ -50,7 +50,12 @@ describe("ProjectsIndex", () => {
     fireEvent.click(within(collection).getByRole("button", { name: "Open project Portfolio" }));
 
     expect(useTabs.getState().tabs).toEqual([
-      expect.objectContaining({ kind: "project", projectSlug: "portfolio", title: "Portfolio" }),
+      expect.objectContaining({
+        kind: "work",
+        projectSlug: "portfolio",
+        title: "Chat",
+        workRoute: "project",
+      }),
     ]);
   });
 

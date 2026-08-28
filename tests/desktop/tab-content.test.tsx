@@ -74,9 +74,9 @@ describe("TabContent", () => {
     useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
     useTabs.getState().focusTab(projectId);
 
-    const { getByRole, getByText } = render(<TabContent />);
+    const { container, getByText } = render(<TabContent />);
 
-    const activePane = getByRole("button", { name: "Project alpha" }).parentElement;
+    const activePane = container.querySelector<HTMLElement>(`[data-tab-id="${projectId}"]`);
     const hiddenPane = getByText("Terminal body").parentElement;
 
     expect(activePane?.hasAttribute("inert")).toBe(false);

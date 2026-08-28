@@ -194,9 +194,10 @@ describe("handleNewAgentRunShortcut", () => {
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "project",
+      kind: "work",
+      workRoute: "project",
       projectSlug: "matrix-os",
-      title: "Matrix OS",
+      title: "Chat",
     });
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
@@ -220,7 +221,9 @@ describe("handleNewAgentRunShortcut", () => {
       useCodingAgentWorkspace.getState(),
     );
 
-    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "project")).toHaveLength(1);
+    expect(useTabs.getState().tabs.filter((tab) => (
+      tab.kind === "work" && tab.workRoute === "project"
+    ))).toHaveLength(1);
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectView.getState().viewFor("website")).toBe("overview");
@@ -277,9 +280,10 @@ describe("handleMenuNavigate", () => {
     handleMenuNavigate("board");
 
     expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "project",
+      kind: "work",
+      workRoute: "project",
       projectSlug: "matrix",
-      title: "Matrix OS",
+      title: "Chat",
     });
   });
 

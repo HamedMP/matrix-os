@@ -1,7 +1,9 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -19,6 +21,7 @@ import {
   OS_WINDOW_SIDEBAR_WIDTH,
   TopBar,
 } from "./OSWindow";
+import { SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
 
 function desktopWindowMotion(tabId: string, bounds: DesktopSurfaceBounds): CSSProperties {
   let hash = 0;
@@ -92,6 +95,8 @@ export default function DesktopSurfaceFrame({
   const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "terminal" || tab.kind === "terminals";
   const paneActive = interactive && !(isNativeEmbed && overlayOpen);
   const interactionCleanupRef = useRef<(() => void) | null>(null);
+  const [surfaceChrome, setSurfaceChrome] = useState<SurfaceChromeSpec | null>(null);
+  const surfaceChromeHost = useMemo(() => ({ setChrome: setSurfaceChrome }), []);
 
   useEffect(() => () => interactionCleanupRef.current?.(), []);
 
@@ -185,18 +190,25 @@ export default function DesktopSurfaceFrame({
   };
 
   return (
+    <SurfaceChromeContext.Provider value={surfaceChromeHost}>
     <OSWindow
       surfaceId={tab.id}
       sidebarWidth={undefined}
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
-      topBar={isWindow ? (
+      topBar={isWindow || surfaceChrome ? (
         <TopBar
+          title={surfaceChrome?.title}
+          leftActions={surfaceChrome?.leftActions}
+          rightActions={surfaceChrome?.rightActions}
+          leftPaneWidth={surfaceChrome?.leftPaneWidth}
+          rightPaneWidth={surfaceChrome?.rightPaneWidth}
+          showWindowControls={isWindow}
           chromePlacement={sidebarOwnsChrome ? "sidebar" : "full-width"}
           sidebarWidth={sidebarOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
           onClose={onClose}
           onMinimize={onMinimize}
           onMaximize={onMaximize}
-          onDragStart={(event) => startPointerInteraction(event, "move")}
+          onDragStart={isWindow ? (event) => startPointerInteraction(event, "move") : undefined}
         />
       ) : null}
       role={isWindow && visible ? "dialog" : undefined}
@@ -244,5 +256,6 @@ export default function DesktopSurfaceFrame({
         </div>
       ) : null}
     </OSWindow>
+    </SurfaceChromeContext.Provider>
   );
 }

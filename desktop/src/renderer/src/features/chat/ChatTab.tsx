@@ -1,6 +1,7 @@
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -349,6 +350,25 @@ function LegacyChatTab() {
   );
 }
 
+export function ChatUnavailableState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center px-6 text-center"
+    >
+      <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
+        Chat unavailable
+      </h2>
+      <p className="mt-1 max-w-sm text-sm" style={{ color: "var(--text-secondary)" }}>
+        Reconnect to this computer, then try again.
+      </p>
+      <Button variant="subtle" className="mt-4" onClick={onRetry}>
+        Retry Chat
+      </Button>
+    </div>
+  );
+}
+
 export default function ChatTab({
   active = true,
   initialChatId,
@@ -356,6 +376,7 @@ export default function ChatTab({
   externalNavigation = false,
   renderInspector,
   inspectorExclusive = false,
+  allowLegacyFallback = true,
 }: {
   active?: boolean;
   initialChatId?: string;
@@ -363,10 +384,13 @@ export default function ChatTab({
   externalNavigation?: boolean;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
+  allowLegacyFallback?: boolean;
 }) {
   const api = useConnection((state) => state.api);
+  const [routeAttempt, setRouteAttempt] = useState(0);
   return (
     <CanonicalChatRoute
+      key={routeAttempt}
       api={api}
       projectId={null}
       initialChatId={initialChatId}
@@ -375,7 +399,9 @@ export default function ChatTab({
       externalNavigation={externalNavigation}
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}
-      fallback={<LegacyChatTab />}
+      fallback={allowLegacyFallback
+        ? <LegacyChatTab />
+        : <ChatUnavailableState onRetry={() => setRouteAttempt((attempt) => attempt + 1)} />}
     />
   );
 }

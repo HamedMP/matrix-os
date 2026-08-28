@@ -80,7 +80,12 @@ describe("openProjectChat", () => {
 
     const tabs = useTabs.getState();
     expect(tabs.tabs).toHaveLength(1);
-    expect(tabs.tabs[0]).toMatchObject({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" });
+    expect(tabs.tabs[0]).toMatchObject({
+      kind: "work",
+      workRoute: "project",
+      projectSlug: "matrix-os",
+      title: "Chat",
+    });
     expect(tabs.activeTabId).toBe(tabs.tabs[0]!.id);
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
   });
@@ -91,7 +96,7 @@ describe("openProjectChat", () => {
 
     openProjectChat("matrix-os");
 
-    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "project")).toHaveLength(1);
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "work")).toHaveLength(1);
     expect(useTabs.getState().activeTabId).toBe(first);
   });
 
@@ -442,7 +447,7 @@ describe("openCodingAgentThread", () => {
 
     await openCodingAgentThread("thread_alpha");
 
-    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "project", projectSlug: "matrix-os" });
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "work", workRoute: "project", projectSlug: "matrix-os" });
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_alpha");
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
   });
@@ -471,7 +476,7 @@ describe("openCodingAgentThread", () => {
 
     openCodingAgentThread("thread_orphan");
 
-    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "project", projectSlug: "matrix-os" });
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "work", workRoute: "project", projectSlug: "matrix-os" });
   });
 
   it("resolves an unknown thread's project from the runtime instead of guessing", async () => {
@@ -508,7 +513,7 @@ describe("openCodingAgentThread", () => {
     await openCodingAgentThread("thread_elsewhere");
 
     // "website" comes from the runtime, not from whichever project was active.
-    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "project", projectSlug: "website" });
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "work", workRoute: "project", projectSlug: "website" });
   });
 
   it("uses the default project when the runtime cannot resolve the thread either", async () => {
@@ -525,7 +530,7 @@ describe("openCodingAgentThread", () => {
 
     await openCodingAgentThread("thread_unknown");
 
-    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "project", projectSlug: "matrix-os" });
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "work", workRoute: "project", projectSlug: "matrix-os" });
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_unknown");
   });
 
@@ -580,12 +585,17 @@ describe("defaultProjectId", () => {
     resetStores();
   });
 
-  it("prefers the currently open project tab", () => {
+  it("prefers the currently open Work Project route", () => {
     useBoard.setState({
       projects: [{ slug: "matrix-os", name: "Matrix OS" }, { slug: "website", name: "Website" }],
       activeProjectSlug: "website",
     });
     useTabs.getState().openTab({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" });
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "work",
+      workRoute: "project",
+      projectSlug: "matrix-os",
+    });
 
     expect(defaultProjectId()).toBe("matrix-os");
   });

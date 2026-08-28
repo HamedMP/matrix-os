@@ -130,6 +130,51 @@ describe("CanonicalChatWorkspace", () => {
   });
 
   it.each([
+    ["Global", null, undefined],
+    ["Project", "matrix-os", "Matrix OS"],
+  ] as const)("keeps %s prompt suggestions after a Terminal pre-creates the draft Chat", async (
+    _scope,
+    projectId,
+    projectLabel,
+  ) => {
+    const onActiveChatChanged = vi.fn();
+    const routeClient = client();
+    const view = render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId={projectId}
+        projectLabel={projectLabel}
+        active
+        catalog={providerCatalog}
+        externalNavigation
+        initialView="draft"
+        onActiveChatChanged={onActiveChatChanged}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+
+    view.rerender(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId={projectId}
+        projectLabel={projectLabel}
+        active
+        catalog={providerCatalog}
+        externalNavigation
+        initialChatId={snapshot.chat.id}
+        initialView="draft"
+        onActiveChatChanged={onActiveChatChanged}
+      />,
+    );
+
+    await waitFor(() => expect(routeClient.getDetail).toHaveBeenCalledWith(snapshot.chat.id, { limit: 200 }));
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
+    expect(onActiveChatChanged).not.toHaveBeenCalledWith(snapshot.chat.id, expect.anything());
+  });
+
+  it.each([
     ["Global", null, "Global chats"],
     ["Project", "matrix-os", "Project chats"],
   ] as const)("suppresses the legacy %s navigation when an external rail owns Chat selection", async (

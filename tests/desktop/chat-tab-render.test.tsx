@@ -110,6 +110,23 @@ describe("ChatTab", () => {
       .not.toContain("30vh");
   });
 
+  it("keeps a canonical connection error inside the current Chat surface", async () => {
+    useHermesChat.setState({ view: "index", indexStatus: "ready", conversations: [] });
+    useConnection.setState({
+      api: {
+        baseUrl: "https://matrix.test",
+        get: vi.fn(async () => { throw new Error("offline"); }),
+      } as never,
+    });
+
+    render(<ChatTab allowLegacyFallback={false} />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Chat unavailable");
+    expect(screen.getByRole("button", { name: "Retry Chat" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Chats" })).toBeNull();
+    expect(screen.queryByText("Start a chat with Hermes, then return to it from any shell.")).toBeNull();
+  });
+
   it("collapses completed work behind the receipt while keeping the final response visible", () => {
     useHermesChat.setState({
       status: "idle",
