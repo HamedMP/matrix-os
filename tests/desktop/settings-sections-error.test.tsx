@@ -82,7 +82,7 @@ describe("settings data sections", () => {
 
     await waitFor(() => {
       expect(screen.queryByText(unavailable)).toBeNull();
-      expect(screen.queryByText(visible)).not.toBeNull();
+      expect(screen.getAllByText(visible).length).toBeGreaterThan(0);
     });
   });
 

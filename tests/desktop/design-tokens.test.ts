@@ -131,6 +131,17 @@ describe("Figma semantic surface tokens", () => {
       }
     }
   });
+
+  it("defines the integration icon surface and danger text tokens in both modes", () => {
+    expect(tokenValue(themeBlock(tokensCss, ":root"), "--surface-card-foreground-subtle")).toBe(
+      "#fafaf6",
+    );
+    expect(tokenValue(themeBlock(tokensCss, ":root"), "--text-danger")).toBe("#b42318");
+    expect(tokenValue(themeBlock(tokensCss, '[data-theme="dark"]'), "--surface-card-foreground-subtle")).toBe(
+      "#242923",
+    );
+    expect(tokenValue(themeBlock(tokensCss, '[data-theme="dark"]'), "--text-danger")).toBe("#f28b82");
+  });
 });
 
 describe("composer focus presentation", () => {

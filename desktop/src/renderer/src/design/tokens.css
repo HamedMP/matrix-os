@@ -20,6 +20,7 @@
   --surface-overlay: #242323;
   --surface-tertiary: #e1e0e0;
   --surface-success: #eef7f2;
+  --surface-card-foreground-subtle: #fafaf6;
 
   /* ── Desktop wallpaper mesh (kept in sync with the web shell) ─ */
   --gradient-deep: #323d2e;
@@ -57,6 +58,7 @@
   --text-disabled: #b5b1a3;
   --text-on-accent: #fafaf5;
   --text-inverse: #fafaf5;
+  --text-danger: #b42318;
 
   /* ── Brand & semantic ───────────────────────────────────────── */
   --accent: #434e3f;
@@ -157,6 +159,7 @@
   --surface-overlay: #242323;
   --surface-tertiary: #2a302c;
   --surface-success: #173827;
+  --surface-card-foreground-subtle: #242923;
 
   --forest: #1a1e1a;
   --forest-deep: #101210;
@@ -183,6 +186,7 @@
   --text-disabled: #55605a;
   --text-on-accent: #141614;
   --text-inverse: #fafaf5;
+  --text-danger: #f28b82;
 
   --accent: #8cc7be;
   --accent-hover: #9dd3cb;
