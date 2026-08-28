@@ -92,6 +92,7 @@ export function WorkRail({
     let current = true;
     if (!client || !active) return () => { current = false; };
     setPinError(null);
+    setPinning({});
     setStatus("loading");
     void loadWorkRailChats(client).then((loaded) => {
       if (!current) return;
@@ -119,6 +120,7 @@ export function WorkRail({
     setPinError(null);
     setPinning((current) => ({ ...current, [record.chat.id]: true }));
     void client.updateUserState(record.chat.id, { pinned }).then((updated) => {
+      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
       setRecords((current) => current.map((candidate) => (
         candidate.chat.id === updated.chat.id ? updated : candidate
       )));
@@ -131,6 +133,7 @@ export function WorkRail({
         setPinError("Chat pin could not be updated.");
       }
     }).finally(() => {
+      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
       setPinning((current) => {
         const next = { ...current };
         delete next[record.chat.id];

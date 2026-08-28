@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
@@ -459,6 +459,54 @@ describe("WorkRail", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Pin Recent global" })).toBeTruthy());
     expect(screen.queryByText("Chat pin could not be updated.")).toBeNull();
+  });
+
+  it("does not apply a stale pin success or clear replacement pin progress", async () => {
+    let resolveOriginalPin!: (record: CanonicalChatRecord) => void;
+    const originalPinRequest = new Promise<CanonicalChatRecord>((resolve) => {
+      resolveOriginalPin = resolve;
+    });
+    const replacementPinRequest = new Promise<CanonicalChatRecord>(() => {});
+    const originalClient = {
+      list: vi.fn(async () => ({ items: [recent] })),
+      updateUserState: vi.fn(() => originalPinRequest),
+    } as unknown as CanonicalChatClient;
+    const replacementClient = {
+      list: vi.fn(async () => ({ items: [recent] })),
+      updateUserState: vi.fn(() => replacementPinRequest),
+    } as unknown as CanonicalChatClient;
+    const props = {
+      projects: [] as Project[],
+      active: true,
+      activeChatId: "chat_same_route",
+      onNewGlobalChat: vi.fn(),
+      onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(),
+      onCollapse: vi.fn(),
+    };
+    const { rerender } = render(<WorkRail {...props} client={originalClient} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pin Recent global" }));
+    await waitFor(() => expect(originalClient.updateUserState).toHaveBeenCalledOnce());
+
+    rerender(<WorkRail {...props} client={replacementClient} />);
+    await waitFor(() => expect(replacementClient.list).toHaveBeenCalledOnce());
+    const replacementPin = await screen.findByRole("button", { name: "Pin Recent global" });
+    await waitFor(() => expect((replacementPin as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(replacementPin);
+    await waitFor(() => expect(replacementClient.updateUserState).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      resolveOriginalPin(record("chat_recent", "Recent global", {
+        pinned: true,
+        updatedAt: "2026-08-28T10:01:00.000Z",
+      }));
+      await originalPinRequest;
+    });
+
+    expect(screen.queryByRole("button", { name: "Unpin Recent global" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows Pin and Delete in the Chat context menu", async () => {
