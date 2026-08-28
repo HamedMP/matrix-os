@@ -17,14 +17,46 @@ jobs:
   changes:
     name: Detect CI-relevant changes
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     outputs:
       should_run: ${{ steps.changed.outputs.should_run }}
       docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
+      - name: Checkout with bounded retry
+        env:
+          CHECKOUT_BACKOFF_SECONDS: "5"
+          CHECKOUT_MAX_ATTEMPTS: "3"
+          CHECKOUT_TIMEOUT_SECONDS: "30"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git init .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git config --local gc.auto 0
+          auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+
+          for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS"); do
+            echo "Checkout fetch attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
+            if timeout --foreground --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
+              git -c http.extraheader="AUTHORIZATION: basic $auth_header" \
+                fetch --no-tags --prune --no-recurse-submodules --depth=1 \
+                origin "$GITHUB_SHA" \
+              && git checkout --force --detach "$GITHUB_SHA"; then
+              echo "Checkout fetch succeeded on attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
+              exit 0
+            fi
+
+            rm -f .git/index.lock .git/shallow.lock
+            if [ "$attempt" -eq "$CHECKOUT_MAX_ATTEMPTS" ]; then
+              echo "::error::Checkout fetch failed after $CHECKOUT_MAX_ATTEMPTS attempts"
+              exit 1
+            fi
+
+            backoff_seconds=$((CHECKOUT_BACKOFF_SECONDS * attempt))
+            echo "Checkout fetch attempt $attempt failed; retrying in ${backoff_seconds}s"
+            sleep "$backoff_seconds"
+          done
 
       - name: Detect source changes
         id: changed

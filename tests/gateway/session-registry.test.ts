@@ -83,6 +83,7 @@ describe("SessionRegistry", () => {
     });
 
     it("rejects shell not in allowlist and falls back to default", () => {
+      vi.stubEnv("SHELL", "");
       const mockSpawn = createMockSpawn();
       const registry = createRegistry({}, mockSpawn);
       registry.create("/home", "/usr/bin/python3");

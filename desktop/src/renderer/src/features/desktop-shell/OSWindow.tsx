@@ -1,3 +1,4 @@
+import { Minus, X, ArrowExpand01 } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,
@@ -48,50 +49,18 @@ export function TrafficLights({
   onMinimize: () => void;
   onMaximize: () => void;
 }) {
+  const controlClass = "no-drag flex size-4 items-center justify-center rounded-[4.8px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
+  const controlStyle = {
+    background: "var(--surface-primary, #FFFEFC)",
+    border: "0.8px solid var(--border-default, #F3F2F2)",
+  };
   const controlLabel = (action: string) => title ? `${action} ${title}` : action;
-  const controlClass = "flex size-5 items-center justify-center rounded-full transition-[filter,transform] hover:brightness-95 active:scale-90 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]";
 
   return (
-    <div className="group/window-controls no-drag flex w-16 shrink-0 items-center gap-0.5">
-      <button
-        type="button"
-        aria-label={controlLabel("Close")}
-        data-window-control="close"
-        className={controlClass}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={onClose}
-      >
-        <span data-window-control-light className="flex size-3 items-center justify-center rounded-full bg-[#ff5f57] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.16)]">
-          <span data-window-control-glyph className="relative block size-2 opacity-0 transition-opacity group-hover/window-controls:opacity-100" aria-hidden="true">
-            <span className="absolute left-1/2 top-1/2 h-px w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full bg-black/60" />
-            <span className="absolute left-1/2 top-1/2 h-px w-2 -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded-full bg-black/60" />
-          </span>
-        </span>
-      </button>
-      <button
-        type="button"
-        aria-label={controlLabel("Minimize")}
-        data-window-control="minimize"
-        className={controlClass}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={onMinimize}
-      >
-        <span data-window-control-light className="flex size-3 items-center justify-center rounded-full bg-[#febc2e] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.16)]">
-          <span data-window-control-glyph className="block h-px w-2 rounded-full bg-black/60 opacity-0 transition-opacity group-hover/window-controls:opacity-100" aria-hidden="true" />
-        </span>
-      </button>
-      <button
-        type="button"
-        aria-label={controlLabel("Maximize")}
-        data-window-control="maximize"
-        className={controlClass}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={onMaximize}
-      >
-        <span data-window-control-light className="flex size-3 items-center justify-center rounded-full bg-[#28c840] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.16)]">
-          <span data-window-control-glyph className="block size-1.5 rounded-[1px] border border-black/60 opacity-0 transition-opacity group-hover/window-controls:opacity-100" aria-hidden="true" />
-        </span>
-      </button>
+    <div className="no-drag flex items-center gap-0.5">
+      <button type="button" aria-label={controlLabel("Close")} className={controlClass} style={controlStyle} onClick={onClose}><X size={11.2} strokeWidth={1.7} /></button>
+      <button type="button" aria-label={controlLabel("Minimize")} className={controlClass} style={controlStyle} onClick={onMinimize}><Minus size={11.2} strokeWidth={1.7} /></button>
+      <button type="button" aria-label={controlLabel("Maximize")} className={controlClass} style={controlStyle} onClick={onMaximize}><ArrowExpand01 size={11.2} strokeWidth={1.7} /></button>
     </div>
   );
 }
@@ -147,7 +116,7 @@ export function TopBar({
           </>
         ) : null}
       </div>
-      <div data-os-window-traffic-lights data-os-window-controls className="absolute inset-y-0 left-0 z-30 flex items-center px-3">
+      <div data-os-window-traffic-lights className="absolute inset-y-0 left-0 z-30 flex items-center px-4">
         <TrafficLights title={title} onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
       </div>
     </div>

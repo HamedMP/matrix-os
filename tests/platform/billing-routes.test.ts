@@ -225,13 +225,13 @@ describe('platform billing routes', () => {
     }));
   });
 
-  it('offers and persists a seven-day trial for the first primary computer', async () => {
+  it('offers and persists a three-day trial for the first primary computer', async () => {
     const trialEnv = { ...env, MATRIX_CARD_TRIALS_ENABLED: 'true' };
     const app = createApp('user_123', trialEnv);
 
     const status = await app.request('/billing/status?runtimeSlot=primary');
     await expect(status.json()).resolves.toMatchObject({
-      trialOffer: { eligible: true, durationDays: 7 },
+      trialOffer: { eligible: true, durationDays: 3 },
     });
 
     const checkout = await app.request('/billing/checkout', {
@@ -247,12 +247,12 @@ describe('platform billing routes', () => {
 
     expect(checkout.status).toBe(200);
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
-      trialPeriodDays: 7,
+      trialPeriodDays: 3,
       paymentMethodMode: 'card_required',
     }));
     await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
       runtimeSlot: 'primary',
-      trialPeriodDays: 7,
+      trialPeriodDays: 3,
     });
   });
 
@@ -441,7 +441,7 @@ describe('platform billing routes', () => {
     const historyApp = createApp('user_history', trialEnv);
     const historyStatus = await historyApp.request('/billing/status?runtimeSlot=primary');
     await expect(historyStatus.json()).resolves.toMatchObject({
-      trialOffer: { eligible: false, durationDays: 7 },
+      trialOffer: { eligible: false, durationDays: 3 },
     });
   });
 
@@ -1490,7 +1490,7 @@ describe('platform billing routes', () => {
         firstTrialPaymentFailedAt: '2026-05-30T00:00:00.000Z',
       },
       access: { runtimeProxyAllowed: false, reason: 'payment_required' },
-      trialOffer: { eligible: false, durationDays: 7 },
+      trialOffer: { eligible: false, durationDays: 3 },
     });
   });
 
