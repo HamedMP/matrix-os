@@ -225,7 +225,6 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     zoomTarget(event)?.setZoomFactor(factor);
     return { factor };
   });
-
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),
   }));
