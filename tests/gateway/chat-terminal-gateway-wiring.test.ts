@@ -173,7 +173,7 @@ describe("createGateway Chat terminal production wiring", () => {
     wiring.registerSessionRoute(app, fakeUpgrade(captured));
 
     await app.request(
-      "/ws/terminal/session?session=terminal_bound&chat=chat_selected&fromSeq=42&client=soft&cols=120&rows=40&lease=exclusive",
+      "/ws/terminal/session?session=terminal_bound&chat=chat_selected&fromSeq=42&client=soft&cols=120&rows=40&lease=exclusive&runtime=pr-1360",
     );
     const socket = fakeSocket();
     captured.events?.onOpen?.(new Event("open"), socket.context);
@@ -217,6 +217,7 @@ describe("createGateway Chat terminal production wiring", () => {
     "session=terminal_bound&lease=shared",
     "session=not%20valid",
     "session=terminal_bound&chat=not%20valid",
+    "session=terminal_bound&runtime=not_valid",
     "session=terminal_bound&unknown=value",
   ])("rejects an invalid terminal WebSocket query before dependency access: %s", async (query) => {
     const repo = repository(true);

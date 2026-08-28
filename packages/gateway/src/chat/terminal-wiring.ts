@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
-import { CanonicalChatIdSchema } from "@matrix-os/contracts";
+import {
+  CanonicalChatIdSchema,
+  MatrixComputerRuntimeSlotSchema,
+} from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { OwnerScope } from "../state-ops.js";
@@ -67,6 +70,7 @@ const TerminalSessionQuerySchema = z.object({
   rows: z.string().regex(/^[1-9]\d{0,2}$/).transform(Number).pipe(z.number().int().min(1).max(200)).optional(),
   lease: z.literal("exclusive").optional(),
   token: z.string().min(1).max(8_192).optional(),
+  runtime: MatrixComputerRuntimeSlotSchema.optional(),
 }).strict().superRefine((query, ctx) => {
   if ((query.cols === undefined) !== (query.rows === undefined)) {
     ctx.addIssue({ code: "custom", message: "Terminal dimensions must be paired" });
