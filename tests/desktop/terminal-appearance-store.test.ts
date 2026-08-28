@@ -36,6 +36,7 @@ describe("Terminal appearance store", () => {
     }));
 
     const load = useTerminalAppearance.getState().load(api);
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
     useTerminalAppearance.getState().setThemeId("powerlevel10k-pure", api);
     resolveLoad?.({ preferences: { shellThemeId: "matrix" } });
     await load;
@@ -105,5 +106,34 @@ describe("Terminal appearance store", () => {
       "/api/terminal/preferences",
       { shellThemeId: "powerlevel10k-rainbow" },
     ));
+  });
+
+  it("waits for pending palette writes before hydrating a replacement ApiClient", async () => {
+    let persistedTheme = "dark";
+    let resolveWrite: (() => void) | undefined;
+    const firstApi = createApi();
+    firstApi.put = vi.fn(() => new Promise<void>((resolve) => {
+      resolveWrite = () => {
+        persistedTheme = "matrix";
+        resolve();
+      };
+    }));
+    const replacementApi = createApi();
+    replacementApi.get = vi.fn(async () => ({
+      preferences: { shellThemeId: persistedTheme },
+    }));
+
+    useTerminalAppearance.getState().setThemeId("matrix", firstApi);
+    const load = useTerminalAppearance.getState().load(replacementApi);
+
+    await Promise.resolve();
+    expect(firstApi.put).toHaveBeenCalledTimes(1);
+    expect(replacementApi.get).not.toHaveBeenCalled();
+
+    resolveWrite?.();
+    await load;
+
+    expect(replacementApi.get).toHaveBeenCalledWith("/api/terminal/preferences");
+    expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "matrix", hydrated: true });
   });
 });

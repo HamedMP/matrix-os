@@ -54,6 +54,7 @@ export const useTerminalAppearance = create<TerminalAppearanceState>()((set, get
       return;
     }
     try {
+      await persistQueue;
       const result = await api.get<TerminalPreferencesResponse>("/api/terminal/preferences");
       const themeId = isSelectableTerminalThemeId(result.preferences?.shellThemeId)
         ? result.preferences.shellThemeId
