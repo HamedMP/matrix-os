@@ -146,6 +146,23 @@ describe("Files workspace", () => {
     expect(screen.getAllByRole("tab", { name: "Matrix home" })).toHaveLength(1);
   });
 
+  it("clears an evicted Files tab folder request at the tab limit", async () => {
+    render(<Tooltip.Provider><FilesWorkspace active /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open workspaces" });
+
+    fireEvent.contextMenu(screen.getByTestId("files-listing"));
+    fireEvent.click(await screen.findByText("New folder…"));
+    expect(screen.getByRole("textbox", { name: "Folder name" })).toBeTruthy();
+
+    for (let index = 0; index < 12; index += 1) {
+      act(() => expect(dispatchActiveAppShortcut("new-tab")).toBe(true));
+      await flushMicrotasks();
+    }
+
+    expect(screen.getAllByRole("tab")).toHaveLength(12);
+    expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
+  });
+
   it("shows the designed empty-folder preview state", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
 

@@ -54,6 +54,19 @@ describe("handleCloseSelectedAppShortcut", () => {
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("window");
   });
+
+  it("does not close a maximized tab after returning to the Desktop workspace", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
+    useDesktopSurfaces.getState().maximizeToTab(filesId);
+    useDesktopSurfaces.getState().setWorkspaceView("desktop");
+    const preventDefault = vi.fn();
+
+    handleCloseSelectedAppShortcut({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("tab");
+  });
 });
 
 describe("handleNewContextShortcut", () => {

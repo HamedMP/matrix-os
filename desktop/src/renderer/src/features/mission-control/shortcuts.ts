@@ -127,6 +127,7 @@ function activeShortcutTab() {
   const surfaces = useDesktopSurfaces.getState();
   const surface = surfaces.surfaces[activeTab.id];
   const hidden = surfaces.desktopHiddenSurfaceIds.includes(activeTab.id)
+    || (surface?.mode === "tab" && surfaces.workspaceView !== "tabs")
     || (
       surfaces.desktopTransition?.phase === "hiding"
       && surfaces.desktopTransition.surfaceIds.includes(activeTab.id)
