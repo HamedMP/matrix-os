@@ -527,7 +527,7 @@ describe("ShellSocket server frames", () => {
     h.latest().open();
     h.latest().frame({ type: "error", code: "buffer_overflow", message: "slow down" });
 
-    h.timers.advance(499);
+    h.timers.advance(9_999);
     expect(h.sockets).toHaveLength(1);
     h.timers.advance(1);
 
@@ -586,7 +586,7 @@ describe("ShellSocket reconnect", () => {
     h.socket.connect();
     h.latest().open();
 
-    h.timers.advance(499);
+    h.timers.advance(9_999);
     expect(h.sockets).toHaveLength(1);
     expect(h.socket.state).toBe("connecting");
 
