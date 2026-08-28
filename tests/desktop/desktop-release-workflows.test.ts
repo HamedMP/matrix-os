@@ -17,7 +17,9 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('tell application "Finder" to activate');
     expect(workflow).toContain("open disk volumeName");
     expect(workflow).toContain("tell disk volumeName");
-    expect(workflow).toContain("ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache");
+    expect(workflow).toContain(
+      "ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.electron-builder-cache",
+    );
     expect(workflow).toContain("from ds_store import DSStore");
     expect(workflow).toContain("from mac_alias import Alias");
     expect(workflow).toContain('icon_view.get("backgroundImageAlias")');
