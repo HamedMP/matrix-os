@@ -193,7 +193,7 @@ describe("InspectorFilesPanel", () => {
             : {
                 items: [{ path: "src/app.ts", kind: "file", sizeBytes: 12 }],
                 hasMore: true,
-                nextCursor: "filecur_1",
+                nextCursor: "filecur_61",
                 limit: 100,
               }
           : {
@@ -238,7 +238,7 @@ describe("InspectorFilesPanel", () => {
     expect(invoke).toHaveBeenNthCalledWith(3, "runtime:browse-files", {
       projectId: "matrix-os",
       path: "src",
-      cursor: "filecur_1",
+      cursor: "filecur_61",
       limit: 100,
     });
   });

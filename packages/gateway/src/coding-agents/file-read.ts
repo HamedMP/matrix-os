@@ -30,6 +30,8 @@ const DEFAULT_FILE_WRITE_LIMIT_BYTES = 64 * 1024;
 const MAX_FILE_ETAG_BYTES = 100 * 1024 * 1024;
 const MAX_FILE_WRITE_LOCKS = 256;
 const MAX_FILE_LIST_LIMIT = 100;
+const MAX_FILE_BROWSE_ENTRIES = 10_000;
+const FILE_BROWSE_INSPECT_MULTIPLIER = 10;
 const MAX_FILE_SEARCH_DIRECTORIES = 512;
 const MAX_FILE_SEARCH_ENTRIES = 2_000;
 const SKIPPED_SEARCH_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".expo"]);
@@ -181,6 +183,55 @@ async function readDirectoryNamesBounded(path: string, maxEntries: number, offse
       }
     });
   }
+}
+
+function encodeFileBrowseCursor(name: string): string {
+  return `filecur_${Buffer.from(name, "utf8").toString("hex")}`;
+}
+
+function decodeFileBrowseCursor(cursor: string | undefined): string | undefined {
+  if (!cursor) return undefined;
+  const encoded = cursor.slice("filecur_".length);
+  const name = Buffer.from(encoded, "hex").toString("utf8");
+  if (
+    Buffer.from(name, "utf8").toString("hex") !== encoded
+    || name.includes("/")
+    || name.includes("\0")
+  ) {
+    throw new CodingAgentFileReadError("file_not_found");
+  }
+  return name;
+}
+
+async function readDirectoryNamesPage(
+  path: string,
+  maxEntries: number,
+  afterName?: string,
+): Promise<{ names: string[]; truncated: boolean }> {
+  const names: string[] = [];
+  const dir = await opendir(path);
+  let inspected = 0;
+  try {
+    for await (const entry of dir) {
+      inspected += 1;
+      if (inspected > MAX_FILE_BROWSE_ENTRIES) {
+        throw new CodingAgentFileReadError("file_unavailable");
+      }
+      if (afterName && entry.name.localeCompare(afterName, "en") <= 0) continue;
+      names.push(entry.name);
+    }
+  } finally {
+    await dir.close().catch((err: unknown) => {
+      if (fsErrorCode(err) !== "ERR_DIR_CLOSED") {
+        console.warn("[coding-agents] directory close failed");
+      }
+    });
+  }
+  names.sort((left, right) => left.localeCompare(right, "en"));
+  return {
+    names: names.slice(0, maxEntries),
+    truncated: names.length > maxEntries,
+  };
 }
 
 function pathForRequest(base: string, requestPath?: string): string {
@@ -348,9 +399,7 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
       const request = FileBrowseRequestSchema.parse(rawRequest);
-      const offset = request.cursor
-        ? Number(request.cursor.slice("filecur_".length))
-        : 0;
+      const afterName = decodeFileBrowseCursor(request.cursor);
       await assertProjectAccess({ principal, request, projects: options.projects });
       const limit = Math.min(request.limit, MAX_FILE_LIST_LIMIT);
       const worktreeRoot = await checkoutRootFor(homePath, principal, request, options.worktrees);
@@ -385,7 +434,11 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
 
-      const listing = await readDirectoryNamesBounded(targetReal, limit, offset).catch((err: unknown) => {
+      const inspectLimit = Math.min(
+        MAX_FILE_BROWSE_ENTRIES,
+        Math.max(limit + 1, limit * FILE_BROWSE_INSPECT_MULTIPLIER),
+      );
+      const listing = await readDirectoryNamesPage(targetReal, inspectLimit, afterName).catch((err: unknown) => {
         const code = fsErrorCode(err);
         if (["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
           throw new CodingAgentFileReadError("file_not_found");
@@ -393,8 +446,10 @@ export function createCodingAgentFileStore(options: {
         console.warn("[coding-agents] file browse readdir failed");
         throw new CodingAgentFileReadError("file_unavailable");
       });
-      const entries: FileMetadata[] = [];
-      for (const name of listing.names.sort((a, b) => a.localeCompare(b, "en"))) {
+      const entries: Array<{ name: string; metadata: FileMetadata }> = [];
+      let lastInspectedName: string | undefined;
+      for (const name of listing.names) {
+        lastInspectedName = name;
         const absolutePath = resolve(targetReal, name);
         const responsePath = pathForResponse(request.path, name);
         if (!responsePath) continue;
@@ -402,18 +457,23 @@ export function createCodingAgentFileStore(options: {
           const stats = await lstat(absolutePath);
           if (!isWithin(rootReal, await realpath(absolutePath))) continue;
           const metadata = await safeFileMetadata({ absolutePath, responsePath, stats });
-          if (metadata) entries.push(metadata);
+          if (metadata) entries.push({ name, metadata });
         } catch (err: unknown) {
           const code = fsErrorCode(err);
           if (!["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
             console.warn("[coding-agents] file browse entry skipped");
           }
         }
+        if (entries.length > limit) break;
       }
-      const nextOffset = offset + listing.names.length;
-      if (listing.truncated && nextOffset >= 10_000) {
-        throw new CodingAgentFileReadError("file_unavailable");
-      }
+      const hasExtraEntry = entries.length > limit;
+      const hasMore = hasExtraEntry || listing.truncated;
+      const items = entries.slice(0, limit);
+      const nextCursorName = hasExtraEntry
+        ? items.at(-1)?.name
+        : listing.truncated
+          ? lastInspectedName
+          : undefined;
 
       return FileBrowseResponseSchema.parse({
         directory: {
@@ -422,9 +482,11 @@ export function createCodingAgentFileStore(options: {
           updatedAt: targetStats.mtime.toISOString(),
         },
         entries: {
-          items: entries,
-          hasMore: listing.truncated,
-          ...(listing.truncated ? { nextCursor: `filecur_${nextOffset}` } : {}),
+          items: items.map((entry) => entry.metadata),
+          hasMore,
+          ...(hasMore && nextCursorName
+            ? { nextCursor: encodeFileBrowseCursor(nextCursorName) }
+            : {}),
           limit,
         },
       });

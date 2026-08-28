@@ -301,7 +301,7 @@ describe("coding agent file read route", () => {
       expect(body.directory).toMatchObject({ path: "src", kind: "directory" });
       expect(body.entries).toMatchObject({
         hasMore: true,
-        nextCursor: "filecur_2",
+        nextCursor: expect.stringMatching(/^filecur_[0-9a-f]+$/),
         limit: 2,
       });
       expect(body.entries.items).toHaveLength(2);
@@ -323,6 +323,42 @@ describe("coding agent file read route", () => {
       ]);
       expect(nextBody.entries).toMatchObject({ hasMore: false, limit: 2 });
       expect(nextBody.entries).not.toHaveProperty("nextCursor");
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not skip remaining files when a directory changes between browse pages", async () => {
+    const harness = await createRouteHarness({ ownerIds: [testPrincipal.userId] });
+    try {
+      const directory = join(harness.worktreeRoot, "changing");
+      await mkdir(directory, { recursive: true });
+      for (const name of ["a.ts", "b.ts", "c.ts", "d.ts"]) {
+        await writeFile(join(directory, name), `export const name = "${name}";\n`);
+      }
+
+      const firstResponse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=changing&limit=2`,
+      );
+      const first = await firstResponse.json();
+      const removedPath = first.entries.items[0].path as string;
+      await rm(join(harness.worktreeRoot, removedPath));
+
+      const secondResponse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=changing&cursor=${first.entries.nextCursor}&limit=2`,
+      );
+      const second = await secondResponse.json();
+      const listed = [...first.entries.items, ...second.entries.items]
+        .map((entry: { path: string }) => entry.path)
+        .filter((path: string) => path !== removedPath)
+        .sort();
+
+      expect(firstResponse.status).toBe(200);
+      expect(secondResponse.status).toBe(200);
+      expect(listed).toEqual(
+        ["changing/a.ts", "changing/b.ts", "changing/c.ts", "changing/d.ts"]
+          .filter((path) => path !== removedPath),
+      );
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }
