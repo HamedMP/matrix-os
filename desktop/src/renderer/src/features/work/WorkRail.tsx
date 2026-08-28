@@ -85,6 +85,7 @@ export function WorkRail({
     setStatus("loading");
     void loadWorkRailChats(client).then((loaded) => {
       if (!current) return;
+      setPinError(null);
       setRecords(loaded);
       setStatus("ready");
     }).catch((error: unknown) => {
