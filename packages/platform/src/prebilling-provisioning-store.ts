@@ -41,7 +41,6 @@ export interface PrebillingProvisioningIntent {
   stripeSessionId: string | null;
   stripeSessionExpiresAt: string | null;
   leaseExpiresAt: string | null;
-  reservedHourlyCostMicros: number;
   paymentConfirmedAt: string | null;
   authorizedAt: string | null;
   cleanedAt: string | null;
@@ -88,7 +87,6 @@ function mapIntent(row: PrebillingProvisioningIntentsTable): PrebillingProvision
     stripeSessionId: row.stripe_session_id,
     stripeSessionExpiresAt: row.stripe_session_expires_at,
     leaseExpiresAt: row.lease_expires_at,
-    reservedHourlyCostMicros: Number(row.reserved_hourly_cost_micros),
     paymentConfirmedAt: row.payment_confirmed_at,
     authorizedAt: row.authorized_at,
     cleanedAt: row.cleaned_at,
@@ -263,9 +261,7 @@ export async function admitPrebillingIntent(
     intentId: string;
     stripeSessionId: string;
     stripeSessionExpiresAt: string;
-    reservedHourlyCostMicros: number;
     maxActive: number;
-    maxHourlyCostMicros: number;
     now: string;
   },
 ): Promise<{ intent: PrebillingProvisioningIntent; admitted: boolean; reason: 'admitted' | 'capacity' }> {
@@ -300,24 +296,20 @@ export async function admitPrebillingIntent(
     if (currentIntent.state !== 'awaiting_checkout') {
       return { intent: currentIntent, admitted: false, reason: 'capacity' as const };
     }
-    const totals = await sql<{ active_count: string; reserved_cost: string }>`
-      SELECT COUNT(*)::text AS active_count,
-             COALESCE(SUM(reserved_hourly_cost_micros), 0)::text AS reserved_cost
+    const totals = await sql<{ active_count: string }>`
+      SELECT COUNT(*)::text AS active_count
       FROM prebilling_provisioning_intents
       WHERE state IN (${sql.join(ACTIVE_CAPACITY_STATES)})
         AND payment_confirmed_at IS NULL
     `.execute(trx.executor);
     const activeCount = Number(totals.rows[0]?.active_count ?? 0);
-    const reservedCost = Number(totals.rows[0]?.reserved_cost ?? 0);
-    const admitted = input.reservedHourlyCostMicros > 0
-      && activeCount < input.maxActive
-      && reservedCost + input.reservedHourlyCostMicros <= input.maxHourlyCostMicros;
+    const admitted = activeCount < input.maxActive;
     const row = await trx.executor.updateTable('prebilling_provisioning_intents').set({
       state: admitted ? 'preparing' : 'preparation_deferred',
       stripe_session_id: input.stripeSessionId,
       stripe_session_expires_at: input.stripeSessionExpiresAt,
       lease_expires_at: input.stripeSessionExpiresAt,
-      reserved_hourly_cost_micros: admitted ? input.reservedHourlyCostMicros : 0,
+      reserved_hourly_cost_micros: 0,
       revision: current.revision + 1,
       updated_at: input.now,
     }).where('id', '=', input.intentId).where('revision', '=', current.revision)
@@ -457,10 +449,7 @@ export async function markPrebillingIntentReady(
             WHEN eligible.payment_confirmed_at IS NOT NULL THEN NULL
             ELSE intent.lease_expires_at
           END,
-          reserved_hourly_cost_micros = CASE
-            WHEN eligible.payment_confirmed_at IS NOT NULL THEN 0
-            ELSE intent.reserved_hourly_cost_micros
-          END,
+          reserved_hourly_cost_micros = 0,
           revision = intent.revision + 1,
           updated_at = ${input.now}
       FROM eligible, activated

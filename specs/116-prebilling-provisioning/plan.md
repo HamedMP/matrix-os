@@ -17,7 +17,7 @@ Move new-primary VPS preparation into the payable-checkout window: after the sig
 - **Target Platform**: Cloud Run platform/app-shell control plane coordinating VPS-native per-user Linux runtimes
 - **Project Type**: Monorepo web application with platform backend, Next.js shell, and VPS lifecycle services
 - **Performance Goals**: Reduce median subscription-authorization-to-ready latency by at least 60%; 80% of users spending at least 60 seconds in checkout ready within 20 seconds of authorization
-- **Constraints**: Zero access before signed slot entitlement; zero duplicate active intents/machines; 30-minute Stripe/preparation policy plus one-minute API safety headroom; 99% cleanup by 35 minutes and 100% by 45 minutes outside provider outage; hard active-count and hourly-cost ceilings; generic client errors; all external calls bounded
+- **Constraints**: Zero access before signed slot entitlement; zero duplicate active intents/machines; 30-minute Stripe/preparation policy plus one-minute API safety headroom; 99% cleanup by 35 minutes and 100% by 45 minutes outside provider outage; one hard global active-count ceiling across all offered machine sizes; generic client errors; all external calls bounded
 - **Scale/Scope**: V1 new-user primary-computer onboarding only; horizontally scaled platform workers; existing paid, additional-computer, recovery, resize, preview, grace, suspension, and self-hosted flows unchanged
 
 ## Constitution Check
@@ -147,7 +147,7 @@ Non-negotiable implementation invariants:
 5. **Cleanup lock scope**: lock intent, cleanup action, machine, current entitlement projection, and newer owner/slot intents in one documented order before the irreversible phase transition.
 6. **Acceptable orphan states**: an open checkout with no preparation is safe and falls back after authorization; an unauthorized prepared machine is temporarily acceptable only under an active lease/cleanup action; an authorized slot with no live machine is acceptable only with one durable normal provisioning job.
 7. **Provider ambiguity**: deterministic provider identity/labels are reconciled before create/delete retry; terminal cleanup means confirmed provider absence.
-8. **Rollback**: disabling admission stops new cost but continuation workers keep authorization, fallback provisioning, reconciliation, and cleanup alive.
+8. **Rollback**: disabling admission stops new unpaid preparation but continuation workers keep authorization, fallback provisioning, reconciliation, and cleanup alive. The legacy reservation column remains present and is written as zero so reverting can restore the former implementation without a schema migration.
 
 ## Implementation Sequence
 
@@ -156,7 +156,7 @@ Non-negotiable implementation invariants:
 Write failing database/state tests, then:
 
 - Add the intent, activation, authorization-basis, cleanup-action, and capacity-bucket schema from [data-model.md](./data-model.md), with rollback-safe defaults and constraints.
-- Implement strict configuration parsing for enabled state, deterministic rollout/allowlist, active count, cost ceiling, worker leases, and bounded retry/timeout values. Unknown/malformed costs fail admission closed.
+- Implement strict configuration parsing for enabled state, deterministic rollout/allowlist, active count, worker leases, and bounded retry/timeout values. Admission is independent of machine size and legacy cost settings.
 - Extract transaction-aware Kysely stores. Repository wrappers accept a transaction handle and never destroy shared pools.
 - Extend the shared machine/job creation path with a narrow discriminated authorization basis. Keep the existing public entitled provision method unchanged.
 - Add activation checks to every runtime/customer operation path in the auth matrix before the feature can create `awaiting_billing` machines.
@@ -173,7 +173,7 @@ Write failing checkout/webhook/race integration tests, then:
 - Claim the checkout attempt and opaque intent ID before Stripe so both metadata scopes carry the exact ID. Do not start provider work until an open session is durably finalized.
 - Reconcile ambiguous Stripe Session creation against the durable attempt/idempotency identity.
 - In the checkout-finalization transaction, admit capacity and create the machine/job once. If preparation admission is unavailable, return the safe checkout destination with zero provider calls.
-- Extend signed subscription projection processing to validate the exact local binding, cancel cleanup, authorize the prepared machine atomically, release cost once, and replay idempotently.
+- Extend signed subscription projection processing to validate the exact local binding, cancel cleanup, authorize the prepared machine atomically, and replay idempotently.
 - In that same server-owned projection workflow, guarantee an entitled primary slot has its valid prepared machine or exactly one entitlement-backed provisioning job. This removes the post-payment browser-click dependency even when prebilling is skipped or fails.
 - Handle event reordering: a subscription projection may arrive while checkout finalization is reconciling; either transaction must leave the authorization guarantee true after replay.
 
@@ -187,7 +187,7 @@ Write failing journey/UI/telemetry tests, then:
 - Move developer-tool selection before checkout for the eligible new-primary cohort. The explicit button opens checkout and preparation in one mutation; no separate browser provisioning request exists.
 - Render preparing, ready-waiting-for-billing, payment-settling, authorized-provisioning, safe failure, and ready states using `@matrix-os/brand` primitives. Keep all provider/internal details out of UI state.
 - Guard active-document/account changes and multi-tab retries by always refreshing authoritative journey state after ambiguous client outcomes.
-- Add the event/metric contract, dashboards, baseline cohort comparison, cleanup/cost alerts, and an operator admission kill switch that leaves continuation workers running.
+- Add the event/metric contract, dashboards, baseline cohort comparison, active-count/cleanup alerts, and an operator admission kill switch that leaves continuation workers running.
 - Validate Canvas first, then Desktop; ensure mobile or older clients using the stable checkout response continue to function.
 
 Exit gate: shell build/React checks, UI contracts, coarse-error checks, metric cardinality tests, and the complete existing onboarding/billing suite pass with admission still disabled by default.
@@ -211,7 +211,7 @@ After the implementation contract stabilizes, update `FinnaAI/matrix-os-site/con
 
 The detailed matrix is in [quickstart.md](./quickstart.md). Implementation follows red → green → refactor per stack and includes:
 
-- Unit tests for schemas, canonical selection equality, feature/cost config, transition predicates, capacity accounting, and safe error mapping.
+- Unit tests for schemas, canonical selection equality, count-only feature config, transition predicates, capacity accounting, and safe error mapping.
 - Kysely integration tests for unique constraints, transaction rollback, concurrent claims, optimistic revisions, event replay, capacity release-once behavior, and migration defaults.
 - Full fake-service integration for checkout → preparation → physical ready/inaccessible → signed subscription → activation/routing.
 - Exhaustive billing-cleanup interleavings at every irreversible phase and ambiguous provider create/delete reconciliation.
@@ -227,7 +227,7 @@ The detailed matrix is in [quickstart.md](./quickstart.md). Implementation follo
 3. Soak fake/synthetic traffic, then—only with explicit operator authorization—use Stripe test mode and one disposable VPS for exact-head full-path validation.
 4. Enable deterministic internal allowlist, then `1%`, `10%`, `50%`, and `100%`, holding at least one cleanup window and checking the success/stop metrics at every stage.
 5. Compare against a stable postbilling control cohort for authorization-to-ready latency, conversion, provider failure, cleanup lag, and paid-without-machine incidence.
-6. Set admission to zero immediately on an invariant, cost, duplicate, cleanup, or latency stop condition. Existing intents continue to authorize or clean up.
+6. Set admission to zero immediately on an invariant, active-count, duplicate, cleanup, or latency stop condition. Existing intents continue to authorize or clean up.
 
 The platform/app-shell deployment path is used for this change. Production customer runtimes remain VPS-native; no Docker Compose deployment or fleet host-bundle rollout is implied by this plan.
 

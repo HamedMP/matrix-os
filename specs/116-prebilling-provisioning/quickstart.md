@@ -8,8 +8,6 @@ Admission requires all of these server-owned settings; missing values keep it of
 MATRIX_PREBILLING_PROVISIONING_ENABLED=true
 MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=<0..100>
 MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=<positive integer>
-MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS=<positive integer>
-MATRIX_PREBILLING_PROVISIONING_COSTS_JSON={"cpx22":...,"cpx32":...,"cpx52":...}
 ```
 
 Setting `ENABLED=false` or rollout to `0` stops only new admission. Signed subscription activation and signed-expiry cleanup remain wired so existing intents can converge safely.
@@ -21,7 +19,7 @@ Required negative/race cases:
 - concurrent identical checkout requests produce one session, intent, job, and provider machine
 - conflicting selections cannot mutate a payable intent
 - Checkout creation definite failure produces zero provider calls
-- capacity/cost denial produces zero provider calls and safely falls back after authorization
+- count-capacity denial produces zero provider calls and safely falls back after authorization
 - provider create timeout reconciles the accepted machine instead of creating another
 - physical readiness before billing remains inaccessible across session routing, explicit VM routing, app session, runtime API, code-domain routing, WebSocket, terminal, recover, resize, and resume paths
 - checkout completion without a subscription projection remains `payment_settling` and is not deleted
