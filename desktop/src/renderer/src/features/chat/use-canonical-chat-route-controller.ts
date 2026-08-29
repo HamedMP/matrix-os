@@ -116,7 +116,26 @@ export function useCanonicalChatRouteController({
 
   useEffect(() => {
     if (!active || !activeChatId || detail?.record.chat.id === activeChatId) return;
-    void loadDetail(activeChatId);
+    let cancelled = false;
+    let timeout: number | undefined;
+    let consecutiveFailures = 0;
+    const loadInitialDetail = async () => {
+      const loaded = await loadDetail(activeChatId);
+      if (cancelled || loaded) return;
+      consecutiveFailures += 1;
+      timeout = window.setTimeout(
+        () => void loadInitialDetail(),
+        Math.min(
+          ACTIVE_RUN_POLL_MS * (2 ** consecutiveFailures),
+          ACTIVE_RUN_MAX_RETRY_MS,
+        ),
+      );
+    };
+    void loadInitialDetail();
+    return () => {
+      cancelled = true;
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    };
   }, [active, activeChatId, detail?.record.chat.id, loadDetail]);
 
   useEffect(() => {

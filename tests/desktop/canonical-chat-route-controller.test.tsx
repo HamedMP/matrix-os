@@ -308,6 +308,43 @@ describe("canonical Chat route controller", () => {
     }
   });
 
+  it("retries a transient initial detail failure without requiring the Chat to be reselected", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const completedRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 3 },
+      };
+      const getDetail = vi.fn()
+        .mockRejectedValueOnce(new TypeError("temporary gateway failure"))
+        .mockResolvedValueOnce({ ...detail, record: completedRecord });
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [completedRecord] })),
+        getDetail,
+      });
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      expect(result.current.detail).toBeNull();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      expect(getDetail).toHaveBeenCalledTimes(2);
+      expect(result.current.detail?.record.chat.revision).toBe(3);
+      expect(result.current.error).toBeNull();
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects an older revision while an active Run continues polling", async () => {
     vi.useFakeTimers();
     try {
