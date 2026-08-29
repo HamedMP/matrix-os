@@ -1,5 +1,6 @@
 import {
   CanonicalChatIdSchema,
+  CanonicalChatMessagePartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
   CanonicalOwnerScopeSchema,
@@ -361,17 +362,25 @@ export class ChatRunLifecycleRepository {
       let inserted = false;
       if (existing) {
         const current = toMessage(existing);
-        const text = current.parts.length === 1 && current.parts[0]?.type === "text"
-          ? current.parts[0].text
+        const textParts = current.parts.every((part) => part.type === "text")
+          ? current.parts
           : undefined;
         if (current.chatId !== chatId || current.runId !== input.runId
           || current.turnId !== run.turn_id || current.role !== "assistant"
-          || current.state !== "pending" || current.seq !== input.seq || text === undefined) {
+          || current.state !== "pending" || current.seq !== input.seq || !textParts?.length) {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
+        const last = textParts.at(-1)!;
+        const combined = CanonicalChatMessagePartSchema.safeParse({
+          type: "text",
+          text: `${last.text}${input.delta}`,
+        });
+        const parts = combined.success
+          ? [...textParts.slice(0, -1), combined.data]
+          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: input.delta })];
         next = CanonicalChatMessageSchema.parse({
           ...current,
-          parts: [{ type: "text", text: `${text}${input.delta}` }],
+          parts,
         });
         await trx.updateTable("chat_messages").set({
           parts: jsonb(next.parts),

@@ -658,23 +658,11 @@ export class CanonicalChatOrchestrator {
           activityError.name,
         );
       }
-      const output = text ? CanonicalChatMessageSchema.parse({
-        id: `msg_${run.id.slice("run_".length)}_assistant`,
-        chatId: run.chatId,
-        seq: outputSeq,
-        role: "assistant",
-        state: terminal.outcome === "completed" ? "committed" : "failed",
-        turnId: run.turnId,
-        runId: run.id,
-        parts: [{ type: "text", text }],
-        createdAt: completedAt,
-      }) : undefined;
       await this.options.repository.finishRun(owner, {
         chatId: run.chatId,
         runId: run.id,
         outcome: terminal.outcome,
         completedAt,
-        ...(output ? { output } : {}),
       });
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;

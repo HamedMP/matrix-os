@@ -13,12 +13,20 @@ import type {
 } from "../../components/conversation/presentation";
 
 function messageText(message: CanonicalChatMessage): string {
-  return message.parts.flatMap((part) => {
-    if (part.type === "text" || part.type === "summary") return [part.text];
-    if (part.type === "status") return [part.detail ? `${part.label}\n\n${part.detail}` : part.label];
-    if (part.type === "tool_result" && part.text) return [part.text];
-    return [];
-  }).join("\n\n");
+  let output = "";
+  let previousWasText = false;
+  for (const part of message.parts) {
+    const text = part.type === "text" || part.type === "summary"
+      ? part.text
+      : part.type === "status"
+        ? part.detail ? `${part.label}\n\n${part.detail}` : part.label
+        : part.type === "tool_result" && part.text ? part.text : undefined;
+    if (text === undefined) continue;
+    if (output && !(previousWasText && part.type === "text")) output += "\n\n";
+    output += text;
+    previousWasText = part.type === "text";
+  }
+  return output;
 }
 
 function messagePresentation(

@@ -239,6 +239,47 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("commits exact assistant output beyond one text-part boundary", async () => {
+    await repository.create(owner, {
+      id: "chat_lossless_multi_part_output",
+      clientRequestId: "req_create_lossless_multi_part_output",
+      title: "Lossless multi-part output",
+    });
+    const chunks = Array.from({ length: 18 }, (_, index) => String(index % 10).repeat(4_000));
+    const expected = chunks.join("");
+    const provider = adapter(async function* () {
+      for (const delta of chunks) yield { type: "assistant.delta", delta };
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_lossless_multi_part_output", {
+      clientRequestId: "req_lossless_multi_part_output_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "stream more than 32,000 characters" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const snapshot = await repository.exportChat(owner, "chat_lossless_multi_part_output");
+    const assistant = snapshot?.messages.find((message) => message.runId === admitted.run.id);
+    expect(assistant).toMatchObject({
+      id: `msg_${admitted.run.id.slice("run_".length)}_assistant`,
+      state: "committed",
+    });
+    expect(assistant?.parts.every((part) => part.type !== "text" || part.text.length <= 32_000)).toBe(true);
+    expect(assistant?.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join(""))
+      .toBe(expected);
+    expect(snapshot?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
+  });
+
   it("keeps durable partial assistant text when a Provider fails before completion", async () => {
     await repository.create(owner, {
       id: "chat_lossless_partial_failure",

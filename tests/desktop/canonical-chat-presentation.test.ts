@@ -32,6 +32,35 @@ describe("canonical Chat presentation adapter", () => {
     });
   });
 
+  it("reassembles adjacent durable text parts without changing assistant output", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, {
+        id: "msg_fixture_chunked_answer",
+        chatId: snapshot.chat.id,
+        seq: 2,
+        role: "assistant",
+        state: "committed",
+        turnId: snapshot.turns[0]!.id,
+        runId: snapshot.runs[0]!.id,
+        parts: [
+          { type: "text", text: "boundary" },
+          { type: "text", text: "-exact\n" },
+          { type: "text", text: "continuation" },
+        ],
+        createdAt: snapshot.runs[0]!.updatedAt,
+      }],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+
+    expect(presented?.final).toMatchObject({
+      markdown: "boundary-exact\ncontinuation",
+      copyText: "boundary-exact\ncontinuation",
+    });
+  });
+
   it("projects persisted run activity and assistant deltas while a Run is active", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;
