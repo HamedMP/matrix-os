@@ -108,6 +108,50 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it("projects a typed Codex tool lifecycle through the provider-neutral activity seam", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+
+    queueMicrotask(() => fake.publish([
+      event({
+        type: "tool.started",
+        eventId: "evt_command_started",
+        toolCallId: "tool_command",
+        displayName: "Run focused tests",
+        kind: "command",
+      }),
+      event({
+        type: "tool.completed",
+        eventId: "evt_command_failed",
+        toolCallId: "tool_command",
+        outcome: "failed",
+      }),
+      event({ type: "thread.completed", eventId: "evt_complete", outcome: "failed" }),
+    ]));
+
+    const events = [];
+    for await (const candidate of adapter.start(input())) events.push(candidate);
+
+    expect(events).toEqual([
+      { type: "state.updated", state: { conversationId: "thread_native" } },
+      {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run focused tests",
+        status: "running",
+      },
+      {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run focused tests",
+        status: "failed",
+      },
+      { type: "run.completed", outcome: "failed" },
+    ]);
+  });
+
   it("streams normalized Codex events from the shared Gateway thread seam", async () => {
     const started = event({
       type: "terminal.bound",
