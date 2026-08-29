@@ -739,6 +739,54 @@ describe("CanonicalChatWorkspace", () => {
     expect(reportedIds).toEqual([null]);
   });
 
+  it.each([
+    ["starting another Chat in the same Project", false],
+    ["deleting the last Chat in the Project", true],
+  ] as const)("keeps New Chat visible after %s", async (_scenario, emptyProject) => {
+    const routeClient = client();
+    const reportedIds: Array<string | null> = [];
+
+    function Harness() {
+      const [route, setRoute] = useState<{
+        chatId?: string;
+        view: "draft" | "conversation";
+      }>({ chatId: snapshot.chat.id, view: "conversation" });
+      return (
+        <>
+          <button type="button" onClick={() => {
+            if (emptyProject) vi.mocked(routeClient.list).mockResolvedValue({ items: [] });
+            setRoute({ view: "draft" });
+          }}>Open project draft</button>
+          <CanonicalChatWorkspace
+            client={routeClient}
+            projectId="matrix-os"
+            projectLabel="Matrix OS"
+            initialChatId={route.chatId}
+            initialView={route.view}
+            active
+            externalNavigation
+            catalog={providerCatalog}
+            onActiveChatChanged={(chatId) => {
+              reportedIds.push(chatId);
+              if (chatId) setRoute({ chatId, view: "conversation" });
+            }}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open project draft" }));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    expect(reportedIds).toEqual([]);
+  });
+
   it("does not submit uploaded attachments after the selected runtime changes", async () => {
     let resolveUpload!: (value: { ok: true; path: string; size: number }) => void;
     const api = {
