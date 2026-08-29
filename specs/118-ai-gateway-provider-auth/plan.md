@@ -211,6 +211,8 @@ Every numbered slice is an independently reviewable PR. Tests are written red fi
 
 **Checkpoint**: red/green fake-provider assertions plus bounded real low-cost tests; `bun run test` and kernel coverage; local Docker compatibility only if exercising proxy packaging; no rollout.
 
+**Verification record**: [`sdk-verification.md`](./sdk-verification.md) captures the exact SDK/runtime results, reproducible commands, and the credential-blocked live checks that remain before rollout.
+
 **PR**: `test(kernel): verify current agent sdk and gateway behavior`
 
 ### Phase 1 — Upgrade Agent SDK and current model catalog
