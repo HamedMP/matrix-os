@@ -101,6 +101,11 @@ function selection(value: string): { provider: string; model: string } {
   return { provider, model };
 }
 
+function isRawProviderFailureText(text: string): boolean {
+  return /^\s*(?:(?:provider\s+)?error:\s*)?(?:HTTP(?:\/\d(?:\.\d)?)?\s+[45]\d{2}\b|\{\s*"(?:detail|error)"\s*:)/i
+    .test(text);
+}
+
 function outputChunks(text: string): string[] {
   const chunks: string[] = [];
   for (let index = 0; index < text.length; index += 4_000) {
@@ -220,6 +225,7 @@ export function createHermesChatProviderAdapter(options: {
     let liveSessionId: string | undefined;
     let durableSessionId: string | undefined;
     let currentSegment = "";
+    let currentSegmentSuppressed = false;
     let lastSealedSegment = "";
     let emittedOutputBytes = 0;
     let emittedDeltaEvents = 0;
@@ -291,7 +297,8 @@ export function createHermesChatProviderAdapter(options: {
       if (event.type === "message.delta") {
         const { text } = HermesDeltaSchema.parse(event.payload);
         if (!text) return;
-        emitVisibleText(text);
+        if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
+        if (!currentSegmentSuppressed) emitVisibleText(text);
         currentSegment += text;
       } else if (event.type === "message.interim") {
         const interim = HermesInterimSchema.parse(event.payload);
@@ -305,6 +312,7 @@ export function createHermesChatProviderAdapter(options: {
         }
         lastSealedSegment = interim.text;
         currentSegment = "";
+        currentSegmentSuppressed = false;
         separatorPending = emittedOutputBytes > 0;
       } else if (event.type === "message.complete") {
         const parsed = HermesCompletionSchema.parse(event.payload);
@@ -489,6 +497,9 @@ export function createHermesChatProviderAdapter(options: {
         const final = completionResult.value;
         if (Buffer.byteLength(final.text, "utf8") > MAX_OUTPUT_BYTES) {
           throw new HermesRunFailure("run", "Hermes output exceeded limit");
+        }
+        if (final.status === "error" && isRawProviderFailureText(final.text)) {
+          throw new HermesRunFailure("run", "Hermes Run failed");
         }
         const previewAlreadySealed = final.response_previewed
           && !currentSegment
