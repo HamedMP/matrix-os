@@ -15,7 +15,9 @@ This pipeline borrows the useful parts of two working desktop release systems:
 - SlayZone: release manifest with SHA-256 sums, explicit channel metadata, and
   dry-run release bundles before publish.
 
-## Required Secrets
+## Required signing configuration
+
+### macOS
 
 The macOS jobs expect an Apple Developer ID Application certificate readable by
 electron-builder:
@@ -31,11 +33,98 @@ secure URL supported by electron-builder. macOS release jobs fail before the
 build if any certificate, certificate-password, or notarization secret is
 missing; unsigned artifacts must never reach a release.
 
+### Windows (recommended: Azure Artifact Signing)
+
+Windows releases are x64 NSIS installers. The release workflow runs on a
+Windows GitHub runner, signs through Azure Artifact Signing (formerly Trusted
+Signing), and fails closed if signing is missing or invalid. It verifies the
+Authenticode signature on both `Matrix OS.exe` and the NSIS installer before an
+artifact can be uploaded. This is app packaging; Electron's [Windows build
+instructions](https://www.electronjs.org/docs/latest/development/build-instructions-windows)
+are for compiling Electron itself and are not required.
+
+Provision the signer once:
+
+1. In the Azure portal, create an **Artifact Signing** account in the chosen
+   region. Complete organization identity validation, then create a
+   **Public Trust** certificate profile. Record the account name, profile name,
+   regional endpoint, and the certificate profile's complete subject DN. North
+   Europe uses `https://neu.codesigning.azure.net`; use the endpoint shown by
+   the account rather than guessing.
+2. Create a Microsoft Entra application and service principal dedicated to
+   Matrix OS Desktop releases. Do not create a client secret.
+3. Add a federated credential to that application with:
+   - issuer: `https://token.actions.githubusercontent.com`
+   - subject: `repo:HamedMP/matrix-os:environment:desktop-release`
+   - audience: `api://AzureADTokenExchange`
+4. At the certificate-profile resource scope, assign the service principal the
+   least-privilege **Artifact Signing Certificate Profile Signer** role. The
+   scope has this form:
+
+   ```text
+   /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CodeSigning/codeSigningAccounts/<account>/certificateProfiles/<profile>
+   ```
+
+5. In GitHub, create an environment named `desktop-release`. Restrict its
+   deployment branches/tags to reviewed release refs. The Windows job uses this
+   environment so every OIDC token has one stable, narrow subject.
+6. Add these repository Actions secrets:
+   - `MATRIX_DESKTOP_WINDOWS_AZURE_CLIENT_ID`: Entra application (client) ID
+   - `MATRIX_DESKTOP_WINDOWS_AZURE_TENANT_ID`: Entra directory (tenant) ID
+   - `MATRIX_DESKTOP_WINDOWS_AZURE_SUBSCRIPTION_ID`: Azure subscription ID
+7. Add these repository Actions variables:
+   - `MATRIX_DESKTOP_WINDOWS_SIGNING_MODE=azure`
+   - `MATRIX_DESKTOP_WINDOWS_PUBLISHER_NAME=<complete certificate subject DN>`
+   - `MATRIX_DESKTOP_WINDOWS_SIGNING_ENDPOINT=<regional HTTPS endpoint>`
+   - `MATRIX_DESKTOP_WINDOWS_SIGNING_ACCOUNT=<Artifact Signing account>`
+   - `MATRIX_DESKTOP_WINDOWS_CERTIFICATE_PROFILE=<certificate profile>`
+
+The publisher value must match the issued certificate subject exactly,
+including the `CN=`, organization, locality/state when present, and country.
+The updater embeds this subject and rejects an update whose signer does not
+match it. The workflow authenticates with `azure/login` and short-lived GitHub
+OIDC credentials; no Azure client secret or signing private key is stored in
+GitHub.
+
+Useful one-time Entra/RBAC commands after creating the Artifact Signing account
+and certificate profile in the portal:
+
+```bash
+APP_CLIENT_ID="$(az ad app create --display-name matrix-os-desktop-release --query appId -o tsv)"
+APP_OBJECT_ID="$(az ad app show --id "$APP_CLIENT_ID" --query id -o tsv)"
+SP_OBJECT_ID="$(az ad sp create --id "$APP_CLIENT_ID" --query id -o tsv)"
+
+# Create credential.json with the issuer, subject, and audience listed above.
+az ad app federated-credential create --id "$APP_OBJECT_ID" --parameters credential.json
+
+az role assignment create \
+  --assignee-object-id "$SP_OBJECT_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Artifact Signing Certificate Profile Signer" \
+  --scope "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CodeSigning/codeSigningAccounts/<account>/certificateProfiles/<profile>"
+```
+
+### Windows certificate-file fallback
+
+If Azure Artifact Signing is unavailable, an exportable OV `.pfx` can be used.
+Set `MATRIX_DESKTOP_WINDOWS_SIGNING_MODE=certificate`, retain the exact
+`MATRIX_DESKTOP_WINDOWS_PUBLISHER_NAME`, and add:
+
+- `MATRIX_DESKTOP_WINDOWS_CERTIFICATE`: base64-encoded `.pfx` (or a secure URL
+  accepted by electron-builder)
+- `MATRIX_DESKTOP_WINDOWS_CERTIFICATE_PASSWORD`: the `.pfx` password
+
+The fallback maps those secrets to electron-builder's `WIN_CSC_LINK` and
+`WIN_CSC_KEY_PASSWORD` only inside the Windows job. Never commit a certificate,
+password, Azure token, or generated signing metadata. Prefer Artifact Signing:
+it avoids an exportable private key and gives the workflow short-lived access.
+
 ## Channels
 
 - Stable: tag `desktop-vX.Y.Z` or run `Desktop Release` with `channel=stable`
   and `mode=publish`. The immutable version release holds the signed artifacts;
-  `desktop-stable` points to its `latest-mac.yml` and `latest-linux.yml` manifests.
+  `desktop-stable` points to `latest-mac.yml`, `latest-linux.yml`, and the
+  Windows `latest.yml` manifest.
 - Beta: run `Desktop Release` with `channel=beta`. The immutable GitHub release
   is marked prerelease and `desktop-beta` points to its channel manifests.
 - Canary: `Desktop Canary Release` runs every 12 hours and can be triggered
@@ -84,7 +173,8 @@ git push origin desktop-v0.1.0
 ```
 
 The release workflow builds macOS arm64/x64 DMG+ZIP artifacts, Linux x64
-AppImage artifacts, merges the channel manifests, generates checksums, and
+AppImage artifacts, and a Windows x64 NSIS `.exe`; prepares all three platform
+manifests; generates checksums; and
 creates the immutable GitHub release with generated changelog notes. It then
 advances the selected `desktop-<channel>` pointer release. Before upload, each macOS
 build verifies its Developer ID signature, stapled notarization ticket, and
@@ -97,6 +187,14 @@ complete a real `electron-updater` check against a deterministic local Generic
 feed; module loading, provider configuration, manifest-selection, or branded
 DMG background errors fail the build.
 
+The Windows job also checks exact installer/blockmap names, validates both
+Authenticode signer subjects, installs silently into the current user's
+profile, checks the `matrixos://` and legacy `matrix-os://` protocol
+registrations, launches the installed application against the same local
+updater fixture, and silently uninstalls it. Any missing artifact, invalid
+signature, protocol-registration failure, launch failure, updater failure, or
+incomplete uninstall blocks the release.
+
 ## Updates
 
 Packaged desktop builds use a channel-scoped Generic feed backed by GitHub
@@ -105,6 +203,8 @@ release downloads:
 - `desktop-stable` serves `latest-mac.yml` and `latest-linux.yml`.
 - `desktop-beta`, `desktop-canary`, and `desktop-dev` serve their matching
   `<channel>-mac.yml` and `<channel>-linux.yml` manifests.
+- Windows uses `latest.yml` on stable and `<channel>.yml` on prerelease
+  channels from the same channel pointer releases.
 
 The app checks on launch and then hourly; **Matrix OS > Check for Updates…** is
 present in installed and development menus. It starts the same check manually
@@ -147,6 +247,21 @@ the approved #1255 green branded installer background appears, **Matrix OS** and
 Applications succeeds. Launch the installed app and confirm Gatekeeper opens it
 without an unidentified-developer warning. This manual visual check complements
 the automated Finder-background gate; it does not replace it.
+
+On a clean Windows 11 x64 user, download the exact `.exe` and verify its
+Properties > Digital Signatures subject matches
+`MATRIX_DESKTOP_WINDOWS_PUBLISHER_NAME`. Install it, confirm the Start Menu and
+desktop shortcuts, open a `matrixos://auth?status=approved` link, check for
+updates from the File menu, and uninstall it from Windows Settings. This manual
+SmartScreen/UI check complements the automated Authenticode and silent-install
+gate.
+
+## References
+
+- [electron-builder Windows code signing](https://www.electron.build/docs/features/code-signing/code-signing-win/)
+- [Azure Artifact Signing roles](https://learn.microsoft.com/en-us/azure/artifact-signing/concept-resources-roles)
+- [Azure Artifact Signing regional endpoints](https://learn.microsoft.com/en-us/azure/artifact-signing/how-to-signing-integrations)
+- [Azure Artifact Signing GitHub OIDC setup](https://github.com/Azure/artifact-signing-action/blob/main/docs/OIDC.md)
 
 For a canary A-to-B acceptance test, install signed Canary A, publish signed
 Canary B, and verify `desktop-canary` serves a manifest whose artifact URLs

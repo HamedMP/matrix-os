@@ -213,4 +213,59 @@ describe("createAppMenuTemplate", () => {
     quitItem.click({} as never, {} as never, {} as never);
     expect(quitApp).toHaveBeenCalledOnce();
   });
+
+  it("uses Windows conventions without macOS-only application roles", () => {
+    const send = vi.fn();
+    const quitApp = vi.fn();
+    const template = createAppMenuTemplate({
+      appName: "Matrix OS",
+      isPackaged: true,
+      platform: "win32",
+      openExternal: vi.fn(),
+      send,
+      adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(),
+      quitApp,
+    });
+
+    expect(template[0]?.label).toBe("File");
+    expect(template.some((item) => item.label === "Matrix OS")).toBe(false);
+    const serialized = JSON.stringify(template);
+    expect(serialized).not.toContain('"role":"services"');
+    expect(serialized).not.toContain('"role":"hide"');
+    expect(serialized).not.toContain('"role":"hideOthers"');
+    expect(serialized).not.toContain('"role":"unhide"');
+
+    const fileMenu = template.find((item) => item.label === "File");
+    const fileItems = Array.isArray(fileMenu?.submenu) ? fileMenu.submenu : [];
+    const expectations = [
+      ["New", "CmdOrCtrl+N"],
+      ["New Agent Thread", "CmdOrCtrl+J"],
+      ["New Tab", "CmdOrCtrl+T"],
+      ["Close Tab", "CmdOrCtrl+W"],
+      ["Settings…", "CmdOrCtrl+,"],
+      ["Check for Updates…", undefined],
+      ["Exit", undefined],
+    ] as const;
+
+    for (const [label, accelerator] of expectations) {
+      const item = fileItems.find((candidate) => "label" in candidate && candidate.label === label);
+      expect(item, label).toBeTruthy();
+      expect(item && "accelerator" in item ? item.accelerator : undefined).toBe(accelerator);
+    }
+
+    const viewMenu = template.find((item) => item.label === "View");
+    const viewItems = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
+    const terminal = viewItems.find((item) => "label" in item && item.label === "Terminal");
+    expect(terminal && "accelerator" in terminal ? terminal.accelerator : null).toBe(
+      "CmdOrCtrl+Alt+T",
+    );
+
+    const exit = fileItems.find((item) => "label" in item && item.label === "Exit");
+    if (!exit || !("click" in exit) || typeof exit.click !== "function") {
+      throw new Error("Exit is not clickable");
+    }
+    exit.click({} as never, {} as never, {} as never);
+    expect(quitApp).toHaveBeenCalledOnce();
+  });
 });

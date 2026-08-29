@@ -75,7 +75,13 @@ textarea,
   user-select: text;
 }
 
-/* ── Titlebar drag region (frameless hiddenInset window) ──────── */
+/* ── Titlebar drag region ─────────────────────────────────────── */
+.native-titlebar {
+  left: env(titlebar-area-x, 0px);
+  right: auto;
+  top: env(titlebar-area-y, 0px);
+  width: env(titlebar-area-width, 100%);
+}
 .titlebar-drag {
   -webkit-app-region: drag;
 }

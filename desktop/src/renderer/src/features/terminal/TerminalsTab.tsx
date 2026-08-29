@@ -12,6 +12,7 @@ import {
   Trash2,
   X,
 } from "@renderer/lib/hugeicons";
+import { systemTerminalLabel } from "@renderer/lib/platform-labels";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, EmptyState, IconButton } from "../../design/primitives";
 import RetainedPane from "../../design/RetainedPane";
@@ -563,7 +564,7 @@ function ShellListEmpty() {
     <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-8 text-center" style={{ borderColor: "var(--border-subtle)" }}>
       <SquareTerminal size={22} style={{ color: "var(--text-tertiary)" }} />
       <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>No shell sessions yet</p>
-      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Start a shell to attach from the Mac Terminal.</p>
+      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Start a shell to attach from the {systemTerminalLabel()}.</p>
     </div>
   );
 }

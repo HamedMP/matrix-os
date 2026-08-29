@@ -121,8 +121,8 @@ describe("desktop release workflows", () => {
   it("injects the public PostHog support configuration into every packaged Desktop build", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
-    expect(workflow.match(/^\s+VITE_POSTHOG_PROJECT_TOKEN: \$\{\{/gm)).toHaveLength(2);
-    expect(workflow.match(/^\s+VITE_POSTHOG_HOST: \$\{\{/gm)).toHaveLength(2);
+    expect(workflow.match(/^\s+VITE_POSTHOG_PROJECT_TOKEN: \$\{\{/gm)).toHaveLength(3);
+    expect(workflow.match(/^\s+VITE_POSTHOG_HOST: \$\{\{/gm)).toHaveLength(3);
     expect(workflow).toContain("vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY");
     expect(workflow).toContain("vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com'");
   });
@@ -134,15 +134,57 @@ describe("desktop release workflows", () => {
     const missingTokenCheck = 'if [ -z "$normalized_posthog_token" ]; then';
     const missingTokenError = "Missing required public PostHog project token for Desktop Support";
 
-    expect(workflow.match(new RegExp(validationName, "g"))).toHaveLength(2);
-    expect(workflow.split(normalizeToken)).toHaveLength(3);
-    expect(workflow.split(missingTokenCheck)).toHaveLength(3);
-    expect(workflow.match(new RegExp(missingTokenError, "g"))).toHaveLength(2);
+    expect(workflow.match(new RegExp(validationName, "g"))).toHaveLength(3);
+    expect(workflow.split(normalizeToken)).toHaveLength(4);
+    expect(workflow.split(missingTokenCheck)).toHaveLength(4);
+    expect(workflow.match(new RegExp(missingTokenError, "g"))).toHaveLength(3);
 
     const macJob = workflow.slice(workflow.indexOf("  mac:"), workflow.indexOf("  linux:"));
-    const linuxJob = workflow.slice(workflow.indexOf("  linux:"));
+    const linuxJob = workflow.slice(workflow.indexOf("  linux:"), workflow.indexOf("  windows:"));
+    const windowsJob = workflow.slice(workflow.indexOf("  windows:"));
     expect(macJob.indexOf(validationName)).toBeLessThan(macJob.indexOf("uses: actions/checkout@v6"));
     expect(linuxJob.indexOf(validationName)).toBeLessThan(linuxJob.indexOf("uses: actions/checkout@v6"));
+    expect(windowsJob.indexOf(validationName)).toBeLessThan(
+      windowsJob.indexOf("uses: actions/checkout@v6"),
+    );
+  });
+
+  it("builds, signs, installs, launches, and uninstalls an exact Windows NSIS release", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+    const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
+    const canary = readFileSync(
+      join(root, ".github/workflows/desktop-release-canary.yml"),
+      "utf8",
+    );
+    const windowsJob = workflow.slice(workflow.indexOf("  windows:"));
+
+    expect(windowsJob).toContain("name: Windows x64");
+    expect(windowsJob).toContain("runs-on: windows-latest");
+    expect(windowsJob).toContain("id-token: write");
+    expect(windowsJob).toContain("name: Validate Windows signing configuration");
+    expect(windowsJob).toContain("MATRIX_DESKTOP_WINDOWS_SIGNING_MODE");
+    expect(windowsJob).toContain("uses: azure/login@v2");
+    expect(windowsJob).toContain("secrets.MATRIX_DESKTOP_WINDOWS_AZURE_CLIENT_ID");
+    expect(windowsJob).toContain("secrets.MATRIX_DESKTOP_WINDOWS_AZURE_TENANT_ID");
+    expect(windowsJob).toContain("secrets.MATRIX_DESKTOP_WINDOWS_AZURE_SUBSCRIPTION_ID");
+    expect(windowsJob).toContain("electron-builder.windows.mjs --win nsis --x64");
+    expect(windowsJob).toContain("artifact_base=Matrix-OS-${packageVersion}-win-x64");
+    expect(windowsJob).toContain('"desktop/dist/$env:ARTIFACT_BASE.exe"');
+    expect(windowsJob).toContain('$blockmapPath = "$installerPath.blockmap"');
+    expect(windowsJob).toContain("Get-AuthenticodeSignature");
+    expect(windowsJob).toContain("Status -ne [System.Management.Automation.SignatureStatus]::Valid");
+    expect(windowsJob).toContain('Start-Process -FilePath $installerPath -ArgumentList "/S" -Wait');
+    expect(windowsJob).toContain('foreach ($scheme in @("matrixos", "matrix-os"))');
+    expect(windowsJob).toContain("Registry::HKEY_CURRENT_USER\\Software\\Classes\\$scheme");
+    expect(windowsJob).toContain("desktop-update-fixture-server.mjs");
+    expect(windowsJob).toContain('"--platform", "windows"');
+    expect(windowsJob).toContain("[updates] update check completed: up to date");
+    expect(windowsJob).toContain('Start-Process -FilePath $uninstallerPath -ArgumentList "/S" -Wait');
+    expect(windowsJob).toContain("desktop/dist/*.exe");
+    expect(windowsJob).toContain("desktop/dist/*.yml");
+
+    expect(release).toContain("id-token: write");
+    expect(canary).toContain("id-token: write");
   });
 
   it("keeps raw workspace TypeScript out of the packaged app archive", () => {
@@ -287,7 +329,7 @@ describe("desktop release workflows", () => {
     expect(action).toContain('REMOTE_TAG_SHA" != "$EXPECTED_SHA"');
   });
 
-  it("keeps only the two platform manifests on a Desktop channel pointer release", () => {
+  it("keeps only the three platform manifests on a Desktop channel pointer release", () => {
     const action = readFileSync(
       join(root, ".github/actions/prune-desktop-channel-assets/action.yml"),
       "utf8",
@@ -295,8 +337,10 @@ describe("desktop release workflows", () => {
 
     expect(action).toContain('ALLOWED_MAC="latest-mac.yml"');
     expect(action).toContain('ALLOWED_LINUX="latest-linux.yml"');
+    expect(action).toContain('ALLOWED_WINDOWS="latest.yml"');
     expect(action).toContain('ALLOWED_MAC="${CHANNEL}-mac.yml"');
     expect(action).toContain('ALLOWED_LINUX="${CHANNEL}-linux.yml"');
+    expect(action).toContain('ALLOWED_WINDOWS="${CHANNEL}.yml"');
     expect(action).toContain('gh release delete-asset "$TAG_NAME" "$asset"');
     expect(action).toContain("--yes");
   });

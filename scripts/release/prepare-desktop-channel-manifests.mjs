@@ -38,6 +38,7 @@ if (!CHANNELS.has(channel)) {
 const platformManifestNames = [
   channel === "stable" ? "latest-mac.yml" : `${channel}-mac.yml`,
   channel === "stable" ? "latest-linux.yml" : `${channel}-linux.yml`,
+  channel === "stable" ? "latest.yml" : `${channel}.yml`,
 ];
 const releaseNotes = (await readFile(notesPath, "utf8")).trim().slice(0, MAX_RELEASE_NOTES_LENGTH);
 if (!releaseNotes) {

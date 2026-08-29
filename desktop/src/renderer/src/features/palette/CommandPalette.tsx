@@ -1,4 +1,5 @@
 import { Command } from "cmdk";
+import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
@@ -238,7 +239,7 @@ export default function CommandPalette() {
             <PaletteItem
               icon={<MessageSquarePlus size={14} />}
               label="New agent run"
-              shortcut="⌘J"
+              shortcut={desktopShortcutLabel("J")}
               onSelect={() =>
                 run(() => {
                   handleNewAgentRunShortcut(

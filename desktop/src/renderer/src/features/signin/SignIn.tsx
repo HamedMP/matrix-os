@@ -64,7 +64,7 @@ export default function SignIn() {
 
   return (
     <div className="flex h-full flex-col" style={{ background: "var(--bg-app)" }}>
-      <header className="titlebar-drag absolute inset-x-0 top-0 z-10" style={{ height: "var(--titlebar-height)" }} />
+      <header className="native-titlebar titlebar-drag absolute inset-x-0 top-0 z-10" style={{ height: "var(--titlebar-height)" }} />
       <div className="grid flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
         <BrandPanel
           title={<>Code on your<br />cloud computer</>}
