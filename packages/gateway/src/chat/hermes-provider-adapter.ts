@@ -1,5 +1,6 @@
 import { delimiter, join } from "node:path";
 import { z } from "zod/v4";
+import { CanonicalChatModelReferenceSchema } from "@matrix-os/contracts";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
 import {
   CanonicalProviderRunEventSchema,
@@ -59,7 +60,7 @@ function selection(value: string): { provider: string; model: string } {
     throw new Error("Unsupported Hermes model selection");
   }
   const provider = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/).parse(value.slice(0, separator));
-  const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).parse(value.slice(separator + 1));
+  const model = CanonicalChatModelReferenceSchema.parse(value.slice(separator + 1));
   return { provider, model };
 }
 

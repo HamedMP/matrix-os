@@ -19,6 +19,21 @@ import {
 const now = "2026-08-25T00:00:00.000Z";
 
 describe("canonical Chat contracts", () => {
+  it("accepts namespaced Provider model references without accepting traversal", () => {
+    expect(CanonicalChatModelSelectionSchema.parse({
+      instanceId: "hermes_default",
+      model: "nous:anthropic/claude-opus-5",
+    })).toMatchObject({ model: "nous:anthropic/claude-opus-5" });
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "hermes_default",
+      model: "nous:../private-model",
+    }).success).toBe(false);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "hermes_default",
+      model: "nous:anthropic\\claude-opus-5",
+    }).success).toBe(false);
+  });
+
   it("parses one complete Chat, Turn, Run, and message without exposing runtime internals", () => {
     const chat = CanonicalChatSchema.parse({
       id: "chat_demo",

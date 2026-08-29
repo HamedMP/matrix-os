@@ -102,6 +102,30 @@ async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("forwards namespaced model ids to Hermes without rewriting them", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: gateway.spawnFn,
+    });
+    const eventsPromise = collect(adapter.start({
+      ...baseInput,
+      selection: {
+        instanceId: "hermes_default",
+        model: "nous:anthropic/claude-opus-5",
+      },
+    }));
+
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+    expect(gateway.requests.find(({ method }) => method === "session.create")?.params)
+      .toMatchObject({ provider: "nous", model: "anthropic/claude-opus-5" });
+
+    gateway.event("message.complete", { text: "", status: "complete" });
+    await expect(eventsPromise).resolves.toEqual(expect.arrayContaining([
+      { type: "run.completed", outcome: "completed" },
+    ]));
+  });
+
   it("yields assistant text before the Hermes process completes", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({

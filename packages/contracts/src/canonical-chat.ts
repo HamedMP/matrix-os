@@ -30,6 +30,16 @@ export const CanonicalChatMessageIdSchema = prefixedId("msg_");
 export const CanonicalChatRequestIdSchema = prefixedId("req_");
 export const CanonicalProviderInstanceIdSchema = canonicalReferenceId(128);
 export const CanonicalChatAttachmentKindSchema = z.enum(["file", "image", "diff", "structured_ref"]);
+export const CanonicalChatModelReferenceSchema = z.string()
+  .min(1)
+  .max(160)
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/,
+    "Invalid model reference",
+  )
+  .refine((value) => !value.includes(".."), {
+    message: "Model reference cannot contain traversal",
+  });
 const CanonicalChatRelativePathSchema = z.string()
   .min(1)
   .max(4096)
@@ -55,7 +65,7 @@ export const CanonicalChatAttentionSchema = z.enum([
 
 export const CanonicalChatModelSelectionSchema = z.object({
   instanceId: CanonicalProviderInstanceIdSchema,
-  model: canonicalReferenceId(160),
+  model: CanonicalChatModelReferenceSchema,
   options: z.array(z.object({
     id: canonicalReferenceId(80),
     value: z.union([canonicalReferenceId(160), z.boolean()]),
