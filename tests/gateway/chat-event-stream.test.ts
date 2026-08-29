@@ -262,6 +262,33 @@ describe("canonical Chat event stream", () => {
     expect(pingSocket.closed).toBe(true);
   });
 
+  it("reports unexpected JSON parser failures without exposing the raw error", async () => {
+    const harness = repositoryHarness();
+    const stream = createStream({ repository: harness.repository });
+    const ws = socket();
+    const session = await stream.open({ ws, principal: principalA });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const parse = vi.spyOn(JSON, "parse").mockImplementationOnce(() => {
+      throw new TypeError("sensitive parser detail");
+    });
+
+    try {
+      expect(() => session.onMessage('{"type":"ping"}')).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(
+        "[chat/event-stream] JSON parse failed:",
+        "TypeError",
+      );
+      expect(JSON.stringify(ws.sent)).not.toContain("sensitive parser detail");
+      expect(ws.sent).toContainEqual(expect.objectContaining({
+        type: "chat.stream.error",
+        error: expect.objectContaining({ code: "invalid_frame" }),
+      }));
+    } finally {
+      parse.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it("enforces global and per-owner caps, TTL eviction, failed-sender removal, and close cleanup", async () => {
     let now = 0;
     const harness = repositoryHarness();
