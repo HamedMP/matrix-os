@@ -169,6 +169,9 @@ describe("CanonicalChatWorkspace", () => {
     );
 
     await waitFor(() => expect(routeClient.getDetail).toHaveBeenCalledWith(snapshot.chat.id, { limit: 200 }));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
     expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
     expect(onActiveChatChanged).not.toHaveBeenCalledWith(snapshot.chat.id, expect.anything());

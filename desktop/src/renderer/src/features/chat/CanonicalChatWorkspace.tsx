@@ -180,6 +180,7 @@ export function CanonicalChatWorkspace({
       && previous.projectId === projectId
     ) return;
     previousRoute.current = { initialChatId, initialView, projectId };
+    if (initialView === "draft") reportedChatId.current = initialChatId ?? null;
     if (projectId !== null) return;
     setGlobalView(initialView ?? (initialChatId ? "conversation" : "index"));
   }, [initialChatId, initialView, projectId]);
