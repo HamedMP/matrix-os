@@ -3,6 +3,8 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
+import { defaultDesktopIcons, useDesktopIcons } from "../../stores/desktop-icons";
+import { FIXED_DESKTOP_APPS } from "./desktop-apps";
 
 type DesktopBackgroundConfig =
   | { type: "pattern" }
@@ -13,6 +15,7 @@ type DesktopBackgroundConfig =
 
 const FALLBACK_STYLE: CSSProperties = { background: "var(--bg-app)" };
 const WALLPAPER_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_DESKTOP_ICONS = defaultDesktopIcons(FIXED_DESKTOP_APPS.map((app) => app.path));
 
 function meshGradient(): string {
   return [
@@ -141,7 +144,8 @@ export default function DesktopBackground() {
 
     if (api) {
       void (async () => {
-        const config = await api.get<{ background?: unknown }>("/api/settings/desktop");
+        const config = await api.get<{ background?: unknown; desktopIcons?: unknown }>("/api/settings/desktop");
+        if (!cancelled) useDesktopIcons.getState().hydrate(config.desktopIcons, DEFAULT_DESKTOP_ICONS);
         const background = backgroundConfig(config?.background);
         if (!background) return;
         if (background.type !== "wallpaper") {

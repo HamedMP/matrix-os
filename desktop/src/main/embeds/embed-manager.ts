@@ -36,6 +36,7 @@ export type EmbedManagerOptions = {
     routeSlug: string | null;
     allowedOrigins: string[];
     resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
+    allowPublicNavigation?: boolean;
     onState: (state: "loading" | "ready" | "failed") => void;
   }) => EmbedViewLike;
   maxLive?: number;
@@ -102,6 +103,7 @@ export class EmbedManager {
       routeSlug?: string;
       allowedOrigins?: string[];
       resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
+      allowPublicNavigation?: boolean;
       onState?: (state: "loading" | "ready" | "failed") => void;
       onDispose?: () => void;
     },
@@ -144,6 +146,7 @@ export class EmbedManager {
       routeSlug: kind === "app" ? options?.routeSlug ?? slug : null,
       allowedOrigins,
       resolveNavigation: options?.resolveNavigation,
+      allowPublicNavigation: options?.allowPublicNavigation,
       onState: emitState,
     });
     record = {

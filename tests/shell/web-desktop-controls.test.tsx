@@ -14,8 +14,16 @@ vi.mock("@/components/UserButton", () => ({
 describe("WebDesktopControls", () => {
   it("maps native Desktop right-side actions to web-safe navigation", () => {
     const onOpenSettings = vi.fn();
-    render(<WebDesktopControls onOpenSettings={onOpenSettings} />);
+    const onOpenCommandPalette = vi.fn();
+    render(
+      <WebDesktopControls
+        onOpenSettings={onOpenSettings}
+        onOpenCommandPalette={onOpenCommandPalette}
+      />,
+    );
 
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(onOpenCommandPalette).toHaveBeenCalledOnce();
     expect(screen.getByRole("link", { name: "Switch computer" }).getAttribute("href")).toBe("/runtime");
     const support = screen.getByRole("link", { name: "Support" });
     expect(support.getAttribute("href")).toBe("https://matrix-os.com/docs");

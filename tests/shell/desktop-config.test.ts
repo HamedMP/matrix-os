@@ -39,6 +39,7 @@ describe("Desktop config", () => {
     useDesktopConfigStore.setState({
       dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
       pinnedApps: [...DEFAULT_PINNED_APPS],
+      desktopIcons: undefined,
     });
     vi.restoreAllMocks();
     resetDesktopConfigRuntimeCacheForTests();
@@ -254,6 +255,27 @@ describe("Desktop config", () => {
       pinnedApps: ["apps/test.html"],
     };
     expect(config.pinnedApps).toEqual(["apps/test.html"]);
+  });
+
+  it("moves, removes, and adds Desktop icons through bounded PATCH updates", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ config: {} }) });
+    vi.stubGlobal("fetch", mockFetch);
+    useDesktopConfigStore.getState().setDesktopIcons([
+      { path: "__chat__", x: 20, y: 58 },
+      { path: "__terminal__", x: 108, y: 58 },
+    ]);
+
+    useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
+    useDesktopConfigStore.getState().removeDesktopIcon("__terminal__");
+    useDesktopConfigStore.getState().addDesktopIcon("apps/notes/index.html");
+
+    expect(useDesktopConfigStore.getState().desktopIcons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+    expect(useDesktopConfigStore.getState().desktopIcons?.some((icon) => icon.path === "__terminal__")).toBe(false);
+    expect(useDesktopConfigStore.getState().desktopIcons?.some((icon) => icon.path === "apps/notes/index.html")).toBe(true);
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(mockFetch.mock.calls.at(-1)?.[1].body)).toEqual({
+      desktopIcons: useDesktopConfigStore.getState().desktopIcons,
+    });
   });
 
   it("initializes from the scoped shell snapshot before revalidating desktop config", async () => {

@@ -13,6 +13,7 @@ import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { useDesktopAppDrawer } from "@desktop/renderer/src/stores/desktop-app-drawer";
+import { useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
 
 const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
@@ -69,6 +70,7 @@ beforeEach(() => {
   useUi.setState(useUi.getInitialState(), true);
   useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
   useDesktopAppDrawer.setState(useDesktopAppDrawer.getInitialState(), true);
+  useDesktopIcons.setState(useDesktopIcons.getInitialState(), true);
   useNativeDesktopMode.setState({ hydrated: true });
   window.operator = {
     invoke: vi.fn(async (channel: string) => channel === "state:get"
@@ -621,7 +623,7 @@ describe("native desktop shell", () => {
     fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
       .getByRole("button", { name: "Notes" }));
 
-    const notesTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "app")!;
+    const notesTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "notes")!;
     expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
     expect(useDesktopSurfaces.getState().surfaces[notesTab.id]?.mode).toBe("window");
   });

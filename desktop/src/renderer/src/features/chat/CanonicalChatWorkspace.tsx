@@ -40,6 +40,7 @@ import {
 import { SharedChatSurface } from "./SharedChatSurface";
 import { useCanonicalChatRouteController } from "./use-canonical-chat-route-controller";
 import { useProviderSetup } from "./use-provider-setup";
+import { useCreateAppRequest } from "../../stores/create-app-request";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
@@ -155,6 +156,16 @@ export function CanonicalChatWorkspace({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [workspaceLayout, setWorkspaceLayout] = useState<"wide" | "narrow">("wide");
+  const createAppRequest = useCreateAppRequest((state) => state.request);
+  const clearCreateAppRequest = useCreateAppRequest((state) => state.clear);
+
+  useEffect(() => {
+    if (!active || !createAppRequest) return;
+    setDraft(createAppRequest.prompt);
+    setDraftProjectId(projectId);
+    setGlobalView("draft");
+    clearCreateAppRequest(createAppRequest.id);
+  }, [active, clearCreateAppRequest, createAppRequest, projectId]);
 
   useLayoutEffect(() => {
     const workspace = workspaceRef.current;

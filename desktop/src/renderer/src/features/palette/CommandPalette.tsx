@@ -87,6 +87,7 @@ function paletteTerminalCommands(
 
 export default function CommandPalette() {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const open = useUi((s) => s.paletteOpen);
   const setOpen = useUi((s) => s.setPaletteOpen);
@@ -130,7 +131,10 @@ export default function CommandPalette() {
     if (!dialog) return;
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
+    inputRef.current?.focus();
+    const focusFrame = window.requestAnimationFrame(() => inputRef.current?.focus());
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       if (typeof dialog.close === "function") dialog.close();
       else dialog.removeAttribute("open");
     };
@@ -196,6 +200,7 @@ export default function CommandPalette() {
         }}
       >
         <Command.Input
+          ref={inputRef}
           autoFocus
           placeholder="Search tasks, sessions, actions…"
           className="w-full border-b bg-transparent px-4 py-3 text-md outline-none"

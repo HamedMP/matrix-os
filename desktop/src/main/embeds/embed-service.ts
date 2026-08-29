@@ -101,6 +101,7 @@ export class EmbedService {
         routeSlug,
         allowedOrigins,
         resolveNavigation,
+        allowPublicNavigation,
         onState,
       }) => {
         const window = this.deps.getWindow();
@@ -120,8 +121,9 @@ export class EmbedService {
           partition,
           allowedOrigins,
           resolveNavigation,
+          allowPublicNavigation,
           onState,
-          denyPermissions: kind === "code-editor",
+          denyPermissions: kind === "code-editor" || kind === "browser",
           ...(bridge ? { appBridge: bridge } : {}),
         });
       },
@@ -137,7 +139,7 @@ export class EmbedService {
       return this.openCodeEditor(gatewayOrigin, request.bounds, request.active ?? true);
     }
     if (request.kind === "browser") {
-      return this.openRuntimeBrowser(
+      return this.openBrowser(
         gatewayOrigin,
         request.url ?? "",
         request.bounds,
@@ -393,6 +395,38 @@ export class EmbedService {
       return { embedId, state: "failed" };
     }
     return { embedId, state: "loading" };
+  }
+
+  private async openBrowser(
+    gatewayOrigin: string,
+    rawUrl: string,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
+    const resolved = resolveBrowserAddress(rawUrl);
+    if (!resolved) return { embedId: randomUUID(), state: "failed" };
+    if (resolved.disposition === "runtime") {
+      return this.openRuntimeBrowser(gatewayOrigin, resolved.url, bounds, active);
+    }
+
+    const embedId = randomUUID();
+    const origin = new URL(resolved.url).origin;
+    try {
+      this.manager.open("browser", null, bounds, resolved.url, {
+        id: embedId,
+        active,
+        allowedOrigins: [origin],
+        allowPublicNavigation: true,
+        onState: (state) => this.deps.emitState(embedId, state),
+      });
+      return { embedId, state: "loading" };
+    } catch (err: unknown) {
+      console.warn(
+        "[embed-service] public browser open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { embedId, state: "failed" };
+    }
   }
 
   private disposeBrowserForward(embedId: string, forward: PortForwardHandle): void {

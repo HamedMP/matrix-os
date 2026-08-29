@@ -1,5 +1,6 @@
 import "posthog-js/dist/conversations";
 import posthog from "posthog-js/dist/module.no-external";
+import { DESKTOP_ANALYTICS_EVENT, isDesktopAnalyticsName, type DesktopAnalyticsDetail } from "../../lib/desktop-analytics";
 import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 
@@ -271,6 +272,20 @@ export default function DesktopSupportWidget() {
       console.warn("[desktop-support] PostHog identification failed:", errorKind(error));
     }
   }, [authGeneration, displayName, handle, platformHost, status]);
+
+  useEffect(() => {
+    const capture = (event: Event) => {
+      const detail = (event as CustomEvent<DesktopAnalyticsDetail>).detail;
+      if (!initialized || activeIdentity === null || !isDesktopAnalyticsName(detail?.name)) return;
+      posthog.capture(detail.name, {
+        ...(detail.appKind ? { app_kind: detail.appKind } : {}),
+        ...(typeof detail.open === "boolean" ? { open: detail.open } : {}),
+        matrix_client: "desktop",
+      });
+    };
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    return () => window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+  }, []);
 
   useEffect(() => () => {
     invalidatePendingSupportOpen();

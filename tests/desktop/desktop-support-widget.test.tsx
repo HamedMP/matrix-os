@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
 import DesktopSupportWidget from "@desktop/renderer/src/features/support/DesktopSupportWidget";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useUi } from "@desktop/renderer/src/stores/ui";
 
 const posthogClient = vi.hoisted(() => ({
   conversations: {
@@ -13,6 +14,7 @@ const posthogClient = vi.hoisted(() => ({
     isAvailable: vi.fn(() => true),
     show: vi.fn(),
   },
+  capture: vi.fn(),
   identify: vi.fn(),
   init: vi.fn(),
   reset: vi.fn(),
@@ -170,7 +172,10 @@ describe("Desktop support widget", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
-      .toEqual(["Main computer", "Support", "Open account menu"]);
+      .toEqual(["Search", "Main computer", "Support", "Open account menu"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(useUi.getState().paletteOpen).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Support" }));
 
@@ -215,6 +220,20 @@ describe("Desktop support widget", () => {
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
     expect(posthogClient.identify).toHaveBeenLastCalledWith("neo", {
       $name: "Neo",
+      matrix_client: "desktop",
+    });
+  });
+
+  it("captures bounded Desktop lifecycle events after identifying the account", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    window.dispatchEvent(new CustomEvent("matrix:desktop-analytics", {
+      detail: { name: "desktop_app_opened", appKind: "browser" },
+    }));
+
+    expect(posthogClient.capture).toHaveBeenCalledWith("desktop_app_opened", {
+      app_kind: "browser",
       matrix_client: "desktop",
     });
   });

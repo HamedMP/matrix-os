@@ -25,6 +25,21 @@ import {
 } from "./OSWindow";
 import { SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
 
+export function shouldActivateDesktopPane(input: {
+  active: boolean;
+  visible: boolean;
+  overlayOpen: boolean;
+  isNativeEmbed: boolean;
+  isDesktopHidden: boolean;
+  isDesktopTransition: boolean;
+}): boolean {
+  if (!input.active || !input.visible) return false;
+  if (input.isNativeEmbed && (input.overlayOpen || input.isDesktopHidden || input.isDesktopTransition)) {
+    return false;
+  }
+  return true;
+}
+
 function desktopWindowMotion(tabId: string, bounds: DesktopSurfaceBounds): CSSProperties {
   let hash = 0;
   for (const character of tabId) hash = (hash * 31 + character.charCodeAt(0)) | 0;
@@ -102,7 +117,14 @@ export default function DesktopSurfaceFrame({
     if (isSettingsSectionId(requestedSettingsSection)) setSettingsSection(requestedSettingsSection);
     useUi.getState().clearRequestedSettingsSection();
   }, [requestedSettingsSection, tab.kind]);
-  const paneActive = interactive && !(isNativeEmbed && overlayOpen);
+  const paneActive = shouldActivateDesktopPane({
+    active,
+    visible,
+    overlayOpen,
+    isNativeEmbed,
+    isDesktopHidden,
+    isDesktopTransition,
+  });
   const interactionCleanupRef = useRef<(() => void) | null>(null);
   const [surfaceChrome, setSurfaceChrome] = useState<SurfaceChromeSpec | null>(null);
   const surfaceChromeHost = useMemo(() => ({ setChrome: setSurfaceChrome }), []);

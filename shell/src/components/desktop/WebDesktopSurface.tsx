@@ -2,10 +2,13 @@
 
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
+import type { DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   Blocks,
   BrushIcon,
+  Code2,
+  FilePenLine,
   FileText,
   FolderKanban,
   FolderTree,
@@ -33,6 +36,9 @@ interface WebDesktopSurfaceProps {
   onShowDesktop: () => void;
   onToggleFullscreen: (id: string) => void;
   children?: ReactNode;
+  desktopIcons?: DesktopIconPlacement[];
+  onMoveDesktopIcon?: (path: string, x: number, y: number) => void;
+  onRemoveDesktopIcon?: (path: string) => void;
 }
 
 interface DesktopIconAppearance {
@@ -60,6 +66,12 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   }
   if (app.path === "__file-browser__") {
     return { color: "var(--surface-brand-emphasis, #748E59)", iconColor: "white", icon: FolderTree };
+  }
+  if (app.path === "__editor__") {
+    return { color: "#4D7FA8", iconColor: "white", icon: FilePenLine };
+  }
+  if (app.path === "__vscode__") {
+    return { color: "#007ACC", iconColor: "white", icon: Code2 };
   }
   if (app.path === "__plugins__" || name === "plugins") {
     return { color: "#7C6DB4", iconColor: "white", icon: Blocks };
@@ -106,26 +118,58 @@ function DesktopDestination({
   selected,
   onSelect,
   onOpen,
+  placement,
+  onMove,
+  onRemove,
 }: {
   app: AppEntry;
   selected: boolean;
   onSelect: () => void;
   onOpen: () => void;
+  placement: DesktopIconPlacement;
+  onMove?: (path: string, x: number, y: number) => void;
+  onRemove?: (path: string) => void;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
-    <button
-      type="button"
-      aria-label={app.name}
-      data-selected={selected || undefined}
-      className="group flex w-[76px] flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-white/10 focus-visible:bg-white/10 data-[selected]:bg-white/15"
-      onClick={onSelect}
-      onDoubleClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key !== "Enter") return;
-        event.preventDefault();
-        onOpen();
-      }}
-    >
+    <>
+      <button
+        type="button"
+        aria-label={app.name}
+        data-selected={selected || undefined}
+        className="group absolute flex w-[76px] touch-none flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-white/10 focus-visible:bg-white/10 data-[selected]:bg-white/15"
+        style={{ left: placement.x, top: placement.y + 38 }}
+        onClick={onSelect}
+        onDoubleClick={onOpen}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setMenu({ x: event.clientX, y: event.clientY });
+        }}
+        onPointerDown={(event) => {
+          if (event.button !== 0 || !onMove) return;
+          const target = event.currentTarget;
+          const startX = event.clientX;
+          const startY = event.clientY;
+          const move = (moveEvent: PointerEvent) => {
+            target.style.left = `${Math.max(0, placement.x + moveEvent.clientX - startX)}px`;
+            target.style.top = `${38 + Math.max(0, placement.y + moveEvent.clientY - startY)}px`;
+          };
+          const up = (upEvent: PointerEvent) => {
+            target.removeEventListener("pointermove", move);
+            target.removeEventListener("pointerup", up);
+            const dx = upEvent.clientX - startX;
+            const dy = upEvent.clientY - startY;
+            if (Math.abs(dx) + Math.abs(dy) > 3) onMove(app.path, Math.max(0, placement.x + dx), Math.max(0, placement.y + dy));
+          };
+          target.addEventListener("pointermove", move);
+          target.addEventListener("pointerup", up);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          onOpen();
+        }}
+      >
       <DesktopAppIcon
         app={app}
         className="relative size-12 rounded-[14px] transition-transform duration-150 group-hover:-translate-y-0.5"
@@ -136,7 +180,23 @@ function DesktopDestination({
       >
         {app.name === "Hermes" ? "Chat" : app.name}
       </span>
-    </button>
+      </button>
+      {menu && onRemove ? (
+        <div role="menu" className="pointer-events-auto fixed min-w-48 rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg" style={{ left: menu.x, top: menu.y, zIndex: SHELL_Z_INDEX.launchpad }}>
+          <button
+            type="button"
+            role="menuitem"
+            className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
+            onClick={() => {
+              onRemove(app.path);
+              setMenu(null);
+            }}
+          >
+            Remove {app.name === "Hermes" ? "Chat" : app.name} from Desktop
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -193,6 +253,9 @@ export function WebDesktopSurface({
   onShowDesktop,
   onToggleFullscreen,
   children,
+  desktopIcons,
+  onMoveDesktopIcon,
+  onRemoveDesktopIcon,
 }: WebDesktopSurfaceProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const desktopApps = useMemo(() => {
@@ -202,11 +265,13 @@ export function WebDesktopSurface({
         : undefined,
       apps.find((app) => app.path === "__terminal__"),
       apps.find((app) => app.path === "__file-browser__"),
+      { name: "Editor", path: "__editor__" },
+      { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
       { name: "Settings", path: "__settings__" },
       { name: "Plugins", path: "__plugins__" },
-      apps.find((app) => app.name.toLowerCase() === "browser"),
-      apps.find((app) => app.name.toLowerCase() === "notes"),
-      apps.find((app) => app.name.toLowerCase() === "whiteboard"),
+      apps.find((app) => app.name.toLowerCase() === "browser") ?? { name: "Browser", path: "__browser__" },
+      apps.find((app) => app.name.toLowerCase() === "notes") ?? { name: "Notes", path: "apps/notes/index.html" },
+      apps.find((app) => app.name.toLowerCase() === "whiteboard") ?? { name: "Whiteboard", path: "apps/whiteboard/index.html" },
     ];
     const seen = new Set<string>();
     return preferred.filter((app): app is AppEntry => {
@@ -215,6 +280,16 @@ export function WebDesktopSurface({
       return true;
     });
   }, [apps]);
+  const placements = useMemo<DesktopIconPlacement[]>(() => desktopIcons ?? desktopApps.map((app, index) => ({
+    path: app.path,
+    x: 20 + (index % 2) * 88,
+    y: 20 + Math.floor(index / 2) * 92,
+  })), [desktopApps, desktopIcons]);
+  const placedApps = useMemo(() => placements.flatMap((placement) => {
+    const app = desktopApps.find((candidate) => candidate.path === placement.path)
+      ?? apps.find((candidate) => candidate.path === placement.path);
+    return app ? [{ app, placement }] : [];
+  }), [apps, desktopApps, placements]);
   const filesApp = apps.find((app) => app.path === "__file-browser__");
   const filesWindow = windows.find((windowRecord) => windowRecord.path === "__file-browser__");
   const otherRunningWindows = windows.filter((windowRecord) => windowRecord.path !== "__file-browser__");
@@ -255,13 +330,16 @@ export function WebDesktopSurface({
 
       <nav
         aria-label="Desktop apps"
-        className="pointer-events-auto absolute left-5 top-[58px] grid grid-cols-2 gap-x-3 gap-y-4"
+        className="pointer-events-auto absolute inset-0"
         style={{ zIndex: SHELL_Z_INDEX.desktopIcons }}
       >
-        {desktopApps.map((app) => (
+        {placedApps.map(({ app, placement }) => (
           <DesktopDestination
             key={app.path}
             app={app}
+            placement={placement}
+            onMove={onMoveDesktopIcon}
+            onRemove={onRemoveDesktopIcon}
             selected={selectedPath === app.path}
             onSelect={() => setSelectedPath(app.path)}
             onOpen={() => {

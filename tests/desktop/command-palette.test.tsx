@@ -90,6 +90,14 @@ describe("CommandPalette", () => {
       value: ResizeObserverStub,
     });
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    window.HTMLDialogElement.prototype.showModal = function showModal() {
+      this.setAttribute("open", "");
+      this.tabIndex = -1;
+      this.focus();
+    };
+    window.HTMLDialogElement.prototype.close = function close() {
+      this.removeAttribute("open");
+    };
     useUi.setState({ paletteOpen: true, createTaskOpen: false, createProjectOpen: false, composerOpen: false });
     useBoard.setState({ activeProjectSlug: null, projects: [], cardsByProject: {} });
     useSessions.setState({ sessions: [] });
@@ -129,6 +137,13 @@ describe("CommandPalette", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("focuses the search input after the native dialog opens", async () => {
+    render(<CommandPalette />);
+
+    const input = screen.getByPlaceholderText("Search tasks, sessions, actions…");
+    await waitFor(() => expect(document.activeElement).toBe(input));
   });
 
   it("forces an app catalog retry after a previous palette load failed", async () => {

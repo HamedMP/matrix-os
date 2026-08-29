@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BrowserTab from "@desktop/renderer/src/features/browser/BrowserTab";
 import { invoke } from "@desktop/renderer/src/lib/operator";
@@ -46,8 +46,7 @@ describe("BrowserTab", () => {
     expect(mocks.embedRender.mock.calls.length).toBeGreaterThan(renderCount);
   });
 
-  it("opens public URLs and searches in the local browser", async () => {
-    vi.mocked(invoke).mockResolvedValue({ ok: true });
+  it("opens public URLs and searches inside the Desktop Browser", () => {
     render(<BrowserTab active />);
 
     const address = screen.getByRole("textbox", { name: "Browser address" });
@@ -58,9 +57,9 @@ describe("BrowserTab", () => {
     fireEvent.change(address, { target: { value: "Matrix OS docs" } });
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
 
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("shell:open-external", {
-      url: "https://www.google.com/search?q=Matrix+OS+docs",
-    }));
-    expect(screen.queryByTestId("embed")).toBeNull();
+    expect(screen.getByTestId("embed").textContent).toBe(
+      "browser:https://www.google.com/search?q=Matrix+OS+docs",
+    );
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

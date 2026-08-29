@@ -1,7 +1,6 @@
 import { ExternalLink, Globe2 } from "@renderer/lib/hugeicons";
 import { type FormEvent, useState } from "react";
 import { resolveBrowserAddress } from "../../../../shared/runtime-browser-url";
-import { invoke } from "../../lib/operator";
 import EmbedHost from "../embeds/EmbedHost";
 
 export default function BrowserTab({
@@ -14,8 +13,8 @@ export default function BrowserTab({
   visualScale?: number;
 }) {
   const [address, setAddress] = useState("");
-  const [runtimeUrl, setRuntimeUrl] = useState<string | null>(null);
-  const [runtimeNavigationRevision, setRuntimeNavigationRevision] = useState(0);
+  const [browserUrl, setBrowserUrl] = useState<string | null>(null);
+  const [navigationRevision, setNavigationRevision] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
 
   const navigate = (event: FormEvent) => {
@@ -26,16 +25,9 @@ export default function BrowserTab({
       return;
     }
     setMessage(null);
-    if (resolved.disposition === "runtime") {
-      setAddress(resolved.url);
-      setRuntimeUrl(resolved.url);
-      setRuntimeNavigationRevision((revision) => revision + 1);
-      return;
-    }
-    setRuntimeUrl(null);
-    void invoke("shell:open-external", { url: resolved.url })
-      .then(() => setMessage("Opened in your local browser."))
-      .catch(() => setMessage("Could not open the local browser."));
+    setAddress(resolved.url);
+    setBrowserUrl(resolved.url);
+    setNavigationRevision((revision) => revision + 1);
   };
 
   return (
@@ -67,11 +59,11 @@ export default function BrowserTab({
           Go
         </button>
       </form>
-      {runtimeUrl ? (
+      {browserUrl ? (
         <EmbedHost
-          key={`${runtimeUrl}:${runtimeNavigationRevision}`}
+          key={`${browserUrl}:${navigationRevision}`}
           kind="browser"
-          url={runtimeUrl}
+          url={browserUrl}
           active={active}
           layoutRevision={layoutRevision}
           visualScale={visualScale}
@@ -87,7 +79,7 @@ export default function BrowserTab({
           <div>
             <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>Browser</h2>
             <p className="mt-1 max-w-md text-sm" style={{ color: "var(--text-secondary)" }}>
-              Runtime localhost ports stay inside Matrix. Public sites and searches open in your local browser.
+              Browse public websites normally. Runtime localhost ports stay inside Matrix through the selected computer.
             </p>
           </div>
           {message ? <p role="status" className="text-xs" style={{ color: "var(--text-tertiary)" }}>{message}</p> : null}

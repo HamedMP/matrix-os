@@ -42,7 +42,7 @@ export default function SurfaceIcon({
   size?: number;
 }) {
   const Icon = SURFACE_ICON[tab.kind];
-  const iconUrl = tab.icon && /^https?:\/\//.test(tab.icon) ? tab.icon : null;
+  const iconUrl = tab.icon && /^(?:https?:\/\/|\/|data:image\/)/.test(tab.icon) ? tab.icon : null;
   if (iconUrl) return <RemoteSurfaceIcon key={iconUrl} iconUrl={iconUrl} size={size} fallback={Icon} />;
   return <Icon size={size} aria-hidden="true" />;
 }

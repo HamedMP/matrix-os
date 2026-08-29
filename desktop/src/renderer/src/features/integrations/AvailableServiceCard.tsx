@@ -61,31 +61,25 @@ export function AvailableServiceCard({
           <span>{service.category}</span>
         </span>
         {connections.length > 0 ? (
-          <span className="sr-only">
-            <span>Connected account: </span>
+          <div className="mt-1 flex flex-col gap-1" aria-label={`${service.name} connected accounts`}>
             {connections.map((account) => (
-              <span key={account.id}>
-                <span>{displayIntegrationName(account.accountLabel)}</span>
-                {account.accountEmail ? <span>{account.accountEmail}</span> : null}
-                <span>{account.status}</span>
-              </span>
-            ))}
-          </span>
-        ) : null}
-        {connections.length > 1 && onDisconnect ? (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {connections.map((account) => (
-              <button
-                key={account.id}
-                type="button"
-                className="rounded border px-1.5 py-0.5 text-xs"
-                style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
-                aria-label={`Disconnect ${displayIntegrationName(account.accountLabel)}`}
-                disabled={disabled}
-                onClick={() => onDisconnect(account)}
-              >
-                {displayIntegrationName(account.accountLabel)} ×
-              </button>
+              <div key={account.id} className="flex min-w-0 items-center gap-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
+                <span className="font-medium">{displayIntegrationName(account.accountLabel)}</span>
+                {account.accountEmail ? <span className="truncate">{account.accountEmail}</span> : null}
+                <span className="capitalize" style={{ color: "var(--surface-success-emphasis, #288A5B)" }}>{account.status}</span>
+                {connections.length > 1 && onDisconnect ? (
+                  <button
+                    type="button"
+                    className="ml-auto rounded border px-1.5 py-0.5"
+                    style={{ borderColor: "var(--border-subtle)" }}
+                    aria-label={`Disconnect ${displayIntegrationName(account.accountLabel)}`}
+                    disabled={disabled}
+                    onClick={() => onDisconnect(account)}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
             ))}
           </div>
         ) : null}

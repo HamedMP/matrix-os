@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -157,6 +157,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const togglePin = useDesktopConfigStore((s) => s.togglePin);
   const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
   const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
+  const desktopIcons = useDesktopConfigStore((s) => s.desktopIcons);
+  const moveDesktopIcon = useDesktopConfigStore((s) => s.moveDesktopIcon);
+  const removeDesktopIcon = useDesktopConfigStore((s) => s.removeDesktopIcon);
+  const addDesktopIcon = useDesktopConfigStore((s) => s.addDesktopIcon);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
   const isHorizontal = dock.position === "bottom";
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
@@ -1114,8 +1118,59 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   // Shared by the Windows taskbar (start menu, quick launch) and the XP
   // desktop icons: open the app window or focus the existing one.
-  const openAppOrFocus = (path: string, name?: string) =>
+  const openAppOrFocus = (path: string, name?: string) => {
+    if (path === "__browser__") {
+      window.open("https://www.google.com", "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (path === "__vscode__") {
+      window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (path === "__editor__") {
+      focusOrOpen("Files", "__file-browser__");
+      return;
+    }
     focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path);
+  };
+
+  const launcherApps = useMemo(() => {
+    const firstClass = [
+      apps.find((app) => app.path === "__chat__") ? { ...apps.find((app) => app.path === "__chat__")!, name: "Chat" } : { name: "Chat", path: "__chat__" },
+      apps.find((app) => app.path === "__terminal__") ?? { name: "Terminal", path: "__terminal__" },
+      apps.find((app) => app.path === "__file-browser__") ?? { name: "Files", path: "__file-browser__" },
+      { name: "Editor", path: "__editor__" },
+      { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
+      { name: "Settings", path: "__settings__" },
+      { name: "Plugins", path: "__plugins__" },
+      apps.find((app) => app.name.toLowerCase() === "browser") ?? { name: "Browser", path: "__browser__" },
+      apps.find((app) => app.name.toLowerCase() === "notes") ?? { name: "Notes", path: "apps/notes/index.html" },
+      apps.find((app) => app.name.toLowerCase() === "whiteboard") ?? { name: "Whiteboard", path: "apps/whiteboard/index.html" },
+    ];
+    const firstClassPaths = new Set(firstClass.map((app) => app.path));
+    return [...firstClass, ...apps.filter((app) => !firstClassPaths.has(app.path))];
+  }, [apps]);
+
+  const openLauncherDestination = useCallback((name: string, path: string) => {
+    if (path === "__settings__" || path === "__plugins__") {
+      setSettingsDefaultSection(path === "__plugins__" ? "integrations" : "appearance");
+      setSettingsOpen(true);
+      setTaskBoardOpen(false);
+      setChatOpen(false);
+      return;
+    }
+    if (path === "__vscode__") {
+      window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
+      setTaskBoardOpen(false);
+      return;
+    }
+    if (path === "__editor__") {
+      focusOrOpen("Files", "__file-browser__");
+      setTaskBoardOpen(false);
+      return;
+    }
+    focusOrOpen(name, path);
+  }, [focusOrOpen]);
 
   if (firstRunStatus === "checking") {
     return (
@@ -1578,6 +1633,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               }}
               headerActions={(
                 <WebDesktopControls
+                  onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
                   onOpenSettings={(section) => {
                     setSettingsDefaultSection(section);
                     setSettingsOpen(true);
@@ -1601,6 +1657,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 }
               }}
               onToggleFullscreen={wmToggleFullscreen}
+              desktopIcons={desktopIcons}
+              onMoveDesktopIcon={moveDesktopIcon}
+              onRemoveDesktopIcon={removeDesktopIcon}
             />
           ) : null}
           {/* XP desktop icons: above the wallpaper, below app windows. The
@@ -1610,18 +1669,26 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           <MissionControl
             open={taskBoardOpen}
             nativePresentation={desktopMode === "desktop"}
-            apps={apps}
+            apps={launcherApps}
             openWindows={windows.reduce<Set<string>>((acc, w) => {
               if (!w.minimized) acc.add(w.path);
               return acc;
             }, new Set())}
-            onOpenApp={openWindow}
+            onOpenApp={openLauncherDestination}
             onClose={() => setTaskBoardOpen(false)}
             pinnedApps={pinnedApps}
             onTogglePin={togglePin}
             onRegenerateIcon={regenerateIcon}
             onRenameApp={renameAppOnServer}
             onRemoveFromCanvas={removeFromCanvas}
+            onCreateApp={() => {
+              focusOrOpen("Chat", "__chat__");
+              chat?.submitMessage("Create a new Matrix app", undefined, {
+                displayText: "Create a new app",
+                promptText: "Use the Matrix app builder agent and app-generation guidance. Ask me what app I want to create, then help me build it.",
+              });
+            }}
+            onAddToDesktop={addDesktopIcon}
           />
 
           {!modeConfig.showWindows && modeConfig.id === "ambient" && (
