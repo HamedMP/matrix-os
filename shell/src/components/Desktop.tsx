@@ -49,6 +49,7 @@ import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { resolveWebDesktopBuiltInLaunch } from "@/lib/web-desktop-app-launch";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
@@ -1119,16 +1120,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // Shared by the Windows taskbar (start menu, quick launch) and the XP
   // desktop icons: open the app window or focus the existing one.
   const openAppOrFocus = (path: string, name?: string) => {
-    if (path === "__browser__") {
-      window.open("https://www.google.com", "_blank", "noopener,noreferrer");
+    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path);
+    if (builtInLaunch?.kind === "external") {
+      window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
       return;
     }
-    if (path === "__vscode__") {
+    if (builtInLaunch?.kind === "external-code") {
       window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
       return;
     }
-    if (path === "__editor__") {
-      focusOrOpen("Files", "__file-browser__");
+    if (builtInLaunch?.kind === "app") {
+      focusOrOpen(builtInLaunch.name, builtInLaunch.path);
       return;
     }
     focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path);
@@ -1159,13 +1161,19 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       setChatOpen(false);
       return;
     }
-    if (path === "__vscode__") {
+    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path);
+    if (builtInLaunch?.kind === "external") {
+      window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
+      setTaskBoardOpen(false);
+      return;
+    }
+    if (builtInLaunch?.kind === "external-code") {
       window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
       setTaskBoardOpen(false);
       return;
     }
-    if (path === "__editor__") {
-      focusOrOpen("Files", "__file-browser__");
+    if (builtInLaunch?.kind === "app") {
+      focusOrOpen(builtInLaunch.name, builtInLaunch.path);
       setTaskBoardOpen(false);
       return;
     }

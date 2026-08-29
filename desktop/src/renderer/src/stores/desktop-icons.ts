@@ -74,9 +74,19 @@ interface DesktopIconsState {
 
 let loadSequence = 0;
 let persistQueue: Promise<void> = Promise.resolve();
+let mutationSequence = 0;
+let stateEpoch = 0;
+let confirmedIcons: DesktopIconPlacement[] = [];
+
+function copyIcons(icons: readonly DesktopIconPlacement[]): DesktopIconPlacement[] {
+  return icons.map((icon) => ({ ...icon }));
+}
 
 export function resetDesktopIconsRuntime(): void {
   loadSequence += 1;
+  mutationSequence += 1;
+  stateEpoch += 1;
+  confirmedIcons = [];
   useDesktopIcons.setState({ icons: [], loaded: false });
 }
 
@@ -91,48 +101,77 @@ function persist(api: ApiClient, icons: DesktopIconPlacement[]): Promise<void> {
   persistQueue = pending.catch((error: unknown) => {
     console.warn("[desktop-icons] persist queue recovered:", error instanceof Error ? error.name : typeof error);
   });
-  return pending.catch((error: unknown) => {
+  return pending;
+}
+
+async function applyOptimisticMutation(
+  api: ApiClient,
+  icons: DesktopIconPlacement[],
+  set: (partial: Partial<DesktopIconsState>) => void,
+): Promise<void> {
+  const sequence = ++mutationSequence;
+  const epoch = stateEpoch;
+  const runtimeGeneration = captureRuntimeGeneration();
+  const snapshot = copyIcons(icons);
+  set({ icons: snapshot });
+  try {
+    await persist(api, snapshot);
+    if (epoch === stateEpoch && sequence <= mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
+      confirmedIcons = copyIcons(snapshot);
+    }
+  } catch (error: unknown) {
     console.warn("[desktop-icons] persist failed:", error instanceof Error ? error.name : typeof error);
-  });
+    if (epoch === stateEpoch && sequence === mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
+      set({ icons: copyIcons(confirmedIcons) });
+    }
+  }
 }
 
 export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
   icons: [],
   loaded: false,
-  hydrate: (value, defaults) => set({
-    icons: parseDesktopIcons(value) ?? defaults.map((icon) => ({ ...icon })),
-    loaded: true,
-  }),
+  hydrate: (value, defaults) => {
+    const icons = parseDesktopIcons(value) ?? copyIcons(defaults);
+    mutationSequence += 1;
+    stateEpoch += 1;
+    confirmedIcons = copyIcons(icons);
+    set({ icons, loaded: true });
+  },
   load: async (api, defaults) => {
     const sequence = ++loadSequence;
     const runtimeGeneration = captureRuntimeGeneration();
     try {
       const config = await api.get<{ desktopIcons?: unknown }>("/api/settings/desktop");
       if (sequence !== loadSequence || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
-      set({ icons: parseDesktopIcons(config.desktopIcons) ?? defaults.map((icon) => ({ ...icon })), loaded: true });
+      const icons = parseDesktopIcons(config.desktopIcons) ?? copyIcons(defaults);
+      mutationSequence += 1;
+      stateEpoch += 1;
+      confirmedIcons = copyIcons(icons);
+      set({ icons, loaded: true });
     } catch (error: unknown) {
       if (sequence !== loadSequence || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.warn("[desktop-icons] load failed:", error instanceof Error ? error.name : typeof error);
-      set({ icons: defaults.map((icon) => ({ ...icon })), loaded: true });
+      const icons = copyIcons(defaults);
+      mutationSequence += 1;
+      stateEpoch += 1;
+      confirmedIcons = copyIcons(icons);
+      set({ icons, loaded: true });
     }
   },
   move: async (path, x, y, api) => {
     const next = get().icons.map((icon) => icon.path === path
       ? { ...icon, x: Math.max(0, Math.min(MAX_COORDINATE, Math.round(x))), y: Math.max(0, Math.min(MAX_COORDINATE, Math.round(y))) }
       : icon);
-    set({ icons: next });
-    await persist(api, next);
+    await applyOptimisticMutation(api, next, set);
   },
   remove: async (path, api) => {
     const next = get().icons.filter((icon) => icon.path !== path);
-    set({ icons: next });
-    await persist(api, next);
+    await applyOptimisticMutation(api, next, set);
   },
   add: async (path, api) => {
     const current = get().icons;
     if (!path || path.length > 2048 || current.some((icon) => icon.path === path) || current.length >= MAX_DESKTOP_ICONS) return;
     const next = [...current, { path, ...nextOpenSlot(current) }];
-    set({ icons: next });
-    await persist(api, next);
+    await applyOptimisticMutation(api, next, set);
   },
 }));

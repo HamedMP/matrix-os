@@ -45,6 +45,13 @@ interface DesktopConfigStore {
 }
 
 let desktopPersistQueue: Promise<void> = Promise.resolve();
+let desktopIconMutationSequence = 0;
+let desktopIconStateEpoch = 0;
+let confirmedDesktopIcons: DesktopIconPlacement[] | undefined;
+
+function copyDesktopIcons(icons: readonly DesktopIconPlacement[] | undefined): DesktopIconPlacement[] | undefined {
+  return icons?.map((icon) => ({ ...icon }));
+}
 
 function persistDesktopPatch(patch: Record<string, unknown>): Promise<void> {
   const gatewayUrl = getGatewayUrl();
@@ -67,6 +74,26 @@ function persistDesktopPatch(patch: Record<string, unknown>): Promise<void> {
   return pending;
 }
 
+function applyDesktopIconMutation(
+  icons: DesktopIconPlacement[],
+  set: (partial: Partial<DesktopConfigStore>) => void,
+): void {
+  const sequence = ++desktopIconMutationSequence;
+  const epoch = desktopIconStateEpoch;
+  const snapshot = copyDesktopIcons(icons) ?? [];
+  set({ desktopIcons: snapshot });
+  void persistDesktopPatch({ desktopIcons: snapshot }).then(() => {
+    if (epoch === desktopIconStateEpoch && sequence <= desktopIconMutationSequence) {
+      confirmedDesktopIcons = copyDesktopIcons(snapshot);
+    }
+  }).catch((error: unknown) => {
+    console.warn("[desktop-config] desktopIcons persist failed:", error instanceof Error ? error.name : typeof error);
+    if (epoch === desktopIconStateEpoch && sequence === desktopIconMutationSequence) {
+      set({ desktopIcons: copyDesktopIcons(confirmedDesktopIcons) });
+    }
+  });
+}
+
 export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   dock: { position: "left", size: 44, iconSize: 30, autoHide: false },
   pinnedApps: [...DEFAULT_PINNED_APPS],
@@ -75,7 +102,12 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   setDock: (dock) => set({ dock }),
   setPinnedApps: (pinnedApps) => set({ pinnedApps }),
   setDockOrder: (dockOrder) => set({ dockOrder }),
-  setDesktopIcons: (desktopIcons) => set({ desktopIcons }),
+  setDesktopIcons: (desktopIcons) => {
+    desktopIconMutationSequence += 1;
+    desktopIconStateEpoch += 1;
+    confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
+    set({ desktopIcons: copyDesktopIcons(desktopIcons) });
+  },
   moveDesktopIcon: (path, x, y) => {
     const current = get().desktopIcons ?? [];
     const next = current.map((icon) => icon.path === path ? {
@@ -83,17 +115,11 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
       x: Math.max(0, Math.min(MAX_DESKTOP_COORDINATE, Math.round(x))),
       y: Math.max(0, Math.min(MAX_DESKTOP_COORDINATE, Math.round(y))),
     } : icon);
-    set({ desktopIcons: next });
-    persistDesktopPatch({ desktopIcons: next }).catch((err) => {
-      console.warn("[desktop-config] moveDesktopIcon persist failed:", err instanceof Error ? err.message : String(err));
-    });
+    applyDesktopIconMutation(next, set);
   },
   removeDesktopIcon: (path) => {
     const next = (get().desktopIcons ?? []).filter((icon) => icon.path !== path);
-    set({ desktopIcons: next });
-    persistDesktopPatch({ desktopIcons: next }).catch((err) => {
-      console.warn("[desktop-config] removeDesktopIcon persist failed:", err instanceof Error ? err.message : String(err));
-    });
+    applyDesktopIconMutation(next, set);
   },
   addDesktopIcon: (path) => {
     const current = get().desktopIcons ?? [];
@@ -108,10 +134,7 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
       }
     }
     const next = [...current, { path, ...slot }];
-    set({ desktopIcons: next });
-    persistDesktopPatch({ desktopIcons: next }).catch((err) => {
-      console.warn("[desktop-config] addDesktopIcon persist failed:", err instanceof Error ? err.message : String(err));
-    });
+    applyDesktopIconMutation(next, set);
   },
   togglePin: (path) => {
     const current = get().pinnedApps ?? [];

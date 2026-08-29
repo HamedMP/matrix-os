@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
+import { resetDesktopIconsRuntime, useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
 
 const CHAT = { path: "__chat__", x: 20, y: 20 };
 const FILES = { path: "__file-browser__", x: 108, y: 20 };
 
 describe("native Desktop icon layout", () => {
-  beforeEach(() => useDesktopIcons.setState(useDesktopIcons.getInitialState(), true));
+  beforeEach(() => {
+    resetDesktopIconsRuntime();
+    useDesktopIcons.setState(useDesktopIcons.getInitialState(), true);
+  });
 
   it("loads the owner-controlled layout from desktop settings", async () => {
     const api = { get: vi.fn(async () => ({ desktopIcons: [FILES] })) };
@@ -32,5 +35,33 @@ describe("native Desktop icon layout", () => {
     expect(api.patch).toHaveBeenLastCalledWith("/api/settings/desktop", {
       desktopIcons: useDesktopIcons.getState().icons,
     });
+  });
+
+  it("rolls the optimistic layout back when persistence fails", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(async () => { throw new Error("offline"); }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+
+    expect(useDesktopIcons.getState().icons).toEqual([CHAT, FILES]);
+  });
+
+  it("keeps a later successful queued layout when an earlier write fails", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn()
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce({ ok: true }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    const remove = useDesktopIcons.getState().remove("__file-browser__", api as never);
+    await Promise.all([move, remove]);
+
+    expect(useDesktopIcons.getState().icons).toEqual([{ path: "__chat__", x: 240, y: 180 }]);
   });
 });

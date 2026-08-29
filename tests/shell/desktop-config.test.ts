@@ -278,6 +278,20 @@ describe("Desktop config", () => {
     });
   });
 
+  it("restores the confirmed web Desktop icon layout after a failed PATCH", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+    const confirmed = [
+      { path: "__chat__", x: 20, y: 58 },
+      { path: "__terminal__", x: 108, y: 58 },
+    ];
+    useDesktopConfigStore.getState().setDesktopIcons(confirmed);
+
+    useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
+
+    await waitFor(() => expect(useDesktopConfigStore.getState().desktopIcons).toEqual(confirmed));
+  });
+
   it("initializes from the scoped shell snapshot before revalidating desktop config", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
