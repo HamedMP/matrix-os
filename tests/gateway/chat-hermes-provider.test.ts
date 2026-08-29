@@ -206,6 +206,45 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("keeps failed Hermes tool output out of the assistant transcript", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_failure",
+      name: "terminal",
+      args: { command: "private raw command" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_failure",
+      name: "terminal",
+      result: {
+        output: "OM134_PRIVATE /home/matrix/private\n",
+        exit_code: 7,
+        error: null,
+      },
+    });
+    gateway.event("message.delta", {
+      text: "The command failed with output: OM134_PRIVATE /home/matrix/private",
+    });
+    gateway.event("message.complete", {
+      text: "The command failed with output: OM134_PRIVATE /home/matrix/private and exit code 7.",
+      status: "complete",
+    });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "running" },
+      { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "failed", summary: "Command failed." },
+      { type: "assistant.delta", delta: "The command failed with output: [redacted tool output] and exit code 7." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/OM134_PRIVATE|\/home\/matrix\/private|private raw command/);
+  });
+
   it("normalizes official Hermes status, reasoning, delegation, search, and request frames", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
