@@ -61,12 +61,11 @@ export class NotesController {
   };
   private current = () => isCurrentRuntimeGeneration(this.generation);
   private set(patch: Partial<NotesState>) {
-    if (!this.current()) return;
     this.state = { ...this.state, ...patch };
-    this.listener?.();
+    if (this.current()) this.listener?.();
   }
-  private query<T>(body: Record<string, unknown>): Promise<T> {
-    if (!this.current()) return Promise.reject(new Error("Runtime changed"));
+  private query<T>(body: Record<string, unknown>, allowDetachedSave = false): Promise<T> {
+    if (!allowDetachedSave && !this.current()) return Promise.reject(new Error("Runtime changed"));
     return this.api.post<T>("/api/bridge/query", { app: "notes", table: "notes", ...body });
   }
 
@@ -115,7 +114,6 @@ export class NotesController {
         const found = await this.query<Record<string, unknown> | null>({ action: "findOne", id: note.id });
         if (!found) throw error;
       }
-      this.offset += 1;
       this.set({ notes: [note, ...this.state.notes], selectedId: note.id });
     } catch (error) {
       console.warn("[notes] create failed", error);
@@ -143,10 +141,9 @@ export class NotesController {
   };
 
   private async savePending(): Promise<boolean> {
-    if (!this.current()) return false;
     this.set({ saving: true });
     try {
-      while (this.state.dirtyIds.length && this.current()) {
+      while (this.state.dirtyIds.length) {
         const id = this.state.dirtyIds[0];
         const note = this.state.notes.find((item) => item.id === id);
         if (!note) {
@@ -158,8 +155,10 @@ export class NotesController {
           this.set({ error: "This note is too large to save. Split it into smaller notes." });
           return false;
         }
-        await this.query({ action: "update", id, data });
-        if (!this.current()) return false;
+        // The API is pinned to the controller's original runtime. Detached
+        // controllers may finish already queued writes after a runtime switch,
+        // while set() suppresses their stale UI notifications.
+        await this.query({ action: "update", id, data }, true);
         // Only mark the exact version sent as saved; keep typing done in flight.
         if (this.state.notes.find((item) => item.id === id) === note) {
           this.set({ dirtyIds: this.state.dirtyIds.filter((item) => item !== id) });

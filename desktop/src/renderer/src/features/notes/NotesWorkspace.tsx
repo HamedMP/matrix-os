@@ -18,8 +18,13 @@ export default function NotesWorkspace({ active }: { active: boolean }) {
   const api = useConnection((state) => state.api);
   const slot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
-  if (!api) return <div className="m-auto text-sm text-[var(--text-tertiary)]">Connect to your Matrix computer to open Notes.</div>;
-  return <NotesSession key={`${slot}:${authGeneration}:${captureRuntimeGeneration()}`} api={api} active={active} />;
+  const pinnedApi = useMemo(() => api?.forRuntime(slot) ?? null, [api, slot]);
+  if (!pinnedApi) return <div className="m-auto text-sm text-[var(--text-tertiary)]">Connect to your Matrix computer to open Notes.</div>;
+  return <NotesSession
+    key={`${slot}:${authGeneration}:${captureRuntimeGeneration()}`}
+    api={pinnedApi}
+    active={active}
+  />;
 }
 
 function NotesSession({ api, active }: { api: ApiClient; active: boolean }) {
