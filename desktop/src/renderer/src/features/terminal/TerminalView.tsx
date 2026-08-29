@@ -1,4 +1,5 @@
 import { Terminal } from "@xterm/xterm";
+import { classifyTerminalClipboardShortcut } from "@matrix-os/contracts";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -25,6 +26,7 @@ import {
 import {
   bracketTerminalPaths,
   MAX_TERMINAL_PASTE_FILE_BYTES,
+  readTerminalClipboardFiles,
   safeTerminalUploadFilename,
   terminalPasteFiles,
 } from "./terminal-rich-paste";
@@ -79,6 +81,7 @@ export default function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
+  const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const endedRef = useRef(false);
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
@@ -129,21 +132,25 @@ export default function TerminalView({
     terminal.loadAddon(serialize);
     terminal.open(host);
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown" || !terminal.hasSelection()) return true;
-      const key = event.key.toLowerCase();
-      const isMacCopy = key === "c"
-        && event.metaKey
-        && !event.ctrlKey
-        && !event.altKey
-        && !event.shiftKey;
-      const isTerminalCopy = key === "c"
-        && event.ctrlKey
-        && event.shiftKey
-        && !event.metaKey
-        && !event.altKey;
-      if (!isMacCopy && !isTerminalCopy) return true;
+      const action = classifyTerminalClipboardShortcut({
+        type: event.type as "keydown" | "keyup" | "keypress",
+        key: event.key,
+        isMac: event.metaKey,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        repeat: event.repeat,
+        isComposing: event.isComposing,
+        hasSelection: terminal.hasSelection(),
+      });
+      if (action !== "copy" && action !== "paste") return true;
       event.preventDefault();
-      copyDesktopTerminalText(terminal.getSelection());
+      if (action === "copy") {
+        void copyDesktopTerminalText(terminal.getSelection());
+      } else {
+        void pasteClipboardRef.current();
+      }
       return false;
     });
     applyTerminalSurfaceTheme(terminal.element, theme.background);
@@ -348,6 +355,46 @@ export default function TerminalView({
       }
     };
 
+    const pasteFromClipboard = async () => {
+      const clipboard = navigator.clipboard;
+      if (!clipboard) {
+        if (!cancelled) setPasteError("Clipboard paste is unavailable. Try again.");
+        return;
+      }
+      const clipboardWithOptionalRead = clipboard as Clipboard & {
+        read?: () => Promise<ClipboardItems>;
+      };
+      if (typeof clipboardWithOptionalRead.read === "function") {
+        try {
+          const imageFiles = await readTerminalClipboardFiles(clipboardWithOptionalRead);
+          if (imageFiles.length > 0) {
+            await uploadAndPaste(imageFiles);
+            return;
+          }
+        } catch (error: unknown) {
+          console.warn("[terminal] clipboard image read unavailable", {
+            category: error instanceof DOMException ? error.name : "clipboard-error",
+          });
+        }
+      }
+      if (!clipboard.readText) {
+        if (!cancelled) setPasteError("Clipboard paste is unavailable. Try again.");
+        return;
+      }
+      try {
+        const text = await clipboard.readText();
+        if (cancelled || text.length === 0) return;
+        termRef.current?.paste(text);
+        setPasteError(null);
+      } catch (error: unknown) {
+        console.warn("[terminal] clipboard text read unavailable", {
+          category: error instanceof DOMException ? error.name : "clipboard-error",
+        });
+        if (!cancelled) setPasteError("Clipboard paste failed. Try again.");
+      }
+    };
+    pasteClipboardRef.current = pasteFromClipboard;
+
     const onPaste = (event: ClipboardEvent) => {
       const files = captureFiles(event);
       if (files.length > 0) void uploadAndPaste(files);
@@ -366,6 +413,9 @@ export default function TerminalView({
     host.addEventListener("drop", onDrop, { capture: true });
     return () => {
       cancelled = true;
+      if (pasteClipboardRef.current === pasteFromClipboard) {
+        pasteClipboardRef.current = async () => undefined;
+      }
       host.removeEventListener("paste", onPaste, { capture: true });
       host.removeEventListener("dragenter", onDrag, { capture: true });
       host.removeEventListener("dragover", onDrag, { capture: true });

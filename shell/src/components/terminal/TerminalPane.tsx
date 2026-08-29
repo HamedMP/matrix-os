@@ -12,6 +12,7 @@ import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
+import { classifyTerminalClipboardShortcut } from "@matrix-os/contracts";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -1880,18 +1881,6 @@ export function TerminalPane({
           return false;
         }
 
-        if (ev.ctrlKey && ev.shiftKey && ev.key === "C") {
-          const selection = term.getSelection();
-          if (selection) {
-            navigator.clipboard.writeText(selection).catch((err: unknown) => {
-              console.warn("Clipboard copy failed:", err instanceof Error ? err.message : err);
-            });
-            term.clearSelection();
-            return false;
-          }
-          return true;
-        }
-
         if (ev.altKey && ev.shiftKey && ev.key.toUpperCase() === "C") {
           const block = commandBlockBufferRef.current.trim();
           if (block) {
@@ -1903,14 +1892,43 @@ export function TerminalPane({
           return true;
         }
 
-        if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
-          pasteClipboardIntoTerminal({
+        const clipboardAction = classifyTerminalClipboardShortcut({
+          type: ev.type as "keydown" | "keyup" | "keypress",
+          key: ev.key,
+          isMac: ev.metaKey,
+          metaKey: ev.metaKey,
+          ctrlKey: ev.ctrlKey,
+          shiftKey: ev.shiftKey,
+          altKey: ev.altKey,
+          repeat: ev.repeat,
+          isComposing: ev.isComposing,
+          hasSelection: term.getSelection().length > 0,
+        });
+        if (clipboardAction === "copy") {
+          ev.preventDefault();
+          const selection = term.getSelection();
+          void navigator.clipboard?.writeText(selection).catch((error: unknown) => {
+            console.warn("[terminal] clipboard copy unavailable", {
+              category: error instanceof DOMException ? error.name : "clipboard-error",
+            });
+            showPasteError("Clipboard copy failed. Try again.");
+          });
+          return false;
+        }
+        if (clipboardAction === "paste") {
+          ev.preventDefault();
+          void pasteClipboardIntoTerminal({
             clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
             gatewayUrl: getGatewayUrl(),
             ws: wsRef.current,
-            submit: ev.altKey,
-          }).catch((err: unknown) => {
-            console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+          }).then((result) => {
+            if (result === "failed" || result === "unavailable") {
+              showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
+            }
+          }).catch((error: unknown) => {
+            console.warn("[terminal] clipboard paste unavailable", {
+              category: error instanceof DOMException ? error.name : "clipboard-error",
+            });
             showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
           });
           return false;

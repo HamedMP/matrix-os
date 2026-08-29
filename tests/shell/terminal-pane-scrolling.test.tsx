@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import React from "react";
 import { act, render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 
 const createdTerminals = vi.hoisted(() => [] as Array<{
   options: Record<string, unknown>;
@@ -16,6 +18,9 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   resize: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
   reset: ReturnType<typeof vi.fn>;
+  selection: string;
+  customKeyEventHandler?: (event: KeyboardEvent) => boolean;
+  clearSelection: ReturnType<typeof vi.fn>;
 }>);
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
@@ -166,6 +171,8 @@ vi.mock("@xterm/xterm", () => ({
       }
     };
     reset = vi.fn();
+    selection = "";
+    customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     dispose = vi.fn();
     resize = vi.fn((cols: number, rows: number) => {
       this.cols = cols;
@@ -178,9 +185,11 @@ vi.mock("@xterm/xterm", () => ({
     });
     emitData = (data: string) => this.dataListener?.(data);
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
-    attachCustomKeyEventHandler = vi.fn();
+    attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+      this.customKeyEventHandler = handler;
+    });
     clearSelection = vi.fn();
-    getSelection = vi.fn(() => "");
+    getSelection = vi.fn(() => this.selection);
     scrollToBottom = vi.fn();
     registerLinkProvider = vi.fn();
 
@@ -462,6 +471,162 @@ describe("TerminalPane scrolling", () => {
     });
     socketHealthConfigs.length = 0;
     Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  afterEach(() => {
+    if (originalClipboardDescriptor) {
+      Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it.each([
+    { label: "Command+C", metaKey: true, ctrlKey: false, shiftKey: false },
+    { label: "Command+Shift+C", metaKey: true, ctrlKey: false, shiftKey: true },
+    { label: "Ctrl+Shift+C", metaKey: false, ctrlKey: true, shiftKey: true },
+  ])("copies the focused pane selection once with $label and keeps it selected", async ({ metaKey, ctrlKey, shiftKey }) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-clipboard-copy"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    terminal.selection = "first row\nλ second row 👩🏽‍💻";
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey,
+      ctrlKey,
+      shiftKey,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith("first row\nλ second row 👩🏽‍💻");
+    expect(terminal.clearSelection).not.toHaveBeenCalled();
+    expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
+  });
+
+  it.each([
+    { label: "Command+V", metaKey: true, ctrlKey: false, shiftKey: false },
+    { label: "Ctrl+Shift+V", metaKey: false, ctrlKey: true, shiftKey: true },
+  ])("pastes into the initiating pane exactly once without Enter with $label", async ({ metaKey, ctrlKey, shiftKey }) => {
+    const readText = vi.fn().mockResolvedValue("printf 'λ 👩🏽‍💻'");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-clipboard-paste"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const terminal = createdTerminals[0]!;
+    const socket = WebSocketMock.instances[0]!;
+    socket.send.mockClear();
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey,
+      ctrlKey,
+      shiftKey,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    await waitFor(() => expect(socket.send).toHaveBeenCalledOnce());
+    expect(readText).toHaveBeenCalledOnce();
+    expect(JSON.parse(socket.send.mock.calls[0]![0])).toEqual({
+      type: "input",
+      data: "\x1b[200~printf 'λ 👩🏽‍💻'\x1b[201~",
+    });
+  });
+
+  it("leaves clipboard shortcuts to the shell when no terminal action can run", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn() },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-clipboard-precedence"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    const preventDefault = vi.fn();
+
+    const withoutSelection = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+    const repeatedPaste = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: true,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(withoutSelection).toBe(true);
+    expect(repeatedPaste).toBe(true);
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("attaches desktop canonical sessions as hard clients with proposed dimensions", async () => {
