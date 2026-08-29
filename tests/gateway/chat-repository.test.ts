@@ -16,6 +16,7 @@ import {
   ChatNotFoundError,
   ChatRepository,
 } from "../../packages/gateway/src/chat/repository.js";
+import type { ChatOutboxEvent, ChatOwner } from "../../packages/gateway/src/chat/records.js";
 
 const owner = { type: "personal" as const, ownerId: "user_a" };
 const otherOwner = { type: "personal" as const, ownerId: "user_b" };
@@ -126,6 +127,27 @@ async function acknowledgeCompletion(
   }).acknowledgeCompletion(acknowledgementOwner, chatId, runId);
 }
 
+type CanonicalChatOutboxSink = (input: {
+  owner: ChatOwner;
+  event: ChatOutboxEvent;
+}) => void;
+
+type ChatEventRepository = ChatRepository & {
+  registerOutboxSink(sink: CanonicalChatOutboxSink): { dispose(): void };
+  replayOutboxWindow(owner: ChatOwner, input: {
+    afterCursor?: number;
+    limit: number;
+  }): Promise<{
+    events: ChatOutboxEvent[];
+    gap: boolean;
+    nextCursor?: number;
+  }>;
+};
+
+function eventRepository(repository: ChatRepository): ChatEventRepository {
+  return repository as ChatEventRepository;
+}
+
 describe("ChatRepository", () => {
   let pglite: InstanceType<typeof KyselyPGlite>;
   let repository: ChatRepository;
@@ -210,6 +232,146 @@ describe("ChatRepository", () => {
       throw new Error("rollback");
     })).rejects.toThrow("rollback");
     expect(await repository.get(owner, "chat_rolled_back")).toBeNull();
+  });
+
+  it("notifies the single bounded outbox sink only after commit and never after rollback", async () => {
+    const delivered: Array<{ owner: ChatOwner; event: ChatOutboxEvent }> = [];
+    const events = eventRepository(repository);
+    const registration = events.registerOutboxSink((event) => delivered.push(event));
+
+    await repository.create(owner, {
+      id: "chat_sink_committed",
+      clientRequestId: "req_sink_committed",
+      title: "Committed sink event",
+    });
+    expect(delivered).toEqual([
+      expect.objectContaining({
+        owner,
+        event: expect.objectContaining({
+          chatId: "chat_sink_committed",
+          eventType: "chat.created",
+        }),
+      }),
+    ]);
+
+    let deliveredBeforeOuterCommit = -1;
+    await repository.withTransaction(async (transaction) => {
+      await transaction.create(owner, {
+        id: "chat_sink_outer_transaction",
+        clientRequestId: "req_sink_outer_transaction",
+        title: "Outer transaction event",
+      });
+      deliveredBeforeOuterCommit = delivered.length;
+    });
+    expect(deliveredBeforeOuterCommit).toBe(1);
+    expect(delivered.at(-1)).toEqual(expect.objectContaining({
+      owner,
+      event: expect.objectContaining({ chatId: "chat_sink_outer_transaction" }),
+    }));
+
+    await expect(repository.withTransaction(async (transaction) => {
+      await transaction.create(owner, {
+        id: "chat_sink_rolled_back",
+        clientRequestId: "req_sink_rolled_back",
+        title: "Rolled-back sink event",
+      });
+      throw new Error("force rollback");
+    })).rejects.toThrow("force rollback");
+    expect(delivered).toHaveLength(2);
+
+    expect(() => events.registerOutboxSink(() => undefined))
+      .toThrow(/sink|registered/i);
+    registration.dispose();
+    const replacement = events.registerOutboxSink(() => undefined);
+    replacement.dispose();
+  });
+
+  it("drains the registered outbox sink before repository release", async () => {
+    const events = eventRepository(repository);
+    const delivered: ChatOutboxEvent[] = [];
+    events.registerOutboxSink(({ event }) => delivered.push(event));
+
+    await repository.release();
+    await repository.create(owner, {
+      id: "chat_after_repository_release",
+      clientRequestId: "req_after_repository_release",
+      title: "No late delivery",
+    });
+
+    expect(delivered).toEqual([]);
+  });
+
+  it("replays an owner-isolated bounded monotonic window and reports a pruned cursor gap", async () => {
+    const events = eventRepository(repository);
+    await repository.create(owner, {
+      id: "chat_replay_first",
+      clientRequestId: "req_replay_first",
+      title: "First replay event",
+    });
+    await repository.create(otherOwner, {
+      id: "chat_replay_other_owner",
+      clientRequestId: "req_replay_other_owner",
+      title: "Other owner event",
+    });
+    await repository.create(owner, {
+      id: "chat_replay_second",
+      clientRequestId: "req_replay_second",
+      title: "Second replay event",
+    });
+
+    const firstWindow = await events.replayOutboxWindow(owner, { limit: 1 });
+    expect(firstWindow).toMatchObject({ gap: false });
+    expect(firstWindow.events).toHaveLength(1);
+    expect(firstWindow.events[0]?.chatId).toBe("chat_replay_first");
+    expect(firstWindow.nextCursor).toBe(firstWindow.events[0]?.cursor);
+
+    const remaining = await events.replayOutboxWindow(owner, {
+      afterCursor: firstWindow.nextCursor,
+      limit: 1000,
+    });
+    expect(remaining.gap).toBe(false);
+    expect(remaining.events.map((event) => event.chatId)).toEqual(["chat_replay_second"]);
+    expect(remaining.events.map((event) => event.cursor))
+      .toEqual([...remaining.events.map((event) => event.cursor)].sort((a, b) => a - b));
+    expect(remaining.events).toHaveLength(1);
+
+    await repository.pruneOutbox(owner, remaining.events[0]!.cursor + 1, 100);
+    await repository.create(owner, {
+      id: "chat_replay_after_prune",
+      clientRequestId: "req_replay_after_prune",
+      title: "After prune",
+    });
+    const gap = await events.replayOutboxWindow(owner, {
+      afterCursor: firstWindow.nextCursor,
+      limit: 10,
+    });
+    expect(gap.gap).toBe(true);
+    expect(gap.events).toEqual([]);
+  });
+
+  it("caps one replay window even when the caller requests an oversized page", async () => {
+    const events = eventRepository(repository);
+    await repository.create(owner, {
+      id: "chat_replay_cap",
+      clientRequestId: "req_replay_cap",
+      title: "Replay cap",
+    });
+    await repository.kysely.insertInto("chat_outbox").values(
+      Array.from({ length: 105 }, (_, index) => ({
+        owner_type: owner.type,
+        owner_id: owner.ownerId,
+        chat_id: "chat_replay_cap",
+        revision: index + 1,
+        event_type: "chat.updated" as const,
+        payload: {},
+      })),
+    ).execute();
+
+    const window = await events.replayOutboxWindow(owner, { limit: 10_000 });
+
+    expect(window.gap).toBe(false);
+    expect(window.events).toHaveLength(100);
+    expect(window.nextCursor).toBe(window.events.at(-1)?.cursor);
   });
 
   it("hydrates and updates owner-local Chat pin state atomically", async () => {

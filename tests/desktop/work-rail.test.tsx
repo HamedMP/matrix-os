@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import React from "react";
+import React, { type ComponentProps, type ComponentType } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
@@ -108,6 +108,100 @@ function setup() {
 afterEach(cleanup);
 
 describe("WorkRail", () => {
+  it("converges two Chat rows from the shared event source without adding WorkRail polling", async () => {
+    type Invalidation =
+      | { type: "chat.changed"; chatId: string; cursor: number }
+      | { type: "chat.full_refresh"; cursor?: number };
+    type EventSource = {
+      subscribe(listener: (event: Invalidation) => void): { dispose(): void };
+    };
+    const listeners = new Set<(event: Invalidation) => void>();
+    const eventSource: EventSource = {
+      subscribe(listener) {
+        listeners.add(listener);
+        return { dispose: () => listeners.delete(listener) };
+      },
+    };
+    const emit = (event: Invalidation) => {
+      for (const listener of listeners) listener(event);
+    };
+    const acceptedA = record("chat_parallel_a", "Parallel A", {
+      updatedAt: "2026-08-29T01:00:00.000Z",
+      activeRunStatus: "accepted",
+    });
+    const runningA = record("chat_parallel_a", "Parallel A", {
+      updatedAt: "2026-08-29T01:01:00.000Z",
+      activeRunStatus: "running",
+    });
+    const failedA = record("chat_parallel_a", "Parallel A", {
+      updatedAt: "2026-08-29T01:03:00.000Z",
+      attention: "failed",
+    });
+    const abortedA = record("chat_parallel_a", "Parallel A", {
+      updatedAt: "2026-08-29T01:04:00.000Z",
+    });
+    const idleB = record("chat_parallel_b", "Parallel B", {
+      updatedAt: "2026-08-29T01:00:00.000Z",
+    });
+    const completedB = record("chat_parallel_b", "Parallel B", {
+      updatedAt: "2026-08-29T01:02:00.000Z",
+      unacknowledged: true,
+    });
+    const acknowledgedB = record("chat_parallel_b", "Parallel B", {
+      updatedAt: "2026-08-29T01:02:00.000Z",
+      unacknowledged: false,
+    });
+    const client = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ items: [acceptedA, idleB] })
+        .mockResolvedValueOnce({ items: [runningA, completedB] })
+        .mockResolvedValueOnce({ items: [runningA, acknowledgedB] })
+        .mockResolvedValueOnce({ items: [failedA, acknowledgedB] })
+        .mockResolvedValueOnce({ items: [abortedA, acknowledgedB] })
+        .mockResolvedValueOnce({ items: [abortedA, acknowledgedB] }),
+    } as unknown as CanonicalChatClient;
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    const EventAwareWorkRail = WorkRail as ComponentType<
+      ComponentProps<typeof WorkRail> & { eventSource: EventSource }
+    >;
+
+    render(
+      <EventAwareWorkRail
+        client={client}
+        eventSource={eventSource}
+        projects={[]}
+        active
+        onNewGlobalChat={vi.fn()}
+        onCreateProject={vi.fn()}
+        onNewProjectChat={vi.fn()}
+        onSelectChat={vi.fn()}
+        onCollapse={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByLabelText("Agent running for Parallel A")).toBeTruthy();
+    expect(screen.queryByLabelText("Unseen completion for Parallel B")).toBeNull();
+
+    act(() => emit({ type: "chat.changed", chatId: "chat_parallel_b", cursor: 2 }));
+    await waitFor(() => expect(screen.getByLabelText("Unseen completion for Parallel B")).toBeTruthy());
+    expect(screen.getByLabelText("Agent running for Parallel A")).toBeTruthy();
+
+    act(() => emit({ type: "chat.changed", chatId: "chat_parallel_b", cursor: 3 }));
+    await waitFor(() => expect(screen.queryByLabelText("Unseen completion for Parallel B")).toBeNull());
+    expect(screen.getByLabelText("Agent running for Parallel A")).toBeTruthy();
+
+    act(() => emit({ type: "chat.changed", chatId: "chat_parallel_a", cursor: 4 }));
+    await waitFor(() => expect(screen.getByLabelText("Agent failed for Parallel A")).toBeTruthy());
+
+    act(() => emit({ type: "chat.changed", chatId: "chat_parallel_a", cursor: 5 }));
+    await waitFor(() => expect(screen.queryByLabelText("Agent failed for Parallel A")).toBeNull());
+    expect(screen.queryByLabelText("Unseen completion for Parallel A")).toBeNull();
+
+    act(() => emit({ type: "chat.full_refresh", cursor: 5 }));
+    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(6));
+    expect(setIntervalSpy).not.toHaveBeenCalled();
+  });
+
   it("renders the highest-priority canonical agent state for every Chat row", async () => {
     const records = [
       record("chat_approval", "Approval chat", {
