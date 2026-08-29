@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscript } from "../../desktop/src/renderer/src/components/conversation/transcript";
 import type { ConversationTurnPresentation } from "../../desktop/src/renderer/src/components/conversation/presentation";
@@ -65,6 +65,86 @@ describe("provider-neutral conversation transcript", () => {
 
     expect(screen.getByText("I’ll inspect the repository first.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
+  });
+
+  it("expands a long user message accessibly and keeps structured references and metadata", async () => {
+    const copyText = vi.fn(async () => {});
+    const longMessage = `${"Inspect the canonical transcript carefully. ".repeat(30)}Final sentence.`;
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-long-user-message",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: false,
+      user: {
+        kind: "message",
+        id: "message-long-user",
+        role: "user",
+        phase: "commentary",
+        markdown: longMessage,
+        copyText: longMessage,
+        timestamp: 1_000,
+        references: [
+          { id: "attachment-log", kind: "file", label: "run.log" },
+          { id: "project-matrix", kind: "resource", label: "Matrix OS" },
+          { id: "skill-review", kind: "invocation", label: "/review" },
+        ],
+      },
+      work: [],
+    }];
+
+    render(<ConversationTranscript turns={turns} callbacks={{ copyText }} />);
+
+    const expand = screen.getByRole("button", { name: "Show full message" });
+    expect(expand.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(longMessage)).toBeNull();
+    expect(screen.getByText("run.log")).toBeTruthy();
+    expect(screen.getByText("Matrix OS")).toBeTruthy();
+    expect(screen.getByText("/review")).toBeTruthy();
+    expect(screen.getByLabelText("User message sent at 1970-01-01T00:00:01.000Z")).toBeTruthy();
+
+    fireEvent.click(expand);
+    expect(screen.getByText(longMessage)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy user message" }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(longMessage));
+  });
+
+  it("renders provider-neutral approval actions through transcript callbacks", async () => {
+    const performAction = vi.fn(async () => {});
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-approval",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: true,
+      work: [{
+        kind: "request",
+        id: "request-approval",
+        phase: "commentary",
+        requestKind: "approval",
+        requestId: "approval-command",
+        state: "waiting",
+        label: "Run the command",
+        detail: "This command writes to the workspace.",
+        risk: "medium",
+        timestamp: 1_500,
+        actions: [
+          { kind: "approval", requestId: "approval-command", decision: "approve", label: "Approve" },
+          { kind: "approval", requestId: "approval-command", decision: "decline", label: "Decline" },
+        ],
+      }],
+    }];
+
+    render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn(), performAction }} />);
+
+    expect(screen.getByRole("group", { name: "Approval required: Run the command" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Approve Run the command" }));
+    await waitFor(() => expect(performAction).toHaveBeenCalledWith({
+      kind: "approval",
+      requestId: "approval-command",
+      decision: "approve",
+      label: "Approve",
+    }, undefined));
   });
 
   it("reveals a newly streamed assistant chunk progressively", () => {

@@ -61,6 +61,114 @@ describe("canonical Chat presentation adapter", () => {
     });
   });
 
+  it("keeps message references, tools, requests, and status separate from assistant text", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const user = {
+      ...snapshot.messages[0]!,
+      parts: [
+        { type: "text" as const, text: "Inspect these inputs" },
+        { type: "attachment_reference" as const, attachmentId: "attachment_log", kind: "file" as const, label: "run.log" },
+        { type: "resource_reference" as const, resource: { kind: "project" as const, id: "project_matrix", label: "Matrix OS" } },
+        { type: "invocation_reference" as const, invocation: { kind: "skill" as const, descriptorId: "skill_review", invocation: "/review" } },
+      ],
+    };
+    const assistant = {
+      id: "msg_structured_answer",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: snapshot.runs[0]!.id,
+      parts: [
+        { type: "tool_request" as const, toolCallId: "tool_tests", name: "terminal", label: "Run tests", inputPreview: "Focused suite" },
+        { type: "tool_result" as const, toolCallId: "tool_tests", outcome: "failed" as const, text: "One test failed.", truncated: false },
+        {
+          type: "approval_request" as const,
+          approvalId: "approval_retry",
+          title: "Retry the command",
+          description: "Run the focused suite again.",
+          risk: "low" as const,
+          allowedDecisions: ["approve" as const, "decline" as const],
+        },
+        { type: "status" as const, tone: "warning" as const, label: "Partial result", detail: "Useful output was preserved." },
+        { type: "summary" as const, text: "Finished summary", source: "assistant" as const },
+      ],
+      createdAt: snapshot.runs[0]!.updatedAt,
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [user, assistant],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+
+    expect(presented?.user).toMatchObject({
+      markdown: "Inspect these inputs",
+      references: [
+        { id: "attachment_log", kind: "file", label: "run.log" },
+        { id: "project_matrix", kind: "resource", label: "Matrix OS" },
+        { id: "skill_review", kind: "invocation", label: "/review" },
+      ],
+    });
+    expect(presented?.work).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "activity-group",
+        activities: [expect.objectContaining({ label: "Run tests", state: "failed", detail: "Focused suite\n\nOne test failed." })],
+      }),
+      expect.objectContaining({ kind: "request", requestKind: "approval", state: "waiting", label: "Retry the command" }),
+      expect.objectContaining({ kind: "notice", tone: "warning", label: "Partial result" }),
+    ]));
+    expect(presented?.final).toMatchObject({ markdown: "Finished summary", copyText: "Finished summary" });
+  });
+
+  it("projects typed activity in durable server sequence with partial state intact", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [
+        {
+          id: "activity_phase",
+          chatId: snapshot.chat.id,
+          runId: run.id,
+          sequence: 4,
+          type: "agent.activity",
+          activityId: "phase_execute",
+          kind: "phase",
+          label: "Executing",
+          status: "completed",
+          occurredAt: "2026-08-26T00:00:00.000Z",
+        },
+        {
+          id: "activity_reasoning",
+          chatId: snapshot.chat.id,
+          runId: run.id,
+          sequence: 3,
+          type: "agent.activity",
+          activityId: "reasoning_summary",
+          kind: "reasoning",
+          label: "Analyzed the failure",
+          status: "partial",
+          summary: "The command failed after producing useful output.",
+          occurredAt: "2026-08-26T00:01:00.000Z",
+        },
+      ],
+    });
+
+    expect(presented?.work).toEqual([{
+      kind: "activity-group",
+      id: `${run.id}:activities`,
+      activities: [
+        expect.objectContaining({ id: "activity_reasoning", kind: "reasoning", state: "partial" }),
+        expect.objectContaining({ id: "activity_phase", kind: "phase", state: "completed" }),
+      ],
+    }]);
+  });
+
   it("projects persisted run activity and assistant deltas while a Run is active", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;
