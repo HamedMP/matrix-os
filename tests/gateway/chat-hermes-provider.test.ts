@@ -299,6 +299,25 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("removes the official Hermes leading stream separator before final reconciliation", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: gateway.spawnFn,
+    });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "\n\n# Result\n\n- Completed\n" });
+    gateway.event("message.complete", { text: "# Result\n\n- Completed\n", status: "complete" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "# Result\n\n- Completed\n" },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+  });
+
   it("coalesces fine-grained Hermes deltas below the canonical activity limit", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({
