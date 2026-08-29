@@ -90,6 +90,8 @@ const DELTA_FLUSH_INTERVAL_MS = 50;
 const MAX_LIVE_DELTA_EVENTS = 350;
 const MAX_ACTIVE_TOOL_ACTIVITIES = 128;
 const MAX_ACTIVE_STATUS_ACTIVITIES = 16;
+const MAX_UNSAFE_TOOL_FRAGMENTS = 128;
+const MAX_UNSAFE_TOOL_FRAGMENT_CHARS = 4_000;
 
 function selection(value: string): { provider: string; model: string } {
   const separator = value.indexOf(":");
@@ -200,6 +202,39 @@ function hermesToolFailed(result: unknown): boolean {
     && value.error !== "";
 }
 
+function collectUnsafeToolFragments(value: unknown, fragments: Set<string>, depth = 0): void {
+  if (depth > 8 || fragments.size >= MAX_UNSAFE_TOOL_FRAGMENTS) return;
+  if (typeof value === "string") {
+    const candidates = [value.trim(), ...value.split(/\r?\n/).map((line) => line.trim())];
+    for (const candidate of candidates) {
+      if (candidate.length < 4 || candidate.length > MAX_UNSAFE_TOOL_FRAGMENT_CHARS) continue;
+      fragments.add(candidate);
+      if (fragments.size >= MAX_UNSAFE_TOOL_FRAGMENTS) return;
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectUnsafeToolFragments(entry, fragments, depth + 1);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const entry of Object.values(value)) {
+    collectUnsafeToolFragments(entry, fragments, depth + 1);
+  }
+}
+
+function redactFailedToolOutput(text: string, fragments: Set<string>): string {
+  let safeText = text;
+  for (const fragment of [...fragments].sort((left, right) => right.length - left.length)) {
+    safeText = safeText.replaceAll(fragment, "[redacted tool output]");
+  }
+  return safeText
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/(?:^|[\s"'`(:=])\/(?:home|Users|private|tmp|var|opt|etc|root|run)\/[^\s"'`<>)]*/g, (match) => (
+      `${match[0] === "/" ? "" : match[0]}[redacted path]`
+    ));
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((resolveValue) => {
@@ -239,6 +274,9 @@ export function createHermesChatProviderAdapter(options: {
     let separatorPending = false;
     let completionSettled = false;
     let failedActivityKind: HermesActivity["kind"] | undefined;
+    let deferAssistantAfterToolFailure = false;
+    let deferredSegmentPrefixLength = 0;
+    const unsafeToolFragments = new Set<string>();
     const toolActivities = new Map<string, Pick<HermesActivity, "kind" | "label">>();
     const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label">>();
     let activeDelegationId: string | undefined;
@@ -304,7 +342,7 @@ export function createHermesChatProviderAdapter(options: {
         const text = currentSegment ? parsed.text : parsed.text.replace(/^\n\n/, "");
         if (!text) return;
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
-        if (!currentSegmentSuppressed) emitVisibleText(text);
+        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure) emitVisibleText(text);
         currentSegment += text;
       } else if (event.type === "message.interim") {
         const interim = HermesInterimSchema.parse(event.payload);
@@ -314,11 +352,18 @@ export function createHermesChatProviderAdapter(options: {
           }
         } else {
           if (currentSegment) separatorPending = true;
-          emitVisibleText(interim.text);
+          if (!deferAssistantAfterToolFailure) emitVisibleText(interim.text);
+        }
+        if (deferAssistantAfterToolFailure) {
+          emitVisibleText(redactFailedToolOutput(
+            interim.text.slice(deferredSegmentPrefixLength),
+            unsafeToolFragments,
+          ));
         }
         lastSealedSegment = interim.text;
         currentSegment = "";
         currentSegmentSuppressed = false;
+        deferredSegmentPrefixLength = 0;
         separatorPending = emittedOutputBytes > 0;
       } else if (event.type === "message.complete") {
         const parsed = HermesCompletionSchema.parse(event.payload);
@@ -353,7 +398,12 @@ export function createHermesChatProviderAdapter(options: {
         const activity = toolActivities.get(parsed.tool_id) ?? hermesToolActivity(parsed.name);
         toolActivities.delete(parsed.tool_id);
         const failed = hermesToolFailed(parsed.result);
-        if (failed) failedActivityKind = activity.kind;
+        if (failed) {
+          failedActivityKind = activity.kind;
+          deferAssistantAfterToolFailure = true;
+          deferredSegmentPrefixLength = currentSegment.length;
+          collectUnsafeToolFragments(parsed.result, unsafeToolFragments);
+        }
         emitAgentActivity({
           activityId: parsed.tool_id,
           ...activity,
@@ -514,7 +564,9 @@ export function createHermesChatProviderAdapter(options: {
           if (!final.text.startsWith(currentSegment)) {
             throw new HermesRunFailure("run", "Hermes final response did not match streamed output");
           }
-          emitVisibleText(final.text.slice(currentSegment.length));
+          emitVisibleText(deferAssistantAfterToolFailure
+            ? redactFailedToolOutput(final.text.slice(deferredSegmentPrefixLength), unsafeToolFragments)
+            : final.text.slice(currentSegment.length));
         }
         flushVisibleText(true);
         if (final.status === "error") throw new HermesRunFailure("run", "Hermes Run failed");
