@@ -47,34 +47,35 @@ describe('platform prebilling provisioning foundation', () => {
     await destroyTestPlatformDb(db);
   });
 
-  it('is disabled by default and parses bounded rollout and capacity settings', () => {
+  it('is disabled by default and enables count-only capacity without legacy cost settings', () => {
     const defaults = loadPrebillingProvisioningConfig({});
     expect(defaults).toMatchObject({
       enabled: false,
       rolloutPercent: 0,
       maxActive: 0,
-      maxHourlyCostMicros: 0,
       leaseMs: 31 * 60 * 1_000,
     });
+    expect(defaults).not.toHaveProperty('maxHourlyCostMicros');
+    expect(defaults).not.toHaveProperty('serverHourlyCostMicros');
     expect(prebillingRolloutIncludesUser(defaults, 'user_123')).toBe(false);
 
     const enabled = loadPrebillingProvisioningConfig({
       MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
       MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
-      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '2',
-      MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '250000',
-      MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx22":50000}',
+      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '4',
     });
-    expect(enabled.serverHourlyCostMicros.get('cpx22')).toBe(50_000);
+    expect(enabled).toMatchObject({ enabled: true, rolloutPercent: 100, maxActive: 4 });
     expect(prebillingRolloutIncludesUser(enabled, 'user_123')).toBe(true);
-    expect(loadPrebillingProvisioningConfig({
+
+    const legacyValuesAreIgnored = loadPrebillingProvisioningConfig({
       MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
+      MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
+      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '4',
+      MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '1',
       MATRIX_PREBILLING_PROVISIONING_COSTS: 'cpx22:92900;cpx32:169900;cpx52:254000',
-    }).serverHourlyCostMicros).toEqual(new Map([
-      ['cpx22', 92_900],
-      ['cpx32', 169_900],
-      ['cpx52', 254_000],
-    ]));
+      MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx22":999999999}',
+    });
+    expect(legacyValuesAreIgnored).toEqual(enabled);
   });
 
   it('creates one immutable intent for a checkout and canonical selection', async () => {
@@ -115,44 +116,75 @@ describe('platform prebilling provisioning foundation', () => {
     });
   });
 
-  it('admits within global count and cost ceilings and defers without reserving when full', async () => {
-    await seedCheckout('checkout-1', 'user_123');
-    await seedCheckout('checkout-2', 'user_456');
-    await createIntent('intent-1', 'checkout-1', 'user_123');
-    await createIntent('intent-2', 'checkout-2', 'user_456');
+  it('concurrently admits four mixed-size intents and defers exactly the fifth', async () => {
+    const serverTypes = ['cpx22', 'cpx52', 'cpx32', 'cpx22', 'cpx52'];
+    for (const index of [1, 2, 3, 4, 5]) {
+      await seedCheckout(`checkout-${index}`, `user_${index}`, serverTypes[index - 1]);
+      await createIntent(`intent-${index}`, `checkout-${index}`, `user_${index}`, serverTypes[index - 1]);
+    }
 
-    const admitted = await admitPrebillingIntent(db, {
-      intentId: 'intent-1',
-      stripeSessionId: 'cs_1',
+    const admitted = await Promise.all([1, 2, 3, 4].map((index) => admitPrebillingIntent(db, {
+      intentId: `intent-${index}`,
+      stripeSessionId: `cs_${index}`,
       stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000,
-      maxActive: 1,
-      maxHourlyCostMicros: 50_000,
+      maxActive: 4,
+      now: CREATED_AT,
+    })));
+    const deferred = await admitPrebillingIntent(db, {
+      intentId: 'intent-5',
+      stripeSessionId: 'cs_5',
+      stripeSessionExpiresAt: EXPIRES_AT,
+      maxActive: 4,
       now: CREATED_AT,
     });
-    const deferred = await admitPrebillingIntent(db, {
+
+    expect(admitted).toHaveLength(4);
+    expect(admitted.every((result) => result.admitted)).toBe(true);
+    expect(admitted.every((result) => result.intent.state === 'preparing')).toBe(true);
+    expect(deferred).toMatchObject({ admitted: false, reason: 'capacity' });
+    expect(deferred.intent).toMatchObject({ state: 'preparation_deferred' });
+    await expect(resetPrebillingPreparationForRetry(db, {
+      intentId: 'intent-5',
+      clerkUserId: 'user_5',
+      now: CREATED_AT,
+    })).resolves.toBe(true);
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-2')).resolves.toMatchObject({
+      state: 'preparing',
+    });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-5')).resolves.toMatchObject({
+      state: 'awaiting_checkout',
+      lastErrorCode: null,
+    });
+  });
+
+  it('ignores old nonzero reservation rows when admitting by active count', async () => {
+    await seedCheckout('checkout-1', 'user_123', 'cpx52');
+    await seedCheckout('checkout-2', 'user_456', 'cpx22');
+    await createIntent('intent-1', 'checkout-1', 'user_123', 'cpx52');
+    await createIntent('intent-2', 'checkout-2', 'user_456', 'cpx22');
+
+    await db.executor.updateTable('prebilling_provisioning_intents').set({
+      state: 'preparing',
+      stripe_session_id: 'cs_legacy',
+      stripe_session_expires_at: EXPIRES_AT,
+      lease_expires_at: EXPIRES_AT,
+      reserved_hourly_cost_micros: 999_999_999,
+    }).where('id', '=', 'intent-1').execute();
+
+    const admitted = await admitPrebillingIntent(db, {
       intentId: 'intent-2',
       stripeSessionId: 'cs_2',
       stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000,
-      maxActive: 1,
-      maxHourlyCostMicros: 50_000,
+      maxActive: 4,
       now: CREATED_AT,
     });
 
     expect(admitted).toMatchObject({ admitted: true, reason: 'admitted' });
-    expect(admitted.intent).toMatchObject({ state: 'preparing', reservedHourlyCostMicros: 50_000 });
-    expect(deferred).toMatchObject({ admitted: false, reason: 'capacity' });
-    expect(deferred.intent).toMatchObject({ state: 'preparation_deferred', reservedHourlyCostMicros: 0 });
-    await expect(resetPrebillingPreparationForRetry(db, {
-      intentId: 'intent-2',
-      clerkUserId: 'user_456',
-      now: CREATED_AT,
-    })).resolves.toBe(true);
-    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-2')).resolves.toMatchObject({
-      state: 'awaiting_checkout',
-      lastErrorCode: null,
-    });
+    const row = await db.executor.selectFrom('prebilling_provisioning_intents')
+      .select('reserved_hourly_cost_micros')
+      .where('id', '=', 'intent-2')
+      .executeTakeFirstOrThrow();
+    expect(Number(row.reserved_hourly_cost_micros)).toBe(0);
   });
 
   it('resumes the same paid intent even when unpaid preparation capacity is full', async () => {
@@ -720,7 +752,7 @@ describe('platform prebilling provisioning foundation', () => {
     });
   });
 
-  async function seedCheckout(id: string, clerkUserId: string): Promise<void> {
+  async function seedCheckout(id: string, clerkUserId: string, serverType = 'cpx32'): Promise<void> {
     const claimed = await claimCheckoutAttempt(db, {
       id,
       clerkUserId,
@@ -728,14 +760,19 @@ describe('platform prebilling provisioning foundation', () => {
       planSlug: 'matrix_builder',
       billingInterval: 'monthly',
       regionSlug: 'region_fsn1',
-      serverType: 'cpx32',
+      serverType,
       developerTools: ['codex', 'claude-code'],
       createdAt: CREATED_AT,
     });
     expect(claimed.claimed).toBe(true);
   }
 
-  async function createIntent(id: string, checkoutAttemptId: string, clerkUserId: string): Promise<void> {
+  async function createIntent(
+    id: string,
+    checkoutAttemptId: string,
+    clerkUserId: string,
+    serverType = 'cpx32',
+  ): Promise<void> {
     await createPrebillingIntent(db, {
       id,
       checkoutAttemptId,
@@ -743,7 +780,7 @@ describe('platform prebilling provisioning foundation', () => {
       runtimeSlot: 'primary',
       planSlug: 'matrix_builder',
       billingInterval: 'monthly',
-      serverType: 'cpx32',
+      serverType,
       regionSlug: 'region_fsn1',
       developerTools: ['codex', 'claude-code'],
       createdAt: CREATED_AT,

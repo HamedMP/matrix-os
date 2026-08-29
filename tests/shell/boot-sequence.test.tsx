@@ -132,6 +132,8 @@ describe("BootSequence", () => {
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
     expect(await screen.findByText("Building your Matrix computer")).toBeTruthy();
     expect(screen.getByText("Booting your computer")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
+    expect(screen.queryByText("Default installs")).toBeNull();
   });
 
   it("shows Settings-style default installs and immediately exchanges the app session after a 202", async () => {
