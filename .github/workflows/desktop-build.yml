@@ -55,7 +55,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${VITE_POSTHOG_PROJECT_TOKEN:-}" ]; then
+          normalized_posthog_token="$(printf '%s' "${VITE_POSTHOG_PROJECT_TOKEN:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -z "$normalized_posthog_token" ]; then
             echo "Missing required public PostHog project token for Desktop Support" >&2
             exit 1
           fi
@@ -348,7 +349,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${VITE_POSTHOG_PROJECT_TOKEN:-}" ]; then
+          normalized_posthog_token="$(printf '%s' "${VITE_POSTHOG_PROJECT_TOKEN:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -z "$normalized_posthog_token" ]; then
             echo "Missing required public PostHog project token for Desktop Support" >&2
             exit 1
           fi

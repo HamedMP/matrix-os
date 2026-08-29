@@ -86,17 +86,19 @@ describe("desktop release workflows", () => {
   it("fails packaged Desktop builds before bundling when PostHog support is unconfigured", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
     const validationName = "name: Validate PostHog support configuration";
-    const missingTokenCheck = 'if [ -z "${VITE_POSTHOG_PROJECT_TOKEN:-}" ]; then';
+    const normalizeToken = "normalized_posthog_token=\"$(printf '%s' \"${VITE_POSTHOG_PROJECT_TOKEN:-}\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\"";
+    const missingTokenCheck = 'if [ -z "$normalized_posthog_token" ]; then';
     const missingTokenError = "Missing required public PostHog project token for Desktop Support";
 
     expect(workflow.match(new RegExp(validationName, "g"))).toHaveLength(2);
+    expect(workflow.split(normalizeToken)).toHaveLength(3);
     expect(workflow.split(missingTokenCheck)).toHaveLength(3);
     expect(workflow.match(new RegExp(missingTokenError, "g"))).toHaveLength(2);
 
     const macJob = workflow.slice(workflow.indexOf("  mac:"), workflow.indexOf("  linux:"));
     const linuxJob = workflow.slice(workflow.indexOf("  linux:"));
-    expect(macJob.indexOf(validationName)).toBeLessThan(macJob.indexOf("name: Build desktop app"));
-    expect(linuxJob.indexOf(validationName)).toBeLessThan(linuxJob.indexOf("name: Build desktop app"));
+    expect(macJob.indexOf(validationName)).toBeLessThan(macJob.indexOf("uses: actions/checkout@v6"));
+    expect(linuxJob.indexOf(validationName)).toBeLessThan(linuxJob.indexOf("uses: actions/checkout@v6"));
   });
 
   it("keeps raw workspace TypeScript out of the packaged app archive", () => {
