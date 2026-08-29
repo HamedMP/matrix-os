@@ -27,11 +27,18 @@ const detail = {
   activities: [],
 };
 
-function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClient {
+type AcknowledgingCanonicalChatClient = CanonicalChatClient & {
+  acknowledgeCompletion(chatId: string, runId: string): Promise<typeof globalRecord>;
+};
+
+function client(
+  overrides: Partial<AcknowledgingCanonicalChatClient> = {},
+): AcknowledgingCanonicalChatClient {
   return {
     list: vi.fn(async () => ({ items: [globalRecord] })),
     search: vi.fn(async () => ({ items: [globalRecord] })),
     getDetail: vi.fn(async () => detail),
+    acknowledgeCompletion: vi.fn(async () => globalRecord),
     create: vi.fn(),
     updateProject: vi.fn(async (_chatId, input) => ({
       ...globalRecord,
@@ -42,7 +49,7 @@ function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClie
     cancelRun: vi.fn(),
     retryTurn: vi.fn(),
     ...overrides,
-  } as CanonicalChatClient;
+  } as AcknowledgingCanonicalChatClient;
 }
 
 describe("canonical Chat route controller", () => {
@@ -137,6 +144,120 @@ describe("canonical Chat route controller", () => {
 
     await waitFor(() => expect(result.current.detail?.record.chat.id).toBe("chat_moved"));
     expect(getDetail).toHaveBeenCalledWith("chat_moved", { limit: 200 });
+  });
+
+  it("acknowledges only the exact currently projected unseen completion when its Chat opens", async () => {
+    const completedRecord = {
+      ...globalRecord,
+      latestSuccessfulCompletion: {
+        runId: "run_completed_opened",
+        completedAt: "2026-08-26T00:01:00.000Z",
+        unacknowledged: true,
+      },
+    };
+    const acknowledgedRecord = {
+      ...completedRecord,
+      latestSuccessfulCompletion: {
+        ...completedRecord.latestSuccessfulCompletion,
+        unacknowledged: false,
+      },
+    };
+    const backgroundRecord = {
+      ...completedRecord,
+      chat: { ...completedRecord.chat, id: "chat_background_completion" },
+      latestSuccessfulCompletion: {
+        ...completedRecord.latestSuccessfulCompletion,
+        runId: "run_background_completed",
+      },
+    };
+    const acknowledgeCompletion = vi.fn(async () => acknowledgedRecord);
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [completedRecord, backgroundRecord] })),
+      getDetail: vi.fn(async () => ({ ...detail, record: completedRecord })),
+      acknowledgeCompletion,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+
+    await waitFor(() => expect(acknowledgeCompletion).toHaveBeenCalledWith(
+      globalRecord.chat.id,
+      "run_completed_opened",
+    ));
+    await waitFor(() => expect(
+      result.current.detail?.record.latestSuccessfulCompletion?.unacknowledged,
+    ).toBe(false));
+    expect(acknowledgeCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a delayed old acknowledgement overwrite a newer successful completion", async () => {
+    vi.useFakeTimers();
+    try {
+      const oldCompletion = {
+        runId: "run_completed_old",
+        completedAt: "2026-08-26T00:01:00.000Z",
+        unacknowledged: true,
+      };
+      const initiallyRunningRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 5 },
+        activeRun: { runId: "run_newer_running", turnId: "cturn_newer", status: "running" as const },
+        latestSuccessfulCompletion: oldCompletion,
+      };
+      const newestCompletionRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 6 },
+        latestSuccessfulCompletion: {
+          runId: "run_completed_newest",
+          completedAt: "2026-08-26T00:02:00.000Z",
+          unacknowledged: true,
+        },
+      };
+      const delayedOldAcknowledgement = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 6 },
+        latestSuccessfulCompletion: { ...oldCompletion, unacknowledged: false },
+      };
+      let resolveAcknowledgement!: (record: typeof delayedOldAcknowledgement) => void;
+      const acknowledgeCompletion = vi.fn(() => new Promise<typeof delayedOldAcknowledgement>((resolve) => {
+        resolveAcknowledgement = resolve;
+      }));
+      const getDetail = vi.fn()
+        .mockResolvedValueOnce({ ...detail, record: initiallyRunningRecord })
+        .mockResolvedValue({ ...detail, record: newestCompletionRecord });
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [initiallyRunningRecord] })),
+        getDetail,
+        acknowledgeCompletion,
+      });
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(acknowledgeCompletion).toHaveBeenCalledWith(
+        globalRecord.chat.id,
+        oldCompletion.runId,
+      );
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(result.current.detail?.record.latestSuccessfulCompletion)
+        .toEqual(newestCompletionRecord.latestSuccessfulCompletion);
+
+      await act(async () => {
+        resolveAcknowledgement(delayedOldAcknowledgement);
+        await Promise.resolve();
+      });
+      expect(result.current.detail?.record.latestSuccessfulCompletion)
+        .toEqual(newestCompletionRecord.latestSuccessfulCompletion);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not reload when the retained tab reflects an internally selected Chat", async () => {
