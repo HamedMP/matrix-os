@@ -169,6 +169,59 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("persists one stable typed activity row across live lifecycle updates", async () => {
+    await repository.create(owner, {
+      id: "chat_activity_projection",
+      clientRequestId: "req_create_activity_projection",
+      title: "Activity projection",
+    });
+    const provider = adapter(async function* () {
+      yield {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "running",
+      };
+      yield {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "failed",
+        summary: "Command failed.",
+      };
+      yield { type: "run.completed", outcome: "failed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_activity_projection", {
+      clientRequestId: "req_activity_projection_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "run tests" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const activities = (await repository.exportChat(owner, "chat_activity_projection"))?.activities
+      .filter((activity) => activity.type === "agent.activity");
+    expect(activities).toEqual([expect.objectContaining({
+      type: "agent.activity",
+      activityId: "tool_command",
+      kind: "command",
+      label: "Run command",
+      status: "failed",
+      summary: "Command failed.",
+    })]);
+  });
+
   it("keeps one durable pending assistant message through 501 deltas and finalizes it in place", async () => {
     await repository.create(owner, {
       id: "chat_lossless_long_run",
