@@ -294,19 +294,18 @@ export function useCanonicalChatRouteController({
         baseRevision: current.record.chat.revision,
       });
       if (!isCurrentScope()) return null;
-      setDetail((existing) => {
-        if (!existing || existing.record.chat.id !== admitted.record.chat.id) return existing;
-        const next = {
-          ...existing,
-          record: admitted.record,
-          runs: [
-            ...existing.runs.filter((run) => run.id !== admitted.run.id),
-            admitted.run,
-          ],
-        };
-        detailRef.current = next;
-        return next;
-      });
+      const existing = detailRef.current;
+      if (!existing || existing.record.chat.id !== admitted.record.chat.id) return null;
+      const next = {
+        ...existing,
+        record: admitted.record,
+        runs: [
+          ...existing.runs.filter((run) => run.id !== admitted.run.id),
+          admitted.run,
+        ],
+      };
+      detailRef.current = next;
+      setDetail(next);
       setItems((existing) => existing.map((item) => (
         item.chat.id === admitted.record.chat.id ? admitted.record : item
       )));
