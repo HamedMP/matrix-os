@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REGISTER_FLAG="${MATRIX_REGISTER_FLAG:-/opt/matrix/register-complete}"
+REGISTER_LOCK="${MATRIX_REGISTER_LOCK:-${REGISTER_FLAG}.lock}"
+MAX_ATTEMPTS="${MATRIX_REGISTRATION_MAX_ATTEMPTS:-30}"
+INSTANCE_ID_URL="${MATRIX_METADATA_INSTANCE_ID_URL:-http://169.254.169.254/hetzner/v1/metadata/instance-id}"
+PUBLIC_IPV4_URL="${MATRIX_METADATA_PUBLIC_IPV4_URL:-http://169.254.169.254/hetzner/v1/metadata/public-ipv4}"
+
+mark_registration_complete() {
+  local incoming="${REGISTER_FLAG}.incoming.$$"
+  install -m 0640 /dev/null "$incoming"
+  mv -f "$incoming" "$REGISTER_FLAG"
+}
+
+[ ! -f "$REGISTER_FLAG" ] || exit 0
+[ -n "${MATRIX_PLATFORM_REGISTER_URL:-}" ] || exit 0
+[ -n "${MATRIX_REGISTRATION_TOKEN:-}" ] || exit 0
+case "$MATRIX_PLATFORM_REGISTER_URL" in
+  */vps/register) ;;
+  *) echo "matrix-register-vps: registration URL must end with /vps/register" >&2; exit 64 ;;
+esac
+
+exec 9>"$REGISTER_LOCK"
+if ! flock -w 30 9; then
+  echo "matrix-register-vps: registration lock is busy; deferring" >&2
+  exit 75
+fi
+[ ! -f "$REGISTER_FLAG" ] || exit 0
+
+instance_id="$(curl --fail --silent --show-error --max-time 10 "$INSTANCE_ID_URL")"
+public_ipv4="$(curl --fail --silent --show-error --max-time 10 "$PUBLIC_IPV4_URL")"
+if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ]; then
+  payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s","bundleSha256":"%s","healthy":true}' \
+    "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION" "$MATRIX_TARGET_BUNDLE_SHA256")"
+else
+  payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s"}' \
+    "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION")"
+fi
+
+for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+  http_status=""
+  if http_status="$(curl --silent --show-error --max-time 10 \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    -X POST \
+    -H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}" \
+    -H "content-type: application/json" \
+    --data "$payload" \
+    "$MATRIX_PLATFORM_REGISTER_URL")"; then
+    case "$http_status" in
+      2??)
+        mark_registration_complete
+        exit 0
+        ;;
+      409)
+        echo "matrix-register-vps: platform reports registration already finalized; stopping retries" >&2
+        mark_registration_complete
+        exit 0
+        ;;
+      408|425|429) ;;
+      4??)
+        echo "matrix-register-vps: platform rejected registration with non-retryable HTTP ${http_status}" >&2
+        exit 64
+        ;;
+      5??) ;;
+      *)
+        echo "matrix-register-vps: platform returned unexpected HTTP ${http_status}; stopping retries" >&2
+        exit 64
+        ;;
+    esac
+  fi
+
+  sleep "$((attempt < 10 ? attempt : 10))"
+done
+
+echo "matrix-register-vps: transient registration retry budget exhausted" >&2
+exit 75
