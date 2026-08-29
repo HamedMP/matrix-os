@@ -31,7 +31,7 @@ interface DesktopConfigStore {
   setDock: (dock: DockConfig) => void;
   setPinnedApps: (apps: string[]) => void;
   setDockOrder: (order: DockOrder | undefined) => void;
-  setDesktopIcons: (icons: DesktopIconPlacement[] | undefined) => void;
+  setDesktopIcons: (icons: DesktopIconPlacement[] | undefined, expectedHydrationRevision?: number) => void;
   moveDesktopIcon: (path: string, x: number, y: number) => void;
   removeDesktopIcon: (path: string) => void;
   addDesktopIcon: (path: string) => void;
@@ -47,7 +47,12 @@ interface DesktopConfigStore {
 let desktopPersistQueue: Promise<void> = Promise.resolve();
 let desktopIconMutationSequence = 0;
 let desktopIconStateEpoch = 0;
+let desktopIconHydrationRevision = 0;
 let confirmedDesktopIcons: DesktopIconPlacement[] | undefined;
+
+export function captureWebDesktopIconsHydrationRevision(): number {
+  return desktopIconHydrationRevision;
+}
 
 function copyDesktopIcons(icons: readonly DesktopIconPlacement[] | undefined): DesktopIconPlacement[] | undefined {
   return icons?.map((icon) => ({ ...icon }));
@@ -81,6 +86,7 @@ function applyDesktopIconMutation(
   const sequence = ++desktopIconMutationSequence;
   const epoch = desktopIconStateEpoch;
   const snapshot = copyDesktopIcons(icons) ?? [];
+  desktopIconHydrationRevision += 1;
   set({ desktopIcons: snapshot });
   void persistDesktopPatch({ desktopIcons: snapshot }).then(() => {
     if (epoch === desktopIconStateEpoch && sequence <= desktopIconMutationSequence) {
@@ -91,6 +97,8 @@ function applyDesktopIconMutation(
     if (epoch === desktopIconStateEpoch && sequence === desktopIconMutationSequence) {
       set({ desktopIcons: copyDesktopIcons(confirmedDesktopIcons) });
     }
+  }).finally(() => {
+    if (epoch === desktopIconStateEpoch) desktopIconHydrationRevision += 1;
   });
 }
 
@@ -102,9 +110,12 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   setDock: (dock) => set({ dock }),
   setPinnedApps: (pinnedApps) => set({ pinnedApps }),
   setDockOrder: (dockOrder) => set({ dockOrder }),
-  setDesktopIcons: (desktopIcons) => {
+  setDesktopIcons: (desktopIcons, expectedHydrationRevision) => {
+    if (expectedHydrationRevision !== undefined
+      && expectedHydrationRevision !== desktopIconHydrationRevision) return;
     desktopIconMutationSequence += 1;
     desktopIconStateEpoch += 1;
+    desktopIconHydrationRevision += 1;
     confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
     set({ desktopIcons: copyDesktopIcons(desktopIcons) });
   },

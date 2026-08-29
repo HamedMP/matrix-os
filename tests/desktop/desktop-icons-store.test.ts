@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { resetDesktopIconsRuntime, useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
+import {
+  captureDesktopIconsHydrationRevision,
+  resetDesktopIconsRuntime,
+  useDesktopIcons,
+} from "@desktop/renderer/src/stores/desktop-icons";
 
 const CHAT = { path: "__chat__", x: 20, y: 20 };
 const FILES = { path: "__file-browser__", x: 108, y: 20 };
@@ -63,5 +67,39 @@ describe("native Desktop icon layout", () => {
     await Promise.all([move, remove]);
 
     expect(useDesktopIcons.getState().icons).toEqual([{ path: "__chat__", x: 240, y: 180 }]);
+  });
+
+  it("ignores settings hydration that started before a successful icon write", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(async () => ({ ok: true })),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+    const staleHydrationRevision = captureDesktopIconsHydrationRevision();
+
+    await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    useDesktopIcons.getState().hydrate([CHAT, FILES], [CHAT, FILES], staleHydrationRevision);
+
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+  });
+
+  it("ignores settings hydration that overlaps an in-flight icon write", async () => {
+    let finishPatch: (() => void) | undefined;
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(() => new Promise<{ ok: true }>((resolve) => {
+        finishPatch = () => resolve({ ok: true });
+      })),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const staleHydrationRevision = captureDesktopIconsHydrationRevision();
+    finishPatch?.();
+    await move;
+    useDesktopIcons.getState().hydrate([CHAT, FILES], [CHAT, FILES], staleHydrationRevision);
+
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
   });
 });

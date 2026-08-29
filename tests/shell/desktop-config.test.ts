@@ -2,7 +2,11 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { useDesktopConfigStore, type DockConfig } from "../../shell/src/stores/desktop-config";
+import {
+  captureWebDesktopIconsHydrationRevision,
+  useDesktopConfigStore,
+  type DockConfig,
+} from "../../shell/src/stores/desktop-config";
 import { DEFAULT_PINNED_APPS } from "../../shell/src/lib/builtin-apps";
 import {
   buildMeshGradient,
@@ -290,6 +294,22 @@ describe("Desktop config", () => {
     useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
 
     await waitFor(() => expect(useDesktopConfigStore.getState().desktopIcons).toEqual(confirmed));
+  });
+
+  it("ignores stale web Desktop icon hydration after a successful PATCH", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    const confirmed = [
+      { path: "__chat__", x: 20, y: 58 },
+      { path: "__terminal__", x: 108, y: 58 },
+    ];
+    useDesktopConfigStore.getState().setDesktopIcons(confirmed);
+    const staleHydrationRevision = captureWebDesktopIconsHydrationRevision();
+
+    useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    useDesktopConfigStore.getState().setDesktopIcons(confirmed, staleHydrationRevision);
+
+    expect(useDesktopConfigStore.getState().desktopIcons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
   });
 
   it("initializes from the scoped shell snapshot before revalidating desktop config", async () => {

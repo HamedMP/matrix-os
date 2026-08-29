@@ -66,7 +66,7 @@ interface DesktopIconsState {
   icons: DesktopIconPlacement[];
   loaded: boolean;
   load(api: ApiClient, defaults: readonly DesktopIconPlacement[]): Promise<void>;
-  hydrate(value: unknown, defaults: readonly DesktopIconPlacement[]): void;
+  hydrate(value: unknown, defaults: readonly DesktopIconPlacement[], expectedRevision: number): void;
   move(path: string, x: number, y: number, api: ApiClient): Promise<void>;
   remove(path: string, api: ApiClient): Promise<void>;
   add(path: string, api: ApiClient): Promise<void>;
@@ -76,6 +76,7 @@ let loadSequence = 0;
 let persistQueue: Promise<void> = Promise.resolve();
 let mutationSequence = 0;
 let stateEpoch = 0;
+let hydrationRevision = 0;
 let confirmedIcons: DesktopIconPlacement[] = [];
 
 function copyIcons(icons: readonly DesktopIconPlacement[]): DesktopIconPlacement[] {
@@ -86,8 +87,13 @@ export function resetDesktopIconsRuntime(): void {
   loadSequence += 1;
   mutationSequence += 1;
   stateEpoch += 1;
+  hydrationRevision += 1;
   confirmedIcons = [];
   useDesktopIcons.setState({ icons: [], loaded: false });
+}
+
+export function captureDesktopIconsHydrationRevision(): number {
+  return hydrationRevision;
 }
 
 function persist(api: ApiClient, icons: DesktopIconPlacement[]): Promise<void> {
@@ -113,7 +119,8 @@ async function applyOptimisticMutation(
   const epoch = stateEpoch;
   const runtimeGeneration = captureRuntimeGeneration();
   const snapshot = copyIcons(icons);
-  set({ icons: snapshot });
+  hydrationRevision += 1;
+  set({ icons: snapshot, loaded: true });
   try {
     await persist(api, snapshot);
     if (epoch === stateEpoch && sequence <= mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
@@ -124,36 +131,47 @@ async function applyOptimisticMutation(
     if (epoch === stateEpoch && sequence === mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
       set({ icons: copyIcons(confirmedIcons) });
     }
+  } finally {
+    if (epoch === stateEpoch) hydrationRevision += 1;
   }
 }
 
 export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
   icons: [],
   loaded: false,
-  hydrate: (value, defaults) => {
+  hydrate: (value, defaults, expectedRevision) => {
+    if (expectedRevision !== hydrationRevision) return;
     const icons = parseDesktopIcons(value) ?? copyIcons(defaults);
     mutationSequence += 1;
     stateEpoch += 1;
+    hydrationRevision += 1;
     confirmedIcons = copyIcons(icons);
     set({ icons, loaded: true });
   },
   load: async (api, defaults) => {
     const sequence = ++loadSequence;
+    const expectedHydrationRevision = hydrationRevision;
     const runtimeGeneration = captureRuntimeGeneration();
     try {
       const config = await api.get<{ desktopIcons?: unknown }>("/api/settings/desktop");
-      if (sequence !== loadSequence || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
+      if (sequence !== loadSequence
+        || expectedHydrationRevision !== hydrationRevision
+        || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       const icons = parseDesktopIcons(config.desktopIcons) ?? copyIcons(defaults);
       mutationSequence += 1;
       stateEpoch += 1;
+      hydrationRevision += 1;
       confirmedIcons = copyIcons(icons);
       set({ icons, loaded: true });
     } catch (error: unknown) {
-      if (sequence !== loadSequence || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
+      if (sequence !== loadSequence
+        || expectedHydrationRevision !== hydrationRevision
+        || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.warn("[desktop-icons] load failed:", error instanceof Error ? error.name : typeof error);
       const icons = copyIcons(defaults);
       mutationSequence += 1;
       stateEpoch += 1;
+      hydrationRevision += 1;
       confirmedIcons = copyIcons(icons);
       set({ icons, loaded: true });
     }

@@ -3,7 +3,11 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
-import { defaultDesktopIcons, useDesktopIcons } from "../../stores/desktop-icons";
+import {
+  captureDesktopIconsHydrationRevision,
+  defaultDesktopIcons,
+  useDesktopIcons,
+} from "../../stores/desktop-icons";
 import { FIXED_DESKTOP_APPS } from "./desktop-apps";
 
 type DesktopBackgroundConfig =
@@ -144,8 +148,11 @@ export default function DesktopBackground() {
 
     if (api) {
       void (async () => {
+        const iconHydrationRevision = captureDesktopIconsHydrationRevision();
         const config = await api.get<{ background?: unknown; desktopIcons?: unknown }>("/api/settings/desktop");
-        if (!cancelled) useDesktopIcons.getState().hydrate(config.desktopIcons, DEFAULT_DESKTOP_ICONS);
+        if (!cancelled) {
+          useDesktopIcons.getState().hydrate(config.desktopIcons, DEFAULT_DESKTOP_ICONS, iconHydrationRevision);
+        }
         const background = backgroundConfig(config?.background);
         if (!background) return;
         if (background.type !== "wallpaper") {
