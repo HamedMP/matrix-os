@@ -300,7 +300,13 @@ describe("Hermes canonical Chat Provider adapter", () => {
       homePath: "/home/matrix/home",
       spawnFn: gateway.spawnFn,
     });
-    const eventsPromise = collect(adapter.start(baseInput));
+    const eventsPromise = collect(adapter.start({
+      ...baseInput,
+      selection: {
+        instanceId: "hermes_default",
+        model: "openai-codex:anthropic/claude-opus-4.6",
+      },
+    }));
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
     gateway.event("message.delta", { text: "hello " });
     gateway.event("message.delta", { text: "from hermes" });
@@ -332,7 +338,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
         params: expect.objectContaining({
           cwd: "/safe/project",
           provider: "openai-codex",
-          model: "gpt-5.6-luna",
+          model: "anthropic/claude-opus-4.6",
           source: "matrix-os-desktop",
         }),
       }),
