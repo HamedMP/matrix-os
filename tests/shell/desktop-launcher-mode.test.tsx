@@ -218,7 +218,7 @@ describe("Desktop launcher dock button by mode", () => {
     await waitFor(() => {
       expect(Array.from(desktopApps.querySelectorAll("button")).map(
         (button) => button.getAttribute("aria-label"),
-      ).slice(0, 4)).toEqual(["Chat", "Terminal", "Files", "Settings"]);
+      ).slice(0, 4)).toEqual(["Chat", "Terminal", "Files", "Editor"]);
     });
     expect(windowManagerStore.getState().apps.find((app) => app.path === "__chat__"))
       .toMatchObject({ name: "Hermes", path: "__chat__" });
