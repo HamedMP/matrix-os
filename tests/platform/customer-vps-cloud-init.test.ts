@@ -55,6 +55,7 @@ describe('platform/customer-vps-cloud-init', () => {
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
     registrationToken: 'registration-secret',
+    registrationTokenExpiresAt: '2026-08-29T20:45:00.000Z',
     postgresPassword: 'postgres-secret',
     posthogToken: 'phc_public',
     posthogProjectToken: 'phc_project',
@@ -62,6 +63,18 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogPublicHost: 'https://eu.posthog.com',
     posthogApiHost: '/relay',
   };
+
+  it('renders the registration deadline used to bound service retries', async () => {
+    const rendered = renderCloudInitTemplate(
+      await loadCustomerVpsCloudInitTemplate(),
+      {
+        ...input,
+        registrationTokenExpiresAt: '2026-08-29T20:45:00.000Z',
+      } as CustomerHostConfig,
+    );
+
+    expect(rendered).toContain('MATRIX_REGISTRATION_TOKEN_EXPIRES_AT=2026-08-29T20:45:00.000Z');
+  });
 
   function runRestoreWithFakeMatrixctl(
     existsStatus: number | { vpsMeta: number; latestPointer: number },
@@ -303,10 +316,10 @@ exit 99
     expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
-      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
+      'systemctl start matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
     );
     expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
@@ -364,7 +377,7 @@ exit 99
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
@@ -728,6 +741,25 @@ exit 99
     expect(restore).toContain('Type=oneshot');
   });
 
+  it('retries registration in a bounded service independent of the gateway', () => {
+    const root = process.cwd();
+    const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
+    const registration = readFileSync(
+      join(root, 'distro/customer-vps/systemd/matrix-vps-registration.service'),
+      'utf8',
+    );
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(gateway).not.toContain('MATRIX_REGISTER_CLIENT');
+    expect(registration).toContain('After=network-online.target matrix-gateway.service');
+    expect(registration).toContain('ExecStart=/opt/matrix/bin/matrix-register-vps');
+    expect(registration).toContain('Restart=on-failure');
+    expect(registration).toContain('SuccessExitStatus=64');
+    expect(registration).toContain('StartLimitIntervalSec=3700');
+    expect(registration).toContain('StartLimitBurst=12');
+    expect(cloudInit).toContain('matrix-vps-registration.service');
+  });
+
   it('uploads DB snapshots before updating latest without calling deferred pruning', () => {
     const root = process.cwd();
     const backup = readFileSync(join(root, 'distro/customer-vps/matrix-db-backup.sh'), 'utf8');
@@ -850,7 +882,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

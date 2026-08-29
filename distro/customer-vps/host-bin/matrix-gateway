@@ -5,9 +5,6 @@ source /opt/matrix/env/host.env
 if [ -f /opt/matrix/env/postgres.env ]; then
   source /opt/matrix/env/postgres.env
 fi
-if [ -f /opt/matrix/env/registration.env ]; then
-  source /opt/matrix/env/registration.env
-fi
 if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
 fi
@@ -89,27 +86,4 @@ else
 fi
 gateway_pid="$!"
 
-gateway_healthy=false
-for _ in $(seq 1 90); do
-  if curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null; then
-    gateway_healthy=true
-    break
-  fi
-  if ! kill -0 "$gateway_pid" 2>/dev/null; then
-    wait "$gateway_pid"
-  fi
-  sleep 2
-done
-
-registration_client="${MATRIX_REGISTER_CLIENT:-/opt/matrix/bin/matrix-register-vps}"
-if [ "$gateway_healthy" = true ]; then
-  if [ -x "$registration_client" ]; then
-    export MATRIX_PLATFORM_REGISTER_URL MATRIX_REGISTRATION_TOKEN MATRIX_MACHINE_ID MATRIX_IMAGE_VERSION MATRIX_TARGET_BUNDLE_SHA256
-    if ! "$registration_client"; then
-      echo "matrix-gateway: VPS registration deferred; gateway remains available" >&2
-    fi
-  else
-    echo "matrix-gateway: registration client not executable; gateway remains available" >&2
-  fi
-fi
 wait "$gateway_pid"

@@ -1,0 +1,24 @@
+[Unit]
+Description=Register Matrix OS customer VPS with the platform
+After=network-online.target matrix-gateway.service
+Wants=network-online.target
+Requires=matrix-gateway.service
+ConditionPathExists=/opt/matrix/bin/matrix-register-vps
+ConditionPathExists=!/opt/matrix/register-complete
+StartLimitIntervalSec=3700
+StartLimitBurst=12
+
+[Service]
+Type=oneshot
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+EnvironmentFile=/opt/matrix/env/registration.env
+ExecStart=/opt/matrix/bin/matrix-register-vps
+Restart=on-failure
+RestartSec=60
+SuccessExitStatus=64
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

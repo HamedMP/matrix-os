@@ -266,6 +266,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '    permissions: "0640"',
   '    content: |',
   '      MATRIX_REGISTRATION_TOKEN={{registrationToken}}',
+  '      MATRIX_REGISTRATION_TOKEN_EXPIRES_AT={{registrationTokenExpiresAt}}',
 ].join('\n');
 
 const PROVIDER_DELETION_RETRY_BASE_MS = 60_000;
@@ -344,6 +345,7 @@ function buildHostConfig(
   input: ProvisionRequest,
   machineId: string,
   registrationToken: string,
+  registrationTokenExpiresAt: string,
   postgresPassword: string,
   bundleRef: HostBundleRef,
 ): CustomerHostConfig {
@@ -360,6 +362,7 @@ function buildHostConfig(
     platformInternalUrl: new URL(config.platformRegisterUrl).origin,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
     registrationToken,
+    registrationTokenExpiresAt,
     postgresPassword,
     posthogToken: config.posthogToken,
     posthogProjectToken: config.posthogProjectToken,
@@ -944,6 +947,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         const payload = openProvisioningPayload(row.recoveryEncryptedPayload, deps.config.platformSecret);
         if (!payload.recovery) throw new Error('Recovery intent is missing durable provenance');
         const imageVersion = row.targetBundleVersion ?? row.imageVersion ?? deps.config.imageVersion;
+        const fallbackRegistrationExpiresAt = new Date(Math.max(
+          row.registrationTokenExpiresAt === null
+            ? 0
+            : new Date(row.registrationTokenExpiresAt).getTime(),
+          now().getTime() + deps.config.registrationTokenTtlMs,
+        )).toISOString();
         const hostConfig = buildHostConfig(
           deps.config,
           {
@@ -954,6 +963,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           },
           row.machineId,
           payload.registrationToken,
+          fallbackRegistrationExpiresAt,
           payload.postgresPassword,
           {
             imageVersion,
@@ -970,12 +980,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             sourceBaseGeneration: null,
           },
         }, deps.config.platformSecret);
-        const fallbackRegistrationExpiresAt = new Date(Math.max(
-          row.registrationTokenExpiresAt === null
-            ? 0
-            : new Date(row.registrationTokenExpiresAt).getTime(),
-          now().getTime() + deps.config.registrationTokenTtlMs,
-        )).toISOString();
         const transitioned = await runInPlatformTransaction(deps.db, async (trx) => {
           const claimed = await trx.executor.updateTable('user_machines').set({
             hetzner_server_id: null,
@@ -1351,6 +1355,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         && imageDecision.targetBundleSha256 === '0'.repeat(64)) {
         throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
       }
+      if (!row.registrationTokenExpiresAt) {
+        throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+      }
       const hostConfig = buildHostConfig(
         deps.config,
         {
@@ -1361,6 +1368,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         },
         row.machineId,
         payload.registrationToken,
+        row.registrationTokenExpiresAt,
         payload.postgresPassword,
         {
           imageVersion,
@@ -2365,6 +2373,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         },
         machineId,
         registration.token,
+        registration.expiresAt,
         postgresPassword,
         bundleRef,
       );
