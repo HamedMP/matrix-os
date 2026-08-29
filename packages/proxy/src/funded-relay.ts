@@ -307,15 +307,23 @@ function boundedBody(
   maxBytes: number,
   lease: AdmissionLease,
   abortUpstream: (reason?: unknown) => void,
+  lifetimeSignal: AbortSignal,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let seen = 0;
   let settled = false;
+  const onLifetimeAbort = (): void => settle();
   const settle = (): void => {
     if (settled) return;
     settled = true;
+    lifetimeSignal.removeEventListener("abort", onLifetimeAbort);
     lease.release();
   };
+  if (lifetimeSignal.aborted) {
+    settle();
+  } else {
+    lifetimeSignal.addEventListener("abort", onLifetimeAbort, { once: true });
+  }
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -460,6 +468,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies): Funded
         dependencies.maxResponseBytes,
         activeLease,
         (reason) => upstreamController.abort(reason),
+        signal,
       ), {
         status: upstream.status,
         headers: safeUpstreamHeaders(upstream),

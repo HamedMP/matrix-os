@@ -191,6 +191,64 @@ describe("Cloudflare funded relay", () => {
     await response.body?.cancel();
   });
 
+  it("releases admission when the total timeout fires after response headers", async () => {
+    const upstreamFetch = vi.fn(async () => {
+      if (upstreamFetch.mock.calls.length === 1) {
+        return new Response(new ReadableStream<Uint8Array>({
+          start() {
+            // Simulate an upstream body that never produces bytes or closes.
+          },
+        }), {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response(JSON.stringify({ id: "msg_after_timeout" }), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const config = resolveFundedRelayConfig(enabledEnv({
+      MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY: "1",
+    }));
+    expect(config).not.toBeNull();
+    const relay = createFundedRelay({
+      ...config!,
+      fetch: upstreamFetch as typeof fetch,
+      timeoutMs: 20,
+    });
+    const app = new Hono();
+    relay.register(app);
+    const headers = {
+      "content-type": "application/json",
+      "x-api-key": buildProxyApiKey("alice", SHARED_SECRET),
+    };
+
+    const stalled = await app.request("/v1/messages", {
+      method: "POST",
+      headers,
+      body: requestBody("claude-sonnet-5", true),
+    });
+    expect(stalled.status).toBe(200);
+
+    const blocked = await app.request("/v1/messages", {
+      method: "POST",
+      headers,
+      body: requestBody(),
+    });
+    expect(blocked.status).toBe(429);
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const admitted = await app.request("/v1/messages", {
+      method: "POST",
+      headers,
+      body: requestBody(),
+    });
+    expect(admitted.status).toBe(200);
+    await admitted.text();
+
+    await stalled.body?.cancel();
+    relay.close();
+  });
+
   it("enforces per-runtime admission limits and maps upstream failures safely", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let releaseFirst: (() => void) | undefined;
