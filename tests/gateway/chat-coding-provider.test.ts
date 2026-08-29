@@ -190,6 +190,47 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(fake.createThread).toHaveBeenCalledTimes(1);
   });
 
+  it("separates distinct Codex assistant message items for Markdown rendering", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+
+    queueMicrotask(() => fake.publish([
+      event({
+        type: "assistant.text.delta",
+        eventId: "evt_commentary",
+        messageId: "msg_commentary",
+        delta: "I'll run the requested command.",
+      }),
+      event({
+        type: "assistant.text.completed",
+        eventId: "evt_commentary_complete",
+        messageId: "msg_commentary",
+      }),
+      event({
+        type: "assistant.text.delta",
+        eventId: "evt_final",
+        messageId: "msg_final",
+        delta: "# Verification\n\n- Complete",
+      }),
+      event({
+        type: "assistant.text.completed",
+        eventId: "evt_final_complete",
+        messageId: "msg_final",
+      }),
+      event({ type: "thread.completed", eventId: "evt_complete", outcome: "completed" }),
+    ]));
+
+    const events = [];
+    for await (const candidate of adapter.start(input())) events.push(candidate);
+
+    expect(events).toEqual([
+      { type: "state.updated", state: { conversationId: "thread_native" } },
+      { type: "assistant.delta", delta: "I'll run the requested command." },
+      { type: "assistant.delta", delta: "\n\n# Verification\n\n- Complete" },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+  });
+
   it("resumes and cancels only the same persisted coding thread", async () => {
     const accepted = event({
       type: "turn.accepted",
