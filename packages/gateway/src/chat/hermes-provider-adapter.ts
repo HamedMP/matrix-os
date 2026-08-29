@@ -300,7 +300,8 @@ export function createHermesChatProviderAdapter(options: {
     const handleEvent = (event: HermesGatewayEvent) => {
       if (completionSettled || !liveSessionId || event.session_id !== liveSessionId) return;
       if (event.type === "message.delta") {
-        const { text } = HermesDeltaSchema.parse(event.payload);
+        const parsed = HermesDeltaSchema.parse(event.payload);
+        const text = currentSegment ? parsed.text : parsed.text.replace(/^\n\n/, "");
         if (!text) return;
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
         if (!currentSegmentSuppressed) emitVisibleText(text);
