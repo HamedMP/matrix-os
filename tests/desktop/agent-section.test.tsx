@@ -870,8 +870,9 @@ describe("AgentSection", () => {
     })));
     await act(async () => resolveSetupSession({ name: "matrix-setup-codex" }));
     expect(
-      useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Connect Codex"),
+      useTabs.getState().tabs.some((tab) => tab.kind === "terminals" && tab.title === "Terminal"),
     ).toBe(true);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-codex");
   });
 
   it("refreshes runtime provider setup status after runtime changes", async () => {

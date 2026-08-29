@@ -136,8 +136,9 @@ describe("ProvidersSection", () => {
     );
     await act(async () => resolveSetupSession({ name: "matrix-setup-codex" }));
     expect(
-      useTabs.getState().tabs.some((tab) => tab.kind === "terminal" && tab.title === "Sign in"),
+      useTabs.getState().tabs.some((tab) => tab.kind === "terminals" && tab.title === "Terminal"),
     ).toBe(true);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-codex");
   });
 
   it("shows a generic setup error when the terminal cannot be opened", async () => {

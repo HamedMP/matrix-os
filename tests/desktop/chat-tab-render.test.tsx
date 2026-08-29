@@ -692,9 +692,10 @@ describe("ChatTab", () => {
     ));
     await act(async () => resolveSetupSession({ name: "matrix-setup-claude" }));
     expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
-      kind: "terminal",
-      title: "Connect Claude",
+      kind: "terminals",
+      title: "Terminal",
     }));
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-claude");
   });
 
   it("persists Global Chat effort and permission selections", async () => {
