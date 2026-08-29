@@ -16,6 +16,10 @@ const SCHEME = /^[a-z][a-z\d+.-]*:/i;
 const DOMAIN_LIKE = /^(?:[^\s/:]+\.)+[^\s/:]+(?::\d+)?(?:[/?#].*)?$/;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
+function isIpv4Loopback(host: string): boolean {
+  return /^127(?:\.\d{1,3}){3}$/.test(host);
+}
+
 function parseHttpUrl(raw: string): URL | null {
   let parsed: URL;
   try {
@@ -55,6 +59,9 @@ export function resolveBrowserAddress(value: string): BrowserAddressResolution |
   const parsed = parseHttpUrl(urlInput);
   if (!parsed) return null;
   const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  // The runtime tunnel currently targets only canonical 127.0.0.1. Never let
+  // another address in 127/8 fall through to the user's local browser.
+  if (isIpv4Loopback(host) && host !== "127.0.0.1") return null;
   if (LOOPBACK_HOSTS.has(host)) {
     if (parsed.protocol !== "http:" || parsed.port === "") return null;
     const remotePort = Number(parsed.port);

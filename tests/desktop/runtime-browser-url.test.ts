@@ -45,6 +45,16 @@ describe("desktop browser address routing", () => {
     expect(resolveBrowserAddress("127.0.0.1")).toBeNull();
   });
 
+  it("never opens another IPv4 loopback address on the local computer", () => {
+    expect(resolveBrowserAddress("127.0.0.2:4000/private")).toBeNull();
+    expect(resolveBrowserAddress("http://127.255.255.254:4000/private")).toBeNull();
+    expect(resolveRuntimeBrowserNavigation(
+      "http://127.0.0.2:4000/private",
+      4000,
+      "http://127.0.0.1:49152",
+    )).toEqual({ disposition: "block" });
+  });
+
   it("rewrites canonical same-port loopback navigation through the active tunnel", () => {
     expect(resolveRuntimeBrowserNavigation(
       "http://localhost:3000/callback?code=ok#done",
