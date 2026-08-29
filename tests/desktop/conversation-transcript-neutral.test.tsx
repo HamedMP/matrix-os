@@ -155,6 +155,61 @@ describe("provider-neutral conversation transcript", () => {
     }
   });
 
+  it("keeps durable partial output visible beside an aborted terminal notice", () => {
+    vi.useFakeTimers();
+    const partial = "Durable partial output that must remain visible after cancellation.";
+    const activeTurn: ConversationTurnPresentation = {
+      id: "turn-aborted-partial",
+      startedAt: 1_000,
+      endedAt: 1_000,
+      active: true,
+      work: [],
+      final: {
+        kind: "message",
+        id: "message-aborted-partial",
+        role: "assistant",
+        phase: "final",
+        markdown: partial,
+        copyText: partial,
+        timestamp: 1_000,
+      },
+    };
+
+    try {
+      const { rerender } = render(
+        <ConversationTranscript turns={[activeTurn]} callbacks={{ copyText: vi.fn() }} />,
+      );
+      act(() => vi.advanceTimersByTime(32));
+      expect(screen.getByText((content) => content.length > 0 && partial.startsWith(content))).toBeTruthy();
+
+      rerender(
+        <ConversationTranscript
+          turns={[{
+            ...activeTurn,
+            active: false,
+            endedAt: 2_000,
+            work: [{ ...activeTurn.final!, phase: "commentary" }],
+            final: {
+              kind: "notice",
+              id: "run-aborted-terminal",
+              phase: "final",
+              tone: "stopped",
+              label: "Agent work stopped",
+              markdown: "Run was cancelled.",
+              timestamp: 2_000,
+            },
+          }]}
+          callbacks={{ copyText: vi.fn() }}
+        />,
+      );
+
+      expect(screen.getByText(partial)).toBeTruthy();
+      expect(screen.getByText("Run was cancelled.")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reveals a live response progressively when polling first sees it as completed", () => {
     vi.useFakeTimers();
     const text = "A completed polling frame should still arrive smoothly.";
