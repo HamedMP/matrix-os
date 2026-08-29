@@ -6,6 +6,5 @@ beforeEach(() => useCreateAppRequest.setState(useCreateAppRequest.getInitialStat
 it("prepares a Matrix builder-agent draft for the Create App launcher", () => {
   useCreateAppRequest.getState().requestDraft();
 
-  expect(useCreateAppRequest.getState().request?.prompt).toContain("Matrix builder agent");
-  expect(useCreateAppRequest.getState().request?.prompt).toContain("app-generation.md");
+  expect(useCreateAppRequest.getState().request?.prompt).toBe("/matrix-app-builder ");
 });

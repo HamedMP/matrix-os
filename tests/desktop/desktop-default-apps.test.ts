@@ -29,6 +29,7 @@ describe("native desktop default apps", () => {
     expect(FIXED_DESKTOP_APPS.find((app) => app.id === "vscode")).toMatchObject({
       kind: "vscode",
       name: "VS Code",
+      color: "#FFFEFC",
     });
     expect(FIXED_DESKTOP_APPS.find((app) => app.id === "plugins")).toMatchObject({
       kind: "settings",

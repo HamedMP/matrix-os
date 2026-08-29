@@ -120,7 +120,7 @@ export class EmbedManager {
         : kind === "code-editor"
           ? "persist:code-editor"
         : kind === "browser"
-          ? `runtime-browser-${id}`
+          ? "persist:browser"
           : this.appPartition(options?.routeSlug ?? slug);
 
     const active = options?.active ?? true;

@@ -83,8 +83,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     icon: Code2,
     iconUrl: vscodeIconUrl,
     name: "VS Code",
-    color: "#007ACC",
-    iconColor: "white",
+    color: "#FFFEFC",
+    iconColor: "#007ACC",
   },
   {
     id: "settings",

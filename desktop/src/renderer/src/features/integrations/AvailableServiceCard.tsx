@@ -3,7 +3,7 @@
 // compact plus action. Account details remain accessible without changing the
 // compact visual treatment of the card.
 import { Button } from "../../design/primitives";
-import { Check, Plus, X } from "@renderer/lib/hugeicons";
+import { Check, Plus } from "@renderer/lib/hugeicons";
 import { IntegrationIcon } from "./IntegrationIcon";
 import { displayIntegrationName, type AvailableIntegration, type ConnectedIntegration } from "./types";
 
@@ -38,10 +38,6 @@ export function AvailableServiceCard({
   onDisconnect?: (connection: ConnectedIntegration) => void;
 }) {
   const description = service.description ?? INTEGRATION_DESCRIPTIONS[service.id] ?? "Connect this service to extend your agent.";
-  // A card-level hover action is only unambiguous for one account. Services
-  // with several accounts expose an explicit disconnect control per account.
-  const actionIsConnected = connected && connections.length === 1 && connection !== undefined && onDisconnect !== undefined;
-
   return (
     <div
       data-testid={`integration-card-${service.id}`}
@@ -67,16 +63,17 @@ export function AvailableServiceCard({
                 <span className="font-medium">{displayIntegrationName(account.accountLabel)}</span>
                 {account.accountEmail ? <span className="truncate">{account.accountEmail}</span> : null}
                 <span className="capitalize" style={{ color: "var(--surface-success-emphasis, #288A5B)" }}>{account.status}</span>
-                {connections.length > 1 && onDisconnect ? (
+                {onDisconnect ? (
                   <button
                     type="button"
-                    className="ml-auto rounded border px-1.5 py-0.5"
+                    data-testid={`integration-disconnect-${account.id}`}
+                    className="ml-auto shrink-0 rounded border px-1.5 py-0.5"
                     style={{ borderColor: "var(--border-subtle)" }}
                     aria-label={`Disconnect ${displayIntegrationName(account.accountLabel)}`}
                     disabled={disabled}
                     onClick={() => onDisconnect(account)}
                   >
-                    Remove
+                    Disconnect
                   </button>
                 ) : null}
               </div>
@@ -84,40 +81,30 @@ export function AvailableServiceCard({
           </div>
         ) : null}
       </div>
-      {actionIsConnected ? (
+      {connected ? (
         <div
-          data-testid={`integration-connect-${service.id}`}
-          className="relative size-7 shrink-0"
-          onClick={onConnect}
+          data-testid={`integration-action-${service.id}`}
+          data-state="connected"
+          className="flex shrink-0 items-center gap-2 self-start"
         >
-          <Button
-            variant="subtle"
-            className="size-7 justify-center rounded-full p-1 px-1!"
+          <span
+            data-testid={`integration-status-${service.id}`}
+            aria-label={`${service.name} connected`}
+            className="flex size-7 items-center justify-center rounded-full"
             style={{ background: "var(--surface-success-emphasis, #288A5B)", color: "var(--text-on-accent)", borderRadius: "9999px" }}
-            aria-label={`Add another ${service.name} account`}
-            data-testid={`integration-action-${service.id}`}
-            data-state="connected"
-            disabled={disabled}
-            onClick={(event) => {
-              event.stopPropagation();
-              onConnect();
-            }}
           >
             <Check size={16} strokeWidth={2.5} aria-hidden="true" />
-          </Button>
+          </span>
           <Button
-            variant="danger"
-            className="pointer-events-none absolute inset-0 size-7 justify-center rounded-full p-1 px-1! opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100"
-            aria-label={`Disconnect ${displayIntegrationName(connection.accountLabel)}`}
-            data-testid={`integration-disconnect-${connection.id}`}
+            variant="subtle"
+            className="size-7 justify-center rounded-[8px] border p-1 px-1!"
+            style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
+            aria-label={`Add another ${service.name} account`}
+            data-testid={`integration-connect-${service.id}`}
             disabled={disabled}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDisconnect(connection);
-            }}
+            onClick={onConnect}
           >
-            <span className="sr-only">Disconnect</span>
-            <X size={16} />
+            <Plus size={16} aria-hidden="true" />
           </Button>
         </div>
       ) : (

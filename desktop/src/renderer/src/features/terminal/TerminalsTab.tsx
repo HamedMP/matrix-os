@@ -62,7 +62,7 @@ function shellStatusLabel(shell: ShellSessionSummary): string {
 }
 
 function shellTitle(shell: ShellSessionSummary): string {
-  return shell.subtitle?.trim() || shell.lastAction?.trim() || shell.name;
+  return shell.subtitle?.trim() || shell.name;
 }
 
 function mostRecentShell(sessions: ShellSessionSummary[]): ShellSessionSummary | null {
@@ -428,6 +428,10 @@ export default function TerminalsTab({
             setRenameError(null);
           }}
           onCopyConnectCommand={(shell) => void copyAttachCommand(shell)}
+          onPin={(shell, pinned) => {
+            if (!api) return;
+            void useShellSessions.getState().patchUiState(api, shell.name, { pinned });
+          }}
           onDelete={setDeleteTarget}
         />
       </div>

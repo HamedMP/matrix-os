@@ -140,6 +140,9 @@ describe("WebDesktopSurface", () => {
     const desktop = screen.getByRole("navigation", { name: "Desktop apps" });
     expect(Array.from(desktop.querySelectorAll("button")).map((button) => button.getAttribute("aria-label")))
       .toEqual(["Chat", "Terminal", "Files", "Editor", "VS Code", "Settings", "Plugins", "Browser", "Notes", "Whiteboard"]);
+    const vscodeIcon = screen.getByRole("button", { name: "VS Code" }).querySelector<HTMLElement>("[data-desktop-app-icon]");
+    expect(vscodeIcon?.style.background).toBe("rgb(255, 254, 252)");
+    expect(vscodeIcon?.querySelector("img")?.getAttribute("src")).toBe("/vscode.png");
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
     expect(onOpenSettings).toHaveBeenCalledWith("integrations");

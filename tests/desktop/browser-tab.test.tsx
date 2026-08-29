@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BrowserTab from "@desktop/renderer/src/features/browser/BrowserTab";
 import { invoke } from "@desktop/renderer/src/lib/operator";
@@ -18,6 +18,7 @@ vi.mock("@desktop/renderer/src/features/embeds/EmbedHost", () => ({
 
 describe("BrowserTab", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.mocked(invoke).mockReset();
     mocks.embedRender.mockReset();
   });
@@ -61,5 +62,49 @@ describe("BrowserTab", () => {
       "browser:https://www.google.com/search?q=Matrix+OS+docs",
     );
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("opens, switches, and closes multiple browser tabs", () => {
+    render(<BrowserTab active />);
+
+    const tablist = screen.getByRole("tablist", { name: "Browser tabs" });
+    expect(within(tablist).getAllByRole("tab")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "New browser tab" }));
+    expect(within(tablist).getAllByRole("tab")).toHaveLength(2);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Browser address" }), {
+      target: { value: "https://example.com/docs" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    expect(screen.getByTestId("embed").textContent).toBe("browser:https://example.com/docs");
+
+    fireEvent.click(within(tablist).getAllByRole("tab")[0]!);
+    expect(screen.queryByTestId("embed")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close browser tab 2" }));
+    expect(within(tablist).getAllByRole("tab")).toHaveLength(1);
+  });
+
+  it("restores the previous tabs and active URL after remount", () => {
+    const first = render(<BrowserTab active />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Browser address" }), {
+      target: { value: "https://example.com/previous" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    first.unmount();
+
+    render(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("https://example.com/previous");
+    expect(screen.getByTestId("embed").textContent).toBe("browser:https://example.com/previous");
+  });
+
+  it("offers browser session settings and explains password-vault safety", () => {
+    render(<BrowserTab active />);
+    fireEvent.click(screen.getByRole("button", { name: "Browser settings" }));
+
+    const settings = screen.getByRole("region", { name: "Browser settings" });
+    expect((within(settings).getByRole("checkbox", { name: "Restore previous tabs" }) as HTMLInputElement).checked).toBe(true);
+    expect(within(settings).getByText("Cookies and sign-ins persist in the browser profile.")).toBeTruthy();
+    expect(within(settings).getByText(/Password saving requires an OS-encrypted browser vault/)).toBeTruthy();
   });
 });

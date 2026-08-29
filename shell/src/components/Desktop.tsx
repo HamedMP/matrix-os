@@ -1691,10 +1691,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             onRemoveFromCanvas={removeFromCanvas}
             onCreateApp={() => {
               focusOrOpen("Chat", "__chat__");
-              chat?.submitMessage("Create a new Matrix app", undefined, {
-                displayText: "Create a new app",
-                promptText: "Use the Matrix app builder agent and app-generation guidance. Ask me what app I want to create, then help me build it.",
-              });
+              chat?.requestComposerDraft("/matrix-app-builder ");
             }}
             onAddToDesktop={addDesktopIcon}
           />

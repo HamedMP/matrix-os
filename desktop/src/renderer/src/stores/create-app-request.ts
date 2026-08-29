@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-const CREATE_APP_PROMPT = "Build a new Matrix app. Use the Matrix builder agent and ~/agents/knowledge/app-generation.md. Ask me what I want to create before you start building.";
+const CREATE_APP_PROMPT = "/matrix-app-builder ";
 
 interface CreateAppRequestState {
   request: { id: number; prompt: string } | null;

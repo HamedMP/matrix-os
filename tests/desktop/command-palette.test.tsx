@@ -142,8 +142,42 @@ describe("CommandPalette", () => {
   it("focuses the search input after the native dialog opens", async () => {
     render(<CommandPalette />);
 
-    const input = screen.getByPlaceholderText("Search tasks, sessions, actions…");
+    const input = screen.getByPlaceholderText("Type a command or search…");
     await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(input.className).toContain("focus-visible:shadow-none");
+  });
+
+  it("provides the categorized command-center design without losing command behavior", async () => {
+    useBoard.setState({
+      activeProjectSlug: null,
+      projects: [{ slug: "matrix-os", name: "Matrix OS" }],
+      cardsByProject: {},
+    });
+
+    render(<CommandPalette />);
+
+    expect(screen.getByText("⌘K")).not.toBeNull();
+    const input = screen.getByPlaceholderText("Type a command or search…");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "All",
+      "Projects",
+      "Actions",
+      "Settings",
+    ]);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
+    expect(screen.getByText("Matrix OS")).not.toBeNull();
+    expect(screen.queryByText("Open Terminal")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
+    const terminalItem = screen.getByText("Open Terminal").closest("[cmdk-item]");
+    expect(terminalItem?.hasAttribute("data-instant-list-hover")).toBe(true);
+    expect(screen.queryByText("Matrix OS")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByText("Open settings")).not.toBeNull();
+    expect(screen.queryByText("Open Terminal")).toBeNull();
   });
 
   it("forces an app catalog retry after a previous palette load failed", async () => {

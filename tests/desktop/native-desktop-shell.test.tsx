@@ -152,6 +152,9 @@ describe("native desktop shell", () => {
   it("opens the background menu from an empty desktop right-click", async () => {
     render(<NativeDesktopShell overlayOpen={false} />);
 
+    const iconLayer = screen.getByRole("navigation", { name: "Desktop apps" });
+    expect(iconLayer.className).toContain("pointer-events-none");
+    expect(screen.getByRole("button", { name: "Chat" }).className).toContain("pointer-events-auto");
     fireEvent.contextMenu(screen.getByTestId("native-desktop-workspace"));
 
     expect(await screen.findByText("Change background…")).toBeTruthy();

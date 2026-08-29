@@ -1,5 +1,6 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, Clipboard, Edit3, MoreHorizontal, SquareTerminal, Trash2, X } from "@renderer/lib/hugeicons";
+import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PinIcon, PinOffIcon, SquareTerminal, Trash2, X } from "@renderer/lib/hugeicons";
+import { useState } from "react";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
@@ -14,16 +15,21 @@ import {
   type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
-
-function isActive(shell: ShellSessionSummary): boolean {
-  return shell.status === "active" || shell.visualStatus === "running";
-}
+import { DesktopTerminalAgentLogo } from "./DesktopTerminalAgentLogo";
 
 function agentMetadata(shell: ShellSessionSummary): string | null {
   if (!shell.agent) return null;
-  return [terminalAgentLabel(shell.agent), shell.model, shell.strength, shell.lastAction ?? shell.subtitle]
+  return [terminalAgentLabel(shell.agent), shell.model, shell.strength]
     .filter(Boolean)
     .join(" · ");
+}
+
+function displayCwd(cwd: string): string {
+  return cwd === "~" ? cwd : `~/${cwd}`;
+}
+
+function sessionTitle(shell: ShellSessionSummary): string {
+  return shell.subtitle?.trim() || shell.name;
 }
 
 export function TerminalSessionSidebar({
@@ -45,6 +51,7 @@ export function TerminalSessionSidebar({
   onCommitRename,
   onCancelRename,
   onCopyConnectCommand,
+  onPin,
   onDelete,
 }: {
   sessions: ShellSessionSummary[];
@@ -65,8 +72,10 @@ export function TerminalSessionSidebar({
   onCommitRename: () => void;
   onCancelRename: () => void;
   onCopyConnectCommand: (session: ShellSessionSummary) => void;
+  onPin: (session: ShellSessionSummary, pinned: boolean) => void;
   onDelete: (session: ShellSessionSummary) => void;
 }) {
+  const [actionsName, setActionsName] = useState<string | null>(null);
   return (
     <OSWindowSafeView area="sidebar" data-terminal-session-sidebar className="flex h-full min-h-0 w-full flex-col">
       <aside className="flex h-full min-h-0 w-full flex-col">
@@ -86,9 +95,10 @@ export function TerminalSessionSidebar({
           />
         </div>
         <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto pb-4">
-          {sessions.map((session) => {
+          {[...sessions].sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))).map((session) => {
             const selected = selectedName === session.name;
             const metadata = agentMetadata(session);
+            const title = sessionTitle(session);
             const renaming = renamingName === session.name;
             return (
               <li key={session.name} className="group/session relative shrink-0 border-b" style={{ borderColor: "var(--border-subtle)" }}>
@@ -123,39 +133,73 @@ export function TerminalSessionSidebar({
                       type="button"
                       aria-label={`Open ${session.name}`}
                       aria-current={selected || undefined}
-                      className="flex min-h-16 w-full min-w-0 items-start gap-2 px-4 py-3 pr-10 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                      className="flex min-h-16 w-full min-w-0 items-start px-4 py-3 pr-10 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
                       style={{ background: selected ? "var(--bg-hover)" : "transparent" }}
                       onClick={() => onSelect(session)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setActionsName(session.name);
+                      }}
                     >
-                      <span
-                        data-terminal-session-status={isActive(session) ? "active" : "inactive"}
-                        className="mt-1.5 size-2.5 shrink-0 rounded-full"
-                        style={{ background: isActive(session) ? "var(--success)" : "var(--text-tertiary)" }}
-                      />
                       <span className="min-w-0 flex-1">
                         <span className="flex min-w-0 items-center justify-between gap-2">
-                          <span className="truncate text-sm leading-5" style={{ color: "var(--text-primary)" }}>{session.name}</span>
-                          <span className="shrink-0 text-[10px]" style={{ color: "var(--text-tertiary)" }}>{relativeSessionActivity(session.updatedAt)}</span>
+                          <span
+                            data-testid={`terminal-session-title-${session.name}`}
+                            className="truncate text-sm leading-5"
+                            style={{ color: "var(--text-primary)" }}
+                            onDoubleClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              onRename(session);
+                            }}
+                          >
+                            {title}
+                          </span>
+                          <span className="flex shrink-0 items-center gap-1 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+                            {session.pinned ? <PinIcon size={11} aria-label="Pinned" /> : null}
+                            {relativeSessionActivity(session.updatedAt)}
+                          </span>
                         </span>
-                        {metadata ? <span className="mt-0.5 block truncate text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>{metadata}</span> : null}
+                        {session.cwd || (metadata && session.agent) ? (
+                          <span
+                            data-testid={`terminal-session-agent-metadata-${session.name}`}
+                            className="mt-0.5 flex min-w-0 items-center justify-between gap-2 text-[10px] leading-4"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            <span
+                              data-testid={`terminal-session-path-${session.name}`}
+                              className="flex min-w-0 items-center gap-1.5"
+                            >
+                              {session.cwd ? <Folder size={13} className="shrink-0" aria-hidden="true" /> : null}
+                              {session.cwd ? <span className="min-w-0 truncate font-mono">{displayCwd(session.cwd)}</span> : null}
+                            </span>
+                            {session.agent ? (
+                              <span
+                                data-testid={`terminal-session-agent-${session.name}`}
+                                className="flex min-w-0 shrink-0 items-center gap-1.5"
+                              >
+                                <DesktopTerminalAgentLogo
+                                  agent={session.agent}
+                                  compact
+                                  testIdPrefix="desktop-terminal-session-agent-logo"
+                                />
+                                {metadata ? <span className="max-w-28 truncate">{metadata}</span> : null}
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                     <SessionActions
                       session={session}
                       disabled={disabled}
+                      open={actionsName === session.name}
+                      onOpenChange={(open) => setActionsName(open ? session.name : null)}
                       onRename={() => onRename(session)}
                       onCopy={() => onCopyConnectCommand(session)}
+                      onPin={() => onPin(session, !session.pinned)}
                       onDelete={() => onDelete(session)}
                     />
-                    <button
-                      type="button"
-                      aria-label={`Delete ${session.name}`}
-                      disabled={disabled}
-                      className="absolute right-9 top-3 z-10 flex size-7 items-center justify-center rounded-md bg-[var(--bg-surface)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--danger)] focus-visible:opacity-100 group-hover/session:opacity-100"
-                      onClick={() => onDelete(session)}
-                    >
-                      <Trash2 size={13} aria-hidden="true" />
-                    </button>
                   </>
                 )}
               </li>
@@ -167,15 +211,18 @@ export function TerminalSessionSidebar({
   );
 }
 
-function SessionActions({ session, disabled, onRename, onCopy, onDelete }: {
+function SessionActions({ session, disabled, open, onOpenChange, onRename, onCopy, onPin, onDelete }: {
   session: ShellSessionSummary;
   disabled: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onRename: () => void;
   onCopy: () => void;
+  onPin: () => void;
   onDelete: () => void;
 }) {
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root open={open} onOpenChange={onOpenChange}>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
@@ -196,6 +243,11 @@ function SessionActions({ session, disabled, onRename, onCopy, onDelete }: {
         >
           <SessionAction icon={<Edit3 size={13} />} label="Rename" onSelect={onRename} />
           <SessionAction icon={<Clipboard size={13} />} label="Copy connect command" onSelect={onCopy} />
+          <SessionAction
+            icon={session.pinned ? <PinOffIcon size={13} /> : <PinIcon size={13} />}
+            label={session.pinned ? "Unpin" : "Pin"}
+            onSelect={onPin}
+          />
           <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
           <SessionAction icon={<Trash2 size={13} />} label="Delete" danger onSelect={onDelete} />
         </DropdownMenu.Content>

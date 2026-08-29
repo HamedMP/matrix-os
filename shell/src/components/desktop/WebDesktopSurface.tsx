@@ -71,7 +71,7 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
     return { color: "#4D7FA8", iconColor: "white", icon: FilePenLine };
   }
   if (app.path === "__vscode__") {
-    return { color: "#007ACC", iconColor: "white", icon: Code2 };
+    return { color: "#FFFEFC", iconColor: "#007ACC", icon: Code2 };
   }
   if (app.path === "__plugins__" || name === "plugins") {
     return { color: "#7C6DB4", iconColor: "white", icon: Blocks };
@@ -101,7 +101,7 @@ function DesktopAppIcon({ app, className = "" }: { app: AppEntry; className?: st
       className={`flex items-center justify-center overflow-hidden border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)] ${className}`}
       style={{ background: appearance.color, color: appearance.iconColor }}
     >
-      {app.iconUrl && !isCanonicalDesktopApp ? (
+      {app.iconUrl && (!isCanonicalDesktopApp || app.path === "__vscode__") ? (
         // Gateway-owned app icons can change at runtime and are already
         // versioned by ETag, so Next/Image cannot statically optimize them.
         // eslint-disable-next-line @next/next/no-img-element

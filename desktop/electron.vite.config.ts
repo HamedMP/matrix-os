@@ -44,6 +44,9 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react(), tailwindcss()],
+    // Reuse the web terminal's canonical agent logos so Desktop and web never
+    // drift to different provider artwork.
+    publicDir: resolve(__dirname, "../shell/public"),
     server: {
       host: "127.0.0.1",
       port: 5173,

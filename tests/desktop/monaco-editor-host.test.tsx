@@ -43,7 +43,7 @@ describe("MonacoEditorHost", () => {
 
     const editor = await screen.findByRole("textbox", { name: "Edit projects/app/src/main.ts" });
     expect(api.getText).toHaveBeenCalledWith(
-      "/files/projects/app/src/main.ts",
+      "/api/files/blob?path=projects%2Fapp%2Fsrc%2Fmain.ts",
       { maxBytes: MAX_MONACO_FILE_BYTES },
     );
     fireEvent.change(editor, { target: { value: "export const value = 2;\n" } });
@@ -51,7 +51,7 @@ describe("MonacoEditorHost", () => {
     fireEvent.keyDown(window, { key: "s", metaKey: true });
 
     await waitFor(() => expect(api.putText).toHaveBeenCalledWith(
-      "/files/projects/app/src/main.ts",
+      "/api/files/blob?path=projects%2Fapp%2Fsrc%2Fmain.ts&force=true",
       "export const value = 2;\n",
     ));
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);

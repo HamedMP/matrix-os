@@ -40,7 +40,7 @@ export default function DesktopIconGrid({
     <nav
       ref={layerRef}
       aria-label="Desktop apps"
-      className="absolute inset-0"
+      className="pointer-events-none absolute inset-0"
       style={{ zIndex: DESKTOP_Z_INDEX.nativeDesktopIcons }}
     >
       {placements.map((placement) => {
@@ -53,7 +53,7 @@ export default function DesktopIconGrid({
             type="button"
             aria-label={destination.name}
             data-selected={selected || undefined}
-            className="group absolute flex w-[76px] touch-none flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] data-[selected]:bg-[var(--bg-selected)]"
+            className="pointer-events-auto group absolute flex w-[76px] touch-none flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] data-[selected]:bg-[var(--bg-selected)]"
             style={{ left: placement.x, top: placement.y }}
             onClick={() => setSelectedId(destination.id)}
             onDoubleClick={destination.open}
@@ -120,7 +120,7 @@ export default function DesktopIconGrid({
         <div
           role="menu"
           data-launchpad-interactive
-          className="fixed min-w-48 rounded-xl border p-1 shadow-[var(--shadow-3)]"
+          className="pointer-events-auto fixed min-w-48 rounded-xl border p-1 shadow-[var(--shadow-3)]"
           style={{ left: menu.x, top: menu.y, zIndex: DESKTOP_Z_INDEX.nativeDesktopLaunchpad, background: "var(--bg-surface)" }}
         >
           <button
