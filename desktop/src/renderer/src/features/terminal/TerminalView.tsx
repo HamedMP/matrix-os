@@ -1,5 +1,8 @@
 import { Terminal } from "@xterm/xterm";
-import { classifyTerminalClipboardShortcut } from "@matrix-os/contracts";
+import {
+  classifyTerminalClipboardShortcut,
+  classifyTerminalPointerEvent,
+} from "@matrix-os/contracts";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -89,7 +92,10 @@ export default function TerminalView({
   const [leaseRevoked, setLeaseRevoked] = useState(false);
   const [leaseAttempt, setLeaseAttempt] = useState(0);
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
-  const closeTerminalContextMenu = useCallback(() => setTerminalContextMenu(null), []);
+  const closeTerminalContextMenu = useCallback(() => {
+    setTerminalContextMenu(null);
+    termRef.current?.focus();
+  }, []);
   const [pasteError, setPasteError] = useState<string | null>(null);
 
   if (stateSessionName !== sessionName) {
@@ -115,6 +121,7 @@ export default function TerminalView({
       fontFamily: buildTerminalFontStack("JetBrains Mono", undefined),
       lineHeight: 1.25,
       scrollback: 5000,
+      rightClickSelectsWord: false,
       theme,
       linkHandler: {
         activate: activateDesktopTerminalLink,
@@ -177,10 +184,22 @@ export default function TerminalView({
       event.stopPropagation();
       if (event.button === 0) openDesktopTerminalLink(link);
     };
+    const onTerminalPointer = (event: MouseEvent) => {
+      const decision = classifyTerminalPointerEvent({
+        type: event.type as "mousedown" | "mousemove" | "mouseup",
+        button: event.button,
+        buttons: event.buttons,
+        hasSelection: terminal.hasSelection(),
+      });
+      if (decision !== "shield-selection") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
     const onTerminalContextMenu = (event: MouseEvent) => {
       const link = linkAtPointer(event);
       event.preventDefault();
       event.stopPropagation();
+      event.stopImmediatePropagation();
       setTerminalContextMenu({
         x: event.clientX,
         y: event.clientY,
@@ -188,8 +207,11 @@ export default function TerminalView({
         selection: terminal.getSelection(),
       });
     };
+    host.addEventListener("mousedown", onTerminalPointer, true);
+    host.addEventListener("mousemove", onTerminalPointer, true);
+    host.addEventListener("mouseup", onTerminalPointer, true);
     host.addEventListener("mouseup", onLinkMouseUp, true);
-    host.addEventListener("contextmenu", onTerminalContextMenu);
+    host.addEventListener("contextmenu", onTerminalContextMenu, true);
     try {
       terminal.loadAddon(new WebglAddon());
     } catch (err: unknown) {
@@ -214,10 +236,13 @@ export default function TerminalView({
     observer.observe(host);
 
     return () => {
-      closeTerminalContextMenu();
+      setTerminalContextMenu(null);
       hoveredLinkRef.current = null;
+      host.removeEventListener("mousedown", onTerminalPointer, true);
+      host.removeEventListener("mousemove", onTerminalPointer, true);
+      host.removeEventListener("mouseup", onTerminalPointer, true);
       host.removeEventListener("mouseup", onLinkMouseUp, true);
-      host.removeEventListener("contextmenu", onTerminalContextMenu);
+      host.removeEventListener("contextmenu", onTerminalContextMenu, true);
       linkProviderDisposable.dispose();
       observer.disconnect();
       if (rafId !== null) {
@@ -234,7 +259,7 @@ export default function TerminalView({
       terminal.dispose();
       termRef.current = null;
     };
-  }, [closeTerminalContextMenu, sessionName]);
+  }, [sessionName]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -252,7 +277,7 @@ export default function TerminalView({
     if (!active) {
       terminal.blur();
       hoveredLinkRef.current = null;
-      closeTerminalContextMenu();
+      setTerminalContextMenu(null);
       return;
     }
     if (endedRef.current) return;
@@ -297,7 +322,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, closeTerminalContextMenu, leaseAttempt]);
+  }, [sessionName, chatId, active, leaseAttempt]);
 
   useEffect(() => {
     const host = hostRef.current;

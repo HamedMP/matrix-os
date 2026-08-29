@@ -10,7 +10,10 @@ import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
-import { classifyTerminalClipboardShortcut } from "@matrix-os/contracts";
+import {
+  classifyTerminalClipboardShortcut,
+  classifyTerminalPointerEvent,
+} from "@matrix-os/contracts";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -211,6 +214,22 @@ export function TerminalPane({
   }, []);
   const closeLinkContextMenu = useCallback(() => {
     setLinkContextMenu(null);
+    (termRef.current as Terminal | null)?.focus();
+  }, []);
+  const copyTerminalSelection = useCallback((selection: string) => {
+    if (!navigator.clipboard?.writeText) {
+      setPasteError("Clipboard copy failed. Try again.");
+      return;
+    }
+    void navigator.clipboard.writeText(selection).catch((error: unknown) => {
+      console.warn("[terminal] clipboard copy unavailable", {
+        category: error instanceof DOMException ? error.name : "clipboard-error",
+      });
+      setPasteError("Clipboard copy failed. Try again.");
+    });
+  }, []);
+  const selectAllTerminal = useCallback(() => {
+    (termRef.current as Terminal | null)?.selectAll();
   }, []);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
@@ -324,6 +343,20 @@ export function TerminalPane({
     const handler = (e: MouseEvent) => {
       // Skip synthetic events we already corrected to avoid infinite loops.
       if ((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected) return;
+      const terminal = termRef.current as Terminal | null;
+      if (terminal) {
+        const decision = classifyTerminalPointerEvent({
+          type: e.type as "mousedown" | "mousemove" | "mouseup",
+          button: e.button,
+          buttons: e.buttons,
+          hasSelection: terminal.hasSelection(),
+        });
+        if (decision === "shield-selection") {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+      }
       const visualScale = canvasZoomRef.current * softGridScaleRef.current;
       if (visualScale === 1) return;
       correct(e);
@@ -845,6 +878,7 @@ export function TerminalPane({
           scrollSensitivity: TERMINAL_SCROLL_SENSITIVITY,
           fastScrollSensitivity: TERMINAL_FAST_SCROLL_SENSITIVITY,
           scrollOnUserInput: true,
+          rightClickSelectsWord: false,
           allowProposedApi: true,
           logger: createXtermLogger(),
           fontSize: terminalFontSize,
@@ -1519,14 +1553,18 @@ export function TerminalPane({
 
       const onLinkContextMenu = (event: MouseEvent) => {
         const cell = terminalCellFromPointer(term, event.clientX, event.clientY);
-        if (!cell) return;
-        const link = findTerminalLinkAtCell(term, cell);
-        if (!link) return;
+        const link = cell ? findTerminalLinkAtCell(term, cell) : null;
         event.preventDefault();
         event.stopPropagation();
-        setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
+        event.stopImmediatePropagation();
+        setLinkContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          link,
+          selection: term.getSelection(),
+        });
       };
-      container.addEventListener("contextmenu", onLinkContextMenu);
+      container.addEventListener("contextmenu", onLinkContextMenu, true);
 
       onDataDisposableRef.current?.dispose();
       onDataDisposableRef.current = term.onData((data: string) => {
@@ -1672,7 +1710,7 @@ export function TerminalPane({
 
       return () => {
         document.removeEventListener("visibilitychange", onVisibilityChange);
-        container.removeEventListener("contextmenu", onLinkContextMenu);
+        container.removeEventListener("contextmenu", onLinkContextMenu, true);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
         if (softGridLayoutFrame !== null) {
@@ -1961,6 +1999,8 @@ export function TerminalPane({
         onClose={closeLinkContextMenu}
         onOpen={openTerminalLink}
         onCopy={copyTerminalLink}
+        onCopySelection={copyTerminalSelection}
+        onSelectAll={selectAllTerminal}
       />
       {/* Reading the imperative xterm search-addon handle during render is
           intentional: the addon is created inside the init effect and is stable
