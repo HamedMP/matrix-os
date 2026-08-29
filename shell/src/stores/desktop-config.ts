@@ -52,6 +52,7 @@ let desktopIconHydrationRevision = 0;
 let confirmedDesktopIcons: DesktopIconPlacement[] | undefined;
 let hasConfirmedDesktopIcons = false;
 let unconfirmedDesktopHydrationRevision: number | null = null;
+let deferredDesktopHydration: { icons: DesktopIconPlacement[] | undefined } | null = null;
 
 export function captureWebDesktopIconsHydrationRevision(): number {
   return desktopIconHydrationRevision;
@@ -64,6 +65,7 @@ export function resetWebDesktopIconsRuntime(): void {
   confirmedDesktopIcons = undefined;
   hasConfirmedDesktopIcons = false;
   unconfirmedDesktopHydrationRevision = null;
+  deferredDesktopHydration = null;
   useDesktopConfigStore.setState({ desktopIcons: undefined });
 }
 
@@ -112,12 +114,22 @@ function applyDesktopIconMutation(
       confirmedDesktopIcons = copyDesktopIcons(snapshot);
       hasConfirmedDesktopIcons = true;
       unconfirmedDesktopHydrationRevision = null;
+      deferredDesktopHydration = null;
     }
   }).catch((error: unknown) => {
     console.warn("[desktop-config] desktopIcons persist failed:", error instanceof Error ? error.name : typeof error);
     if (epoch === desktopIconStateEpoch && sequence === desktopIconMutationSequence) {
       if (hasConfirmedDesktopIcons) {
         set({ desktopIcons: copyDesktopIcons(confirmedDesktopIcons) });
+      } else if (deferredDesktopHydration !== null) {
+        const desktopIcons = copyDesktopIcons(deferredDesktopHydration.icons);
+        confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
+        hasConfirmedDesktopIcons = true;
+        unconfirmedDesktopHydrationRevision = null;
+        deferredDesktopHydration = null;
+        desktopIconHydrationRevision += 1;
+        set({ desktopIcons });
+        restoredPendingHydration = true;
       } else {
         set({ desktopIcons: rollbackIcons });
         if (unconfirmedDesktopHydrationRevision !== null) {
@@ -146,13 +158,19 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   },
   setDesktopIcons: (desktopIcons, expectedHydrationRevision) => {
     if (expectedHydrationRevision !== undefined
-      && expectedHydrationRevision !== desktopIconHydrationRevision) return;
+      && expectedHydrationRevision !== desktopIconHydrationRevision) {
+      if (!hasConfirmedDesktopIcons && unconfirmedDesktopHydrationRevision === expectedHydrationRevision) {
+        deferredDesktopHydration = { icons: copyDesktopIcons(desktopIcons) };
+      }
+      return;
+    }
     desktopIconMutationSequence += 1;
     desktopIconStateEpoch += 1;
     desktopIconHydrationRevision += 1;
     confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
     hasConfirmedDesktopIcons = true;
     unconfirmedDesktopHydrationRevision = null;
+    deferredDesktopHydration = null;
     set({ desktopIcons: copyDesktopIcons(desktopIcons) });
   },
   moveDesktopIcon: (path, x, y) => {

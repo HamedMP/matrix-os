@@ -81,6 +81,7 @@ let hydrationRevision = 0;
 let confirmedIcons: DesktopIconPlacement[] = [];
 let hasConfirmedIcons = false;
 let unconfirmedHydrationRevision: number | null = null;
+let deferredHydrationIcons: DesktopIconPlacement[] | null = null;
 
 function copyIcons(icons: readonly DesktopIconPlacement[]): DesktopIconPlacement[] {
   return icons.map((icon) => ({ ...icon }));
@@ -94,6 +95,7 @@ export function resetDesktopIconsRuntime(): void {
   confirmedIcons = [];
   hasConfirmedIcons = false;
   unconfirmedHydrationRevision = null;
+  deferredHydrationIcons = null;
   useDesktopIcons.setState({ icons: [], loaded: false });
 }
 
@@ -138,12 +140,22 @@ async function applyOptimisticMutation(
       confirmedIcons = copyIcons(snapshot);
       hasConfirmedIcons = true;
       unconfirmedHydrationRevision = null;
+      deferredHydrationIcons = null;
     }
   } catch (error: unknown) {
     console.warn("[desktop-icons] persist failed:", error instanceof Error ? error.name : typeof error);
     if (epoch === stateEpoch && sequence === mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
       if (hasConfirmedIcons) {
         set({ icons: copyIcons(confirmedIcons), loaded: true });
+      } else if (deferredHydrationIcons !== null) {
+        const icons = copyIcons(deferredHydrationIcons);
+        confirmedIcons = copyIcons(icons);
+        hasConfirmedIcons = true;
+        unconfirmedHydrationRevision = null;
+        deferredHydrationIcons = null;
+        hydrationRevision += 1;
+        set({ icons, loaded: true });
+        restoredPendingHydration = true;
       } else {
         set({ icons: rollbackIcons, loaded: false });
         if (unconfirmedHydrationRevision !== null) {
@@ -166,14 +178,20 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     set({ icons: copyIcons(defaults) });
   },
   hydrate: (value, defaults, expectedRevision) => {
-    if (expectedRevision !== hydrationRevision) return;
     const icons = parseDesktopIcons(value) ?? copyIcons(defaults);
+    if (expectedRevision !== hydrationRevision) {
+      if (!hasConfirmedIcons && unconfirmedHydrationRevision === expectedRevision) {
+        deferredHydrationIcons = copyIcons(icons);
+      }
+      return;
+    }
     mutationSequence += 1;
     stateEpoch += 1;
     hydrationRevision += 1;
     confirmedIcons = copyIcons(icons);
     hasConfirmedIcons = true;
     unconfirmedHydrationRevision = null;
+    deferredHydrationIcons = null;
     set({ icons, loaded: true });
   },
   load: async (api, defaults) => {
@@ -183,28 +201,40 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     try {
       const config = await api.get<{ desktopIcons?: unknown }>("/api/settings/desktop");
       if (sequence !== loadSequence
-        || expectedHydrationRevision !== hydrationRevision
         || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       const icons = parseDesktopIcons(config.desktopIcons) ?? copyIcons(defaults);
+      if (expectedHydrationRevision !== hydrationRevision) {
+        if (!hasConfirmedIcons && unconfirmedHydrationRevision === expectedHydrationRevision) {
+          deferredHydrationIcons = copyIcons(icons);
+        }
+        return;
+      }
       mutationSequence += 1;
       stateEpoch += 1;
       hydrationRevision += 1;
       confirmedIcons = copyIcons(icons);
       hasConfirmedIcons = true;
       unconfirmedHydrationRevision = null;
+      deferredHydrationIcons = null;
       set({ icons, loaded: true });
     } catch (error: unknown) {
       if (sequence !== loadSequence
-        || expectedHydrationRevision !== hydrationRevision
         || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.warn("[desktop-icons] load failed:", error instanceof Error ? error.name : typeof error);
       const icons = copyIcons(defaults);
+      if (expectedHydrationRevision !== hydrationRevision) {
+        if (!hasConfirmedIcons && unconfirmedHydrationRevision === expectedHydrationRevision) {
+          deferredHydrationIcons = copyIcons(icons);
+        }
+        return;
+      }
       mutationSequence += 1;
       stateEpoch += 1;
       hydrationRevision += 1;
       confirmedIcons = copyIcons(icons);
       hasConfirmedIcons = true;
       unconfirmedHydrationRevision = null;
+      deferredHydrationIcons = null;
       set({ icons, loaded: true });
     }
   },

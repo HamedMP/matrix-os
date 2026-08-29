@@ -72,6 +72,25 @@ describe("native Desktop icon layout", () => {
     expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
   });
 
+  it("replays settings hydration that resolves before an initial icon write fails", async () => {
+    let rejectPatch: ((error: Error) => void) | undefined;
+    const api = {
+      patch: vi.fn(() => new Promise<never>((_resolve, reject) => {
+        rejectPatch = reject;
+      })),
+    };
+    const pendingHydrationRevision = captureDesktopIconsHydrationRevision();
+    useDesktopIcons.getState().prime([CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    useDesktopIcons.getState().hydrate([FILES], [CHAT, FILES], pendingHydrationRevision);
+    rejectPatch?.(new Error("offline"));
+    await move;
+
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
+  });
+
   it("keeps a later successful queued layout when an earlier write fails", async () => {
     const api = {
       get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),

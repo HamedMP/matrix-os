@@ -317,6 +317,28 @@ describe("Desktop config", () => {
     expect(useDesktopConfigStore.getState().desktopIcons).toEqual(serverIcons);
   });
 
+  it("replays web settings hydration that resolves before an initial icon write fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let resolvePatch: ((response: { ok: false; status: number }) => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve) => {
+      resolvePatch = resolve;
+    })));
+    const defaults = [
+      { path: "__chat__", x: 20, y: 58 },
+      { path: "__terminal__", x: 108, y: 58 },
+    ];
+    const serverIcons = [defaults[1]];
+    const pendingHydrationRevision = captureWebDesktopIconsHydrationRevision();
+    useDesktopConfigStore.getState().primeDesktopIcons(defaults);
+
+    useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    useDesktopConfigStore.getState().setDesktopIcons(serverIcons, pendingHydrationRevision);
+    resolvePatch?.({ ok: false, status: 503 });
+
+    await waitFor(() => expect(useDesktopConfigStore.getState().desktopIcons).toEqual(serverIcons));
+  });
+
   it("ignores stale web Desktop icon hydration after a successful PATCH", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
     const confirmed = [
