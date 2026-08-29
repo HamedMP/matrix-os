@@ -156,6 +156,56 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|inline_diff|args_text|TOKEN/);
   });
 
+  it("distinguishes successful and failed official Hermes terminal results", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_success",
+      name: "terminal",
+      args: { command: "printf OM134_OK" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_success",
+      name: "terminal",
+      args: { command: "printf OM134_OK" },
+      result: { output: "OM134_OK", exit_code: 0, error: null },
+      summary: "OM134_OK",
+    });
+    gateway.event("tool.start", {
+      tool_id: "tool_failure",
+      name: "terminal",
+      args: { command: "exit 7" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_failure",
+      name: "terminal",
+      args: { command: "exit 7" },
+      result: { output: "", exit_code: 7, error: null },
+      summary: "Exited with code 7",
+    });
+    gateway.event("message.complete", { text: "", status: "error" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "agent.activity", activityId: "tool_success", kind: "command", label: "Run command", status: "running" },
+      { type: "agent.activity", activityId: "tool_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed." },
+      { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "running" },
+      { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "failed", summary: "Command failed." },
+      {
+        type: "run.completed",
+        outcome: "failed",
+        error: {
+          code: "run_failed",
+          safeMessage: "A command failed during this Run.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        },
+      },
+    ]);
+  });
+
   it("normalizes official Hermes status, reasoning, delegation, search, and request frames", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
