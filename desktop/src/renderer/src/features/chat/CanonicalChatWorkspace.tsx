@@ -11,6 +11,7 @@ import type {
 import { MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -246,6 +247,15 @@ export function CanonicalChatWorkspace({
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
     await navigator.clipboard.writeText(text);
   }, []);
+  const retryTurn = controller.retryTurn;
+  const performTranscriptAction = useCallback(async (action: ConversationActionPresentation) => {
+    if (action.kind !== "retry") throw new Error("UnsupportedConversationAction");
+    const admitted = await retryTurn(action.turnId);
+    if (!admitted) throw new Error("RetryUnavailable");
+  }, [retryTurn]);
+  const canPerformTranscriptAction = useCallback((action: ConversationActionPresentation) => (
+    action.kind === "retry"
+  ), []);
   const activeProjectSlug = projects.find((project) => (
     project.id === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
     || project.slug === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
@@ -522,7 +532,11 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail && globalView === "conversation" ? (
           <>
-            <ConversationTranscript turns={transcript} callbacks={{ copyText }} />
+            <ConversationTranscript turns={transcript} callbacks={{
+              copyText,
+              performAction: performTranscriptAction,
+              canPerformAction: canPerformTranscriptAction,
+            }} />
             <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
