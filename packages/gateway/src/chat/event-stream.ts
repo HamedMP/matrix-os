@@ -296,7 +296,13 @@ export function createCanonicalChatEventStream(options: {
         let value: unknown;
         try {
           value = JSON.parse(raw);
-        } catch {
+        } catch (error: unknown) {
+          if (!(error instanceof SyntaxError)) {
+            console.warn(
+              "[chat/event-stream] JSON parse failed:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+          }
           sendOrEvict(current, { type: "chat.stream.error", error: invalidFrameError() });
           return;
         }
