@@ -131,6 +131,13 @@ async function scanRuntimeApps(
     const apps = await listUniqueAppManifests(appsDir);
     for (const app of apps) {
       if (seen.has(app.slug)) continue;
+      // Existing homes may still contain the retired bundled Notes app. Keep
+      // its files and owner data intact, but do not expose it in launchers now
+      // that Notes is a native desktop surface.
+      if (isRetiredBundledNotesApp(app.slug, app.relativePath, app.manifest)) {
+        seen.add(app.slug);
+        continue;
+      }
       // Hidden apps are parked: not listed in the launcher and not registered.
       if (app.manifest.hidden) {
         seen.add(app.slug);
@@ -164,6 +171,19 @@ async function scanRuntimeApps(
   } catch (err: unknown) {
     logAppScanSkip(".", err);
   }
+}
+
+function isRetiredBundledNotesApp(
+  slug: string,
+  relativePath: string,
+  manifest: AppManifest,
+): boolean {
+  return (
+    slug === "notes" &&
+    relativePath === "notes" &&
+    manifest.author === "system" &&
+    manifest.version === "3.0.0"
+  );
 }
 
 async function safeComputeRuntimeState(

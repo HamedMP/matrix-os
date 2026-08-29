@@ -18,22 +18,6 @@
     "featuredTagline": "Stay organized, get things done"
   },
   {
-    "id": "notes",
-    "name": "Notes",
-    "description": "Quick notes with auto-save",
-    "longDescription": "Lightweight note-taking with instant auto-save. Write markdown, organize with folders, and search across all notes. Your notes persist automatically.",
-    "category": "Productivity",
-    "author": "Matrix OS",
-    "source": "bundled",
-    "icon": "N",
-    "iconColor": "#f59e0b",
-    "rating": 4.3,
-    "ratingCount": 256,
-    "downloads": 9800,
-    "version": "1.0.0",
-    "tags": ["notes", "writing", "markdown"]
-  },
-  {
     "id": "expense-tracker",
     "name": "Expense Tracker",
     "description": "Track daily expenses and budgets",

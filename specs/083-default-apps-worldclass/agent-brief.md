@@ -41,7 +41,7 @@ home/apps/<slug>/
 ```
 
 Copy `index.html`, `vite.config.ts`, `tsconfig.json`, `package.json` shape from an existing
-real app: **`home/apps/pomodoro/`** (timer + DB) or **`home/apps/notes/`** (richer). Match their
+real app: **`home/apps/pomodoro/`** (timer + DB) or **`home/apps/task-manager/`** (richer). Match their
 build config exactly. Use `lucide-react` for icons. React 19. No external CDNs.
 
 ## 2. Data — the MatrixOS DB bridge (canonical types)

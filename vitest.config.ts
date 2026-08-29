@@ -15,18 +15,6 @@ export default defineConfig({
         ) {
           return path.resolve(__dirname, "tests/shell/mocks/tldraw.tsx");
         }
-        if (
-          source === "@tiptap/react" &&
-          normalized.endsWith("/home/apps/notes/src/RichEditor.tsx")
-        ) {
-          return path.resolve(__dirname, "tests/default-apps/mocks/tiptap-react.ts");
-        }
-        if (
-          source === "@tiptap/starter-kit" &&
-          normalized.endsWith("/home/apps/notes/src/RichEditor.tsx")
-        ) {
-          return path.resolve(__dirname, "tests/default-apps/mocks/tiptap-starter-kit.ts");
-        }
         if (source !== "chess.js") return null;
         // Keep FakeChess scoped to the chess app integration test and the
         // component it renders so lower-level chess unit tests opt in explicitly.
