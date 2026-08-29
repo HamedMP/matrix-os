@@ -1263,6 +1263,33 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(startupEnable).toBeGreaterThan(mainLoop);
   });
 
+  it('migrates customer backups to the platform broker before removing legacy R2 credentials', () => {
+    const root = process.cwd();
+    const matrixctl = readFileSync(join(root, 'distro/customer-vps/host-bin/matrixctl'), 'utf8');
+    const broker = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-r2-broker.mjs'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const backupUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-db-backup.service'), 'utf8');
+
+    expect(matrixctl).toContain('MATRIX_R2_BROKER_HELPER');
+    expect(broker).toContain('/internal/containers/${encodeURIComponent(handle)}/sync/system');
+    expect(broker).toContain('authorization: `Bearer ${token}`');
+    expect(matrixctl).not.toContain('AWS_ACCESS_KEY_ID');
+    expect(matrixctl).not.toContain('AWS_SECRET_ACCESS_KEY');
+    expect(syncAgent).toContain('/opt/matrix/bin/matrixctl r2 broker-ready');
+    expect(syncAgent).toContain('sudo rm -f -- /opt/matrix/env/r2.env');
+    expect(syncAgent).toContain('reconcile_legacy_r2_credentials()');
+    const startupReconcile = syncAgent.indexOf('reconcile_legacy_r2_credentials ||');
+    const mainLoop = syncAgent.indexOf('while true; do', syncAgent.indexOf('# ── Main loop'));
+    expect(startupReconcile).toBeGreaterThan(syncAgent.indexOf('recover_interrupted_update'));
+    expect(startupReconcile).toBeLessThan(mainLoop);
+    expect(syncAgent).toContain('maybe_reconcile_legacy_r2_credentials()');
+    expect(syncAgent.indexOf('maybe_reconcile_legacy_r2_credentials ||', mainLoop)).toBeGreaterThan(mainLoop);
+    expect(syncAgent).toContain('MATRIX_LEGACY_R2_RETRY_INTERVAL_SECONDS:-300');
+    expect(syncAgent).toContain('curl --fail --silent --max-time 5 "$HEALTH_URL"');
+    expect(syncAgent).toContain('write_update_error "legacy_storage_credentials_remain"');
+    expect(backupUnit).not.toContain('EnvironmentFile=-/opt/matrix/env/r2.env');
+  });
+
   it('bounds the terminal user-manager reload before app replacement', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');

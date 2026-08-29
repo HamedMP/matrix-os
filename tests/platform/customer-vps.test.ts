@@ -1429,15 +1429,16 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).not.toContain('PIPEDREAM_CLIENT_SECRET');
   });
 
-  it('templates R2 credentials into provisioned customer hosts for backups', async () => {
+  it('never templates platform R2 credentials into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 
     await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
-    expect(createInput?.userData).toContain("AWS_ACCESS_KEY_ID='r2-access-key'");
-    expect(createInput?.userData).toContain("AWS_SECRET_ACCESS_KEY='r2-secret-key'");
-    expect(createInput?.userData).toContain("R2_ENDPOINT='https://r2.example'");
+    expect(createInput?.userData).not.toContain('AWS_ACCESS_KEY_ID');
+    expect(createInput?.userData).not.toContain('AWS_SECRET_ACCESS_KEY');
+    expect(createInput?.userData).not.toContain('R2_ENDPOINT');
+    expect(createInput?.userData).not.toContain('/opt/matrix/env/r2.env');
   });
 
   it('templates public PostHog telemetry into provisioned customer hosts', async () => {

@@ -35,6 +35,8 @@ readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
 readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
 readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
 readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
+readonly LEGACY_R2_ENV_FILE="/opt/matrix/env/r2.env"
+readonly LEGACY_R2_RETRY_INTERVAL_SECONDS="${MATRIX_LEGACY_R2_RETRY_INTERVAL_SECONDS:-300}"
 readonly TERMINAL_RUNTIME_ROOT="/opt/matrix/terminal-runtime"
 readonly TERMINAL_RUNTIME_GENERATION_FILE="TERMINAL_RUNTIME_GENERATION"
 readonly TERMINAL_RUNTIME_MAX_GENERATIONS="${MATRIX_TERMINAL_RUNTIME_MAX_GENERATIONS:-8}"
@@ -217,6 +219,82 @@ install_host_bin_payload() {
       return 1
     fi
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+}
+
+prepare_legacy_r2_migration() {
+  local extract_dir="$1" helper
+  if [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]; then
+    return 0
+  fi
+  if [ -L "$LEGACY_R2_ENV_FILE" ] || [ ! -f "$LEGACY_R2_ENV_FILE" ]; then
+    log "ERROR: legacy R2 credential path has an invalid file type"
+    return 1
+  fi
+  helper="$extract_dir/bin/matrix-r2-broker.mjs"
+  if [ ! -f "$helper" ] || [ -L "$helper" ] || [ ! -x /opt/matrix/runtime/node/bin/node ]; then
+    log "ERROR: storage broker migration payload is unavailable"
+    return 1
+  fi
+  if ! /opt/matrix/runtime/node/bin/node "$helper" probe; then
+    log "ERROR: storage broker is not ready; preserving legacy credentials"
+    return 1
+  fi
+}
+
+remove_legacy_r2_credentials() {
+  if [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]; then
+    return 0
+  fi
+  if [ -L "$LEGACY_R2_ENV_FILE" ] || [ ! -f "$LEGACY_R2_ENV_FILE" ]; then
+    log "ERROR: refusing to remove invalid legacy R2 credential path"
+    return 1
+  fi
+  /opt/matrix/bin/matrixctl r2 broker-ready || return 1
+  sudo rm -f -- /opt/matrix/env/r2.env || return 1
+  [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]
+}
+
+clear_legacy_r2_update_error() {
+  [ -f "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 0
+  if python3 - "$UPDATE_ERROR_MARKER" <<'PY'
+import json
+import os
+import stat
+import sys
+
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+try:
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 65536:
+        raise ValueError("invalid update error marker")
+    payload = os.read(fd, 65537)
+    if len(payload) > 65536:
+        raise ValueError("oversized update error marker")
+    if json.loads(payload).get("code") != "legacy_storage_credentials_remain":
+        raise SystemExit(1)
+finally:
+    os.close(fd)
+PY
+  then
+    rm -f -- "$UPDATE_ERROR_MARKER"
+  fi
+}
+
+reconcile_legacy_r2_credentials() {
+  if [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]; then
+    clear_legacy_r2_update_error
+    return 0
+  fi
+  if ! curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+    write_update_error "legacy_storage_credentials_remain" "Legacy storage credentials remain until the installed release and tenant-isolated broker are healthy." "$(current_version)" || true
+    return 1
+  fi
+  if ! remove_legacy_r2_credentials; then
+    write_update_error "legacy_storage_credentials_remain" "Legacy storage credentials remain until the tenant-isolated broker is available." "$(current_version)" || true
+    return 1
+  fi
+  clear_legacy_r2_update_error
+  log "Removed legacy R2 credentials after broker and release health verification"
 }
 
 install_terminal_runtime_bootstrap_helpers() {
@@ -771,6 +849,11 @@ apply_update() {
     write_update_error "bundle_layout_invalid" "The release bundle layout was invalid." "$version"
     rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
+  if ! prepare_legacy_r2_migration "$extract_dir"; then
+    write_update_error "storage_broker_unavailable" "The tenant-isolated backup broker was unavailable; the update was not applied." "$version"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   if ! install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"; then
     log "ERROR: Terminal runtime helper bootstrap failed; aborting before app replacement"
     write_update_error "terminal_runtime_helper_install_failed" "The terminal runtime verification helpers could not be installed." "$version"
@@ -900,6 +983,12 @@ apply_update() {
   if [ "$healthy" = true ]; then
     if commit_release_metadata; then
       log "Updated release metadata"
+      if ! remove_legacy_r2_credentials; then
+        log "ERROR: legacy R2 credentials could not be removed after the broker migration"
+        write_update_error "legacy_storage_credentials_remain" "The update completed, but legacy storage credentials still require removal." "$version"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
       log "Health check passed — update to $version complete"
       rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
     else
@@ -1121,6 +1210,7 @@ perform_update_repair() {
 }
 
 last_staging_cleanup=0
+last_legacy_r2_reconcile=0
 
 maybe_clean_staging() {
   local now
@@ -1130,6 +1220,19 @@ maybe_clean_staging() {
   fi
   last_staging_cleanup="$now"
   clean_staging || true
+}
+
+maybe_reconcile_legacy_r2_credentials() {
+  if [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]; then
+    return 0
+  fi
+  local now
+  now="$(date +%s)"
+  if [ $((now - last_legacy_r2_reconcile)) -lt "$LEGACY_R2_RETRY_INTERVAL_SECONDS" ]; then
+    return 0
+  fi
+  last_legacy_r2_reconcile="$now"
+  reconcile_legacy_r2_credentials
 }
 
 if [ -x "$BOOTSTRAP_ATTESTATION_WRITER" ]; then
@@ -1153,6 +1256,8 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+last_legacy_r2_reconcile="$(date +%s)"
+reconcile_legacy_r2_credentials || log "WARN: legacy R2 credential removal deferred; will retry"
 last_staging_cleanup="$(date +%s)"
 
 while true; do
@@ -1212,6 +1317,7 @@ while true; do
   # Poll for new version
   check_for_update || true
   maybe_clean_staging
+  maybe_reconcile_legacy_r2_credentials || log "WARN: legacy R2 credential removal retry failed"
 
   # Sleep in 6s increments (50x = 5 min) so we react quickly to triggers
   for _ in $(seq 1 50); do
