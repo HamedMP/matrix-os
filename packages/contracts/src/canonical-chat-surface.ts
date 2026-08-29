@@ -12,6 +12,7 @@ import {
   CanonicalChatTurnSchema,
   CanonicalChatTurnIdSchema,
   CanonicalProviderInstanceIdSchema,
+  CanonicalProviderModelIdSchema,
 } from "#canonical-chat";
 import { CanonicalProviderDriverKindSchema } from "#canonical-chat-provider";
 import {
@@ -49,7 +50,7 @@ const CanonicalChatInspectorRunSchema = z.object({
   ]),
   driverKind: CanonicalProviderDriverKindSchema,
   instanceId: CanonicalProviderInstanceIdSchema,
-  model: canonicalReferenceId(160),
+  model: CanonicalProviderModelIdSchema,
   startedAt: IsoTimestampSchema.optional(),
   completedAt: IsoTimestampSchema.optional(),
 }).strict();

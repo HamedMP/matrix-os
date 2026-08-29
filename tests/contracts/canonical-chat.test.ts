@@ -318,6 +318,22 @@ describe("canonical Chat contracts", () => {
       model: "gpt-5.6-sol",
       options: [{ id: "effort", value: "low" }, { id: "effort", value: "high" }],
     }).success).toBe(false);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "hermes_default",
+      model: "openai-codex:anthropic/claude-opus-4.6",
+    }).success).toBe(true);
+    for (const model of [
+      "/absolute/model",
+      "C:/absolute/model",
+      "provider:model/../secret",
+      "provider:model//secret",
+      "provider:model/",
+    ]) {
+      expect(CanonicalChatModelSelectionSchema.safeParse({
+        instanceId: "hermes_default",
+        model,
+      }).success).toBe(false);
+    }
     expect(CanonicalProviderCatalogSchema.safeParse({
       revision: "catalog_2",
       drivers: [driver],

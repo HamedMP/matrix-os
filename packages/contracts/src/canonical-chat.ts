@@ -29,6 +29,16 @@ export const CanonicalChatRunIdSchema = prefixedId("run_");
 export const CanonicalChatMessageIdSchema = prefixedId("msg_");
 export const CanonicalChatRequestIdSchema = prefixedId("req_");
 export const CanonicalProviderInstanceIdSchema = canonicalReferenceId(128);
+export const CanonicalProviderModelIdSchema = z.string()
+  .min(1)
+  .max(241)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,240}$/, "Invalid Provider model identifier")
+  .refine((value) => !value.includes("..") && !value.includes("//"), {
+    message: "Provider model identifier cannot contain traversal",
+  })
+  .refine((value) => !/^[A-Za-z]:\//.test(value) && !value.endsWith("/"), {
+    message: "Provider model identifier cannot be a path",
+  });
 export const CanonicalChatAttachmentKindSchema = z.enum(["file", "image", "diff", "structured_ref"]);
 const CanonicalChatRelativePathSchema = z.string()
   .min(1)
@@ -55,7 +65,7 @@ export const CanonicalChatAttentionSchema = z.enum([
 
 export const CanonicalChatModelSelectionSchema = z.object({
   instanceId: CanonicalProviderInstanceIdSchema,
-  model: canonicalReferenceId(160),
+  model: CanonicalProviderModelIdSchema,
   options: z.array(z.object({
     id: canonicalReferenceId(80),
     value: z.union([canonicalReferenceId(160), z.boolean()]),

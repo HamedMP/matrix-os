@@ -4,6 +4,7 @@ import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatResourceKindSchema,
   CanonicalProviderInstanceIdSchema,
+  CanonicalProviderModelIdSchema,
 } from "#canonical-chat";
 import {
   CanonicalProviderDriverKindSchema,
@@ -34,7 +35,7 @@ export const CanonicalModelCapabilitySchema = z.enum([
 ]);
 
 export const CanonicalModelDescriptorSchema = z.object({
-  id: canonicalReferenceId(160),
+  id: CanonicalProviderModelIdSchema,
   displayName: canonicalSafeLabel(120, 480),
   description: canonicalSafeLabel(280, 1_120).optional(),
   availability: z.enum(["available", "auth_required", "unavailable"]),
