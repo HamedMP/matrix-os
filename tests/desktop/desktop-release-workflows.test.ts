@@ -101,6 +101,16 @@ describe("desktop release workflows", () => {
     expect(linuxJob.indexOf(validationName)).toBeLessThan(linuxJob.indexOf("uses: actions/checkout@v6"));
   });
 
+  it("gives release renderer builds enough Node heap on every runner", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+
+    expect(
+      workflow.match(
+        /- name: Build desktop app\n\s+env:\n\s+NODE_OPTIONS: "--max-old-space-size=4096"\n\s+run: pnpm --filter desktop build/g,
+      ),
+    ).toHaveLength(2);
+  });
+
   it("keeps raw workspace TypeScript out of the packaged app archive", () => {
     const builder = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
 

@@ -121,6 +121,8 @@ jobs:
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
       - name: Build desktop app
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: pnpm --filter desktop build
 
       - name: Package desktop app
@@ -378,6 +380,8 @@ jobs:
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
       - name: Build desktop app
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: pnpm --filter desktop build
 
       - name: Package desktop app
