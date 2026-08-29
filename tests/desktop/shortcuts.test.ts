@@ -130,6 +130,21 @@ describe("handleCloseSelectedAppShortcut", () => {
     expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
     expect(useTabs.getState().activeTabId).toBeNull();
   });
+
+  it("does not activate a window fallback hidden by the tabs workspace", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: true });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useDesktopSurfaces.getState().maximizeToTab(terminalId);
+    useTabs.getState().focusTab(terminalId);
+
+    handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+
+    expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([filesId]);
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("window");
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
+    expect(useTabs.getState().activeTabId).toBeNull();
+  });
 });
 
 describe("top-level app tab shortcuts", () => {
@@ -280,6 +295,7 @@ describe("handleNewContextShortcut", () => {
 
     const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
     useDesktopSurfaces.getState().reconcileTabs([chatId, filesId], { width: 1280, height: 720 });
+    useDesktopSurfaces.getState().activateSurface(filesId);
     handleNewContextShortcut({ preventDefault: vi.fn() });
     expect(newChat).not.toHaveBeenCalled();
     expect(useUi.getState().createTaskOpen).toBe(true);

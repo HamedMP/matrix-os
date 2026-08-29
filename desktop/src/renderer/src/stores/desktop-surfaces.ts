@@ -43,6 +43,7 @@ export function isDesktopSurfaceVisible(
   const surface = state.surfaces[tabId];
   if (!surface || surface.mode === "closed" || surface.mode === "minimized") return false;
   if (state.desktopHiddenSurfaceIds.includes(tabId)) return false;
+  if (surface.mode === "window" && state.workspaceView !== "desktop") return false;
   if (surface.mode === "tab" && state.workspaceView !== "tabs") return false;
   return state.desktopTransition?.phase !== "hiding"
     || !state.desktopTransition.surfaceIds.includes(tabId);
