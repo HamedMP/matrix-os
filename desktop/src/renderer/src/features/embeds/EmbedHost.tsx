@@ -17,6 +17,7 @@ interface EmbedHostCommonProps {
 
 type EmbedHostProps = EmbedHostCommonProps & (
   | { kind: "hosted-shell" }
+  | { kind: "code-editor" }
   | { kind: "app"; slug: string; appIdentity?: string }
   | { kind: "browser"; url: string }
 );
@@ -86,7 +87,7 @@ export default function EmbedHost({
       height: Math.round(r.height),
     };
 
-    const openRequest = kind === "hosted-shell"
+    const openRequest = kind === "hosted-shell" || kind === "code-editor"
       ? { kind, bounds, active: activeRef.current }
       : kind === "browser"
         ? { kind, url: url!, bounds, active: activeRef.current }

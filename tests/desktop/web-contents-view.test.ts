@@ -49,6 +49,25 @@ beforeEach(() => {
 });
 
 describe("createWebContentsView", () => {
+  it("denies browser permissions for the trusted code editor surface", () => {
+    createWebContentsView({
+      window: {
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:code-editor",
+      allowedOrigins: ["https://code.matrix-os.com"],
+      denyPermissions: true,
+      onState: vi.fn(),
+    });
+
+    expect(electronMock.webContents.session.setPermissionCheckHandler).toHaveBeenCalledWith(
+      expect.any(Function),
+    );
+    expect(electronMock.webContents.session.setPermissionRequestHandler).toHaveBeenCalledWith(
+      expect.any(Function),
+    );
+  });
+
   it("installs the restricted bridge preload only for app views and unregisters it on close", () => {
     const register = vi.fn();
     const unregister = vi.fn();

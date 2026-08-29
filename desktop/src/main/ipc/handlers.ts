@@ -276,7 +276,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("embed:open", async (request, event) => {
     try {
       const bounds = toWebContentsViewBounds(request.bounds, event);
-      if (request.kind === "hosted-shell") {
+      if (request.kind === "hosted-shell" || request.kind === "code-editor") {
         return await ctx.embeds.open({ kind: request.kind, bounds, active: request.active });
       }
       if (request.kind === "browser") {

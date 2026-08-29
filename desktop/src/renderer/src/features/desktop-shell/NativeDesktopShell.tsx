@@ -5,6 +5,7 @@ import {
   type DesktopViewport,
 } from "../../stores/desktop-surfaces";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
+import { EDITOR_WORKSPACE_TAB_SPEC } from "../editor/desktop-editor-store";
 import { openChatIndex, openProjectsIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
 import { FIXED_DESKTOP_APPS, type DesktopAppId } from "./desktop-apps";
@@ -159,6 +160,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
+      editor: () => openRoot(() => openTab(EDITOR_WORKSPACE_TAB_SPEC)),
+      vscode: () => openRoot(() => openTab({ kind: "vscode", title: "VS Code", closable: false })),
       settings: () => openRoot(() => {
         useUi.getState().requestSettingsSection("account");
         openTab({ kind: "settings", title: "Settings" });

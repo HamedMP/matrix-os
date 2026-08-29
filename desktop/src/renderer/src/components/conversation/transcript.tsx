@@ -172,7 +172,7 @@ function ResponseMessage({
         <MessageContent>
           <Bubble variant="ghost">
             <BubbleContent className="max-w-[620px] overflow-visible">
-              <MessageResponse copyText={callbacks.copyText}>{visibleMarkdown}</MessageResponse>
+              <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (
@@ -223,7 +223,7 @@ function Notice({
               <div className="min-w-0">
                 <p className="font-medium leading-5">{notice.label}</p>
                 <div className="mt-0.5 leading-5" style={{ color: "var(--text-secondary)" }}>
-                  <MessageResponse copyText={callbacks.copyText}>{notice.markdown}</MessageResponse>
+                  <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile}>{notice.markdown}</MessageResponse>
                 </div>
               </div>
             </BubbleContent>

@@ -35,6 +35,92 @@ describe("EmbedService", () => {
     expect(reload).toHaveBeenCalledWith("embed-shell");
   });
 
+  it("opens VS Code only at the fixed authenticated Matrix code origin", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      runCodeEditorHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      manager: {
+        open: (
+          kind: string,
+          slug: string | null,
+          bounds: Bounds,
+          url: string,
+          options: unknown,
+        ) => string;
+      };
+    };
+    vi.spyOn(internals, "runCodeEditorHandoff").mockResolvedValue({ ok: true });
+    const open = vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+
+    const result = await service.open({ kind: "code-editor", bounds: BOUNDS });
+
+    expect(open).toHaveBeenCalledWith(
+      "code-editor",
+      null,
+      BOUNDS,
+      "https://code.matrix-os.com/",
+      expect.objectContaining({
+        id: result.embedId,
+        allowedOrigins: ["https://code.matrix-os.com"],
+      }),
+    );
+  });
+
+  it("does not attach a stale VS Code handoff after a runtime reset", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      runCodeEditorHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      manager: { open: (...args: unknown[]) => string };
+    };
+    let resolveHandoff!: (result: HandoffResult) => void;
+    vi.spyOn(internals, "runCodeEditorHandoff").mockImplementation(
+      () => new Promise((resolve) => { resolveHandoff = resolve; }),
+    );
+    const open = vi.spyOn(internals.manager, "open").mockReturnValue("code-1");
+
+    const opening = service.open({ kind: "code-editor", bounds: BOUNDS });
+    service.closeAll();
+    resolveHandoff({ ok: true });
+
+    await expect(opening).resolves.toMatchObject({ state: "failed" });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("caps pending VS Code handoffs", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      runCodeEditorHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+    };
+    vi.spyOn(internals, "runCodeEditorHandoff").mockImplementation(
+      () => new Promise(() => {}),
+    );
+
+    const openings = Array.from({ length: 13 }, () => (
+      service.open({ kind: "code-editor", bounds: BOUNDS })
+    ));
+
+    await expect(openings.at(-1)).resolves.toMatchObject({ state: "failed" });
+    expect(internals.runCodeEditorHandoff).toHaveBeenCalledTimes(12);
+    service.closeAll();
+  });
+
   it("tunnels runtime loopback pages through Matrix and closes the tunnel with the embed", async () => {
     const closeForward = vi.fn(async () => {});
     const startPortForward = vi.fn(async () => ({

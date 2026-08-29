@@ -16,6 +16,8 @@ export type TabKind =
   | "terminal"
   | "terminals"
   | "files"
+  | "editor"
+  | "vscode"
   | "apps"
   | "app"
   | "settings";

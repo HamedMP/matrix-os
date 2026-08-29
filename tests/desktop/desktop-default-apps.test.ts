@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { FIXED_DESKTOP_APPS } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
 
 describe("native desktop default apps", () => {
-  it("ships the eight canonical desktop destinations in product order", () => {
+  it("ships Chat first with the ten canonical desktop destinations in product order", () => {
     expect(FIXED_DESKTOP_APPS.map((app) => app.id)).toEqual([
       "work",
       "terminal",
       "files",
+      "editor",
+      "vscode",
       "settings",
       "plugins",
       "browser",
@@ -20,6 +22,14 @@ describe("native desktop default apps", () => {
   });
 
   it("deep-links first-party app and Settings destinations", () => {
+    expect(FIXED_DESKTOP_APPS.find((app) => app.id === "editor")).toMatchObject({
+      kind: "editor",
+      name: "Editor",
+    });
+    expect(FIXED_DESKTOP_APPS.find((app) => app.id === "vscode")).toMatchObject({
+      kind: "vscode",
+      name: "VS Code",
+    });
     expect(FIXED_DESKTOP_APPS.find((app) => app.id === "plugins")).toMatchObject({
       kind: "settings",
       settingsSection: "skills",

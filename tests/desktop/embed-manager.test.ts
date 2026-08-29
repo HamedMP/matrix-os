@@ -114,11 +114,16 @@ describe("EmbedManager", () => {
     ).toThrow(/exactly one allowed origin source/);
   });
 
-  it("names partitions persist:hosted-shell and persist:app-<slug>", () => {
+  it("names hosted, code editor, and app partitions deterministically", () => {
     const { manager, views } = makeManager();
     manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    manager.open("code-editor", null, BOUNDS, "https://gw.test/code");
     manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/");
-    expect(views.map((v) => v.partition)).toEqual(["persist:hosted-shell", "persist:app-notes"]);
+    expect(views.map((v) => v.partition)).toEqual([
+      "persist:hosted-shell",
+      "persist:code-editor",
+      "persist:app-notes",
+    ]);
   });
 
   it("uses the route slug for the partition while retaining a nested app identity", () => {

@@ -884,11 +884,13 @@ describe("IPC contract", () => {
     const bounds = { x: 0, y: 38, width: 800, height: 600 };
 
     expect(schema.safeParse({ kind: "hosted-shell", bounds }).success).toBe(true);
+    expect(schema.safeParse({ kind: "code-editor", bounds }).success).toBe(true);
     expect(schema.safeParse({ kind: "app", slug: "notes", bounds }).success).toBe(true);
     expect(schema.safeParse({ kind: "browser", url: "http://127.0.0.1:3000/", bounds }).success).toBe(true);
     expect(schema.safeParse({ kind: "app", bounds }).success).toBe(false);
     expect(schema.safeParse({ kind: "browser", bounds }).success).toBe(false);
     expect(schema.safeParse({ kind: "hosted-shell", url: "http://127.0.0.1:3000/", bounds }).success).toBe(false);
+    expect(schema.safeParse({ kind: "code-editor", url: "https://evil.test", bounds }).success).toBe(false);
     expect(schema.safeParse({ kind: "browser", slug: "notes", url: "http://127.0.0.1:3000/", bounds }).success).toBe(false);
   });
 

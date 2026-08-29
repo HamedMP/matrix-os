@@ -130,6 +130,8 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("button", { name: "Plugins" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Editor" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "VS Code" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Settings" })
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
       .toBe("var(--surface-neutral-emphasis, #6B7280)");
@@ -293,6 +295,19 @@ describe("native desktop shell", () => {
       expect.objectContaining({ kind: "app", slug: "notes", title: "Notes" }),
       expect.objectContaining({ kind: "app", slug: "whiteboard", title: "Whiteboard" }),
     ]));
+  });
+
+  it("launches the Monaco Editor and hosted VS Code as first-class windows", () => {
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Editor" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "VS Code" }));
+
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "editor", title: "Editor" }),
+      expect.objectContaining({ kind: "vscode", title: "VS Code" }),
+    ]));
+    expect(screen.getByRole("dialog", { name: "VS Code window" })).toBeTruthy();
   });
 
   it("normalizes restored legacy Chat, Projects, and Project tabs into one Work surface", () => {

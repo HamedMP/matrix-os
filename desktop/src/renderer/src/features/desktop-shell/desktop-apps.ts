@@ -1,6 +1,8 @@
 import {
   Blocks,
   BrushIcon,
+  Code2,
+  FilePenLine,
   FileText,
   FolderTree,
   Globe2,
@@ -15,6 +17,8 @@ export type DesktopAppId =
   | "work"
   | "terminal"
   | "files"
+  | "editor"
+  | "vscode"
   | "settings"
   | "plugins"
   | "browser"
@@ -55,6 +59,22 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     icon: FolderTree,
     name: "Files",
     color: "var(--surface-brand-emphasis, #748E59)",
+    iconColor: "white",
+  },
+  {
+    id: "editor",
+    kind: "editor",
+    icon: FilePenLine,
+    name: "Editor",
+    color: "#4D7FA8",
+    iconColor: "white",
+  },
+  {
+    id: "vscode",
+    kind: "vscode",
+    icon: Code2,
+    name: "VS Code",
+    color: "#007ACC",
     iconColor: "white",
   },
   {

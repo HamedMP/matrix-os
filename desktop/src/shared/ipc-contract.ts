@@ -311,6 +311,11 @@ export const INVOKE_CHANNELS = {
         active: z.boolean().optional(),
       }),
       z.strictObject({
+        kind: z.literal("code-editor"),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
         kind: z.literal("app"),
         slug: z.string().min(1).max(128),
         appIdentity: z.string().min(1).max(256)

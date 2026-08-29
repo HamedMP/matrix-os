@@ -1,5 +1,7 @@
 import {
   FileCode2,
+  FilePenLine,
+  Code2,
   FolderKanban,
   FolderTree,
   Globe2,
@@ -23,6 +25,8 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   terminal: SquareTerminal,
   terminals: SquareTerminal,
   files: FolderTree,
+  editor: FilePenLine,
+  vscode: Code2,
   apps: LayoutGrid,
   app: LayoutGrid,
   settings: Settings,

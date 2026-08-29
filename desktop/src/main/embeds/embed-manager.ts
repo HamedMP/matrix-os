@@ -22,7 +22,7 @@ export interface EmbedViewLike {
   destroy(): void;
 }
 
-export type EmbedKind = "hosted-shell" | "app" | "browser";
+export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "browser";
 
 type EmbedOriginOptions =
   | { allowedOrigins: string[]; getAllowedOrigins?: never }
@@ -115,6 +115,8 @@ export class EmbedManager {
     const partition =
       kind === "hosted-shell"
         ? "persist:hosted-shell"
+        : kind === "code-editor"
+          ? "persist:code-editor"
         : kind === "browser"
           ? `runtime-browser-${id}`
           : this.appPartition(options?.routeSlug ?? slug);

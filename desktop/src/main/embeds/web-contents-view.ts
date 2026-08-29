@@ -14,6 +14,7 @@ export function createWebContentsView(options: {
   allowedOrigins: string[];
   resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
   onState: (state: "loading" | "ready" | "failed") => void;
+  denyPermissions?: boolean;
   appBridge?: {
     appIdentity: string;
     routeSlug: string;
@@ -36,7 +37,7 @@ export function createWebContentsView(options: {
   });
 
   const contents = view.webContents;
-  if (options.appBridge) {
+  if (options.appBridge || options.denyPermissions) {
     // App views receive only the explicit typed bridge. Browser capabilities
     // that could escape that permission model are denied by default.
     contents.session.setPermissionCheckHandler(() => false);

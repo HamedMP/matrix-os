@@ -211,6 +211,23 @@ describe("EmbedHost", () => {
     }));
   });
 
+  it("opens VS Code through the fixed trusted code-editor request", async () => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "code-1", state: "loading" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="code-editor" />);
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", {
+      kind: "code-editor",
+      bounds: { x: 10, y: 20, width: 300, height: 200 },
+      active: true,
+    }));
+  });
+
   it("reopens the same runtime Browser URL after an unexpected tunnel failure", async () => {
     let nextEmbedId = 0;
     let emitState: ((payload: { embedId: string; state: "failed" }) => void) | null = null;

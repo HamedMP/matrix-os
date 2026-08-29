@@ -73,4 +73,5 @@ export interface ConversationTurnPresentation {
 
 export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
+  openFile?: (path: string) => boolean;
 }
