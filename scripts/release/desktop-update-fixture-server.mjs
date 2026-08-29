@@ -4,10 +4,8 @@ import { createServer } from "node:http";
 import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const PLATFORMS = new Set(["mac", "windows", "linux"]);
-
 export function resolveFixtureManifestName(platform, channel) {
-  if (!PLATFORMS.has(platform)) {
+  if (!["mac", "windows", "linux"].includes(platform)) {
     throw new Error("--platform must be one of mac, windows, or linux");
   }
   if (!channel || !["stable", "beta", "canary", "dev"].includes(channel)) {

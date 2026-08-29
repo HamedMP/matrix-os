@@ -145,7 +145,7 @@ describe("desktop release workflows", () => {
     expect(macJob.indexOf(validationName)).toBeLessThan(macJob.indexOf("uses: actions/checkout@v6"));
     expect(linuxJob.indexOf(validationName)).toBeLessThan(linuxJob.indexOf("uses: actions/checkout@v6"));
     expect(windowsJob.indexOf(validationName)).toBeLessThan(
-      windowsJob.indexOf("uses: actions/checkout@v6"),
+      windowsJob.indexOf("uses: actions/checkout@"),
     );
   });
 
@@ -163,7 +163,17 @@ describe("desktop release workflows", () => {
     expect(windowsJob).toContain("id-token: write");
     expect(windowsJob).toContain("name: Validate Windows signing configuration");
     expect(windowsJob).toContain("MATRIX_DESKTOP_WINDOWS_SIGNING_MODE");
-    expect(windowsJob).toContain("uses: azure/login@v2");
+    for (const pinnedAction of [
+      "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+      "pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86",
+      "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+      "azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6",
+      "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+    ]) {
+      expect(windowsJob).toContain(`uses: ${pinnedAction}`);
+    }
+    expect(windowsJob).not.toMatch(/^\s+-?\s*uses:\s+[^\s]+@v\d+\s*$/m);
     expect(windowsJob).toContain("secrets.MATRIX_DESKTOP_WINDOWS_AZURE_CLIENT_ID");
     expect(windowsJob).toContain("secrets.MATRIX_DESKTOP_WINDOWS_AZURE_TENANT_ID");
     expect(windowsJob).toContain("secrets.MATRIX_DESKTOP_WINDOWS_AZURE_SUBSCRIPTION_ID");

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveFixtureManifestName } from "../../scripts/release/desktop-update-fixture-server.mjs";
@@ -34,5 +35,15 @@ describe("desktop update fixture server", () => {
   ])("resolves stable and prerelease manifest names for %s", (platform, stable, beta) => {
     expect(resolveFixtureManifestName(platform, "stable")).toBe(stable);
     expect(resolveFixtureManifestName(platform, "beta")).toBe(beta);
+  });
+
+  it("uses a fixed literal allowlist without introducing an unbounded collection", () => {
+    const source = readFileSync(
+      join(root, "scripts/release/desktop-update-fixture-server.mjs"),
+      "utf8",
+    );
+
+    expect(source).not.toContain("new Set(");
+    expect(source).toContain('["mac", "windows", "linux"].includes(platform)');
   });
 });

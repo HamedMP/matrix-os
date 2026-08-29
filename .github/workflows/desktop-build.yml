@@ -578,16 +578,16 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: pnpm
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -611,7 +611,7 @@ jobs:
 
       - name: Authenticate to Azure for Artifact Signing
         if: ${{ env.MATRIX_DESKTOP_WINDOWS_SIGNING_MODE == 'azure' }}
-        uses: azure/login@v2
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           client-id: ${{ secrets.MATRIX_DESKTOP_WINDOWS_AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.MATRIX_DESKTOP_WINDOWS_AZURE_TENANT_ID }}
@@ -787,7 +787,7 @@ jobs:
           }
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ inputs.artifact_prefix }}-windows-x64
           path: |
