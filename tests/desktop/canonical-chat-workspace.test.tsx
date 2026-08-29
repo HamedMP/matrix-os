@@ -174,7 +174,7 @@ describe("CanonicalChatWorkspace", () => {
     });
     expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
-    expect(onActiveChatChanged).not.toHaveBeenCalledWith(snapshot.chat.id, expect.anything());
+    expect(onActiveChatChanged).not.toHaveBeenCalled();
   });
 
   it.each([
