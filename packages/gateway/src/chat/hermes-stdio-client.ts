@@ -18,7 +18,7 @@ const HermesGatewayEventSchema = z.object({
   method: z.literal("event"),
   params: z.object({
     type: z.string().min(1).max(128),
-    session_id: z.string().min(1).max(512).optional(),
+    session_id: z.union([z.literal(""), z.string().min(1).max(512)]).optional(),
     payload: z.unknown().optional(),
   }).passthrough(),
 }).strict();

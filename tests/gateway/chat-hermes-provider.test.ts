@@ -136,6 +136,27 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("ignores global Hermes advisory events with an empty session id", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: gateway.spawnFn,
+    });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("sessions.changed", {}, "");
+    gateway.event("message.delta", { text: "still streaming" });
+    gateway.event("message.complete", { text: "still streaming", status: "complete" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "still streaming" },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
   it("starts the official Hermes stdio gateway with the selected provider, model, and root", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({
