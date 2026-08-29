@@ -191,8 +191,13 @@ function hermesStatusActivity(kind: string): Pick<HermesActivity, "activityId" |
 function hermesToolFailed(result: unknown): boolean {
   if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
   const value = result as Record<string, unknown>;
-  if (value.success === false || value.ok === false || value.error !== undefined) return true;
-  return ["error", "failed", "failure"].includes(String(value.status ?? "").toLowerCase());
+  if (value.success === false || value.ok === false) return true;
+  if (["error", "failed", "failure"].includes(String(value.status ?? "").toLowerCase())) return true;
+  if (typeof value.exit_code === "number" && value.exit_code !== 0) return true;
+  return value.error !== undefined
+    && value.error !== null
+    && value.error !== false
+    && value.error !== "";
 }
 
 function deferred<T>() {
