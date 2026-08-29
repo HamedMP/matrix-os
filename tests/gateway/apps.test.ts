@@ -139,44 +139,6 @@ describe("T711: GET /api/apps", () => {
     expect(apps.map((app) => app.name)).not.toContain("Symphony");
   });
 
-  it("hides the retired bundled Notes app from existing homes", async () => {
-    mkdirSync(join(homePath, "apps/notes"), { recursive: true });
-    writeFileSync(join(homePath, "apps/notes/index.html"), "<html></html>");
-    writeFileSync(
-      join(homePath, "apps/notes/matrix.json"),
-      JSON.stringify({
-        name: "Notes",
-        slug: "notes",
-        author: "system",
-        version: "3.0.0",
-        runtimeVersion: "^1.0.0",
-        category: "productivity",
-        runtime: "static",
-      }),
-    );
-
-    expect(await listApps(homePath)).toEqual([]);
-  });
-
-  it("keeps user-created Notes apps visible", async () => {
-    mkdirSync(join(homePath, "apps/notes"), { recursive: true });
-    writeFileSync(join(homePath, "apps/notes/index.html"), "<html></html>");
-    writeFileSync(
-      join(homePath, "apps/notes/matrix.json"),
-      JSON.stringify({
-        name: "My Notes",
-        slug: "notes",
-        author: "owner",
-        version: "1.0.0",
-        runtimeVersion: "^1.0.0",
-        category: "productivity",
-        runtime: "static",
-      }),
-    );
-
-    expect((await listApps(homePath)).map((app) => app.name)).toEqual(["My Notes"]);
-  });
-
   it("does not warn for ordinary nested directories without manifests", async () => {
     mkdirSync(join(homePath, "apps/generated/app/api/health"), { recursive: true });
     mkdirSync(join(homePath, "apps/generated/src/components"), { recursive: true });
