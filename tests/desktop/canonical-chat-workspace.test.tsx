@@ -644,6 +644,58 @@ describe("CanonicalChatWorkspace", () => {
     expect(routeClient.getDetail).toHaveBeenCalledTimes(1);
   });
 
+  it("does not report stale detail after switching between Chats in the same Project", async () => {
+    const firstChatId = snapshot.chat.id;
+    const secondChatId = "chat_same_project_second";
+    const secondRecord = {
+      ...record,
+      chat: { ...record.chat, id: secondChatId, title: "Second project chat" },
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [record, secondRecord] });
+    vi.mocked(routeClient.getDetail).mockImplementation(async (chatId) => ({
+      record: chatId === secondChatId ? secondRecord : record,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    }));
+    const reportedIds: string[] = [];
+
+    function Harness() {
+      const [activeChatId, setActiveChatId] = useState(firstChatId);
+      return (
+        <>
+          <button type="button" onClick={() => setActiveChatId(secondChatId)}>Switch project chat</button>
+          <CanonicalChatWorkspace
+            client={routeClient}
+            projectId="matrix-os"
+            projectLabel="Matrix OS"
+            initialChatId={activeChatId}
+            active
+            externalNavigation
+            catalog={providerCatalog}
+            onActiveChatChanged={(chatId) => {
+              if (!chatId) return;
+              reportedIds.push(chatId);
+              setActiveChatId(chatId);
+            }}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Switch project chat" }));
+
+    await waitFor(() => expect(routeClient.getDetail).toHaveBeenCalledWith(secondChatId, { limit: 200 }));
+    await waitFor(() => expect(reportedIds).toContain(secondChatId));
+    expect(reportedIds).not.toContain(firstChatId);
+    expect(vi.mocked(routeClient.getDetail).mock.calls.at(-1)?.[0]).toBe(secondChatId);
+  });
+
   it("does not let stale Global Chat detail overwrite a requested New Chat draft", async () => {
     const routeClient = client();
     const reportedIds: Array<string | null> = [];

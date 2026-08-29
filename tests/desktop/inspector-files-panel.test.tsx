@@ -179,6 +179,32 @@ describe("InspectorFilesPanel", () => {
     }));
   });
 
+  it("finishes loading the Project file tree under React StrictMode", async () => {
+    vi.spyOn(window.operator, "invoke").mockResolvedValue({
+      directory: { kind: "directory" },
+      entries: {
+        items: [{ path: "README.md", kind: "file", sizeBytes: 8 }],
+        hasMore: false,
+        limit: 100,
+      },
+    });
+
+    render(
+      <React.StrictMode>
+        <Tooltip.Provider>
+          <InspectorFilesPanel
+            scope={{ kind: "project", chatId: "chat_project", projectId: "matrix-os", label: "Matrix OS" }}
+            browserOnly
+            forceList
+          />
+        </Tooltip.Provider>
+      </React.StrictMode>,
+    );
+
+    expect(await screen.findByRole("button", { name: "Open file README.md" })).toBeTruthy();
+    expect(screen.queryByText("Loading files…")).toBeNull();
+  });
+
   it("expands Project folders inline without replacing the root listing", async () => {
     const onOpenFile = vi.fn();
     const invoke = vi.spyOn(window.operator, "invoke").mockImplementation(async (channel, request) => {

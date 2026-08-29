@@ -84,20 +84,21 @@ function ExpandableFileTree({
 }) {
   const [expandedPaths, setExpandedPaths] = useState<string[]>([]);
   const [directories, setDirectories] = useState<Record<string, InspectorTreeDirectory>>({});
-  const mounted = useRef(true);
+  const lifecycleGeneration = useRef(0);
 
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => () => { lifecycleGeneration.current += 1; }, []);
 
   const ensureDirectory = useCallback((path: string) => {
+    const generation = lifecycleGeneration.current;
     setDirectories((current) => {
       if (current[path] || Object.keys(current).length >= MAX_EXPANDED_FILE_DIRECTORIES) return current;
       return { ...current, [path]: { status: "loading", entries: [] } };
     });
     void loadDirectory(path).then((entries) => {
-      if (!mounted.current) return;
+      if (generation !== lifecycleGeneration.current) return;
       setDirectories((current) => ({ ...current, [path]: { status: "ready", entries } }));
     }).catch(() => {
-      if (!mounted.current) return;
+      if (generation !== lifecycleGeneration.current) return;
       setDirectories((current) => ({ ...current, [path]: { status: "error", entries: [] } }));
     });
   }, [loadDirectory]);
