@@ -451,6 +451,8 @@ Read these on demand, not every session:
 - Owner-controlled filesystem under Matrix home for paste assets; no new database persistence (106-terminal-rich-paste)
 - TypeScript 5.5+ strict ES modules on Node.js 24+; POSIX shell/cloud-init for host sanitation and activation; GitHub Actions YAML + Hono, Kysely, PostgreSQL, Zod 4 via `zod/v4`, native `fetch`, Vitest, existing host-bundle and customer-VPS services, Hetzner Cloud API v1 (109-golden-vps-snapshots)
 - Platform PostgreSQL via Kysely for authoritative lifecycle, jobs, leases, evidence, and exact-resource cleanup; Hetzner snapshot storage for disk images; R2 remains the immutable host-bundle object store (109-golden-vps-snapshots)
+- TypeScript 5.9 strict ES modules; React 19; Node.js 24+ build/runtime tooling + `@xterm/xterm` 6.0.0, Electron 41, Next.js 16 shell, existing Matrix terminal link/context-menu helpers, `@matrix-os/contracts` (118-fix-terminal-clipboard)
+- N/A; selection, context-menu snapshots, and clipboard operation state are transient and must not be persisted (118-fix-terminal-clipboard)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -507,5 +509,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/116-prebilling-provisioning/plan.md`.
+Current Spec Kit plan: `specs/118-fix-terminal-clipboard/plan.md`.
 <!-- SPECKIT END -->
