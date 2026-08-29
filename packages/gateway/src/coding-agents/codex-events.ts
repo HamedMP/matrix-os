@@ -8,6 +8,7 @@ import {
   UserInputQuestionSchema,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
+import { safePublishedText } from "../chat/safe-activity-projection.js";
 
 const MAX_CODEX_JSON_LINE_BYTES = 64 * 1024;
 const MAX_ASSISTANT_DELTA_CHARS = 4_000;
@@ -127,7 +128,10 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.started"),
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
-    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan"]),
+    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning"]),
+    preview: SafeDisplayStringSchema.optional(),
+    previewKind: z.enum(["command", "path", "text"]).optional(),
+    detail: SafeDisplayStringSchema.optional(),
   }).strict(),
   z.object({
     type: z.literal("matrix.codex.tool.output"),
@@ -239,6 +243,8 @@ function appServerRecordEvents(
       toolCallId: record.toolCallId,
       displayName: record.displayName,
       kind: record.kind,
+      ...(record.preview ? { preview: record.preview, previewKind: record.previewKind } : {}),
+      ...(record.detail ? { detail: record.detail } : {}),
     })];
   }
   if (record.type === "matrix.codex.tool.output") {
@@ -261,12 +267,14 @@ function toolStarted(
   itemId: string,
   displayName: string,
   kind: string,
+  details: { preview?: string; previewKind?: "command" | "path" | "text"; detail?: string } = {},
 ): AgentThreadEvent {
   return event(context, {
     type: "tool.started",
     toolCallId: itemId,
     displayName,
     kind,
+    ...details,
   });
 }
 
@@ -307,11 +315,17 @@ function startedItemEvents(
   context: CodexEventContext,
   item: z.infer<typeof CodexItemSchema>,
 ): AgentThreadEvent[] {
-  if (item.type === "command_execution") return [toolStarted(context, item.id, "Run command", "command")];
+  if (item.type === "command_execution") {
+    const preview = safePublishedText(item.command, { homePath: "/home/matrix/home", maxChars: 1_000 });
+    return [toolStarted(context, item.id, "Run command", "command", preview
+      ? { preview, previewKind: "command" }
+      : {})];
+  }
   if (item.type === "mcp_tool_call") return [toolStarted(context, item.id, "Use tool", "tool")];
   if (item.type === "collab_tool_call") return [toolStarted(context, item.id, "Coordinate agents", "agent")];
   if (item.type === "web_search") return [toolStarted(context, item.id, "Search web", "search")];
   if (item.type === "todo_list") return [toolStarted(context, item.id, "Update plan", "plan")];
+  if (item.type === "reasoning") return [toolStarted(context, item.id, "Thinking", "reasoning")];
   return [];
 }
 
@@ -338,7 +352,9 @@ function completedItemEvents(
       .map((change) => safeFileChangeEvent(context, change))
       .filter((change): change is AgentThreadEvent => change !== null);
     return [
-      toolStarted(context, item.id, "Update files", "file_change"),
+      toolStarted(context, item.id, "Update files", "file_change", changes[0]?.type === "file.changed"
+        ? { preview: changes[0].path, previewKind: "path" }
+        : {}),
       ...changes,
       toolCompleted(context, item.id, item.status === "completed" ? "success" : "failed"),
     ];
@@ -362,6 +378,7 @@ function completedItemEvents(
   if (item.type === "web_search" || item.type === "todo_list") {
     return [toolCompleted(context, item.id, "success")];
   }
+  if (item.type === "reasoning") return [toolCompleted(context, item.id, "success")];
   return [];
 }
 

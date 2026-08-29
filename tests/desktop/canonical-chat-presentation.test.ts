@@ -283,14 +283,18 @@ describe("canonical Chat presentation adapter", () => {
       ],
     });
 
-    expect(presented?.work).toEqual([{
-      kind: "activity-group",
-      id: `${run.id}:activities`,
-      activities: [
-        expect.objectContaining({ id: "activity_reasoning", kind: "reasoning", state: "partial" }),
-        expect.objectContaining({ id: "activity_phase", kind: "phase", state: "completed" }),
-      ],
-    }]);
+    expect(presented?.work).toEqual([
+      expect.objectContaining({
+        kind: "activity-group",
+        id: `${run.id}:activities:activity_reasoning`,
+        activities: [expect.objectContaining({ id: "activity_reasoning", kind: "reasoning", state: "partial" })],
+      }),
+      expect.objectContaining({
+        kind: "activity-group",
+        id: `${run.id}:activities:activity_phase`,
+        activities: [expect.objectContaining({ id: "activity_phase", kind: "phase", state: "completed" })],
+      }),
+    ]);
   });
 
   it("projects persisted run activity and assistant deltas while a Run is active", () => {
@@ -339,16 +343,21 @@ describe("canonical Chat presentation adapter", () => {
     expect(turns[0]).toMatchObject({
       id: turn.id,
       active: true,
-      work: [{
-        kind: "activity-group",
-        activities: [{ label: "Reading project files", state: "running" }],
-      }],
-      final: {
-        role: "assistant",
-        markdown: "I found the issue.",
-        copyText: "I found the issue.",
-      },
+      work: [
+        expect.objectContaining({
+          kind: "activity-group",
+          activities: [expect.objectContaining({ label: "Reading project files", state: "running" })],
+        }),
+        expect.objectContaining({
+          kind: "message",
+          phase: "commentary",
+          role: "assistant",
+          markdown: "I found the issue.",
+          copyText: "I found the issue.",
+        }),
+      ],
     });
+    expect(turns[0]?.final).toBeUndefined();
   });
 
   it("keeps failed partial text as commentary and exposes the authoritative failure", () => {

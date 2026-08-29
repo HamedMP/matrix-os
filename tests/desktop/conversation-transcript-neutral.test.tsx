@@ -20,7 +20,10 @@ describe("provider-neutral conversation transcript", () => {
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
   it("renders typed non-Hermes adapter output without importing a provider store", () => {
     const sourceTurns: ProjectLikeConversationTurn[] = [{
@@ -151,6 +154,49 @@ describe("provider-neutral conversation transcript", () => {
     expect(screenshot.getAttribute("src")).toBe("/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png");
   });
 
+  it("loads uploaded message images through the authenticated Desktop API", async () => {
+    const loadImage = vi.fn(async () => new Blob(["png bytes"], { type: "image/png" }));
+    const createObjectURL = vi.fn(() => "blob:matrix-screenshot");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-authenticated-image",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: false,
+      user: {
+        kind: "message",
+        id: "message-authenticated-image",
+        role: "user",
+        phase: "commentary",
+        markdown: "Use this screenshot",
+        copyText: "Use this screenshot",
+        timestamp: 1_000,
+        content: [{
+          kind: "image",
+          id: "attachment-authenticated-image",
+          label: "Screenshot.png",
+          src: "/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png",
+        }],
+      },
+      work: [],
+    }];
+
+    const rendered = render(<ConversationTranscript
+      turns={turns}
+      callbacks={{ copyText: vi.fn(), loadImage }}
+    />);
+
+    expect(screen.getByRole("status", { name: "Loading Screenshot.png" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("img", { name: "Screenshot.png" }).getAttribute("src"))
+      .toBe("blob:matrix-screenshot"));
+    expect(loadImage).toHaveBeenCalledWith("/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png");
+    expect(createObjectURL).toHaveBeenCalledOnce();
+
+    rendered.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:matrix-screenshot");
+  });
+
   it("uses a rotating progress indicator and a compact terminal failure outcome", () => {
     const turns: ConversationTurnPresentation[] = [{
       id: "turn-running-command",
@@ -183,11 +229,11 @@ describe("provider-neutral conversation transcript", () => {
     render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
 
     const activity = screen.getByRole("button", { name: "Run build: pnpm build" });
-    const progress = activity.querySelector("svg:last-of-type");
+    const progress = activity.querySelector("svg.animate-spin");
     expect(progress?.getAttribute("class")).toContain("animate-spin");
     expect(progress?.getAttribute("class")).not.toContain("status-pulse");
     const failure = screen.getByRole("status", { name: "Agent work failed" });
-    expect(failure.className).not.toContain("rounded-xl");
+    expect(failure.className).toContain("rounded-none");
     expect(failure.getAttribute("style") ?? "").not.toContain("background:");
   });
 

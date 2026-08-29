@@ -189,7 +189,7 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(events).toEqual([
       { type: "state.updated", state: { conversationId: "thread_native" } },
       { type: "terminal.bound", terminalSessionId: "terminal_native", terminalSessionCreatedAt: occurredAt },
-      { type: "assistant.delta", delta: "done" },
+      { type: "assistant.delta", messageId: "msg_native", delta: "done" },
       expect.objectContaining({ type: "resource.changed", resourceKind: "file", changeKind: "updated" }),
       { type: "run.completed", outcome: "completed" },
     ]);

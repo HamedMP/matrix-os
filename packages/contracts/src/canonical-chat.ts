@@ -8,6 +8,7 @@ import {
   canonicalReferenceId,
   canonicalSafeErrorText,
   canonicalSafeLabel,
+  canonicalOwnerRelativePath,
 } from "#canonical-chat-primitives";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
@@ -280,6 +281,7 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     label: canonicalSafeLabel(240, 960),
     mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
     sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
+    ownerReference: canonicalOwnerRelativePath().optional(),
   }).strict(),
   z.object({
     type: z.literal("approval_request"),
@@ -441,7 +443,18 @@ export const CanonicalChatAgentActivityPayloadSchema = z.object({
   label: canonicalSafeLabel(240, 960),
   status: CanonicalChatAgentActivityStatusSchema,
   summary: canonicalSafeLabel(1_000, 4_000).optional(),
-}).strict();
+  preview: canonicalSafeLabel(1_000, 4_000).optional(),
+  previewKind: z.enum(["command", "path", "text"]).optional(),
+  detail: canonicalSafeLabel(2_000, 8_000).optional(),
+}).strict().superRefine((activity, context) => {
+  if ((activity.preview === undefined) !== (activity.previewKind === undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: activity.preview === undefined ? ["preview"] : ["previewKind"],
+      message: "Activity preview and kind must be provided together",
+    });
+  }
+});
 
 export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({

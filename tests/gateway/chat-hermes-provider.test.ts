@@ -133,6 +133,9 @@ describe("Hermes canonical Chat Provider adapter", () => {
         kind: "command",
         label: "Run command",
         status: "running",
+        preview: "npm test",
+        previewKind: "command",
+        detail: "Working directory: .",
       },
       {
         type: "agent.activity",
@@ -141,6 +144,9 @@ describe("Hermes canonical Chat Provider adapter", () => {
         label: "Run command",
         status: "failed",
         summary: "Command failed.",
+        preview: "npm test",
+        previewKind: "command",
+        detail: "Working directory: .",
       },
       {
         type: "run.completed",
@@ -154,6 +160,43 @@ describe("Hermes canonical Chat Provider adapter", () => {
       },
     ]);
     expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|inline_diff|args_text|TOKEN/);
+  });
+
+  it("uses a bounded provider-neutral label for an otherwise unknown Hermes tool", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_calendar",
+      name: "calendar_lookup",
+      args: { query: "private meeting notes", token: "secret-value" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_calendar",
+      name: "calendar_lookup",
+      result: { output: "private meeting notes" },
+    });
+    gateway.event("message.complete", { text: "Done.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_calendar",
+        kind: "dynamic_tool",
+        label: "Use calendar lookup",
+        status: "running",
+      }),
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_calendar",
+        label: "Use calendar lookup",
+        status: "completed",
+      }),
+    ]));
+    expect(JSON.stringify(events)).not.toMatch(/private meeting notes|secret-value|token/);
   });
 
   it("distinguishes successful and failed official Hermes terminal results", async () => {
@@ -189,10 +232,10 @@ describe("Hermes canonical Chat Provider adapter", () => {
     gateway.event("message.complete", { text: "", status: "error" });
 
     expect(await eventsPromise).toEqual([
-      { type: "agent.activity", activityId: "tool_success", kind: "command", label: "Run command", status: "running" },
-      { type: "agent.activity", activityId: "tool_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed." },
-      { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "running" },
-      { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "failed", summary: "Command failed." },
+      { type: "agent.activity", activityId: "tool_success", kind: "command", label: "Run command", status: "running", preview: "printf OM134_OK", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "printf OM134_OK", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "running", preview: "exit 7", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "exit 7", previewKind: "command" },
       {
         type: "run.completed",
         outcome: "failed",

@@ -137,7 +137,6 @@ describe("Claude canonical Chat Provider adapter", () => {
         kind: "reasoning",
         label: "Thinking",
         status: "running",
-        summary: "Inspecting the manifest before building.",
       },
       {
         type: "agent.activity",
@@ -155,7 +154,7 @@ describe("Claude canonical Chat Provider adapter", () => {
         status: "completed",
       }),
     ]));
-    expect(JSON.stringify(events)).not.toMatch(/secret-value|Authorization|\/home\/matrix\/home/);
+    expect(JSON.stringify(events)).not.toMatch(/secret-value|Authorization|\/home\/matrix\/home|Inspecting the manifest/);
   });
 
   it("coalesces a healthy long Claude text stream instead of failing on total event count", async () => {

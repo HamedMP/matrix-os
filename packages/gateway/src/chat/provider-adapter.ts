@@ -15,7 +15,11 @@ import { z } from "zod/v4";
 const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 
 export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("assistant.delta"), delta: z.string().min(1).max(4_000) }).strict(),
+  z.object({
+    type: z.literal("assistant.delta"),
+    messageId: SafeProviderRefSchema.optional(),
+    delta: z.string().min(1).max(4_000),
+  }).strict(),
   CanonicalChatAgentActivityPayloadSchema.extend({
     type: z.literal("agent.activity"),
   }).strict(),

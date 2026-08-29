@@ -8,6 +8,7 @@ import type {
   ConversationAttachmentPresentation,
   ConversationActivityPresentation,
   ConversationMessagePresentation,
+  ConversationMessageContentPresentation,
   ConversationNoticePresentation,
   ConversationRequestPresentation,
   ConversationTurnPresentation,
@@ -41,6 +42,7 @@ function messagePresentation(
       references.push({ id: part.invocation.descriptorId, kind: "invocation", label: part.invocation.invocation });
     }
   }
+  const content = messageContent(message, markdown);
   return {
     kind: "message",
     id: message.id,
@@ -49,8 +51,79 @@ function messagePresentation(
     markdown,
     copyText: markdown,
     timestamp: Date.parse(message.createdAt),
+    ...(content.length > 0 ? { content } : {}),
     ...(references.length > 0 ? { references } : {}),
   };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function messageContent(
+  message: CanonicalChatMessage,
+  markdown: string,
+): ConversationMessageContentPresentation[] {
+  const matches: Array<{
+    start: number;
+    end: number;
+    segment: ConversationMessageContentPresentation;
+  }> = [];
+  const unmatched: ConversationMessageContentPresentation[] = [];
+  const images: ConversationMessageContentPresentation[] = [];
+  for (const part of message.parts) {
+    if (part.type === "invocation_reference") {
+      const token = part.invocation.invocation;
+      const start = markdown.indexOf(token);
+      const segment = {
+        kind: "reference" as const,
+        id: part.invocation.descriptorId,
+        referenceKind: "invocation" as const,
+        label: token,
+      };
+      if (start >= 0) matches.push({ start, end: start + token.length, segment });
+      else unmatched.push(segment);
+    } else if (part.type === "resource_reference") {
+      const pattern = new RegExp(`\\[${escapeRegExp(part.resource.label)}\\]\\([^)]*\\)`);
+      const found = pattern.exec(markdown);
+      const segment = {
+        kind: "reference" as const,
+        id: part.resource.id,
+        referenceKind: "resource" as const,
+        label: part.resource.label,
+      };
+      if (found?.index !== undefined) {
+        matches.push({ start: found.index, end: found.index + found[0].length, segment });
+      } else unmatched.push(segment);
+    } else if (part.type === "attachment_reference") {
+      if (part.kind === "image" && part.ownerReference) {
+        images.push({
+          kind: "image",
+          id: part.attachmentId,
+          label: part.label,
+          src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}`,
+        });
+      } else {
+        unmatched.push({
+          kind: "reference",
+          id: part.attachmentId,
+          referenceKind: "file",
+          label: part.label,
+        });
+      }
+    }
+  }
+  matches.sort((left, right) => left.start - right.start || left.end - right.end);
+  const content: ConversationMessageContentPresentation[] = [];
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.start < cursor) continue;
+    if (match.start > cursor) content.push({ kind: "text", text: markdown.slice(cursor, match.start) });
+    content.push(match.segment);
+    cursor = match.end;
+  }
+  if (cursor < markdown.length) content.push({ kind: "text", text: markdown.slice(cursor) });
+  return [...content, ...unmatched, ...images];
 }
 
 function messageWork(message: CanonicalChatMessage): ConversationWorkPresentation[] {
@@ -188,7 +261,12 @@ function runPresentation(
   const runActivities = [...uniqueRunActivities.values()];
   const toolProgress = new Map<string, Extract<CanonicalChatRunActivity, { type: "tool.progress" }>>();
   const agentActivities = new Map<string, Extract<CanonicalChatRunActivity, { type: "agent.activity" }>>();
-  const activityOrder: Array<{ type: "tool" | "agent"; id: string }> = [];
+  const activityOrder: Array<{
+    type: "tool" | "agent";
+    id: string;
+    occurredAt: string;
+    sequence?: number;
+  }> = [];
   const toolOutput = new Map<string, string[]>();
   const streamed = new Map<string, { text: string; occurredAt: string }>();
   let runError: Extract<CanonicalChatRunActivity, { type: "run.error" }> | undefined;
@@ -197,10 +275,24 @@ function runPresentation(
 
   for (const activity of runActivities) {
     if (activity.type === "tool.progress") {
-      if (!toolProgress.has(activity.toolCallId)) activityOrder.push({ type: "tool", id: activity.toolCallId });
+      if (!toolProgress.has(activity.toolCallId)) {
+        activityOrder.push({
+          type: "tool",
+          id: activity.toolCallId,
+          occurredAt: activity.occurredAt,
+          ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+        });
+      }
       toolProgress.set(activity.toolCallId, activity);
     } else if (activity.type === "agent.activity") {
-      if (!agentActivities.has(activity.activityId)) activityOrder.push({ type: "agent", id: activity.activityId });
+      if (!agentActivities.has(activity.activityId)) {
+        activityOrder.push({
+          type: "agent",
+          id: activity.activityId,
+          occurredAt: activity.occurredAt,
+          ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+        });
+      }
       agentActivities.set(activity.activityId, activity);
     } else if (activity.type === "tool.output") {
       const output = toolOutput.get(activity.toolCallId) ?? [];
@@ -253,36 +345,51 @@ function runPresentation(
     }
   }
 
-  const activityRows: ConversationActivityPresentation[] = [];
+  const activityGroups: ConversationWorkPresentation[] = [];
   for (const entry of activityOrder) {
     if (entry.type === "agent") {
       const activity = agentActivities.get(entry.id);
       if (!activity) continue;
-      const detail = activity.summary ?? toolOutput.get(activity.activityId)?.join("\n");
-      activityRows.push({
-        id: activity.id,
-        kind: activity.kind,
-        state: activityState(activity.status),
-        label: activity.label,
-        ...(detail ? { detail, preview: detail, previewKind: "text" as const } : {}),
+      const detail = activity.detail ?? activity.summary ?? toolOutput.get(activity.activityId)?.join("\n");
+      activityGroups.push({
+        kind: "activity-group",
+        id: `${run.id}:activities:${activity.id}`,
+        timestamp: Date.parse(entry.occurredAt),
+        ...(entry.sequence !== undefined ? { sequence: entry.sequence } : {}),
+        activities: [{
+          id: activity.id,
+          kind: activity.kind,
+          state: activityState(activity.status),
+          label: activity.label,
+          ...(activity.preview ? {
+            preview: activity.preview,
+            previewKind: activity.previewKind,
+            copyText: activity.previewKind === "command" ? activity.preview : undefined,
+          } : activity.summary ? { preview: activity.summary, previewKind: "text" as const } : {}),
+          ...(detail ? { detail } : {}),
+        }],
       });
       continue;
     }
     const activity = toolProgress.get(entry.id);
     if (!activity) continue;
     const detail = toolOutput.get(activity.toolCallId)?.join("\n");
-    activityRows.push({
-      id: activity.id,
-      kind: "tool",
-      state: activityState(activity.status),
-      label: activity.label,
-      ...(detail ? { detail, preview: detail, previewKind: "text" as const } : {}),
+    activityGroups.push({
+      kind: "activity-group",
+      id: `${run.id}:activities:${activity.id}`,
+      timestamp: Date.parse(entry.occurredAt),
+      ...(entry.sequence !== undefined ? { sequence: entry.sequence } : {}),
+      activities: [{
+        id: activity.id,
+        kind: "tool",
+        state: activityState(activity.status),
+        label: activity.label,
+        ...(detail ? { detail, preview: detail, previewKind: "text" as const } : {}),
+      }],
     });
   }
   const work: ConversationWorkPresentation[] = [
-    ...(activityRows.length > 0
-      ? [{ kind: "activity-group" as const, id: `${run.id}:activities`, activities: activityRows }]
-      : []),
+    ...activityGroups,
     ...requestOrder.flatMap((key) => {
       const request = requests.get(key);
       return request ? [request] : [];
@@ -290,16 +397,24 @@ function runPresentation(
   ];
   const failed = run.status === "failed" || run.outcome === "failed";
   const stopped = run.status === "aborted" || run.outcome === "aborted";
-  const streamedMessage = [...streamed.entries()].at(-1);
-  const streamingFinal = !hasFinalAssistantMessage && !failed && !stopped && streamedMessage
+  const active = isActiveRun(run);
+  const streamedMessages = [...streamed.entries()].map(([messageId, value]) => ({
+    kind: "message" as const,
+    id: messageId,
+    role: "assistant" as const,
+    phase: "commentary" as const,
+    markdown: value.text,
+    copyText: value.text,
+    timestamp: Date.parse(value.occurredAt),
+  }));
+  const streamingFinalMessage = !active && !hasFinalAssistantMessage && !failed && !stopped
+    ? streamedMessages.at(-1)
+    : undefined;
+  work.push(...streamedMessages.filter((message) => message.id !== streamingFinalMessage?.id));
+  const streamingFinal = streamingFinalMessage
     ? {
-        kind: "message" as const,
-        id: streamedMessage[0],
-        role: "assistant" as const,
+        ...streamingFinalMessage,
         phase: "final" as const,
-        markdown: streamedMessage[1].text,
-        copyText: streamedMessage[1].text,
-        timestamp: Date.parse(streamedMessage[1].occurredAt),
       }
     : undefined;
   const terminalNotice = failed || stopped
@@ -336,12 +451,12 @@ export function canonicalChatPresentation(input: {
     const run = runs.at(-1);
     const assistantMessages = input.messages.filter((message) => (
       message.turnId === turn.id && message.role === "assistant"
-    ));
+    )).sort((left, right) => left.seq - right.seq);
     const terminalFailure = run?.status === "failed" || run?.status === "aborted"
       || run?.outcome === "failed" || run?.outcome === "aborted";
-    const finalMessage = terminalFailure ? undefined : assistantMessages.at(-1);
+    const finalMessage = terminalFailure || isActiveRun(run) ? undefined : assistantMessages.at(-1);
     const live = runPresentation(run, input.activities, Boolean(finalMessage), turn.id);
-    const work = [
+    const unsortedWork = [
       ...assistantMessages.filter((message) => message.id !== finalMessage?.id).flatMap((message) => [
         ...messageWork(message),
         ...(messageText(message) ? [messagePresentation(message, "commentary")] : []),
@@ -349,6 +464,30 @@ export function canonicalChatPresentation(input: {
       ...(finalMessage ? messageWork(finalMessage) : []),
       ...live.work,
     ];
+    const activityWork = unsortedWork.filter((item) => item.kind === "activity-group")
+      .map((item, index) => ({ item, index }))
+      .sort((left, right) => (
+        (left.item.sequence ?? Number.MAX_SAFE_INTEGER) - (right.item.sequence ?? Number.MAX_SAFE_INTEGER)
+        || (left.item.timestamp ?? Number.MAX_SAFE_INTEGER) - (right.item.timestamp ?? Number.MAX_SAFE_INTEGER)
+        || left.index - right.index
+      ));
+    const otherWork = unsortedWork.filter((item) => item.kind !== "activity-group")
+      .map((item, index) => ({ item, index }))
+      .sort((left, right) => left.item.timestamp - right.item.timestamp || left.index - right.index);
+    const work: ConversationWorkPresentation[] = [];
+    let activityIndex = 0;
+    let otherIndex = 0;
+    while (activityIndex < activityWork.length || otherIndex < otherWork.length) {
+      const activity = activityWork[activityIndex];
+      const other = otherWork[otherIndex];
+      if (!other || (activity && (activity.item.timestamp ?? Number.MAX_SAFE_INTEGER) <= other.item.timestamp)) {
+        work.push(activity!.item);
+        activityIndex += 1;
+      } else {
+        work.push(other.item);
+        otherIndex += 1;
+      }
+    }
     const startedAt = Date.parse(run?.startedAt ?? run?.createdAt ?? turn.createdAt);
     const endedAt = Date.parse(run?.completedAt ?? run?.updatedAt ?? turn.updatedAt);
     return {

@@ -61,7 +61,9 @@ export function ConversationActivity({
               <Icon className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
             </MarkerIcon>
             <MarkerContent className="flex min-w-0 items-baseline gap-1.5">
-              <span className="shrink-0 font-medium text-[var(--text-primary)]">{activity.label}</span>
+              <span className={`shrink-0 font-medium text-[var(--text-primary)] ${activity.kind === "reasoning" && activity.state === "running" ? "shimmer" : ""}`}>
+                {activity.label}
+              </span>
               {activity.preview ? (
                 <span
                   title={activity.preview}
@@ -76,7 +78,7 @@ export function ConversationActivity({
               ) : null}
             </MarkerContent>
             {activity.state === "running" ? (
-              <LoaderCircle aria-hidden className="status-pulse size-3.5 shrink-0" />
+              <LoaderCircle aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
             ) : activity.state === "failed" ? (
               <X aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--danger)" }} />
             ) : activity.state === "stopped" ? (

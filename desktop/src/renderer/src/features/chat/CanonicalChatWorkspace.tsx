@@ -29,7 +29,7 @@ import {
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
 import { failClosedProviderCatalog, useChatProviderCatalog } from "./chat-provider-catalog";
-import { canonicalResourceReferenceForPath, searchGlobalChatResources } from "./chat-resource-search";
+import { searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
 import {
   SharedChatComposer,
@@ -302,8 +302,13 @@ export function CanonicalChatWorkspace({
       const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
         attachment.path
           ? [{
-              type: "resource_reference" as const,
-              resource: canonicalResourceReferenceForPath("file", attachment.path),
+              type: "attachment_reference" as const,
+              attachmentId: attachment.id,
+              kind: attachment.kind === "image" ? "image" as const : "file" as const,
+              label: attachment.label,
+              ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+              ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
+              ownerReference: attachment.path,
             }]
           : []
       ));
@@ -534,6 +539,7 @@ export function CanonicalChatWorkspace({
           <>
             <ConversationTranscript turns={transcript} callbacks={{
               copyText,
+              ...(api ? { loadImage: (src: string) => api.getBlob(src, { maxBytes: 10 * 1024 * 1024 }) } : {}),
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
             }} />

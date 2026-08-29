@@ -16,6 +16,11 @@ import {
   type HermesGatewayEvent,
   type HermesGatewaySpawn,
 } from "./hermes-stdio-client.js";
+import {
+  safePublishedText,
+  safeToolPreview,
+  sanitizeAssistantText,
+} from "./safe-activity-projection.js";
 
 const SafeSessionIdSchema = z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/);
 const HermesChatStateSchema = z.object({ sessionId: SafeSessionIdSchema }).strict();
@@ -37,6 +42,7 @@ const HermesCompletionSchema = z.object({
 const HermesToolStartSchema = z.object({
   tool_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
   name: z.string().trim().min(1).max(160),
+  args: z.unknown().optional(),
 }).passthrough();
 const HermesToolCompleteSchema = HermesToolStartSchema.extend({
   result: z.unknown().optional(),
@@ -45,7 +51,10 @@ const HermesStatusUpdateSchema = z.object({
   kind: z.string().trim().min(1).max(80),
   text: z.string().max(4_000).optional(),
 }).passthrough();
-const HermesReasoningAvailableSchema = z.object({ text: z.string().max(96 * 1024) }).passthrough();
+const HermesReasoningAvailableSchema = z.object({
+  text: z.string().max(96 * 1024),
+  verbose: z.boolean().optional(),
+}).passthrough();
 const HermesSubagentStartSchema = z.object({
   subagent_id: z.string().min(1).max(256).optional(),
   task_index: z.number().int().min(0).max(10_000),
@@ -140,7 +149,10 @@ function hermesToolActivity(name: string): Pick<HermesActivity, "kind" | "label"
   if (normalized.includes("image") && (normalized.includes("inspect") || normalized.includes("analy"))) {
     return { kind: "image_inspection", label: "Inspect image" };
   }
-  return { kind: "dynamic_tool", label: "Use tool" };
+  const safeWords = /^[a-z0-9_.:-]+$/.test(normalized)
+    ? normalized.split(/[_.:-]+/).filter(Boolean).slice(0, 6).join(" ")
+    : "";
+  return { kind: "dynamic_tool", label: safeWords ? `Use ${safeWords}` : "Use tool" };
 }
 
 function hermesActivitySummary(kind: HermesActivity["kind"], failed: boolean): string {
@@ -186,6 +198,9 @@ function hermesStatusActivity(kind: string): Pick<HermesActivity, "activityId" |
   }
   if (["process", "loop", "lifecycle"].includes(normalized)) {
     return { activityId: `status_${normalized}`, kind: "phase", label: "Working" };
+  }
+  if (["working", "work", "executing", "running"].includes(normalized)) {
+    return { activityId: "status_working", kind: "phase", label: "Working" };
   }
   return undefined;
 }
@@ -277,8 +292,8 @@ export function createHermesChatProviderAdapter(options: {
     let deferAssistantAfterToolFailure = false;
     let deferredSegmentPrefixLength = 0;
     const unsafeToolFragments = new Set<string>();
-    const toolActivities = new Map<string, Pick<HermesActivity, "kind" | "label">>();
-    const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label">>();
+    const toolActivities = new Map<string, Pick<HermesActivity, "kind" | "label" | "preview" | "previewKind" | "detail">>();
+    const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label" | "summary">>();
     let activeDelegationId: string | undefined;
 
     const emitAgentActivity = (activity: Omit<HermesActivity, "type">) => {
@@ -342,7 +357,12 @@ export function createHermesChatProviderAdapter(options: {
         const text = currentSegment ? parsed.text : parsed.text.replace(/^\n\n/, "");
         if (!text) return;
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
-        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure) emitVisibleText(text);
+        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
+          emitVisibleText(sanitizeAssistantText(text, {
+            homePath: options.homePath,
+            executionRoot: input.executionRoot,
+          }));
+        }
         currentSegment += text;
       } else if (event.type === "message.interim") {
         const interim = HermesInterimSchema.parse(event.payload);
@@ -352,13 +372,18 @@ export function createHermesChatProviderAdapter(options: {
           }
         } else {
           if (currentSegment) separatorPending = true;
-          if (!deferAssistantAfterToolFailure) emitVisibleText(interim.text);
+          if (!deferAssistantAfterToolFailure) {
+            emitVisibleText(sanitizeAssistantText(interim.text, {
+              homePath: options.homePath,
+              executionRoot: input.executionRoot,
+            }));
+          }
         }
         if (deferAssistantAfterToolFailure) {
-          emitVisibleText(redactFailedToolOutput(
+          emitVisibleText(sanitizeAssistantText(redactFailedToolOutput(
             interim.text.slice(deferredSegmentPrefixLength),
             unsafeToolFragments,
-          ));
+          ), { homePath: options.homePath, executionRoot: input.executionRoot }));
         }
         lastSealedSegment = interim.text;
         currentSegment = "";
@@ -374,19 +399,37 @@ export function createHermesChatProviderAdapter(options: {
         const parsed = HermesStatusUpdateSchema.parse(event.payload);
         const activity = hermesStatusActivity(parsed.kind);
         if (!activity) return;
-        setBounded(statusActivities, activity.activityId, activity, MAX_ACTIVE_STATUS_ACTIVITIES);
-        emitAgentActivity({ ...activity, status: "running" });
+        const summary = safePublishedText(parsed.text, {
+          homePath: options.homePath,
+          executionRoot: input.executionRoot,
+          maxChars: 1_000,
+        });
+        const projected = { ...activity, ...(summary ? { summary } : {}) };
+        setBounded(statusActivities, activity.activityId, projected, MAX_ACTIVE_STATUS_ACTIVITIES);
+        emitAgentActivity({ ...projected, status: "running" });
       } else if (event.type === "reasoning.available") {
-        HermesReasoningAvailableSchema.parse(event.payload);
+        const parsed = HermesReasoningAvailableSchema.parse(event.payload);
+        const summary = parsed.verbose ? undefined : safePublishedText(parsed.text, {
+          homePath: options.homePath,
+          executionRoot: input.executionRoot,
+          maxChars: 1_000,
+        });
         emitAgentActivity({
           activityId: "reasoning_summary",
           kind: "reasoning",
-          label: "Reasoning complete",
+          label: summary ? "Reasoning" : "Reasoning complete",
           status: "completed",
+          ...(summary ? { summary } : {}),
         });
       } else if (event.type === "tool.start") {
         const parsed = HermesToolStartSchema.parse(event.payload);
-        const activity = hermesToolActivity(parsed.name);
+        const activity = {
+          ...hermesToolActivity(parsed.name),
+          ...safeToolPreview(parsed.name, parsed.args, {
+            homePath: options.homePath,
+            executionRoot: input.executionRoot,
+          }),
+        };
         setBounded(toolActivities, parsed.tool_id, activity, MAX_ACTIVE_TOOL_ACTIVITIES);
         emitAgentActivity({
           activityId: parsed.tool_id,
@@ -564,9 +607,13 @@ export function createHermesChatProviderAdapter(options: {
           if (!final.text.startsWith(currentSegment)) {
             throw new HermesRunFailure("run", "Hermes final response did not match streamed output");
           }
-          emitVisibleText(deferAssistantAfterToolFailure
+          const finalTail = deferAssistantAfterToolFailure
             ? redactFailedToolOutput(final.text.slice(deferredSegmentPrefixLength), unsafeToolFragments)
-            : final.text.slice(currentSegment.length));
+            : final.text.slice(currentSegment.length);
+          emitVisibleText(sanitizeAssistantText(finalTail, {
+            homePath: options.homePath,
+            executionRoot: input.executionRoot,
+          }));
         }
         flushVisibleText(true);
         if (final.status === "error") throw new HermesRunFailure("run", "Hermes Run failed");

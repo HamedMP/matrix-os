@@ -98,14 +98,41 @@ function UserMessage({
   const visibleMarkdown = collapsible && !expanded
     ? `${lines.slice(0, 10).join("\n").slice(0, 700)}…`
     : message.markdown;
+  const renderStructuredContent = Boolean(message.content?.length) && (!collapsible || expanded);
   return (
     <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
       <Message align="end">
         <MessageContent>
           <Bubble variant="secondary" align="end">
             <BubbleContent className="max-w-[580px] whitespace-pre-wrap" data-selectable>
-              {visibleMarkdown}
-              {references.length > 0 ? (
+              {renderStructuredContent ? message.content!.map((segment, index) => {
+                if (segment.kind === "text") return <span key={`text:${index}`}>{segment.text}</span>;
+                if (segment.kind === "image") {
+                  return (
+                    <span key={`image:${segment.id}`} className="mt-2 block overflow-hidden rounded-lg border" style={{ borderColor: "var(--border-default)" }}>
+                      <AuthenticatedMessageImage
+                        src={segment.src}
+                        label={segment.label}
+                        loadImage={callbacks.loadImage}
+                      />
+                    </span>
+                  );
+                }
+                const Icon = segment.referenceKind === "file"
+                  ? FileText
+                  : segment.referenceKind === "resource" ? Link2 : Wrench;
+                return (
+                  <span
+                    key={`${segment.referenceKind}:${segment.id}`}
+                    className="mx-0.5 inline-flex max-w-full translate-y-px items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs"
+                    style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+                  >
+                    <Icon size={12} aria-hidden className="shrink-0" />
+                    <span className="truncate">{segment.label}</span>
+                  </span>
+                );
+              }) : visibleMarkdown}
+              {!renderStructuredContent && references.length > 0 ? (
                 <span className="mt-2 flex flex-wrap justify-end gap-1.5">
                   {references.map((reference) => {
                     const Icon = reference.kind === "file" ? FileText : reference.kind === "resource" ? Link2 : Wrench;
@@ -145,6 +172,44 @@ function UserMessage({
         </MessageContent>
       </Message>
     </ConversationItem>
+  );
+}
+
+function AuthenticatedMessageImage({
+  src,
+  label,
+  loadImage,
+}: {
+  src: string;
+  label: string;
+  loadImage?: (src: string) => Promise<Blob>;
+}) {
+  const [resolvedSrc, setResolvedSrc] = useState(loadImage ? "" : src);
+  useEffect(() => {
+    if (!loadImage) {
+      setResolvedSrc(src);
+      return;
+    }
+    let active = true;
+    let objectUrl: string | undefined;
+    void loadImage(src).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setResolvedSrc(objectUrl);
+    }).catch((error: unknown) => {
+      console.warn("[conversation] image preview unavailable:", error instanceof Error ? error.name : "UnknownError");
+    });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [loadImage, src]);
+  return resolvedSrc ? (
+    <img src={resolvedSrc} alt={label} className="block max-h-72 w-full object-contain" />
+  ) : (
+    <span role="status" aria-label={`Loading ${label}`} className="block px-3 py-6 text-center text-xs" style={{ color: "var(--text-tertiary)" }}>
+      Loading image…
+    </span>
   );
 }
 
@@ -255,11 +320,9 @@ function Notice({
             <BubbleContent
               role="status"
               aria-label={notice.label}
-              className={`max-w-[620px] rounded-xl px-3.5 py-3 text-sm ${failed ? "flex items-start gap-2.5" : ""}`}
+              className={`max-w-[620px] rounded-none border-l-2 py-1 pl-2 text-sm ${failed ? "flex items-start gap-2" : ""}`}
               style={{
-                background: failed
-                  ? "color-mix(in srgb, var(--danger) 8%, transparent)"
-                  : "var(--bg-sunken)",
+                borderColor: failed ? "var(--danger)" : "var(--border-default)",
                 color: "var(--text-primary)",
               }}
             >
@@ -313,13 +376,16 @@ function Request({
   const [answer, setAnswer] = useState("");
   const [pending, setPending] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
+  const activeAction = useRef<symbol | null>(null);
   const availableActions = (request.actions ?? []).filter((action) => (
     callbacks.performAction && (!callbacks.canPerformAction || callbacks.canPerformAction(action))
   ));
   const inputAction = availableActions.find((action) => action.kind === "input");
   const label = `${request.requestKind === "approval" ? "Approval" : "Input"} ${request.state === "waiting" ? "required" : "resolved"}: ${request.label}`;
   const perform = async (action: typeof availableActions[number], input?: string) => {
-    if (!callbacks.performAction || pending) return;
+    if (!callbacks.performAction || activeAction.current) return;
+    const actionToken = Symbol("conversation-request-action");
+    activeAction.current = actionToken;
     setPending(true);
     setActionFailed(false);
     try {
@@ -328,7 +394,10 @@ function Request({
       console.warn("[conversation] request action failed:", error instanceof Error ? error.name : "UnknownError");
       setActionFailed(true);
     } finally {
-      setPending(false);
+      if (activeAction.current === actionToken) {
+        activeAction.current = null;
+        setPending(false);
+      }
     }
   };
   const Icon = request.requestKind === "approval" ? ShieldAlert : MessageCircle;
@@ -491,7 +560,7 @@ export function ConversationTranscript({
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
 }) {
-  const initialFinalIds = useRef(new Set(
+  const [initialFinalIds] = useState(() => new Set(
     turns.flatMap((turn) => turn.final ? [turn.final.id] : []),
   ));
   return (
@@ -502,7 +571,7 @@ export function ConversationTranscript({
             key={turn.id}
             turn={turn}
             callbacks={callbacks}
-            initialFinalIds={initialFinalIds.current}
+            initialFinalIds={initialFinalIds}
           />
         ))}
       </ConversationContent>

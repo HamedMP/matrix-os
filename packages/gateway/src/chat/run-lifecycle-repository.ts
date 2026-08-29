@@ -490,32 +490,38 @@ export class ChatRunLifecycleRepository {
         return { run: toRun(current), transitioned: false };
       }
       const expectedState = input.outcome === "completed" ? "committed" : "failed";
-      const pendingRow = await trx.selectFrom("chat_messages").selectAll()
+      const pendingRows = await trx.selectFrom("chat_messages").selectAll()
         .where("chat_id", "=", input.chatId)
         .where("run_id", "=", input.runId)
         .where("role", "=", "assistant")
+        .orderBy("seq")
         .forUpdate()
-        .executeTakeFirst();
+        .execute();
       let finalizedOutput: CanonicalChatMessage | undefined;
       let insertedOutput = false;
-      if (pendingRow) {
-        const pending = toMessage(pendingRow);
-        if (pending.state !== "pending") {
+      if (pendingRows.length > 0) {
+        const pendingMessages = pendingRows.map(toMessage);
+        if (pendingMessages.some((pending) => pending.state !== "pending")) {
           throw new ChatConflictError(input.chatId, Number(chat.revision));
         }
-        if (output !== undefined && (output.id !== pending.id || output.seq !== pending.seq)) {
+        if (output !== undefined && !pendingMessages.some((pending) => (
+          output.id === pending.id && output.seq === pending.seq
+        ))) {
           throw new ChatConflictError(input.chatId, Number(chat.revision));
         }
-        finalizedOutput = CanonicalChatMessageSchema.parse({
-          ...(output ?? pending),
-          state: expectedState,
-        });
-        await trx.updateTable("chat_messages").set({
-          state: expectedState,
-          parts: jsonb(finalizedOutput.parts),
-          byte_count: encoded.encode(JSON.stringify(finalizedOutput)).byteLength,
-          search_text: messageSearchText(finalizedOutput),
-        }).where("id", "=", pending.id).execute();
+        for (const pending of pendingMessages) {
+          const finalized = CanonicalChatMessageSchema.parse({
+            ...(output?.id === pending.id ? output : pending),
+            state: expectedState,
+          });
+          await trx.updateTable("chat_messages").set({
+            state: expectedState,
+            parts: jsonb(finalized.parts),
+            byte_count: encoded.encode(JSON.stringify(finalized)).byteLength,
+            search_text: messageSearchText(finalized),
+          }).where("id", "=", pending.id).execute();
+          finalizedOutput = finalized;
+        }
       } else if (output !== undefined) {
         if (output.chatId !== input.chatId || output.runId !== input.runId
           || output.turnId !== current.turn_id || output.role !== "assistant"

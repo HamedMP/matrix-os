@@ -6,6 +6,11 @@ export interface ConversationAttachmentPresentation {
   kind: "file" | "resource" | "invocation";
 }
 
+export type ConversationMessageContentPresentation =
+  | { kind: "text"; text: string }
+  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string }
+  | { kind: "image"; id: string; label: string; src: string };
+
 export interface ConversationMessagePresentation {
   kind: "message";
   id: string;
@@ -14,6 +19,7 @@ export interface ConversationMessagePresentation {
   markdown: string;
   copyText: string;
   timestamp: number;
+  content?: ConversationMessageContentPresentation[];
   /** @deprecated Use references for new provider-neutral projections. */
   attachments?: ConversationAttachmentPresentation[];
   references?: ConversationAttachmentPresentation[];
@@ -56,6 +62,8 @@ export interface ConversationActivityGroupPresentation {
   kind: "activity-group";
   id: string;
   activities: ConversationActivityPresentation[];
+  timestamp?: number;
+  sequence?: number;
 }
 
 export interface ConversationNoticePresentation {
@@ -110,6 +118,7 @@ export interface ConversationTurnPresentation {
 
 export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
+  loadImage?: (src: string) => Promise<Blob>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
 }

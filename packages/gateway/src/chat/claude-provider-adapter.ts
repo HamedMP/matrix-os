@@ -13,6 +13,10 @@ import {
   runCanonicalCli,
   type CanonicalCliSpawn,
 } from "./cli-process.js";
+import {
+  safeToolPreview,
+  sanitizeAssistantText,
+} from "./safe-activity-projection.js";
 
 const ClaudeChatStateSchema = z.object({
   sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/),
@@ -28,7 +32,14 @@ const ClaudeStreamLineSchema = z.object({
   model: z.string().min(1).max(160).optional(),
   event: z.object({
     type: z.string(),
+    index: z.number().int().min(0).max(10_000).optional(),
     delta: z.object({ type: z.string().optional(), text: z.string().optional() }).passthrough().optional(),
+    content_block: z.object({
+      type: z.string(),
+      id: z.string().min(1).max(128).optional(),
+      name: z.string().min(1).max(160).optional(),
+      input: z.unknown().optional(),
+    }).passthrough().optional(),
   }).passthrough().optional(),
 }).passthrough();
 
@@ -62,6 +73,23 @@ function outputChunks(text: string): string[] {
     if (chunk) chunks.push(chunk);
   }
   return chunks;
+}
+
+function claudeActivity(name: string) {
+  const normalized = name.trim().toLowerCase();
+  if (["bash", "shell", "terminal", "execute", "run_command"].includes(normalized)) {
+    return { kind: "command" as const, label: "Run command" };
+  }
+  if (["write", "edit", "apply_patch", "notebookedit"].includes(normalized)) {
+    return { kind: "file_change" as const, label: "Update file" };
+  }
+  if (["websearch", "webfetch", "web_search"].includes(normalized)) {
+    return { kind: "web_search" as const, label: "Search the web" };
+  }
+  if (["task", "agent", "delegate"].includes(normalized)) {
+    return { kind: "delegation" as const, label: "Delegated task" };
+  }
+  return { kind: "dynamic_tool" as const, label: name };
 }
 
 export function createClaudeChatProviderAdapter(options: {
@@ -116,6 +144,14 @@ export function createClaudeChatProviderAdapter(options: {
     let emittedState = resumeState;
     let pendingDelta = "";
     let deltaFlushScheduled = false;
+    const activityByIndex = new Map<number, {
+      activityId: string;
+      kind: ReturnType<typeof claudeActivity>["kind"] | "reasoning";
+      label: string;
+      preview?: string;
+      previewKind?: "command" | "path" | "text";
+      detail?: string;
+    }>();
 
     const flushPendingDelta = () => {
       deltaFlushScheduled = false;
@@ -159,11 +195,61 @@ export function createClaudeChatProviderAdapter(options: {
         : undefined;
       if (delta) {
         streamedText = true;
-        enqueueDelta(delta);
+        enqueueDelta(sanitizeAssistantText(delta, {
+          homePath: options.homePath,
+          executionRoot: input.executionRoot,
+        }));
+      }
+      if (line.type === "stream_event" && line.event?.type === "content_block_start"
+        && line.event.index !== undefined && line.event.content_block) {
+        const block = line.event.content_block;
+        if (block.type === "thinking") {
+          const activity = {
+            activityId: `reasoning_${line.event.index}`,
+            kind: "reasoning" as const,
+            label: "Thinking",
+          };
+          activityByIndex.set(line.event.index, activity);
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "agent.activity",
+            ...activity,
+            status: "running",
+          }));
+        } else if (block.type === "tool_use" && block.id && block.name) {
+          const activity = {
+            activityId: block.id,
+            ...claudeActivity(block.name),
+            ...safeToolPreview(block.name, block.input, {
+              homePath: options.homePath,
+              executionRoot: input.executionRoot,
+            }),
+          };
+          activityByIndex.set(line.event.index, activity);
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "agent.activity",
+            ...activity,
+            status: "running",
+          }));
+        }
+      }
+      if (line.type === "stream_event" && line.event?.type === "content_block_stop"
+        && line.event.index !== undefined) {
+        const activity = activityByIndex.get(line.event.index);
+        if (activity) {
+          activityByIndex.delete(line.event.index);
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "agent.activity",
+            ...activity,
+            status: "completed",
+          }));
+        }
       }
       if (line.type === "result") {
         sawResult = true;
-        resultText = line.result ?? "";
+        resultText = sanitizeAssistantText(line.result ?? "", {
+          homePath: options.homePath,
+          executionRoot: input.executionRoot,
+        });
         resultFailed = line.is_error === true || line.subtype === "error";
       }
     };
