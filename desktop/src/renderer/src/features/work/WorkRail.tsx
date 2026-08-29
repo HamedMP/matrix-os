@@ -14,7 +14,10 @@ import {
 } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ContextMenu } from "../../design/primitives";
-import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
+import type {
+  CanonicalChatClient,
+  CanonicalChatEventSource,
+} from "../../lib/canonical-chat-client";
 import type { Project } from "../../stores/board";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { DeleteConversationDialog } from "../chat/DeleteConversationDialog";
@@ -42,6 +45,7 @@ async function loadWorkRailChats(client: CanonicalChatClient): Promise<Canonical
 
 export function WorkRail({
   client,
+  eventSource,
   projects,
   active,
   activeChatId,
@@ -56,6 +60,7 @@ export function WorkRail({
   className = "w-[260px]",
 }: {
   client: CanonicalChatClient | null;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
   projects: Project[];
   active: boolean;
   activeChatId?: string;
@@ -97,26 +102,46 @@ export function WorkRail({
   useEffect(() => {
     let current = true;
     if (!client || !active) return () => { current = false; };
+    let refreshInFlight = false;
+    let refreshPending = false;
     setPinError(null);
     setPinning({});
     setDeleteChatTarget(null);
     setDeletingChat(false);
     setDeleteChatError(null);
     setStatus("loading");
-    void loadWorkRailChats(client).then((loaded) => {
-      if (!current) return;
-      setRecords(loaded);
-      setStatus("ready");
-    }).catch((error: unknown) => {
-      if (!current) return;
-      console.warn(
-        "[work] Chat list load failed:",
-        error instanceof Error ? error.name : "UnknownError",
-      );
-      setStatus("error");
-    });
-    return () => { current = false; };
-  }, [active, activeChatId, activeProjectSlug, client]);
+    const refresh = async () => {
+      if (refreshInFlight) {
+        refreshPending = true;
+        return;
+      }
+      refreshInFlight = true;
+      do {
+        refreshPending = false;
+        try {
+          const loaded = await loadWorkRailChats(client);
+          if (!current) return;
+          setRecords(loaded);
+          setStatus("ready");
+        } catch (error: unknown) {
+          if (!current) return;
+          console.warn(
+            "[work] Chat list load failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          setStatus("error");
+        }
+      } while (current && refreshPending);
+      refreshInFlight = false;
+    };
+    const subscription = eventSource?.subscribe(() => void refresh());
+    void refresh();
+    return () => {
+      current = false;
+      refreshPending = false;
+      subscription?.dispose();
+    };
+  }, [active, activeChatId, activeProjectSlug, client, eventSource]);
 
   const toggleSection = (key: SectionKey) => {
     setSections((current) => ({ ...current, [key]: !current[key] }));

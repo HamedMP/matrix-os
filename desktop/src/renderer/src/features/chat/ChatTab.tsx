@@ -1,6 +1,7 @@
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import type { CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
@@ -378,6 +379,7 @@ export default function ChatTab({
   renderInspector,
   inspectorExclusive = false,
   allowLegacyFallback = true,
+  eventSource,
 }: {
   active?: boolean;
   tabId?: string;
@@ -387,6 +389,7 @@ export default function ChatTab({
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
   allowLegacyFallback?: boolean;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const api = useConnection((state) => state.api);
   const [routeAttempt, setRouteAttempt] = useState(0);
@@ -399,6 +402,7 @@ export default function ChatTab({
       initialChatId={initialChatId}
       initialView={initialView}
       active={active}
+      eventSource={eventSource}
       externalNavigation={externalNavigation}
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}

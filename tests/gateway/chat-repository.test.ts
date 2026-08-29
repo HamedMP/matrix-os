@@ -301,6 +301,24 @@ describe("ChatRepository", () => {
     expect(delivered).toEqual([]);
   });
 
+  it("fails closed and rolls back when one transaction exceeds the pending outbox cap", async () => {
+    const delivered: ChatOutboxEvent[] = [];
+    eventRepository(repository).registerOutboxSink(({ event }) => delivered.push(event));
+
+    await expect(repository.withTransaction(async (transaction) => {
+      for (let index = 0; index <= 100; index += 1) {
+        await transaction.create(owner, {
+          id: `chat_pending_cap_${index}`,
+          clientRequestId: `req_pending_cap_${index}`,
+          title: `Pending event ${index}`,
+        });
+      }
+    })).rejects.toThrow(/outbox limit/i);
+
+    expect(delivered).toEqual([]);
+    expect((await repository.list(owner, { limit: 100 })).items).toEqual([]);
+  });
+
   it("replays an owner-isolated bounded monotonic window and reports a pruned cursor gap", async () => {
     const events = eventRepository(repository);
     await repository.create(owner, {

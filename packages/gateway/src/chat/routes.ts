@@ -2,6 +2,7 @@ import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
+  CanonicalChatEventCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
@@ -40,6 +41,13 @@ import {
 } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestrator.js";
+import {
+  createCanonicalChatEventStream,
+  type CanonicalChatEventStreamSession,
+  type CanonicalChatEventStreamSocket,
+} from "./event-stream.js";
+
+export { createCanonicalChatEventStream } from "./event-stream.js";
 
 const CHAT_CREATE_BODY_LIMIT = 96 * 1024;
 const CHAT_TURN_BODY_LIMIT = 128 * 1024;
@@ -127,6 +135,39 @@ export interface CanonicalChatRouteService {
 
 function ownerFromPrincipal(principal: RequestPrincipal): ChatOwner {
   return { type: "personal", ownerId: principal.userId };
+}
+
+export function registerCanonicalChatEventRoute(options: {
+  mount(
+    path: string,
+    open: (input: {
+      context: unknown;
+      ws: CanonicalChatEventStreamSocket;
+      cursor?: string;
+    }) => Promise<CanonicalChatEventStreamSession>,
+  ): void;
+  getPrincipal(context: unknown): RequestPrincipal;
+  stream: Pick<ReturnType<typeof createCanonicalChatEventStream>, "open">;
+}): void {
+  options.mount("/ws/chats/events", async ({ context, ws, cursor }) => {
+    const principal = options.getPrincipal(context);
+    const parsedCursor = cursor === undefined
+      ? undefined
+      : CanonicalChatEventCursorSchema.parse(Number(cursor));
+    return options.stream.open({
+      ws,
+      principal,
+      ...(parsedCursor === undefined ? {} : { cursor: parsedCursor }),
+    });
+  });
+}
+
+export async function closeCanonicalChatEventLifecycle(options: {
+  stream: Pick<ReturnType<typeof createCanonicalChatEventStream>, "shutdown">;
+  releaseRepository(): Promise<void>;
+}): Promise<void> {
+  options.stream.shutdown();
+  await options.releaseRepository();
 }
 
 function bodyTooLarge(c: Context) {

@@ -251,6 +251,7 @@ describe("shared Desktop canonical Chat event source", () => {
     await source.start();
     sockets[0]!.emit({ type: "chat.replay.gap", reason: "cursor_unavailable" });
     sockets[0]!.emit({ type: "chat.replay.end", nextCursor: 12 });
+    sockets[0]!.onmessage?.({ data: "x".repeat(16 * 1024 + 1) });
     sockets[0]!.emit({
       type: "chat.event",
       event: {
@@ -269,11 +270,15 @@ describe("shared Desktop canonical Chat event source", () => {
 
   it("bounds shared consumers and fails safely when credentials are unavailable", async () => {
     const sockets: FakeChatWebSocket[] = [];
+    const timers: Array<{ callback: () => void; delay: number; cleared: boolean }> = [];
+    let credentialAttempts = 0;
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const source = createSource({
       gatewayOrigin: "https://runtime.test",
       fetchWebSocketToken: vi.fn(async () => {
-        throw new Error("credential secret must stay private");
+        credentialAttempts += 1;
+        if (credentialAttempts === 1) throw new Error("credential secret must stay private");
+        return "recovered-ws-token";
       }),
       createWebSocket: (url) => {
         const ws = new FakeChatWebSocket(url);
@@ -281,6 +286,14 @@ describe("shared Desktop canonical Chat event source", () => {
         return ws;
       },
       maxConsumers: 2,
+      setTimeoutFn: (callback, delay) => {
+        const timer = { callback, delay, cleared: false };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimeoutFn: (timer) => {
+        (timer as { cleared: boolean }).cleared = true;
+      },
     });
     const first = source.subscribe(() => undefined);
     source.subscribe(() => undefined);
@@ -289,6 +302,10 @@ describe("shared Desktop canonical Chat event source", () => {
     await expect(source.start()).resolves.toBeUndefined();
     expect(sockets).toEqual([]);
     expect(JSON.stringify(warning.mock.calls)).not.toContain("credential secret must stay private");
+    expect(timers[0]?.delay).toBeGreaterThan(0);
+    timers[0]!.callback();
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    expect(sockets[0]?.url).toContain("token=recovered-ws-token");
     expect(source.activeConsumerCount()).toBe(2);
     first.dispose();
     expect(source.activeConsumerCount()).toBe(1);

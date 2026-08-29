@@ -150,6 +150,67 @@ describe("canonical Chat route controller", () => {
     expect(listeners.size).toBe(0);
   });
 
+  it("coalesces a burst of selected Chat events into one in-flight and one pending detail refresh", async () => {
+    type Invalidation = { type: "chat.changed"; chatId: string; cursor: number };
+    const listeners = new Set<(event: Invalidation) => void>();
+    const eventSource = {
+      subscribe(listener: (event: Invalidation) => void) {
+        listeners.add(listener);
+        return { dispose: () => listeners.delete(listener) };
+      },
+    };
+    const firstRefresh = {
+      ...detail,
+      record: {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 1, title: "First refresh" },
+      },
+    };
+    const secondRefresh = {
+      ...detail,
+      record: {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 2, title: "Second refresh" },
+      },
+    };
+    let resolveFirstRefresh!: (value: typeof firstRefresh) => void;
+    const deferredFirstRefresh = new Promise<typeof firstRefresh>((resolve) => {
+      resolveFirstRefresh = resolve;
+    });
+    const getDetail = vi.fn(async () => detail);
+    const sharedClient = client({ getDetail });
+    const useEventAwareController = useCanonicalChatRouteController as (
+      input: Parameters<typeof useCanonicalChatRouteController>[0] & { eventSource: typeof eventSource },
+    ) => ReturnType<typeof useCanonicalChatRouteController>;
+    const { result } = renderHook(() => useEventAwareController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+      eventSource,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(globalRecord.chat.id));
+    expect(getDetail).toHaveBeenCalledTimes(1);
+    getDetail.mockImplementationOnce(() => deferredFirstRefresh);
+    getDetail.mockResolvedValueOnce(secondRefresh);
+
+    act(() => {
+      for (const cursor of [1, 2, 3]) {
+        for (const listener of listeners) {
+          listener({ type: "chat.changed", chatId: globalRecord.chat.id, cursor });
+        }
+      }
+    });
+    expect(getDetail).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveFirstRefresh(firstRefresh);
+      await deferredFirstRefresh;
+    });
+    await waitFor(() => expect(getDetail).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(result.current.detail?.record.chat.title).toBe("Second refresh"));
+  });
+
   it("loads Global and Project entry points through the same scoped controller", async () => {
     const sharedClient = client();
     const { result, rerender } = renderHook(

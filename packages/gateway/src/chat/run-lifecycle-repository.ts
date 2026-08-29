@@ -30,6 +30,14 @@ import {
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 type Transact = <T>(fn: (trx: Executor) => Promise<T>) => Promise<T>;
+type AppendOutbox = (
+  executor: Executor,
+  owner: ChatOwner,
+  chatId: string,
+  revision: number,
+  eventType: ChatOutboxEventType,
+  payload?: Record<string, unknown>,
+) => Promise<void>;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
@@ -84,28 +92,11 @@ async function selectOwnedChat(
   return query.executeTakeFirst();
 }
 
-async function insertOutbox(
-  executor: Executor,
-  owner: ChatOwner,
-  chatId: string,
-  revision: number,
-  eventType: ChatOutboxEventType,
-  payload: Record<string, unknown> = {},
-): Promise<void> {
-  await executor.insertInto("chat_outbox").values({
-    owner_type: owner.type,
-    owner_id: owner.ownerId,
-    chat_id: chatId,
-    revision,
-    event_type: eventType,
-    payload: jsonb(payload),
-  }).execute();
-}
-
 export class ChatRunLifecycleRepository {
   constructor(
     private readonly kysely: Kysely<ChatDatabase>,
     private readonly transact: Transact,
+    private readonly appendOutbox: AppendOutbox,
   ) {}
 
   async getAdapterState(ownerInput: ChatOwner, input: {
@@ -353,7 +344,7 @@ export class ChatRunLifecycleRepository {
           ...(railTransition ? { attention: railTransition.attention } : {}),
           updated_at: sql`now()`,
         }).where("id", "=", chatId).execute();
-        await insertOutbox(trx, owner, chatId, revision, "run.activity", { runId });
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId });
       }
       return inserted;
     });
@@ -457,7 +448,7 @@ export class ChatRunLifecycleRepository {
         last_message_preview: preview(next),
         updated_at: createdAt,
       }).where("id", "=", chatId).execute();
-      await insertOutbox(trx, owner, chatId, revision, "run.message", {
+      await this.appendOutbox(trx, owner, chatId, revision, "run.message", {
         runId: input.runId,
         messageId: input.messageId,
       });
@@ -561,7 +552,7 @@ export class ChatRunLifecycleRepository {
         attention: input.outcome === "failed" ? "failed" : "none",
         updated_at: completedAt,
       }).where("id", "=", input.chatId).execute();
-      await insertOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, { runId: input.runId });
+      await this.appendOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, { runId: input.runId });
       return { run: toRun(updated), transitioned: true };
     });
   }

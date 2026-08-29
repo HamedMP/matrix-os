@@ -4,7 +4,10 @@ import type {
   CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
+import type {
+  CanonicalChatClient,
+  CanonicalChatEventSource,
+} from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 
@@ -45,12 +48,14 @@ export function useCanonicalChatRouteController({
   active,
   initialChatId = null,
   autoSelectFirst = true,
+  eventSource,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
   active: boolean;
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -141,6 +146,54 @@ export function useCanonicalChatRouteController({
   }, [active, initialChatId, load, projectId]);
 
   useEffect(() => {
+    if (!active || !eventSource) return;
+    let current = true;
+    let detailRefreshInFlight = false;
+    let detailRefreshPending = false;
+    let listRefreshInFlight = false;
+    let listRefreshPending = false;
+    const refreshSelectedDetail = async () => {
+      if (detailRefreshInFlight) {
+        detailRefreshPending = true;
+        return;
+      }
+      detailRefreshInFlight = true;
+      do {
+        detailRefreshPending = false;
+        const selectedChatId = activeChatIdRef.current;
+        if (selectedChatId) await loadDetail(selectedChatId);
+      } while (current && detailRefreshPending);
+      detailRefreshInFlight = false;
+    };
+    const refreshList = async () => {
+      if (listRefreshInFlight) {
+        listRefreshPending = true;
+        return;
+      }
+      listRefreshInFlight = true;
+      do {
+        listRefreshPending = false;
+        await load();
+      } while (current && listRefreshPending);
+      listRefreshInFlight = false;
+    };
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.full_refresh") {
+        void refreshList();
+        void refreshSelectedDetail();
+        return;
+      }
+      if (event.chatId === activeChatIdRef.current) void refreshSelectedDetail();
+    });
+    return () => {
+      current = false;
+      detailRefreshPending = false;
+      listRefreshPending = false;
+      subscription.dispose();
+    };
+  }, [active, eventSource, load, loadDetail]);
+
+  useEffect(() => {
     if (!active || !activeChatId || detail?.record.chat.id === activeChatId) return;
     let cancelled = false;
     let timeout: number | undefined;
@@ -166,11 +219,11 @@ export function useCanonicalChatRouteController({
 
   useEffect(() => {
     const completion = detail?.record.latestSuccessfulCompletion;
-    if (!active || !activeChatId || detail?.record.chat.id !== activeChatId
-      || !completion?.unacknowledged) {
+    if (!active || !activeChatId || detail?.record.chat.id !== activeChatId || !completion) {
       acknowledgementAttemptRef.current = null;
       return;
     }
+    if (!completion.unacknowledged) return;
     const existing = acknowledgementAttemptRef.current;
     if (existing?.client === client
       && existing.chatId === activeChatId

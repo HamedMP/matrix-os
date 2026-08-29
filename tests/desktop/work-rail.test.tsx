@@ -199,7 +199,67 @@ describe("WorkRail", () => {
 
     act(() => emit({ type: "chat.full_refresh", cursor: 5 }));
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(6));
-    expect(setIntervalSpy).not.toHaveBeenCalled();
+    expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 200);
+  });
+
+  it("coalesces a burst of shared Chat events into one in-flight and one pending canonical refresh", async () => {
+    type Invalidation = { type: "chat.changed"; chatId: string; cursor: number };
+    const listeners = new Set<(event: Invalidation) => void>();
+    let resolveInFlight!: (value: { items: CanonicalChatRecord[] }) => void;
+    const inFlight = new Promise<{ items: CanonicalChatRecord[] }>((resolve) => {
+      resolveInFlight = resolve;
+    });
+    const initial = record("chat_burst", "Burst chat", {
+      updatedAt: "2026-08-29T02:00:00.000Z",
+    });
+    const refreshed = record("chat_burst", "Burst chat", {
+      updatedAt: "2026-08-29T02:01:00.000Z",
+      activeRunStatus: "running",
+    });
+    const client = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ items: [initial] })
+        .mockImplementationOnce(() => inFlight)
+        .mockResolvedValueOnce({ items: [refreshed] }),
+    } as unknown as CanonicalChatClient;
+    const eventSource = {
+      subscribe(listener: (event: Invalidation) => void) {
+        listeners.add(listener);
+        return { dispose: () => listeners.delete(listener) };
+      },
+    };
+    const EventAwareWorkRail = WorkRail as ComponentType<
+      ComponentProps<typeof WorkRail> & { eventSource: typeof eventSource }
+    >;
+
+    render(
+      <EventAwareWorkRail
+        client={client}
+        eventSource={eventSource}
+        projects={[]}
+        active
+        onNewGlobalChat={vi.fn()}
+        onCreateProject={vi.fn()}
+        onNewProjectChat={vi.fn()}
+        onSelectChat={vi.fn()}
+        onCollapse={vi.fn()}
+      />,
+    );
+    await screen.findByRole("button", { name: "Burst chat" });
+
+    act(() => {
+      for (const cursor of [1, 2, 3]) {
+        for (const listener of listeners) listener({ type: "chat.changed", chatId: initial.chat.id, cursor });
+      }
+    });
+    expect(client.list).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveInFlight({ items: [initial] });
+      await inFlight;
+    });
+    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(3));
+    expect(await screen.findByLabelText("Agent running for Burst chat")).toBeTruthy();
   });
 
   it("renders the highest-priority canonical agent state for every Chat row", async () => {

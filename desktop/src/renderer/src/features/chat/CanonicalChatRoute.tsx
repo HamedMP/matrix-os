@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
-import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
+import {
+  createCanonicalChatClient,
+  type CanonicalChatEventSource,
+} from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -24,6 +27,7 @@ export function CanonicalChatRoute({
   inspector,
   renderInspector,
   inspectorExclusive = false,
+  eventSource,
 }: {
   api: ApiClient | null;
   projectId: string | null;
@@ -37,6 +41,7 @@ export function CanonicalChatRoute({
   inspector?: ReactNode;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -140,6 +145,7 @@ export function CanonicalChatRoute({
       initialView={initialView}
       projectLabel={projectLabel}
       active={active}
+      eventSource={eventSource}
       externalNavigation={externalNavigation}
       inspector={inspector}
       renderInspector={renderInspector}
