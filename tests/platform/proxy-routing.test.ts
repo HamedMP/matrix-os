@@ -20,6 +20,7 @@ import {
 } from "../../packages/platform/src/main.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { buildBillingSetupTarget } from "../../packages/platform/src/auth-pages.js";
+import { DEFAULT_DEVELOPER_TOOLS } from "../../packages/platform/src/developer-tools.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 import { shouldServePlatformRuntimeShell } from "../../packages/platform/src/session-routing-middleware.js";
@@ -1929,7 +1930,7 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: ["codex", "claude-code", "opencode", "pi"],
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.clerk.com/v1/users/user_new",
@@ -2229,6 +2230,7 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new_avatar",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new_avatar")).resolves.toMatchObject({
       clerkId: "user_new_avatar",
@@ -2290,6 +2292,7 @@ describe("platform proxy routing", () => {
       handle: "new",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new")).resolves.toMatchObject({
       clerkId: "user_new",
@@ -2342,6 +2345,7 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new")).resolves.toMatchObject({
       handle: "newuser",
@@ -2394,6 +2398,7 @@ describe("platform proxy routing", () => {
       handle: "very-long-username-with-hyphen",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2498,6 +2503,7 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2560,6 +2566,7 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2620,6 +2627,7 @@ describe("platform proxy routing", () => {
       handle: "alice",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2681,6 +2689,7 @@ describe("platform proxy routing", () => {
       handle: "alice",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2730,6 +2739,7 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
