@@ -522,7 +522,9 @@ describe('CI workflows', () => {
     const root = process.cwd();
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
-    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'");
+    expect(production).toContain(
+      "MATRIX_PREBILLING_PROVISIONING_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.prebilling_rollback_drain && 'false' || 'true' }}",
+    );
     expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100'");
     expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '4' }}");
     for (const name of [
@@ -538,6 +540,22 @@ describe('CI workflows', () => {
     expect(production).toContain('deployed prebilling contract still contains legacy setting');
     expect(production).toContain('Verify deployed prebilling contract');
     expect(production).toContain('prebilling deployment contract is missing');
+  });
+
+  it('provides a promoted production-only drain path before a cost-aware rollback', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(production).toContain('prebilling_rollback_drain:');
+    expect(production).toContain("default: false");
+    expect(production).toContain("inputs.prebilling_rollback_drain && 'false' || 'true'");
+    expect(production).toContain('PREBILLING_ROLLBACK_DRAIN');
+    expect(production).toContain('Rollback drain requires a promoted production deployment.');
+    expect(production).toContain(
+      'MATRIX_PREBILLING_PROVISIONING_ENABLED="$MATRIX_PREBILLING_PROVISIONING_ENABLED"',
+    );
+    expect(production).toContain('MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=100');
+    expect(production).toContain('--to-revisions "$PRODUCTION_REVISION=100"');
   });
 
   it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {

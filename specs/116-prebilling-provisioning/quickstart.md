@@ -18,7 +18,7 @@ The retained database column avoids a schema rollback, but count-only revisions 
 
 When an immediate monetary ceiling is required, use this order:
 
-1. Deploy the count-only revision with new unpaid admission disabled while leaving continuation workers enabled.
+1. Manually dispatch `platform-cloud-run.yml` from the count-only revision with `environment=production`, `promote=true`, and `prebilling_rollback_drain=true`. The workflow rejects drain requests that are not promoted production deployments, verifies admission is disabled, leaves continuation workers enabled, and sends 100% of traffic to the drain revision.
 2. Wait one full 31-minute checkout lease, or query under the prebilling advisory lock and verify there are no unpaid intents in active preparation states with a zero legacy reservation.
 3. Shift traffic to the former cost-aware revision and restore its legacy cost settings.
 
