@@ -63,6 +63,11 @@ interface ToolActivity {
   kind?: CanonicalChatAgentActivityKind;
 }
 
+interface AssistantTextProjection {
+  messageId?: string;
+  trailingNewlines: number;
+}
+
 function activityKind(kind: string): CanonicalChatAgentActivityKind | undefined {
   if (kind === "command") return "command";
   if (kind === "file_change") return "file_change";
@@ -84,12 +89,32 @@ function failedActivitySummary(kind: CanonicalChatAgentActivityKind): string {
   return "Activity failed.";
 }
 
+function boundedNewlineCount(value: string, edge: "leading" | "trailing"): number {
+  let count = 0;
+  for (let index = edge === "leading" ? 0 : value.length - 1;
+    index >= 0 && index < value.length && value[index] === "\n" && count < 2;
+    index += edge === "leading" ? 1 : -1) {
+    count += 1;
+  }
+  return count;
+}
+
 function normalizeEvent(
   event: AgentThreadEvent,
   toolActivities: Map<string, ToolActivity>,
+  assistantText: AssistantTextProjection,
 ): CanonicalProviderRunEvent[] {
   if (event.type === "assistant.text.delta") {
-    return [CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta: event.delta })];
+    const startsNewItem = assistantText.messageId !== undefined
+      && assistantText.messageId !== event.messageId;
+    const leadingNewlines = boundedNewlineCount(event.delta, "leading");
+    const separator = startsNewItem
+      ? "\n".repeat(Math.max(0, 2 - assistantText.trailingNewlines - leadingNewlines))
+      : "";
+    const delta = `${separator}${event.delta}`;
+    assistantText.messageId = event.messageId;
+    assistantText.trailingNewlines = boundedNewlineCount(delta, "trailing");
+    return [CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta })];
   }
   if (event.type === "tool.started") {
     const toolActivity = { label: event.displayName, kind: activityKind(event.kind) };
@@ -258,6 +283,7 @@ async function* normalizedEvents(
 ): AsyncGenerator<CanonicalProviderRunEvent> {
   const recentEventIds = new Set<string>();
   const toolActivities = new Map<string, ToolActivity>();
+  const assistantText: AssistantTextProjection = { trailingNewlines: 0 };
   let batch: AgentThreadEvent[] | null = initial;
   while (batch !== null) {
     for (const event of batch) {
@@ -267,7 +293,7 @@ async function* normalizedEvents(
         if (oldest !== undefined) recentEventIds.delete(oldest);
       }
       recentEventIds.add(event.eventId);
-      for (const normalized of normalizeEvent(event, toolActivities)) {
+      for (const normalized of normalizeEvent(event, toolActivities, assistantText)) {
         yield normalized;
         if (normalized.type === "run.completed") return;
       }
