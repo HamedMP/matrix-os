@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,9 +18,14 @@ const candidateRoots = [
 ];
 
 let sharp;
+let Resvg;
 let dependencyRoot;
 for (const candidateRoot of candidateRoots) {
   const packagePath = resolve(candidateRoot, "node_modules/sharp/package.json");
+  const resvgPackagePath = resolve(
+    candidateRoot,
+    "node_modules/@resvg/resvg-js/package.json",
+  );
   const displayFontRoot = resolve(
     candidateRoot,
     "node_modules/@expo-google-fonts/bricolage-grotesque",
@@ -32,16 +36,21 @@ for (const candidateRoot of candidateRoots) {
     resolve(uiFontRoot, "400Regular/Geist_400Regular.ttf"),
     resolve(uiFontRoot, "600SemiBold/Geist_600SemiBold.ttf"),
   ];
-  if (existsSync(packagePath) && fontPaths.every(existsSync)) {
+  if (
+    existsSync(packagePath) &&
+    existsSync(resvgPackagePath) &&
+    fontPaths.every(existsSync)
+  ) {
     sharp = createRequire(packagePath)("sharp");
+    ({ Resvg } = createRequire(resvgPackagePath)("@resvg/resvg-js"));
     dependencyRoot = candidateRoot;
     break;
   }
 }
 
-if (!sharp || !dependencyRoot) {
+if (!sharp || !Resvg || !dependencyRoot) {
   throw new Error(
-    "The DMG generator dependencies are not installed in this worktree. Run `pnpm install`, or set MATRIX_REPO_ROOT to a checkout that has sharp, Bricolage Grotesque, and Geist installed.",
+    "The DMG generator dependencies are not installed in this worktree. Run `pnpm install`, or set MATRIX_REPO_ROOT to a checkout that has sharp, resvg-js, Bricolage Grotesque, and Geist installed.",
   );
 }
 
@@ -84,12 +93,6 @@ for (const assetPath of [
   }
 }
 
-const [displayFontBold, uiFontRegular, uiFontSemiBold] = await Promise.all([
-  readFile(displayFontBoldPath),
-  readFile(uiFontRegularPath),
-  readFile(uiFontSemiBoldPath),
-]);
-
 const displayFontFamily = desktopFonts.display;
 const uiFontFamily = desktopFonts.sans;
 // shadcn/ui inherits these typography values from Tailwind's default type scale.
@@ -119,28 +122,6 @@ function backgroundSvg() {
         <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
           <feGaussianBlur stdDeviation="7"/>
         </filter>
-        <style>
-          @font-face {
-            font-family: "Bricolage Grotesque";
-            src: url("data:font/ttf;base64,${displayFontBold.toString("base64")}") format("truetype");
-            font-weight: 700;
-          }
-          @font-face {
-            font-family: "Geist";
-            src: url("data:font/ttf;base64,${uiFontRegular.toString("base64")}") format("truetype");
-            font-weight: 400;
-          }
-          @font-face {
-            font-family: "Geist";
-            src: url("data:font/ttf;base64,${uiFontSemiBold.toString("base64")}") format("truetype");
-            font-weight: 600;
-          }
-          .display { font-family: ${displayFontFamily}; }
-          .ui { font-family: ${uiFontFamily}; }
-          .text-4xl { font-size: ${tailwindTypeScale["text-4xl"].fontSize}px; line-height: ${tailwindTypeScale["text-4xl"].lineHeight}px; letter-spacing: -0.025em; }
-          .text-base { font-size: ${tailwindTypeScale["text-base"].fontSize}px; line-height: ${tailwindTypeScale["text-base"].lineHeight}px; }
-          .text-xs { font-size: ${tailwindTypeScale["text-xs"].fontSize}px; line-height: ${tailwindTypeScale["text-xs"].lineHeight}px; }
-        </style>
       </defs>
 
       <rect width="${width}" height="${height}" fill="url(#background)"/>
@@ -148,16 +129,29 @@ function backgroundSvg() {
       <rect width="${width}" height="${height}" fill="url(#emberGlow)"/>
       <rect x="0.5" y="0.5" width="719" height="519" rx="1" fill="none" stroke="${palette.light}" stroke-opacity="0.08"/>
 
-      <text class="display text-4xl" x="360" y="105" fill="${palette.light}" font-weight="700" text-anchor="middle">Install Matrix OS</text>
-      <text class="ui text-base" x="360" y="140" fill="${palette.cream}" fill-opacity="0.78" font-weight="400" text-anchor="middle">Drag Matrix OS to Applications</text>
-
       <circle cx="190" cy="322" r="78" fill="${palette.light}" fill-opacity="0.018" stroke="${palette.light}" stroke-opacity="0.045"/>
       <circle cx="530" cy="322" r="78" fill="${palette.light}" fill-opacity="0.018" stroke="${palette.light}" stroke-opacity="0.045"/>
 
       <path d="M301 322H419" stroke="#10140F" stroke-opacity="0.22" stroke-width="12" stroke-linecap="round" filter="url(#softShadow)"/>
       <path d="M301 322H414" stroke="${palette.ember}" stroke-width="5" stroke-linecap="round"/>
       <path d="M396 303L415 322L396 341" fill="none" stroke="${palette.ember}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  `;
+}
 
+function textSvg() {
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <style>
+        .display { font-family: ${displayFontFamily}; }
+        .ui { font-family: ${uiFontFamily}; }
+        .text-4xl { font-size: ${tailwindTypeScale["text-4xl"].fontSize}px; line-height: ${tailwindTypeScale["text-4xl"].lineHeight}px; letter-spacing: -0.025em; }
+        .text-base { font-size: ${tailwindTypeScale["text-base"].fontSize}px; line-height: ${tailwindTypeScale["text-base"].lineHeight}px; }
+        .text-xs { font-size: ${tailwindTypeScale["text-xs"].fontSize}px; line-height: ${tailwindTypeScale["text-xs"].lineHeight}px; }
+      </style>
+
+      <text class="display text-4xl" x="360" y="105" fill="${palette.light}" font-weight="700" text-anchor="middle">Install Matrix OS</text>
+      <text class="ui text-base" x="360" y="140" fill="${palette.cream}" fill-opacity="0.78" font-weight="400" text-anchor="middle">Drag Matrix OS to Applications</text>
       <text class="ui text-xs" x="360" y="472" fill="${palette.cream}" fill-opacity="0.46" font-weight="600" text-anchor="middle" letter-spacing="1.4">YOUR PRIVATE AI COMPUTER</text>
     </svg>
   `;
@@ -212,9 +206,23 @@ async function render(scale, target) {
     .resize({ width: outputWidth, height: outputHeight, fit: "fill" })
     .png()
     .toBuffer();
+  const textLayer = Buffer.from(
+    new Resvg(textSvg(), {
+      fitTo: { mode: "zoom", value: scale },
+      font: {
+        fontFiles: [displayFontBoldPath, uiFontRegularPath, uiFontSemiBoldPath],
+        loadSystemFonts: false,
+        defaultFontFamily: "Geist",
+        sansSerifFamily: "Geist",
+      },
+    })
+      .render()
+      .asPng(),
+  );
 
   await sharp(base)
     .composite([
+      { input: textLayer, left: 0, top: 0 },
       { input: ambientLeft.input, left: -64 * scale, top: 190 * scale },
       { input: ambientRight.input, left: 582 * scale, top: 226 * scale },
       {
