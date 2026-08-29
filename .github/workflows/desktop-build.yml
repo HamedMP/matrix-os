@@ -51,6 +51,16 @@ jobs:
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_APP_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
+      - name: Validate PostHog support configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalized_posthog_token="$(printf '%s' "${VITE_POSTHOG_PROJECT_TOKEN:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -z "$normalized_posthog_token" ]; then
+            echo "Missing required public PostHog project token for Desktop Support" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v6
@@ -335,6 +345,16 @@ jobs:
       VITE_POSTHOG_PROJECT_TOKEN: ${{ vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY }}
       VITE_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
     steps:
+      - name: Validate PostHog support configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalized_posthog_token="$(printf '%s' "${VITE_POSTHOG_PROJECT_TOKEN:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -z "$normalized_posthog_token" ]; then
+            echo "Missing required public PostHog project token for Desktop Support" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v6
