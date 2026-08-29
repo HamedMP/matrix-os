@@ -12,7 +12,7 @@
 
 - Funded relay availability and safety limits are validated process configuration.
 - The enabled model list is an explicit operator allowlist. Remote/client model values cannot expand it.
-- Runtime identity is derived from a verified `sk-proxy-<handle>.<hmac>` credential. Caller identity headers are ignored.
+- Runtime identity is derived from a verified `sk-matrix-funded-<handle>.<hmac>` credential with a funded-only HMAC audience. Legacy `sk-proxy-*` credentials cannot invoke the funded relay. Caller identity headers are ignored.
 - Cloudflare spend limits are a defense-in-depth fuse. Future per-owner balances and add-on credits belong to platform PostgreSQL through Kysely.
 - Chat content remains in the owner runtime and is never persisted by this package.
 
@@ -20,12 +20,12 @@
 
 - `resolveFundedRelayConfig()` parses and fails closed on enabled relay configuration.
 - `createFundedRelay()` registers the bounded `/v1/messages` and `/v1/messages/count_tokens` surface and exposes shutdown cleanup.
-- `buildProxyApiKey()` / `parseProxyApiKey()` provide the current runtime HMAC credential contract.
+- `buildFundedProxyApiKey()` / `parseFundedProxyApiKey()` provide the funded runtime HMAC credential contract. The legacy proxy credential helpers remain isolated from this audience.
 - Other modules under `src/` are internal unless exported deliberately.
 
 ## Auth And Trust Boundaries
 
-- The customer runtime sends its scoped HMAC credential in the Anthropic SDK `x-api-key` field. Raw provider API keys are rejected by the funded route.
+- The customer runtime sends its funded-audience HMAC credential in the Anthropic SDK `x-api-key` field. Raw provider and legacy proxy API keys bypass the funded route and remain subject to their existing owner/legacy handler until that migration is complete.
 - The relay derives an opaque Cloudflare `runtime_id` with HMAC and does not trust `x-matrix-user`, forwarded headers, Cloudflare metadata headers, provider authorization, target URLs, or model policy from the caller.
 - Cloudflare is always the fixed official `gateway.ai.cloudflare.com/.../anthropic` endpoint. Redirects are rejected.
 - The central Cloudflare gateway token is replaced server-side and never returned or forwarded from a customer runtime.
@@ -36,7 +36,8 @@
 
 - Global and per-runtime concurrency plus per-minute admission limits are enforced before upstream dispatch. The default global minute budget leaves headroom below Cloudflare Unified Billing's documented gateway limit.
 - The runtime admission registry has an operator-configured hard cap. Expired inactive entries are evicted opportunistically when capacity is reached; shutdown clears the registry and denies new leases.
-- Request bodies, model/tool/message counts, response bytes, request duration, and forwarded headers are bounded.
+- Admission happens immediately after funded credential verification and before body parsing. Request bodies, nested JSON, model/tool/message counts, response bytes, inbound request time, first-response time, total stream duration, and forwarded headers are bounded.
+- Only explicit top-level Anthropic fields, client-defined tools, and operator-allowlisted beta identifiers are reconstructed for upstream forwarding; server tools, service-tier overrides, and unknown fields are rejected.
 - Downstream cancellation propagates to the Cloudflare request, and admission leases remain held until the response stream completes or is cancelled.
 - The relay is conversation-stateless. Restarting it can drop in-flight streams but cannot corrupt Chat state; the owner kernel handles retry/resume deliberately.
 - Cloudflare spend limits are eventually consistent and are not an atomic balance. Future metering reserves Matrix credit transactionally before dispatch and reconciles final usage afterward.

@@ -37,15 +37,16 @@ Use dedicated development/staging values; never production credentials in tests.
 ```text
 MATRIX_FUNDED_AI_ENABLED=0
 MATRIX_FUNDED_AI_MODELS=<validated allowlist>
+MATRIX_FUNDED_AI_BETAS=<validated beta allowlist or empty>
+MATRIX_FUNDED_AI_FIRST_RESPONSE_TIMEOUT_MS=10000
 MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=<bounded>
 MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=<bounded>
 MATRIX_FUNDED_AI_RATE_LIMIT=<bounded>
-MATRIX_FUNDED_AI_RELAY_AUDIENCE=<exact audience>
 CLOUDFLARE_AI_GATEWAY_URL=<fixed dedicated gateway URL>
 CLOUDFLARE_AI_GATEWAY_TOKEN=<central relay only>
 ```
 
-Exact names may follow current config conventions, but incomplete funded configuration must fail before listen. Customer VPSes receive only relay URL and a scoped runtime token.
+Incomplete funded configuration must fail before listen. The transport checkpoint uses a distinct `sk-matrix-funded-*` HMAC audience; activation replaces it with the planned owner/runtime/expiry/revocation-scoped credential. Customer VPSes receive only relay URL and that scoped runtime token.
 
 ## 5. Exercise the full fake-upstream path
 
