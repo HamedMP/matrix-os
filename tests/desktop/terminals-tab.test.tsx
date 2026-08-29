@@ -648,6 +648,53 @@ describe("TerminalsTab", () => {
     expect(newApi.get).toHaveBeenCalledWith("/api/agents");
   });
 
+  it("masks the previous runtime inventory before passive invalidation runs", async () => {
+    const oldApi = {
+      get: vi.fn(async (path: string) => (
+        path === "/api/agents"
+          ? installedAgents
+          : { preferences: { shellThemeId: "dark" } }
+      )),
+      put: terminalPreferencesPut,
+    };
+    const newApi = {
+      get: vi.fn(async (path: string) => (
+        path === "/api/agents"
+          ? { agents: [{ id: "codex", installState: "missing" }] }
+          : { preferences: { shellThemeId: "dark" } }
+      )),
+      put: terminalPreferencesPut,
+    };
+    let codexLabelDuringRuntimeCommit = "";
+
+    function RuntimeCommitObserver() {
+      const runtimeSlot = useConnection((state) => state.runtimeSlot);
+      React.useLayoutEffect(() => {
+        if (runtimeSlot !== "secondary") return;
+        codexLabelDuringRuntimeCommit = screen
+          .getAllByRole("menuitem")
+          .find((item) => item.textContent?.includes("Codex"))
+          ?.textContent ?? "";
+      }, [runtimeSlot]);
+      return null;
+    }
+
+    useConnection.setState({ api: oldApi as never, runtimeSlot: "primary" });
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active" }] });
+    render(
+      <Tooltip.Provider>
+        <TerminalsTab />
+        <RuntimeCommitObserver />
+      </Tooltip.Provider>,
+    );
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Choose session type" }), { button: 0, ctrlKey: false });
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: /Codex/ }).textContent).not.toContain("Unavailable"));
+
+    act(() => useConnection.setState({ api: newApi as never, runtimeSlot: "secondary" }));
+
+    expect(codexLabelDuringRuntimeCommit).toContain("Unavailable");
+  });
+
   it("shows the running agent and its current activity in each session row", () => {
     useShellSessions.setState({
       sessions: [{

@@ -125,14 +125,28 @@ export default function TerminalsTab({
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ShellSessionSummary | null>(null);
-  const [agentStatuses, setAgentStatuses] = useState({ ...UNKNOWN_TERMINAL_AGENT_STATUSES });
-  const [checkingAgentStatuses, setCheckingAgentStatuses] = useState(false);
+  const [agentInventory, setAgentInventory] = useState(() => ({
+    api,
+    runtimeSlot,
+    statuses: { ...UNKNOWN_TERMINAL_AGENT_STATUSES },
+    checking: false,
+  }));
   const agentStatusRequestRef = useRef(0);
+  const agentInventoryIsCurrent = agentInventory.api === api
+    && agentInventory.runtimeSlot === runtimeSlot;
+  const agentStatuses = agentInventoryIsCurrent
+    ? agentInventory.statuses
+    : UNKNOWN_TERMINAL_AGENT_STATUSES;
+  const checkingAgentStatuses = agentInventoryIsCurrent && agentInventory.checking;
 
   useEffect(() => {
     agentStatusRequestRef.current += 1;
-    setAgentStatuses({ ...UNKNOWN_TERMINAL_AGENT_STATUSES });
-    setCheckingAgentStatuses(false);
+    setAgentInventory({
+      api,
+      runtimeSlot,
+      statuses: { ...UNKNOWN_TERMINAL_AGENT_STATUSES },
+      checking: false,
+    });
   }, [api, runtimeSlot]);
 
   useEffect(() => {
@@ -209,20 +223,38 @@ export default function TerminalsTab({
     if (!api || checkingAgentStatuses) return;
     const requestId = agentStatusRequestRef.current + 1;
     agentStatusRequestRef.current = requestId;
-    setCheckingAgentStatuses(true);
+    const requestApi = api;
+    const requestRuntimeSlot = runtimeSlot;
+    setAgentInventory((current) => ({
+      api: requestApi,
+      runtimeSlot: requestRuntimeSlot,
+      statuses: current.api === requestApi && current.runtimeSlot === requestRuntimeSlot
+        ? current.statuses
+        : { ...UNKNOWN_TERMINAL_AGENT_STATUSES },
+      checking: true,
+    }));
     try {
-      const statuses = parseTerminalAgentStatuses(await api.get("/api/agents"));
+      const statuses = parseTerminalAgentStatuses(await requestApi.get("/api/agents"));
       if (agentStatusRequestRef.current === requestId) {
-        setAgentStatuses(statuses);
+        setAgentInventory({
+          api: requestApi,
+          runtimeSlot: requestRuntimeSlot,
+          statuses,
+          checking: true,
+        });
       }
     } catch (err: unknown) {
       console.warn("[terminal] Failed to load agent status:", err instanceof Error ? err.message : String(err));
     } finally {
       if (agentStatusRequestRef.current === requestId) {
-        setCheckingAgentStatuses(false);
+        setAgentInventory((current) => (
+          current.api === requestApi && current.runtimeSlot === requestRuntimeSlot
+            ? { ...current, checking: false }
+            : current
+        ));
       }
     }
-  }, [api, checkingAgentStatuses]);
+  }, [api, checkingAgentStatuses, runtimeSlot]);
 
   const createAgentSession = async (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
     if (!api || creating) return;
