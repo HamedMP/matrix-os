@@ -277,12 +277,12 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
-  it("deep-links Plugins and launches the bundled Notes and Whiteboard apps", () => {
+  it("deep-links Plugins to Services and launches native Notes plus bundled Whiteboard", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
     expect(useTabs.getState().tabs.find((tab) => tab.kind === "settings")?.title).toBe("Plugins");
-    expect(screen.getByText("Plugins content").getAttribute("data-settings-section")).toBe("skills");
+    expect(screen.getByText("Plugins content").getAttribute("data-settings-section")).toBe("services");
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
     expect(useTabs.getState().tabs.find((tab) => tab.kind === "settings")?.title).toBe("Settings");
@@ -292,7 +292,7 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Whiteboard" }));
 
     expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "app", slug: "notes", title: "Notes" }),
+      expect.objectContaining({ kind: "notes", title: "Notes" }),
       expect.objectContaining({ kind: "app", slug: "whiteboard", title: "Whiteboard" }),
     ]));
   });

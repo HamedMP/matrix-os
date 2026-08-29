@@ -32,11 +32,10 @@ describe("native desktop default apps", () => {
     });
     expect(FIXED_DESKTOP_APPS.find((app) => app.id === "plugins")).toMatchObject({
       kind: "settings",
-      settingsSection: "skills",
+      settingsSection: "services",
     });
     expect(FIXED_DESKTOP_APPS.find((app) => app.id === "notes")).toMatchObject({
-      kind: "app",
-      slug: "notes",
+      kind: "notes",
     });
     expect(FIXED_DESKTOP_APPS.find((app) => app.id === "whiteboard")).toMatchObject({
       kind: "app",

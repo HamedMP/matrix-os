@@ -93,10 +93,11 @@ describe("Settings panel", () => {
       <Settings open={false} defaultSection="appearance" onOpenChange={() => {}} />,
     );
 
-    rerender(<Settings open defaultSection="plugins" onOpenChange={() => {}} />);
+    rerender(<Settings open defaultSection="integrations" onOpenChange={() => {}} />);
 
-    await waitFor(() => expect(screen.getByText("Plugin settings").isConnected).toBe(true));
+    await waitFor(() => expect(screen.getByText("Integration settings").isConnected).toBe(true));
     expect(screen.queryByText("Appearance settings")).toBeNull();
+    expect(screen.getByRole("button", { name: "Services" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("keeps account controls available while billing is locked for provisioning", async () => {
@@ -173,7 +174,7 @@ describe("Settings panel", () => {
     const defaultInstallsTab = screen.getByRole("button", { name: "Default installs" });
     expect(defaultInstallsTab.getAttribute("aria-current")).toBe("page");
     expect((screen.getByRole("button", { name: "Billing Completed" }) as HTMLButtonElement).disabled).toBe(true);
-    for (const label of ["Appearance", "Integrations", "System"]) {
+    for (const label of ["Appearance", "Services", "System"]) {
       expect((screen.getByRole("button", { name: `${label} Unavailable until your VPS is ready` }) as HTMLButtonElement).disabled).toBe(true);
     }
 

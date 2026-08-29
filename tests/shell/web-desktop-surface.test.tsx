@@ -92,7 +92,7 @@ describe("WebDesktopSurface", () => {
     expect(onActivateWindow).toHaveBeenCalledWith("terminal-window");
   });
 
-  it("ships the canonical Desktop destinations in parity order and deep-links Plugins", () => {
+  it("ships the canonical Desktop destinations in parity order and deep-links Plugins to Services", () => {
     const onOpenSettings = vi.fn();
     const onOpenApp = vi.fn();
     render(
@@ -116,7 +116,7 @@ describe("WebDesktopSurface", () => {
       .toEqual(["Chat", "Terminal", "Files", "Settings", "Plugins", "Browser", "Notes", "Whiteboard"]);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
-    expect(onOpenSettings).toHaveBeenCalledWith("plugins");
+    expect(onOpenSettings).toHaveBeenCalledWith("integrations");
     fireEvent.doubleClick(screen.getByRole("button", { name: "Notes" }));
     expect(onOpenApp).toHaveBeenCalledWith("apps/notes/index.html", "Notes");
   });
