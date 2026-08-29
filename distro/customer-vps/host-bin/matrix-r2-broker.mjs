@@ -23,6 +23,10 @@ function fail(message) {
   throw new Error(message);
 }
 
+function logCleanupFailure(operation) {
+  console.error(`matrix-r2-broker: ${operation} cleanup failed`);
+}
+
 function storageAccess(key) {
   if (key === 'system/vps-meta.json') return 'read';
   if (key === 'system/db/latest') return 'write';
@@ -175,6 +179,7 @@ async function multipartPut(path, key, size) {
     } catch {
       // The original upload failure remains authoritative; abandoned uploads
       // are covered by the bucket's multipart lifecycle policy.
+      logCleanupFailure('multipart abort');
     }
     throw error;
   }
@@ -210,8 +215,12 @@ async function get(key, destination) {
     handle = undefined;
     await rename(temp, destination);
   } catch (error) {
-    await handle?.close().catch(() => {});
-    await rm(temp, { force: true }).catch(() => {});
+    await handle?.close().catch(() => {
+      logCleanupFailure('download handle close');
+    });
+    await rm(temp, { force: true }).catch(() => {
+      logCleanupFailure('temporary download removal');
+    });
     throw error;
   }
 }

@@ -1290,6 +1290,19 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(backupUnit).not.toContain('EnvironmentFile=-/opt/matrix/env/r2.env');
   });
 
+  it('reports broker cleanup failures without replacing the primary operation error', () => {
+    const broker = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/host-bin/matrix-r2-broker.mjs'),
+      'utf8',
+    );
+
+    expect(broker).toContain("logCleanupFailure('multipart abort')");
+    expect(broker).toContain("logCleanupFailure('download handle close')");
+    expect(broker).toContain("logCleanupFailure('temporary download removal')");
+    expect(broker).toContain('throw error;');
+    expect(broker).not.toContain('cleanupError.message');
+  });
+
   it('bounds the terminal user-manager reload before app replacement', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
