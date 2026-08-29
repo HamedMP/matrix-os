@@ -9,7 +9,16 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Loader2Icon, LogOutIcon, PlusCircleIcon, ServerIcon, SettingsIcon, UserIcon } from "@/lib/hugeicons";
+import {
+  CircleHelpIcon,
+  CreditCardIcon,
+  Loader2Icon,
+  LogOutIcon,
+  PlusCircleIcon,
+  ServerIcon,
+  SettingsIcon,
+  UserIcon,
+} from "@/lib/hugeicons";
 import Image from "next/image";
 import Link from "next/link";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
@@ -24,6 +33,7 @@ import {
 } from "@/lib/sign-out";
 
 type UserButtonVariant = "dock" | "menubar" | "settings";
+type AccountSettingsSection = "appearance" | "billing";
 
 function Placeholder({ variant = "dock" }: { variant?: UserButtonVariant }) {
   const isSettings = variant === "settings";
@@ -55,7 +65,7 @@ export function UserButton({
   onOpenSettings,
 }: {
   variant?: UserButtonVariant;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section: AccountSettingsSection) => void;
 }) {
   // SSR hydration guard: useIsClient is false on the server and during the first client render
   // (so the static Placeholder renders during SSR/first paint), then true on the client, so the
@@ -78,7 +88,7 @@ function SelfHostedUserButton({
   onOpenSettings,
 }: {
   variant: UserButtonVariant;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section: AccountSettingsSection) => void;
 }) {
   const isSettings = variant === "settings";
   const isMenubar = variant === "menubar";
@@ -87,7 +97,7 @@ function SelfHostedUserButton({
     <button
       type="button"
       aria-label={label}
-      onClick={onOpenSettings}
+      onClick={() => onOpenSettings?.("appearance")}
       className={cn(
         "flex items-center justify-center rounded-xl border border-border/60 bg-card text-foreground shadow-sm transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         isMenubar ? "size-7 rounded-full border bg-card shadow-sm" : "size-10",
@@ -129,7 +139,7 @@ function MountedUserButton({
   onOpenSettings,
 }: {
   variant: UserButtonVariant;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section: AccountSettingsSection) => void;
 }) {
   const { isLoaded, isSignedIn, signOut } = useAuth();
   const { user } = useUser();
@@ -222,7 +232,7 @@ function MountedUserButton({
               <DropdownMenuPrimitive.Item
                 className={itemClass}
                 onSelect={() => {
-                  onOpenSettings();
+                  onOpenSettings("appearance");
                 }}
               >
                 <SettingsIcon className="size-4 text-muted-foreground" aria-hidden="true" />
@@ -238,6 +248,26 @@ function MountedUserButton({
               <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
               Manage account
             </DropdownMenuPrimitive.Item>
+            <DropdownMenuPrimitive.Item asChild>
+              <a
+                className={itemClass}
+                href="https://matrix-os.com/docs"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <CircleHelpIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                Get help
+              </a>
+            </DropdownMenuPrimitive.Item>
+            {onOpenSettings ? (
+              <DropdownMenuPrimitive.Item
+                className={itemClass}
+                onSelect={() => onOpenSettings("billing")}
+              >
+                <CreditCardIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                View plans
+              </DropdownMenuPrimitive.Item>
+            ) : null}
             <DropdownMenuPrimitive.Item asChild>
               <Link className={itemClass} href="/runtime">
                 <ServerIcon className="size-4 text-muted-foreground" aria-hidden="true" />

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import type { TabKind } from "../../stores/tabs";
 import DesktopAppIcon from "./DesktopAppIcon";
 import type { DesktopAppConfig } from "./desktop-apps";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -9,14 +8,14 @@ export interface DesktopDestination extends DesktopAppConfig {
 }
 
 export default function DesktopIconGrid({ destinations }: { destinations: DesktopDestination[] }) {
-  const [selectedKind, setSelectedKind] = useState<TabKind | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const layerRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const clearSelection = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node) || layerRef.current?.contains(target)) return;
-      setSelectedKind(null);
+      setSelectedId(null);
     };
     document.addEventListener("pointerdown", clearSelection);
     return () => document.removeEventListener("pointerdown", clearSelection);
@@ -30,22 +29,22 @@ export default function DesktopIconGrid({ destinations }: { destinations: Deskto
       style={{ zIndex: DESKTOP_Z_INDEX.nativeDesktopIcons }}
     >
       {destinations.map((destination) => {
-        const selected = selectedKind === destination.kind;
+        const selected = selectedId === destination.id;
         return (
           <button
-            key={destination.kind}
+            key={destination.id}
             type="button"
             aria-label={destination.name}
             data-selected={selected || undefined}
             className="group flex w-[76px] flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] data-[selected]:bg-[var(--bg-selected)]"
-            onClick={() => setSelectedKind(destination.kind)}
+            onClick={() => setSelectedId(destination.id)}
             onDoubleClick={destination.open}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
                 destination.open();
               } else if (event.key === "Escape") {
-                setSelectedKind(null);
+                setSelectedId(null);
               }
             }}
           >

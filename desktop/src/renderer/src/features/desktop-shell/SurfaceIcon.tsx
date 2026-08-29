@@ -14,6 +14,7 @@ import type { Tab, TabKind } from "../../stores/tabs";
 
 const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   home: Globe2,
+  browser: Globe2,
   work: FolderKanban,
   chat: MessageCircle,
   projects: FolderKanban,

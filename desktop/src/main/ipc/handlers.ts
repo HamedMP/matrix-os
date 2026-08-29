@@ -273,14 +273,26 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
-  handle("embed:open", async ({ kind, slug, appIdentity, bounds, active }, event) => {
+  handle("embed:open", async (request, event) => {
     try {
+      const bounds = toWebContentsViewBounds(request.bounds, event);
+      if (request.kind === "hosted-shell") {
+        return await ctx.embeds.open({ kind: request.kind, bounds, active: request.active });
+      }
+      if (request.kind === "browser") {
+        return await ctx.embeds.open({
+          kind: request.kind,
+          url: request.url,
+          bounds,
+          active: request.active,
+        });
+      }
       return await ctx.embeds.open({
-        kind,
-        slug,
-        appIdentity,
-        bounds: toWebContentsViewBounds(bounds, event),
-        active,
+        kind: request.kind,
+        slug: request.slug,
+        appIdentity: request.appIdentity,
+        bounds,
+        active: request.active,
       });
     } catch (err: unknown) {
       console.warn(

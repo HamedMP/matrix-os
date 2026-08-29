@@ -153,11 +153,15 @@ describe("desktop release workflows", () => {
 
   it("bundles runtime schema dependencies into the Electron main process", () => {
     const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
-    const bundledContracts = config.match(
+    const bundledMainDependencies = config.match(
+      /externalizeDepsPlugin\(\{ exclude: \["zod", "@matrix-os\/contracts", "@finnaai\/matrix"\] \}\)/g,
+    );
+    const bundledPreloadDependencies = config.match(
       /externalizeDepsPlugin\(\{ exclude: \["zod", "@matrix-os\/contracts"\] \}\)/g,
     );
 
-    expect(bundledContracts).toHaveLength(2);
+    expect(bundledMainDependencies).toHaveLength(1);
+    expect(bundledPreloadDependencies).toHaveLength(1);
   });
 
   it("emits one self-contained sandbox preload for the shell and native apps", () => {

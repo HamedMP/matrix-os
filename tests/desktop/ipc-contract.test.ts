@@ -879,6 +879,19 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ embedId: "e1", state: "auth-required", token: "secret" }).success).toBe(false);
   });
 
+  it("requires kind-specific embed:open payloads", () => {
+    const schema = INVOKE_CHANNELS["embed:open"].request;
+    const bounds = { x: 0, y: 38, width: 800, height: 600 };
+
+    expect(schema.safeParse({ kind: "hosted-shell", bounds }).success).toBe(true);
+    expect(schema.safeParse({ kind: "app", slug: "notes", bounds }).success).toBe(true);
+    expect(schema.safeParse({ kind: "browser", url: "http://127.0.0.1:3000/", bounds }).success).toBe(true);
+    expect(schema.safeParse({ kind: "app", bounds }).success).toBe(false);
+    expect(schema.safeParse({ kind: "browser", bounds }).success).toBe(false);
+    expect(schema.safeParse({ kind: "hosted-shell", url: "http://127.0.0.1:3000/", bounds }).success).toBe(false);
+    expect(schema.safeParse({ kind: "browser", slug: "notes", url: "http://127.0.0.1:3000/", bounds }).success).toBe(false);
+  });
+
   it("caps state:set values at 64KB and only allows known keys", () => {
     const schema = INVOKE_CHANNELS["state:set"].request;
     expect(schema.safeParse({ key: "appearance", value: { theme: "dark" } }).success).toBe(true);

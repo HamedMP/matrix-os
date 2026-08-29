@@ -6,6 +6,12 @@
 // native principal (L1).
 import { net, session, type BaseWindow } from "electron";
 import { randomUUID } from "node:crypto";
+import {
+  startPortForward as startMatrixPortForward,
+  type PortForwardHandle,
+  type StartPortForwardOptions,
+} from "@finnaai/matrix/port-forward";
+import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 import { EmbedManager, type Bounds } from "./embed-manager";
 import { LaunchTokenCache } from "./launch-token-cache";
 import {
@@ -29,12 +35,14 @@ interface EmbedServiceDeps {
   emitState: (embedId: string, state: EmbedState) => void;
   appBridge?: NativeAppBridge;
   appPreloadPath?: string;
+  startPortForward?: (options: StartPortForwardOptions) => Promise<PortForwardHandle>;
 }
 
 interface OpenRequest {
-  kind: "hosted-shell" | "app";
+  kind: "hosted-shell" | "app" | "browser";
   slug?: string;
   appIdentity?: string;
+  url?: string;
   bounds: Bounds;
   active?: boolean;
 }
@@ -46,6 +54,7 @@ interface OpenResult {
 
 const MAX_PENDING_HOSTED_SHELLS = 12;
 const MAX_PENDING_APPS = 12;
+const MAX_PENDING_BROWSERS = 12;
 const HOSTED_SHELL_PARTITION = "persist:hosted-shell";
 
 interface PendingAppEmbed {
@@ -62,18 +71,21 @@ export class EmbedService {
   private readonly pendingApps = new Map<string, PendingAppEmbed>();
   private readonly pendingActive = new Map<string, boolean>();
   private readonly hostedShellIds = new Set<string>();
+  private readonly pendingBrowsers = new Set<string>();
+  private readonly browserForwards = new Map<string, PortForwardHandle>();
   private hostedShellRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private hostedShellHandoffInFlight: Promise<HandoffResult> | null = null;
   private hostedShellHandoffInFlightGeneration: number | null = null;
   private hostedShellRefreshGatewayOrigin: string | null = null;
   private hostedShellGeneration = 0;
+  private browserGeneration = 0;
 
   constructor(deps: EmbedServiceDeps) {
     this.deps = deps;
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
-      createView: ({ partition, kind, slug, routeSlug, onState }) => {
+      createView: ({ partition, kind, slug, routeSlug, allowedOrigins, onState }) => {
         const window = this.deps.getWindow();
         if (!window) throw new Error("no window for embed");
         const bridge = kind === "app" && slug && this.deps.appBridge && this.deps.appPreloadPath
@@ -89,7 +101,7 @@ export class EmbedService {
         return createWebContentsView({
           window,
           partition,
-          allowedOrigins: [this.deps.getGatewayOrigin()],
+          allowedOrigins,
           onState,
           ...(bridge ? { appBridge: bridge } : {}),
         });
@@ -101,6 +113,14 @@ export class EmbedService {
     const gatewayOrigin = this.deps.getGatewayOrigin();
     if (request.kind === "hosted-shell") {
       return this.openHostedShell(gatewayOrigin, request.bounds, request.active ?? true);
+    }
+    if (request.kind === "browser") {
+      return this.openRuntimeBrowser(
+        gatewayOrigin,
+        request.url ?? "",
+        request.bounds,
+        request.active ?? true,
+      );
     }
     return this.openApp(
       gatewayOrigin,
@@ -155,25 +175,144 @@ export class EmbedService {
   close(embedId: string): boolean {
     const wasPending = this.pendingHostedShells.delete(embedId);
     const wasPendingApp = this.pendingApps.delete(embedId);
+    const wasPendingBrowser = this.pendingBrowsers.delete(embedId);
+    const browserForward = this.browserForwards.get(embedId);
     this.pendingActive.delete(embedId);
     const wasHostedShell = this.hostedShellIds.delete(embedId);
     if (wasHostedShell && this.hostedShellIds.size === 0) {
       this.hostedShellGeneration += 1;
       this.clearHostedShellRefreshTimer();
     }
-    return this.manager.close(embedId) || wasPending || wasPendingApp;
+    const closed = this.manager.close(embedId);
+    if (!closed && browserForward) this.disposeBrowserForward(embedId, browserForward);
+    return closed || wasPending || wasPendingApp || wasPendingBrowser || Boolean(browserForward);
   }
 
   closeAll(): void {
     this.hostedShellGeneration += 1;
+    this.browserGeneration += 1;
     this.pendingHostedShells.clear();
     this.pendingApps.clear();
+    this.pendingBrowsers.clear();
     this.pendingActive.clear();
     this.hostedShellIds.clear();
     this.clearHostedShellRefreshTimer();
     this.tokenCache.clear();
     this.manager.closeAll();
+    for (const [embedId, forward] of this.browserForwards) {
+      this.disposeBrowserForward(embedId, forward);
+    }
     this.deps.appBridge?.clear();
+  }
+
+  private async openRuntimeBrowser(
+    gatewayOrigin: string,
+    rawUrl: string,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
+    const embedId = randomUUID();
+    const resolved = resolveBrowserAddress(rawUrl);
+    const token = this.deps.getToken();
+    if (resolved?.disposition !== "runtime" || !token) {
+      return { embedId, state: token ? "failed" : "auth-required" };
+    }
+    if (this.pendingBrowsers.size >= MAX_PENDING_BROWSERS) {
+      return { embedId, state: "failed" };
+    }
+
+    const generation = this.browserGeneration;
+    this.pendingBrowsers.add(embedId);
+    const startPortForward = this.deps.startPortForward ?? startMatrixPortForward;
+    let forward: PortForwardHandle;
+    try {
+      forward = await startPortForward({
+        gatewayUrl: gatewayOrigin,
+        token,
+        localHost: "127.0.0.1",
+        localPort: 0,
+        remoteHost: resolved.remoteHost,
+        remotePort: resolved.remotePort,
+      });
+    } catch (err: unknown) {
+      this.pendingBrowsers.delete(embedId);
+      console.warn(
+        "[embed-service] runtime browser tunnel failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { embedId, state: "failed" };
+    }
+
+    const stillPending = this.pendingBrowsers.delete(embedId);
+    if (generation !== this.browserGeneration || !stillPending) {
+      void forward.close().catch((err: unknown) => {
+        console.warn(
+          "[embed-service] stale runtime browser tunnel cleanup failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      });
+      return { embedId, state: "failed" };
+    }
+
+    const localUrl = new URL(resolved.url);
+    localUrl.hostname = "127.0.0.1";
+    localUrl.port = String(forward.localPort);
+    const allowedOrigins = [localUrl.origin];
+    this.browserForwards.set(embedId, forward);
+    const disposeForward = () => this.disposeBrowserForward(embedId, forward);
+    void forward.closed.then(
+      () => this.handleBrowserForwardClosed(embedId, forward),
+      (err: unknown) => this.handleBrowserForwardClosed(embedId, forward, err),
+    );
+    try {
+      this.manager.open("browser", null, bounds, localUrl.toString(), {
+        id: embedId,
+        active,
+        allowedOrigins,
+        onDispose: disposeForward,
+        onState: (state) => this.deps.emitState(embedId, state),
+      });
+    } catch (err: unknown) {
+      disposeForward();
+      console.warn(
+        "[embed-service] runtime browser open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { embedId, state: "failed" };
+    }
+    return { embedId, state: "loading" };
+  }
+
+  private disposeBrowserForward(embedId: string, forward: PortForwardHandle): void {
+    if (this.browserForwards.get(embedId) !== forward) return;
+    this.browserForwards.delete(embedId);
+    void forward.close().catch((err: unknown) => {
+      console.warn(
+        "[embed-service] runtime browser tunnel cleanup failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+  }
+
+  private handleBrowserForwardClosed(
+    embedId: string,
+    forward: PortForwardHandle,
+    err?: unknown,
+  ): void {
+    if (this.browserForwards.get(embedId) !== forward) return;
+    this.browserForwards.delete(embedId);
+    this.manager.close(embedId);
+    if (err === undefined) return;
+    console.warn(
+      "[embed-service] runtime browser tunnel close monitoring failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    void forward.close().catch((closeErr: unknown) => {
+      console.warn(
+        "[embed-service] failed Browser tunnel final cleanup:",
+        closeErr instanceof Error ? closeErr.message : String(closeErr),
+      );
+    });
   }
 
   async retryAuth(embedId: string): Promise<boolean> {

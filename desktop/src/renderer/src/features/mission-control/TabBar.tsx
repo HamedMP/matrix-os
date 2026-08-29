@@ -2,6 +2,7 @@ import {
   FileCode2,
   FolderKanban,
   FolderTree,
+  Globe2,
   Home,
   LayoutGrid,
   Sparkles,
@@ -15,6 +16,7 @@ import { useTabs, type Tab, type TabKind } from "../../stores/tabs";
 
 const TAB_ICON: Record<TabKind, LucideIcon> = {
   home: Home,
+  browser: Globe2,
   work: FolderKanban,
   chat: Sparkles,
   projects: FolderKanban,

@@ -404,6 +404,37 @@ describe("EmbedManager", () => {
     expect(views[0]?.view.bounds).toEqual(next);
   });
 
+  it("allows a runtime browser to opt into only its ephemeral loopback origin", () => {
+    const created: Array<{ kind: string; partition: string; allowedOrigins: string[] }> = [];
+    const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
+      createView: ({ kind, partition, allowedOrigins, onState }) => {
+        created.push({ kind, partition, allowedOrigins });
+        return new FakeView(null, onState);
+      },
+    });
+
+    manager.open("browser", null, BOUNDS, "http://127.0.0.1:49152/docs", {
+      allowedOrigins: ["http://127.0.0.1:49152"],
+    });
+
+    expect(created).toEqual([{
+      kind: "browser",
+      partition: expect.stringMatching(/^runtime-browser-/),
+      allowedOrigins: ["http://127.0.0.1:49152"],
+    }]);
+  });
+
+  it("runs embed disposal exactly once when a browser closes", () => {
+    const { manager } = makeManager();
+    const onDispose = vi.fn();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/", { onDispose });
+
+    expect(manager.close(id)).toBe(true);
+    expect(manager.close(id)).toBe(false);
+    expect(onDispose).toHaveBeenCalledTimes(1);
+  });
+
   it("close destroys the view and forgets the embed", () => {
     const { manager, views } = makeManager();
     const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/");

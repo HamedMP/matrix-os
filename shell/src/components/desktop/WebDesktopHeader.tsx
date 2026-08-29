@@ -13,6 +13,7 @@ interface WebDesktopHeaderProps {
   onCloseWindow: (id: string) => void;
   onShowDesktop: () => void;
   onToggleFullscreen: (id: string) => void;
+  rightActions?: ReactNode;
 }
 
 function activeWindowId(windows: AppWindow[]): string | null {
@@ -32,6 +33,7 @@ export function WebDesktopHeader({
   onCloseWindow,
   onShowDesktop,
   onToggleFullscreen,
+  rightActions,
 }: WebDesktopHeaderProps) {
   const [previewsOpen, setPreviewsOpen] = useState(false);
   const activeId = useMemo(() => activeWindowId(windows), [windows]);
@@ -93,6 +95,11 @@ export function WebDesktopHeader({
             </button>
           ) : null}
         </div>
+        {rightActions ? (
+          <div className="flex shrink-0 items-center border-l border-border/70 px-2">
+            {rightActions}
+          </div>
+        ) : null}
       </header>
 
       {previewsOpen ? (

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EmbedService } from "@desktop/main/embeds/embed-service";
 import type { Bounds } from "@desktop/main/embeds/embed-manager";
 import type { HandoffResult } from "@desktop/main/embeds/app-session";
+import type { PortForwardHandle } from "@finnaai/matrix/port-forward";
 
 vi.mock("electron", () => ({
   net: { request: vi.fn() },
@@ -32,6 +33,191 @@ describe("EmbedService", () => {
 
     await expect(service.reload("embed-shell")).resolves.toBe(true);
     expect(reload).toHaveBeenCalledWith("embed-shell");
+  });
+
+  it("tunnels runtime loopback pages through Matrix and closes the tunnel with the embed", async () => {
+    const closeForward = vi.fn(async () => {});
+    const startPortForward = vi.fn(async () => ({
+      localHost: "127.0.0.1" as const,
+      localPort: 49152,
+      remoteHost: "127.0.0.1" as const,
+      remotePort: 3000,
+      ready: Promise.resolve(),
+      closed: new Promise<void>(() => {}),
+      close: closeForward,
+    }));
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+    const internals = service as unknown as {
+      manager: {
+        open: (
+          kind: string,
+          slug: string | null,
+          bounds: Bounds,
+          url: string,
+          options: unknown,
+        ) => string;
+      };
+    };
+    const open = vi.spyOn(internals.manager, "open").mockImplementation((_kind, _slug, _bounds, _url, options) => {
+      expect(options).toEqual(expect.objectContaining({ id: expect.any(String) }));
+      return (options as { id: string }).id;
+    });
+
+    const result = await service.open({
+      kind: "browser",
+      url: "http://127.0.0.1:3000/docs?q=matrix#api",
+      bounds: BOUNDS,
+    });
+
+    expect(startPortForward).toHaveBeenCalledWith(expect.objectContaining({
+      gatewayUrl: "https://gateway.test",
+      token: "token",
+      localHost: "127.0.0.1",
+      localPort: 0,
+      remoteHost: "127.0.0.1",
+      remotePort: 3000,
+    }));
+    expect(open).toHaveBeenCalledWith(
+      "browser",
+      null,
+      BOUNDS,
+      "http://127.0.0.1:49152/docs?q=matrix#api",
+      expect.objectContaining({
+        id: result.embedId,
+        allowedOrigins: ["http://127.0.0.1:49152"],
+      }),
+    );
+
+    expect(service.close(result.embedId)).toBe(true);
+    await vi.waitFor(() => expect(closeForward).toHaveBeenCalledTimes(1));
+  });
+
+  it("cleans up a pending Browser tunnel when its embed closes before forwarding is ready", async () => {
+    let resolveForward!: (value: PortForwardHandle) => void;
+    const closeForward = vi.fn(async () => {});
+    const startPortForward = vi.fn(() => new Promise<PortForwardHandle>((resolve) => {
+      resolveForward = resolve;
+    }));
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+
+    const opening = service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+    await vi.waitFor(() => expect(startPortForward).toHaveBeenCalledOnce());
+    const pendingId = Array.from((service as unknown as { pendingBrowsers: Set<string> }).pendingBrowsers)[0]!;
+    expect(service.close(pendingId)).toBe(true);
+    resolveForward({
+      localHost: "127.0.0.1",
+      localPort: 49152,
+      remoteHost: "127.0.0.1",
+      remotePort: 3000,
+      ready: Promise.resolve(),
+      closed: new Promise<void>(() => {}),
+      close: closeForward,
+    });
+
+    await expect(opening).resolves.toMatchObject({ embedId: pendingId, state: "failed" });
+    await vi.waitFor(() => expect(closeForward).toHaveBeenCalledOnce());
+  });
+
+  it("caps pending Browser tunnels", async () => {
+    const startPortForward = vi.fn(() => new Promise<PortForwardHandle>(() => {}));
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+
+    const openings = Array.from({ length: 13 }, (_, index) => service.open({
+      kind: "browser" as const,
+      url: `127.0.0.1:${3000 + index}`,
+      bounds: BOUNDS,
+    }));
+
+    await expect(openings.at(-1)).resolves.toMatchObject({ state: "failed" });
+    expect(startPortForward).toHaveBeenCalledTimes(12);
+    service.closeAll();
+  });
+
+  it("invalidates a pending Browser tunnel when the selected runtime changes", async () => {
+    let resolveForward!: (value: PortForwardHandle) => void;
+    const closeForward = vi.fn(async () => {});
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward: () => new Promise<PortForwardHandle>((resolve) => {
+        resolveForward = resolve;
+      }),
+    });
+    const opening = service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+    await vi.waitFor(() => expect(
+      (service as unknown as { pendingBrowsers: Set<string> }).pendingBrowsers.size,
+    ).toBe(1));
+
+    service.closeAll();
+    resolveForward({
+      localHost: "127.0.0.1",
+      localPort: 49152,
+      remoteHost: "127.0.0.1",
+      remotePort: 3000,
+      ready: Promise.resolve(),
+      closed: new Promise<void>(() => {}),
+      close: closeForward,
+    });
+
+    await expect(opening).resolves.toMatchObject({ state: "failed" });
+    await vi.waitFor(() => expect(closeForward).toHaveBeenCalledOnce());
+  });
+
+  it("evicts the Browser embed when tunnel termination rejects", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let rejectClosed!: (error: Error) => void;
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward: async () => ({
+        localHost: "127.0.0.1",
+        localPort: 49152,
+        remoteHost: "127.0.0.1",
+        remotePort: 3000,
+        ready: Promise.resolve(),
+        closed: new Promise<void>((_resolve, reject) => { rejectClosed = reject; }),
+        close: vi.fn(async () => {}),
+      }),
+    });
+    const internals = service as unknown as {
+      browserForwards: Map<string, PortForwardHandle>;
+      manager: {
+        open: (...args: unknown[]) => string;
+        close: (embedId: string) => boolean;
+      };
+    };
+    vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+    const closeEmbed = vi.spyOn(internals.manager, "close").mockReturnValue(true);
+
+    const result = await service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+    rejectClosed(new Error("forward failed"));
+
+    await vi.waitFor(() => expect(closeEmbed).toHaveBeenCalledWith(result.embedId));
+    expect(internals.browserForwards.has(result.embedId)).toBe(false);
   });
 
   it("refreshes hosted-shell cookies before navigating the retained embed", async () => {

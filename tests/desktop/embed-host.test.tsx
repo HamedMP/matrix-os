@@ -191,6 +191,24 @@ describe("EmbedHost", () => {
     });
   });
 
+  it("wires runtime Browser URLs through the typed embed request", async () => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "browser-1", state: "loading" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="browser" url="http://127.0.0.1:3000/docs" />);
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", {
+      kind: "browser",
+      url: "http://127.0.0.1:3000/docs",
+      bounds: { x: 10, y: 20, width: 300, height: 200 },
+      active: true,
+    }));
+  });
+
   it("reloads the retained native embed when the host receives a refresh request", async () => {
     const view = render(<EmbedHost kind="hosted-shell" refreshRequest={0} />);
     await act(async () => {

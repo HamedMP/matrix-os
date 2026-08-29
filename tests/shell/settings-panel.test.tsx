@@ -87,6 +87,18 @@ describe("Settings panel", () => {
     expect(screen.getByText("Agent settings").isConnected).toBe(true);
   });
 
+  it("honors a Desktop deep link when Settings opens", async () => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+    const { rerender } = render(
+      <Settings open={false} defaultSection="appearance" onOpenChange={() => {}} />,
+    );
+
+    rerender(<Settings open defaultSection="plugins" onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("Plugin settings").isConnected).toBe(true));
+    expect(screen.queryByText("Appearance settings")).toBeNull();
+  });
+
   it("keeps account controls available while billing is locked for provisioning", async () => {
     billingState.active = false;
     const { Settings } = await import("../../shell/src/components/Settings.js");

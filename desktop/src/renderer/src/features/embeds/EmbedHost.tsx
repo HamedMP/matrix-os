@@ -8,23 +8,32 @@ import { useConnection } from "../../stores/connection";
 // A WebContentsView is a native overlay that always paints above the renderer,
 // so when this host's tab is inactive the view is DETACHED from the window
 // (embed:set-active false) rather than moved off-screen (lesson L14).
-export default function EmbedHost({
-  kind,
-  slug,
-  appIdentity,
-  active = true,
-  refreshRequest,
-  layoutRevision,
-  visualScale = 1,
-}: {
-  kind: "hosted-shell" | "app";
-  slug?: string;
-  appIdentity?: string;
+interface EmbedHostCommonProps {
   active?: boolean;
   refreshRequest?: number;
   layoutRevision?: string;
   visualScale?: number;
-}) {
+}
+
+type EmbedHostProps = EmbedHostCommonProps & (
+  | { kind: "hosted-shell" }
+  | { kind: "app"; slug: string; appIdentity?: string }
+  | { kind: "browser"; url: string }
+);
+
+export default function EmbedHost({
+  ...props
+}: EmbedHostProps) {
+  const {
+    kind,
+  active = true,
+  refreshRequest,
+  layoutRevision,
+  visualScale = 1,
+  } = props;
+  const slug = props.kind === "app" ? props.slug : undefined;
+  const appIdentity = props.kind === "app" ? props.appIdentity : undefined;
+  const url = props.kind === "browser" ? props.url : undefined;
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
@@ -75,13 +84,19 @@ export default function EmbedHost({
       height: Math.round(r.height),
     };
 
-    void invoke("embed:open", {
-      kind,
-      ...(slug ? { slug } : {}),
-      ...(appIdentity ? { appIdentity } : {}),
-      bounds,
-      active: activeRef.current,
-    })
+    const openRequest = kind === "hosted-shell"
+      ? { kind, bounds, active: activeRef.current }
+      : kind === "browser"
+        ? { kind, url: url!, bounds, active: activeRef.current }
+        : {
+            kind,
+            slug: slug!,
+            ...(appIdentity ? { appIdentity } : {}),
+            bounds,
+            active: activeRef.current,
+          };
+
+    void invoke("embed:open", openRequest)
       .then(({ embedId, state: initialState }) => {
         if (disposed) {
           void invoke("embed:close", { embedId });
@@ -115,7 +130,7 @@ export default function EmbedHost({
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdentity, kind, slug, runtimeSlot]);
+  }, [appIdentity, kind, runtimeSlot, slug, url]);
 
   // Attach/detach the native view as the hosting tab activates/deactivates.
   useEffect(() => {

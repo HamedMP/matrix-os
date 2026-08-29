@@ -12,6 +12,9 @@ const apps = [
   { name: "Terminal", path: "__terminal__", iconUrl: "/icons/terminal.svg" },
   { name: "Files", path: "__file-browser__", iconUrl: "/icons/files.svg" },
   { name: "Hermes", path: "__chat__", iconUrl: "/icons/chat.svg" },
+  { name: "Browser", path: "apps/browser/index.html", iconUrl: "/icons/browser.svg" },
+  { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/notes.svg" },
+  { name: "Whiteboard", path: "apps/whiteboard/index.html", iconUrl: "/icons/whiteboard.svg" },
   { name: "Calculator", path: "apps/calculator/index.html", iconUrl: "/icons/calculator.svg" },
 ];
 
@@ -87,6 +90,57 @@ describe("WebDesktopSurface", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Focus Terminal" }));
     expect(onActivateWindow).toHaveBeenCalledWith("terminal-window");
+  });
+
+  it("ships the canonical Desktop destinations in parity order and deep-links Plugins", () => {
+    const onOpenSettings = vi.fn();
+    const onOpenApp = vi.fn();
+    render(
+      <WebDesktopSurface
+        apps={apps}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        onOpenApp={onOpenApp}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={onOpenSettings}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+
+    const desktop = screen.getByRole("navigation", { name: "Desktop apps" });
+    expect(Array.from(desktop.querySelectorAll("button")).map((button) => button.getAttribute("aria-label")))
+      .toEqual(["Chat", "Terminal", "Files", "Settings", "Plugins", "Browser", "Notes", "Whiteboard"]);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("plugins");
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Notes" }));
+    expect(onOpenApp).toHaveBeenCalledWith("apps/notes/index.html", "Notes");
+  });
+
+  it("renders account, runtime, and support controls in the header action slot", () => {
+    render(
+      <WebDesktopSurface
+        apps={apps}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        headerActions={<button type="button">Account controls</button>}
+        onOpenApp={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("banner").contains(screen.getByRole("button", { name: "Account controls" })))
+      .toBe(true);
   });
 
   it("keeps minimized apps in the taskbar as restore targets", () => {
