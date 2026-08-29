@@ -43,7 +43,6 @@ export function createPrebillingProvisioningCoordinator(options: {
     if (!current) return false;
     if (
       current.paymentConfirmedAt === null
-      && current.state !== 'preparing'
       && !prebillingRolloutIncludesUser(options.config, current.clerkUserId)
     ) {
       return false;

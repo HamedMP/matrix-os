@@ -10,7 +10,7 @@ MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=<0..100>
 MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=<positive integer>
 ```
 
-Setting `ENABLED=false` or rollout to `0` stops only new unpaid admission: awaiting intents are not admitted and failed unpaid preparations are not reset for retry. Preparations admitted before the change may continue, while paid-intent bypass, signed subscription activation, and signed-expiry cleanup remain wired so existing intents can converge safely.
+Setting `ENABLED=false` or rollout to `0` stops new unpaid provider work: awaiting intents are not admitted, failed unpaid preparations are not reset for retry, and a `preparing` crash state cannot create its first machine on resume. Detached work already in flight may settle, while paid-intent bypass, signed subscription activation, and signed-expiry cleanup remain wired so existing intents can converge safely.
 
 ## Rollback to a Cost-Aware Revision
 

@@ -245,6 +245,37 @@ describe('platform prebilling provisioning foundation', () => {
     });
   });
 
+  it('does not create a first machine for an unpaid preparing intent after admission is disabled', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    await admitPrebillingIntent(db, {
+      intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
+      maxActive: 1, now: CREATED_AT,
+    });
+    const provisionForCheckout = vi.fn().mockResolvedValue({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      status: 'provisioning',
+      etaSeconds: 90,
+    });
+    const coordinator = createPrebillingProvisioningCoordinator({
+      db,
+      config: loadPrebillingProvisioningConfig({}),
+      customerVpsService: { provisionForCheckout } as never,
+      resolveIdentity: vi.fn().mockResolvedValue({ handle: 'alice' }),
+      now: () => new Date(CREATED_AT),
+    });
+
+    await expect(coordinator.resumePreparation({
+      intentId: 'intent-1', clerkUserId: 'user_123',
+    })).resolves.toBe(false);
+
+    expect(provisionForCheckout).not.toHaveBeenCalled();
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'preparing',
+      machineId: null,
+    });
+  });
+
   it('resumes the same paid intent even when unpaid admission is disabled and capacity is full', async () => {
     await seedCheckout('checkout-1', 'user_123');
     await seedCheckout('checkout-2', 'user_456');
