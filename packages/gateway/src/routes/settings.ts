@@ -34,6 +34,7 @@ import {
   type AgentConfigErrorKind,
 } from "../agent-config/errors.js";
 import type { AgentRuntimeController } from "../agent-config/runtime-controller.js";
+import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 
 const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
@@ -223,12 +224,14 @@ export function createSettingsRoutes(opts: {
   channelManager: ChannelManager;
   agentRuntimeSource?: AgentRuntimeSource;
   agentRuntimeController?: AgentRuntimeController;
+  aiProviderService?: AiProviderSnapshotReader;
 }) {
   const {
     homePath,
     channelManager,
     agentRuntimeSource,
     agentRuntimeController,
+    aiProviderService,
   } = opts;
   const app = new Hono();
   const configPath = join(homePath, "system/config.json");
@@ -246,12 +249,23 @@ export function createSettingsRoutes(opts: {
       "handle",
     );
     let runtimeSnapshot;
+    let providerSnapshot;
     if (agentRuntimeSource) {
       try {
         runtimeSnapshot = await readRuntimeSnapshot(agentRuntimeSource);
       } catch (err) {
         console.warn(
           "[settings] Failed to read agent runtime settings:",
+          err instanceof Error ? err.name : "UnknownError",
+        );
+      }
+    }
+    if (aiProviderService) {
+      try {
+        providerSnapshot = await aiProviderService.getSnapshot({ refresh: false });
+      } catch (err) {
+        console.warn(
+          "[settings] Failed to read AI provider settings:",
           err instanceof Error ? err.name : "UnknownError",
         );
       }
@@ -263,6 +277,7 @@ export function createSettingsRoutes(opts: {
       platformCredentialAvailable: typeof process.env.ANTHROPIC_API_KEY === "string"
         && process.env.ANTHROPIC_API_KEY.length > 0,
       runtimeSnapshot,
+      providerSnapshot,
     });
   }
 

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { createSettingsRoutes } from "../../packages/gateway/src/routes/settings.js";
 import { buildAgentSettingsView } from "../../packages/gateway/src/agent-config/service.js";
+import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 
 function stubChannelManager() {
   return {
@@ -266,5 +267,38 @@ describe("current and legacy Anthropic models", () => {
       expect.objectContaining({ id: "claude-haiku-4-5" }),
       expect.objectContaining({ id: "claude-sonnet-4-5", tier: "Legacy" }),
     ]));
+  });
+
+  it("adapts Matrix-funded access without presenting the owner Anthropic account as connected", async () => {
+    const providerHome = resolve(mkdtempSync(join(tmpdir(), "settings-provider-adapter-")));
+    mkdirSync(join(providerHome, "system"), { recursive: true });
+    writeFileSync(join(providerHome, "system/config.json"), "{}");
+    const providerService = new AiProviderService({
+      homePath: providerHome,
+      env: { ANTHROPIC_API_KEY: "platform-secret" },
+    });
+    try {
+      const providerSnapshot = await providerService.getSnapshot();
+      const view = buildAgentSettingsView({
+        identity: { name: "Matrix Owner" },
+        config: {},
+        claudeLoginAvailable: false,
+        platformCredentialAvailable: true,
+        providerSnapshot,
+      });
+
+      expect(view.chat).toMatchObject({ provider: "matrix_ai", authKind: "platform" });
+      expect(view.providers.find((provider) => provider.runtime === null)).toMatchObject({
+        id: "matrix_ai",
+        displayName: "Matrix AI",
+        authKind: "platform",
+        authStatus: { state: "ready", authenticated: true },
+      });
+      expect(providerSnapshot.accounts.find((account) => account.id === "owner_anthropic"))
+        .toMatchObject({ state: "setup_required", authMethod: null });
+    } finally {
+      providerService.close();
+      rmSync(providerHome, { recursive: true, force: true });
+    }
   });
 });

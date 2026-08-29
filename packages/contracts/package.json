@@ -7,6 +7,7 @@
     ".": "./src/index.ts"
   },
   "imports": {
+    "#ai-provider": "./src/ai-provider.ts",
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",

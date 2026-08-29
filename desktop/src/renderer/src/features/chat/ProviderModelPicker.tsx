@@ -16,6 +16,7 @@ import {
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 
 const DRIVER_LABEL: Record<CanonicalProviderDriverKind, string> = {
+  kernel: "Matrix Agent",
   hermes: "Hermes",
   openclaw: "OpenClaw",
   codex: "Codex",

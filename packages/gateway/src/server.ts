@@ -232,6 +232,8 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { AiProviderService } from "./ai-providers/service.js";
+import { createAiProviderRoutes } from "./ai-providers/routes.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
@@ -4142,6 +4144,7 @@ export async function createGateway(config: GatewayConfig) {
     client: hermesClient,
   });
   await agentRuntimeServices.controller.reconcile();
+  const aiProviderService = new AiProviderService({ homePath });
   const canonicalExecutableDriverKinds = [
     "hermes" as const,
     ...(codingAgentProviders.some((provider) => provider.providerId === "claude")
@@ -4215,6 +4218,10 @@ export async function createGateway(config: GatewayConfig) {
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
+  app.route("/api/ai", createAiProviderRoutes({
+    service: aiProviderService,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
 
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
@@ -4222,6 +4229,7 @@ export async function createGateway(config: GatewayConfig) {
     channelManager,
     agentRuntimeSource: agentRuntimeServices.source,
     agentRuntimeController: agentRuntimeServices.controller,
+    aiProviderService,
   });
   app.route("/api/settings", settingsRoutes);
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
@@ -4515,6 +4523,7 @@ export async function createGateway(config: GatewayConfig) {
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       await agentRuntimeServices.controller.close();
+      aiProviderService.close();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();
