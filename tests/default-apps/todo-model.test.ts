@@ -26,8 +26,12 @@ function makeTask(partial: Partial<Task> = {}): Task {
   })!;
 }
 
-const NOW = new Date("2026-05-31T12:00:00.000Z"); // Sunday
+const NOW = new Date(2026, 4, 31, 12); // Sunday in the host's local timezone
 const REPO_ROOT = join(__dirname, "..", "..");
+
+function localDue(day: number, hour: number): string {
+  return new Date(2026, 4, day, hour).toISOString();
+}
 
 describe("normalizeTask", () => {
   it("coerces loose db rows into typed tasks", () => {
@@ -96,12 +100,12 @@ describe("todo manifest schema", () => {
 });
 
 describe("filterTasks", () => {
-  const overdue = makeTask({ id: "1", title: "overdue", due: "2026-05-30T09:00:00.000Z" });
-  const today = makeTask({ id: "2", title: "today", due: "2026-05-31T18:00:00.000Z" });
-  const tomorrow = makeTask({ id: "3", title: "tomorrow", due: "2026-06-01T09:00:00.000Z" });
+  const overdue = makeTask({ id: "1", title: "overdue", due: localDue(30, 9) });
+  const today = makeTask({ id: "2", title: "today", due: localDue(31, 18) });
+  const tomorrow = makeTask({ id: "3", title: "tomorrow", due: localDue(32, 9) });
   const noDate = makeTask({ id: "4", title: "inbox-item", due: null });
   const projItem = makeTask({ id: "5", title: "proj", project: "Work", due: null });
-  const done = makeTask({ id: "6", title: "done", status: "done", due: "2026-05-31T08:00:00.000Z" });
+  const done = makeTask({ id: "6", title: "done", status: "done", due: localDue(31, 8) });
   const all = [overdue, today, tomorrow, noDate, projItem, done];
 
   it("Inbox shows open tasks with no project", () => {
@@ -136,10 +140,10 @@ describe("filterTasks", () => {
 describe("countByView", () => {
   it("returns per-view open counts", () => {
     const tasks = [
-      makeTask({ id: "1", due: "2026-05-31T18:00:00.000Z" }),
-      makeTask({ id: "2", due: "2026-06-02T18:00:00.000Z" }),
+      makeTask({ id: "1", due: localDue(31, 18) }),
+      makeTask({ id: "2", due: localDue(33, 18) }),
       makeTask({ id: "3", due: null }),
-      makeTask({ id: "4", status: "done", due: "2026-05-31T18:00:00.000Z" }),
+      makeTask({ id: "4", status: "done", due: localDue(31, 18) }),
     ];
     const counts = countByView(tasks, NOW);
     expect(counts.inbox).toBe(3);

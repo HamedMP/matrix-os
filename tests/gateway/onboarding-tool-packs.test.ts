@@ -1,6 +1,3 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   SelectToolPacksRequestSchema,
@@ -262,32 +259,61 @@ describe("onboarding tool packs", () => {
   });
 
   it("uses the existing Linux tools service timeout budget for host installs", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "matrix-tool-pack-installer-"));
-    const scriptPath = join(tempDir, "installer");
-    await writeFile(scriptPath, [
-      "#!/usr/bin/env bash",
-      "if [ \"$1\" = \"linux-tools\" ]; then",
-      "  sleep 0.1",
-      "else",
-      "  sleep 1",
-      "fi",
-      "",
-    ].join("\n"));
-    await chmod(scriptPath, 0o755);
-
+    vi.useFakeTimers();
     try {
+      const createChild = () => {
+        let closeListener: ((code: number | null) => void) | undefined;
+        return {
+          stdout: { on: vi.fn() },
+          stderr: { on: vi.fn() },
+          kill: vi.fn(),
+          on: vi.fn((event: "error" | "close", listener: (value: Error | number | null) => void) => {
+            if (event === "close") closeListener = listener as (code: number | null) => void;
+          }),
+          close: (code: number | null) => closeListener?.(code),
+        };
+      };
+      const linuxToolsChild = createChild();
+      const codeServerChild = createChild();
+      const spawnInstaller = vi.fn()
+        .mockReturnValueOnce(linuxToolsChild)
+        .mockReturnValueOnce(codeServerChild);
       const installer = createHostToolPackInstaller({
-        scriptPath,
+        scriptPath: "/opt/matrix/bin/test-installer",
         timeoutMs: 50,
         linuxToolsTimeoutMs: 500,
+        spawnInstaller,
       });
 
-      await installer.install(testPrincipal.userId, "linux-tools");
-      await expect(installer.install(testPrincipal.userId, "code-server")).rejects.toThrow(
+      const linuxToolsInstall = installer.install(testPrincipal.userId, "linux-tools");
+      await vi.advanceTimersByTimeAsync(499);
+      expect(linuxToolsChild.kill).not.toHaveBeenCalled();
+      linuxToolsChild.close(0);
+      await expect(linuxToolsInstall).resolves.toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(linuxToolsChild.kill).not.toHaveBeenCalled();
+
+      const codeServerInstall = installer.install(testPrincipal.userId, "code-server");
+      const codeServerResult = expect(codeServerInstall).rejects.toThrow(
         "tool pack install timed out for code-server",
       );
+      await vi.advanceTimersByTimeAsync(49);
+      expect(codeServerChild.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await codeServerResult;
+      expect(codeServerChild.kill).toHaveBeenCalledWith("SIGTERM");
+
+      expect(spawnInstaller).toHaveBeenNthCalledWith(
+        1,
+        "/opt/matrix/bin/test-installer",
+        ["linux-tools"],
+        expect.objectContaining({
+          env: expect.objectContaining({ MATRIX_TOOL_PACK_OWNER_ID: testPrincipal.userId }),
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      );
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      vi.useRealTimers();
     }
   });
 

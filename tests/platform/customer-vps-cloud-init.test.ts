@@ -80,7 +80,19 @@ describe('platform/customer-vps-cloud-init', () => {
       fakeAwsPath,
       `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(stderr)} >&2\nexit ${exitCode}\n`,
     );
+    const fakeTimeoutPath = join(tempDir, 'timeout');
+    writeFileSync(fakeTimeoutPath, `#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --preserve-status|--kill-after=*) shift ;;
+    [0-9]*) shift; break ;;
+    *) break ;;
+  esac
+done
+exec "$@"
+`);
     chmodSync(fakeAwsPath, 0o755);
+    chmodSync(fakeTimeoutPath, 0o755);
 
     try {
       return spawnSync('bash', [join(root, 'distro/customer-vps/matrixctl'), 'r2', 'exists', 'system/db/latest'], {
@@ -111,6 +123,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const restorePath = join(tempDir, 'matrix-restore.sh');
     const restoreFlag = join(tempDir, 'restore-complete');
     const matrixctlCalls = join(tempDir, 'matrixctl-calls');
+    const fakeMvPath = join(tempDir, 'mv');
 
     if (options.preexistingRestoreFlag === 'file') {
       writeFileSync(restoreFlag, 'completed\n');
@@ -135,6 +148,17 @@ exit 99
 `,
     );
     chmodSync(fakeMatrixctlPath, 0o755);
+    writeFileSync(fakeMvPath, `#!/usr/bin/env bash
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    -Tf|-T|-f|--) ;;
+    *) args+=("$arg") ;;
+  esac
+done
+exec /bin/mv "\${args[@]}"
+`);
+    chmodSync(fakeMvPath, 0o755);
 
     const restoreScript = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8')
       .split('/opt/matrix/bin/matrixctl')
@@ -156,6 +180,7 @@ exit 99
         env: {
           ...process.env,
           SECOND_RESTORE_TEST_ROOT: tempDir,
+          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
         },
       });
       return {
