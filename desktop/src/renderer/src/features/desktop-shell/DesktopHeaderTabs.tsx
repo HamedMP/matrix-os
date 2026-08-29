@@ -48,7 +48,7 @@ export default function DesktopHeaderTabs() {
     const tabIds = useTabs.getState().tabs.map((tab) => tab.id);
     const fallbackId = topmostVisibleDesktopSurfaceId(
       tabIds,
-      useDesktopSurfaces.getState().surfaces,
+      useDesktopSurfaces.getState(),
       excludedTabId,
     );
     if (fallbackId) activate(fallbackId);

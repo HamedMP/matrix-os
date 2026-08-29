@@ -170,7 +170,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     const tabIds = useTabs.getState().tabs.map((tab) => tab.id);
     const fallbackId = topmostVisibleDesktopSurfaceId(
       tabIds,
-      useDesktopSurfaces.getState().surfaces,
+      useDesktopSurfaces.getState(),
       excludedTabId,
     );
     if (fallbackId) activate(fallbackId);

@@ -18,7 +18,7 @@ describe("desktop surfaces store", () => {
 
     expect(topmostVisibleDesktopSurfaceId(
       ["files", "terminal"],
-      useDesktopSurfaces.getState().surfaces,
+      useDesktopSurfaces.getState(),
       "files",
     )).toBe("terminal");
   });

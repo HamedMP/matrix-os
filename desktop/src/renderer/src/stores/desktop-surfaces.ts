@@ -24,20 +24,43 @@ export interface DesktopSurface {
   zIndex: number;
 }
 
+export interface DesktopTransition {
+  phase: "hiding" | "restoring";
+  surfaceIds: string[];
+}
+
+export interface DesktopSurfaceVisibilityState {
+  surfaces: Readonly<Record<string, DesktopSurface>>;
+  workspaceView: "desktop" | "tabs";
+  desktopHiddenSurfaceIds: readonly string[];
+  desktopTransition: DesktopTransition | null;
+}
+
+export function isDesktopSurfaceVisible(
+  tabId: string,
+  state: DesktopSurfaceVisibilityState,
+): boolean {
+  const surface = state.surfaces[tabId];
+  if (!surface || surface.mode === "closed" || surface.mode === "minimized") return false;
+  if (state.desktopHiddenSurfaceIds.includes(tabId)) return false;
+  if (surface.mode === "tab" && state.workspaceView !== "tabs") return false;
+  return state.desktopTransition?.phase !== "hiding"
+    || !state.desktopTransition.surfaceIds.includes(tabId);
+}
+
 export function topmostVisibleDesktopSurfaceId(
   tabIds: readonly string[],
-  surfaces: Readonly<Record<string, DesktopSurface>>,
+  state: DesktopSurfaceVisibilityState,
   excludedTabId: string,
 ): string | null {
   let fallbackId: string | null = null;
   let fallbackZIndex = Number.NEGATIVE_INFINITY;
   for (const tabId of tabIds) {
-    const surface = surfaces[tabId];
+    const surface = state.surfaces[tabId];
     if (
       tabId !== excludedTabId
+      && isDesktopSurfaceVisible(tabId, state)
       && surface
-      && surface.mode !== "minimized"
-      && surface.mode !== "closed"
       && surface.zIndex > fallbackZIndex
     ) {
       fallbackId = tabId;
@@ -45,11 +68,6 @@ export function topmostVisibleDesktopSurfaceId(
     }
   }
   return fallbackId;
-}
-
-export interface DesktopTransition {
-  phase: "hiding" | "restoring";
-  surfaceIds: string[];
 }
 
 const DESKTOP_GAP = 12;

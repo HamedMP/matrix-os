@@ -99,6 +99,37 @@ describe("handleCloseSelectedAppShortcut", () => {
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("tab");
   });
+
+  it("does not activate a fallback window hidden by Show Desktop", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useDesktopSurfaces.getState().showDesktop();
+    useDesktopSurfaces.getState().activateSurface(filesId);
+    useTabs.getState().focusTab(filesId);
+
+    handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("closed");
+    expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual([terminalId]);
+    expect(useTabs.getState().activeTabId).toBeNull();
+  });
+
+  it("does not activate a maximized fallback hidden by the Desktop workspace", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useDesktopSurfaces.getState().maximizeToTab(terminalId);
+    useDesktopSurfaces.getState().activateSurface(filesId);
+    useTabs.getState().focusTab(filesId);
+
+    handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("closed");
+    expect(useDesktopSurfaces.getState().surfaces[terminalId]?.mode).toBe("tab");
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
+    expect(useTabs.getState().activeTabId).toBeNull();
+  });
 });
 
 describe("top-level app tab shortcuts", () => {

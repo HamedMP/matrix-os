@@ -11,6 +11,7 @@ import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { openTopLevelTabInstance } from "../../stores/top-level-tabs";
 import {
+  isDesktopSurfaceVisible,
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
 } from "../../stores/desktop-surfaces";
@@ -90,7 +91,7 @@ export function handleCloseSelectedAppShortcut(
   const surfaces = useDesktopSurfaces.getState();
   const fallbackId = topmostVisibleDesktopSurfaceId(
     tabs.tabs.map((tab) => tab.id),
-    surfaces.surfaces,
+    surfaces,
     activeTab.id,
   );
 
@@ -110,14 +111,7 @@ function activeShortcutTab() {
   const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
   if (!activeTab || !NATIVE_DESKTOP_WINDOW_SHELL) return activeTab;
   const surfaces = useDesktopSurfaces.getState();
-  const surface = surfaces.surfaces[activeTab.id];
-  const hidden = surfaces.desktopHiddenSurfaceIds.includes(activeTab.id)
-    || (surface?.mode === "tab" && surfaces.workspaceView !== "tabs")
-    || (
-      surfaces.desktopTransition?.phase === "hiding"
-      && surfaces.desktopTransition.surfaceIds.includes(activeTab.id)
-    );
-  return surface && surface.mode !== "closed" && surface.mode !== "minimized" && !hidden
+  return isDesktopSurfaceVisible(activeTab.id, surfaces)
     ? activeTab
     : undefined;
 }
