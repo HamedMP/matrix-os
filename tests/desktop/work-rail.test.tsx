@@ -11,7 +11,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 function record(
   id: string,
   title: string,
-  options: { pinned?: boolean; projectId?: string; updatedAt: string },
+  options: {
+    pinned?: boolean;
+    projectId?: string;
+    updatedAt: string;
+    attention?: "none" | "approval_required" | "input_required" | "failed";
+    activeRunStatus?: "accepted" | "running" | "waiting_for_approval" | "waiting_for_input";
+    unacknowledged?: boolean;
+  },
 ): CanonicalChatRecord {
   return {
     chat: {
@@ -19,7 +26,7 @@ function record(
       ownerScope: { type: "personal", ownerId: "owner_test" },
       title,
       lifecycle: "active",
-      attention: "none",
+      attention: options.attention ?? "none",
       revision: 1,
       messageCount: 1,
       userState: { readThroughSeq: 0, pinned: options.pinned ?? false, muted: false },
@@ -27,7 +34,21 @@ function record(
       updatedAt: options.updatedAt,
     },
     ...(options.projectId ? { projectId: options.projectId } : {}),
-  };
+    ...(options.activeRunStatus ? {
+      activeRun: {
+        runId: `run_${id}`,
+        turnId: `cturn_${id}`,
+        status: options.activeRunStatus,
+      },
+    } : {}),
+    ...(options.unacknowledged === undefined ? {} : {
+      latestSuccessfulCompletion: {
+        runId: `run_completed_${id}`,
+        completedAt: "2026-08-28T12:01:00.000Z",
+        unacknowledged: options.unacknowledged,
+      },
+    }),
+  } as CanonicalChatRecord;
 }
 
 const alpha: Project = {
@@ -87,6 +108,73 @@ function setup() {
 afterEach(cleanup);
 
 describe("WorkRail", () => {
+  it("renders the highest-priority canonical agent state for every Chat row", async () => {
+    const records = [
+      record("chat_approval", "Approval chat", {
+        updatedAt: "2026-08-28T12:06:00.000Z",
+        attention: "approval_required",
+        activeRunStatus: "running",
+        unacknowledged: true,
+      }),
+      record("chat_input", "Input chat", {
+        updatedAt: "2026-08-28T12:05:00.000Z",
+        attention: "input_required",
+        activeRunStatus: "running",
+        unacknowledged: true,
+      }),
+      record("chat_running", "Running chat", {
+        updatedAt: "2026-08-28T12:04:00.000Z",
+        attention: "failed",
+        activeRunStatus: "running",
+        unacknowledged: true,
+      }),
+      record("chat_failed", "Failed chat", {
+        updatedAt: "2026-08-28T12:03:00.000Z",
+        attention: "failed",
+        unacknowledged: true,
+      }),
+      record("chat_completed", "Completed chat", {
+        updatedAt: "2026-08-28T12:02:00.000Z",
+        unacknowledged: true,
+      }),
+      record("chat_acknowledged", "Acknowledged chat", {
+        updatedAt: "2026-08-28T12:01:00.000Z",
+        unacknowledged: false,
+      }),
+      record("chat_idle", "Idle chat", {
+        updatedAt: "2026-08-28T12:00:00.000Z",
+      }),
+    ];
+    const client = {
+      list: vi.fn(async () => ({ items: records })),
+    } as unknown as CanonicalChatClient;
+    render(
+      <WorkRail
+        client={client}
+        projects={[]}
+        active
+        onNewGlobalChat={vi.fn()}
+        onCreateProject={vi.fn()}
+        onNewProjectChat={vi.fn()}
+        onSelectChat={vi.fn()}
+        onCollapse={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Approval chat" });
+    expect(screen.getByLabelText("Approval required for Approval chat")).toBeTruthy();
+    expect(screen.getByLabelText("Input required for Input chat")).toBeTruthy();
+    expect(screen.getByLabelText("Agent running for Running chat")).toBeTruthy();
+    expect(screen.getByLabelText("Agent failed for Failed chat")).toBeTruthy();
+    expect(screen.getByLabelText("Unseen completion for Completed chat")).toBeTruthy();
+
+    expect(screen.queryByLabelText("Agent running for Approval chat")).toBeNull();
+    expect(screen.queryByLabelText("Unseen completion for Running chat")).toBeNull();
+    expect(screen.queryByLabelText("Unseen completion for Failed chat")).toBeNull();
+    expect(screen.queryByLabelText("Unseen completion for Acknowledged chat")).toBeNull();
+    expect(screen.queryByLabelText("Unseen completion for Idle chat")).toBeNull();
+  });
+
   it("renders New chat as a plain leading rail row", async () => {
     const { actions } = setup();
     await screen.findByRole("button", { name: "Pinned global" });

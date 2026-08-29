@@ -145,6 +145,38 @@ describe("canonical Chat API contracts", () => {
     }).success).toBe(false);
   });
 
+  it("preserves the exact successful completion fact in canonical list and detail records", () => {
+    const completedRecord = {
+      ...chatRecord,
+      latestSuccessfulCompletion: {
+        runId: "run_completed_exact",
+        completedAt: "2026-08-25T12:02:00.000Z",
+        unacknowledged: true,
+      },
+    };
+
+    const list = CanonicalChatListResponseSchema.safeParse({ items: [completedRecord] });
+    const detail = CanonicalChatDetailResponseSchema.safeParse({
+      record: completedRecord,
+      messages: [],
+      turns: [],
+      runs: [],
+      activities: [],
+    });
+
+    expect(list.success).toBe(true);
+    expect(detail.success).toBe(true);
+    if (!list.success || !detail.success) return;
+    expect(list.data.items[0]).toMatchObject({
+      latestSuccessfulCompletion: {
+        runId: "run_completed_exact",
+        completedAt: "2026-08-25T12:02:00.000Z",
+        unacknowledged: true,
+      },
+    });
+    expect(detail.data.record).toEqual(list.data.items[0]);
+  });
+
   it("accepts only bounded user Turn input and keeps ownership and paths server-owned", () => {
     const request = {
       clientRequestId: "req_turn_contract",
