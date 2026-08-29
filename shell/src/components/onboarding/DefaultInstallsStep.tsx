@@ -275,8 +275,9 @@ export function DefaultInstallsStep({
     setSelectedTools((current) => nextDeveloperToolsSelection(current, tool));
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is required by the global keydown effect below while the closure must refresh when the selected snapshot changes.
   const buildWithSelectedTools = useCallback((): void => {
-    if (!loading) onBuild(selectedTools);
+    if (!loading) onBuild([...selectedTools]);
   }, [loading, onBuild, selectedTools]);
 
   useEffect(() => {

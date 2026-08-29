@@ -1929,6 +1929,7 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
+      developerTools: ["codex", "claude-code", "opencode", "pi"],
     }, DETACHED_PROVISION_OPTIONS);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.clerk.com/v1/users/user_new",
@@ -1950,7 +1951,7 @@ describe("platform proxy routing", () => {
     });
   });
 
-  it("passes directly selected developer tools to hosted runtime provisioning", async () => {
+  it("passes a directly selected empty developer tool list to hosted runtime provisioning", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -1989,7 +1990,7 @@ describe("platform proxy routing", () => {
       },
       body: JSON.stringify({
         runtime: "research-lab",
-        developerTools: ["opencode", "pi"],
+        developerTools: [],
         serverType: "cpx22",
         location: "hil",
       }),
@@ -2000,7 +2001,7 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new_tools",
       runtimeSlot: "research-lab",
-      developerTools: ["opencode", "pi"],
+      developerTools: [],
       serverType: "cpx22",
       location: "hil",
     }, DETACHED_PROVISION_OPTIONS);
@@ -2798,6 +2799,8 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain("showCheckoutUnavailableState();");
     expect(html).not.toContain("Opening secure checkout");
     expect(html).toContain("retryProvisioningAfterBillingDelay(developerTools)");
+    expect(html).toContain("startProvisioningFromClerkSession(selectedTools.slice());");
+    expect(html).toContain("Array.isArray(selectedDeveloperTools) ? selectedDeveloperTools.slice() : defaultDeveloperTools.slice()");
     expect(html).toContain("setProvisionControls(false, null);\n      billingRetryTimeoutId = window.setTimeout");
     expect(html).toContain("provisioning_conflict");
     expect(html).toContain("if (body && body.code === 'provisioning_conflict') {\n                billingConfirmationPolls = 0;\n                continueWithClerkSession(true);");

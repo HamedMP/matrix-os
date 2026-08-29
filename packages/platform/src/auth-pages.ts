@@ -940,7 +940,7 @@ export function getAuthPage(
       buildButton.className = 'primary';
       buildButton.textContent = 'Build VPS';
       buildButton.addEventListener('click', function() {
-        startProvisioningFromClerkSession(selectedTools);
+        startProvisioningFromClerkSession(selectedTools.slice());
       });
       actions.appendChild(buildButton);
       footer.appendChild(actions);
@@ -1067,7 +1067,7 @@ export function getAuthPage(
         window.clearTimeout(billingRetryTimeoutId);
         billingRetryTimeoutId = null;
       }
-      var developerTools = Array.isArray(selectedDeveloperTools) ? selectedDeveloperTools : defaultDeveloperTools;
+      var developerTools = Array.isArray(selectedDeveloperTools) ? selectedDeveloperTools.slice() : defaultDeveloperTools.slice();
       provisionStarted = true;
       setProvisionControls(true, null);
       if (!window.Clerk.session) {

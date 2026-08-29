@@ -449,6 +449,10 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
 
     expect(await screen.findByRole("heading", { name: "Default installs" })).toBeTruthy();
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      fireEvent.click(screen.getByRole("checkbox", { name: label }));
+    }
+    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     await waitFor(() => {
@@ -458,7 +462,7 @@ describe("RuntimeManager", () => {
           method: "POST",
           body: JSON.stringify({
             runtime: "research-lab",
-            developerTools: ["codex", "claude-code", "opencode", "pi"],
+            developerTools: [],
             serverType: "cpx32",
             location: "fsn1",
           }),
