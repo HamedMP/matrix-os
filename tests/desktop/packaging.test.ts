@@ -14,6 +14,17 @@ function readPngDimensions(path: string): { width: number; height: number } {
 }
 
 describe("desktop packaging", () => {
+  it("uses an electron-builder version that preserves branded DMG backgrounds", () => {
+    const packageJson = JSON.parse(
+      readFileSync(join(process.cwd(), "desktop/package.json"), "utf8"),
+    ) as { devDependencies?: Record<string, string> };
+    const version = packageJson.devDependencies?.["electron-builder"];
+
+    expect(version).toMatch(/^~?\d+\.\d+\.\d+$/);
+    const [major, minor, patch] = version!.replace(/^~/, "").split(".").map(Number);
+    expect(major * 1_000_000 + minor * 1_000 + patch).toBeGreaterThanOrEqual(26_005_000);
+  });
+
   it("registers canonical and legacy macOS URL schemes", () => {
     const raw = readFileSync(join(process.cwd(), "desktop/electron-builder.yml"), "utf8");
     const config = parse(raw) as {
@@ -72,11 +83,14 @@ describe("desktop packaging", () => {
     expect(generator).toContain("forestDeep: brandPalette.forestDeep");
     expect(generator).toContain("cream: brandPalette.cream");
     expect(generator).toContain("ember: brandPalette.ember");
-    expect(generator).toContain("displayFontFamily = resolveCssFontFamily(brandFonts.display)");
-    expect(generator).toContain("@fontsource/instrument-serif/files");
-    expect(generator).toContain("instrument-serif-latin-400-normal.woff2");
-    expect(generator).toContain("existsSync(packagePath) && existsSync(fontPath)");
-    expect(generator).not.toContain("instrument-sans");
+    expect(generator).toContain("displayFontFamily = desktopFonts.display");
+    expect(generator).toContain("@expo-google-fonts/bricolage-grotesque");
+    expect(generator).toContain("BricolageGrotesque_400Regular.ttf");
+    expect(generator).toContain("BricolageGrotesque_600SemiBold.ttf");
+    expect(generator).toContain("BricolageGrotesque_700Bold.ttf");
+    expect(generator).toContain("existsSync(packagePath) && fontPaths.every(existsSync)");
+    expect(generator).not.toContain("Instrument Serif");
+    expect(generator).not.toContain("instrument-serif");
     expect(generator.match(/<text class="display"/g)).toHaveLength(3);
     expect(generator).not.toContain('<text class="sans"');
 
@@ -89,7 +103,16 @@ describe("desktop packaging", () => {
 
     const desktopPackageJson = JSON.parse(
       readFileSync(join(root, "desktop/package.json"), "utf8"),
-    ) as { dependencies?: Record<string, string> };
+    ) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    expect(
+      desktopPackageJson.devDependencies?.["@expo-google-fonts/bricolage-grotesque"],
+    ).toMatch(/^\^0\.4\./);
+    expect(desktopPackageJson.dependencies).not.toHaveProperty(
+      "@expo-google-fonts/bricolage-grotesque",
+    );
     expect(desktopPackageJson.dependencies?.["@fontsource/instrument-serif"]).toMatch(/^\^5\./);
   });
 

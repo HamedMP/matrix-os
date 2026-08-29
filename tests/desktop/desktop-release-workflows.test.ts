@@ -7,6 +7,42 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("desktop release workflows", () => {
+  it("verifies the mounted DMG background through Finder at its native volume path", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+
+    expect(workflow).toContain('attach_output="$(hdiutil attach "$dmg_path" -nobrowse -readonly)"');
+    expect(workflow).toContain("/^\\/Volumes\\//");
+    expect(workflow).not.toContain('-mountpoint "$mount_dir"');
+    expect(workflow).not.toContain('open "$mount_dir"');
+    expect(workflow).toContain('tell application "Finder" to activate');
+    expect(workflow).toContain("open disk volumeName");
+    expect(workflow).toContain("tell disk volumeName");
+    expect(workflow).toContain(
+      "ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.electron-builder-cache",
+    );
+    expect(workflow).toContain(
+      "find \"$ELECTRON_BUILDER_CACHE\" -path '*/python/bin/python3' -print -quit",
+    );
+    expect(workflow).toContain('[ ! -x "$dmgbuild_python" ]');
+    expect(workflow).toContain("from ds_store import DSStore");
+    expect(workflow).toContain("from mac_alias import Alias");
+    expect(workflow).toContain('icon_view.get("backgroundImageAlias")');
+    expect(workflow).toContain("Alias.from_bytes(background_alias)");
+    expect(workflow).toMatch(
+      /set backgroundFile to POSIX file backgroundPath as alias\s+tell application "Finder"/,
+    );
+    expect(workflow).not.toMatch(
+      /tell application "Finder"\s+set backgroundFile to POSIX file backgroundPath/,
+    );
+    expect(workflow).toContain("return POSIX path of backgroundFile");
+    expect(workflow).not.toContain("set viewOptionsProperties to properties of viewOptions");
+    expect(workflow).toContain('background_picture="missing value"');
+    expect(workflow).toContain('"$mount_dir"/.background.*');
+    expect(workflow).toContain('[ ! -f "$background_picture" ]');
+    expect(workflow).toContain("close container window of disk volumeName");
+    expect(workflow).toContain('hdiutil detach "$mount_dir" -quiet || true');
+  });
+
   it("verifies packaged artifacts before renaming mac update manifests", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
@@ -38,7 +74,7 @@ describe("desktop release workflows", () => {
     expect(workflow).not.toContain("starts through Rosetta");
     expect(workflow).toContain('grep -Fq "[updates] update check completed: up to date" "$app_log"');
     expect(workflow).toContain('grep -Fq "[updates] check failed:" "$app_log"');
-    expect(workflow).toContain('hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly');
+    expect(workflow).toContain('attach_output="$(hdiutil attach "$dmg_path" -nobrowse -readonly)"');
     expect(workflow).toContain('[ ! -L "$mount_dir/Applications" ]');
     expect(workflow).toContain('applications_target="$(readlink "$mount_dir/Applications")"');
     expect(workflow).toContain('[ "$applications_target" != "/Applications" ]');
@@ -55,6 +91,14 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('! -name "${{ matrix.arch }}-${CHANNEL}-mac.yml"');
     expect(workflow).toContain("desktop/dist/*-mac.yml");
     expect(workflow).toContain("desktop/dist/*.blockmap");
+  });
+
+  it("gives the macOS renderer build enough heap for the release bundle", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+
+    expect(workflow).toMatch(
+      /- name: Build desktop app\n\s+env:\n\s+NODE_OPTIONS: --max-old-space-size=4096\n\s+run: pnpm --filter desktop build/,
+    );
   });
 
   it("lets the mac matrix arch control electron-builder outputs", () => {
