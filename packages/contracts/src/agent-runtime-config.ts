@@ -1,9 +1,9 @@
 import { z } from "zod/v4";
-import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
+import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 
 const SafeSlugSchema = z.string().min(1).max(80).regex(SAFE_SLUG);
 const SafeLabelSchema = z.string().trim().min(1).max(120);
-const ModelReferenceSchema = z.string().trim().min(1).max(160);
+const ModelReferenceSchema = ProviderModelReferenceSchema;
 
 export const AgentRuntimeIdSchema = z.enum(["hermes", "openclaw"]);
 export const AgentEffortSchema = z.enum(["low", "medium", "high", "max"]);

@@ -175,6 +175,7 @@ describe("coding agent project conversation contracts", () => {
     expect(AgentTurnIdSchema.parse("turn_auth_fix_1")).toBe("turn_auth_fix_1");
     expect(CreateAgentTurnRequestSchema.parse({
       message: "Continue with the gateway fix.",
+      model: "openai/gpt-5.6-sol",
       attachments: [{
         id: "review:auth:12",
         kind: "structured_ref",
@@ -182,7 +183,10 @@ describe("coding agent project conversation contracts", () => {
         path: "packages/gateway/src/auth.ts",
       }],
       clientRequestId: "req_turn_auth_1",
-    }).message).toBe("Continue with the gateway fix.");
+    })).toMatchObject({
+      message: "Continue with the gateway fix.",
+      model: "openai/gpt-5.6-sol",
+    });
 
     for (const invalid of [
       { message: "", clientRequestId: "req_turn_auth_1" },

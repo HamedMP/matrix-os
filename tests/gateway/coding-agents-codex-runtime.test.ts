@@ -46,6 +46,7 @@ describe("Codex structured event runtime", () => {
       agent: "codex",
       cwd: "/home/matrix/home/projects/repo",
       prompt: "Fix the failing route.",
+      model: "openai/gpt-5.6-sol",
       approvalPolicy: "never",
       sandbox: {
         enabled: true,
@@ -65,6 +66,7 @@ describe("Codex structured event runtime", () => {
     const config = JSON.parse(Buffer.from(launch.args[4]!, "base64").toString("utf8"));
     expect(config).toEqual({
       prompt: "Fix the failing route.",
+      model: "openai/gpt-5.6-sol",
       approvalPolicy: "never",
       sandbox: "workspace-write",
       writableRoots: ["/home/matrix/home/projects/repo"],
@@ -613,9 +615,11 @@ describe("Codex structured event runtime", () => {
       runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
     });
     let sessionId: string | undefined;
+    let runtimeModel: string | undefined;
     const runtime = {
-      startSession: vi.fn(async ({ request }: { request: { sessionId: string } }) => {
+      startSession: vi.fn(async ({ request }: { request: { sessionId: string; model?: string } }) => {
         sessionId = request.sessionId;
+        runtimeModel = request.model;
         return {
           ok: true as const,
           status: 201,
@@ -648,7 +652,7 @@ describe("Codex structured event runtime", () => {
         runId: "run_canonical_bridge",
         prompt: "Inspect the calculator.",
         parts: [{ type: "text", text: "Inspect the calculator." }],
-        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        selection: { instanceId: "codex_default", model: "openai/gpt-5.6-sol" },
         interactionMode: "default",
         permissionMode: "supervised",
         signal: AbortSignal.timeout(5_000),
@@ -659,6 +663,7 @@ describe("Codex structured event runtime", () => {
 
     try {
       await vi.waitFor(() => expect(sessionId).toBeDefined());
+      expect(runtimeModel).toBe("openai/gpt-5.6-sol");
       const eventPath = codexProviderEventPath(homePath, sessionId!);
       const delta = (index: number) => ({
         type: "matrix.codex.assistant.delta",

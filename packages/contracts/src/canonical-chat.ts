@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { IsoTimestampSchema } from "#contract-primitives";
+import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalProviderDriverKindSchema,
@@ -30,16 +30,7 @@ export const CanonicalChatMessageIdSchema = prefixedId("msg_");
 export const CanonicalChatRequestIdSchema = prefixedId("req_");
 export const CanonicalProviderInstanceIdSchema = canonicalReferenceId(128);
 export const CanonicalChatAttachmentKindSchema = z.enum(["file", "image", "diff", "structured_ref"]);
-export const CanonicalChatModelReferenceSchema = z.string()
-  .min(1)
-  .max(160)
-  .regex(
-    /^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/,
-    "Invalid model reference",
-  )
-  .refine((value) => !value.includes(".."), {
-    message: "Model reference cannot contain traversal",
-  });
+export const CanonicalChatModelReferenceSchema = ProviderModelReferenceSchema;
 const CanonicalChatRelativePathSchema = z.string()
   .min(1)
   .max(4096)
