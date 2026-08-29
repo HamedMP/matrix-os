@@ -7,7 +7,7 @@
 
 ## Summary
 
-Matrix offers one Stripe-native subscription trial for an account's first primary hosted computer. The product default is seven days; operators may set `MATRIX_CARD_TRIAL_DAYS` to an integer from 1 through 30 for a controlled rollout. Stripe Checkout collects a card before Matrix provisions the VPS, charges $0 at trial creation, and automatically attempts the selected Starter, Builder, or Max price when Stripe's authoritative `trial_end` arrives. Checkout redirects never grant access; signed Stripe subscription and invoice webhooks project the entitlement used by provisioning and routing.
+Matrix offers one Stripe-native subscription trial for an account's first primary hosted computer. The product default is three days; operators may set `MATRIX_CARD_TRIAL_DAYS` to an integer from 1 through 30 for a controlled rollout. Stripe Checkout collects a card before Matrix provisions the VPS, charges $0 at trial creation, and automatically attempts the selected Starter, Builder, or Max price when Stripe's authoritative `trial_end` arrives. Checkout redirects never grant access; signed Stripe subscription and invoice webhooks project the entitlement used by provisioning and routing.
 
 This specification supersedes the "no trials" requirements in `specs/084-stripe-runtime-plans/spec.md`. It also narrows that specification's dynamic-payment-method rule: trial Checkout is card-only and always collects a payment method, while paid and additional-computer Checkout continues to use Stripe's configured dynamic methods.
 
@@ -38,7 +38,7 @@ This specification supersedes the "no trials" requirements in `specs/084-stripe-
 - Canceling during the trial retains access until Stripe ends the trial. An unpaid end gates access and schedules suspension.
 - Poweroff retains the machine row, provider server, disk, backups, home files, and owner Postgres data.
 - Promotion codes remain independent invoice discounts and never implement trial duration.
-- `MATRIX_CARD_TRIAL_DAYS` is the server-side offer source of truth, defaults to `7`, and fails startup/deployment validation outside `1..30`. Stripe's persisted `trial_end` remains authoritative after subscription creation.
+- `MATRIX_CARD_TRIAL_DAYS` is the server-side offer source of truth, defaults to `3`, and fails startup/deployment validation outside `1..30`. Stripe's persisted `trial_end` remains authoritative after subscription creation.
 
 ## Eligibility And Checkout
 
@@ -134,6 +134,6 @@ Stripe Dashboard production configuration must enable Stripe's trial-ending emai
 
 - Unit/integration tests cover eligibility serialization, Checkout parameters, retry persistence, trial projection, conversion recognition, zero-value invoice rejection, duplicate/out-of-order webhooks, immediate access gating, established grace, suspension cancellation, recovery resume, action leases/retries, provider-call idempotency, graceful-shutdown fallback, and payment/action races.
 - Shell tests cover eligible, ineligible, active, expiring, failed, recovered, and additional-computer states.
-- Stripe test mode and Test Clocks exercise successful and declined conversion through the configured trial duration; the canonical product test remains seven days.
+- Stripe test mode and Test Clocks exercise successful and declined conversion through the configured trial duration; the canonical product test remains three days.
 - Run targeted billing/VPS/UI tests, full tests and coverage, production shell build, and Canvas-first browser validation.
 - Public pricing and billing documentation ships in a separate `matrix-os-site` PR (MAT-446).

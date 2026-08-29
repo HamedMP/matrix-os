@@ -9,11 +9,42 @@ export const palette = {
   border: "#DCD9CC",
   mutedFg: "#5C5A4F",
   subtle: "#7A7768",
+  brandInk: "#1F2D1D",
+  brandTeal: "#0E3522",
+  brandGold: "#F1C379",
+  brandCoral: "#D06E53",
+  brandMuted: "#7A786B",
 } as const;
 
 export const fonts = {
   display: "var(--font-serif-display), 'Instrument Serif', Georgia, serif",
   sans: "var(--font-instrument), 'Instrument Sans', system-ui, sans-serif",
+  heading: "var(--font-bricolage), 'Bricolage Grotesque', sans-serif",
+  ui: "var(--font-geist-sans), Geist, system-ui, sans-serif",
+  machine: "var(--font-geist-mono), 'Geist Mono', monospace",
+} as const;
+
+/** Desktop and device-onboarding palette from the current Matrix product brand. */
+export const desktopPalette = {
+  forest: "#0E3422",
+  forestDeep: "#092417",
+  stageStart: "#16472F",
+  forestHover: "#174D34",
+  coral: "#D06E53",
+  gold: "#F1C379",
+  green: "#BED77B",
+  blue: "#C5D6E2",
+  paper: "#FCFCF8",
+  canvas: "#F1F4E8",
+  surfaceMuted: "#F7F8F1",
+  textMuted: "#536259",
+  danger: "#9F3F2C",
+} as const;
+
+export const desktopFonts = {
+  display: '"Bricolage Grotesque", Geist, ui-sans-serif, system-ui, sans-serif',
+  sans: 'Geist, ui-sans-serif, system-ui, sans-serif',
+  mono: '"Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace',
 } as const;
 
 export const cardShadow = "0 0 7.5rem 0 rgba(50, 53, 46, 0.09)";

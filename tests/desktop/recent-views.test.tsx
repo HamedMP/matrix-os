@@ -36,21 +36,26 @@ describe("RecentViews", () => {
 
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("overview");
     expect(useTabs.getState().tabs).toEqual([
-      expect.objectContaining({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" }),
+      expect.objectContaining({
+        kind: "work",
+        workRoute: "project",
+        projectSlug: "matrix-os",
+        title: "Chat",
+      }),
     ]);
   });
 
   it.each([
     [null, "chat"],
     ["project_1", "project"],
-  ] as const)("opens a canonical Chat in its recorded scope %s", (projectId, expectedKind) => {
+  ] as const)("opens a canonical Chat in its recorded scope %s", (projectId, expectedRoute) => {
     useTabs.getState().recordRecentCanonicalChat("chat_1", "Canonical chat", projectId);
     render(<RecentViews />);
 
     fireEvent.click(screen.getByRole("button", { name: "Open recent Canonical chat" }));
 
     expect(useTabs.getState().tabs.at(-1)).toMatchObject(projectId === null
-      ? { kind: expectedKind, chatId: "chat_1", chatView: "conversation" }
-      : { kind: expectedKind, projectSlug: "matrix-os", chatId: "chat_1" });
+      ? { kind: "work", workRoute: expectedRoute, chatId: "chat_1", chatView: "conversation" }
+      : { kind: "work", workRoute: expectedRoute, projectSlug: "matrix-os", chatId: "chat_1" });
   });
 });

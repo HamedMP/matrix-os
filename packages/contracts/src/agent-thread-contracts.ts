@@ -178,7 +178,11 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
       partial: z.boolean(),
     }).strict(),
   }).strict(),
-  BaseThreadEventSchema.extend({ type: z.literal("terminal.bound"), terminalSessionId: TerminalSessionIdSchema }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("terminal.bound"),
+    terminalSessionId: TerminalSessionIdSchema,
+    terminalSessionCreatedAt: IsoTimestampSchema.optional(),
+  }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("thread.error"), error: SafeClientErrorSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("thread.completed"), outcome: z.enum(["completed", "failed", "aborted"]) }).strict(),
 ]);

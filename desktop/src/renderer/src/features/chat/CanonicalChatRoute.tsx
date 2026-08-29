@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
@@ -13,21 +14,29 @@ type CanonicalRouteAvailability = "checking" | "available" | "unavailable";
 export function CanonicalChatRoute({
   api,
   projectId,
+  tabId,
   initialChatId,
   initialView,
   projectLabel,
   active,
+  externalNavigation = false,
   fallback,
   inspector,
+  renderInspector,
+  inspectorExclusive = false,
 }: {
   api: ApiClient | null;
   projectId: string | null;
+  tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
   active: boolean;
+  externalNavigation?: boolean;
   fallback: ReactNode;
   inspector?: ReactNode;
+  renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
+  inspectorExclusive?: boolean;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -131,7 +140,10 @@ export function CanonicalChatRoute({
       initialView={initialView}
       projectLabel={projectLabel}
       active={active}
+      externalNavigation={externalNavigation}
       inspector={inspector}
+      renderInspector={renderInspector}
+      inspectorExclusive={inspectorExclusive}
       onActiveChatChanged={(chatId, title) => {
         if (chatId) {
           useTabs.getState().recordRecentCanonicalChat(
@@ -141,6 +153,14 @@ export function CanonicalChatRoute({
           );
         }
         if (projectId === null) {
+          if (tabId) {
+            useTabs.getState().updateChatRoute(tabId, {
+              title: title ?? "Chat",
+              chatView: chatId ? "conversation" : "draft",
+              ...(chatId ? { chatId } : {}),
+            });
+            return;
+          }
           useTabs.getState().openTab({
             kind: "chat",
             title: title ?? "Chat",
@@ -160,7 +180,15 @@ export function CanonicalChatRoute({
       onProjectChanged={(chatId, targetProjectId, title) => {
         useTabs.getState().recordRecentCanonicalChat(chatId, title, targetProjectId);
         if (targetProjectId === null) {
-          useTabs.getState().openTab({ kind: "chat", title: "Chat", chatId, closable: false });
+          if (tabId) {
+            useTabs.getState().updateChatRoute(tabId, {
+              title,
+              chatId,
+              chatView: "conversation",
+            });
+            return;
+          }
+          useTabs.getState().openTab({ kind: "chat", title, chatId, closable: false });
           return;
         }
         const project = useBoard.getState().projects.find((candidate) => (

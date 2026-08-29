@@ -35,6 +35,10 @@ export const CanonicalUpdateChatProjectRequestSchema = z.object({
   projectId: canonicalReferenceId(160).nullable(),
 }).strict();
 
+export const CanonicalUpdateChatUserStateRequestSchema = z.object({
+  pinned: z.boolean(),
+}).strict();
+
 const USER_INPUT_PART_TYPES = new Set([
   "text",
   "attachment_reference",
@@ -93,6 +97,7 @@ export const CanonicalChatDetailResponseSchema = z.object({
   turns: z.array(CanonicalChatTurnSchema).max(100),
   runs: z.array(CanonicalChatRunSchema).max(100),
   activities: z.array(CanonicalChatRunActivitySchema).max(500),
+  terminalSessionIds: z.array(canonicalReferenceId(128)).max(100).optional(),
   nextCursor: CanonicalChatApiCursorSchema.optional(),
 }).strict().superRefine((detail, ctx) => {
   const chatId = detail.record.chat.id;
@@ -150,6 +155,7 @@ export const CanonicalChatRunAdmissionResponseSchema = z.object({
 
 export type CanonicalCreateChatRequest = z.infer<typeof CanonicalCreateChatRequestSchema>;
 export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateChatProjectRequestSchema>;
+export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdateChatUserStateRequestSchema>;
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
 export type CanonicalCancelChatRunRequest = z.infer<typeof CanonicalCancelChatRunRequestSchema>;
 export type CanonicalRetryChatTurnRequest = z.infer<typeof CanonicalRetryChatTurnRequestSchema>;

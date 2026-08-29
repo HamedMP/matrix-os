@@ -12,6 +12,7 @@ import {
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatUserStateRequestSchema,
   CanonicalCreateChatRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
@@ -24,6 +25,7 @@ import {
   type CanonicalCreateChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { ChatOwner } from "./records.js";
@@ -49,7 +51,7 @@ const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
 ]);
 
 type CursorEnvelope = z.infer<typeof CursorEnvelopeSchema>;
-type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "hardDelete" | "list" | "search" | "getDetailPage">;
+type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "updateUserState" | "hardDelete" | "list" | "search" | "getDetailPage">;
 
 function encodeCursor(value: CursorEnvelope): string {
   return CanonicalChatApiCursorSchema.parse(
@@ -144,6 +146,18 @@ export function createCanonicalChatService(
       ));
     },
 
+    async updateUserState(
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalUpdateChatUserStateRequest,
+    ): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.updateUserState(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalUpdateChatUserStateRequestSchema.parse(input),
+      ));
+    },
+
     async delete(owner, chatId, clientRequestId) {
       return repository.hardDelete(owner, {
         chatId: CanonicalChatIdSchema.parse(chatId),
@@ -197,6 +211,7 @@ export function createCanonicalChatService(
         turns: page.turns,
         runs: page.runs,
         activities: page.activities,
+        terminalSessionIds: page.terminalSessionIds,
         ...(page.nextBeforeSeq === undefined ? {} : {
           nextCursor: encodeCursor({
             version: 1,
@@ -263,6 +278,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
   return {
     create: unavailable,
     updateProject: unavailable,
+    updateUserState: unavailable,
     delete: unavailable,
     list: unavailable,
     search: unavailable,

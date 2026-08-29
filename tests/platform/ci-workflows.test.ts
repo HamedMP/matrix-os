@@ -1,6 +1,115 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parse } from 'yaml';
+
+function readChangeDetectionCheckoutRun(root: string): string | undefined {
+  const workflow = parse(
+    readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'),
+  ) as {
+    jobs?: {
+      changes?: {
+        steps?: Array<{
+          name?: string;
+          run?: string;
+        }>;
+      };
+    };
+  };
+
+  return workflow.jobs?.changes?.steps?.find(
+    (step) => step.name === 'Checkout with bounded retry',
+  )?.run;
+}
+
+function runChangeDetectionCheckout(
+  checkoutRun: string,
+  failuresBeforeSuccess: number,
+): {
+  attempts: string;
+  checkoutCompleted: boolean;
+  status: number | null;
+  stderr: string;
+  stdout: string;
+} {
+  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-ci-checkout-retry-'));
+  const fakeBin = join(tempDir, 'bin');
+  const fetchAttempts = join(tempDir, 'fetch-attempts');
+  const checkoutMarker = join(tempDir, 'checkout-complete');
+  mkdirSync(fakeBin);
+  writeFileSync(
+    join(fakeBin, 'git'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" fetch "* ]]; then
+  if [[ " $* " != *" $GITHUB_SHA "* ]]; then
+    echo "fetch did not request the event commit" >&2
+    exit 64
+  fi
+  if [[ " $* " == *" --depth=1 "* ]]; then
+    echo "event commit fetch must retain full history" >&2
+    exit 65
+  fi
+  attempt=0
+  if [ -f "$FAKE_GIT_FETCH_ATTEMPTS" ]; then
+    attempt="$(cat "$FAKE_GIT_FETCH_ATTEMPTS")"
+  fi
+  attempt=$((attempt + 1))
+  printf '%s' "$attempt" > "$FAKE_GIT_FETCH_ATTEMPTS"
+  if [ "$FAKE_GIT_FAILURES_BEFORE_SUCCESS" -lt 0 ] || [ "$attempt" -le "$FAKE_GIT_FAILURES_BEFORE_SUCCESS" ]; then
+    exit 1
+  fi
+fi
+if [[ " $* " == *" checkout --force --detach "* ]]; then
+  touch "$FAKE_GIT_CHECKOUT_MARKER"
+fi
+`,
+  );
+  chmodSync(join(fakeBin, 'git'), 0o755);
+
+  try {
+    const result = spawnSync('bash', ['-c', checkoutRun], {
+      cwd: tempDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        CHECKOUT_BACKOFF_SECONDS: '0',
+        CHECKOUT_MAX_ATTEMPTS: '3',
+        CHECKOUT_TIMEOUT_SECONDS: '1',
+        FAKE_GIT_CHECKOUT_MARKER: checkoutMarker,
+        FAKE_GIT_FAILURES_BEFORE_SUCCESS: String(failuresBeforeSuccess),
+        FAKE_GIT_FETCH_ATTEMPTS: fetchAttempts,
+        GH_TOKEN: 'test-token',
+        GITHUB_REF: 'refs/heads/main',
+        GITHUB_REPOSITORY: 'HamedMP/matrix-os',
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_SHA: '0123456789012345678901234567890123456789',
+      },
+    });
+
+    return {
+      attempts: readFileSync(fetchAttempts, 'utf8'),
+      checkoutCompleted: existsSync(checkoutMarker),
+      status: result.status,
+      stderr: result.stderr,
+      stdout: result.stdout,
+    };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
 
 describe('CI workflows', () => {
   const stripePriceSecrets = [
@@ -11,6 +120,28 @@ describe('CI workflows', () => {
     ['STRIPE_PRICE_MATRIX_MAX_MONTHLY', 'stripe-price-matrix-max-monthly'],
     ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
   ] as const;
+
+  it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const superseder = readFileSync(join(root, '.github/workflows/ci-supersede.yml'), 'utf8');
+
+    expect(workflow).toContain('run-name: CI coverage-v1');
+    expect(workflow).toContain('queue: max');
+    expect(workflow).not.toContain('cancel-in-progress:');
+    expect(superseder).toContain('actions: write');
+    expect(superseder).toContain('paths-ignore:');
+    expect(superseder).toContain("- 'docs/**'");
+    expect(superseder).toContain("- 'specs/**'");
+    expect(superseder).toContain("- '**/*.md'");
+    expect(superseder).toContain(
+      'uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
+    );
+    expect(superseder).toContain(
+      'uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6',
+    );
+    expect(superseder).toContain('node scripts/ci/supersede-main-ci.mjs');
+  });
 
   it('exposes a stable aggregate CI result job for branch protection', () => {
     const root = process.cwd();
@@ -33,7 +164,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
-  it('keeps CI change detection within its bounded checkout budget', () => {
+  it('plans main coverage from the last trusted frontier and wires its range into diff checks', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     const changesJob = workflow.slice(
@@ -41,10 +172,51 @@ describe('CI workflows', () => {
       workflow.indexOf('  # ── Gate 1: Mechanical checks'),
     );
 
-    expect(changesJob).toContain('timeout-minutes: 2');
-    expect(changesJob).toContain('fetch-depth: 1');
+    expect(changesJob).toContain('timeout-minutes: 3');
+    expect(changesJob).toContain('name: Checkout with bounded retry');
+    expect(changesJob).toContain('CHECKOUT_MAX_ATTEMPTS: "3"');
+    expect(changesJob).toContain('CHECKOUT_TIMEOUT_SECONDS: "30"');
+    expect(changesJob).toContain('CHECKOUT_BACKOFF_SECONDS: "5"');
+    expect(changesJob).toContain('timeout --foreground --kill-after=5s');
+    expect(changesJob).toContain('for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS")');
+    expect(changesJob).toContain('Checkout fetch failed after $CHECKOUT_MAX_ATTEMPTS attempts');
     expect(changesJob).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
+    expect(changesJob).not.toContain('uses: actions/checkout@v6');
     expect(changesJob).not.toContain('fetch-depth: 0');
+    expect(changesJob).toContain('node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"');
+    expect(workflow).toContain('base_sha: ${{ steps.changed.outputs.base_sha }}');
+    expect(workflow).toContain('COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}');
+    expect(workflow).toContain('COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}');
+    expect(workflow).toContain('if [ "$COVERAGE_BOOTSTRAP" = "true" ]; then');
+    expect(workflow).toContain('BEFORE="$COVERAGE_BASE_SHA"');
+  });
+
+  it('recovers when the first change-detection checkout fetch fails transiently', () => {
+    const root = process.cwd();
+    const checkoutRun = readChangeDetectionCheckoutRun(root);
+    expect(checkoutRun).toBeTypeOf('string');
+
+    const result = runChangeDetectionCheckout(checkoutRun ?? 'exit 1', 1);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.attempts).toBe('2');
+    expect(result.checkoutCompleted).toBe(true);
+    expect(result.stdout).toContain('Checkout fetch attempt 1/3');
+    expect(result.stdout).toContain('Checkout fetch attempt 2/3');
+  });
+
+  it('fails change detection after the bounded checkout attempts are exhausted', () => {
+    const root = process.cwd();
+    const checkoutRun = readChangeDetectionCheckoutRun(root);
+    expect(checkoutRun).toBeTypeOf('string');
+
+    const result = runChangeDetectionCheckout(checkoutRun ?? 'exit 1', -1);
+
+    expect(result.status).toBe(1);
+    expect(result.attempts).toBe('3');
+    expect(result.checkoutCompleted).toBe(false);
+    expect(result.stdout).toContain('Checkout fetch attempt 3/3');
+    expect(result.stdout).toContain('Checkout fetch failed after 3 attempts');
   });
 
   it('runs lightweight docs contract tests for docs-only CI changes', () => {
@@ -86,6 +258,9 @@ describe('CI workflows', () => {
     expect(readme).toContain('host bundle release tests are blocking');
     expect(readme).toContain('React Doctor');
     expect(readme).toContain('Docs Contract Tests');
+    expect(readme).toContain('coverage frontier');
+    expect(readme).toContain('ci-supersede.yml');
+    expect(readme).toMatch(/Docs-only successors\s+queue behind broader runs/);
     expect(readme).toContain('Screenshot workflow removed');
   });
 
@@ -318,16 +493,16 @@ describe('CI workflows', () => {
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
     const preview = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
 
-    expect(production).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
+    expect(production).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}");
     expect(production).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
-    expect(production).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '7' }}");
+    expect(production).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}");
     expect(production).toContain('MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}');
     expect(production).toContain('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30.');
     expect(production).toContain('[[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]');
     expect(production).not.toContain('10#$MATRIX_CARD_TRIAL_DAYS');
-    expect(preview).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
+    expect(preview).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}");
     expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
-    expect(preview).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '7' }}");
+    expect(preview).toContain("MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}");
     expect(preview).toContain('MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}');
     expect(preview).toContain('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30.');
     expect(preview).toContain('[[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]');
@@ -340,6 +515,28 @@ describe('CI workflows', () => {
     ]) {
       expect(production).toContain(eventType);
     }
+  });
+
+  it('durably deploys fail-closed prebilling for every new primary signup', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'");
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100'");
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '1' }}");
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS || '254000' }}");
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_COSTS: ${{ vars.MATRIX_PREBILLING_PROVISIONING_COSTS || 'cpx22:92900;cpx32:169900;cpx52:254000' }}");
+    for (const name of [
+      'MATRIX_PREBILLING_PROVISIONING_ENABLED',
+      'MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT',
+      'MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE',
+      'MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS',
+      'MATRIX_PREBILLING_PROVISIONING_COSTS',
+    ]) {
+      expect(production).toContain(`${name}=\${${name}}`);
+    }
+    expect(production).toContain('Verify deployed prebilling contract');
+    expect(production).toContain('prebilling deployment contract is missing');
   });
 
   it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {

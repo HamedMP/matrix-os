@@ -13,6 +13,11 @@
       "types": "./src/tokens.ts",
       "import": "./dist/tokens.js",
       "default": "./dist/tokens.js"
+    },
+    "./marks": {
+      "types": "./src/marks.ts",
+      "import": "./dist/marks.js",
+      "default": "./dist/marks.js"
     }
   },
   "scripts": { "build": "tsc" },

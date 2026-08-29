@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useConnection } from "../../../stores/connection";
-import { Card, Empty, SectionHeader } from "./section-kit";
+import { Card, Empty, SettingsSectionHeader } from "./section-kit";
 
 interface CronJob {
   id?: string;
@@ -49,7 +49,7 @@ export default function CronSection() {
 
   return (
     <>
-      <SectionHeader title="Schedules" description="Recurring agent jobs and heartbeats." />
+      <SettingsSectionHeader title="Schedules" description="Recurring agent jobs and heartbeats." />
       <Card>
         {state.loading ? <Empty text="Loading schedules..." /> : state.error ? <Empty text="Schedules unavailable." /> : state.jobs.length === 0 ? (
           <Empty text="No scheduled jobs." />

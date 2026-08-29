@@ -1,3 +1,10 @@
+import { desktopFonts, desktopPalette } from '@matrix-os/brand/tokens';
+import { rabbitMarkSvg } from '@matrix-os/brand/marks';
+
+const BRICOLAGE_FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&amp;display=swap" rel="stylesheet">`;
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -44,6 +51,24 @@ export function approvalPage(
     var runtimeReady = false;
     var selectedRuntimeSlot = '';
     var computerSelectionRequired = true;
+    var clerkAppearance = {
+      variables: {
+        colorPrimary: '${desktopPalette.forest}',
+        colorBackground: '${desktopPalette.paper}',
+        colorText: '${desktopPalette.forest}',
+        colorTextSecondary: '${desktopPalette.textMuted}',
+        borderRadius: '14px',
+        fontFamily: '${desktopFonts.display}',
+      },
+      elements: {
+        rootBox: { width: '100%' },
+        cardBox: { width: '100%', boxShadow: 'none' },
+        card: { width: '100%', padding: '0', boxShadow: 'none', background: 'transparent' },
+        headerTitle: { fontFamily: '${desktopFonts.display}', fontWeight: '700' },
+        formButtonPrimary: { backgroundColor: '${desktopPalette.forest}' },
+        footer: { background: 'transparent' },
+      },
+    };
 
     function deviceReturnPath() {
       var url = new URL(window.location.href);
@@ -87,7 +112,7 @@ export function approvalPage(
       var button = document.getElementById('confirm-button');
       if (button) {
         button.disabled = isBusy || !runtimeReady;
-        button.textContent = isBusy ? 'authorizing...' : 'approve login';
+        button.textContent = isBusy ? 'Connecting...' : 'Approve and connect';
       }
     }
 
@@ -102,7 +127,6 @@ export function approvalPage(
     }
 
     function updateSignedInIdentity() {
-      var instance = document.getElementById('instance-line');
       var card = document.getElementById('identity-card');
       if (!window.Clerk || !window.Clerk.user) return;
       var user = window.Clerk.user;
@@ -140,17 +164,12 @@ export function approvalPage(
         fallback.hidden = false;
       }
       if (card) card.hidden = false;
-      if (instance) instance.textContent = 'signed in: @' + handle + ' on app.matrix-os.com';
     }
 
     function updateSelectedComputer() {
       var select = document.getElementById('computer-select');
-      var instance = document.getElementById('instance-line');
       selectedRuntimeSlot = select?.value || '';
       runtimeReady = Boolean(selectedRuntimeSlot);
-      if (instance && select?.selectedOptions[0]) {
-        instance.textContent = 'computer: ' + select.selectedOptions[0].textContent;
-      }
       setBusy(false);
     }
 
@@ -233,7 +252,7 @@ export function approvalPage(
       setConfirmReady(false);
       renderActionState(
         'Set up your Matrix computer',
-        'Create or activate your Matrix computer first, then return here to approve the desktop app.',
+        'Create or activate your Matrix computer first, then return here to connect this device.',
         'Open setup',
         redirectToBillingSetup
       );
@@ -268,6 +287,7 @@ export function approvalPage(
       if (signin && !signin.dataset.mounted) {
         signin.dataset.mounted = 'true';
         window.Clerk.mountSignUp(signin, {
+          appearance: clerkAppearance,
           signInUrl: deviceAuthUrl('sign-in'),
           forceRedirectUrl: approvalUrl,
           fallbackRedirectUrl: approvalUrl,
@@ -286,6 +306,7 @@ export function approvalPage(
       if (signin && !signin.dataset.mounted) {
         signin.dataset.mounted = 'true';
         window.Clerk.mountSignIn(signin, {
+          appearance: clerkAppearance,
           signUpUrl: deviceAuthUrl('sign-up'),
           forceRedirectUrl: approvalUrl,
           fallbackRedirectUrl: approvalUrl,
@@ -459,173 +480,277 @@ export function approvalPage(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Authorize device -- Matrix OS</title>
-  <style>
+  ${BRICOLAGE_FONT_LINKS}
+  <style nonce="${scriptNonce}">
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
+    :root {
+      color-scheme: light;
+      --forest: ${desktopPalette.forest};
+      --coral: ${desktopPalette.coral};
+      --gold: ${desktopPalette.gold};
+      --green: ${desktopPalette.green};
+      --blue: ${desktopPalette.blue};
+      --paper: ${desktopPalette.paper};
+      --canvas: ${desktopPalette.canvas};
+      --ink-muted: ${desktopPalette.textMuted};
+      --stage-start: ${desktopPalette.stageStart};
+      --forest-hover: ${desktopPalette.forestHover};
+      --danger: ${desktopPalette.danger};
+      --line: rgba(14, 52, 34, 0.14);
+    }
     body {
       margin: 0;
       min-height: 100vh;
       display: grid;
       place-items: center;
-      background: #101312;
-      color: #e8efe7;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      padding: 24px;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(241, 195, 121, 0.45), transparent 30rem),
+        radial-gradient(circle at 88% 90%, rgba(197, 214, 226, 0.65), transparent 34rem),
+        var(--canvas);
+      color: var(--forest);
+      font-family: ${desktopFonts.display};
+      font-optical-sizing: auto;
+      font-style: normal;
+      font-variation-settings: "wdth" 100;
+      padding: clamp(16px, 4vw, 48px);
     }
     main {
-      width: min(1120px, 100%);
+      width: min(1180px, 100%);
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
-      gap: 24px;
+      grid-template-columns: minmax(0, 1.12fr) minmax(360px, 0.88fr);
       align-items: stretch;
-    }
-    .terminal {
-      min-height: 480px;
-      background: #070908;
-      border: 1px solid #2b3a34;
-      border-radius: 8px;
       overflow: hidden;
-      box-shadow: 0 24px 80px rgba(0,0,0,0.38);
+      border: 1px solid rgba(14, 52, 34, 0.18);
+      border-radius: 28px;
+      background: var(--paper);
+      box-shadow: 0 34px 100px rgba(14, 52, 34, 0.18);
     }
-    .bar {
-      height: 38px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 0 14px;
-      background: #151a18;
-      border-bottom: 1px solid #2b3a34;
-      color: #9aa8a1;
-      font-size: 13px;
-    }
-    .dot { width: 10px; height: 10px; border-radius: 999px; background: #5f6b65; }
-    .dot.ok { background: #66d19e; }
-    .screen {
-      padding: 28px;
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-      font-size: 14px;
-      line-height: 1.7;
-    }
-    .prompt { color: #8fbfa3; }
-    .muted { color: #8a968f; }
-    .code {
-      display: inline-block;
-      margin: 12px 0 18px;
-      padding: 10px 14px;
-      border: 1px solid #385247;
-      border-radius: 6px;
-      background: #101714;
-      color: #f4f7f1;
-      font-size: 24px;
-      letter-spacing: 0.08em;
-    }
-    .panel {
-      background: #f6f2e8;
-      color: #25332d;
-      border: 1px solid #ddd4c3;
-      border-radius: 8px;
-      padding: 24px;
+    .desktop-stage {
+      position: relative;
+      min-height: 650px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      background:
+        radial-gradient(circle at 78% 16%, rgba(208, 110, 83, 0.7), transparent 26rem),
+        linear-gradient(145deg, var(--stage-start) 0%, var(--forest) 52%, ${desktopPalette.forestDeep} 100%);
+      color: var(--paper);
+      overflow: hidden;
     }
-    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
-    h2 { margin: 0; font-size: 18px; line-height: 1.2; }
-    p { margin: 0; color: #516158; line-height: 1.5; }
+    .desktop-stage::after {
+      content: "";
+      position: absolute;
+      inset: auto -16% -34% 18%;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: rgba(190, 215, 123, 0.18);
+      filter: blur(2px);
+      pointer-events: none;
+    }
+    .brand-bar {
+      position: relative;
+      z-index: 1;
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      border-bottom: 1px solid rgba(252, 252, 248, 0.15);
+      background: rgba(252, 252, 248, 0.07);
+      backdrop-filter: blur(18px);
+    }
+    .brand-lockup { display: flex; align-items: center; gap: 10px; }
+    .brand-name {
+      font-family: "Bricolage Grotesque", sans-serif;
+      font-optical-sizing: auto;
+      font-size: 17px;
+      font-style: normal;
+      font-variation-settings: "wdth" 100;
+      font-weight: 800;
+      letter-spacing: -0.015em;
+    }
+    .rabbit-mark { display: block; width: auto; flex: 0 0 auto; fill: currentColor; }
+    .rabbit-mark-phosphor { color: var(--green); height: 34px; }
+    .secure-label { color: rgba(252, 252, 248, 0.7); font-size: 12px; }
+    .stage-content {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      align-items: center;
+      padding: clamp(34px, 7vw, 72px);
+    }
+    .stage-copy { align-self: center; max-width: 520px; }
+    .eyebrow {
+      margin: 0 0 14px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+    .stage-content h1 {
+      max-width: 520px;
+      margin: 0;
+      color: var(--paper);
+      font-family: ${desktopFonts.display};
+      font-size: clamp(40px, 6vw, 68px);
+      font-weight: 700;
+      letter-spacing: -0.045em;
+      line-height: 0.98;
+    }
+    .stage-title-line { display: block; }
+    .stage-title-product { white-space: nowrap; }
+    .stage-lede { max-width: 430px; margin-top: 20px; color: rgba(252, 252, 248, 0.72); }
+    .stage-promise {
+      align-self: end;
+      max-width: 420px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(252, 252, 248, 0.2);
+      color: rgba(252, 252, 248, 0.9);
+      font-family: ${desktopFonts.display};
+      font-size: clamp(18px, 2vw, 24px);
+      font-weight: 560;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+    .stage-watermark {
+      position: absolute;
+      right: -72px;
+      bottom: -150px;
+      z-index: 0;
+      color: rgba(190, 215, 123, 0.08);
+      pointer-events: none;
+      transform: rotate(-7deg);
+    }
+    .stage-watermark .rabbit-mark { height: 520px; }
+    .panel {
+      min-width: 0;
+      background: var(--paper);
+      color: var(--forest);
+      padding: clamp(28px, 5vw, 58px);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 22px;
+    }
+    .panel-intro { display: grid; gap: 16px; }
+    .panel-intro .eyebrow { margin: 0; }
+    .panel .eyebrow { color: var(--coral); }
+    .panel h2, .device-state h2 {
+      margin: 0;
+      font-family: ${desktopFonts.display};
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      line-height: 1.02;
+    }
+    p { margin: 0; color: var(--ink-muted); line-height: 1.55; }
     button {
       width: 100%;
-      background: #25332d;
-      color: #fffdf6;
-      border: 0;
-      padding: 0.75rem 1rem;
+      min-height: 48px;
+      background: var(--forest);
+      color: var(--paper);
+      border: 1px solid var(--forest);
+      padding: 0.8rem 1rem;
       font-size: 0.95rem;
-      border-radius: 6px;
+      font-weight: 650;
+      border-radius: 14px;
       cursor: pointer;
+      transition: transform 160ms ease, background 160ms ease;
     }
+    button:hover:not(:disabled) { transform: translateY(-1px); background: var(--forest-hover); }
+    button:focus-visible, select:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
     button:disabled { opacity: 0.65; cursor: wait; }
-    .status { min-height: 1.25rem; color: #9f2d2d; }
+    .status { min-height: 1.25rem; color: var(--danger); font-size: 13px; }
     .identity {
       display: grid;
       grid-template-columns: 44px minmax(0, 1fr);
       gap: 12px;
       align-items: center;
-      padding: 12px;
-      border: 1px solid #d7d0c2;
-      border-radius: 6px;
-      background: #fffdf8;
+      margin-bottom: 14px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: ${desktopPalette.surfaceMuted};
     }
     .identity-avatar {
       width: 44px;
       height: 44px;
       border-radius: 50%;
       object-fit: cover;
-      background: #25332d;
+      background: var(--forest);
     }
     .identity-avatar-fallback {
       display: grid;
       place-items: center;
-      color: #fffdf8;
+      color: var(--paper);
       font-weight: 700;
     }
     .identity-copy { min-width: 0; }
-    .identity-name { color: #25332d; font-weight: 700; }
+    .identity-name { color: var(--forest); font-weight: 700; }
     .identity-meta {
       overflow: hidden;
-      color: #66736c;
+      color: var(--ink-muted);
       font-size: 0.82rem;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .computer-field { display: grid; gap: 7px; margin: 14px 0; }
-    .computer-field label { color: #35453e; font-size: 0.82rem; font-weight: 700; }
+    .computer-field label { color: var(--forest); font-size: 0.82rem; font-weight: 700; }
     .computer-field select {
       width: 100%;
       min-height: 42px;
-      border: 1px solid #b9c2bc;
-      border-radius: 6px;
-      background: #fff;
-      color: #25332d;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper);
+      color: var(--forest);
       padding: 0 36px 0 12px;
       font: inherit;
     }
-    .computer-field select:focus-visible { outline: 2px solid #2c7254; outline-offset: 2px; }
     #signin-area { min-width: 0; }
     .device-state {
       display: flex;
       flex-direction: column;
       gap: 12px;
-      border-top: 1px solid #ded7c9;
+      border-top: 1px solid var(--line);
       padding-top: 16px;
     }
-    @media (max-width: 760px) {
+    .device-state h2 { font-size: 28px; }
+    @media (max-width: 820px) {
       main { grid-template-columns: 1fr; }
-      .terminal { min-height: 360px; }
-      .screen { padding: 20px; }
+      .desktop-stage { min-height: 470px; }
+      .stage-content { padding: 34px 28px; }
+      .panel { padding: 38px 28px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
     }
   </style>
 </head>
 <body>
   <main>
-    <section class="terminal" aria-label="${productLabel} login preview">
-      <div class="bar"><span class="dot ok"></span><span class="dot"></span><span class="dot"></span><span>${isNativeApp ? 'matrix app sign in' : 'matrix login'}</span></div>
-      <div class="screen">
-        <div><span class="prompt">matrix</span> login</div>
-        <div class="muted">open app.matrix-os.com/auth/device</div>
-        <div>verification code</div>
-        <div class="code">${escapedCode}</div>
-        <div id="instance-line" class="muted">waiting for signed-in Matrix instance...</div>
-        <br>
-        <div><span class="prompt">matrix</span> whoami</div>
-        <div class="muted">@handle on app.matrix-os.com</div>
-        <div><span class="prompt">matrix</span> shell attach -c main</div>
-        <div><span class="prompt">matrix</span> run -it -- claude</div>
-        <div><span class="prompt">matrix</span> doctor</div>
+    <section class="desktop-stage" aria-label="${productLabel} secure connection">
+      <div class="brand-bar">
+        <div class="brand-lockup">${rabbitMarkSvg('rabbit-mark rabbit-mark-phosphor')}<span class="brand-name">Matrix OS</span></div>
+        <span class="secure-label">Secure device connection</span>
+      </div>
+      <div class="stage-watermark">${rabbitMarkSvg('rabbit-mark stage-rabbit-mark')}</div>
+      <div class="stage-content">
+        <div class="stage-copy">
+          <p class="eyebrow">Your private computer</p>
+          <h1><span class="stage-title-line">Connect</span><span class="stage-title-line stage-title-product">Matrix OS</span></h1>
+          <p class="stage-lede">Approve once to securely open your private computer from this device.</p>
+        </div>
+        <p class="stage-promise">One account. One private computer. Every surface.</p>
       </div>
     </section>
     <section class="panel">
-      <div>
-        <h1>Approve ${productLabel}</h1>
-        <p>Authorize ${isNativeApp ? 'the desktop app' : 'this terminal'} to connect to your Matrix OS cloud computer.</p>
+      <div class="panel-intro">
+        <p class="eyebrow">One last step</p>
+        <h2>Approve ${productLabel}</h2>
+        <p>Allow this device to open your Matrix OS cloud computer.</p>
       </div>
       <div id="signin-area" style="display:none"></div>
       <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
@@ -646,7 +771,7 @@ export function approvalPage(
           <label for="computer-select">Computer</label>
           <select id="computer-select" name="runtimeSlot" aria-label="Computer"></select>
         </div>
-        <button id="confirm-button" type="submit" disabled>approve login</button>
+        <button id="confirm-button" type="submit" disabled>Approve and connect</button>
       </form>
       <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
     </section>
@@ -664,8 +789,13 @@ export function approvalSuccessPage(nativeRedirectUri: string | null = null): st
   const redirectLink = nativeRedirectUri
     ? `<p><a href="${escapeHtmlAttr(nativeRedirectUri)}">Return to Matrix OS</a></p>`
     : '';
+  const detail = nativeRedirectUri
+    ? 'Opening Matrix OS now. Keep this tab open until the desktop app is in focus.'
+    : 'You can close this tab and return to Matrix OS.';
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">${redirectMeta}<title>Authorized</title>
-<style>body{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#eee;min-height:100vh;display:flex;align-items:center;justify-content:center}.card{max-width:380px;padding:2rem;background:#141414;border:1px solid #222;border-radius:8px;text-align:center}</style></head>
-<body><div class="card"><h1>Login successful</h1><p>You can close this tab and return to Matrix OS.</p>${redirectLink}</div></body></html>`;
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${redirectMeta}<title>Connected — Matrix OS</title>${BRICOLAGE_FONT_LINKS}
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,rgba(241,195,121,.58),transparent 28rem),radial-gradient(circle at 85% 90%,rgba(197,214,226,.8),transparent 34rem),${desktopPalette.canvas};color:${desktopPalette.forest};font-family:${desktopFonts.display};font-optical-sizing:auto;font-style:normal;font-variation-settings:"wdth" 100}.card{width:min(520px,100%);padding:clamp(32px,7vw,64px);border:1px solid rgba(14,52,34,.16);border-radius:28px;background:${desktopPalette.paper};box-shadow:0 30px 90px rgba(14,52,34,.16);text-align:center}.rabbit-mark{display:block;width:auto;fill:currentColor}.success-rabbit{color:${desktopPalette.forest};height:78px;margin:0 auto 26px;animation:arrive .5s cubic-bezier(.2,.8,.2,1) both}.eyebrow{margin:0 0 12px;color:${desktopPalette.coral};font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}h1{margin:0;font-family:${desktopFonts.display};font-size:clamp(38px,8vw,58px);font-weight:700;letter-spacing:-.045em;line-height:1}p{margin:18px auto 0;max-width:390px;color:${desktopPalette.textMuted};line-height:1.6}a{display:inline-flex;min-height:48px;align-items:center;justify-content:center;margin-top:8px;padding:0 22px;border-radius:14px;background:${desktopPalette.forest};color:${desktopPalette.paper};font-weight:700;text-decoration:none}a:focus-visible{outline:3px solid ${desktopPalette.gold};outline-offset:3px}@keyframes arrive{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head>
+<body><main class="card">${rabbitMarkSvg('rabbit-mark success-rabbit')}<p class="eyebrow">Device approved</p><h1>You&#39;re connected</h1><p>${detail}</p>${redirectLink}</main></body></html>`;
 }

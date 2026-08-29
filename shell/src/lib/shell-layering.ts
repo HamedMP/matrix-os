@@ -15,6 +15,9 @@ export const SHELL_Z_INDEX = {
   appWindowMax: 500,
   fullscreenWindow: 600,
   fullscreenExit: 601,
+  desktopDrawerBackdrop: 640,
+  desktopDrawer: 645,
+  desktopHeader: 650,
   // macOS Launchpad (macos-glass design): full-screen launcher take-over above
   // every app window and the dock, but below Settings and hard gates. Shares
   // the taskbar band; the two never co-render (different designs).

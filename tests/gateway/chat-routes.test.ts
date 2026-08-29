@@ -9,6 +9,7 @@ import {
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
   type CanonicalCreateChatRequest,
+  type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
@@ -40,6 +41,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
   return {
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
+    updateUserState: vi.fn(async () => record),
     delete: vi.fn(async () => ({ chatId: record.chat.id, deletedAt: record.chat.updatedAt })),
     list: vi.fn(async () => ({ items: [record] })),
     search: vi.fn(async () => ({ items: [record] })),
@@ -141,6 +143,50 @@ describe("canonical Chat routes", () => {
       body: JSON.stringify({ baseRevision: 0, projectId: null, ownerId: "other" }),
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("updates only the authenticated principal's bounded Chat user state", async () => {
+    const pinned = {
+      ...record,
+      chat: {
+        ...record.chat,
+        userState: { readThroughSeq: 0, pinned: true, muted: false },
+      },
+    };
+    const updateUserState = vi.fn(async (
+      _owner: ChatOwner,
+      _chatId: string,
+      _input: CanonicalUpdateChatUserStateRequest,
+    ) => pinned);
+    const app = appFor(routeService({ updateUserState }));
+
+    const response = await app.request("/api/chats/chat_route_test/user-state", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinned: true }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(pinned);
+    expect(updateUserState).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      { pinned: true },
+    );
+
+    const invalid = await app.request("/api/chats/chat_route_test/user-state", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinned: true, ownerId: "other_owner" }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const oversized = await app.request("/api/chats/chat_route_test/user-state", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinned: true, padding: "x".repeat(5 * 1024) }),
+    });
+    expect(oversized.status).toBe(413);
   });
 
   it("deletes an owned Chat with an idempotency key", async () => {

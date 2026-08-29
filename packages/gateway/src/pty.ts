@@ -44,7 +44,7 @@ export function createPtyHandler(
 
     async open() {
       const resolvedSpawn = spawnFn ?? await getDefaultSpawn();
-      const shell = process.env.SHELL ?? "/bin/bash";
+      const shell = process.env.SHELL || "/bin/zsh";
       const validatedCwd = cwd ? resolveWithinHome(homePath, cwd) : null;
       const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : homePath;
 

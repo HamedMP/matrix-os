@@ -12,16 +12,17 @@ import { InspectorTerminalPanel } from "../../desktop/src/renderer/src/features/
 // test asserts the wiring (session name, active gating, list/embed switch)
 // without a live socket or canvas.
 const terminalViewMock = vi.hoisted(() => ({
-  lastProps: undefined as { sessionName: string; active?: boolean } | undefined,
+  lastProps: undefined as { sessionName: string; chatId?: string; active?: boolean } | undefined,
 }));
 
 vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => ({
-  default: (props: { sessionName: string; active?: boolean }) => {
+  default: (props: { sessionName: string; chatId?: string; active?: boolean }) => {
     terminalViewMock.lastProps = props;
     return (
       <div
         data-testid="embedded-terminal"
         data-session={props.sessionName}
+        data-chat={props.chatId}
         data-active={String(props.active ?? true)}
       />
     );
@@ -106,6 +107,7 @@ describe("InspectorTerminalPanel", () => {
           session({ id: "ts_2", name: "deploy-shell" }),
         ])}
         active
+        chatId="chat_selected"
       />,
     );
 
@@ -115,6 +117,7 @@ describe("InspectorTerminalPanel", () => {
     expect(embedded.getAttribute("data-session")).toBe("deploy-shell");
     expect(embedded.getAttribute("data-active")).toBe("true");
     expect(terminalViewMock.lastProps?.sessionName).toBe("deploy-shell");
+    expect(terminalViewMock.lastProps?.chatId).toBe("chat_selected");
     // Exactly one session embeds at a time; the list is replaced, not stacked.
     expect(screen.queryByRole("button", { name: "Open terminal build-shell" })).toBeNull();
 

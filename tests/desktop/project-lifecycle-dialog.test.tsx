@@ -57,6 +57,7 @@ describe("ProjectLifecycleDialog", () => {
 
     render(<ProjectLifecycleDialog open project={folderProject} onClose={onClose} />);
 
+    expect(screen.getByRole("alertdialog", { name: "Delete project permanently?" })).toBeTruthy();
     expect(screen.getByText(/original folder and files will stay untouched/i)).not.toBeNull();
     const submit = screen.getByRole("button", { name: "Delete project" });
     expect(submit.hasAttribute("disabled")).toBe(true);

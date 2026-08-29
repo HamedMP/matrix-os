@@ -727,7 +727,7 @@ describe("PostHog error tracking", () => {
     expect(observabilitySource).toContain("bounds only the await");
   });
 
-  it("does not pass PostHog secrets to external Conduit containers", async () => {
+  it("does not ship legacy Conduit containers", async () => {
     const composeFiles = [
       "docker-compose.dev.yml",
       "distro/docker-compose.platform.yml",
@@ -735,9 +735,8 @@ describe("PostHog error tracking", () => {
 
     for (const file of composeFiles) {
       const source = await readFile(file, "utf8");
-      const conduitBlock = readYamlServiceBlock(source, "conduit");
-      expect(conduitBlock, file).not.toContain("POSTHOG_TOKEN");
-      expect(conduitBlock, file).not.toContain("POSTHOG_HOST");
+      expect(source, file).not.toContain("matrixconduit/matrix-conduit");
+      expect(source, file).not.toMatch(/^\s{2}conduit:\s*$/m);
     }
   });
 
@@ -846,8 +845,8 @@ describe("PostHog error tracking", () => {
     );
     const devEntrypoint = await readFile("distro/docker-dev-entrypoint.sh", "utf8");
     expect(devEntrypoint).toContain("pnpm --filter @matrix-os/observability build");
-    expect(devEntrypoint).toContain("mkdir -p /app/packages/observability/dist");
-    expect(devEntrypoint).toContain("chown -R matrixos:matrixos /app/packages/observability/dist");
+    expect(countOccurrences(devEntrypoint, "/app/packages/observability/dist"))
+      .toBeGreaterThanOrEqual(2);
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {

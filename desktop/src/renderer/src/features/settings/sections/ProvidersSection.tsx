@@ -17,7 +17,7 @@ import {
 } from "../../coding-agents/provider-setup-terminal";
 import { ProviderGlyph } from "../provider-glyph";
 import { useProviderPreferences } from "../provider-preferences";
-import { Card, Empty, SectionHeader } from "./section-kit";
+import { Card, Empty, SettingsSectionHeader } from "./section-kit";
 
 const PROVIDER_STATUS_COLOR: Record<AgentProviderSummary["availability"], string> = {
   available: "var(--success)",
@@ -195,7 +195,7 @@ export default function ProvidersSection() {
   return (
     <>
       <div className="flex items-start justify-between gap-4">
-        <SectionHeader
+        <SettingsSectionHeader
           title="Providers"
           description="Coding agents on this computer. Install, sign in, and choose the default for new chats."
         />

@@ -185,6 +185,19 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-current"]);
   });
 
+  it("keeps an adopted provider session when an older load settles afterwards", async () => {
+    const staleResponse = deferred<{ sessions: Array<{ name: string }> }>();
+    const pending = useShellSessions.getState().load(makeApi({
+      get: vi.fn().mockReturnValue(staleResponse.promise),
+    }));
+
+    useShellSessions.getState().adoptCreatedSession("matrix-setup-codex");
+    staleResponse.resolve({ sessions: [] });
+
+    expect(await pending).toBeNull();
+    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-setup-codex"]);
+  });
+
   it("creates shell sessions with two-word names, projects cwd, and retries one 409 conflict", async () => {
     const post = vi
       .fn()

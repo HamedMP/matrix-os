@@ -5,7 +5,7 @@
 // the sync endpoint with backoff until the account lands; Disconnect asks
 // for confirmation first. The renderer only displays name/category/label/
 // email/status — never tokens, remote logos, or upstream error text.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { invoke } from "../../lib/operator";
 import { categoryMessage } from "../../../../shared/app-error";
@@ -13,12 +13,13 @@ import { RefreshButton } from "../settings/sections/ProvidersSection";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { AvailableServiceCard } from "./AvailableServiceCard";
-import { ConnectedServiceRow } from "./ConnectedServiceRow";
 import { ConnectPendingBanner } from "./ConnectPendingBanner";
 import { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll } from "./connect-poll";
 import { DisconnectConfirmDialog } from "./DisconnectConfirmDialog";
 import { EmptyCatalogState, ErrorState, LoadingSkeleton, UnavailableState } from "./IntegrationStatusViews";
 import { useIntegrations } from "./integrations-store";
+import { displayIntegrationName } from "./types";
+import { SettingsSectionHeader } from "../settings/sections/section-kit";
 
 const GENERIC_ERROR = categoryMessage("server");
 
@@ -195,6 +196,25 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     ? (available.find((service) => service.id === connectingService)?.name ?? connectingService)
     : null;
 
+  const catalogServices = useMemo(() => {
+    const known = new Set(available.map((service) => service.id));
+    const services = [
+      ...available,
+      ...connections
+        .filter((connection) => !known.has(connection.service))
+        .map((connection) => ({
+          id: connection.service,
+          name: displayIntegrationName(connection.service),
+          category: "other",
+        })),
+    ];
+    return services.sort((left, right) => {
+      const leftConnected = connections.some((connection) => connection.service === left.id);
+      const rightConnected = connections.some((connection) => connection.service === right.id);
+      return Number(rightConnected) - Number(leftConnected);
+    });
+  }, [available, connections]);
+
   let body: ReactNode;
   if (status === "idle" || status === "loading") {
     body = <LoadingSkeleton />;
@@ -215,43 +235,28 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
           </p>
         ) : null}
 
-        {connections.length > 0 ? (
-          <section className="mb-6">
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>
-              Connected
-            </h4>
-            <div className="flex flex-col gap-2">
-              {connections.map((conn) => (
-                <ConnectedServiceRow
-                  key={conn.id}
-                  connection={conn}
-                  serviceName={available.find((service) => service.id === conn.service)?.name ?? conn.service}
-                  disconnecting={disconnectingId === conn.id}
-                  onDisconnect={() => setConfirmId(conn.id)}
-                />
-              ))}
-            </div>
-          </section>
-        ) : null}
-
         <section>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>
-            Available
-          </h4>
           {available.length === 0 && connections.length === 0 ? (
             <EmptyCatalogState />
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {available.map((service) => (
-                <AvailableServiceCard
-                  key={service.id}
-                  service={service}
-                  connected={connections.some((conn) => conn.service === service.id)}
-                  connecting={connectingService === service.id}
-                  disabled={connectingService !== null}
-                  onConnect={() => void handleConnect(service.id)}
-                />
-              ))}
+            <div data-testid="integrations-grid" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {catalogServices.map((service) => {
+                const connection = connections.find((conn) => conn.service === service.id);
+                const serviceConnections = connections.filter((conn) => conn.service === service.id);
+                return (
+                  <AvailableServiceCard
+                    key={service.id}
+                    service={service}
+                    connected={connection !== undefined}
+                    connection={serviceConnections.length === 1 ? connection : undefined}
+                    connections={serviceConnections}
+                    connecting={connectingService === service.id}
+                    disabled={connectingService !== null}
+                    onConnect={() => void handleConnect(service.id)}
+                    onDisconnect={(target) => setConfirmId(target.id)}
+                  />
+                );
+              })}
             </div>
           )}
         </section>
@@ -271,15 +276,12 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
 
   return (
     <>
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h3 className="text-xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
-            Integrations
-          </h3>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            Connect external services to extend your agent's capabilities.
-          </p>
-        </div>
+      <div className="flex items-start justify-between gap-4">
+        <SettingsSectionHeader
+          className="mb-0"
+          title="Integrations"
+          description="Connect extra services to extend your agent's capabilities."
+        />
         {status === "ready" ? <RefreshButton onClick={refresh} /> : null}
       </div>
 

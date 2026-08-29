@@ -22,9 +22,11 @@ const AppearanceSchema = z
   })
   .strict();
 
-const TerminalAppearanceSchema = z.strictObject({
-  mode: z.enum(["dark", "light"]),
-});
+const TerminalAppearanceSchema = z.union([
+  z.strictObject({ appThemeId: z.enum(["light", "matrix-dark", "matrix"]) }),
+  // Read-compatible with desktop builds that only exposed a dark/light mode.
+  z.strictObject({ mode: z.enum(["dark", "light"]) }),
+]);
 
 const DesktopShellSchema = z.strictObject({
   mode: z.enum(["desktop", "canvas"]),

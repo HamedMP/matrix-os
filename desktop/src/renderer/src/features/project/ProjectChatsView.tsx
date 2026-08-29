@@ -1,7 +1,7 @@
 import { Maximize2, MessageSquare, Minimize2, PanelRightOpen, Server, X } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { Group, Panel, Separator, type Layout as SplitLayout } from "react-resizable-panels";
-import { defaultAgentThreadComposerDraft } from "@matrix-os/contracts";
+import { defaultAgentThreadComposerDraft, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, EmptyState } from "../../design/primitives";
 import { useProjectChatLauncher } from "../../lib/project-chat";
@@ -40,7 +40,7 @@ import { loadCodingAgentConversation, openCodingAgentThread } from "../../lib/pr
 import { ProjectChatDraft } from "./ProjectChatDraft";
 import { buildProjectInspectorContext } from "./project-inspector-context";
 import { ProjectThreadList } from "./ProjectThreadList";
-import { HermesPane } from "../chat/ChatTab";
+import { ChatUnavailableState, HermesPane } from "../chat/ChatTab";
 import { CanonicalChatRoute } from "../chat/CanonicalChatRoute";
 import { useBoard } from "../../stores/board";
 
@@ -719,23 +719,41 @@ export default function ProjectChatsView({
   projectId,
   active,
   initialChatId,
+  initialView,
+  externalNavigation = false,
+  renderInspector,
+  inspectorExclusive = false,
+  allowLegacyFallback = true,
 }: {
   projectId: string;
   active: boolean;
   initialChatId?: string;
+  initialView?: "index" | "draft" | "conversation";
+  externalNavigation?: boolean;
+  renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
+  inspectorExclusive?: boolean;
+  allowLegacyFallback?: boolean;
 }) {
   const api = useConnection((state) => state.api);
+  const [routeAttempt, setRouteAttempt] = useState(0);
   const projectLabel = useBoard((state) => (
     state.projects.find((project) => project.slug === projectId)?.name ?? projectId
   ));
   return (
     <CanonicalChatRoute
+      key={routeAttempt}
       api={api}
       projectId={projectId}
       initialChatId={initialChatId}
+      initialView={initialView}
       projectLabel={projectLabel}
       active={active}
-      fallback={<LegacyProjectChatsView projectId={projectId} active={active} />}
+      externalNavigation={externalNavigation}
+      renderInspector={renderInspector}
+      inspectorExclusive={inspectorExclusive}
+      fallback={allowLegacyFallback
+        ? <LegacyProjectChatsView projectId={projectId} active={active} />
+        : <ChatUnavailableState onRetry={() => setRouteAttempt((attempt) => attempt + 1)} />}
     />
   );
 }

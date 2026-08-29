@@ -303,6 +303,15 @@ const DEFAULT_ALLOWED_SHELLS = new Set([
   "/usr/bin/bash", "/usr/bin/zsh", "/usr/bin/fish",
   "/usr/local/bin/bash", "/usr/local/bin/zsh", "/usr/local/bin/fish",
 ]);
+const MATRIX_DEFAULT_SHELL = "/bin/zsh";
+
+function resolveDefaultShell(allowedShells: Set<string>): string {
+  const envShell = process.env.SHELL;
+  if (envShell && allowedShells.has(envShell)) return envShell;
+  if (allowedShells.has(MATRIX_DEFAULT_SHELL)) return MATRIX_DEFAULT_SHELL;
+  if (allowedShells.has("/bin/bash")) return "/bin/bash";
+  return allowedShells.values().next().value ?? MATRIX_DEFAULT_SHELL;
+}
 
 export class SessionRegistry {
   private sessions = new Map<string, PtySession>();
@@ -357,8 +366,7 @@ export class SessionRegistry {
     }
 
     const sessionId = randomUUID();
-    const envShell = process.env.SHELL ?? "/bin/bash";
-    const defaultShell = this.allowedShells.has(envShell) ? envShell : "/bin/bash";
+    const defaultShell = resolveDefaultShell(this.allowedShells);
     const resolvedShell = shell && this.allowedShells.has(shell) ? shell : defaultShell;
     const buffer = new RingBuffer(this.bufferSize);
     const validatedCwd = resolveWithinHome(this.homePath, cwd);
@@ -405,7 +413,7 @@ export class SessionRegistry {
     const ptyProcess = this.spawnFn(
       parsed.command,
       parsed.args,
-      this.spawnOptions(targetCwd, "/bin/bash"),
+      this.spawnOptions(targetCwd, resolveDefaultShell(this.allowedShells)),
     );
 
     const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, parsed.command);
@@ -691,7 +699,9 @@ export class SessionRegistry {
 
   private restorePersistedSession(info: SessionInfo): boolean {
     try {
-      const shell = this.allowedShells.has(info.shell) ? info.shell : "/bin/bash";
+      const shell = this.allowedShells.has(info.shell)
+        ? info.shell
+        : resolveDefaultShell(this.allowedShells);
       const validatedCwd = resolveWithinHome(this.homePath, info.cwd);
       const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
       const ptyProcess = this.spawnFn(shell, [], this.spawnOptions(targetCwd, shell));

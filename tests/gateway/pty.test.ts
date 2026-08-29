@@ -122,4 +122,14 @@ describe("PTY handler", () => {
 
     process.env.SHELL = originalShell;
   });
+
+  it("defaults to zsh when SHELL is unset", () => {
+    vi.stubEnv("SHELL", "");
+
+    const handler = createPtyHandler("/tmp/test-home", mockSpawn);
+    handler.open();
+
+    const call = vi.mocked(mockSpawn).mock.calls[0];
+    expect(call[0]).toBe("/bin/zsh");
+  });
 });

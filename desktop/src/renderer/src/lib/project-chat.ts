@@ -11,7 +11,7 @@ import { useBoard } from "../stores/board";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
 import { useProjectView } from "../stores/project-view";
 import { useProjectWorkspaces } from "../stores/project-workspaces";
-import { useTabs } from "../stores/tabs";
+import { isWorkRoute, useTabs } from "../stores/tabs";
 
 export interface OpenProjectChatOptions {
   // Select this thread in the project's Chats view and load its conversation.
@@ -51,7 +51,7 @@ export const useProjectChatLauncher = create<ProjectChatLauncherState>()((set) =
 export function defaultProjectId(): string | null {
   const tabs = useTabs.getState();
   const active = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
-  if (active?.kind === "project" && active.projectSlug) return active.projectSlug;
+  if (isWorkRoute(active, "project") && active?.projectSlug) return active.projectSlug;
   const board = useBoard.getState();
   if (board.activeProjectSlug) return board.activeProjectSlug;
   return board.projects[0]?.slug ?? null;

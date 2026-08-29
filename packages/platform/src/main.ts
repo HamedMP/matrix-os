@@ -447,14 +447,14 @@ export function createApp(deps: {
   });
 
   // Matrix well-known endpoints (unauthenticated, required for federation)
-  const CONDUIT_SERVER = process.env.CONDUIT_SERVER ?? 'matrix-os.com:6167';
-  const CONDUIT_BASE_URL = process.env.CONDUIT_BASE_URL ?? 'https://matrix-os.com';
+  const matrixServer = process.env.MATRIX_SERVER ?? 'matrix-os.com';
+  const matrixHomeserverUrl = process.env.MATRIX_HOMESERVER_URL ?? 'https://matrix-os.com';
 
   app.get('/.well-known/matrix/server', (c) =>
-    c.json({ 'm.server': CONDUIT_SERVER }),
+    c.json({ 'm.server': matrixServer }),
   );
   app.get('/.well-known/matrix/client', (c) =>
-    c.json({ 'm.homeserver': { base_url: CONDUIT_BASE_URL } }),
+    c.json({ 'm.homeserver': { base_url: matrixHomeserverUrl } }),
   );
 
   app.route('/', platformMetricsRoutes.routes);
@@ -519,25 +519,6 @@ export function createApp(deps: {
     getGatewayUrlForHandle,
   }));
 
-  app.route('/', createAppSessionRoutes({
-    db,
-    clerkAuth,
-    customerVpsService: deps.customerVpsService,
-    matrixProvisioner,
-    appEnv,
-    platformJwtSecret,
-    legacyContainerRoutingEnabled,
-    logRouteError: logPlatformRouteError,
-    applyNoStoreHeaders,
-    jsonCustomerVpsError,
-    stripeBillingEntitlementsEnabled,
-    resolveEffectiveBillingEntitlement,
-    selectProvisionIdentityForClerkUser,
-    ensureProvisionedPlatformUser,
-    resolveAppDomainIdentity,
-    getGatewayUrlForHandle,
-  }));
-
   const prebilling = deps.customerVpsService
     ? createPrebillingProvisioningCoordinator({
         db,
@@ -553,9 +534,34 @@ export function createApp(deps: {
         }),
       })
     : undefined;
-  deps.customerVpsService?.setPrebillingFallbackReconciler?.(
-    prebilling ? async () => { await prebilling.reconcileFallbacks?.(); } : undefined,
-  );
+  if (prebilling) {
+    deps.customerVpsService?.setPrebillingFallbackReconciler?.(
+      () => prebilling.reconcilePreparations(),
+    );
+  }
+
+  app.route('/', createAppSessionRoutes({
+    db,
+    clerkAuth,
+    customerVpsService: deps.customerVpsService,
+    resumePrebillingPreparation: prebilling
+      ? (input) => prebilling.resumePreparation(input)
+      : undefined,
+    matrixProvisioner,
+    appEnv,
+    platformJwtSecret,
+    legacyContainerRoutingEnabled,
+    logRouteError: logPlatformRouteError,
+    applyNoStoreHeaders,
+    jsonCustomerVpsError,
+    stripeBillingEntitlementsEnabled,
+    resolveEffectiveBillingEntitlement,
+    selectProvisionIdentityForClerkUser,
+    ensureProvisionedPlatformUser,
+    resolveAppDomainIdentity,
+    getGatewayUrlForHandle,
+  }));
+
   app.route('/billing', createBillingRoutes({
     db,
     stripe: appEnv.STRIPE_SECRET_KEY
@@ -619,6 +625,9 @@ export function createApp(deps: {
       syncJwtSecret: platformJwtSecret ?? undefined,
     }),
     provisionRuntime: deps.customerVpsService ? provisionRuntimeForJourney : undefined,
+    resumePrebillingPreparation: prebilling
+      ? (input) => prebilling.resumePreparation(input)
+      : undefined,
     verifyInternalToken: platformSecret
       ? (handle, token) => timingSafeTokenEquals(token, buildPlatformVerificationToken(handle, platformSecret))
       : undefined,

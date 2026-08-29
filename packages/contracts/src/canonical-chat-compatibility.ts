@@ -273,7 +273,13 @@ function activityFromEvent(input: {
     return { ...base, type: "review.ready", reviewId: event.reviewId, summary: event.summary };
   }
   if (event.type === "terminal.bound") {
-    return { ...base, type: "terminal.bound", terminalSessionId: event.terminalSessionId };
+    if (!event.terminalSessionCreatedAt) return null;
+    return {
+      ...base,
+      type: "terminal.bound",
+      terminalSessionId: event.terminalSessionId,
+      terminalSessionCreatedAt: event.terminalSessionCreatedAt,
+    };
   }
   if (event.type === "thread.error") {
     const recoveryActions = event.error.recoveryActions?.flatMap((action) => {

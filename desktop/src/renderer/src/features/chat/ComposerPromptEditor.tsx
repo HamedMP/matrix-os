@@ -555,7 +555,7 @@ function ComposerPromptEditorInner({
             placeholder={<span />}
             data-slot="prompt-input-content"
             data-max-length={maxLength}
-            className="block max-h-[220px] min-h-9 w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent px-4 pb-1 pt-1 text-md leading-relaxed shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 [&_p]:m-0 disabled:opacity-60"
+            className="block max-h-[220px] min-h-9 w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent px-4 pb-1 pt-1 text-[14px] leading-[20px] shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 [&_p]:m-0 disabled:opacity-60"
             onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
               if (!event.defaultPrevented) onKeyDown(event);
             }}
@@ -564,7 +564,7 @@ function ComposerPromptEditorInner({
         placeholder={(
           <div
             data-slot="prompt-input-placeholder"
-            className="pointer-events-none absolute inset-x-4 top-1 text-md leading-relaxed"
+            className="pointer-events-none absolute inset-x-4 top-1 text-[14px] font-medium leading-[20px]"
             style={{ color: "var(--text-tertiary)" }}
           >
             {placeholder}

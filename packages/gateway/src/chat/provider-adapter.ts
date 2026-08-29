@@ -27,7 +27,11 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     text: z.string().max(4_000),
     truncated: z.boolean(),
   }).strict(),
-  z.object({ type: z.literal("terminal.bound"), terminalSessionId: SafeProviderRefSchema }).strict(),
+  z.object({
+    type: z.literal("terminal.bound"),
+    terminalSessionId: SafeProviderRefSchema,
+    terminalSessionCreatedAt: z.iso.datetime(),
+  }).strict(),
   z.object({
     type: z.literal("review.ready"),
     reviewId: SafeProviderRefSchema,

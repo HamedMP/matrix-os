@@ -286,6 +286,7 @@ export const INVOKE_CHANNELS = {
     request: ZoomFactorResultSchema,
     response: ZoomFactorResultSchema,
   },
+  "window:toggle-maximize": { request: Empty, response: Ok },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),
     response: z.object({ value: z.unknown() }).strict(),
@@ -435,7 +436,19 @@ export const EVENT_CHANNELS = {
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
   "app:zoom-changed": ZoomFactorResultSchema,
   "menu:action": z
-    .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open", "refresh-home"]) })
+    .object({
+      action: z.enum([
+        "new-task",
+        "new-thread",
+        "new-context",
+        "new-tab",
+        "close-tab",
+        "close-app",
+        "palette",
+        "quick-open",
+        "refresh-home",
+      ]),
+    })
     .strict(),
   "menu:navigate": z.object({ kind: z.enum(["settings", "board", "project", "terminals"]) }).strict(),
 } as const;

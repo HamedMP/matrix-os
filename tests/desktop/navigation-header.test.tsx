@@ -3,7 +3,7 @@
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NavigationHeader, {
   breadcrumbItemsForTab,
   breadcrumbsForTab,
@@ -27,9 +27,16 @@ describe("Desktop navigation header", () => {
     useUi.setState(useUi.getInitialState(), true);
     useThreads.setState(useThreads.getInitialState(), true);
     useHermesChat.setState(useHermesChat.getInitialState(), true);
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn() },
+    });
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    delete (window as { operator?: unknown }).operator;
+  });
 
   it("builds contextual root and nested breadcrumbs", () => {
     const project: Tab = {
@@ -303,7 +310,7 @@ describe("Desktop navigation header", () => {
     const activeTab = useTabs.getState().tabs.find(
       (tab) => tab.id === useTabs.getState().activeTabId,
     );
-    expect(activeTab).toMatchObject({ kind: "projects", title: "Projects" });
+    expect(activeTab).toMatchObject({ kind: "work", title: "Chat", workRoute: "projects" });
   });
 
   it("does not revisit a directly opened task after using the Projects breadcrumb", () => {
@@ -403,6 +410,30 @@ describe("Desktop navigation header", () => {
     expect(screen.getByRole("tab", { name: "Desktop" })).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Actions for Browser" })).toBeNull();
+  });
+
+  it("toggles the native window when the titlebar background is double-clicked", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    fireEvent.doubleClick(screen.getByRole("banner"));
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("window:toggle-maximize", {});
+  });
+
+  it("does not toggle the native window when a titlebar tab is double-clicked", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    fireEvent.doubleClick(screen.getByRole("tab", { name: "Desktop" }));
+
+    expect(window.operator.invoke).not.toHaveBeenCalledWith("window:toggle-maximize", {});
+  });
+
+  it("leaves the native titlebar drag region available for OS window gestures", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    expect(screen.getByRole("banner").classList.contains("titlebar-drag")).toBe(true);
+    expect(screen.getByRole("tablist", { name: "Workspace tabs" })
+      .classList.contains("titlebar-drag")).toBe(true);
   });
 
   it("uses Figma-style native top-bar controls without a mode switcher", () => {

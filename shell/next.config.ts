@@ -68,6 +68,10 @@ const nextConfig: NextConfig = {
         destination: `${gatewayUrl}/:path*`,
       },
       {
+        source: "/health",
+        destination: `${gatewayUrl}/health`,
+      },
+      {
         source: "/api/:path*",
         destination: `${gatewayUrl}/api/:path*`,
       },

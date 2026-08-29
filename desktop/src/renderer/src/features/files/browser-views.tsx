@@ -293,6 +293,7 @@ export function BrowserToolbar({
   onSearchOpen,
   onSearchClose,
   onSearchQueryChange,
+  showViewSwitcher = true,
 }: {
   compact: boolean;
   currentPath: string;
@@ -313,6 +314,7 @@ export function BrowserToolbar({
   onSearchOpen: () => void;
   onSearchClose: () => void;
   onSearchQueryChange: (query: string) => void;
+  showViewSwitcher?: boolean;
 }) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const previousSearchOpenRef = useRef(searchOpen);
@@ -373,7 +375,7 @@ export function BrowserToolbar({
           <RefreshCw size={16} />
         </IconButton>
       ) : null}
-      <ViewSwitcher view={view} onChange={onViewChange} />
+      {showViewSwitcher ? <ViewSwitcher view={view} onChange={onViewChange} /> : null}
       {searchOpen ? (
         <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg border px-2 sm:max-w-48" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
           <Search size={16} aria-hidden style={{ color: "var(--text-tertiary)" }} />

@@ -48,12 +48,76 @@ describe("Electron OS window chrome", () => {
     expect(screen.queryByText("Terminal")).toBeNull();
 
     const closeButton = screen.getByRole("button", { name: "Close" });
-    expect(closeButton.className).toContain("size-4");
-    expect(closeButton.className).toContain("rounded-[4.8px]");
-    expect((closeButton as HTMLElement).style.background).toBe("var(--surface-primary, #FFFEFC)");
+    expect(closeButton.className).toContain("size-3");
+    expect(closeButton.className).toContain("rounded-full");
+    expect(closeButton.className).toContain("bg-[#ff5f57]");
+    expect(screen.getByRole("button", { name: "Minimize" }).className).toContain("bg-[#febc2e]");
+    expect(screen.getByRole("button", { name: "Maximize" }).className).toContain("bg-[#28c840]");
+    expect(closeButton.querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Minimize" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Maximize" }).querySelector("svg")).toBeTruthy();
+    expect(closeButton.querySelector("svg")?.getAttribute("class")).toContain("text-black/0");
+    expect(closeButton.querySelector("svg")?.getAttribute("class")).toContain("group-hover/traffic:text-black/60");
+    expect(closeButton.parentElement?.className).toContain("gap-1.5");
 
     fireEvent.click(closeButton);
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("places Chat pane controls and title in the shared top row without window controls when maximized", () => {
+    render(
+      <TopBar
+        title="Release planning"
+        leftActions={<button type="button">Toggle navigation</button>}
+        rightActions={<button type="button">Toggle inspector</button>}
+        leftPaneWidth={260}
+        rightPaneWidth={640}
+        showWindowControls={false}
+      />,
+    );
+
+    expect(screen.getByText("Release planning")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Toggle navigation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Toggle inspector" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Close Release planning" })).toBeNull();
+    const chromeGrid = screen.getByTestId("os-window-chrome-grid");
+    expect(chromeGrid.className).toContain("border-b");
+    expect((chromeGrid as HTMLElement).style.gridTemplateColumns).toBe("260px minmax(0, 1fr) 640px");
+    const title = screen.getByText("Release planning");
+    expect(title.parentElement?.className).toContain("justify-start");
+    expect(title.parentElement?.className).toContain("text-[15px]");
+  });
+
+  it("mirrors open pane toggles at their inner edges and closed toggles at the window edges", () => {
+    const { rerender } = render(
+      <TopBar
+        leftActions={<button type="button">Toggle navigation</button>}
+        rightActions={<button type="button">Toggle inspector</button>}
+        leftPaneWidth={260}
+        rightPaneWidth={640}
+        showWindowControls={false}
+      />,
+    );
+
+    const openNavigation = screen.getByRole("button", { name: "Toggle navigation" });
+    const openInspector = screen.getByRole("button", { name: "Toggle inspector" });
+    expect(openNavigation.parentElement?.className).toContain("ml-auto");
+    expect(openInspector.parentElement?.parentElement?.className).toContain("justify-start");
+
+    rerender(
+      <TopBar
+        leftActions={<button type="button">Toggle navigation</button>}
+        rightActions={<button type="button">Toggle inspector</button>}
+        leftPaneWidth={0}
+        rightPaneWidth={0}
+        showWindowControls={false}
+      />,
+    );
+
+    const closedNavigation = screen.getByRole("button", { name: "Toggle navigation" });
+    const closedInspector = screen.getByRole("button", { name: "Toggle inspector" });
+    expect(closedNavigation.parentElement?.className).not.toContain("ml-auto");
+    expect(closedInspector.parentElement?.className).toContain("ml-auto");
   });
 
   it("applies topbar clearance only to the safe area for each window layout", () => {
@@ -69,7 +133,7 @@ describe("Electron OS window chrome", () => {
       </OSWindow>,
     );
 
-    expect((screen.getByTestId("sidebar-safe-view") as HTMLElement).style.paddingTop).toBe("38px");
+    expect((screen.getByTestId("sidebar-safe-view") as HTMLElement).style.paddingTop).toBe("48px");
     expect((screen.getByTestId("pane-safe-view") as HTMLElement).style.paddingTop).toBe("");
 
     rerender(
@@ -78,7 +142,7 @@ describe("Electron OS window chrome", () => {
       </OSWindow>,
     );
 
-    expect((container.querySelector('[data-os-window-safe-view="pane"]') as HTMLElement).style.paddingTop).toBe("38px");
+    expect((container.querySelector('[data-os-window-safe-view="pane"]') as HTMLElement).style.paddingTop).toBe("48px");
 
     rerender(
       <OSWindow surfaceId="project-tab" safeAreaLayout="pane">

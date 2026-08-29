@@ -15,6 +15,7 @@ import { useConnection } from "../../stores/connection";
 import { isManagedBrowserPath, parseBrowserEntries, type BrowserEntry } from "./browser-entries";
 import { FileGlyph, kindForEntry } from "./file-kind";
 import { formatEntrySize, formatModified } from "./format";
+import { MonacoReadOnlyEditor } from "../editor/MonacoReadOnlyEditor";
 
 const MarkdownContent = lazy(async () => {
   const module = await import("../editor/MarkdownPreview");
@@ -152,7 +153,7 @@ function LoadingPreview({ label = "Loading preview…" }: { label?: string }) {
   );
 }
 
-function TextPreview({ path, markdown = false }: { path: string; markdown?: boolean }) {
+function TextPreview({ path, markdown = false, monaco = false }: { path: string; markdown?: boolean; monaco?: boolean }) {
   const api = useConnection((state) => state.api);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<
@@ -182,6 +183,7 @@ function TextPreview({ path, markdown = false }: { path: string; markdown?: bool
   if (state.status === "loading") return <LoadingPreview />;
   if (state.status === "error") return <PreviewFailure error={state.error} onRetry={() => setAttempt((value) => value + 1)} />;
   if (markdown) return <MarkdownContent content={state.content} />;
+  if (monaco) return <MonacoReadOnlyEditor path={path} content={state.content} />;
   return (
     <pre className="min-h-0 flex-1 overflow-auto p-5 font-mono text-[13px] leading-6" style={{ color: "var(--text-primary)", background: "var(--bg-sunken)" }} data-selectable>
       <code>{state.content}</code>
@@ -300,10 +302,12 @@ export function FilePreview({
   path,
   entry,
   onOpen,
+  textRenderer = "plain",
 }: {
   path: string | null;
   entry?: BrowserEntry;
   onOpen?: (selection: PreviewSelection) => void;
+  textRenderer?: "plain" | "monaco";
 }) {
   const api = useConnection((state) => state.api);
   if (path === null || !api) {
@@ -316,7 +320,7 @@ export function FilePreview({
   const kind = previewKindForPath(path);
   if (kind === "image") return <ImagePreview key={path} path={path} name={name} />;
   if (kind === "markdown") return <TextPreview key={path} path={path} markdown />;
-  if (kind === "text") return <TextPreview key={path} path={path} />;
+  if (kind === "text") return <TextPreview key={path} path={path} monaco={textRenderer === "monaco"} />;
   return <EmptyState icon={<FileQuestion size={26} />} headline="Preview not available" description="This file type can’t be previewed here." />;
 }
 

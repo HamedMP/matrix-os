@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSummary, RuntimeSummary } from "@matrix-os/contracts";
 import ProjectOverview from "../../desktop/src/renderer/src/features/project/ProjectOverview";
@@ -80,6 +80,51 @@ describe("ProjectOverview", () => {
   });
 
   afterEach(cleanup);
+
+  it("matches the Figma typography for the Project detail heading", () => {
+    render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        description="Build the personal AI operating system"
+        summary={null}
+        active
+        viewSwitch={null}
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { name: "Matrix OS" });
+    const description = screen.getByText("Build the personal AI operating system");
+    expect(heading.className).toContain("text-[24px]");
+    expect(heading.className).toContain("font-semibold");
+    expect(heading.className).toContain("leading-[32px]");
+    expect(heading.className).toContain("tracking-[-0.6px]");
+    expect(heading.style.fontFamily).not.toBe("var(--font-editorial)");
+    expect(description.className).toContain("text-[16px]");
+    expect(description.className).toContain("leading-[28px]");
+  });
+
+  it("matches the Figma typography for recent Project sessions", () => {
+    render(
+      <ProjectOverview
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryWithThreads([thread(1)])}
+        active={false}
+        viewSwitch={null}
+      />,
+    );
+
+    const session = screen.getByRole("button", { name: "Open session Session 1" });
+    const title = within(session).getByText("Session 1");
+    const activity = session.querySelector<HTMLElement>(".tabular-nums");
+    expect(title.className).toContain("text-[16px]");
+    expect(title.className).toContain("font-normal");
+    expect(title.className).toContain("leading-[28px]");
+    expect(activity?.className).toContain("text-[12px]");
+    expect(activity?.className).toContain("font-medium");
+    expect(activity?.className).toContain("leading-[16px]");
+  });
 
   it("shows an explicit loading state while the runtime summary is unresolved", () => {
     render(

@@ -15,6 +15,7 @@ import type { CustomerVpsService } from './customer-vps.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { HetznerLocationSchema, HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 import { DeveloperToolsSchema } from './developer-tools.js';
+import { getActivePrebillingIntent } from './prebilling-provisioning-store.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import {
   normalizePostAuthRedirectPath,
@@ -61,6 +62,7 @@ export function createAppSessionRoutes(opts: {
   db: PlatformDB;
   clerkAuth?: ClerkAuth;
   customerVpsService?: CustomerVpsService;
+  resumePrebillingPreparation?: (input: { intentId: string; clerkUserId: string }) => Promise<boolean>;
   matrixProvisioner?: MatrixProvisioner;
   appEnv: NodeJS.ProcessEnv;
   platformJwtSecret: string;
@@ -181,6 +183,28 @@ export function createAppSessionRoutes(opts: {
             '/api/auth/provision-runtime',
           );
         }
+      }
+
+      const prebillingIntent = await getActivePrebillingIntent(
+        opts.db,
+        result.userId,
+        parsed.data.runtime,
+      );
+      if (prebillingIntent) {
+        const resumed = await opts.resumePrebillingPreparation?.({
+          intentId: prebillingIntent.id,
+          clerkUserId: result.userId,
+        });
+        opts.applyNoStoreHeaders(c);
+        if (!resumed) {
+          return c.json({ error: 'Provisioning unavailable', code: 'provisioning_unavailable' }, 503);
+        }
+        return c.json({
+          runtime: 'customer_vps',
+          runtimeSlot: parsed.data.runtime,
+          status: 'provisioning',
+          intentId: prebillingIntent.id,
+        }, 202);
       }
 
       const identity = await opts.selectProvisionIdentityForClerkUser(opts.db, result.userId, opts.appEnv);

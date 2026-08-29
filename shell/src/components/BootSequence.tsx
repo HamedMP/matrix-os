@@ -13,6 +13,7 @@ import {
 } from "@/lib/hugeicons";
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
 import { MatrixBootMark } from "@/components/MatrixBootMark";
+import { MatrixLoadingScreen } from "@/components/MatrixLoadingScreen";
 import {
   PROVISIONING_RETRY_ERROR,
   isAcceptedProvisionResponse,
@@ -237,13 +238,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
   }
 
   if (!isLoaded) {
-    return (
-      <BootShell activeStep="account">
-        <Spinner />
-        <h1 className="text-lg font-medium text-forest">Checking your session</h1>
-        <p className="max-w-sm text-sm">Matrix is loading your account before opening billing or your computer.</p>
-      </BootShell>
-    );
+    return <MatrixLoadingScreen />;
   }
 
   // Signed-out / session-expired: the journey hook is disabled, so without this
@@ -253,13 +248,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
   }
 
   if (status === "loading") {
-    return (
-      <BootShell activeStep="account">
-        <Spinner />
-        <h1 className="text-lg font-medium text-forest">Checking setup status</h1>
-        <p className="max-w-sm text-sm">Matrix is checking account, billing, and computer readiness.</p>
-      </BootShell>
-    );
+    return <MatrixLoadingScreen />;
   }
 
   // Journey said the session is no longer valid — re-authenticate rather than

@@ -4,6 +4,7 @@ import type {
 import type {
   AgentProviderSummary,
   CanonicalChatMessagePart,
+  CanonicalChatDetailResponse,
   CanonicalProviderCatalog,
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
@@ -82,8 +83,11 @@ export function CanonicalChatWorkspace({
   initialView,
   projectLabel,
   active,
+  externalNavigation = false,
   catalog,
   inspector,
+  renderInspector,
+  inspectorExclusive = false,
   onProjectChanged,
   onActiveChatChanged,
   onChatDeleted,
@@ -95,8 +99,11 @@ export function CanonicalChatWorkspace({
   initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
   active: boolean;
+  externalNavigation?: boolean;
   catalog?: CanonicalProviderCatalog;
   inspector?: ReactNode;
+  renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
+  inspectorExclusive?: boolean;
   onProjectChanged?: (chatId: string, projectId: string | null, title: string) => void;
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
   onChatDeleted?: (chatId: string) => void;
@@ -173,6 +180,7 @@ export function CanonicalChatWorkspace({
       && previous.projectId === projectId
     ) return;
     previousRoute.current = { initialChatId, initialView, projectId };
+    reportedChatId.current = initialChatId ?? null;
     if (projectId !== null) return;
     setGlobalView(initialView ?? (initialChatId ? "conversation" : "index"));
   }, [initialChatId, initialView, projectId]);
@@ -317,7 +325,7 @@ export function CanonicalChatWorkspace({
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
     setDraftProjectId(projectId);
-    if (projectId === null) setGlobalView("draft");
+    setGlobalView("draft");
   };
 
   const selectChat = (chatId: string) => {
@@ -325,7 +333,7 @@ export function CanonicalChatWorkspace({
     const selected = controller.items.find((item) => item.chat.id === chatId);
     reportedChatId.current = chatId;
     onActiveChatChanged?.(chatId, selected?.chat.title);
-    if (projectId === null) setGlobalView("conversation");
+    setGlobalView("conversation");
   };
 
   const composer = (
@@ -370,8 +378,8 @@ export function CanonicalChatWorkspace({
           />
         )}
         onNewChat={startNewChat}
-        placeholder={controller.detail ? "Reply to chat…" : "How can I help you today?"}
-        ariaLabel={controller.detail ? "Reply to chat" : "Start a chat"}
+        placeholder={globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
+        ariaLabel={globalView === "conversation" ? "Reply to chat" : "Start a chat"}
         leadingControls={(
           <ConversationContextPicker
             context={context}
@@ -407,7 +415,7 @@ export function CanonicalChatWorkspace({
       data-slot="canonical-chat-workspace"
       data-layout={workspaceLayout}
     >
-      {projectId === null ? (
+      {!externalNavigation && (projectId === null ? (
         <CanonicalChatIndex
           items={controller.items}
           activeChatId={controller.activeChatId}
@@ -432,10 +440,10 @@ export function CanonicalChatWorkspace({
       >
         <div className="flex items-center justify-between gap-2 px-1 pb-3">
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            <h2 className="truncate text-[14px] font-semibold leading-[20px]" style={{ color: "var(--text-primary)" }}>
               {projectLabel ?? "Project chats"}
             </h2>
-            <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            <p className="text-[12px] leading-[16px] tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
               Project
             </p>
           </div>
@@ -460,7 +468,7 @@ export function CanonicalChatWorkspace({
             value={query}
             aria-label="Search chats"
             placeholder="Search chats"
-            className="h-9 w-full rounded-lg border bg-transparent pl-8 pr-2 text-sm outline-none focus:border-[var(--accent)]"
+            className="h-9 w-full rounded-lg border bg-transparent pl-8 pr-2 text-[14px] leading-[20px] outline-none focus:border-[var(--accent)]"
             style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
             onChange={(event) => {
               const value = event.currentTarget.value;
@@ -479,10 +487,10 @@ export function CanonicalChatWorkspace({
               className="w-full rounded-lg px-2.5 py-2 text-left hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)]"
               onClick={() => selectChat(record.chat.id)}
             >
-              <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+              <span className="block truncate text-[14px] font-medium leading-[20px]" style={{ color: "var(--text-primary)" }}>
                 {record.chat.title}
               </span>
-              <span className="block truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+              <span className="block truncate text-[12px] leading-[16px] tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
                 {record.chat.lastMessagePreview ?? "No messages yet"}
               </span>
             </button>
@@ -491,10 +499,12 @@ export function CanonicalChatWorkspace({
             <p className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
           ) : null}
         </div>
-      </aside>}
+      </aside>)}
       <SharedChatSurface
         ariaLabel={projectId ? "Project Chat" : "Global Chat"}
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
+        aria-hidden={inspectorExclusive || undefined}
+        inert={inspectorExclusive || undefined}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
         {...attachments.paneProps}
       >
@@ -503,7 +513,7 @@ export function CanonicalChatWorkspace({
             {controller.error}
           </div>
         ) : null}
-        {controller.detail ? (
+        {controller.detail && globalView === "conversation" ? (
           <>
             <ConversationTranscript turns={transcript} callbacks={{ copyText }} />
             <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">{composer}</div>
@@ -520,9 +530,13 @@ export function CanonicalChatWorkspace({
         ) : projectId === null ? (
           <div
             data-slot="chat-new-chat-content"
-            className={`flex min-h-0 flex-1 flex-col ${workspaceLayout === "narrow" ? "overflow-y-auto" : ""}`}
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
           >
-            <div className={`flex min-h-0 flex-1 items-center justify-center ${workspaceLayout === "narrow" ? "px-3 py-3" : "px-5 py-8"}`}>
+            <div
+              data-slot="chat-starter-scroll"
+              className={`flex min-h-0 flex-1 justify-center ${workspaceLayout === "narrow" ? "items-start overflow-y-auto px-3 py-3" : "items-center px-5 py-8"}`}
+              style={workspaceLayout === "narrow" ? { scrollbarGutter: "stable" } : undefined}
+            >
               <div className="w-full max-w-[480px]">
                 <ChatStarterCards
                   layout="two-by-two"
@@ -539,7 +553,7 @@ export function CanonicalChatWorkspace({
           <div className={`mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center ${workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8"}`}>
             <div className="flex flex-col items-center gap-3 text-center">
               <MessageSquare size={28} aria-hidden style={{ color: "var(--text-tertiary)" }} />
-              <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.02em]" style={{ color: "var(--text-primary)" }}>
+              <h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>
                 What should we build today?
               </h1>
             </div>
@@ -552,7 +566,7 @@ export function CanonicalChatWorkspace({
           </div>
         )}
       </SharedChatSurface>
-      {inspector}
+      {renderInspector ? (controller.detail ? renderInspector(controller.detail) : null) : inspector}
       {projectId === null ? (
         <DeleteConversationDialog
           conversation={deleteTarget}

@@ -573,6 +573,9 @@ export async function fetchCodingAgentFileBrowse(
   if (parsedRequest.data.path) {
     url.searchParams.set("path", parsedRequest.data.path);
   }
+  if (parsedRequest.data.cursor) {
+    url.searchParams.set("cursor", parsedRequest.data.cursor);
+  }
   url.searchParams.set("limit", String(parsedRequest.data.limit));
   const res = await fetchFn(url.toString(), {
     method: "GET",

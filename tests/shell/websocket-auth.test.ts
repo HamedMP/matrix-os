@@ -20,6 +20,7 @@ function tokenResponse(token: string | null, expiresAt = Date.now() + 60_000) {
 describe("websocket auth", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "");
     vi.stubGlobal("fetch", vi.fn());
     gateway.http = "http://gateway.test";
     gateway.ws = "ws://gateway.test/ws";
@@ -27,6 +28,17 @@ describe("websocket auth", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("skips managed ws-token requests in explicit local auth-bypass mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    const { buildAuthenticatedWebSocketUrl } = await import("../../shell/src/lib/websocket-auth.js");
+
+    await expect(buildAuthenticatedWebSocketUrl("/ws", undefined, { requireToken: true }))
+      .resolves
+      .toBe("ws://gateway.test/ws");
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("requires a fresh token for shell live socket URLs when requested", async () => {

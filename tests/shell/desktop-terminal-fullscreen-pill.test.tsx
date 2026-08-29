@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Desktop } from "../../shell/src/components/Desktop.js";
 import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
@@ -268,5 +268,17 @@ describe("Desktop terminal fullscreen chrome", () => {
     });
 
     expect(windowManagerStore.getState().fullscreenWindowId).toBe("win-terminal");
+  });
+
+  it("exits fullscreen before the Desktop tab hides the active window", async () => {
+    resetStores(appWindow);
+    desktopModeStore.setState({ mode: "desktop", previousMode: null, _hydrated: true });
+
+    render(<DesktopComponent />);
+
+    await screen.findByText("App content");
+    fireEvent.click(screen.getByRole("tab", { name: "Show desktop" }));
+
+    expect(windowManagerStore.getState().fullscreenWindowId).toBeNull();
   });
 });

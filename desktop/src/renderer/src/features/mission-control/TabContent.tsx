@@ -4,19 +4,16 @@ import { Button, EmptyState } from "../../design/primitives";
 import RetainedPane from "../../design/RetainedPane";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
-import ProjectTab from "../project/ProjectTab";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
-import SettingsView from "../settings/SettingsView";
-import PluginsHub from "../plugins/PluginsHub";
+import SettingsView, { type SettingsSectionId } from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
-import ChatTab from "../chat/ChatTab";
 import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";
-import ProjectsIndex from "../project/ProjectsIndex";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
+import WorkTab from "../work/WorkTab";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -54,18 +51,31 @@ export function TabPane({
   visible = active,
   layoutRevision,
   visualScale = 1,
+  settingsSection,
+  onSettingsSectionChange,
 }: {
   tab: Tab;
   active: boolean;
   visible?: boolean;
   layoutRevision?: string;
   visualScale?: number;
+  settingsSection?: SettingsSectionId;
+  onSettingsSectionChange?: (section: SettingsSectionId) => void;
 }) {
   switch (tab.kind) {
     case "home":
       return <HomeTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
+    case "work":
+      return <WorkTab
+        route={tab.workRoute ?? "chat"}
+        projectSlug={tab.projectSlug}
+        active={active}
+        initialChatId={tab.chatId}
+        initialChatView={tab.chatView}
+        initialChatTitle={tab.chatTitle}
+      />;
     case "chat":
-      return <ChatTab active={active} initialChatId={tab.chatId} initialView={tab.chatView} />;
+      return <WorkTab tabId={tab.id} route="chat" active={active} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} />;
     case "terminals":
       return <TerminalsTab active={active} visible={visible} />;
     case "files":
@@ -73,23 +83,19 @@ export function TabPane({
     case "apps":
       return <AppLauncher />;
     case "projects":
-      return <ProjectsIndex />;
+      return <WorkTab route="projects" active={active} />;
     case "app":
       return tab.slug
         ? <EmbedHost kind="app" slug={tab.slug} appIdentity={tab.appIdentity} active={active} layoutRevision={layoutRevision} visualScale={visualScale} />
         : null;
     case "project":
-      return tab.projectSlug
-        ? <ProjectTab projectSlug={tab.projectSlug} active={active} initialChatId={tab.chatId} />
-        : null;
+      return <WorkTab route="project" projectSlug={tab.projectSlug} active={active} initialChatId={tab.chatId} initialChatTitle={tab.chatTitle} />;
     case "task":
       return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "settings":
-      return <SettingsView />;
-    case "plugins":
-      return <PluginsHub />;
+      return <SettingsView section={settingsSection} onSectionChange={onSettingsSectionChange} />;
     default:
       return null;
   }

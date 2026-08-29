@@ -10,6 +10,7 @@ interface AppMenuTemplateOptions {
   send: MenuEventSender;
   adjustZoom(action: ZoomAction): void;
   checkForUpdates(): void;
+  quitApp(): void;
 }
 
 export function createAppMenuTemplate({
@@ -19,6 +20,7 @@ export function createAppMenuTemplate({
   send,
   adjustZoom,
   checkForUpdates,
+  quitApp,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const viewSubmenu: MenuItemConstructorOptions[] = [
     {
@@ -95,16 +97,24 @@ export function createAppMenuTemplate({
         { role: "hideOthers" },
         { role: "unhide" },
         { type: "separator" },
-        { role: "quit" },
+        {
+          label: "Close Selected App",
+          accelerator: "Cmd+Q",
+          click: () => send("menu:action", { action: "close-app" }),
+        },
+        {
+          label: `Quit ${appName}`,
+          click: quitApp,
+        },
       ],
     },
     {
       label: "File",
       submenu: [
         {
-          label: "New Task",
+          label: "New",
           accelerator: "Cmd+N",
-          click: () => send("menu:action", { action: "new-task" }),
+          click: () => send("menu:action", { action: "new-context" }),
         },
         {
           label: "New Agent Thread",
@@ -112,7 +122,16 @@ export function createAppMenuTemplate({
           click: () => send("menu:action", { action: "new-thread" }),
         },
         { type: "separator" },
-        { role: "close" },
+        {
+          label: "New Tab",
+          accelerator: "Cmd+T",
+          click: () => send("menu:action", { action: "new-tab" }),
+        },
+        {
+          label: "Close Tab",
+          accelerator: "Cmd+W",
+          click: () => send("menu:action", { action: "close-tab" }),
+        },
       ],
     },
     { role: "editMenu" },

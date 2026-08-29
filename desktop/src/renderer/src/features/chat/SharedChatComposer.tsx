@@ -5,7 +5,7 @@ import type {
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
-import { Box, ChevronDown, Paperclip, SquareTerminal } from "@renderer/lib/hugeicons";
+import { Box, ChevronDown, Paperclip, SlidersHorizontalIcon, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
@@ -254,6 +254,7 @@ export function SharedChatComposer({
   layout?: "default" | "narrow";
 }) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const suggestionMenuRef = useRef<HTMLDivElement>(null);
   const attachmentTriggerRef = useRef<HTMLButtonElement>(null);
@@ -409,6 +410,8 @@ export function SharedChatComposer({
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
+  const hasSecondaryControls = composerOptions.some((option) => option.kind === "enum" && (option.values?.length ?? 0) > 1)
+    || (instance?.supports.permissionModes.length ?? 0) > 1;
   useEffect(() => {
     if (!slashMenuOpen && !resourceMenuOpen && !attachmentMenuOpen) return;
     const dismissOutside = (event: PointerEvent) => {
@@ -424,7 +427,7 @@ export function SharedChatComposer({
     return () => document.removeEventListener("pointerdown", dismissOutside);
   }, [attachmentMenuOpen, resourceMenuOpen, slashMenuOpen, suggestionKey]);
   return (
-    <div className="relative" data-slot="shared-chat-composer">
+    <div className="relative @container/chat-composer" data-slot="shared-chat-composer">
       {slashMenuOpen && filteredSlashEntries.length > 0 ? (
         <SuggestionMenu label="Skills and commands" menuSide={menuSide} menuRef={suggestionMenuRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>
@@ -553,18 +556,18 @@ export function SharedChatComposer({
               onNewChat={onNewChat}
               onChange={onSelectionChange}
             />
-            {selection ? composerOptions.map((option) => option.kind === "enum" ? (
-              <CompactSelect
-                key={option.id}
-                label={option.label}
-                value={String(selectedOptionValue(selection, option.id) ?? option.values?.[0]?.value ?? "")}
-                options={(option.values ?? []).map((candidate) => ({ value: candidate.value, label: candidate.label }))}
-                menuSide={menuSide}
-                onChange={(next) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next))}
-              />
-            ) : null) : null}
-            {selection && (instance?.supports.permissionModes.length ?? 0) > 1 ? (
-              <>
+            <div data-slot="composer-secondary-controls" className="contents @max-[42rem]/chat-composer:hidden">
+              {selection ? composerOptions.map((option) => option.kind === "enum" ? (
+                <CompactSelect
+                  key={option.id}
+                  label={option.label}
+                  value={String(selectedOptionValue(selection, option.id) ?? option.values?.[0]?.value ?? "")}
+                  options={(option.values ?? []).map((candidate) => ({ value: candidate.value, label: candidate.label }))}
+                  menuSide={menuSide}
+                  onChange={(next) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next))}
+                />
+              ) : null) : null}
+              {selection && (instance?.supports.permissionModes.length ?? 0) > 1 ? (
                 <CompactSelect
                   label="Permission mode"
                   value={selection.permissionMode}
@@ -572,7 +575,60 @@ export function SharedChatComposer({
                   menuSide={menuSide}
                   onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
                 />
-              </>
+              ) : null}
+            </div>
+            {selection && hasSecondaryControls ? (
+              <Popover.Root open={settingsMenuOpen} onOpenChange={setSettingsMenuOpen}>
+                <Popover.Trigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Chat settings"
+                    aria-haspopup="dialog"
+                    aria-expanded={settingsMenuOpen}
+                    className="hidden size-8 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] @max-[42rem]/chat-composer:flex"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    <SlidersHorizontalIcon size={15} aria-hidden />
+                  </button>
+                </Popover.Trigger>
+                {settingsMenuOpen ? (
+                  <Popover.Portal>
+                    <Popover.Content
+                      role="dialog"
+                      aria-label="Chat settings"
+                      side={menuSide}
+                      align="end"
+                      sideOffset={8}
+                      collisionPadding={16}
+                      className="z-50 flex min-w-56 flex-col gap-1 rounded-xl border p-2 shadow-xl"
+                      style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
+                    >
+                      <span className="px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
+                        Chat settings
+                      </span>
+                      {composerOptions.map((option) => option.kind === "enum" ? (
+                        <CompactSelect
+                          key={option.id}
+                          label={option.label}
+                          value={String(selectedOptionValue(selection, option.id) ?? option.values?.[0]?.value ?? "")}
+                          options={(option.values ?? []).map((candidate) => ({ value: candidate.value, label: candidate.label }))}
+                          menuSide={menuSide}
+                          onChange={(next) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next))}
+                        />
+                      ) : null)}
+                      {(instance?.supports.permissionModes.length ?? 0) > 1 ? (
+                        <CompactSelect
+                          label="Permission mode"
+                          value={selection.permissionMode}
+                          options={(instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: mode.replace(/_/g, " ") }))}
+                          menuSide={menuSide}
+                          onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
+                        />
+                      ) : null}
+                    </Popover.Content>
+                  </Popover.Portal>
+                ) : null}
+              </Popover.Root>
             ) : null}
           </>
         )}

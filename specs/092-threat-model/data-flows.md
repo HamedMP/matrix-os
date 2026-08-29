@@ -48,7 +48,7 @@ VPS ─▶ R2 (presign prefix-scoped ✓, but shared standing full-bucket key, F
 | Postgres tenant password | Platform (HMAC) | VPS env + `credentials.json` | env `0640`; **`credentials.json` `0644`** | per-user | **F7** |
 | R2 access key / secret | Platform | every VPS | env `0640` | **full bucket, shared** | **F4** |
 | Platform verification token | Platform (HMAC handle) | VPS env | env `0640` | per-user | ok |
-| Registration token | Platform | VPS (ephemeral) | env `0640` | per-VPS, ~15 min TTL | F11 ↓ |
+| Registration token | Platform | VPS (ephemeral) | env `0640` | per-VPS, one-time, machine-bound, ≤60 min bootstrap TTL | F11 ↓ |
 | Stripe secret / webhook secret | Platform | Platform only | GCP Secret Mgr | platform | ok |
 | Clerk secret | Platform | Platform only | GCP Secret Mgr | platform | ok |
 | Platform secret (admin bearer) | Platform | Platform + shell proxy | env / GCP | platform | gates social/store (N1) |

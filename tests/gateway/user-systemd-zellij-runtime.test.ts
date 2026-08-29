@@ -86,6 +86,8 @@ describe("user-systemd workspace Zellij runtime", () => {
       ok: true,
       status: "running",
       sessionName: `matrix-${workspaceRuntimeId(SESSION_ID)}`,
+      publicSessionName: SESSION_ID,
+      createdAt: "2026-07-31T12:00:00.000Z",
     });
   });
 

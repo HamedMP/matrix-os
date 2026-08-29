@@ -23,7 +23,6 @@ const ROOT_DOCKER_INPUTS = Object.freeze([
 const EXACT_DOCKER_INPUTS = Object.freeze([
   ".github/workflows/docker-test.yml",
   "distro/cloudflared-dev-vps.yml",
-  "distro/conduit.toml",
   "distro/docker-dev-entrypoint.sh",
   "distro/init-postgres.sh",
   "distro/p10k.zsh",

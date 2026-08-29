@@ -450,7 +450,16 @@ describe("TerminalPane scrolling", () => {
     mockedCapturePostHogEvent.mockClear();
     WebSocketMock.instances.length = 0;
     ResizeObserverMock.instances.length = 0;
-    buildAuthenticatedWebSocketUrl.mockClear();
+    buildAuthenticatedWebSocketUrl.mockReset();
+    buildAuthenticatedWebSocketUrl.mockImplementation((path, query) => {
+      const url = new URL(`ws://localhost${path}`);
+      for (const [key, value] of Object.entries(query ?? {})) {
+        if (value) {
+          url.searchParams.set(key, value);
+        }
+      }
+      return Promise.resolve(url.toString());
+    });
     socketHealthConfigs.length = 0;
     Reflect.deleteProperty(window, "visualViewport");
   });
@@ -484,6 +493,51 @@ describe("TerminalPane scrolling", () => {
     expect(createdFitAddons[0].proposeDimensions).toHaveBeenCalled();
     expect(createdFitAddons[0].fit).not.toHaveBeenCalled();
     expect(createdTerminals[0].resize).not.toHaveBeenCalled();
+  });
+
+  it("restarts a pending observer connection with an exclusive lease when the pane becomes focused", async () => {
+    let resolveObserverUrl: (() => void) | null = null;
+    buildAuthenticatedWebSocketUrl
+      .mockImplementationOnce((path, query) => new Promise<string>((resolve) => {
+        const url = new URL(`ws://localhost${path}`);
+        for (const [key, value] of Object.entries(query ?? {})) {
+          if (value) url.searchParams.set(key, value);
+        }
+        resolveObserverUrl = () => resolve(url.toString());
+      }));
+
+    const props = {
+      paneId: "pane-pending-focus-takeover",
+      cwd: "",
+      theme,
+      sessionId: "main",
+      isClosing: false,
+      shouldCacheOnUnmount: () => false,
+      shouldDestroyOnUnmount: () => false,
+      onFocus: () => {},
+    } satisfies Omit<Parameters<typeof TerminalPane>[0], "isFocused">;
+    const view = render(<TerminalPane {...props} isFocused={false} />);
+
+    await waitFor(() => expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledTimes(1));
+    expect(buildAuthenticatedWebSocketUrl.mock.calls[0]?.[1]).not.toHaveProperty("lease");
+
+    view.rerender(<TerminalPane {...props} isFocused />);
+
+    await waitFor(() => expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledTimes(2));
+    expect(buildAuthenticatedWebSocketUrl.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      session: "main",
+      client: "hard",
+      lease: "exclusive",
+      cols: "120",
+      rows: "42",
+    }));
+
+    await act(async () => {
+      resolveObserverUrl?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    expect(new URL(WebSocketMock.instances[0]!.url).searchParams.get("lease")).toBe("exclusive");
   });
 
   it("renews the focused web terminal lease well before gateway expiry", async () => {

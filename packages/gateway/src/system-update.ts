@@ -158,6 +158,29 @@ export function resolveInternalUpgradeStartTarget(
   };
 }
 
+/**
+ * Resolve mutable channel pointers before triggering an update so the updater
+ * receives an immutable release version. The returned version is also safe
+ * for clients to use as their installation-completion predicate.
+ */
+export async function resolveInternalUpgradeInstallTarget(options: {
+  target: InternalUpgradeTarget;
+  platformUrl?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<Extract<InternalUpgradeTarget, { type: "version" }>> {
+  if (options.target.type === "version") return options.target;
+  if (!options.platformUrl) throw new Error("Update manifest is not configured");
+
+  const release = await fetchHostBundleChannelManifest({
+    platformUrl: options.platformUrl,
+    channel: options.target.value,
+    fetchImpl: options.fetchImpl,
+  });
+  const version = parseUpdateVersion(release.version);
+  if (!version) throw new Error("Update manifest has an invalid version");
+  return { type: "version", value: version };
+}
+
 export async function writeInternalUpgradeTrigger(options: {
   body: unknown;
   appDir?: string;

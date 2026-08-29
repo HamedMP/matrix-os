@@ -14,6 +14,8 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 
 const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
 vi.stubGlobal("fetch", fetchSpy);
+const defaultInnerWidth = window.innerWidth;
+const defaultInnerHeight = window.innerHeight;
 
 function resetStore() {
   resetWindowManagerLayoutPersistenceForTests();
@@ -39,6 +41,8 @@ describe("Window Manager Store", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: defaultInnerWidth });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: defaultInnerHeight });
   });
 
   describe("openWindow", () => {
@@ -68,13 +72,15 @@ describe("Window Manager Store", () => {
       expect(windows[0].minimized).toBe(false);
     });
 
-    it("centers dev-mode windows with a small cascade offset", () => {
+    it("centers every dev-mode window without asymmetric cascade margins", () => {
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
       openWindow("App2", "apps/app2.html", 80);
       const [w1, w2] = useWindowManager.getState().windows;
-      expect(w2.x).toBe(w1.x + 28);
-      expect(w2.y).toBe(w1.y + 28);
+      expect(w2.x).toBe(w1.x);
+      expect(w2.y).toBe(w1.y);
+      expect(w1.x).toBe(Math.round((window.innerWidth - w1.width) / 2));
+      expect(w1.y).toBe(Math.round((window.innerHeight - w1.height) / 2));
     });
 
     it("places second canvas window to the right of the first", () => {
@@ -85,6 +91,21 @@ describe("Window Manager Store", () => {
       const [w1, w2] = useWindowManager.getState().windows;
       expect(w2.x).toBe(w1.x + w1.width + 24);
       expect(w2.y).toBe(w1.y);
+    });
+
+    it("fits a fresh terminal inside a narrow desktop work area", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 860,
+        height: 522,
+      });
     });
 
     it("assigns incrementing zIndex", () => {
@@ -151,6 +172,86 @@ describe("Window Manager Store", () => {
       const win = useWindowManager.getState().windows[0];
       expect(win.width).toBe(800);
       expect(win.height).toBe(600);
+    });
+  });
+
+  describe("reconcileWindowsToViewport", () => {
+    it("fits open desktop windows after the viewport shrinks", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+      useWindowManager.getState().loadLayout([{
+        path: "__file-browser__",
+        title: "Files",
+        x: 500,
+        y: 192,
+        width: 900,
+        height: 650,
+        state: "open",
+      }]);
+
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 500 });
+      useWindowManager.getState().reconcileWindowsToViewport();
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 760,
+        height: 422,
+      });
+    });
+
+    it("shrinks below the preferred minimum when the desktop is extremely short", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 640 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 250 });
+      useWindowManager.getState().loadLayout([{
+        path: "__file-browser__",
+        title: "Files",
+        x: 40,
+        y: 40,
+        width: 600,
+        height: 480,
+        state: "open",
+      }]);
+
+      useWindowManager.getState().reconcileWindowsToViewport();
+
+      const windowRecord = useWindowManager.getState().windows[0];
+      expect(windowRecord).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 600,
+        height: 172,
+      });
+      expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(230);
+    });
+
+    it("leaves spatial Canvas windows unchanged", () => {
+      useDesktopMode.setState({ mode: "canvas" });
+      useWindowManager.setState({
+        windows: [{
+          id: "canvas-window",
+          path: "apps/notes.html",
+          title: "Notes",
+          x: 1400,
+          y: 900,
+          width: 800,
+          height: 600,
+          minimized: false,
+          zIndex: 1,
+        }],
+      });
+
+      useWindowManager.getState().reconcileWindowsToViewport();
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 1400,
+        y: 900,
+        width: 800,
+        height: 600,
+      });
     });
   });
 
@@ -302,6 +403,104 @@ describe("Window Manager Store", () => {
       expect(windows.find((w) => w.path === "apps/notes.html")?.minimized).toBe(false);
       expect(windows.find((w) => w.path === "apps/todo.html")?.minimized).toBe(true);
       expect(closedPaths.has("apps/closed.html")).toBe(true);
+    });
+
+    it("recenters restored wide dev-mode windows so their side margins stay symmetric", () => {
+      const width = Math.round(window.innerWidth * 0.9);
+      const saved: LayoutWindow[] = [
+        {
+          path: "__file-browser__",
+          title: "Files",
+          x: 85,
+          y: 80,
+          width,
+          height: 600,
+          state: "open",
+        },
+      ];
+
+      useWindowManager.getState().loadLayout(saved);
+
+      const [restored] = useWindowManager.getState().windows;
+      expect(restored.x).toBe(Math.round((window.innerWidth - width) / 2));
+      expect(window.innerWidth - (restored.x + restored.width)).toBe(restored.x);
+      expect(restored.y).toBe(80);
+    });
+
+    it("fits restored desktop windows inside the current viewport", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+      const saved: LayoutWindow[] = [
+        {
+          path: "__file-browser__",
+          title: "Files",
+          x: 1_400,
+          y: 900,
+          width: 1_200,
+          height: 900,
+          state: "open",
+        },
+      ];
+
+      useWindowManager.getState().loadLayout(saved);
+
+      const [restored] = useWindowManager.getState().windows;
+      expect(restored).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 860,
+        height: 522,
+      });
+      expect(restored.x + restored.width).toBeLessThanOrEqual(window.innerWidth - 20);
+      expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight - 20);
+    });
+
+    it("shrinks a restored terminal below its preferred minimum on narrow desktops", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+
+      useWindowManager.getState().loadLayout([{
+        path: "__terminal__",
+        title: "Terminal",
+        x: 200,
+        y: 160,
+        width: 1_040,
+        height: 680,
+        state: "open",
+      }]);
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 860,
+        height: 522,
+      });
+    });
+
+    it("keeps a reopened terminal fitted to a narrow desktop", () => {
+      useDesktopMode.setState({ mode: "desktop" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+
+      useWindowManager.getState().loadLayout([{
+        path: "__terminal__",
+        title: "Terminal",
+        x: 200,
+        y: 160,
+        width: 1_040,
+        height: 680,
+        state: "closed",
+      }]);
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: 20,
+        y: 20,
+        width: 860,
+        height: 522,
+      });
     });
 
     it("does not save immediately while hydrating server layout", () => {

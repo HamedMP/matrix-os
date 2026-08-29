@@ -168,8 +168,8 @@ function ProjectCard(props: {
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       onClick={onOpen}
     >
-      <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{project.name}</span>
-      <span className="mt-1.5 line-clamp-2 text-xs leading-5" style={{ color: "var(--text-tertiary)" }}>{projectCaption(project)}</span>
+      <span className="text-[20px] font-semibold leading-[28px] tracking-[-0.5px]" style={{ color: "var(--text-primary)" }}>{project.name}</span>
+      <span className="mt-1.5 line-clamp-2 text-[16px] leading-[28px]" style={{ color: "var(--text-tertiary)" }}>{projectCaption(project)}</span>
       {path ? (
         <span className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px]" style={{ color: "var(--text-tertiary)" }} title={path}>
           <Folder aria-hidden="true" size={12} className="shrink-0" />
@@ -200,7 +200,7 @@ function ProjectCard(props: {
           ) : null}
         </span>
       ) : null}
-      <span className="mt-auto pt-2 text-xs" style={{ color: "var(--text-tertiary)" }}>{projectDate(project, summaryUpdatedAt)}</span>
+      <span data-slot="project-card-activity" className="mt-auto pt-2 text-[14px] leading-[20px]" style={{ color: "var(--text-tertiary)" }}>{projectDate(project, summaryUpdatedAt)}</span>
     </button>
   );
 }
@@ -234,7 +234,7 @@ export default function ProjectsIndex() {
     <main className="min-h-0 flex-1 overflow-y-auto" style={{ background: "var(--bg-app)" }}>
       <div className="mx-auto flex w-full max-w-[920px] flex-col px-8 pb-12 pt-10">
         <div className="mb-5 flex items-center gap-3">
-          <h1 className="text-[32px] leading-none tracking-[-0.035em]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-editorial)" }}>
+          <h1 className="text-[24px] font-semibold leading-[32px] tracking-[-0.6px]" style={{ color: "var(--text-primary)" }}>
             Projects
           </h1>
           <div className="flex-1" />
@@ -248,7 +248,7 @@ export default function ProjectsIndex() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onBlur={() => { if (!query) setSearchOpen(false); }}
-                className="h-8 w-52 rounded-md border bg-transparent pl-8 pr-2 text-sm outline-none focus:border-[var(--accent)]"
+                className="h-8 w-52 rounded-md border bg-transparent pl-8 pr-2 text-[14px] leading-[20px] outline-none focus:border-[var(--accent)]"
                 style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
               />
             </label>
@@ -265,7 +265,7 @@ export default function ProjectsIndex() {
           )}
           <button
             type="button"
-            className="h-8 rounded-md px-3 text-sm font-medium"
+            className="h-8 rounded-md px-3 text-[14px] font-medium leading-[20px]"
             style={{ background: "var(--accent)", color: "var(--text-on-accent)" }}
             onClick={() => setCreateProjectOpen(true)}
           >

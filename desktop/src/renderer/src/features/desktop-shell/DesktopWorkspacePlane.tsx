@@ -5,23 +5,21 @@ import {
   type ComponentPropsWithoutRef,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type SyntheticEvent,
   type WheelEvent,
 } from "react";
 import { useNativeDesktopMode, type NativeDesktopMode } from "../../stores/native-desktop-mode";
 
-function isInsideCanvasSurface(target: EventTarget | null): boolean {
-  return target instanceof Element
-    && target.closest("[data-desktop-surface],button,input,a") !== null;
-}
-
 type DesktopWorkspacePlaneProps = {
   mode: NativeDesktopMode;
   children: ReactNode;
+  onBackgroundClick?: () => void;
 } & Omit<ComponentPropsWithoutRef<"div">, "children">;
 
 const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlaneProps>(function DesktopWorkspacePlane({
   mode,
   children,
+  onBackgroundClick,
   ...triggerProps
 }, ref) {
   const panX = useNativeDesktopMode((state) => state.panX);
@@ -29,12 +27,21 @@ const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlanePr
   const zoom = useNativeDesktopMode((state) => state.zoom);
   const setCanvasTransform = useNativeDesktopMode((state) => state.setCanvasTransform);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const planeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => () => cleanupRef.current?.(), []);
 
+  // Portals bubble through React even when their DOM is outside an app window.
+  // Only these two background elements own workspace gestures; an arbitrary
+  // descendant or portaled popup must never count as empty desktop/canvas.
+  const isBackgroundEvent = (event: SyntheticEvent<HTMLDivElement>) => (
+    !event.defaultPrevented
+    && (event.target === event.currentTarget || event.target === planeRef.current)
+  );
+
   const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (mode !== "canvas" || event.button !== 0) return;
-    if (isInsideCanvasSurface(event.target)) return;
+    if (!isBackgroundEvent(event)) return;
     event.preventDefault();
     cleanupRef.current?.();
     const startX = event.clientX;
@@ -63,7 +70,7 @@ const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlanePr
 
   const zoomCanvas = (event: WheelEvent<HTMLDivElement>) => {
     if (mode !== "canvas" || (!event.metaKey && !event.ctrlKey)) return;
-    if (isInsideCanvasSurface(event.target)) return;
+    if (!isBackgroundEvent(event)) return;
     event.preventDefault();
     const viewport = event.currentTarget.getBoundingClientRect();
     const nextZoom = Math.min(2, Math.max(0.5, zoom * Math.exp(-event.deltaY * 0.002)));
@@ -79,6 +86,10 @@ const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlanePr
   };
 
   const canvas = mode === "canvas";
+  const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (mode !== "desktop" || event.button !== 0 || !isBackgroundEvent(event)) return;
+    onBackgroundClick?.();
+  };
   return (
     <div
       {...triggerProps}
@@ -93,8 +104,10 @@ const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlanePr
       } : undefined}
       onPointerDown={startPan}
       onWheel={zoomCanvas}
+      onClick={onClick}
     >
       <div
+        ref={planeRef}
         data-testid="native-desktop-workspace-plane"
         className="absolute inset-0"
         style={{

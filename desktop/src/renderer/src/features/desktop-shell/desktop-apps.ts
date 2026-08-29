@@ -1,16 +1,14 @@
 import {
-  Blocks,
-  FolderKanban,
   FolderTree,
   Globe2,
-  MessageCircle,
+  MessageSquare,
   Settings,
   SquareTerminal,
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
 
-export type DesktopAppId = "browser" | "chat" | "terminal" | "files" | "plugins" | "settings" | "projects";
+export type DesktopAppId = "browser" | "work" | "terminal" | "files" | "settings";
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
@@ -31,11 +29,11 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     iconColor: "white",
   },
   {
-    id: "chat",
-    kind: "chat",
-    icon: MessageCircle,
+    id: "work",
+    kind: "work",
+    icon: MessageSquare,
     name: "Chat",
-    color: "var(--surface-success-emphasis, #288A5B)",
+    color: "var(--surface-error-emphasis, #BA5236)",
     iconColor: "white",
   },
   {
@@ -55,27 +53,11 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     iconColor: "white",
   },
   {
-    id: "plugins",
-    kind: "plugins",
-    icon: Blocks,
-    name: "Plugins",
-    color: "#7C6DB4",
-    iconColor: "white",
-  },
-  {
     id: "settings",
     kind: "settings",
     icon: Settings,
     name: "Settings",
     color: "var(--surface-neutral-emphasis, #6B7280)",
-    iconColor: "white",
-  },
-  {
-    id: "projects",
-    kind: "projects",
-    icon: FolderKanban,
-    name: "Projects",
-    color: "var(--surface-error-emphasis, #BA5236)",
     iconColor: "white",
   },
 ];

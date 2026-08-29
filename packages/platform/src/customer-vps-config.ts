@@ -100,7 +100,10 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     posthogPublicHost: env.NEXT_PUBLIC_POSTHOG_HOST ?? DEFAULT_POSTHOG_PUBLIC_HOST,
     posthogApiHost: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? '',
     provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),
-    registrationTokenTtlMs: numberFromEnv(env.CUSTOMER_VPS_REGISTRATION_TOKEN_TTL_MS, 15 * 60 * 1000),
+    // Clean-image bootstrap allows 15 minutes for the host bundle download
+    // and 30 minutes for prerequisite preparation before Gateway can register.
+    // Keep a bounded buffer for the remaining host setup and reconciliation.
+    registrationTokenTtlMs: 60 * 60 * 1000,
     reconciliationBatchSize: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE, 50),
     reconciliationStaleAfterMs: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_STALE_AFTER_MS, 10 * 60 * 1000),
     maxProvisionAttempts: numberFromEnv(env.CUSTOMER_VPS_MAX_PROVISION_ATTEMPTS, 3),

@@ -15,6 +15,7 @@ import {
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
@@ -26,6 +27,7 @@ import {
   type CanonicalCreateChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -73,6 +75,11 @@ export interface CanonicalChatRouteService {
     owner: ChatOwner,
     chatId: string,
     input: CanonicalUpdateChatProjectRequest,
+  ): Promise<CanonicalChatRecord>;
+  updateUserState(
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalUpdateChatUserStateRequest,
   ): Promise<CanonicalChatRecord>;
   delete(owner: ChatOwner, chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   list(owner: ChatOwner, input: {
@@ -265,6 +272,22 @@ export function createCanonicalChatRoutes(options: {
       const parsed = CanonicalUpdateChatProjectRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
       const result = await options.service.updateProject(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatRecordSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/user-state", updateBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalUpdateChatUserStateRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.updateUserState(
         ownerFromPrincipal(options.getPrincipal(context)),
         chatId,
         parsed.data,

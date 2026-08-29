@@ -11,7 +11,7 @@ import {
 import { useConnection } from "../stores/connection";
 import { useHermesChat } from "../stores/hermes-chat";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
-import { useTabs } from "../stores/tabs";
+import { isWorkRoute, useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
 import { openCodingAgentThread } from "./project-chat";
 import { routeThreadNotification, unifiedAttentionCount } from "../stores/unified-threads";
@@ -107,11 +107,12 @@ export function wireKernel(): () => void {
   const activeSocket = socket;
 
   const unsubscribeMessages = activeSocket.subscribe((msg) => {
-    // A kernel thread is "focused" only when the Chat tab (where ThreadView
+    // A kernel thread is "focused" only when the Work Chat route (where ThreadView
     // renders) is active and it's the selected thread; otherwise completions
     // raise a notification.
     const tabsState = useTabs.getState();
-    const chatActive = tabsState.tabs.find((t) => t.id === tabsState.activeTabId)?.kind === "chat";
+    const activeTab = tabsState.tabs.find((tab) => tab.id === tabsState.activeTabId);
+    const chatActive = isWorkRoute(activeTab, "chat");
     const focusedThreadId = chatActive ? useThreads.getState().activeThreadId : null;
     const { notification } = useThreads
       .getState()

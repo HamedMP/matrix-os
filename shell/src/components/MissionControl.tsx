@@ -31,6 +31,7 @@ interface MissionControlProps {
   onRegenerateIcon: (slug: string) => void;
   onRenameApp?: (slug: string, newName: string) => void;
   onRemoveFromCanvas?: (path: string) => void;
+  nativePresentation?: boolean;
 }
 
 export function MissionControl({
@@ -44,6 +45,7 @@ export function MissionControl({
   onRegenerateIcon,
   onRenameApp,
   onRemoveFromCanvas,
+  nativePresentation = false,
 }: MissionControlProps) {
   const { provision } = useTaskBoard();
   const themeStyle = useThemeStyle();
@@ -89,10 +91,10 @@ export function MissionControl({
 
   if (!mounted) return null;
 
-  // macOS design: the launcher is a full-screen Launchpad take-over instead
-  // of the classic panel. Mount/visible timing and the global Escape handler
-  // above stay shared, so open/close behavior is identical across variants.
-  if (themeStyle === "macos-glass") {
+  // Native Desktop and macOS designs share the full-screen launchpad model.
+  // The older dock-management panel remains available only to legacy shell
+  // renderers; pinning and ordering belong to Settings, not the OS launcher.
+  if (nativePresentation || themeStyle === "macos-glass") {
     return (
       <Launchpad apps={apps} visible={visible} onOpenApp={onOpenApp} onClose={onClose} />
     );

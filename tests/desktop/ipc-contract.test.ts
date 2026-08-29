@@ -56,6 +56,7 @@ describe("IPC contract", () => {
       "update:acknowledge-whats-new",
       "app:get-zoom",
       "app:set-zoom",
+      "window:toggle-maximize",
     ];
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
@@ -883,6 +884,7 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ key: "appearance", value: { theme: "dark" } }).success).toBe(true);
     expect(schema.safeParse({ key: "desktopShell", value: { mode: "canvas" } }).success).toBe(true);
     expect(schema.safeParse({ key: "terminalAppearance", value: { mode: "dark" } }).success).toBe(true);
+    expect(schema.safeParse({ key: "terminalAppearance", value: { appThemeId: "matrix" } }).success).toBe(true);
     expect(schema.safeParse({
       key: "projectViews",
       value: {
@@ -949,6 +951,10 @@ describe("IPC contract", () => {
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "project" }).success).toBe(true);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "agents" }).success).toBe(false);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "terminals" }).success).toBe(true);
+    for (const action of ["new-context", "new-tab", "close-tab", "close-app"] as const) {
+      expect(EVENT_CHANNELS["menu:action"].safeParse({ action }).success, action).toBe(true);
+    }
+    expect(EVENT_CHANNELS["menu:action"].safeParse({ action: "quit-app" }).success).toBe(false);
     expect(EVENT_CHANNELS["update:manual-check-requested"].safeParse({}).success).toBe(true);
     expect(
       EVENT_CHANNELS["update:manual-check-requested"].safeParse({ source: "untrusted" }).success,

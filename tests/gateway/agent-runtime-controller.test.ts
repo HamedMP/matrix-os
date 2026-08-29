@@ -737,12 +737,17 @@ describe("agent runtime controller", () => {
   it("aborts and waits for an in-flight transition before closing adapters", async () => {
     const homePath = await createHome();
     let prepareSignal: AbortSignal | undefined;
+    let resolvePrepareListening: () => void = () => {};
+    const prepareListening = new Promise<void>((resolve) => {
+      resolvePrepareListening = resolve;
+    });
     const openclaw = fakeAdapter("openclaw", {
       prepare: vi.fn(async (signal) => new Promise<void>((_resolve, reject) => {
         prepareSignal = signal;
         signal.addEventListener("abort", () => reject(signal.reason), {
           once: true,
         });
+        resolvePrepareListening();
       })),
     });
     const hermes = fakeAdapter("hermes");
@@ -753,6 +758,7 @@ describe("agent runtime controller", () => {
     });
     const transition = controller.update({ runtime: "openclaw", revision: 0 });
     await vi.waitFor(() => expect(openclaw.prepare).toHaveBeenCalledOnce());
+    await prepareListening;
 
     await controller.close();
 

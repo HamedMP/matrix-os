@@ -172,7 +172,7 @@ bun run dev:kernel        # kernel package only
 bun run dev:desktop       # Electron desktop shell
 
 bun run docker            # Legacy/local Docker dev only; not production customer runtime
-bun run docker:full       # + proxy, platform, conduit
+bun run docker:full       # + proxy and platform
 bun run docker:all        # + observability stack
 bun run docker:multi      # + alice & bob multi-user
 bun run docker:stop       # stop containers, preserve volumes

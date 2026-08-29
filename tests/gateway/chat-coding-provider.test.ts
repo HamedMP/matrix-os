@@ -109,7 +109,12 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 
 describe("canonical coding Chat Provider adapter", () => {
   it("streams normalized Codex events from the shared Gateway thread seam", async () => {
-    const started = event({ type: "terminal.bound", eventId: "evt_terminal", terminalSessionId: "terminal_native" });
+    const started = event({
+      type: "terminal.bound",
+      eventId: "evt_terminal",
+      terminalSessionId: "terminal_native",
+      terminalSessionCreatedAt: occurredAt,
+    });
     const fake = fakeStore([started]);
     const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
 
@@ -124,7 +129,7 @@ describe("canonical coding Chat Provider adapter", () => {
 
     expect(events).toEqual([
       { type: "state.updated", state: { conversationId: "thread_native" } },
-      { type: "terminal.bound", terminalSessionId: "terminal_native" },
+      { type: "terminal.bound", terminalSessionId: "terminal_native", terminalSessionCreatedAt: occurredAt },
       { type: "assistant.delta", delta: "done" },
       expect.objectContaining({ type: "resource.changed", resourceKind: "file", changeKind: "updated" }),
       { type: "run.completed", outcome: "completed" },

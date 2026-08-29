@@ -451,6 +451,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("terminal.bound"),
     terminalSessionId: canonicalReferenceId(128),
+    terminalSessionCreatedAt: z.iso.datetime(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("run.error"),

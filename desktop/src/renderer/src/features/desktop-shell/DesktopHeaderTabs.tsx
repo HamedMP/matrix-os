@@ -1,5 +1,8 @@
 import { useCallback } from "react";
-import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
+import {
+  topmostVisibleDesktopSurfaceId,
+  useDesktopSurfaces,
+} from "../../stores/desktop-surfaces";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
@@ -17,6 +20,7 @@ export default function DesktopHeaderTabs() {
   const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
   const showDesktop = useDesktopSurfaces((state) => state.showDesktop);
+  const setWorkspaceView = useDesktopSurfaces((state) => state.setWorkspaceView);
   const requestBackgroundRefresh = useUi((state) => state.requestDesktopBackgroundRefresh);
   const drawerOpen = useDesktopAppDrawer((state) => state.open);
   const toggleDrawer = useDesktopAppDrawer((state) => state.toggle);
@@ -26,28 +30,28 @@ export default function DesktopHeaderTabs() {
     requestBackgroundRefresh();
   }, [requestBackgroundRefresh, showDesktop]);
 
+  const focusDesktopOrShowDesktop = useCallback(() => {
+    if (workspaceView === "desktop") {
+      showDesktopWithRefresh();
+      return;
+    }
+    setWorkspaceView("desktop");
+    requestBackgroundRefresh();
+  }, [requestBackgroundRefresh, setWorkspaceView, showDesktopWithRefresh, workspaceView]);
+
   const activate = useCallback((tabId: string) => {
     focusTab(tabId);
     activateSurface(tabId);
   }, [activateSurface, focusTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
-    let fallback: Tab | undefined;
-    let fallbackZIndex = Number.NEGATIVE_INFINITY;
-    for (const tab of useTabs.getState().tabs) {
-      const surface = useDesktopSurfaces.getState().surfaces[tab.id];
-      if (
-        tab.id !== excludedTabId
-        && surface
-        && surface.mode !== "minimized"
-        && surface.mode !== "closed"
-        && surface.zIndex > fallbackZIndex
-      ) {
-        fallback = tab;
-        fallbackZIndex = surface.zIndex;
-      }
-    }
-    if (fallback) activate(fallback.id);
+    const tabIds = useTabs.getState().tabs.map((tab) => tab.id);
+    const fallbackId = topmostVisibleDesktopSurfaceId(
+      tabIds,
+      useDesktopSurfaces.getState(),
+      excludedTabId,
+    );
+    if (fallbackId) activate(fallbackId);
   }, [activate]);
 
   const close = useCallback((tab: Tab) => {
@@ -74,11 +78,12 @@ export default function DesktopHeaderTabs() {
       onRestore={restore}
       onMinimize={(tabId) => {
         minimizeSurface(tabId);
-        showDesktopWithRefresh();
+        setWorkspaceView("desktop");
+        requestBackgroundRefresh();
       }}
       onClose={close}
       workspaceView={workspaceView}
-      onShowDesktop={showDesktopWithRefresh}
+      onShowDesktop={focusDesktopOrShowDesktop}
       onToggleSidebar={toggleDrawer}
       sidebarOpen={drawerOpen}
     />

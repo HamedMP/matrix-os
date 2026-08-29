@@ -33,10 +33,10 @@ export function DotGrid() {
   const gridEnabled = useDotGrid((s) => s.enabled);
   const desktopMode = useDesktopMode((s) => s.mode);
   const themeStyle = useThemeStyle();
-  // Developer mode deliberately stays terminal-first and grid-free. Preserve
-  // the user's grid preference in every other mode so switching modes cannot
-  // silently rewrite or suppress it if the legacy Desktop mode is re-enabled.
-  const enabled = desktopMode !== "dev" && gridEnabled && !OS_DESIGN_STYLES.has(themeStyle);
+  // The dot grid belongs to the spatial Canvas renderer. The canonical
+  // Desktop plane follows the native shell and leaves the configured
+  // wallpaper unobstructed.
+  const enabled = desktopMode === "canvas" && gridEnabled && !OS_DESIGN_STYLES.has(themeStyle);
   const mouseRef = useRef({ x: -1000, y: -1000, active: false });
   const idleTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const rafRef = useRef(0);

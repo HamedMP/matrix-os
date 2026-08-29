@@ -70,11 +70,12 @@ const regionGroupLabels: Record<string, string> = {
   "ap-southeast": "Asia Pacific",
 };
 const includedHighlights = [
-  "Dedicated VPS attached right after checkout",
+  "Dedicated VPS prepared before checkout",
   "Your files and data persist across restarts",
   "Change tier or cancel anytime in the billing portal",
 ] as const;
 const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
+const BILLING_PREPARATION_TIMEOUT_MS = 370_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const acceptedPaymentMarks = ["Visa", "Mastercard"] as const;
 const billingPlanNames: Record<string, string> = {
@@ -210,7 +211,7 @@ function CheckoutPanel({
     setCheckoutError(null);
     captureBillingTelemetry("checkout_intent", telemetryPropertiesRef.current);
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
+    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_PREPARATION_TIMEOUT_MS);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear the abort timeout and reset `checkoutLoading` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
       const response = await fetch("/billing/checkout", {
@@ -297,7 +298,7 @@ function CheckoutPanel({
               ? "Add your card in Stripe Checkout. You will not be charged today."
               : mode === "device-setup"
               ? "Review your plan and region here. Stripe opens only after you choose Continue to pay."
-              : "Secure checkout opens before Matrix provisions this computer."}
+              : "Matrix prepares this computer before secure checkout opens."}
           </p>
         </div>
       )}
@@ -389,7 +390,7 @@ function CheckoutPanel({
           <CreditCardIcon className="size-4" aria-hidden="true" />
         )}
         {checkoutLoading
-          ? "Opening checkout"
+          ? "Opening secure checkout"
           : checkoutBypassed
           ? "Continue setup"
           : trialDurationDays !== null
@@ -1328,8 +1329,8 @@ function BillingPanelInner({
               : "Manage your hosted Matrix computer"}
           </h3>
           <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
-            Choose the plan for your hosted runtime. Billing starts in Stripe before Matrix
-            attaches a dedicated VPS.
+            Choose your computer and developer tools once. Matrix starts preparing it while
+            you complete secure billing in Stripe.
           </p>
         </div>
 

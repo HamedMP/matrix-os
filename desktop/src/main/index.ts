@@ -206,18 +206,19 @@ if (!gotLock) {
       });
       await auth.init();
 
+      const rendererOrigin = process.env.ELECTRON_RENDERER_URL
+        ? new URL(process.env.ELECTRON_RENDERER_URL).origin
+        : "null";
       // Renderer session gets origin-scoped bearer injection; embed partitions
       // (separate sessions) never do (lesson L1).
       installHeaderInjection(
         session.defaultSession,
         () => auth.getToken(),
         () => auth.getGatewayOrigin(),
+        rendererOrigin,
       );
       // The renderer is a different origin than the gateway (file:// in prod,
       // localhost in dev), so allow its cross-origin fetches to the gateway.
-      const rendererOrigin = process.env.ELECTRON_RENDERER_URL
-        ? new URL(process.env.ELECTRON_RENDERER_URL).origin
-        : "null";
       installGatewayCors(session.defaultSession, () => auth.getGatewayOrigin(), rendererOrigin);
 
       const nativeAppBridge = new NativeAppBridge({
@@ -306,6 +307,11 @@ if (!gotLock) {
         },
         getUpdateSnapshot: () => updater.snapshot(),
         installUpdate: () => updater.install(),
+        toggleWindowMaximize: () => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          if (mainWindow.isMaximized()) mainWindow.unmaximize();
+          else mainWindow.maximize();
+        },
         getWhatsNew: async () => {
           const stored = await store.get("desktopUpdateRelease");
           if (!stored || stored.version !== app.getVersion()) {

@@ -110,8 +110,8 @@ describe('platform/customer-vps reliability', () => {
     const { service, hetzner, setClock } = createHarness();
     await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
-    // Advance past the 15-minute registration token TTL and the 10-minute stale window.
-    setClock('2026-04-26T12:16:00.000Z');
+    // Advance past the 60-minute registration token TTL and the 10-minute stale window.
+    setClock('2026-04-26T13:01:00.000Z');
     const result = await service.reconcileProvisioning();
 
     expect(result.failed).toBe(1);
@@ -126,8 +126,8 @@ describe('platform/customer-vps reliability', () => {
     const { service, setClock } = createHarness();
     await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
-    // 12 minutes: stale (>10m) but token still valid (<15m).
-    setClock('2026-04-26T12:12:00.000Z');
+    // 30 minutes: stale (>10m) but token still valid (<60m).
+    setClock('2026-04-26T12:30:00.000Z');
     const result = await service.reconcileProvisioning();
 
     expect(result.failed).toBe(0);
@@ -285,7 +285,7 @@ describe('platform/customer-vps reliability', () => {
     const { service, setClock } = createHarness();
     const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
-    setClock('2026-04-26T12:16:00.000Z'); // past 15-minute TTL
+    setClock('2026-04-26T13:01:00.000Z'); // past 60-minute TTL
     await expect(
       service.register('reg-token', {
         machineId: first.machineId,

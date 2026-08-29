@@ -38,7 +38,13 @@ export default function ProjectLifecycleDialog({
   const deleteEnabled = confirmation === project.name;
 
   return (
-    <Dialog open={open} onClose={() => { if (!pending) onClose(); }} width={440}>
+    <Dialog
+      open={open}
+      onClose={() => { if (!pending) onClose(); }}
+      width={440}
+      title="Delete project permanently?"
+      role="alertdialog"
+    >
       <div className="flex items-start gap-3 border-b px-5 py-4" style={{ borderColor: "var(--border-subtle)" }}>
         <span
           className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"

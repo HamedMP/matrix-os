@@ -1734,7 +1734,9 @@ export function TerminalPane({
             return url.toString();
           })
           .then((wsUrl) => {
-            webSocketConnectPending = false;
+            if (generation === wsGenerationRef.current) {
+              webSocketConnectPending = false;
+            }
             if (generation !== wsGenerationRef.current || disposed || isClosingRef.current) {
               const reason = generation !== wsGenerationRef.current
                 ? "stale"
@@ -1768,6 +1770,14 @@ export function TerminalPane({
 
       resumeLeaseRef.current = () => {
         if (disposed || isClosingRef.current) return;
+        if (webSocketConnectPending) {
+          // The pending URL was built with the focus state captured when the
+          // request started. Invalidate it before reconnecting so a pane that
+          // becomes active mid-request cannot finish as a non-exclusive
+          // observer and retain the session's stale canonical grid.
+          wsGenerationRef.current += 1;
+          webSocketConnectPending = false;
+        }
         const existing = wsRef.current;
         if (existing && existing.readyState !== WebSocket.CLOSED) {
           existing.onopen = null;

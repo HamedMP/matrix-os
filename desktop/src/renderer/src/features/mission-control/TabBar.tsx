@@ -1,5 +1,4 @@
 import {
-  Blocks,
   FileCode2,
   FolderKanban,
   FolderTree,
@@ -16,6 +15,7 @@ import { useTabs, type Tab, type TabKind } from "../../stores/tabs";
 
 const TAB_ICON: Record<TabKind, LucideIcon> = {
   home: Home,
+  work: FolderKanban,
   chat: Sparkles,
   projects: FolderKanban,
   project: FolderKanban,
@@ -25,7 +25,6 @@ const TAB_ICON: Record<TabKind, LucideIcon> = {
   files: FolderTree,
   apps: LayoutGrid,
   app: LayoutGrid,
-  plugins: Blocks,
   settings: Settings,
 };
 

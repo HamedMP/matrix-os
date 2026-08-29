@@ -6,8 +6,9 @@ import {
   PanelLeft,
 } from "@renderer/lib/hugeicons";
 import { Fragment } from "react";
+import { invoke } from "../../lib/operator";
 import { useHermesChat } from "../../stores/hermes-chat";
-import { useTabs, type Tab } from "../../stores/tabs";
+import { isWorkRoute, useTabs, type Tab } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -29,6 +30,27 @@ export function breadcrumbItemsForTab(
   conversationTitle?: string,
 ): BreadcrumbItem[] {
   if (!tab) return [];
+  if (tab.kind === "work") {
+    if (tab.workRoute === "projects") {
+      return [
+        { key: "home", label: "Home" },
+        { key: "projects", label: "Projects" },
+      ];
+    }
+    if (tab.workRoute === "project") {
+      return [
+        { key: "home", label: "Home" },
+        { key: "projects", label: "Projects" },
+        { key: `projects/${tab.projectSlug ?? tab.id}`, label: tab.projectSlug ?? "Project" },
+      ];
+    }
+    return conversationTitle
+      ? [
+          { key: "chat", label: "Chat" },
+          { key: `chat/${tab.id}`, label: conversationTitle },
+        ]
+      : [{ key: "chat", label: "Chat" }];
+  }
   switch (tab.kind) {
     case "projects":
       return [
@@ -146,21 +168,27 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
   const hermesConversationTitle = hermesSessionId
     ? hermesConversations.find((conversation) => conversation.id === hermesSessionId)?.title
     : undefined;
-  const canonicalConversationTitle = activeTab?.kind === "chat" && activeTab.chatId
-    ? activeTab.title
+  const canonicalConversationTitle = isWorkRoute(activeTab, "chat") && activeTab?.chatId
+    ? activeTab.chatTitle
     : undefined;
   const activeConversationTitle = canonicalConversationTitle
     ?? activeThreadTitle
     ?? (hermesConversationView === "conversation" ? hermesConversationTitle : undefined);
+  const handleTitlebarDoubleClick = (event: React.MouseEvent<HTMLElement>) => {
+    if (!nativeDesktop) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("button,input,a,[role='button'],[role='tab']")) return;
+    void invoke("window:toggle-maximize", {});
+  };
   const breadcrumbs = breadcrumbItemsForTab(activeTab, activeConversationTitle);
   const hasContextActions = Boolean(
     activeTab && activeTab.kind !== "terminals" && activeTab.kind !== "terminal",
   );
-  const canReturnToChatIndex = activeTab?.kind === "chat"
-    && (Boolean(activeTab.chatId) || activeThreadId !== null || hermesConversationView === "conversation");
+  const canReturnToChatIndex = isWorkRoute(activeTab, "chat")
+    && (Boolean(activeTab?.chatId) || activeThreadId !== null || hermesConversationView === "conversation");
   const canReturnToTerminalIndex = activeTab?.kind === "terminal"
     || (activeTab?.kind === "terminals" && activeTab.title !== "Terminal");
-  const canReturnToProjectsIndex = activeTab?.kind === "project"
+  const canReturnToProjectsIndex = isWorkRoute(activeTab, "project")
     || activeTab?.kind === "task";
   const previousTab = historyIndex > 0
     ? tabs.find((tab) => tab.id === viewHistory[historyIndex - 1])
@@ -200,6 +228,7 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
   return (
     <header
       className="titlebar-drag absolute inset-x-0 top-0 grid shrink-0 items-center"
+      onDoubleClick={handleTitlebarDoubleClick}
       style={{
         zIndex: DESKTOP_Z_INDEX.chrome,
         height: "var(--titlebar-height)",

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import {
+  Bricolage_Grotesque,
   Cormorant_Garamond,
   Geist,
   Geist_Mono,
@@ -70,6 +71,14 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Landing/brand display face. `block` prevents the Matrix loading wordmark from
+// visibly swapping between a fallback face and Bricolage during hydration.
+const bricolage = Bricolage_Grotesque({
+  variable: "--font-bricolage",
+  subsets: ["latin"],
+  display: "block",
+});
+
 export async function generateMetadata(): Promise<Metadata> {
   const metadata = await buildShellMetadata(process.env.GATEWAY_URL);
   return {
@@ -125,7 +134,7 @@ export default async function RootLayout({
       // replay without rebuilding the bundle.
       data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
-      <body className={`${inter.variable} ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable} ${geistSans.variable} ${geistMono.variable}`}>
+      <body className={`${inter.variable} ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable} ${geistSans.variable} ${geistMono.variable} ${bricolage.variable}`}>
         {children}
         {includePostHogIdentify ? <PostHogIdentify /> : null}
         <PwaRegister />

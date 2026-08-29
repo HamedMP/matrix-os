@@ -229,6 +229,10 @@ describe("SharedChatComposer", () => {
     expect(screen.getByLabelText("Reasoning")).toBeTruthy();
     expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     expect(screen.getByLabelText("Permission mode")).toBeTruthy();
+    const settings = screen.getByRole("button", { name: "Chat settings" });
+    expect(settings.className).toContain("@max-[42rem]/chat-composer:flex");
+    expect(container.querySelector('[data-slot="composer-secondary-controls"]')?.className)
+      .toContain("@max-[42rem]/chat-composer:hidden");
     expect(container.querySelector(".prompt-card")?.classList.contains("overflow-hidden"))
       .toBe(false);
   });
@@ -650,7 +654,12 @@ describe("SharedChatComposer", () => {
     const placeholder = container.querySelector<HTMLElement>('[data-slot="prompt-input-placeholder"]');
 
     expect(prompt.className).toContain("pt-1");
+    expect(prompt.className).toContain("text-[14px]");
+    expect(prompt.className).toContain("leading-[20px]");
     expect(placeholder?.className).toContain("top-1");
+    expect(placeholder?.className).toContain("text-[14px]");
+    expect(placeholder?.className).toContain("font-medium");
+    expect(placeholder?.className).toContain("leading-[20px]");
     expect(placeholder?.className).not.toContain("top-4");
   });
 

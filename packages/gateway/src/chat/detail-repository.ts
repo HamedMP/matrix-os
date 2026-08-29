@@ -9,7 +9,7 @@ import {
 import type { Kysely } from "kysely";
 import type { ChatDatabase } from "./database.js";
 import {
-  toActivity,
+  toActivities,
   toMessage,
   toRun,
   toTurn,
@@ -23,6 +23,7 @@ export interface ChatDetailPage {
   turns: CanonicalChatTurn[];
   runs: CanonicalChatRun[];
   activities: CanonicalChatRunActivity[];
+  terminalSessionIds: string[];
   nextBeforeSeq?: number;
 }
 
@@ -82,12 +83,19 @@ export class ChatDetailRepository {
       .limit(500)
       .execute();
     activityRows.reverse();
+    const terminalBindings = await this.kysely.selectFrom("chat_terminal_bindings")
+      .select("session_id")
+      .where("chat_id", "=", parsedChatId)
+      .orderBy("bound_at", "desc")
+      .limit(100)
+      .execute();
     return {
       record,
       messages: selectedMessageRows.map(toMessage),
       turns: turnRows.map(toTurn),
       runs: runRows.map(toRun),
-      activities: activityRows.map(toActivity),
+      activities: toActivities(activityRows),
+      terminalSessionIds: terminalBindings.reverse().map((binding) => binding.session_id),
       ...(hasOlder && selectedMessageRows[0]
         ? { nextBeforeSeq: Number(selectedMessageRows[0].seq) }
         : {}),

@@ -11,6 +11,7 @@ import type {
   UserMachineRecord,
   PlatformDB,
 } from '../../packages/platform/src/db.js';
+import type { PrebillingProvisioningIntent } from '../../packages/platform/src/prebilling-provisioning-store.js';
 import {
   getLatestJourneyEvent,
   getOnboardingFirstRun,
@@ -76,11 +77,28 @@ function machine(status: string, overrides: Partial<UserMachineRecord> = {}): Us
   };
 }
 
+function prebillingIntent(
+  state: PrebillingProvisioningIntent['state'],
+  overrides: Partial<PrebillingProvisioningIntent> = {},
+): PrebillingProvisioningIntent {
+  return {
+    id: 'intent-1', checkoutAttemptId: 'a1', clerkUserId: 'user_123', runtimeSlot: 'primary',
+    planSlug: 'matrix_builder', billingInterval: 'monthly', serverType: 'cpx32',
+    regionSlug: 'region_fsn1', developerTools: ['codex'], state, revision: 3,
+    machineId: null, stripeSessionId: 'cs_1', stripeSessionExpiresAt: '2026-06-11T12:30:00.000Z',
+    leaseExpiresAt: null, reservedHourlyCostMicros: 0,
+    paymentConfirmedAt: '2026-06-11T11:59:00.000Z', authorizedAt: null, cleanedAt: null,
+    lastErrorCode: null, createdAt: '2026-06-11T11:55:00.000Z', updatedAt: '2026-06-11T11:59:00.000Z',
+    ...overrides,
+  };
+}
+
 function derive(partial: Partial<JourneyDerivationInputs>): ReturnType<typeof deriveJourneyPhase> {
   return deriveJourneyPhase({
     entitlement: null,
     checkoutAttempt: null,
     liveMachine: null,
+    prebillingIntent: null,
     firstRun: null,
     now: NOW,
     settlingWindowMs: 10 * 60 * 1000,
@@ -144,6 +162,19 @@ describe('platform/journey deriveJourneyPhase', () => {
     expect(s.phase).toBe('install_choices_required');
     expect(s.nextAction.kind).toBe('choose_default_installs');
     expect(s.progress).toBeUndefined();
+  });
+
+  it('active entitlement with the original paid intent still preparing → wait without offering another provision', () => {
+    const s = derive({
+      entitlement: entitlement('active'),
+      prebillingIntent: prebillingIntent('payment_settling'),
+    });
+    expect(s).toMatchObject({
+      phase: 'provisioning',
+      nextAction: { kind: 'wait' },
+      progress: { stage: 'creating_server', startedAt: '2026-06-11T11:55:00.000Z' },
+    });
+    expect(s.detail).toBe('Finishing your Matrix computer…');
   });
 
   it('grace-period entitlement still grants access', () => {

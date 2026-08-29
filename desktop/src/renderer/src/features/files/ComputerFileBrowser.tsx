@@ -66,6 +66,8 @@ function pathTitle(path: string): string {
 export default function ComputerFileBrowser({
   compact = false,
   framed = true,
+  fillAvailableHeight = false,
+  forceList = false,
   mode = "browse",
   onOpenFile,
   onSelectionChange,
@@ -80,6 +82,8 @@ export default function ComputerFileBrowser({
   refreshRevision = 0,
 }: {
   compact?: boolean;
+  fillAvailableHeight?: boolean;
+  forceList?: boolean;
   // framed renders the browser as its own bordered card (dialogs, pickers).
   // The Files workspace passes framed={false} and wraps browser + preview in
   // a single bordered container with a hairline divider instead.
@@ -104,6 +108,7 @@ export default function ComputerFileBrowser({
   const authGeneration = useConnection((state) => state.authGeneration);
   const view = useBrowserViewPreference((state) => state.view);
   const setView = useBrowserViewPreference((state) => state.setView);
+  const effectiveView = forceList ? "list" : view;
   const {
     currentPath,
     resetHistory,
@@ -302,7 +307,7 @@ export default function ComputerFileBrowser({
     if (viewStatus !== "ready" || !restoreFocusRef.current) return;
     restoreFocusRef.current = false;
     entryRefs.current[0]?.focus();
-  }, [viewStatus, sortedEntries, view, searchOpen]);
+  }, [viewStatus, sortedEntries, effectiveView, searchOpen]);
 
   const focusEntry = useCallback((index: number) => {
     const clamped = Math.max(0, Math.min(index, sortedEntries.length - 1));
@@ -315,7 +320,7 @@ export default function ComputerFileBrowser({
       goUp();
       return;
     }
-    const step = view === "grid" ? measureGridColumns(gridRef.current) : 1;
+    const step = effectiveView === "grid" ? measureGridColumns(gridRef.current) : 1;
     switch (event.key) {
       case "Enter":
         // Prevent the native button click so activation fires exactly once.
@@ -335,19 +340,19 @@ export default function ComputerFileBrowser({
         focusEntry(index - step);
         break;
       case "ArrowRight":
-        if (view === "grid") {
+        if (effectiveView === "grid") {
           event.preventDefault();
           focusEntry(index + 1);
         }
         break;
       case "ArrowLeft":
-        if (view === "grid") {
+        if (effectiveView === "grid") {
           event.preventDefault();
           focusEntry(index - 1);
         }
         break;
     }
-  }, [activateEntry, focusEntry, goUp, view]);
+  }, [activateEntry, effectiveView, focusEntry, goUp]);
 
   const toggleSort = useCallback((key: BrowserSortKey) => {
     if (key === sortKey) {
@@ -407,7 +412,7 @@ export default function ComputerFileBrowser({
         <EntryButton
           key={`${entry.type}:${path}`}
           entry={entry}
-          grid={view === "grid"}
+          grid={effectiveView === "grid"}
           listColumns={listColumns}
           compact={compact}
           selected={viewSelectedPath === path || isCandidate}
@@ -430,7 +435,7 @@ export default function ComputerFileBrowser({
       return entryButton;
     });
     content =
-      view === "grid" ? (
+      effectiveView === "grid" ? (
         <div ref={gridRef} className="flex flex-wrap content-start gap-1">
           {buttons}
         </div>
@@ -483,10 +488,10 @@ export default function ComputerFileBrowser({
         compact={compact}
         currentPath={viewCurrentPath}
         crumbs={crumbs}
-        view={view}
+        view={effectiveView}
         onViewChange={(next) => {
           markFocusForRestore();
-          setView(next);
+          if (!forceList) setView(next);
         }}
         onUp={goUp}
         canGoBack={canGoBack}
@@ -506,6 +511,7 @@ export default function ComputerFileBrowser({
           setSearchQuery("");
         }}
         onSearchQueryChange={setSearchQuery}
+        showViewSwitcher={!forceList}
       />
 
       {mode === "browse" ? (
@@ -541,8 +547,8 @@ export default function ComputerFileBrowser({
             : undefined;
           setContextDirectory(path ? { path, name: pathTitle(path) } : null);
         }}
-        className={`${compact ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto ${
-          compact && view === "list" ? "px-1.5 pb-1.5" : compact || view === "grid" ? "p-1.5" : "pb-4"
+        className={`${compact && !fillAvailableHeight ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto ${
+          compact && effectiveView === "list" ? "px-1.5 pb-1.5" : compact || effectiveView === "grid" ? "p-1.5" : "pb-4"
         }`}
         onDragEnter={mode === "browse" && !viewReadOnly ? (event) => {
           if (!hasRegularDroppedFiles(event.dataTransfer)) return;

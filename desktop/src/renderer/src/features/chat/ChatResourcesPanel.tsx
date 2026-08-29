@@ -112,7 +112,7 @@ export function ChatResourcesPanel({
   }, [onClose]);
 
   const openIntegrations = () => {
-    requestSettingsSection("integrations");
+    requestSettingsSection("services");
     openTab({ kind: "settings", title: "Settings" });
     onClose(false);
   };

@@ -115,6 +115,14 @@ export interface ChatRunEventsTable {
   occurred_at: Timestamp;
 }
 
+export interface ChatTerminalBindingsTable {
+  chat_id: string;
+  session_id: string;
+  session_created_at: string | null;
+  run_id: string | null;
+  bound_at: Timestamp;
+}
+
 export interface ChatRunAdapterStateTable {
   run_id: string;
   driver_kind: string;
@@ -179,6 +187,7 @@ export interface ChatDatabase {
   chat_turns: ChatTurnsTable;
   chat_runs: ChatRunsTable;
   chat_run_events: ChatRunEventsTable;
+  chat_terminal_bindings: ChatTerminalBindingsTable;
   chat_run_adapter_state: ChatRunAdapterStateTable;
   chat_outbox: ChatOutboxTable;
   chat_deletions: ChatDeletionsTable;
@@ -338,6 +347,24 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
       event JSONB NOT NULL,
       occurred_at TIMESTAMPTZ NOT NULL
     )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_terminal_bindings (
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL,
+      session_created_at TEXT,
+      run_id TEXT REFERENCES chat_runs(id) ON DELETE SET NULL,
+      bound_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (chat_id, session_id)
+    )
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_terminal_bindings
+    ADD COLUMN IF NOT EXISTS session_created_at TEXT
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_chat_terminal_bindings_session
+    ON chat_terminal_bindings(session_id)
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_run_adapter_state (

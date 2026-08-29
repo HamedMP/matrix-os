@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
   type DesktopViewport,
 } from "../../stores/desktop-surfaces";
@@ -37,6 +38,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const tabs = useTabs((state) => state.tabs);
   const activeTabId = useTabs((state) => state.activeTabId);
   const openTab = useTabs((state) => state.openTab);
+  const normalizeLegacyTabs = useTabs((state) => state.normalizeLegacyTabs);
   const focusTab = useTabs((state) => state.focusTab);
   const closeTab = useTabs((state) => state.closeTab);
   const surfaces = useDesktopSurfaces((state) => state.surfaces);
@@ -48,6 +50,9 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const setSurfaceBounds = useDesktopSurfaces((state) => state.setSurfaceBounds);
   const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
+  const desktopTransition = useDesktopSurfaces((state) => state.desktopTransition);
+  const desktopHiddenSurfaceIds = useDesktopSurfaces((state) => state.desktopHiddenSurfaceIds);
+  const finishDesktopTransition = useDesktopSurfaces((state) => state.finishDesktopTransition);
   const launcherOpen = useUi((state) => state.appLauncherOpen);
   const setLauncherOpen = useUi((state) => state.setAppLauncherOpen);
   const requestBackgroundRefresh = useUi((state) => state.requestDesktopBackgroundRefresh);
@@ -76,9 +81,19 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [launcherOpen]);
 
   useEffect(() => {
+    normalizeLegacyTabs();
+  }, [normalizeLegacyTabs]);
+
+  useEffect(() => {
     if (!desktopModeHydrated) return;
     reconcileTabs(tabIds, viewport, desktopMode !== "canvas");
   }, [desktopMode, desktopModeHydrated, reconcileTabs, tabIds, viewport]);
+
+  useEffect(() => {
+    if (!desktopTransition) return;
+    const timer = window.setTimeout(() => finishDesktopTransition(), 280);
+    return () => window.clearTimeout(timer);
+  }, [desktopTransition, finishDesktopTransition]);
 
   const activeSurface = activeTabId ? surfaces[activeTabId] : undefined;
   const activeSurfaceAvailable = activeSurface !== undefined && activeSurface.mode !== "closed";
@@ -109,6 +124,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [reconcileAndActivateCurrent]);
 
   const closeApps = useCallback(() => setLauncherOpen(false), [setLauncherOpen]);
+  const showDesktopWithRefresh = useCallback(() => {
+    useDesktopSurfaces.getState().showDesktop();
+    requestBackgroundRefresh();
+  }, [requestBackgroundRefresh]);
   const toggleApps = useCallback(
     () => setLauncherOpen(!useUi.getState().appLauncherOpen),
     [setLauncherOpen],
@@ -139,34 +158,22 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const destinations = useMemo<DesktopDestination[]>(() => {
     const openers: Record<DesktopAppId, () => void> = {
       browser: () => openRoot(() => openTab(HOSTED_SHELL_TAB_SPEC)),
-      chat: () => openRoot(openChatIndex),
+      work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
-      plugins: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
       settings: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
-      projects: () => openRoot(openProjectsIndex),
     };
     return FIXED_DESKTOP_APPS.map((app) => ({ ...app, open: openers[app.id] }));
   }, [openRoot, openTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
-    const surfaceState = useDesktopSurfaces.getState().surfaces;
-    let fallback: Tab | undefined;
-    let fallbackZIndex = Number.NEGATIVE_INFINITY;
-    for (const tab of useTabs.getState().tabs) {
-      const surface = surfaceState[tab.id];
-      if (
-        tab.id !== excludedTabId &&
-        surface &&
-        surface.mode !== "minimized" &&
-        surface.mode !== "closed" &&
-        surface.zIndex > fallbackZIndex
-      ) {
-        fallback = tab;
-        fallbackZIndex = surface.zIndex;
-      }
-    }
-    if (fallback) activate(fallback.id);
+    const tabIds = useTabs.getState().tabs.map((tab) => tab.id);
+    const fallbackId = topmostVisibleDesktopSurfaceId(
+      tabIds,
+      useDesktopSurfaces.getState(),
+      excludedTabId,
+    );
+    if (fallbackId) activate(fallbackId);
   }, [activate]);
 
   const minimize = useCallback((tabId: string) => {
@@ -218,7 +225,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         <DesktopIconGrid destinations={destinations} />
       ) : null}
       <DesktopBackgroundMenu>
-        <DesktopWorkspacePlane mode={desktopMode}>
+        <DesktopWorkspacePlane mode={desktopMode} onBackgroundClick={showDesktopWithRefresh}>
           {desktopMode === "canvas" ? <DesktopIconGrid destinations={destinations} /> : null}
           {tabs.map((tab) => {
           const surface = surfaces[tab.id];
@@ -234,6 +241,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
               presentation={desktopMode}
               interactionScale={desktopMode === "canvas" ? canvasZoom : 1}
               workspaceRevision={desktopMode === "canvas" ? `${canvasPanX}:${canvasPanY}:${canvasZoom}` : "desktop"}
+              desktopTransition={desktopTransition}
+              desktopHiddenSurfaceIds={desktopHiddenSurfaceIds}
               onFocus={() => activate(tab.id)}
               onClose={() => close(tab)}
               onMinimize={() => minimize(tab.id)}

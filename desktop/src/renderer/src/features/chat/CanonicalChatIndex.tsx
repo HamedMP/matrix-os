@@ -58,7 +58,7 @@ export function CanonicalChatIndex({
         <header className="flex shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
           <div className="flex min-w-0 items-center gap-1">
             <MessageSquare size={16} aria-hidden="true" />
-            <h1 aria-label="Chats" className="truncate text-base font-medium tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>Chat</h1>
+            <h1 aria-label="Chats" className="truncate text-[16px] font-medium leading-[16px] tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>Chat</h1>
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -132,9 +132,9 @@ export function CanonicalChatIndex({
                   style={{ background: record.chat.id === activeChatId ? "var(--bg-selected)" : "transparent" }}
                   onClick={() => onSelect(record.chat.id)}
                 >
-                  <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-[14px] leading-[20px]" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
                 </button>
-                <time className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs transition-opacity group-hover/chat:opacity-0" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>
+                <time className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[12px] leading-[16px] tracking-[0.12px] transition-opacity group-hover/chat:opacity-0" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>
                   {activityLabel(record.chat.updatedAt)}
                 </time>
                 <button

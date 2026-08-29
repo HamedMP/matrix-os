@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { type PlatformDB } from '../../packages/platform/src/db.js';
@@ -9,6 +10,17 @@ import {
 } from '../../packages/platform/src/matrix-provisioning.js';
 
 describe('platform/matrix-provisioning', () => {
+  it('uses homeserver-neutral runtime configuration', () => {
+    const startup = readFileSync('packages/platform/src/platform-startup.ts', 'utf8');
+    const main = readFileSync('packages/platform/src/main.ts', 'utf8');
+
+    expect(startup).toContain('MATRIX_HOMESERVER_URL');
+    expect(startup).toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(main).toContain('MATRIX_HOMESERVER_URL');
+    expect(startup).not.toContain('CONDUIT_');
+    expect(main).not.toContain('CONDUIT_');
+  });
+
   let db: PlatformDB;
   let fetchMock: ReturnType<typeof vi.fn>;
   let provisioner: MatrixProvisioner;
@@ -50,7 +62,7 @@ describe('platform/matrix-provisioning', () => {
   }
 
   describe('provisionUser', () => {
-    it('creates Matrix accounts for human and AI via Conduit register API', async () => {
+    it('creates Matrix accounts for human and AI via the client register API', async () => {
       mockRegisterAndLogin('@alice:matrix-os.com', 'human-token-123');
       mockRegisterAndLogin('@alice_ai:matrix-os.com', 'ai-token-456');
 
@@ -61,7 +73,8 @@ describe('platform/matrix-provisioning', () => {
       expect(result.humanAccessToken).toBe('human-token-123');
       expect(result.aiAccessToken).toBe('ai-token-456');
 
-      // Verify correct Conduit register endpoint (not Synapse admin API)
+      // Use the portable Matrix client registration endpoint rather than a
+      // homeserver-specific admin API.
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const [humanUrl, humanOpts] = fetchMock.mock.calls[0];
       expect(humanUrl).toBe('https://matrix.matrix-os.com/_matrix/client/v3/register');
