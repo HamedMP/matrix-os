@@ -32,6 +32,13 @@ const HermesCompletionSchema = z.object({
   status: z.enum(["complete", "completed", "interrupted", "error"]).default("complete"),
   response_previewed: z.boolean().default(false),
 }).passthrough();
+const HermesToolStartSchema = z.object({
+  tool_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
+  name: z.string().trim().min(1).max(160),
+}).passthrough();
+const HermesToolCompleteSchema = HermesToolStartSchema.extend({
+  result: z.unknown().optional(),
+}).passthrough();
 const HermesPromptResponseSchema = z.object({ status: z.literal("streaming") }).passthrough();
 const HermesModelConfigResponseSchema = z.object({ confirm_required: z.boolean().optional() }).passthrough();
 const HermesYoloResponseSchema = z.object({
@@ -44,6 +51,7 @@ type HermesCompletion = z.infer<typeof HermesCompletionSchema>;
 type HermesCompletionResult =
   | { ok: true; value: HermesCompletion }
   | { ok: false; error: Error };
+type HermesActivity = Extract<CanonicalProviderRunEvent, { type: "agent.activity" }>;
 
 export type HermesChatState = z.infer<typeof HermesChatStateSchema>;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -70,6 +78,21 @@ function outputChunks(text: string): string[] {
     if (chunk) chunks.push(chunk);
   }
   return chunks;
+}
+
+function hermesToolActivity(name: string): Pick<HermesActivity, "kind" | "label"> {
+  const normalized = name.trim().toLowerCase();
+  if (["terminal", "shell", "bash", "execute", "execute_code", "run_command"].includes(normalized)) {
+    return { kind: "command", label: "Run command" };
+  }
+  return { kind: "dynamic_tool", label: "Use tool" };
+}
+
+function hermesToolFailed(result: unknown): boolean {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
+  const value = result as Record<string, unknown>;
+  if (value.success === false || value.ok === false || value.error !== undefined) return true;
+  return ["error", "failed", "failure"].includes(String(value.status ?? "").toLowerCase());
 }
 
 function deferred<T>() {
@@ -109,6 +132,8 @@ export function createHermesChatProviderAdapter(options: {
     let deltaFlushTimer: NodeJS.Timeout | undefined;
     let separatorPending = false;
     let completionSettled = false;
+    let failedActivityKind: HermesActivity["kind"] | undefined;
+    const toolActivities = new Map<string, Pick<HermesActivity, "kind" | "label">>();
 
     const flushVisibleText = (force = false) => {
       if (!pendingVisibleText || (!force && emittedDeltaEvents >= MAX_LIVE_DELTA_EVENTS)) return;
@@ -177,6 +202,29 @@ export function createHermesChatProviderAdapter(options: {
         const parsed = HermesCompletionSchema.parse(event.payload);
         completionSettled = true;
         completion.resolve({ ok: true, value: parsed });
+      } else if (event.type === "tool.start") {
+        const parsed = HermesToolStartSchema.parse(event.payload);
+        const activity = hermesToolActivity(parsed.name);
+        toolActivities.set(parsed.tool_id, activity);
+        queue.push(CanonicalProviderRunEventSchema.parse({
+          type: "agent.activity",
+          activityId: parsed.tool_id,
+          ...activity,
+          status: "running",
+        }));
+      } else if (event.type === "tool.complete") {
+        const parsed = HermesToolCompleteSchema.parse(event.payload);
+        const activity = toolActivities.get(parsed.tool_id) ?? hermesToolActivity(parsed.name);
+        toolActivities.delete(parsed.tool_id);
+        const failed = hermesToolFailed(parsed.result);
+        if (failed) failedActivityKind = activity.kind;
+        queue.push(CanonicalProviderRunEventSchema.parse({
+          type: "agent.activity",
+          activityId: parsed.tool_id,
+          ...activity,
+          status: failed ? "failed" : "completed",
+          ...(failed ? { summary: activity.kind === "command" ? "Command failed." : "Tool failed." } : {}),
+        }));
       } else if (event.type === "error") {
         completionSettled = true;
         completion.resolve({ ok: false, error: new Error("Hermes Run failed") });
@@ -308,7 +356,9 @@ export function createHermesChatProviderAdapter(options: {
           ...(input.signal.aborted ? {} : {
             error: {
               code: "run_failed",
-              safeMessage: "The selected provider could not complete this Run. Check its connection and retry.",
+              safeMessage: failedActivityKind === "command"
+                ? "A command failed during this Run."
+                : "The selected provider could not complete this Run. Check its connection and retry.",
               retryable: true,
               recoveryActions: ["retry"],
             },

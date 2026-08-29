@@ -102,6 +102,60 @@ async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("projects official Hermes tool frames without leaking provider payloads", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_command",
+      name: "terminal",
+      context: "npm test --token secret-value",
+      args: { command: "npm test", cwd: "/safe/project", env: { TOKEN: "secret-value" } },
+      args_text: "npm test --token secret-value",
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_command",
+      name: "terminal",
+      args: { command: "npm test", cwd: "/safe/project", env: { TOKEN: "secret-value" } },
+      result: { success: false, error: "failed at /safe/project with secret-value" },
+      summary: "failed at /safe/project with secret-value",
+      inline_diff: "-secret-value\n+replacement",
+    });
+    gateway.event("message.complete", { text: "", status: "error" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "running",
+      },
+      {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "failed",
+        summary: "Command failed.",
+      },
+      {
+        type: "run.completed",
+        outcome: "failed",
+        error: {
+          code: "run_failed",
+          safeMessage: "A command failed during this Run.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        },
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|inline_diff|args_text|TOKEN/);
+  });
+
   it("yields assistant text before the Hermes process completes", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({
