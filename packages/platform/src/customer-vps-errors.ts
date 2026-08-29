@@ -7,6 +7,7 @@ export type CustomerVpsFailureCode =
   | 'user_data_too_large'
   | 'r2_unavailable'
   | 'invalid_state'
+  | 'already_registered'
   | 'billing_required'
   | 'not_found'
   | 'registration_rejected'

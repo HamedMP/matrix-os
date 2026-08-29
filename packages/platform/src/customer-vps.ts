@@ -2133,6 +2133,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
+      if (row.status === 'running') {
+        throw new CustomerVpsError(409, 'already_registered', 'Machine already registered');
+      }
       if (row.status !== 'provisioning' && row.status !== 'recovering') {
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
       }
@@ -2275,7 +2278,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             failureAt: null,
           },
         );
-        if (!registered) throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
+        if (!registered) {
+          const current = await getUserMachine(trx, input.machineId);
+          if (current?.status === 'running' && current.registrationTokenHash === null) {
+            throw new CustomerVpsError(409, 'already_registered', 'Machine already registered');
+          }
+          throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
+        }
         if (row.prebillingIntentId) {
           const markedReady = await markPrebillingIntentReady(trx, {
             intentId: row.prebillingIntentId,

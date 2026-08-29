@@ -93,12 +93,20 @@ describe('customer VPS registration client', () => {
     expect(registration.registerFlagExists).toBe(true);
   });
 
-  it('treats HTTP 409 as an already-completed registration and stops retrying', () => {
-    const registration = runRegistrationClient(409, 'invalid_state');
+  it('treats an already-registered HTTP 409 as complete and stops retrying', () => {
+    const registration = runRegistrationClient(409, 'already_registered');
 
     expect(registration.result.status, registration.result.stderr).toBe(0);
     expect(registration.registrationAttempts).toBe(1);
     expect(registration.registerFlagExists).toBe(true);
+  });
+
+  it('does not mark a generic invalid-state HTTP 409 registration complete', () => {
+    const registration = runRegistrationClient(409, 'invalid_state');
+
+    expect(registration.result.status).toBe(64);
+    expect(registration.registrationAttempts).toBe(1);
+    expect(registration.registerFlagExists).toBe(false);
   });
 
   it('does not mark a rejected HTTP 409 registration complete', () => {

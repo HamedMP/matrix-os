@@ -108,7 +108,7 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
         exit 0
         ;;
       409)
-        if grep -Eq '"failure_code"[[:space:]]*:[[:space:]]*"invalid_state"' "$response_file"; then
+        if grep -Eq '"failure_code"[[:space:]]*:[[:space:]]*"already_registered"' "$response_file"; then
           echo "matrix-register-vps: platform reports registration already finalized; stopping retries" >&2
           mark_registration_complete
           exit 0
