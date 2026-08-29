@@ -5,7 +5,11 @@ import {
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentRuntimeSource } from "../../packages/gateway/src/agent-config/service.js";
+import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import {
   ProviderCatalogUnavailableError,
   createChatProviderCatalogService,
@@ -98,6 +102,51 @@ function codingRegistry(
 }
 
 describe("canonical Chat Provider catalog", () => {
+  it("projects runnable Agent SDK instances from the canonical funding and account snapshot", async () => {
+    const homePath = mkdtempSync(join(tmpdir(), "chat-provider-kernel-"));
+    mkdirSync(join(homePath, "system"), { recursive: true });
+    writeFileSync(join(homePath, "system/config.json"), "{}");
+    const aiProviderSource = new AiProviderService({
+      homePath,
+      env: { ANTHROPIC_API_KEY: "platform-secret" },
+    });
+    try {
+      const service = createChatProviderCatalogService({
+        codingProviders: codingRegistry([]),
+        agentRuntimeSource: runtimeSource(),
+        aiProviderSource,
+        executableDriverKinds: ["kernel"],
+      });
+
+      const catalog = await service.getCatalog(principal);
+      const matrix = catalog.instances.find((instance) => instance.id === "kernel_matrix_included");
+      const owner = catalog.instances.find((instance) => instance.id === "kernel_owner_anthropic_key");
+
+      expect(catalog.drivers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "kernel", displayName: "Matrix Agent" }),
+      ]));
+      expect(matrix).toMatchObject({
+        driverKind: "kernel",
+        displayName: "Matrix AI",
+        availability: "available",
+        models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }],
+        defaultSelection: {
+          instanceId: "kernel_matrix_included",
+          model: "claude-sonnet-5",
+        },
+      });
+      expect(owner).toMatchObject({
+        availability: "setup_required",
+        models: [],
+        setupActions: [{ kind: "open_settings" }],
+      });
+      expect(JSON.stringify(catalog)).not.toContain("platform-secret");
+    } finally {
+      aiProviderSource.close();
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("preserves namespaced system model ids in the canonical catalog", async () => {
     const source: AgentRuntimeSource = async () => {
       const snapshot = await runtimeSource()();

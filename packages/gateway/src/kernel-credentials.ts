@@ -1,11 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod/v4";
 
 export type KernelCredentialMode = "platform" | "api_key" | "claude_login";
-export type KernelCredentialAccessSourceId =
-  | "matrix_included"
-  | "owner_anthropic_key"
-  | "owner_anthropic_profile";
+export const KernelCredentialAccessSourceIdSchema = z.enum([
+  "matrix_included",
+  "owner_anthropic_key",
+  "owner_anthropic_profile",
+]);
+export type KernelCredentialAccessSourceId = z.infer<typeof KernelCredentialAccessSourceIdSchema>;
 export type KernelCredentialObservationState =
   | "ready"
   | "setup_required"
@@ -55,6 +58,7 @@ function isFundedAccessEnabled(env: NodeJS.ProcessEnv): boolean {
 async function resolveKernelCredentials(
   homePath: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
+  requestedAccessSourceId?: KernelCredentialAccessSourceId,
 ): Promise<KernelCredentialResolution> {
   const env = { ...baseEnv };
   const matrixState = isFundedAccessEnabled(baseEnv)
@@ -113,8 +117,27 @@ async function resolveKernelCredentials(
     ownerProfile: { state: profileState },
   };
 
+  if (requestedAccessSourceId === "matrix_included") {
+    if (matrixState !== "ready") throw new Error("Selected AI access is unavailable");
+    return { mode: "platform", env, sources };
+  }
+  if (requestedAccessSourceId === "owner_anthropic_key") {
+    if (ownerApiKey === undefined) throw new Error("Selected AI access is unavailable");
+    env.ANTHROPIC_API_KEY = ownerApiKey;
+    delete env.ANTHROPIC_BASE_URL;
+    return { mode: "api_key", env, sources };
+  }
+  if (requestedAccessSourceId === "owner_anthropic_profile") {
+    if (!hasOwnerProfile) throw new Error("Selected AI access is unavailable");
+    env.HOME = homePath;
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_BASE_URL;
+    return { mode: "claude_login", env, sources };
+  }
+
   if (ownerApiKey !== undefined) {
     env.ANTHROPIC_API_KEY = ownerApiKey;
+    delete env.ANTHROPIC_BASE_URL;
     return { mode: selectedMode, env, sources };
   }
   if (hasOwnerProfile) {
@@ -129,8 +152,9 @@ async function resolveKernelCredentials(
 export async function buildKernelEnv(
   homePath: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
+  requestedAccessSourceId?: KernelCredentialAccessSourceId,
 ): Promise<Record<string, string | undefined> | undefined> {
-  return (await resolveKernelCredentials(homePath, baseEnv)).env;
+  return (await resolveKernelCredentials(homePath, baseEnv, requestedAccessSourceId)).env;
 }
 
 export async function resolveKernelCredentialMode(homePath: string): Promise<KernelCredentialMode> {

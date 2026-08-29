@@ -57,6 +57,41 @@ describe("kernel credential resolution", () => {
     await expect(buildKernelEnv(homePath, { ANTHROPIC_API_KEY: "platform-key" })).resolves.toBeUndefined();
   });
 
+  it("honors an explicit Matrix-funded source even when owner credentials exist", async () => {
+    writeFileSync(
+      join(homePath, "system/config.json"),
+      JSON.stringify({ kernel: { anthropicApiKey: "sk-ant-owner-key" } }),
+    );
+
+    await expect(buildKernelEnv(
+      homePath,
+      { ANTHROPIC_API_KEY: "platform-key", ANTHROPIC_BASE_URL: "https://relay.example.com" },
+      "matrix_included",
+    )).resolves.toMatchObject({
+      ANTHROPIC_API_KEY: "platform-key",
+      ANTHROPIC_BASE_URL: "https://relay.example.com",
+    });
+  });
+
+  it("honors an explicit owner source and fails closed when it is unavailable", async () => {
+    writeFileSync(
+      join(homePath, "system/config.json"),
+      JSON.stringify({ kernel: { anthropicApiKey: "sk-ant-owner-key" } }),
+    );
+
+    await expect(buildKernelEnv(
+      homePath,
+      { ANTHROPIC_API_KEY: "platform-key" },
+      "owner_anthropic_key",
+    )).resolves.toMatchObject({ ANTHROPIC_API_KEY: "sk-ant-owner-key" });
+
+    await expect(buildKernelEnv(
+      homePath,
+      { ANTHROPIC_API_KEY: "platform-key" },
+      "owner_anthropic_profile",
+    )).rejects.toThrow("Selected AI access is unavailable");
+  });
+
   it("reports Matrix and owner credential sources independently without secrets", async () => {
     writeFileSync(
       join(homePath, "system/config.json"),
