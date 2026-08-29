@@ -9,6 +9,7 @@ describe("createAppMenuTemplate", () => {
       const template = createAppMenuTemplate({
         appName: "Matrix OS",
         isPackaged,
+        platform: "darwin",
         openExternal: vi.fn(),
         send,
         adjustZoom: vi.fn(),
@@ -36,6 +37,7 @@ describe("createAppMenuTemplate", () => {
       const template = createAppMenuTemplate({
         appName: "Matrix OS",
         isPackaged,
+        platform: "darwin",
         openExternal: vi.fn(),
         send,
         adjustZoom: vi.fn(),
@@ -63,6 +65,7 @@ describe("createAppMenuTemplate", () => {
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
       isPackaged: true,
+      platform: "darwin",
       openExternal: vi.fn(),
       send,
       adjustZoom: vi.fn(),
@@ -91,6 +94,7 @@ describe("createAppMenuTemplate", () => {
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
       isPackaged: true,
+      platform: "darwin",
       openExternal: vi.fn(),
       send,
       adjustZoom: vi.fn(),
@@ -118,6 +122,7 @@ describe("createAppMenuTemplate", () => {
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
       isPackaged: true,
+      platform: "darwin",
       openExternal: vi.fn(),
       send: vi.fn(),
       adjustZoom,
@@ -155,6 +160,7 @@ describe("createAppMenuTemplate", () => {
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
       isPackaged: true,
+      platform: "darwin",
       openExternal: vi.fn(),
       send: vi.fn(),
       adjustZoom: vi.fn(),
@@ -176,6 +182,7 @@ describe("createAppMenuTemplate", () => {
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
       isPackaged: true,
+      platform: "darwin",
       openExternal: vi.fn(),
       send,
       adjustZoom: vi.fn(),
