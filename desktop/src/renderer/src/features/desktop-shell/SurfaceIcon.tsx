@@ -1,5 +1,4 @@
 import {
-  Blocks,
   FileCode2,
   FolderKanban,
   FolderTree,
@@ -25,7 +24,6 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   files: FolderTree,
   apps: LayoutGrid,
   app: LayoutGrid,
-  plugins: Blocks,
   settings: Settings,
 };
 

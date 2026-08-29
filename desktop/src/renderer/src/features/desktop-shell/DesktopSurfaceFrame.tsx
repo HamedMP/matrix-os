@@ -209,7 +209,7 @@ export default function DesktopSurfaceFrame({
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBar={isWindow || surfaceChrome ? (
         <TopBar
-          title={surfaceChrome ? surfaceChrome.title : tab.title}
+          title={tab.kind === "settings" ? undefined : surfaceChrome ? surfaceChrome.title : tab.title}
           leftActions={surfaceChrome?.leftActions}
           rightActions={surfaceChrome?.rightActions}
           leftPaneWidth={surfaceChrome?.leftPaneWidth}

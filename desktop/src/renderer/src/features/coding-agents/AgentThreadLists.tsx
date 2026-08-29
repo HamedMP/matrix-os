@@ -13,6 +13,7 @@ export function ThreadList({
   onOpenThread?: (thread: AgentThreadSummary) => void;
 }) {
   const openTab = useTabs((s) => s.openTab);
+  const requestTerminalSession = useTabs((s) => s.requestTerminalSession);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const findAttachableSessionName = (sessionId: string): string | null =>
@@ -56,7 +57,11 @@ export function ThreadList({
                     variant="ghost"
                     aria-label={`Open terminal for ${thread.title}`}
                     title={`Open terminal for ${thread.title}`}
-                    onClick={() => openTab({ kind: "terminal", sessionName: thread.terminalSessionId, title: terminalSessionName })}
+                    onClick={() => {
+                      if (!thread.terminalSessionId) return;
+                      openTab({ kind: "terminals", title: "Terminal" });
+                      requestTerminalSession(terminalSessionName);
+                    }}
                   >
                     <SquareTerminal size={14} />
                   </Button>

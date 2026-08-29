@@ -235,32 +235,22 @@ describe("desktop plugins skills section", () => {
     await waitFor(() => expect(screen.getByText("No skills installed yet.")).not.toBeNull());
 
     fireEvent.click(screen.getByRole("button", { name: /Open terminal/i }));
-    await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith("/api/terminal/sessions", {
-        name: "plugins-skills",
-        cwd: "projects",
-      }),
-    );
+    await waitFor(() => expect(useTabs.getState().tabs).toHaveLength(1));
+    expect(api.post).not.toHaveBeenCalled();
     const tabs = useTabs.getState().tabs;
-    expect(tabs.some((tab) => tab.kind === "terminal" && tab.sessionName === "plugins-skills")).toBe(true);
+    expect(tabs.some((tab) => tab.kind === "terminals" && tab.title === "Terminal")).toBe(true);
   });
 
-  it("shows generic copy when the terminal cannot be opened", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("opens the Terminal app without requiring a session request", async () => {
     const api = makeApi({ skills: [] });
-    api.post = vi.fn(async () => {
-      throw new Error("secret-token-leak");
-    });
     useConnection.setState({ api: api as never });
     render(<SkillsSection />);
 
     await waitFor(() => expect(screen.getByText("No skills installed yet.")).not.toBeNull());
     fireEvent.click(screen.getByRole("button", { name: /Open terminal/i }));
 
-    await waitFor(() =>
-      expect(screen.getByText("Something went wrong. Please try again.")).not.toBeNull(),
-    );
-    expect(useTabs.getState().tabs).toHaveLength(0);
-    expect(error.mock.calls.flat().join(" ")).not.toContain("secret-token-leak");
+    await waitFor(() => expect(useTabs.getState().tabs).toHaveLength(1));
+    expect(api.post).not.toHaveBeenCalled();
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "terminals", title: "Terminal" });
   });
 });

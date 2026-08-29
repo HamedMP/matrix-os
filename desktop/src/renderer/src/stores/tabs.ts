@@ -17,7 +17,6 @@ export type TabKind =
   | "files"
   | "apps"
   | "app"
-  | "plugins"
   | "settings";
 
 export type WorkRoute = "chat" | "projects" | "project";

@@ -5,7 +5,9 @@ import type {
   SafeSetupAction,
 } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
-import type { useTabs } from "../../stores/tabs";
+import { useTabs } from "../../stores/tabs";
+import { useShellSessions } from "../../stores/shell-sessions";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { providerSupportsSetupAction } from "./provider-readiness";
 
 const MAX_PROVIDER_SETUP_ACTIONS = 10;
@@ -89,6 +91,7 @@ export async function openProviderSetupTerminal(
   openTab: ReturnType<typeof useTabs.getState>["openTab"],
   logPrefix = "provider-setup",
 ): Promise<boolean> {
+  const runtimeGeneration = captureRuntimeGeneration();
   try {
     const requestedSessionName = freshSetupSessionName(setup);
     const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
@@ -96,12 +99,16 @@ export async function openProviderSetupTerminal(
       cwd: "projects",
       cmd: setup.command,
     });
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
     const sessionName = typeof response.name === "string" && SESSION_NAME_PATTERN.test(response.name)
       ? response.name
       : requestedSessionName;
-    openTab({ kind: "terminal", sessionName, title: setup.label });
+    useShellSessions.getState().adoptCreatedSession(sessionName);
+    openTab({ kind: "terminals", title: "Terminal" });
+    useTabs.getState().requestTerminalSession(sessionName);
     return true;
   } catch (err: unknown) {
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
     console.error(`[${logPrefix}] Failed to open provider setup terminal:`, err instanceof Error ? err.name : typeof err);
     return false;
   }
