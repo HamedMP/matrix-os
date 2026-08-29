@@ -156,6 +156,65 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|inline_diff|args_text|TOKEN/);
   });
 
+  it("normalizes official Hermes status, reasoning, delegation, search, and request frames", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("status.update", { kind: "planning", text: "Plan with API_TOKEN=secret-value" });
+    gateway.event("reasoning.available", { text: "hidden reasoning at /safe/project", verbose: true });
+    gateway.event("tool.start", {
+      tool_id: "tool_search",
+      name: "web_search",
+      args: { query: "private query", headers: { Authorization: "Bearer secret-value" } },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_search",
+      name: "web_search",
+      args: { query: "private query" },
+      result: { success: true, content: "raw page content" },
+      summary: "raw page content",
+    });
+    gateway.event("subagent.start", {
+      subagent_id: "worker_1",
+      task_index: 0,
+      goal: "inspect /safe/project with secret-value",
+    });
+    gateway.event("subagent.complete", {
+      status: "completed",
+      summary: "raw delegated output secret-value",
+      text: "raw delegated text",
+    });
+    gateway.event("approval.request", {
+      request_id: "approval_1",
+      command: "deploy --token secret-value",
+      description: "contains secret-value",
+    });
+    gateway.event("clarify.request", {
+      request_id: "input_1",
+      question: "Paste TOKEN for /safe/project",
+      choices: ["secret-value"],
+    });
+    gateway.event("message.complete", { text: "", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      { type: "agent.activity", activityId: "status_planning", kind: "plan", label: "Planning", status: "running" },
+      { type: "agent.activity", activityId: "reasoning_summary", kind: "reasoning", label: "Reasoning complete", status: "completed" },
+      { type: "agent.activity", activityId: "tool_search", kind: "web_search", label: "Search the web", status: "running" },
+      { type: "agent.activity", activityId: "tool_search", kind: "web_search", label: "Search the web", status: "completed", summary: "Web search completed." },
+      { type: "agent.activity", activityId: "subagent_worker_1", kind: "delegation", label: "Delegated task", status: "running" },
+      { type: "agent.activity", activityId: "subagent_worker_1", kind: "delegation", label: "Delegated task", status: "completed", summary: "Delegated work completed." },
+      { type: "approval.requested", approvalId: "approval_1", title: "Command approval required", risk: "high" },
+      { type: "input.requested", requestId: "input_1", title: "Hermes needs input" },
+      { type: "agent.activity", activityId: "status_planning", kind: "plan", label: "Planning", status: "completed" },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|API_TOKEN|Authorization|raw page|raw delegated|private query/);
+  });
+
   it("yields assistant text before the Hermes process completes", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({

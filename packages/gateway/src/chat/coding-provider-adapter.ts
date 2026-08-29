@@ -22,6 +22,7 @@ import {
 
 const MAX_BUFFERED_EVENTS = 500;
 const MAX_RECENT_EVENT_IDS = MAX_BUFFERED_EVENTS * 2;
+const MAX_ACTIVE_TOOL_ACTIVITIES = 128;
 
 type CodingThreads = Pick<
   CodingAgentThreadStore & CodingAgentTurnStore,
@@ -76,6 +77,13 @@ function activityKind(kind: string): CanonicalChatAgentActivityKind | undefined 
   return undefined;
 }
 
+function failedActivitySummary(kind: CanonicalChatAgentActivityKind): string {
+  if (kind === "command") return "Command failed.";
+  if (kind === "delegation") return "Delegated work failed.";
+  if (kind === "web_search") return "Web search failed.";
+  return "Activity failed.";
+}
+
 function normalizeEvent(
   event: AgentThreadEvent,
   toolActivities: Map<string, ToolActivity>,
@@ -85,6 +93,10 @@ function normalizeEvent(
   }
   if (event.type === "tool.started") {
     const toolActivity = { label: event.displayName, kind: activityKind(event.kind) };
+    if (!toolActivities.has(event.toolCallId) && toolActivities.size >= MAX_ACTIVE_TOOL_ACTIVITIES) {
+      const oldest = toolActivities.keys().next().value;
+      if (oldest !== undefined) toolActivities.delete(oldest);
+    }
     toolActivities.set(event.toolCallId, toolActivity);
     return [CanonicalProviderRunEventSchema.parse(toolActivity.kind ? {
       type: "agent.activity",
@@ -100,15 +112,7 @@ function normalizeEvent(
     })];
   }
   if (event.type === "tool.output") {
-    const candidate = CanonicalProviderRunEventSchema.safeParse({
-      type: "tool.output", toolCallId: event.toolCallId, text: event.text, truncated: event.truncated ?? false,
-    });
-    return [candidate.success ? candidate.data : CanonicalProviderRunEventSchema.parse({
-      type: "tool.output",
-      toolCallId: event.toolCallId,
-      text: "Provider tool output is available in the bound terminal.",
-      truncated: true,
-    })];
+    return [];
   }
   if (event.type === "tool.completed") {
     const toolActivity = toolActivities.get(event.toolCallId);
@@ -119,6 +123,7 @@ function normalizeEvent(
       kind: toolActivity.kind,
       label: toolActivity.label,
       status: event.outcome === "success" ? "completed" : event.outcome,
+      ...(event.outcome === "failed" ? { summary: failedActivitySummary(toolActivity.kind) } : {}),
     } : {
       type: "tool.progress",
       toolCallId: event.toolCallId,

@@ -121,6 +121,13 @@ describe("canonical coding Chat Provider adapter", () => {
         kind: "command",
       }),
       event({
+        type: "tool.output",
+        eventId: "evt_command_output",
+        toolCallId: "tool_command",
+        text: "failed at /Users/private/project with API_TOKEN=secret-value",
+        truncated: false,
+      }),
+      event({
         type: "tool.completed",
         eventId: "evt_command_failed",
         toolCallId: "tool_command",
@@ -147,9 +154,11 @@ describe("canonical coding Chat Provider adapter", () => {
         kind: "command",
         label: "Run focused tests",
         status: "failed",
+        summary: "Command failed.",
       },
       { type: "run.completed", outcome: "failed" },
     ]);
+    expect(JSON.stringify(events)).not.toMatch(/secret-value|API_TOKEN|\/Users\/private|tool\.output/);
   });
 
   it("streams normalized Codex events from the shared Gateway thread seam", async () => {

@@ -1,4 +1,5 @@
 import { delimiter, join } from "node:path";
+import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
 import {
@@ -39,6 +40,25 @@ const HermesToolStartSchema = z.object({
 const HermesToolCompleteSchema = HermesToolStartSchema.extend({
   result: z.unknown().optional(),
 }).passthrough();
+const HermesStatusUpdateSchema = z.object({
+  kind: z.string().trim().min(1).max(80),
+  text: z.string().max(4_000).optional(),
+}).passthrough();
+const HermesReasoningAvailableSchema = z.object({ text: z.string().max(96 * 1024) }).passthrough();
+const HermesSubagentStartSchema = z.object({
+  subagent_id: z.string().min(1).max(256).optional(),
+  task_index: z.number().int().min(0).max(10_000),
+}).passthrough();
+const HermesSubagentCompleteSchema = z.object({
+  subagent_id: z.string().min(1).max(256).optional(),
+  status: z.string().trim().min(1).max(80),
+}).passthrough();
+const HermesApprovalRequestSchema = z.object({
+  request_id: z.string().min(1).max(256).optional(),
+}).passthrough();
+const HermesClarifyRequestSchema = z.object({
+  request_id: z.string().min(1).max(256),
+}).passthrough();
 const HermesPromptResponseSchema = z.object({ status: z.literal("streaming") }).passthrough();
 const HermesModelConfigResponseSchema = z.object({ confirm_required: z.boolean().optional() }).passthrough();
 const HermesYoloResponseSchema = z.object({
@@ -60,6 +80,8 @@ const DELTA_FLUSH_BYTES = 256;
 const DELTA_FLUSH_INTERVAL_MS = 50;
 // Reserve room in the 500-event canonical queue for a bounded final flush and terminal events.
 const MAX_LIVE_DELTA_EVENTS = 350;
+const MAX_ACTIVE_TOOL_ACTIVITIES = 128;
+const MAX_ACTIVE_STATUS_ACTIVITIES = 16;
 
 function selection(value: string): { provider: string; model: string } {
   const separator = value.indexOf(":");
@@ -85,7 +107,64 @@ function hermesToolActivity(name: string): Pick<HermesActivity, "kind" | "label"
   if (["terminal", "shell", "bash", "execute", "execute_code", "run_command"].includes(normalized)) {
     return { kind: "command", label: "Run command" };
   }
+  if (["web_search", "web_extract", "browser", "browser_use"].includes(normalized)) {
+    return { kind: "web_search", label: "Search the web" };
+  }
+  if (["delegate_task", "subagent", "spawn_subagent"].includes(normalized)) {
+    return { kind: "delegation", label: "Delegated task" };
+  }
+  if (["todo", "plan", "update_plan"].includes(normalized)) {
+    return { kind: "plan", label: "Update plan" };
+  }
+  if (/^(?:write|edit|patch|replace|apply)_?file$/.test(normalized) || normalized === "apply_patch") {
+    return { kind: "file_change", label: "Update file" };
+  }
+  if (normalized.startsWith("mcp_") || normalized.includes("mcp")) {
+    return { kind: "mcp_tool", label: "Use connected tool" };
+  }
+  if (normalized.includes("image") && (normalized.includes("inspect") || normalized.includes("analy"))) {
+    return { kind: "image_inspection", label: "Inspect image" };
+  }
   return { kind: "dynamic_tool", label: "Use tool" };
+}
+
+function hermesActivitySummary(kind: HermesActivity["kind"], failed: boolean): string {
+  if (kind === "command") return failed ? "Command failed." : "Command completed.";
+  if (kind === "web_search") return failed ? "Web search failed." : "Web search completed.";
+  if (kind === "delegation") return failed ? "Delegated work failed." : "Delegated work completed.";
+  if (kind === "file_change") return failed ? "File update failed." : "File update completed.";
+  return failed ? "Tool failed." : "Tool completed.";
+}
+
+function providerReference(prefix: string, value: string): string {
+  const candidate = `${prefix}${value}`;
+  if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(candidate)) return candidate;
+  return `${prefix}${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
+}
+
+function setBounded<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number): void {
+  if (!map.has(key) && map.size >= maxSize) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+  map.set(key, value);
+}
+
+function hermesStatusActivity(kind: string): Pick<HermesActivity, "activityId" | "kind" | "label"> | undefined {
+  const normalized = kind.trim().toLowerCase();
+  if (["planning", "plan", "todo"].includes(normalized)) {
+    return { activityId: "status_planning", kind: "plan", label: "Planning" };
+  }
+  if (["thinking", "reasoning"].includes(normalized)) {
+    return { activityId: "status_reasoning", kind: "reasoning", label: "Analyzing" };
+  }
+  if (normalized === "compacting") {
+    return { activityId: "status_compacting", kind: "phase", label: "Summarizing conversation" };
+  }
+  if (["process", "loop", "lifecycle"].includes(normalized)) {
+    return { activityId: `status_${normalized}`, kind: "phase", label: "Working" };
+  }
+  return undefined;
 }
 
 function hermesToolFailed(result: unknown): boolean {
@@ -134,6 +213,19 @@ export function createHermesChatProviderAdapter(options: {
     let completionSettled = false;
     let failedActivityKind: HermesActivity["kind"] | undefined;
     const toolActivities = new Map<string, Pick<HermesActivity, "kind" | "label">>();
+    const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label">>();
+    let activeDelegationId: string | undefined;
+
+    const emitAgentActivity = (activity: Omit<HermesActivity, "type">) => {
+      queue.push(CanonicalProviderRunEventSchema.parse({ type: "agent.activity", ...activity }));
+    };
+
+    const completeStatusActivities = () => {
+      for (const activity of statusActivities.values()) {
+        emitAgentActivity({ ...activity, status: "completed" });
+      }
+      statusActivities.clear();
+    };
 
     const flushVisibleText = (force = false) => {
       if (!pendingVisibleText || (!force && emittedDeltaEvents >= MAX_LIVE_DELTA_EVENTS)) return;
@@ -200,30 +292,93 @@ export function createHermesChatProviderAdapter(options: {
         separatorPending = emittedOutputBytes > 0;
       } else if (event.type === "message.complete") {
         const parsed = HermesCompletionSchema.parse(event.payload);
+        completeStatusActivities();
         completionSettled = true;
         completion.resolve({ ok: true, value: parsed });
+      } else if (event.type === "status.update") {
+        const parsed = HermesStatusUpdateSchema.parse(event.payload);
+        const activity = hermesStatusActivity(parsed.kind);
+        if (!activity) return;
+        setBounded(statusActivities, activity.activityId, activity, MAX_ACTIVE_STATUS_ACTIVITIES);
+        emitAgentActivity({ ...activity, status: "running" });
+      } else if (event.type === "reasoning.available") {
+        HermesReasoningAvailableSchema.parse(event.payload);
+        emitAgentActivity({
+          activityId: "reasoning_summary",
+          kind: "reasoning",
+          label: "Reasoning complete",
+          status: "completed",
+        });
       } else if (event.type === "tool.start") {
         const parsed = HermesToolStartSchema.parse(event.payload);
         const activity = hermesToolActivity(parsed.name);
-        toolActivities.set(parsed.tool_id, activity);
-        queue.push(CanonicalProviderRunEventSchema.parse({
-          type: "agent.activity",
+        setBounded(toolActivities, parsed.tool_id, activity, MAX_ACTIVE_TOOL_ACTIVITIES);
+        emitAgentActivity({
           activityId: parsed.tool_id,
           ...activity,
           status: "running",
-        }));
+        });
       } else if (event.type === "tool.complete") {
         const parsed = HermesToolCompleteSchema.parse(event.payload);
         const activity = toolActivities.get(parsed.tool_id) ?? hermesToolActivity(parsed.name);
         toolActivities.delete(parsed.tool_id);
         const failed = hermesToolFailed(parsed.result);
         if (failed) failedActivityKind = activity.kind;
-        queue.push(CanonicalProviderRunEventSchema.parse({
-          type: "agent.activity",
+        emitAgentActivity({
           activityId: parsed.tool_id,
           ...activity,
           status: failed ? "failed" : "completed",
-          ...(failed ? { summary: activity.kind === "command" ? "Command failed." : "Tool failed." } : {}),
+          summary: hermesActivitySummary(activity.kind, failed),
+        });
+      } else if (event.type === "subagent.start" || event.type === "subagent.spawn_requested") {
+        const parsed = HermesSubagentStartSchema.parse(event.payload);
+        activeDelegationId = providerReference("subagent_", parsed.subagent_id ?? String(parsed.task_index));
+        emitAgentActivity({
+          activityId: activeDelegationId,
+          kind: "delegation",
+          label: "Delegated task",
+          status: "running",
+        });
+      } else if (event.type === "subagent.complete") {
+        const parsed = HermesSubagentCompleteSchema.parse(event.payload);
+        const activityId = parsed.subagent_id
+          ? providerReference("subagent_", parsed.subagent_id)
+          : activeDelegationId;
+        if (!activityId) return;
+        const normalizedStatus = parsed.status.toLowerCase();
+        const status = ["completed", "complete", "success", "succeeded"].includes(normalizedStatus)
+          ? "completed" as const
+          : ["cancelled", "canceled", "aborted", "interrupted"].includes(normalizedStatus)
+            ? "cancelled" as const
+            : "failed" as const;
+        if (status === "failed") failedActivityKind = "delegation";
+        emitAgentActivity({
+          activityId,
+          kind: "delegation",
+          label: "Delegated task",
+          status,
+          summary: status === "completed"
+            ? "Delegated work completed."
+            : status === "cancelled" ? "Delegated work cancelled." : "Delegated work failed.",
+        });
+        if (activityId === activeDelegationId) activeDelegationId = undefined;
+      } else if (event.type === "approval.request") {
+        const parsed = HermesApprovalRequestSchema.parse(event.payload);
+        const approvalId = parsed.request_id
+          ? providerReference("", parsed.request_id)
+          : providerReference("approval_", JSON.stringify(event.payload));
+        queue.push(CanonicalProviderRunEventSchema.parse({
+          type: "approval.requested",
+          approvalId,
+          title: "Command approval required",
+          risk: "high",
+        }));
+      } else if (event.type === "clarify.request") {
+        const parsed = HermesClarifyRequestSchema.parse(event.payload);
+        queue.push(CanonicalProviderRunEventSchema.parse({
+          type: "input.requested",
+          requestId: providerReference("", parsed.request_id),
+          title: "Hermes needs input",
         }));
       } else if (event.type === "error") {
         completionSettled = true;
