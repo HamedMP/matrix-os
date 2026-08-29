@@ -70,6 +70,7 @@
   },
   "devDependencies": {
     "@expo-google-fonts/bricolage-grotesque": "^0.4.1",
+    "@expo-google-fonts/geist": "^0.4.2",
     "@matrix-os/contracts": "workspace:*",
     "@tailwindcss/vite": "^4.1.18",
     "@types/react": "^19",

@@ -22,14 +22,15 @@ let sharp;
 let dependencyRoot;
 for (const candidateRoot of candidateRoots) {
   const packagePath = resolve(candidateRoot, "node_modules/sharp/package.json");
-  const fontRoot = resolve(
+  const displayFontRoot = resolve(
     candidateRoot,
     "node_modules/@expo-google-fonts/bricolage-grotesque",
   );
+  const uiFontRoot = resolve(candidateRoot, "node_modules/@expo-google-fonts/geist");
   const fontPaths = [
-    resolve(fontRoot, "400Regular/BricolageGrotesque_400Regular.ttf"),
-    resolve(fontRoot, "600SemiBold/BricolageGrotesque_600SemiBold.ttf"),
-    resolve(fontRoot, "700Bold/BricolageGrotesque_700Bold.ttf"),
+    resolve(displayFontRoot, "700Bold/BricolageGrotesque_700Bold.ttf"),
+    resolve(uiFontRoot, "400Regular/Geist_400Regular.ttf"),
+    resolve(uiFontRoot, "600SemiBold/Geist_600SemiBold.ttf"),
   ];
   if (existsSync(packagePath) && fontPaths.every(existsSync)) {
     sharp = createRequire(packagePath)("sharp");
@@ -40,7 +41,7 @@ for (const candidateRoot of candidateRoots) {
 
 if (!sharp || !dependencyRoot) {
   throw new Error(
-    "The DMG generator dependencies are not installed in this worktree. Run `pnpm install`, or set MATRIX_REPO_ROOT to a checkout that has both sharp and Bricolage Grotesque installed.",
+    "The DMG generator dependencies are not installed in this worktree. Run `pnpm install`, or set MATRIX_REPO_ROOT to a checkout that has sharp, Bricolage Grotesque, and Geist installed.",
   );
 }
 
@@ -59,39 +60,44 @@ const displayFontDirectory = resolve(
   dependencyRoot,
   "node_modules/@expo-google-fonts/bricolage-grotesque",
 );
-const displayFontRegularPath = resolve(
-  displayFontDirectory,
-  "400Regular/BricolageGrotesque_400Regular.ttf",
-);
-const displayFontSemiBoldPath = resolve(
-  displayFontDirectory,
-  "600SemiBold/BricolageGrotesque_600SemiBold.ttf",
-);
 const displayFontBoldPath = resolve(
   displayFontDirectory,
   "700Bold/BricolageGrotesque_700Bold.ttf",
 );
+const uiFontDirectory = resolve(
+  dependencyRoot,
+  "node_modules/@expo-google-fonts/geist",
+);
+const uiFontRegularPath = resolve(uiFontDirectory, "400Regular/Geist_400Regular.ttf");
+const uiFontSemiBoldPath = resolve(uiFontDirectory, "600SemiBold/Geist_600SemiBold.ttf");
 const outputPath = resolve(root, "desktop/build/dmg-background.png");
 const outputRetinaPath = resolve(root, "desktop/build/dmg-background@2x.png");
 
 for (const assetPath of [
   logoPath,
-  displayFontRegularPath,
-  displayFontSemiBoldPath,
   displayFontBoldPath,
+  uiFontRegularPath,
+  uiFontSemiBoldPath,
 ]) {
   if (!existsSync(assetPath)) {
     throw new Error(`Required Matrix brand asset is missing: ${assetPath}`);
   }
 }
 
-const [displayFontRegular, displayFontSemiBold, displayFontBold] = await Promise.all([
-  readFile(displayFontRegularPath),
-  readFile(displayFontSemiBoldPath),
+const [displayFontBold, uiFontRegular, uiFontSemiBold] = await Promise.all([
   readFile(displayFontBoldPath),
+  readFile(uiFontRegularPath),
+  readFile(uiFontSemiBoldPath),
 ]);
 
 const displayFontFamily = desktopFonts.display;
+const uiFontFamily = desktopFonts.sans;
+// shadcn/ui inherits these typography values from Tailwind's default type scale.
+const tailwindTypeScale = {
+  "text-4xl": { fontSize: 36, lineHeight: 40 },
+  "text-base": { fontSize: 16, lineHeight: 24 },
+  "text-xs": { fontSize: 12, lineHeight: 16 },
+};
 
 function backgroundSvg() {
   return `
@@ -116,20 +122,24 @@ function backgroundSvg() {
         <style>
           @font-face {
             font-family: "Bricolage Grotesque";
-            src: url("data:font/ttf;base64,${displayFontRegular.toString("base64")}") format("truetype");
-            font-weight: 400;
-          }
-          @font-face {
-            font-family: "Bricolage Grotesque";
-            src: url("data:font/ttf;base64,${displayFontSemiBold.toString("base64")}") format("truetype");
-            font-weight: 600;
-          }
-          @font-face {
-            font-family: "Bricolage Grotesque";
             src: url("data:font/ttf;base64,${displayFontBold.toString("base64")}") format("truetype");
             font-weight: 700;
           }
+          @font-face {
+            font-family: "Geist";
+            src: url("data:font/ttf;base64,${uiFontRegular.toString("base64")}") format("truetype");
+            font-weight: 400;
+          }
+          @font-face {
+            font-family: "Geist";
+            src: url("data:font/ttf;base64,${uiFontSemiBold.toString("base64")}") format("truetype");
+            font-weight: 600;
+          }
           .display { font-family: ${displayFontFamily}; }
+          .ui { font-family: ${uiFontFamily}; }
+          .text-4xl { font-size: ${tailwindTypeScale["text-4xl"].fontSize}px; line-height: ${tailwindTypeScale["text-4xl"].lineHeight}px; letter-spacing: -0.025em; }
+          .text-base { font-size: ${tailwindTypeScale["text-base"].fontSize}px; line-height: ${tailwindTypeScale["text-base"].lineHeight}px; }
+          .text-xs { font-size: ${tailwindTypeScale["text-xs"].fontSize}px; line-height: ${tailwindTypeScale["text-xs"].lineHeight}px; }
         </style>
       </defs>
 
@@ -138,8 +148,8 @@ function backgroundSvg() {
       <rect width="${width}" height="${height}" fill="url(#emberGlow)"/>
       <rect x="0.5" y="0.5" width="719" height="519" rx="1" fill="none" stroke="${palette.light}" stroke-opacity="0.08"/>
 
-      <text class="display" x="360" y="105" fill="${palette.light}" font-size="42" font-weight="700" text-anchor="middle" letter-spacing="-1.2">Install Matrix OS</text>
-      <text class="display" x="360" y="140" fill="${palette.cream}" fill-opacity="0.78" font-size="17" font-weight="400" text-anchor="middle">Drag Matrix OS to Applications</text>
+      <text class="display text-4xl" x="360" y="105" fill="${palette.light}" font-weight="700" text-anchor="middle">Install Matrix OS</text>
+      <text class="ui text-base" x="360" y="140" fill="${palette.cream}" fill-opacity="0.78" font-weight="400" text-anchor="middle">Drag Matrix OS to Applications</text>
 
       <circle cx="190" cy="322" r="78" fill="${palette.light}" fill-opacity="0.018" stroke="${palette.light}" stroke-opacity="0.045"/>
       <circle cx="530" cy="322" r="78" fill="${palette.light}" fill-opacity="0.018" stroke="${palette.light}" stroke-opacity="0.045"/>
@@ -148,7 +158,7 @@ function backgroundSvg() {
       <path d="M301 322H414" stroke="${palette.ember}" stroke-width="5" stroke-linecap="round"/>
       <path d="M396 303L415 322L396 341" fill="none" stroke="${palette.ember}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 
-      <text class="display" x="360" y="472" fill="${palette.cream}" fill-opacity="0.46" font-size="12" font-weight="600" text-anchor="middle" letter-spacing="1.4">YOUR PRIVATE AI COMPUTER</text>
+      <text class="ui text-xs" x="360" y="472" fill="${palette.cream}" fill-opacity="0.46" font-weight="600" text-anchor="middle" letter-spacing="1.4">YOUR PRIVATE AI COMPUTER</text>
     </svg>
   `;
 }

@@ -84,15 +84,22 @@ describe("desktop packaging", () => {
     expect(generator).toContain("cream: brandPalette.cream");
     expect(generator).toContain("ember: brandPalette.ember");
     expect(generator).toContain("displayFontFamily = desktopFonts.display");
+    expect(generator).toContain("uiFontFamily = desktopFonts.sans");
     expect(generator).toContain("@expo-google-fonts/bricolage-grotesque");
-    expect(generator).toContain("BricolageGrotesque_400Regular.ttf");
-    expect(generator).toContain("BricolageGrotesque_600SemiBold.ttf");
     expect(generator).toContain("BricolageGrotesque_700Bold.ttf");
+    expect(generator).not.toContain("BricolageGrotesque_400Regular.ttf");
+    expect(generator).not.toContain("BricolageGrotesque_600SemiBold.ttf");
+    expect(generator).toContain("@expo-google-fonts/geist");
+    expect(generator).toContain("Geist_400Regular.ttf");
+    expect(generator).toContain("Geist_600SemiBold.ttf");
     expect(generator).toContain("existsSync(packagePath) && fontPaths.every(existsSync)");
     expect(generator).not.toContain("Instrument Serif");
     expect(generator).not.toContain("instrument-serif");
-    expect(generator.match(/<text class="display"/g)).toHaveLength(3);
-    expect(generator).not.toContain('<text class="sans"');
+    expect(generator.match(/<text class="display text-4xl"/g)).toHaveLength(1);
+    expect(generator.match(/<text class="ui text-(?:base|xs)"/g)).toHaveLength(2);
+    expect(generator).toContain('"text-4xl": { fontSize: 36, lineHeight: 40 }');
+    expect(generator).toContain('"text-base": { fontSize: 16, lineHeight: 24 }');
+    expect(generator).toContain('"text-xs": { fontSize: 12, lineHeight: 16 }');
 
     const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
@@ -110,9 +117,11 @@ describe("desktop packaging", () => {
     expect(
       desktopPackageJson.devDependencies?.["@expo-google-fonts/bricolage-grotesque"],
     ).toMatch(/^\^0\.4\./);
+    expect(desktopPackageJson.devDependencies?.["@expo-google-fonts/geist"]).toMatch(/^\^0\.4\./);
     expect(desktopPackageJson.dependencies).not.toHaveProperty(
       "@expo-google-fonts/bricolage-grotesque",
     );
+    expect(desktopPackageJson.dependencies).not.toHaveProperty("@expo-google-fonts/geist");
     expect(desktopPackageJson.dependencies?.["@fontsource/instrument-serif"]).toMatch(/^\^5\./);
   });
 
