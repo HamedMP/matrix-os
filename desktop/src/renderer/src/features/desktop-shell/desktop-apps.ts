@@ -2,13 +2,14 @@ import {
   FolderTree,
   Globe2,
   MessageSquare,
+  Notebook,
   Settings,
   SquareTerminal,
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
 
-export type DesktopAppId = "browser" | "work" | "terminal" | "files" | "settings";
+export type DesktopAppId = "browser" | "work" | "terminal" | "files" | "notes" | "settings";
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
@@ -50,6 +51,14 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     icon: FolderTree,
     name: "Files",
     color: "var(--surface-brand-emphasis, #748E59)",
+    iconColor: "white",
+  },
+  {
+    id: "notes",
+    kind: "notes",
+    icon: Notebook,
+    name: "Notes",
+    color: "var(--surface-purple-emphasis)",
     iconColor: "white",
   },
   {

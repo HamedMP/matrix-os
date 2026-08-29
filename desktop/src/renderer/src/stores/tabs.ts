@@ -15,6 +15,7 @@ export type TabKind =
   | "terminal"
   | "terminals"
   | "files"
+  | "notes"
   | "apps"
   | "app"
   | "settings";

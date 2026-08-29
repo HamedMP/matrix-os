@@ -161,6 +161,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
+      notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes" })),
       settings: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
     };
     return FIXED_DESKTOP_APPS.map((app) => ({ ...app, open: openers[app.id] }));

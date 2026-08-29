@@ -14,6 +14,7 @@ import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 import WorkTab from "../work/WorkTab";
+import NotesWorkspace from "../notes/NotesWorkspace";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -80,6 +81,8 @@ export function TabPane({
       return <TerminalsTab active={active} visible={visible} />;
     case "files":
       return <FilesWorkspace />;
+    case "notes":
+      return <NotesWorkspace active={active} />;
     case "apps":
       return <AppLauncher />;
     case "projects":
