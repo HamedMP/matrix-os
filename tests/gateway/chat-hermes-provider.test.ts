@@ -449,13 +449,36 @@ describe("Hermes canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "run_failed",
-        safeMessage: "The selected provider could not complete this Run. Check its connection and retry.",
+        code: "provider_unavailable",
+        safeMessage: "The Hermes connection failed. Try again.",
         retryable: true,
         recoveryActions: ["retry"],
       },
     }]);
     expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("reports a Hermes Run failure without mislabeling it as a transport failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.complete", { text: "useful partial", status: "error" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "useful partial" },
+      {
+        type: "run.completed",
+        outcome: "failed",
+        error: {
+          code: "run_failed",
+          safeMessage: "Hermes could not complete this Run.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        },
+      },
+    ]);
   });
 
   it("fails closed when the final response diverges from already streamed text", async () => {

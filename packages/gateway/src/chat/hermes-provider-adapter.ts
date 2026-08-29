@@ -73,6 +73,13 @@ type HermesCompletionResult =
   | { ok: false; error: Error };
 type HermesActivity = Extract<CanonicalProviderRunEvent, { type: "agent.activity" }>;
 
+class HermesRunFailure extends Error {
+  constructor(readonly reason: "run" | "interrupted" | "timeout", message: string) {
+    super(message);
+    this.name = "HermesRunFailure";
+  }
+}
+
 export type HermesChatState = z.infer<typeof HermesChatStateSchema>;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const MAX_OUTPUT_BYTES = 96 * 1024;
@@ -134,6 +141,14 @@ function hermesActivitySummary(kind: HermesActivity["kind"], failed: boolean): s
   if (kind === "delegation") return failed ? "Delegated work failed." : "Delegated work completed.";
   if (kind === "file_change") return failed ? "File update failed." : "File update completed.";
   return failed ? "Tool failed." : "Tool completed.";
+}
+
+function hermesFailedActivityMessage(kind: HermesActivity["kind"]): string {
+  if (kind === "command") return "A command failed during this Run.";
+  if (kind === "web_search") return "A web search failed during this Run.";
+  if (kind === "delegation") return "Delegated work failed during this Run.";
+  if (kind === "file_change") return "A file update failed during this Run.";
+  return "A tool failed during this Run.";
 }
 
 function providerReference(prefix: string, value: string): string {
@@ -255,7 +270,7 @@ export function createHermesChatProviderAdapter(options: {
       const separator = separatorPending && emittedOutputBytes > 0 ? "\n\n" : "";
       const addedBytes = Buffer.byteLength(separator + text, "utf8");
       if (emittedOutputBytes + addedBytes > MAX_OUTPUT_BYTES) {
-        throw new Error("Hermes output exceeded limit");
+        throw new HermesRunFailure("run", "Hermes output exceeded limit");
       }
       pendingVisibleText += separator + text;
       emittedOutputBytes += addedBytes;
@@ -418,7 +433,7 @@ export function createHermesChatProviderAdapter(options: {
           abortRun = () => reject(new Error("Hermes Run aborted"));
           if (input.signal.aborted) return abortRun();
           input.signal.addEventListener("abort", abortRun, { once: true });
-          totalTimer = setTimeout(() => reject(new Error("Hermes Run timed out")), timeoutMs);
+          totalTimer = setTimeout(() => reject(new HermesRunFailure("timeout", "Hermes Run timed out")), timeoutMs);
           totalTimer.unref?.();
         });
         const withinRun = <T>(operation: Promise<T>) => Promise.race([operation, stopped]);
@@ -471,23 +486,23 @@ export function createHermesChatProviderAdapter(options: {
         const completionResult = await withinRun(completion.promise);
         if (!completionResult.ok) throw completionResult.error;
         const final = completionResult.value;
-        if (final.status === "error") throw new Error("Hermes Run failed");
-        if (final.status === "interrupted" && !input.signal.aborted) {
-          throw new Error("Hermes Run was interrupted");
-        }
         if (Buffer.byteLength(final.text, "utf8") > MAX_OUTPUT_BYTES) {
-          throw new Error("Hermes output exceeded limit");
+          throw new HermesRunFailure("run", "Hermes output exceeded limit");
         }
         const previewAlreadySealed = final.response_previewed
           && !currentSegment
           && final.text === lastSealedSegment;
         if (!previewAlreadySealed) {
           if (!final.text.startsWith(currentSegment)) {
-            throw new Error("Hermes final response did not match streamed output");
+            throw new HermesRunFailure("run", "Hermes final response did not match streamed output");
           }
           emitVisibleText(final.text.slice(currentSegment.length));
         }
         flushVisibleText(true);
+        if (final.status === "error") throw new HermesRunFailure("run", "Hermes Run failed");
+        if (final.status === "interrupted" && !input.signal.aborted) {
+          throw new HermesRunFailure("interrupted", "Hermes Run was interrupted");
+        }
         if (durableSessionId && durableSessionId !== resumeState?.sessionId) {
           queue.push(CanonicalProviderRunEventSchema.parse({
             type: "state.updated",
@@ -505,15 +520,25 @@ export function createHermesChatProviderAdapter(options: {
           }
         }
         console.warn("[chat/hermes] Provider Run failed:", error instanceof Error ? error.name : "UnknownError");
+        const safeFailure = failedActivityKind
+          ? { code: "run_failed" as const, safeMessage: hermesFailedActivityMessage(failedActivityKind) }
+          : error instanceof HermesRunFailure
+            ? {
+                code: "run_failed" as const,
+                safeMessage: error.reason === "interrupted"
+                  ? "The Hermes Run was interrupted before completion."
+                  : error.reason === "timeout" ? "The Hermes Run timed out." : "Hermes could not complete this Run.",
+              }
+            : {
+                code: "provider_unavailable" as const,
+                safeMessage: "The Hermes connection failed. Try again.",
+              };
         queue.push(CanonicalProviderRunEventSchema.parse({
           type: "run.completed",
           outcome: input.signal.aborted ? "aborted" : "failed",
           ...(input.signal.aborted ? {} : {
             error: {
-              code: "run_failed",
-              safeMessage: failedActivityKind === "command"
-                ? "A command failed during this Run."
-                : "The selected provider could not complete this Run. Check its connection and retry.",
+              ...safeFailure,
               retryable: true,
               recoveryActions: ["retry"],
             },
