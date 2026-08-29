@@ -17,7 +17,7 @@ Key principles:
 ## Tech Stack
 
 - **Runtime**: Node.js 24+, TypeScript 5.5+ strict, ES modules
-- **AI**: Claude Agent SDK V1 `query()` + `resume`, Opus 4.6
+- **AI**: Claude Agent SDK V1 `query()` + `resume`, Opus 5
 - **Frontend**: Next.js 16 (`proxy.ts` replaces middleware, Turbopack, React Compiler, `cacheComponents`), React 19
 - **Backend**: Hono (HTTP/WS gateway + channel adapters)
 - **Database**: PostgreSQL via Kysely for platform, kernel durable state, social, app, and user data. Do not add alternative embedded databases or ORMs for new persistence.

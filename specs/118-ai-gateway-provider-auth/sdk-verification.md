@@ -4,12 +4,14 @@
 
 **Target**: `@anthropic-ai/claude-agent-sdk@0.3.251`
 
-**Production version during this spike**: `0.2.79` (unchanged; the upgrade belongs to Phase 1)
+**Production version after Phase 1**: `0.3.240`, the newest release old enough
+to satisfy the workspace's seven-day `minimumReleaseAge` policy. The exact
+`0.3.251` compatibility job remains the forward-compatibility gate.
 
 ## Reproduce
 
-Install the target SDK outside the repository so this spike does not alter the
-production dependency or lockfile:
+Install the forward target SDK outside the repository so the compatibility job
+does not alter the production dependency or lockfile:
 
 ```bash
 mkdir -p /private/tmp/matrix-agent-sdk-03251
@@ -80,3 +82,17 @@ times.
 5. Run one bounded authenticated owner-profile turn and one Cloudflare Unified
    Billing turn in a secret-bearing environment before rollout. The deterministic
    fake-provider suite remains the required regression gate.
+
+## Phase 1 implementation status
+
+- Production dependencies are pinned to `0.3.240`; the lockfile resolves the
+  matching platform packages and MCP SDK peer range.
+- V1 `query()` plus `resume` remains the kernel path.
+- Skills use `skills: "all"`; the deprecated `Skill` allowlist entry is gone.
+- Claude Fable 5, Opus 5, Sonnet 5, and Haiku 4.5 are the current catalog.
+  Existing 4.x model IDs remain valid legacy choices and are never rewritten.
+- Effort and adaptive thinking are emitted only for models whose current API
+  contract supports them. Claude 5 exposes `xhigh`; Haiku and unknown/custom
+  models receive neither field.
+- Results normalize cumulative `modelUsage`, and no-fallback refusals reach the
+  shell as a safe generic terminal error.

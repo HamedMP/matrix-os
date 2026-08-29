@@ -104,7 +104,7 @@ describe("loadKernelConfigFile", () => {
 
     writeFileSync(join(homePath, "system", "config.json"), "{not json");
     await expect(resolveKernelConfigFileAsync(homePath)).resolves.toEqual({
-      model: "claude-opus-4-6",
+      model: "claude-opus-5",
       effort: "high",
     });
   });
@@ -117,7 +117,7 @@ describe("loadKernelConfigFile", () => {
 
     expect(loadKernelConfigFile(homePath)).toEqual({});
     await expect(resolveKernelConfigFileAsync(homePath)).resolves.toEqual({
-      model: "claude-opus-4-6",
+      model: "claude-opus-5",
       effort: "high",
     });
   });

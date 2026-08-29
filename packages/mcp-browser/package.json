@@ -18,7 +18,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.39",
+    "@anthropic-ai/claude-agent-sdk": "0.3.240",
     "@matrix-os/kernel": "workspace:*",
     "zod": "^4.4.3"
   },

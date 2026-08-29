@@ -526,7 +526,7 @@ describe("T135: System info", () => {
 
     const info = getSystemInfo(homePath);
 
-    expect(info.model).toBe("claude-opus-4-6");
+    expect(info.model).toBe("claude-opus-5");
     expect(info.effort).toBe("high");
     rmSync(homePath, { recursive: true, force: true });
   });
@@ -537,7 +537,7 @@ describe("T135: System info", () => {
 
     const info = getSystemInfo(homePath);
 
-    expect(info.model).toBe("claude-opus-4-6");
+    expect(info.model).toBe("claude-opus-5");
     expect(info.effort).toBe("high");
     rmSync(homePath, { recursive: true, force: true });
   });
