@@ -145,7 +145,7 @@ describe("ChatTab", () => {
     const receipt = screen.getByRole("button", { name: "Worked for 12s" });
     expect(receipt.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("I’ll inspect it.")).toBeNull();
-    expect(screen.queryByRole("button", { name: "2 previous tool calls" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "2 previous activities" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
     expect(screen.getByText("The repository is clean.")).toBeTruthy();
 
@@ -153,7 +153,7 @@ describe("ChatTab", () => {
     expect(receipt.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("I’ll inspect it.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "2 previous tool calls" }));
+    fireEvent.click(screen.getByRole("button", { name: "2 previous activities" }));
     expect(screen.getByRole("button", { name: "Searched tools: repository tools" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Read file: README.md" })).toBeTruthy();
 
@@ -315,9 +315,10 @@ describe("ChatTab", () => {
     const failureNotice = screen.getByRole("status", { name: "Agent work failed" });
     expect(failureNotice.textContent).toContain("Agent work failed");
     expect(failureNotice.textContent).toContain("The command failed.");
-    expect(failureNotice.className).toContain("rounded-xl");
-    expect(failureNotice.style.background).toContain("var(--danger)");
-    expect(failureNotice.style.borderColor).toBe("");
+    expect(failureNotice.className).toContain("rounded-none");
+    expect(failureNotice.className).toContain("border-l-2");
+    expect(failureNotice.style.background).toBe("");
+    expect(failureNotice.style.borderColor).toBe("var(--danger)");
     expect(screen.queryByRole("button", { name: "Running command: bun run test" })).toBeNull();
   });
 
