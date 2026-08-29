@@ -119,6 +119,8 @@ describe("canonical coding Chat Provider adapter", () => {
         toolCallId: "tool_command",
         displayName: "Run focused tests",
         kind: "command",
+        preview: "bun run test tests/desktop/canonical-chat-presentation.test.ts",
+        previewKind: "command",
       }),
       event({
         type: "tool.output",
@@ -147,6 +149,8 @@ describe("canonical coding Chat Provider adapter", () => {
         kind: "command",
         label: "Run focused tests",
         status: "running",
+        preview: "bun run test tests/desktop/canonical-chat-presentation.test.ts",
+        previewKind: "command",
       },
       {
         type: "agent.activity",
@@ -155,6 +159,8 @@ describe("canonical coding Chat Provider adapter", () => {
         label: "Run focused tests",
         status: "failed",
         summary: "Command failed.",
+        preview: "bun run test tests/desktop/canonical-chat-presentation.test.ts",
+        previewKind: "command",
       },
       { type: "run.completed", outcome: "failed" },
     ]);
@@ -225,8 +231,8 @@ describe("canonical coding Chat Provider adapter", () => {
 
     expect(events).toEqual([
       { type: "state.updated", state: { conversationId: "thread_native" } },
-      { type: "assistant.delta", delta: "I'll run the requested command." },
-      { type: "assistant.delta", delta: "\n\n# Verification\n\n- Complete" },
+      { type: "assistant.delta", messageId: "msg_commentary", delta: "I'll run the requested command." },
+      { type: "assistant.delta", messageId: "msg_final", delta: "# Verification\n\n- Complete" },
       { type: "run.completed", outcome: "completed" },
     ]);
   });

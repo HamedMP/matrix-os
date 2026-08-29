@@ -123,6 +123,130 @@ describe("canonical Chat presentation adapter", () => {
     expect(presented?.final).toMatchObject({ markdown: "Finished summary", copyText: "Finished summary" });
   });
 
+  it("preserves inline user references and image previews in authored order", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const user = {
+      ...snapshot.messages[0]!,
+      parts: [
+        { type: "text" as const, text: "/matrix-app-builder create a game in [apps](apps) using this screenshot" },
+        {
+          type: "invocation_reference" as const,
+          invocation: { kind: "skill" as const, descriptorId: "matrix-app-builder", invocation: "/matrix-app-builder" },
+        },
+        {
+          type: "resource_reference" as const,
+          resource: { kind: "folder" as const, id: "apps", label: "apps" },
+        },
+        {
+          type: "attachment_reference" as const,
+          attachmentId: "attachment_screenshot",
+          kind: "image" as const,
+          label: "Screenshot.png",
+          mimeType: "image/png",
+          ownerReference: "temporary/desktop-chat/Screenshot.png",
+        },
+      ],
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [user],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+
+    expect(presented?.user?.content).toEqual([
+      { kind: "reference", id: "matrix-app-builder", referenceKind: "invocation", label: "/matrix-app-builder" },
+      { kind: "text", text: " create a game in " },
+      { kind: "reference", id: "apps", referenceKind: "resource", label: "apps" },
+      { kind: "text", text: " using this screenshot" },
+      {
+        kind: "image",
+        id: "attachment_screenshot",
+        label: "Screenshot.png",
+        src: "/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png",
+      },
+    ]);
+  });
+
+  it("keeps process text and activities in one chronological Work timeline and only the last result outside", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const run = snapshot.runs[0]!;
+    const assistant = (id: string, seq: number, text: string, createdAt: string) => ({
+      id,
+      chatId: snapshot.chat.id,
+      seq,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text }],
+      createdAt,
+    });
+    const processOne = assistant("msg_process_one", 2, "I’ll inspect the project first.", "2026-08-26T00:00:01.000Z");
+    const processTwo = assistant("msg_process_two", 3, "The failing command points to the build step.", "2026-08-26T00:00:03.000Z");
+    const result = assistant("msg_result", 4, "The game is ready in ~/apps/flappy-bird.", "2026-08-26T00:00:05.000Z");
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, processOne, processTwo, result],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [{
+        id: "activity_command",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "agent.activity",
+        activityId: "command_build",
+        kind: "command",
+        label: "Run build",
+        status: "completed",
+        preview: "pnpm build",
+        previewKind: "command",
+        detail: "Completed in ~/apps/flappy-bird",
+        occurredAt: "2026-08-26T00:00:02.000Z",
+      }],
+    });
+
+    expect(presented?.work.map((item) => item.id)).toEqual([
+      "msg_process_one",
+      `${run.id}:activities:activity_command`,
+      "msg_process_two",
+    ]);
+    expect(presented?.final).toMatchObject({
+      id: "msg_result",
+      markdown: "The game is ready in ~/apps/flappy-bird.",
+    });
+  });
+
+  it("keeps live assistant process text inside Working until a terminal result exists", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [{
+        id: "activity_delta",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "assistant.delta",
+        messageId: "msg_live_process",
+        delta: "I’m checking the build output.",
+        occurredAt: "2026-08-26T00:00:01.000Z",
+      }],
+    });
+
+    expect(presented?.work).toContainEqual(expect.objectContaining({
+      id: "msg_live_process",
+      kind: "message",
+      phase: "commentary",
+      markdown: "I’m checking the build output.",
+    }));
+    expect(presented?.final).toBeUndefined();
+  });
+
   it("projects typed activity in durable server sequence with partial state intact", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;

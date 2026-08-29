@@ -110,6 +110,87 @@ describe("provider-neutral conversation transcript", () => {
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(longMessage));
   });
 
+  it("renders skill and folder references inline with user text and shows uploaded images", () => {
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-inline-user-content",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: false,
+      user: {
+        kind: "message",
+        id: "message-inline-user",
+        role: "user",
+        phase: "commentary",
+        markdown: "/matrix-app-builder create a game in [apps](apps) using this screenshot",
+        copyText: "/matrix-app-builder create a game in [apps](apps) using this screenshot",
+        timestamp: 1_000,
+        content: [
+          { kind: "reference", id: "matrix-app-builder", referenceKind: "invocation", label: "/matrix-app-builder" },
+          { kind: "text", text: " create a game in " },
+          { kind: "reference", id: "apps", referenceKind: "resource", label: "apps" },
+          { kind: "text", text: " using this screenshot" },
+          {
+            kind: "image",
+            id: "attachment-screenshot",
+            label: "Screenshot.png",
+            src: "/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png",
+          },
+        ],
+      },
+      work: [],
+    }];
+
+    render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
+
+    const bubble = screen.getByText("create a game in", { exact: false }).closest('[data-slot="bubble-content"]');
+    expect(bubble).toBeTruthy();
+    expect(screen.getByText("/matrix-app-builder")).toBeTruthy();
+    expect(screen.getByText("apps")).toBeTruthy();
+    expect(screen.queryByText("[apps](apps)")).toBeNull();
+    const screenshot = screen.getByRole("img", { name: "Screenshot.png" });
+    expect(screenshot.getAttribute("src")).toBe("/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png");
+  });
+
+  it("uses a rotating progress indicator and a compact terminal failure outcome", () => {
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-running-command",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: true,
+      work: [{
+        kind: "activity-group",
+        id: "activities-running",
+        activities: [{
+          id: "activity-running",
+          kind: "command",
+          state: "running",
+          label: "Run build",
+          preview: "pnpm build",
+          previewKind: "command",
+        }],
+      }],
+      final: {
+        kind: "notice",
+        id: "run-failed",
+        phase: "final",
+        tone: "failed",
+        label: "Agent work failed",
+        markdown: "A command failed during this Run.",
+        timestamp: 2_000,
+      },
+    }];
+
+    render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
+
+    const activity = screen.getByRole("button", { name: "Run build: pnpm build" });
+    const progress = activity.querySelector("svg:last-of-type");
+    expect(progress?.getAttribute("class")).toContain("animate-spin");
+    expect(progress?.getAttribute("class")).not.toContain("status-pulse");
+    const failure = screen.getByRole("status", { name: "Agent work failed" });
+    expect(failure.className).not.toContain("rounded-xl");
+    expect(failure.getAttribute("style") ?? "").not.toContain("background:");
+  });
+
   it("renders provider-neutral approval actions through transcript callbacks", async () => {
     const performAction = vi.fn(async () => {});
     const turns: ConversationTurnPresentation[] = [{

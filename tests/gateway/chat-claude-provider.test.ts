@@ -79,6 +79,85 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("projects Claude tool activity and safe published process text through the provider-neutral seam", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        session_id: "claude_activity_session",
+        model: "claude-sonnet-4-6",
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "thinking",
+            thinking: "Inspecting the manifest before building.",
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "tool_build",
+            name: "Bash",
+            input: {
+              command: "pnpm build",
+              cwd: "/home/matrix/home/apps/flappy-bird",
+              headers: { Authorization: "Bearer secret-value" },
+            },
+          },
+        },
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 1 } }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Built the app in ~/apps/flappy-bird." } } }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "Built the app in ~/apps/flappy-bird.",
+        session_id: "claude_activity_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual(expect.arrayContaining([
+      {
+        type: "agent.activity",
+        activityId: "reasoning_0",
+        kind: "reasoning",
+        label: "Thinking",
+        status: "running",
+        summary: "Inspecting the manifest before building.",
+      },
+      {
+        type: "agent.activity",
+        activityId: "tool_build",
+        kind: "command",
+        label: "Run command",
+        status: "running",
+        preview: "pnpm build",
+        previewKind: "command",
+        detail: "Working directory: ~/apps/flappy-bird",
+      },
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_build",
+        status: "completed",
+      }),
+    ]));
+    expect(JSON.stringify(events)).not.toMatch(/secret-value|Authorization|\/home\/matrix\/home/);
+  });
+
   it("coalesces a healthy long Claude text stream instead of failing on total event count", async () => {
     const deltas = Array.from({ length: 600 }, () => JSON.stringify({
       type: "stream_event",

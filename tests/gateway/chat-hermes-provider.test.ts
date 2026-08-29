@@ -304,6 +304,74 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|API_TOKEN|Authorization|raw page|raw delegated|private query/);
   });
 
+  it("projects safe Hermes command, file, and published reasoning details without raw payloads", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("status.update", { kind: "working", text: "Inspecting the app structure" });
+    gateway.event("reasoning.available", { text: "The build output points to the manifest.", verbose: false });
+    gateway.event("tool.start", {
+      tool_id: "tool_command",
+      name: "terminal",
+      args: {
+        command: "pnpm build",
+        cwd: "/home/matrix/home/apps/flappy-bird",
+        env: { API_TOKEN: "secret-value" },
+      },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_command",
+      name: "terminal",
+      result: { success: true, output: "private file content" },
+    });
+    gateway.event("message.complete", {
+      text: "Created the game at /home/matrix/home/apps/flappy-bird.",
+      status: "complete",
+    });
+
+    const events = await eventsPromise;
+    expect(events).toEqual(expect.arrayContaining([
+      {
+        type: "agent.activity",
+        activityId: "status_working",
+        kind: "phase",
+        label: "Working",
+        status: "running",
+        summary: "Inspecting the app structure",
+      },
+      {
+        type: "agent.activity",
+        activityId: "reasoning_summary",
+        kind: "reasoning",
+        label: "Reasoning",
+        status: "completed",
+        summary: "The build output points to the manifest.",
+      },
+      {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "running",
+        preview: "pnpm build",
+        previewKind: "command",
+        detail: "Working directory: ~/apps/flappy-bird",
+      },
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        status: "completed",
+        preview: "pnpm build",
+        previewKind: "command",
+      }),
+      { type: "assistant.delta", delta: "Created the game at ~/apps/flappy-bird." },
+    ]));
+    expect(JSON.stringify(events)).not.toMatch(/secret-value|API_TOKEN|private file content|\/home\/matrix\/home/);
+  });
+
   it("yields assistant text before the Hermes process completes", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({
