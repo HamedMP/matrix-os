@@ -404,6 +404,35 @@ export const CanonicalChatSafeErrorSchema = z.object({
   }
 });
 
+export const CanonicalChatAgentActivityKindSchema = z.enum([
+  "phase",
+  "reasoning",
+  "plan",
+  "command",
+  "file_change",
+  "mcp_tool",
+  "dynamic_tool",
+  "delegation",
+  "web_search",
+  "image_inspection",
+]);
+
+export const CanonicalChatAgentActivityStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+  "partial",
+]);
+
+export const CanonicalChatAgentActivityPayloadSchema = z.object({
+  activityId: canonicalReferenceId(128),
+  kind: CanonicalChatAgentActivityKindSchema,
+  label: canonicalSafeLabel(240, 960),
+  status: CanonicalChatAgentActivityStatusSchema,
+  summary: canonicalSafeLabel(1_000, 4_000).optional(),
+}).strict();
+
 export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("run.status"),
@@ -438,6 +467,10 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     toolCallId: canonicalReferenceId(128),
     label: canonicalSafeLabel(240, 960),
     status: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("agent.activity"),
+    ...CanonicalChatAgentActivityPayloadSchema.shape,
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("review.ready"),
@@ -508,3 +541,5 @@ export type CanonicalChatMessagePart = z.infer<typeof CanonicalChatMessagePartSc
 export type CanonicalChatMessage = z.infer<typeof CanonicalChatMessageSchema>;
 export type CanonicalChatRunActivity = z.infer<typeof CanonicalChatRunActivitySchema>;
 export type CanonicalChatSafeError = z.infer<typeof CanonicalChatSafeErrorSchema>;
+export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentActivityKindSchema>;
+export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;

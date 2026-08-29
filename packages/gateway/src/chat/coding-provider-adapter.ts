@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   AgentModeSchema,
   CanonicalChatSafeErrorSchema,
+  type CanonicalChatAgentActivityKind,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
   type CreateAgentThreadRequest,
@@ -56,13 +57,46 @@ function safeResourceId(path: string): string {
   return `file_${createHash("sha256").update(path).digest("hex").slice(0, 32)}`;
 }
 
-function normalizeEvent(event: AgentThreadEvent): CanonicalProviderRunEvent[] {
+interface ToolActivity {
+  label: string;
+  kind?: CanonicalChatAgentActivityKind;
+}
+
+function activityKind(kind: string): CanonicalChatAgentActivityKind | undefined {
+  if (kind === "command") return "command";
+  if (kind === "file_change") return "file_change";
+  if (kind === "mcp_tool") return "mcp_tool";
+  if (kind === "dynamic_tool") return "dynamic_tool";
+  if (kind === "agent" || kind === "delegation") return "delegation";
+  if (kind === "search" || kind === "web_search") return "web_search";
+  if (kind === "plan") return "plan";
+  if (kind === "phase") return "phase";
+  if (kind === "reasoning") return "reasoning";
+  if (kind === "image" || kind === "image_inspection") return "image_inspection";
+  return undefined;
+}
+
+function normalizeEvent(
+  event: AgentThreadEvent,
+  toolActivities: Map<string, ToolActivity>,
+): CanonicalProviderRunEvent[] {
   if (event.type === "assistant.text.delta") {
     return [CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta: event.delta })];
   }
   if (event.type === "tool.started") {
-    return [CanonicalProviderRunEventSchema.parse({
-      type: "tool.progress", toolCallId: event.toolCallId, label: event.displayName, status: "running",
+    const toolActivity = { label: event.displayName, kind: activityKind(event.kind) };
+    toolActivities.set(event.toolCallId, toolActivity);
+    return [CanonicalProviderRunEventSchema.parse(toolActivity.kind ? {
+      type: "agent.activity",
+      activityId: event.toolCallId,
+      kind: toolActivity.kind,
+      label: toolActivity.label,
+      status: "running",
+    } : {
+      type: "tool.progress",
+      toolCallId: event.toolCallId,
+      label: toolActivity.label,
+      status: "running",
     })];
   }
   if (event.type === "tool.output") {
@@ -77,10 +111,18 @@ function normalizeEvent(event: AgentThreadEvent): CanonicalProviderRunEvent[] {
     })];
   }
   if (event.type === "tool.completed") {
-    return [CanonicalProviderRunEventSchema.parse({
+    const toolActivity = toolActivities.get(event.toolCallId);
+    toolActivities.delete(event.toolCallId);
+    return [CanonicalProviderRunEventSchema.parse(toolActivity?.kind ? {
+      type: "agent.activity",
+      activityId: event.toolCallId,
+      kind: toolActivity.kind,
+      label: toolActivity.label,
+      status: event.outcome === "success" ? "completed" : event.outcome,
+    } : {
       type: "tool.progress",
       toolCallId: event.toolCallId,
-      label: "Tool",
+      label: toolActivity?.label ?? "Tool",
       status: event.outcome === "success" ? "completed" : event.outcome,
     })];
   }
@@ -210,6 +252,7 @@ async function* normalizedEvents(
   inbox: ThreadEventInbox,
 ): AsyncGenerator<CanonicalProviderRunEvent> {
   const recentEventIds = new Set<string>();
+  const toolActivities = new Map<string, ToolActivity>();
   let batch: AgentThreadEvent[] | null = initial;
   while (batch !== null) {
     for (const event of batch) {
@@ -219,7 +262,7 @@ async function* normalizedEvents(
         if (oldest !== undefined) recentEventIds.delete(oldest);
       }
       recentEventIds.add(event.eventId);
-      for (const normalized of normalizeEvent(event)) {
+      for (const normalized of normalizeEvent(event, toolActivities)) {
         yield normalized;
         if (normalized.type === "run.completed") return;
       }

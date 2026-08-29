@@ -1,4 +1,5 @@
 import {
+  CanonicalChatAgentActivityPayloadSchema,
   CanonicalChatMessagePartSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
@@ -15,6 +16,9 @@ const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Z
 
 export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("assistant.delta"), delta: z.string().min(1).max(4_000) }).strict(),
+  CanonicalChatAgentActivityPayloadSchema.extend({
+    type: z.literal("agent.activity"),
+  }).strict(),
   z.object({
     type: z.literal("tool.progress"),
     toolCallId: SafeProviderRefSchema,
