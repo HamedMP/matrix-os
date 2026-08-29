@@ -6,13 +6,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import BrowserTab from "@desktop/renderer/src/features/browser/BrowserTab";
 import { invoke } from "@desktop/renderer/src/lib/operator";
 
+const mocks = vi.hoisted(() => ({ embedRender: vi.fn() }));
+
 vi.mock("@desktop/renderer/src/lib/operator", () => ({ invoke: vi.fn() }));
 vi.mock("@desktop/renderer/src/features/embeds/EmbedHost", () => ({
-  default: ({ kind, url }: { kind: string; url: string }) => <div data-testid="embed">{kind}:{url}</div>,
+  default: ({ kind, url }: { kind: string; url: string }) => {
+    mocks.embedRender(kind, url);
+    return <div data-testid="embed">{kind}:{url}</div>;
+  },
 }));
 
 describe("BrowserTab", () => {
-  beforeEach(() => vi.mocked(invoke).mockReset());
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    mocks.embedRender.mockReset();
+  });
 
   it("keeps loopback navigation inside the selected runtime embed", () => {
     render(<BrowserTab active />);
@@ -24,6 +32,18 @@ describe("BrowserTab", () => {
 
     expect(screen.getByTestId("embed").textContent).toBe("browser:http://127.0.0.1:3000/docs");
     expect(invoke).not.toHaveBeenCalledWith("shell:open-external", expect.anything());
+  });
+
+  it("remounts the runtime embed when the same normalized address is submitted again", () => {
+    render(<BrowserTab active />);
+    const address = screen.getByRole("textbox", { name: "Browser address" });
+    fireEvent.change(address, { target: { value: "127.0.0.1:3000/docs" } });
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    const renderCount = mocks.embedRender.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+
+    expect(mocks.embedRender.mock.calls.length).toBeGreaterThan(renderCount);
   });
 
   it("opens public URLs and searches in the local browser", async () => {

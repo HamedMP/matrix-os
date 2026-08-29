@@ -41,6 +41,7 @@ export default function EmbedHost({
   const lastRefreshRequestRef = useRef(refreshRequest);
   activeRef.current = active;
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
+  const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
 
   const reportBounds = useCallback((): void => {
@@ -62,6 +63,7 @@ export default function EmbedHost({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    embedIdRef.current = null;
     setState("loading");
     let disposed = false;
     let offState: (() => void) | null = null;
@@ -127,10 +129,11 @@ export default function EmbedHost({
       window.removeEventListener("resize", onWindowResize);
       offState?.();
       const id = embedIdRef.current;
+      embedIdRef.current = null;
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdentity, kind, runtimeSlot, slug, url]);
+  }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url]);
 
   // Attach/detach the native view as the hosting tab activates/deactivates.
   useEffect(() => {
@@ -208,10 +211,19 @@ export default function EmbedHost({
         </div>
       ) : null}
       {state === "failed" ? (
-        <div className="absolute inset-0 flex items-center justify-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
             Couldn't load this surface.
           </span>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setState("loading");
+              setRetryRevision((revision) => revision + 1);
+            }}
+          >
+            Try again
+          </Button>
         </div>
       ) : null}
     </div>

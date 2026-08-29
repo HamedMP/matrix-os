@@ -15,6 +15,7 @@ export default function BrowserTab({
 }) {
   const [address, setAddress] = useState("");
   const [runtimeUrl, setRuntimeUrl] = useState<string | null>(null);
+  const [runtimeNavigationRevision, setRuntimeNavigationRevision] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
 
   const navigate = (event: FormEvent) => {
@@ -28,6 +29,7 @@ export default function BrowserTab({
     if (resolved.disposition === "runtime") {
       setAddress(resolved.url);
       setRuntimeUrl(resolved.url);
+      setRuntimeNavigationRevision((revision) => revision + 1);
       return;
     }
     setRuntimeUrl(null);
@@ -67,7 +69,7 @@ export default function BrowserTab({
       </form>
       {runtimeUrl ? (
         <EmbedHost
-          key={runtimeUrl}
+          key={`${runtimeUrl}:${runtimeNavigationRevision}`}
           kind="browser"
           url={runtimeUrl}
           active={active}
