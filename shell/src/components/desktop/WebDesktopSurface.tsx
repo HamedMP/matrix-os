@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
-import type { DesktopIconPlacement } from "@/stores/desktop-config";
+import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   Blocks,
@@ -258,6 +258,7 @@ export function WebDesktopSurface({
   onRemoveDesktopIcon,
 }: WebDesktopSurfaceProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const primeDesktopIcons = useDesktopConfigStore((state) => state.primeDesktopIcons);
   const desktopApps = useMemo(() => {
     const preferred = [
       apps.find((app) => app.path === "__chat__")
@@ -280,11 +281,15 @@ export function WebDesktopSurface({
       return true;
     });
   }, [apps]);
-  const placements = useMemo<DesktopIconPlacement[]>(() => desktopIcons ?? desktopApps.map((app, index) => ({
+  const defaultPlacements = useMemo<DesktopIconPlacement[]>(() => desktopApps.map((app, index) => ({
     path: app.path,
     x: 20 + (index % 2) * 88,
     y: 20 + Math.floor(index / 2) * 92,
-  })), [desktopApps, desktopIcons]);
+  })), [desktopApps]);
+  useLayoutEffect(() => {
+    if (desktopIcons === undefined) primeDesktopIcons(defaultPlacements);
+  }, [defaultPlacements, desktopIcons, primeDesktopIcons]);
+  const placements = desktopIcons ?? defaultPlacements;
   const placedApps = useMemo(() => placements.flatMap((placement) => {
     const app = desktopApps.find((candidate) => candidate.path === placement.path)
       ?? apps.find((candidate) => candidate.path === placement.path);

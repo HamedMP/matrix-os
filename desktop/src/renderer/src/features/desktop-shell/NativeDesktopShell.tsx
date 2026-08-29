@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
@@ -75,6 +75,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const installedApps = useApps((state) => state.apps);
   const desktopIcons = useDesktopIcons((state) => state.icons);
+  const primeDesktopIcons = useDesktopIcons((state) => state.prime);
   const moveDesktopIcon = useDesktopIcons((state) => state.move);
   const removeDesktopIcon = useDesktopIcons((state) => state.remove);
   const addDesktopIcon = useDesktopIcons((state) => state.add);
@@ -87,6 +88,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     () => defaultDesktopIcons(FIXED_DESKTOP_APPS.map((app) => app.path)),
     [],
   );
+
+  useLayoutEffect(() => {
+    primeDesktopIcons(defaultIconLayout);
+  }, [defaultIconLayout, primeDesktopIcons]);
 
   const effectiveDesktopIcons = desktopIcons.length > 0 || useDesktopIcons.getState().loaded
     ? desktopIcons

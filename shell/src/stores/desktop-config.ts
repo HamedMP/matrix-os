@@ -31,6 +31,7 @@ interface DesktopConfigStore {
   setDock: (dock: DockConfig) => void;
   setPinnedApps: (apps: string[]) => void;
   setDockOrder: (order: DockOrder | undefined) => void;
+  primeDesktopIcons: (icons: DesktopIconPlacement[]) => void;
   setDesktopIcons: (icons: DesktopIconPlacement[] | undefined, expectedHydrationRevision?: number) => void;
   moveDesktopIcon: (path: string, x: number, y: number) => void;
   removeDesktopIcon: (path: string) => void;
@@ -49,9 +50,21 @@ let desktopIconMutationSequence = 0;
 let desktopIconStateEpoch = 0;
 let desktopIconHydrationRevision = 0;
 let confirmedDesktopIcons: DesktopIconPlacement[] | undefined;
+let hasConfirmedDesktopIcons = false;
+let unconfirmedDesktopHydrationRevision: number | null = null;
 
 export function captureWebDesktopIconsHydrationRevision(): number {
   return desktopIconHydrationRevision;
+}
+
+export function resetWebDesktopIconsRuntime(): void {
+  desktopIconMutationSequence += 1;
+  desktopIconStateEpoch += 1;
+  desktopIconHydrationRevision += 1;
+  confirmedDesktopIcons = undefined;
+  hasConfirmedDesktopIcons = false;
+  unconfirmedDesktopHydrationRevision = null;
+  useDesktopConfigStore.setState({ desktopIcons: undefined });
 }
 
 function copyDesktopIcons(icons: readonly DesktopIconPlacement[] | undefined): DesktopIconPlacement[] | undefined {
@@ -80,25 +93,42 @@ function persistDesktopPatch(patch: Record<string, unknown>): Promise<void> {
 }
 
 function applyDesktopIconMutation(
+  previousIcons: DesktopIconPlacement[],
   icons: DesktopIconPlacement[],
   set: (partial: Partial<DesktopConfigStore>) => void,
 ): void {
   const sequence = ++desktopIconMutationSequence;
   const epoch = desktopIconStateEpoch;
+  const rollbackIcons = copyDesktopIcons(previousIcons) ?? [];
   const snapshot = copyDesktopIcons(icons) ?? [];
+  if (!hasConfirmedDesktopIcons && unconfirmedDesktopHydrationRevision === null) {
+    unconfirmedDesktopHydrationRevision = desktopIconHydrationRevision;
+  }
   desktopIconHydrationRevision += 1;
   set({ desktopIcons: snapshot });
+  let restoredPendingHydration = false;
   void persistDesktopPatch({ desktopIcons: snapshot }).then(() => {
     if (epoch === desktopIconStateEpoch && sequence <= desktopIconMutationSequence) {
       confirmedDesktopIcons = copyDesktopIcons(snapshot);
+      hasConfirmedDesktopIcons = true;
+      unconfirmedDesktopHydrationRevision = null;
     }
   }).catch((error: unknown) => {
     console.warn("[desktop-config] desktopIcons persist failed:", error instanceof Error ? error.name : typeof error);
     if (epoch === desktopIconStateEpoch && sequence === desktopIconMutationSequence) {
-      set({ desktopIcons: copyDesktopIcons(confirmedDesktopIcons) });
+      if (hasConfirmedDesktopIcons) {
+        set({ desktopIcons: copyDesktopIcons(confirmedDesktopIcons) });
+      } else {
+        set({ desktopIcons: rollbackIcons });
+        if (unconfirmedDesktopHydrationRevision !== null) {
+          desktopIconHydrationRevision = unconfirmedDesktopHydrationRevision;
+          unconfirmedDesktopHydrationRevision = null;
+          restoredPendingHydration = true;
+        }
+      }
     }
   }).finally(() => {
-    if (epoch === desktopIconStateEpoch) desktopIconHydrationRevision += 1;
+    if (epoch === desktopIconStateEpoch && !restoredPendingHydration) desktopIconHydrationRevision += 1;
   });
 }
 
@@ -110,6 +140,10 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   setDock: (dock) => set({ dock }),
   setPinnedApps: (pinnedApps) => set({ pinnedApps }),
   setDockOrder: (dockOrder) => set({ dockOrder }),
+  primeDesktopIcons: (icons) => {
+    if (get().desktopIcons !== undefined) return;
+    set({ desktopIcons: copyDesktopIcons(icons) });
+  },
   setDesktopIcons: (desktopIcons, expectedHydrationRevision) => {
     if (expectedHydrationRevision !== undefined
       && expectedHydrationRevision !== desktopIconHydrationRevision) return;
@@ -117,6 +151,8 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     desktopIconStateEpoch += 1;
     desktopIconHydrationRevision += 1;
     confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
+    hasConfirmedDesktopIcons = true;
+    unconfirmedDesktopHydrationRevision = null;
     set({ desktopIcons: copyDesktopIcons(desktopIcons) });
   },
   moveDesktopIcon: (path, x, y) => {
@@ -126,11 +162,12 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
       x: Math.max(0, Math.min(MAX_DESKTOP_COORDINATE, Math.round(x))),
       y: Math.max(0, Math.min(MAX_DESKTOP_COORDINATE, Math.round(y))),
     } : icon);
-    applyDesktopIconMutation(next, set);
+    applyDesktopIconMutation(current, next, set);
   },
   removeDesktopIcon: (path) => {
-    const next = (get().desktopIcons ?? []).filter((icon) => icon.path !== path);
-    applyDesktopIconMutation(next, set);
+    const current = get().desktopIcons ?? [];
+    const next = current.filter((icon) => icon.path !== path);
+    applyDesktopIconMutation(current, next, set);
   },
   addDesktopIcon: (path) => {
     const current = get().desktopIcons ?? [];
@@ -145,7 +182,7 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
       }
     }
     const next = [...current, { path, ...slot }];
-    applyDesktopIconMutation(next, set);
+    applyDesktopIconMutation(current, next, set);
   },
   togglePin: (path) => {
     const current = get().pinnedApps ?? [];

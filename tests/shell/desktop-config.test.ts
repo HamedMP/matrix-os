@@ -4,6 +4,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   captureWebDesktopIconsHydrationRevision,
+  resetWebDesktopIconsRuntime,
   useDesktopConfigStore,
   type DockConfig,
 } from "../../shell/src/stores/desktop-config";
@@ -45,6 +46,7 @@ describe("Desktop config", () => {
       pinnedApps: [...DEFAULT_PINNED_APPS],
       desktopIcons: undefined,
     });
+    resetWebDesktopIconsRuntime();
     vi.restoreAllMocks();
     resetDesktopConfigRuntimeCacheForTests();
     window.history.replaceState({}, "", "/");
@@ -294,6 +296,25 @@ describe("Desktop config", () => {
     useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
 
     await waitFor(() => expect(useDesktopConfigStore.getState().desktopIcons).toEqual(confirmed));
+  });
+
+  it("allows pending web settings hydration after an initial icon write fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+    const defaults = [
+      { path: "__chat__", x: 20, y: 58 },
+      { path: "__terminal__", x: 108, y: 58 },
+    ];
+    const serverIcons = [defaults[1]];
+    const pendingHydrationRevision = captureWebDesktopIconsHydrationRevision();
+    useDesktopConfigStore.getState().primeDesktopIcons(defaults);
+
+    useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    await waitFor(() => expect(useDesktopConfigStore.getState().desktopIcons).toEqual(defaults));
+    useDesktopConfigStore.getState().setDesktopIcons(serverIcons, pendingHydrationRevision);
+
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual(serverIcons);
   });
 
   it("ignores stale web Desktop icon hydration after a successful PATCH", async () => {
