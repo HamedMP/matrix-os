@@ -95,7 +95,7 @@ Matrix-funded access is an access source, not an Anthropic login. This distincti
 | `capabilities` | bounded set | Context/output limits, tools, vision, reasoning, etc. |
 | `effortControls` | bounded set | Only controls accepted by this model/transport |
 | `accessEligibility` | bounded set | Which access-source classes may use it |
-| `dataPolicy` | object | Retention/ZDR disclosure key, not arbitrary copy |
+| `dataPolicies` | bounded object array | One route/disclosure key per eligible access source, so Matrix-relay and owner-direct paths remain distinct |
 | `aliases` | bounded array | Compatibility only; never ambiguous |
 | `catalogVersion` | bounded string | Required |
 
