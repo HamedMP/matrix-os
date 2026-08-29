@@ -136,6 +136,30 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("coalesces fine-grained Hermes deltas below the canonical activity limit", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: gateway.spawnFn,
+    });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    const response = "x".repeat(600);
+    for (const character of response) {
+      gateway.event("message.delta", { text: character });
+    }
+    gateway.event("message.complete", { text: response, status: "complete" });
+
+    const events = await eventsPromise;
+    const deltas = events.filter((event): event is { type: "assistant.delta"; delta: string } => (
+      typeof event === "object" && event !== null && (event as { type?: unknown }).type === "assistant.delta"
+    ));
+    expect(deltas.map(({ delta }) => delta).join("")).toBe(response);
+    expect(deltas.length).toBeLessThan(100);
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("ignores global Hermes advisory events with an empty session id", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({
@@ -277,8 +301,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
 
     expect(await eventsPromise).toEqual([
       { type: "assistant.delta", delta: "interim answer" },
-      { type: "assistant.delta", delta: "\n\n" },
-      { type: "assistant.delta", delta: "final answer" },
+      { type: "assistant.delta", delta: "\n\nfinal answer" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);

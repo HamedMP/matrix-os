@@ -48,6 +48,10 @@ type HermesCompletionResult =
 export type HermesChatState = z.infer<typeof HermesChatStateSchema>;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const MAX_OUTPUT_BYTES = 96 * 1024;
+const DELTA_FLUSH_BYTES = 256;
+const DELTA_FLUSH_INTERVAL_MS = 50;
+// Reserve room in the 500-event canonical queue for a bounded final flush and terminal events.
+const MAX_LIVE_DELTA_EVENTS = 350;
 
 function selection(value: string): { provider: string; model: string } {
   const separator = value.indexOf(":");
@@ -76,15 +80,6 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function emitDelta(
-  queue: ReturnType<typeof createCanonicalCliEventQueue<CanonicalProviderRunEvent>>,
-  text: string,
-): void {
-  for (const delta of outputChunks(text)) {
-    queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
-  }
-}
-
 export function createHermesChatProviderAdapter(options: {
   homePath: string;
   spawnFn?: HermesGatewaySpawn;
@@ -109,8 +104,34 @@ export function createHermesChatProviderAdapter(options: {
     let currentSegment = "";
     let lastSealedSegment = "";
     let emittedOutputBytes = 0;
+    let emittedDeltaEvents = 0;
+    let pendingVisibleText = "";
+    let deltaFlushTimer: NodeJS.Timeout | undefined;
     let separatorPending = false;
     let completionSettled = false;
+
+    const flushVisibleText = (force = false) => {
+      if (!pendingVisibleText || (!force && emittedDeltaEvents >= MAX_LIVE_DELTA_EVENTS)) return;
+      if (deltaFlushTimer) {
+        clearTimeout(deltaFlushTimer);
+        deltaFlushTimer = undefined;
+      }
+      const text = pendingVisibleText;
+      pendingVisibleText = "";
+      for (const delta of outputChunks(text)) {
+        queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+        emittedDeltaEvents += 1;
+      }
+    };
+
+    const scheduleVisibleTextFlush = () => {
+      if (deltaFlushTimer || emittedDeltaEvents >= MAX_LIVE_DELTA_EVENTS) return;
+      deltaFlushTimer = setTimeout(() => {
+        deltaFlushTimer = undefined;
+        flushVisibleText();
+      }, DELTA_FLUSH_INTERVAL_MS);
+      deltaFlushTimer.unref?.();
+    };
 
     const emitVisibleText = (text: string) => {
       if (!text) return;
@@ -119,10 +140,17 @@ export function createHermesChatProviderAdapter(options: {
       if (emittedOutputBytes + addedBytes > MAX_OUTPUT_BYTES) {
         throw new Error("Hermes output exceeded limit");
       }
-      emitDelta(queue, separator);
-      emitDelta(queue, text);
+      pendingVisibleText += separator + text;
       emittedOutputBytes += addedBytes;
       separatorPending = false;
+      if (emittedDeltaEvents === 0) {
+        flushVisibleText();
+      } else if (emittedDeltaEvents < MAX_LIVE_DELTA_EVENTS
+        && Buffer.byteLength(pendingVisibleText, "utf8") >= DELTA_FLUSH_BYTES) {
+        flushVisibleText();
+      } else if (emittedDeltaEvents < MAX_LIVE_DELTA_EVENTS) {
+        scheduleVisibleTextFlush();
+      }
     };
 
     const handleEvent = (event: HermesGatewayEvent) => {
@@ -256,6 +284,7 @@ export function createHermesChatProviderAdapter(options: {
           }
           emitVisibleText(final.text.slice(currentSegment.length));
         }
+        flushVisibleText(true);
         if (durableSessionId && durableSessionId !== resumeState?.sessionId) {
           queue.push(CanonicalProviderRunEventSchema.parse({
             type: "state.updated",
@@ -264,6 +293,7 @@ export function createHermesChatProviderAdapter(options: {
         }
         queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "completed" }));
       } catch (error: unknown) {
+        flushVisibleText(true);
         if (input.signal.aborted && liveSessionId) {
           try {
             await client.request("session.interrupt", { session_id: liveSessionId }, 1_000);
@@ -285,6 +315,7 @@ export function createHermesChatProviderAdapter(options: {
           }),
         }));
       } finally {
+        if (deltaFlushTimer) clearTimeout(deltaFlushTimer);
         if (totalTimer) clearTimeout(totalTimer);
         if (abortRun) input.signal.removeEventListener("abort", abortRun);
         await client.close();
