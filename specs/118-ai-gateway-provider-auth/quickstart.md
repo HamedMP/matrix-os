@@ -5,7 +5,7 @@ This is the shortest safe route from the current code to a canary-funded Chat. I
 ## 1. Work only in the feature worktree
 
 ```bash
-cd /Users/hamed/dev/claude-tools/matrix-os-ai-gateway-provider-auth
+cd /path/to/matrix-os/.worktrees/unify-provider-account-state
 git status --short
 ```
 
@@ -102,3 +102,32 @@ Docker is only for local compatibility around legacy proxy packaging. It is not 
 ## 10. General availability gate
 
 Do not widen eligibility until the canary has stable spend/error/TTFT metrics, the spend fuse and kill switch have been exercised, leakage/auth suites pass, all PRs reach Greptile 5/5, public docs are merged, and rollback to owner-funded-only behavior is rehearsed.
+
+## 11. Phase 2 implementation record
+
+Phase 2 now has one gateway-owned V3 provider snapshot and compatibility projections for legacy Settings and canonical Chat. The decisive fixture is green across contracts, gateway catalog projection, web Chat, web Settings, and desktop Chat catalog normalization:
+
+```text
+Matrix AI: ready / included
+Anthropic account: not connected
+OpenRouter account: not connected
+Matrix Agent (Agent SDK): installed / ready
+Claude Sonnet 5: selectable only through Matrix AI
+```
+
+The web Chat picker derives choices only from ready provider instances, submits both the selected canonical model and its allowlisted access-source ID explicitly, and preserves local drafts while provider setup is inspected. The gateway carries that source through queued dispatch and credential resolution, so selecting Matrix-funded versus owner-funded access cannot collapse to an implicit credential preference. Settings renders access funding, owner accounts, harness health, and models as separate facts. The desktop continues to consume the canonical `/api/chat-providers` compatibility projection; the gateway now derives that catalog from the V3 snapshot, so the desktop does not introduce a second provider truth.
+
+Validation recorded on 2026-08-30:
+
+- Focused contract, gateway, web Chat/Settings, hook, and desktop tests passed.
+- `bun run typecheck`, `bun run check:patterns:diff`, and `bun run build:shell:production` passed.
+- Changed-scope React Doctor findings introduced by this layer were resolved before submission.
+- The full repository suite completed with 12,425 passing and 2 skipped tests. Ten unrelated macOS baseline failures remain: seven Linux host-script assumptions in `golden-snapshot-host-scripts.test.ts` (`stat -c` and `add-apt-repository`) and three interactive Bash handoff timeouts in `terminal-agent-options.test.ts`.
+- The normalized decisive fixture is explicitly tested to contain no key-shaped values, filesystem paths, raw errors, exception names, stacks, stderr, or stdout.
+
+Visual verification uses the real Settings truth cards and Chat provider setup surface with that decisive snapshot:
+
+- [Desktop Settings and Chat provider state](./assets/phase2-provider-state-desktop.jpg)
+- [Mobile Settings and Chat provider state](./assets/phase2-provider-state-mobile.jpg)
+
+Provider login mutations, funded relay activation, metering/add-ons, and broader harnesses remain deferred to their delivery-plan phases. Phase 2 does not change database state or silently infer that an owner account is connected from Matrix-funded access.

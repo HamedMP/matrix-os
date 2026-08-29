@@ -148,6 +148,7 @@ import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
+import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import {
@@ -2394,6 +2395,7 @@ export async function createGateway(config: GatewayConfig) {
                 }, undefined, abortController, {
                 model: parsed.model,
                 effort: parsed.effort,
+                accessSourceId: parsed.accessSourceId,
                 workingDirectory,
               })
               .catch((err: Error) => {
@@ -4146,6 +4148,7 @@ export async function createGateway(config: GatewayConfig) {
   await agentRuntimeServices.controller.reconcile();
   const aiProviderService = new AiProviderService({ homePath });
   const canonicalExecutableDriverKinds = [
+    "kernel" as const,
     "hermes" as const,
     ...(codingAgentProviders.some((provider) => provider.providerId === "claude")
       ? ["claude_code" as const]
@@ -4158,6 +4161,7 @@ export async function createGateway(config: GatewayConfig) {
   const canonicalChatProviderCatalog = createChatProviderCatalogService({
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
+    aiProviderSource: aiProviderService,
     executableDriverKinds: canonicalExecutableDriverKinds,
     skillsSource: () => loadSkills(homePath),
     ...(codexExecutable ? {
@@ -4174,6 +4178,7 @@ export async function createGateway(config: GatewayConfig) {
       worktrees: codingAgentWorktreeManager,
     });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
+      createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath }),
     ];
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {

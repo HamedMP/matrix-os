@@ -6,6 +6,7 @@ import type {
   AgentProviderDescriptor,
   AgentRuntimeId,
   AgentSettingsView,
+  AiProviderSnapshotV3,
 } from "@matrix-os/contracts";
 import {
   AlertTriangleIcon,
@@ -31,6 +32,10 @@ import {
   type NormalizedAgentSettings,
 } from "@/lib/agent-config";
 import type { TerminalLaunchAction } from "@/lib/terminal-launch";
+import {
+  deriveReadyModelChoices,
+  loadAiProviderSnapshot,
+} from "@/lib/ai-providers";
 import { HermesConfigurationDialog } from "./HermesConfigurationDialog";
 
 interface AgentRuntimePanelProps {
@@ -64,6 +69,91 @@ function StatusBadge({ state }: { state: string }) {
       {ready ? <CheckCircle2Icon className="size-3" /> : <AlertTriangleIcon className="size-3" />}
       {statusLabel(state)}
     </Badge>
+  );
+}
+
+function accountStateLabel(state: AiProviderSnapshotV3["accounts"][number]["state"]): string {
+  return state === "setup_required" ? "Not connected" : statusLabel(state);
+}
+
+function fundingLabel(kind: AiProviderSnapshotV3["accessSources"][number]["fundingKind"]): string {
+  if (kind === "matrix_included") return "Included";
+  if (kind === "matrix_addon") return "Matrix add-on";
+  return "Owner-funded";
+}
+
+export function ProviderTruthCards({ snapshot }: { snapshot: AiProviderSnapshotV3 }) {
+  const readyModels = deriveReadyModelChoices(snapshot);
+  return (
+    <div className="grid gap-4 xl:grid-cols-3">
+      <Card role="region" aria-label="AI access">
+        <CardHeader className="gap-1">
+          <CardTitle className="text-sm">AI access</CardTitle>
+          <p className="text-xs text-muted-foreground">Who supplies the credential and pays for each run.</p>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {snapshot.accessSources.map((source) => (
+            <div key={source.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/60 p-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{source.displayName}</p>
+                <p className="text-xs text-muted-foreground">{fundingLabel(source.fundingKind)}</p>
+              </div>
+              <StatusBadge state={source.state} />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card role="region" aria-label="Provider accounts">
+        <CardHeader className="gap-1">
+          <CardTitle className="text-sm">Provider accounts</CardTitle>
+          <p className="text-xs text-muted-foreground">Your own provider connections, separate from Matrix access.</p>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {snapshot.accounts.map((account) => (
+            <div key={account.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/60 p-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">
+                  {account.vendor === "openrouter" ? "OpenRouter" : account.vendor === "anthropic" ? "Anthropic" : statusLabel(account.vendor)}
+                </p>
+                <p className="text-xs text-muted-foreground">{accountStateLabel(account.state)}</p>
+              </div>
+              <StatusBadge state={account.state} />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card role="region" aria-label="AI harnesses">
+        <CardHeader className="gap-1">
+          <CardTitle className="text-sm">AI harnesses</CardTitle>
+          <p className="text-xs text-muted-foreground">Installed execution engines and their current health.</p>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {snapshot.drivers.map((driver) => (
+            <div key={driver.id} className="rounded-lg border border-border/60 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">{driver.displayName}</p>
+                  <p className="text-xs text-muted-foreground">{statusLabel(driver.installState)}</p>
+                </div>
+                <StatusBadge state={driver.health} />
+              </div>
+            </div>
+          ))}
+          {readyModels.length > 0 && (
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Ready models</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {readyModels.map((model) => (
+                  <Badge key={`${model.instanceId}:${model.modelId}`} variant="outline">{model.modelLabel}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -513,6 +603,7 @@ function LegacyFallback({
 
 export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
   const [settings, setSettings] = useState<NormalizedAgentSettings | null>(null);
+  const [providerSnapshot, setProviderSnapshot] = useState<AiProviderSnapshotV3 | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -521,26 +612,30 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
   const reload = async () => {
     setLoading(true);
     setError(null);
-    try {
-      const loaded = await loadAgentSettings();
-      setSettings(loaded);
-    } catch (loadError) {
-      setError(safeMessage(loadError));
-    }
-    setLoading(false);
+    await Promise.allSettled([
+      loadAgentSettings(),
+      loadAiProviderSnapshot({ refresh: true }),
+    ]).then(([loaded, providers]) => {
+      if (loaded.status === "fulfilled") setSettings(loaded.value);
+      else setError(safeMessage(loaded.reason));
+      if (providers.status === "fulfilled") setProviderSnapshot(providers.value);
+    }).finally(() => setLoading(false));
   };
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const loaded = await loadAgentSettings();
-        if (!cancelled) setSettings(loaded);
-      } catch (loadError) {
-        if (!cancelled) setError(safeMessage(loadError));
+    void Promise.allSettled([
+      loadAgentSettings(),
+      loadAiProviderSnapshot(),
+    ]).then(([loaded, providers]) => {
+      if (!cancelled) {
+        if (loaded.status === "fulfilled") setSettings(loaded.value);
+        else setError(safeMessage(loaded.reason));
+        if (providers.status === "fulfilled") setProviderSnapshot(providers.value);
       }
+    }).finally(() => {
       if (!cancelled) setLoading(false);
-    })();
+    });
     return () => {
       cancelled = true;
     };
@@ -552,6 +647,14 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
     try {
       const updated = await operation();
       setSettings(updated);
+      try {
+        setProviderSnapshot(await loadAiProviderSnapshot({ refresh: true }));
+      } catch (refreshError) {
+        console.warn(
+          "[settings] Provider projection refresh failed:",
+          refreshError instanceof Error ? refreshError.name : "UnknownError",
+        );
+      }
     } catch (mutationError) {
       setError(safeMessage(mutationError));
       setEditResetVersion((version) => version + 1);
@@ -565,6 +668,14 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
     try {
       await saveAnthropicApiKey(key);
       setSettings(await loadAgentSettings());
+      try {
+        setProviderSnapshot(await loadAiProviderSnapshot({ refresh: true }));
+      } catch (refreshError) {
+        console.warn(
+          "[settings] Provider projection refresh failed:",
+          refreshError instanceof Error ? refreshError.name : "UnknownError",
+        );
+      }
     } catch (keyError) {
       setError(safeMessage(keyError));
     }
@@ -615,6 +726,7 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
   return (
     <div className="space-y-4">
       {error && <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
+      {providerSnapshot && <ProviderTruthCards snapshot={providerSnapshot} />}
       <ChatCard
         key={`${view.chat?.model ?? "inactive"}:${view.chat?.effort ?? "none"}:${view.chat?.authKind ?? "none"}:${editResetVersion}`}
         view={view}
