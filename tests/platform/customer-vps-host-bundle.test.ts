@@ -71,6 +71,7 @@ describe('customer VPS host bundle', () => {
 
     expect(script).toContain('matrix-host-bundle.tar.gz');
     expect(script).toContain('matrix-gateway');
+    expect(script).toContain('matrix-register-vps');
     expect(script).toContain('matrix-shell');
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
@@ -1645,10 +1646,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const launcher = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
 
     expect(launcher).toContain('MATRIX_PLATFORM_REGISTER_URL');
-    expect(launcher).toContain('/hetzner/v1/metadata/instance-id');
-    expect(launcher).toContain('/hetzner/v1/metadata/public-ipv4');
-    expect(launcher).toContain('/vps/register');
-    expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(launcher).toContain('MATRIX_REGISTER_CLIENT');
+    expect(launcher).toContain('/opt/matrix/bin/matrix-register-vps');
+    expect(launcher).toMatch(/if ! .*"\$registration_client"; then\s+echo "matrix-gateway: VPS registration deferred; gateway remains available" >&2\s+fi/);
+    expect(launcher).not.toContain('register_once()');
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
