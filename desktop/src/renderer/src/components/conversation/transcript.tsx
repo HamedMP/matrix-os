@@ -130,6 +130,7 @@ function ResponseMessage({
   animateOnMount: boolean;
 }) {
   const previousMessageId = useRef(message.id);
+  const previousStreaming = useRef(streaming);
   const [visibleMarkdown, setVisibleMarkdown] = useState(() => (
     streaming || animateOnMount ? "" : message.markdown
   ));
@@ -139,6 +140,12 @@ function ResponseMessage({
     previousMessageId.current = message.id;
     setVisibleMarkdown(streaming || animateOnMount ? "" : message.markdown);
   }, [animateOnMount, message.id, message.markdown, streaming]);
+
+  useEffect(() => {
+    const terminalized = previousStreaming.current && !streaming;
+    previousStreaming.current = streaming;
+    if (terminalized) setVisibleMarkdown(message.markdown);
+  }, [message.markdown, streaming]);
 
   useEffect(() => {
     if (visibleMarkdown === message.markdown) return;

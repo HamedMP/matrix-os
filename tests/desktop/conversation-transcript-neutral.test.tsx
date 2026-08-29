@@ -109,6 +109,52 @@ describe("provider-neutral conversation transcript", () => {
     }
   });
 
+  it("shows the complete streamed response as soon as its turn terminalizes", () => {
+    vi.useFakeTimers();
+    const text = `${"terminal_output_".repeat(5_000)}done`;
+    const activeTurn: ConversationTurnPresentation = {
+      id: "turn-terminalizing-stream",
+      startedAt: 1_000,
+      endedAt: 1_000,
+      active: true,
+      work: [],
+      final: {
+        kind: "message",
+        id: "message-terminalizing-stream",
+        role: "assistant",
+        phase: "final",
+        markdown: text,
+        copyText: text,
+        timestamp: 1_000,
+      },
+    };
+
+    try {
+      const { container, rerender } = render(
+        <ConversationTranscript turns={[activeTurn]} callbacks={{ copyText: vi.fn() }} />,
+      );
+      const response = container.querySelector(
+        '[data-slot="message"][data-align="start"] [data-selectable]',
+      );
+
+      act(() => vi.advanceTimersByTime(32));
+      expect(response?.textContent?.length).toBeGreaterThan(0);
+      expect(response?.textContent?.length).toBeLessThan(text.length);
+
+      rerender(
+        <ConversationTranscript
+          turns={[{ ...activeTurn, active: false, endedAt: 2_000 }]}
+          callbacks={{ copyText: vi.fn() }}
+        />,
+      );
+
+      expect(response?.textContent?.length).toBe(text.length);
+      expect(response?.textContent).toBe(text);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reveals a live response progressively when polling first sees it as completed", () => {
     vi.useFakeTimers();
     const text = "A completed polling frame should still arrive smoothly.";
