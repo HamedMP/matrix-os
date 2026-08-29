@@ -64,9 +64,14 @@ describe("EmbedService", () => {
         ) => string;
       };
     };
+    let browserOptions!: {
+      id: string;
+      resolveNavigation: (url: string) => unknown;
+    };
     const open = vi.spyOn(internals.manager, "open").mockImplementation((_kind, _slug, _bounds, _url, options) => {
       expect(options).toEqual(expect.objectContaining({ id: expect.any(String) }));
-      return (options as { id: string }).id;
+      browserOptions = options as typeof browserOptions;
+      return browserOptions.id;
     });
 
     const result = await service.open({
@@ -91,8 +96,16 @@ describe("EmbedService", () => {
       expect.objectContaining({
         id: result.embedId,
         allowedOrigins: ["http://127.0.0.1:49152"],
+        resolveNavigation: expect.any(Function),
       }),
     );
+    expect(browserOptions.resolveNavigation("http://localhost:3000/canonical?q=1")).toEqual({
+      disposition: "rewrite",
+      url: "http://127.0.0.1:49152/canonical?q=1",
+    });
+    expect(browserOptions.resolveNavigation("http://localhost:4000/other")).toEqual({
+      disposition: "block",
+    });
 
     expect(service.close(result.embedId)).toBe(true);
     await vi.waitFor(() => expect(closeForward).toHaveBeenCalledTimes(1));
@@ -218,6 +231,42 @@ describe("EmbedService", () => {
 
     await vi.waitFor(() => expect(closeEmbed).toHaveBeenCalledWith(result.embedId));
     expect(internals.browserForwards.has(result.embedId)).toBe(false);
+  });
+
+  it("reports a recoverable failure when an established Browser tunnel closes normally", async () => {
+    let resolveClosed!: () => void;
+    const emitState = vi.fn();
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState,
+      startPortForward: async () => ({
+        localHost: "127.0.0.1",
+        localPort: 49152,
+        remoteHost: "127.0.0.1",
+        remotePort: 3000,
+        ready: Promise.resolve(),
+        closed: new Promise<void>((resolve) => { resolveClosed = resolve; }),
+        close: vi.fn(async () => {}),
+      }),
+    });
+    const internals = service as unknown as {
+      manager: {
+        open: (...args: unknown[]) => string;
+        close: (embedId: string) => boolean;
+      };
+    };
+    vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+    const closeEmbed = vi.spyOn(internals.manager, "close").mockReturnValue(true);
+    const result = await service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+
+    resolveClosed();
+
+    await vi.waitFor(() => expect(emitState).toHaveBeenCalledWith(result.embedId, "failed"));
+    expect(closeEmbed).toHaveBeenCalledWith(result.embedId);
   });
 
   it("refreshes hosted-shell cookies before navigating the retained embed", async () => {

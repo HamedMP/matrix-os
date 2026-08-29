@@ -7,6 +7,11 @@ export type BrowserAddressResolution =
     }
   | { disposition: "external"; url: string };
 
+export type RuntimeBrowserNavigationDecision =
+  | { disposition: "rewrite"; url: string }
+  | { disposition: "block" }
+  | { disposition: "external" };
+
 const SCHEME = /^[a-z][a-z\d+.-]*:/i;
 const DOMAIN_LIKE = /^(?:[^\s/:]+\.)+[^\s/:]+(?::\d+)?(?:[/?#].*)?$/;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -62,4 +67,27 @@ export function resolveBrowserAddress(value: string): BrowserAddressResolution |
     };
   }
   return { disposition: "external", url: parsed.toString() };
+}
+
+export function resolveRuntimeBrowserNavigation(
+  value: string,
+  remotePort: number,
+  localOrigin: string,
+): RuntimeBrowserNavigationDecision {
+  const target = parseHttpUrl(value);
+  const local = parseHttpUrl(localOrigin);
+  if (!target || !local || local.protocol !== "http:") return { disposition: "block" };
+
+  const localHost = local.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!LOOPBACK_HOSTS.has(localHost) || local.port === "") return { disposition: "block" };
+
+  const resolved = resolveBrowserAddress(target.toString());
+  if (!resolved) return { disposition: "block" };
+  if (resolved.disposition === "external") return { disposition: "external" };
+  if (resolved.remotePort !== remotePort) return { disposition: "block" };
+
+  local.pathname = target.pathname;
+  local.search = target.search;
+  local.hash = target.hash;
+  return { disposition: "rewrite", url: local.toString() };
 }

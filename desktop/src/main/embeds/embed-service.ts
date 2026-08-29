@@ -11,7 +11,10 @@ import {
   type PortForwardHandle,
   type StartPortForwardOptions,
 } from "@finnaai/matrix/port-forward";
-import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
+import {
+  resolveBrowserAddress,
+  resolveRuntimeBrowserNavigation,
+} from "../../shared/runtime-browser-url";
 import { EmbedManager, type Bounds } from "./embed-manager";
 import { LaunchTokenCache } from "./launch-token-cache";
 import {
@@ -85,7 +88,15 @@ export class EmbedService {
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
-      createView: ({ partition, kind, slug, routeSlug, allowedOrigins, onState }) => {
+      createView: ({
+        partition,
+        kind,
+        slug,
+        routeSlug,
+        allowedOrigins,
+        resolveNavigation,
+        onState,
+      }) => {
         const window = this.deps.getWindow();
         if (!window) throw new Error("no window for embed");
         const bridge = kind === "app" && slug && this.deps.appBridge && this.deps.appPreloadPath
@@ -102,6 +113,7 @@ export class EmbedService {
           window,
           partition,
           allowedOrigins,
+          resolveNavigation,
           onState,
           ...(bridge ? { appBridge: bridge } : {}),
         });
@@ -269,6 +281,11 @@ export class EmbedService {
         id: embedId,
         active,
         allowedOrigins,
+        resolveNavigation: (url) => resolveRuntimeBrowserNavigation(
+          url,
+          resolved.remotePort,
+          localUrl.origin,
+        ),
         onDispose: disposeForward,
         onState: (state) => this.deps.emitState(embedId, state),
       });
@@ -301,6 +318,7 @@ export class EmbedService {
   ): void {
     if (this.browserForwards.get(embedId) !== forward) return;
     this.browserForwards.delete(embedId);
+    this.deps.emitState(embedId, "failed");
     this.manager.close(embedId);
     if (err === undefined) return;
     console.warn(

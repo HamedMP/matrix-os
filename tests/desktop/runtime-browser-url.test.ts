@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveBrowserAddress } from "@desktop/shared/runtime-browser-url";
+import {
+  resolveBrowserAddress,
+  resolveRuntimeBrowserNavigation,
+} from "@desktop/shared/runtime-browser-url";
 
 describe("desktop browser address routing", () => {
   it("keeps loopback ports on the selected Matrix runtime", () => {
@@ -40,5 +43,26 @@ describe("desktop browser address routing", () => {
     expect(resolveBrowserAddress("https://user:pass@example.com")).toBeNull();
     expect(resolveBrowserAddress("localhost")).toBeNull();
     expect(resolveBrowserAddress("127.0.0.1")).toBeNull();
+  });
+
+  it("rewrites canonical same-port loopback navigation through the active tunnel", () => {
+    expect(resolveRuntimeBrowserNavigation(
+      "http://localhost:3000/callback?code=ok#done",
+      3000,
+      "http://127.0.0.1:49152",
+    )).toEqual({
+      disposition: "rewrite",
+      url: "http://127.0.0.1:49152/callback?code=ok#done",
+    });
+    expect(resolveRuntimeBrowserNavigation(
+      "http://127.0.0.1:4000/other",
+      3000,
+      "http://127.0.0.1:49152",
+    )).toEqual({ disposition: "block" });
+    expect(resolveRuntimeBrowserNavigation(
+      "https://matrix-os.com/docs",
+      3000,
+      "http://127.0.0.1:49152",
+    )).toEqual({ disposition: "external" });
   });
 });

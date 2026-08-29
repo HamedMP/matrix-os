@@ -4,6 +4,7 @@
 // unbounded.
 import { randomUUID } from "node:crypto";
 import { isNavigationAllowed } from "./origin-policy";
+import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
 
 export interface Bounds {
   x: number;
@@ -34,6 +35,7 @@ export type EmbedManagerOptions = {
     slug: string | null;
     routeSlug: string | null;
     allowedOrigins: string[];
+    resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
     onState: (state: "loading" | "ready" | "failed") => void;
   }) => EmbedViewLike;
   maxLive?: number;
@@ -99,6 +101,7 @@ export class EmbedManager {
       active?: boolean;
       routeSlug?: string;
       allowedOrigins?: string[];
+      resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
       onState?: (state: "loading" | "ready" | "failed") => void;
       onDispose?: () => void;
     },
@@ -138,6 +141,7 @@ export class EmbedManager {
       slug,
       routeSlug: kind === "app" ? options?.routeSlug ?? slug : null,
       allowedOrigins,
+      resolveNavigation: options?.resolveNavigation,
       onState: emitState,
     });
     record = {
