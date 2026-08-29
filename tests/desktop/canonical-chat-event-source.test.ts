@@ -252,6 +252,7 @@ describe("shared Desktop canonical Chat event source", () => {
     sockets[0]!.emit({ type: "chat.replay.gap", reason: "cursor_unavailable" });
     sockets[0]!.emit({ type: "chat.replay.end", nextCursor: 12 });
     sockets[0]!.onmessage?.({ data: "x".repeat(16 * 1024 + 1) });
+    sockets[0]!.onmessage?.({ data: "{" });
     sockets[0]!.emit({
       type: "chat.event",
       event: {
@@ -265,7 +266,10 @@ describe("shared Desktop canonical Chat event source", () => {
     });
 
     expect(invalidations).toEqual([{ type: "chat.full_refresh", cursor: 12 }]);
-    expect(warn).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "[canonical-chat] event stream sent invalid JSON:",
+      "SyntaxError",
+    );
   });
 
   it("bounds shared consumers and fails safely when credentials are unavailable", async () => {
@@ -301,6 +305,10 @@ describe("shared Desktop canonical Chat event source", () => {
 
     await expect(source.start()).resolves.toBeUndefined();
     expect(sockets).toEqual([]);
+    expect(warning).toHaveBeenCalledWith(
+      "[canonical-chat] event stream credential unavailable:",
+      "Error",
+    );
     expect(JSON.stringify(warning.mock.calls)).not.toContain("credential secret must stay private");
     expect(timers[0]?.delay).toBeGreaterThan(0);
     timers[0]!.callback();
@@ -311,5 +319,48 @@ describe("shared Desktop canonical Chat event source", () => {
     expect(source.activeConsumerCount()).toBe(1);
     source.dispose();
     expect(source.activeConsumerCount()).toBe(0);
+  });
+
+  it("reports safe error categories for invalid origins and socket construction failures", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const timers: Array<() => void> = [];
+    const invalidOrigin = createSource({
+      gatewayOrigin: "file:///private/runtime",
+      fetchWebSocketToken: vi.fn(async () => "ws-token"),
+      createWebSocket: vi.fn(() => {
+        throw new Error("must not construct");
+      }),
+      setTimeoutFn: (callback) => {
+        timers.push(callback);
+        return callback;
+      },
+    });
+
+    await invalidOrigin.start();
+    expect(warning).toHaveBeenCalledWith(
+      "[canonical-chat] event stream origin unavailable:",
+      "Error",
+    );
+    invalidOrigin.dispose();
+
+    const connectionFailure = createSource({
+      gatewayOrigin: "https://runtime.test",
+      fetchWebSocketToken: vi.fn(async () => "ws-token"),
+      createWebSocket: vi.fn(() => {
+        throw new RangeError("sensitive socket detail");
+      }),
+      setTimeoutFn: (callback) => {
+        timers.push(callback);
+        return callback;
+      },
+    });
+
+    await connectionFailure.start();
+    expect(warning).toHaveBeenCalledWith(
+      "[canonical-chat] event stream connection unavailable:",
+      "RangeError",
+    );
+    expect(JSON.stringify(warning.mock.calls)).not.toContain("sensitive socket detail");
+    connectionFailure.dispose();
   });
 });
