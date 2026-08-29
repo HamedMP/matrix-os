@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
   type DesktopViewport,
 } from "../../stores/desktop-surfaces";
@@ -160,30 +161,19 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
-      plugins: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
       settings: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
     };
     return FIXED_DESKTOP_APPS.map((app) => ({ ...app, open: openers[app.id] }));
   }, [openRoot, openTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
-    const surfaceState = useDesktopSurfaces.getState().surfaces;
-    let fallback: Tab | undefined;
-    let fallbackZIndex = Number.NEGATIVE_INFINITY;
-    for (const tab of useTabs.getState().tabs) {
-      const surface = surfaceState[tab.id];
-      if (
-        tab.id !== excludedTabId &&
-        surface &&
-        surface.mode !== "minimized" &&
-        surface.mode !== "closed" &&
-        surface.zIndex > fallbackZIndex
-      ) {
-        fallback = tab;
-        fallbackZIndex = surface.zIndex;
-      }
-    }
-    if (fallback) activate(fallback.id);
+    const tabIds = useTabs.getState().tabs.map((tab) => tab.id);
+    const fallbackId = topmostVisibleDesktopSurfaceId(
+      tabIds,
+      useDesktopSurfaces.getState(),
+      excludedTabId,
+    );
+    if (fallbackId) activate(fallbackId);
   }, [activate]);
 
   const minimize = useCallback((tabId: string) => {

@@ -7,7 +7,6 @@ import { useUi } from "../../stores/ui";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
 import SettingsView, { type SettingsSectionId } from "../settings/SettingsView";
-import PluginsHub from "../plugins/PluginsHub";
 import HomeTab from "./HomeTab";
 import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
@@ -76,7 +75,7 @@ export function TabPane({
         initialChatTitle={tab.chatTitle}
       />;
     case "chat":
-      return <WorkTab route="chat" active={active} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} />;
+      return <WorkTab tabId={tab.id} route="chat" active={active} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} />;
     case "terminals":
       return <TerminalsTab active={active} visible={visible} />;
     case "files":
@@ -97,8 +96,6 @@ export function TabPane({
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "settings":
       return <SettingsView section={settingsSection} onSectionChange={onSettingsSectionChange} />;
-    case "plugins":
-      return <PluginsHub />;
     default:
       return null;
   }

@@ -194,6 +194,7 @@ function ResponsiveWorkInspector({
 }
 
 export default function WorkTab({
+  tabId,
   route,
   projectSlug,
   active,
@@ -201,6 +202,7 @@ export default function WorkTab({
   initialChatView,
   initialChatTitle,
 }: {
+  tabId?: string;
   route: WorkRoute;
   projectSlug?: string;
   active: boolean;
@@ -508,7 +510,7 @@ export default function WorkTab({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab active={active} initialChatId={initialChatId} initialView={initialChatView} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug

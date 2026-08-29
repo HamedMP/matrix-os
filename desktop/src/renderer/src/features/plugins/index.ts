@@ -1,8 +1,4 @@
-// Desktop Plugins hub: integrations, MCP servers, skills, and the Matrix CLI
-// in one sidebar destination. The orchestrator registers PluginsHub for the
-// "plugins" tab kind; sections may also be rendered standalone.
-export { default } from "./PluginsHub";
-export { default as PluginsHub } from "./PluginsHub";
+// Shared content now rendered from the Settings > Integrations section.
 export { SkillsSection } from "./SkillsSection";
 export { McpServersSection } from "./McpServersSection";
 export { CliSection, CLI_BREW_INSTALL_COMMAND, CLI_NPM_INSTALL_COMMAND } from "./CliSection";

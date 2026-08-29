@@ -119,9 +119,7 @@ describe("native desktop shell", () => {
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
       .toBe("var(--surface-brand-emphasis, #748E59)");
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Plugins" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("rgb(124, 109, 180)");
+    expect(screen.queryByRole("button", { name: "Plugins" })).toBeNull();
     expect(screen.getByRole("button", { name: "Settings" })
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
       .toBe("var(--surface-neutral-emphasis, #6B7280)");
@@ -313,8 +311,8 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("dialog", { name: "Settings window" })).toBeTruthy();
     const settingsWindow = screen.getByRole("dialog", { name: "Settings window" });
     expect(settingsWindow.querySelector("[data-os-window-sidebar]")).toBeTruthy();
-    const settingsTitle = within(settingsWindow).getByRole("heading", { name: "Settings" });
-    expect(settingsTitle.closest("[data-settings-sidebar-title]")?.querySelector("svg")).toBeTruthy();
+    expect(settingsWindow.querySelector('[data-os-window-chrome-placement="sidebar"]')?.textContent).not.toContain("Settings");
+    expect(within(settingsWindow).getByRole("heading", { name: "Settings" })).toBeTruthy();
     expect(within(settingsWindow).getByRole("button", { name: "Account" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
 
@@ -670,9 +668,6 @@ describe("native desktop shell", () => {
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
     fireEvent.click(getWindowControl("Files", "Close"));
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
-    fireEvent.click(getWindowControl("Plugins", "Close"));
-
     expect(screen.queryByRole("dialog", { name: "Files window" })).toBeNull();
   });
 

@@ -371,6 +371,7 @@ export function ChatUnavailableState({ onRetry }: { onRetry: () => void }) {
 
 export default function ChatTab({
   active = true,
+  tabId,
   initialChatId,
   initialView,
   externalNavigation = false,
@@ -379,6 +380,7 @@ export default function ChatTab({
   allowLegacyFallback = true,
 }: {
   active?: boolean;
+  tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
   externalNavigation?: boolean;
@@ -393,6 +395,7 @@ export default function ChatTab({
       key={routeAttempt}
       api={api}
       projectId={null}
+      tabId={tabId}
       initialChatId={initialChatId}
       initialView={initialView}
       active={active}

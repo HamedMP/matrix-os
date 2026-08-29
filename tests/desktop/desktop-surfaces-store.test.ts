@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   desktopSurfaceBounds,
+  topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
 } from "@desktop/renderer/src/stores/desktop-surfaces";
 import { DESKTOP_Z_INDEX } from "@desktop/renderer/src/design/layering";
@@ -10,6 +11,18 @@ beforeEach(() => {
 });
 
 describe("desktop surfaces store", () => {
+  it("finds the topmost visible surface only among retained tabs", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["files", "terminal", "stale"], { width: 1200, height: 760 });
+    useDesktopSurfaces.getState().focusSurface("stale");
+    useDesktopSurfaces.getState().focusSurface("terminal");
+
+    expect(topmostVisibleDesktopSurfaceId(
+      ["files", "terminal"],
+      useDesktopSurfaces.getState(),
+      "files",
+    )).toBe("terminal");
+  });
+
   it("reconciles tabs into bounded cascading windows", () => {
     useDesktopSurfaces.getState().reconcileTabs(
       ["home", "chat", "terminal"],

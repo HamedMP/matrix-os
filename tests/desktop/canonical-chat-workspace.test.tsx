@@ -169,9 +169,12 @@ describe("CanonicalChatWorkspace", () => {
     );
 
     await waitFor(() => expect(routeClient.getDetail).toHaveBeenCalledWith(snapshot.chat.id, { limit: 200 }));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
     expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
-    expect(onActiveChatChanged).not.toHaveBeenCalledWith(snapshot.chat.id, expect.anything());
+    expect(onActiveChatChanged).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -644,6 +647,58 @@ describe("CanonicalChatWorkspace", () => {
     expect(routeClient.getDetail).toHaveBeenCalledTimes(1);
   });
 
+  it("does not report stale detail after switching between Chats in the same Project", async () => {
+    const firstChatId = snapshot.chat.id;
+    const secondChatId = "chat_same_project_second";
+    const secondRecord = {
+      ...record,
+      chat: { ...record.chat, id: secondChatId, title: "Second project chat" },
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [record, secondRecord] });
+    vi.mocked(routeClient.getDetail).mockImplementation(async (chatId) => ({
+      record: chatId === secondChatId ? secondRecord : record,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    }));
+    const reportedIds: string[] = [];
+
+    function Harness() {
+      const [activeChatId, setActiveChatId] = useState(firstChatId);
+      return (
+        <>
+          <button type="button" onClick={() => setActiveChatId(secondChatId)}>Switch project chat</button>
+          <CanonicalChatWorkspace
+            client={routeClient}
+            projectId="matrix-os"
+            projectLabel="Matrix OS"
+            initialChatId={activeChatId}
+            active
+            externalNavigation
+            catalog={providerCatalog}
+            onActiveChatChanged={(chatId) => {
+              if (!chatId) return;
+              reportedIds.push(chatId);
+              setActiveChatId(chatId);
+            }}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Switch project chat" }));
+
+    await waitFor(() => expect(routeClient.getDetail).toHaveBeenCalledWith(secondChatId, { limit: 200 }));
+    await waitFor(() => expect(reportedIds).toContain(secondChatId));
+    expect(reportedIds).not.toContain(firstChatId);
+    expect(vi.mocked(routeClient.getDetail).mock.calls.at(-1)?.[0]).toBe(secondChatId);
+  });
+
   it("does not let stale Global Chat detail overwrite a requested New Chat draft", async () => {
     const routeClient = client();
     const reportedIds: Array<string | null> = [];
@@ -739,6 +794,54 @@ describe("CanonicalChatWorkspace", () => {
     ));
 
     expect(routedChatId).toBe(nextRecord.chat.id);
+  });
+
+  it.each([
+    ["starting another Chat in the same Project", false],
+    ["deleting the last Chat in the Project", true],
+  ] as const)("keeps New Chat visible after %s", async (_scenario, emptyProject) => {
+    const routeClient = client();
+    const reportedIds: Array<string | null> = [];
+
+    function Harness() {
+      const [route, setRoute] = useState<{
+        chatId?: string;
+        view: "draft" | "conversation";
+      }>({ chatId: snapshot.chat.id, view: "conversation" });
+      return (
+        <>
+          <button type="button" onClick={() => {
+            if (emptyProject) vi.mocked(routeClient.list).mockResolvedValue({ items: [] });
+            setRoute({ view: "draft" });
+          }}>Open project draft</button>
+          <CanonicalChatWorkspace
+            client={routeClient}
+            projectId="matrix-os"
+            projectLabel="Matrix OS"
+            initialChatId={route.chatId}
+            initialView={route.view}
+            active
+            externalNavigation
+            catalog={providerCatalog}
+            onActiveChatChanged={(chatId) => {
+              reportedIds.push(chatId);
+              if (chatId) setRoute({ chatId, view: "conversation" });
+            }}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open project draft" }));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    expect(reportedIds).toEqual([]);
   });
 
   it("does not submit uploaded attachments after the selected runtime changes", async () => {

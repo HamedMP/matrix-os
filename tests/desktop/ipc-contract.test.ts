@@ -951,6 +951,10 @@ describe("IPC contract", () => {
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "project" }).success).toBe(true);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "agents" }).success).toBe(false);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "terminals" }).success).toBe(true);
+    for (const action of ["new-context", "new-tab", "close-tab", "close-app"] as const) {
+      expect(EVENT_CHANNELS["menu:action"].safeParse({ action }).success, action).toBe(true);
+    }
+    expect(EVENT_CHANNELS["menu:action"].safeParse({ action: "quit-app" }).success).toBe(false);
     expect(EVENT_CHANNELS["update:manual-check-requested"].safeParse({}).success).toBe(true);
     expect(
       EVENT_CHANNELS["update:manual-check-requested"].safeParse({ source: "untrusted" }).success,
