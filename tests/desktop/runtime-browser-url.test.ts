@@ -55,6 +55,23 @@ describe("desktop browser address routing", () => {
     )).toEqual({ disposition: "block" });
   });
 
+  it("blocks all runtime-controlled off-tunnel navigation before DNS resolution", () => {
+    expect(resolveBrowserAddress("https://matrix-os.com/docs")).toEqual({
+      disposition: "external",
+      url: "https://matrix-os.com/docs",
+    });
+    expect(resolveRuntimeBrowserNavigation(
+      "http://127.0.0.1.nip.io:4000/private",
+      4000,
+      "http://127.0.0.1:49152",
+    )).toEqual({ disposition: "block" });
+    expect(resolveRuntimeBrowserNavigation(
+      "https://matrix-os.com/docs",
+      4000,
+      "http://127.0.0.1:49152",
+    )).toEqual({ disposition: "block" });
+  });
+
   it("rewrites canonical same-port loopback navigation through the active tunnel", () => {
     expect(resolveRuntimeBrowserNavigation(
       "http://localhost:3000/callback?code=ok#done",
@@ -69,10 +86,5 @@ describe("desktop browser address routing", () => {
       3000,
       "http://127.0.0.1:49152",
     )).toEqual({ disposition: "block" });
-    expect(resolveRuntimeBrowserNavigation(
-      "https://matrix-os.com/docs",
-      3000,
-      "http://127.0.0.1:49152",
-    )).toEqual({ disposition: "external" });
   });
 });

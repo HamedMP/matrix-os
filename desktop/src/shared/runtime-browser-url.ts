@@ -90,7 +90,11 @@ export function resolveRuntimeBrowserNavigation(
 
   const resolved = resolveBrowserAddress(target.toString());
   if (!resolved) return { disposition: "block" };
-  if (resolved.disposition === "external") return { disposition: "external" };
+  // A runtime page controls this navigation. Do not hand hostname resolution
+  // to the user's browser: a DNS alias or rebinding response could otherwise
+  // reach loopback/private services outside the authenticated tunnel. Public
+  // URLs entered directly in BrowserTab still use resolveBrowserAddress().
+  if (resolved.disposition === "external") return { disposition: "block" };
   if (resolved.remotePort !== remotePort) return { disposition: "block" };
 
   local.pathname = target.pathname;
