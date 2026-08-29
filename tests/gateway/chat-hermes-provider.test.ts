@@ -487,6 +487,27 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it.each([false, true])("keeps a raw Provider HTTP failure out of assistant output (streamed=%s)", async (streamed) => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+    const rawFailure = 'HTTP 400: {"detail":"model is not supported for this account"}';
+    if (streamed) gateway.event("message.delta", { text: rawFailure });
+    gateway.event("message.complete", { text: rawFailure, status: "error" });
+
+    expect(await eventsPromise).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "run_failed",
+        safeMessage: "Hermes could not complete this Run.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }]);
+  });
+
   it("fails closed when the final response diverges from already streamed text", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
