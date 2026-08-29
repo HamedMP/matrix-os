@@ -63,10 +63,12 @@ export function createFilesApi(api: ApiClient, maxReadBytes?: number): FilesApi 
       if (!parsed.success) return { mtime: null };
       return { mtime: normalizeMtime(parsed.data.modified) };
     },
-    read: (path) => api.getText(
-      `/files/${encodeFilesPath(path)}`,
-      maxReadBytes === undefined ? undefined : { maxBytes: maxReadBytes },
-    ),
+    read: (path) => {
+      const encodedPath = `/files/${encodeFilesPath(path)}`;
+      return maxReadBytes === undefined
+        ? api.getText(encodedPath)
+        : api.getText(encodedPath, { maxBytes: maxReadBytes });
+    },
     write: async (path, content) => {
       const raw = await api.putText<unknown>(`/files/${encodeFilesPath(path)}`, content);
       const parsed = WireWriteSchema.safeParse(raw);
