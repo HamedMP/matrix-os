@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import type { ChatOutboxEvent, ChatOwner } from "../../packages/gateway/src/chat/records.js";
@@ -47,11 +45,39 @@ type CreateCanonicalChatEventStream = (options: {
   now?: () => number;
 }) => ChatEventStream;
 
+type RegisterCanonicalChatEventRoute = (options: {
+  mount(
+    path: string,
+    open: (input: {
+      context: unknown;
+      ws: ChatEventStreamSocket;
+      cursor?: string;
+    }) => Promise<void>,
+  ): void;
+  getPrincipal(context: unknown): RequestPrincipal;
+  stream: Pick<ChatEventStream, "open">;
+}) => void;
+
+type CloseCanonicalChatEventLifecycle = (options: {
+  stream: Pick<ChatEventStream, "shutdown">;
+  releaseRepository(): Promise<void>;
+}) => Promise<void>;
+
 const createCanonicalChatEventStream = (
   canonicalChatRoutes as unknown as {
     createCanonicalChatEventStream?: CreateCanonicalChatEventStream;
   }
 ).createCanonicalChatEventStream;
+const registerCanonicalChatEventRoute = (
+  canonicalChatRoutes as unknown as {
+    registerCanonicalChatEventRoute?: RegisterCanonicalChatEventRoute;
+  }
+).registerCanonicalChatEventRoute;
+const closeCanonicalChatEventLifecycle = (
+  canonicalChatRoutes as unknown as {
+    closeCanonicalChatEventLifecycle?: CloseCanonicalChatEventLifecycle;
+  }
+).closeCanonicalChatEventLifecycle;
 
 const principalA: RequestPrincipal = { userId: "owner_a", source: "jwt" };
 const principalB: RequestPrincipal = { userId: "owner_b", source: "jwt" };
@@ -273,7 +299,7 @@ describe("canonical Chat event stream", () => {
     expect(stream.activeSubscriberCount()).toBe(0);
   });
 
-  it("closes and drains every subscriber and the repository sink on shutdown before repository release", async () => {
+  it("closes and drains every subscriber and the repository sink on shutdown", async () => {
     const order: string[] = [];
     const harness = repositoryHarness();
     const originalRegister = harness.repository.registerOutboxSink;
@@ -294,9 +320,18 @@ describe("canonical Chat event stream", () => {
     expect(stream.activeSubscriberCount()).toBe(0);
     expect(harness.disposed()).toBe(true);
     expect(order).toEqual(["socket.close", "sink.dispose"]);
+  });
 
-    const serverSource = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
-    expect(serverSource).toMatch(/chatEventStream\?\.shutdown\(\)[\s\S]*chatRepository\?\.release\(\)/);
+  it("drains the Chat stream before releasing the shared repository through the public close seam", async () => {
+    expect(closeCanonicalChatEventLifecycle).toBeTypeOf("function");
+    const order: string[] = [];
+
+    await closeCanonicalChatEventLifecycle!({
+      stream: { shutdown: () => { order.push("stream.shutdown"); } },
+      releaseRepository: async () => { order.push("repository.release"); },
+    });
+
+    expect(order).toEqual(["stream.shutdown", "repository.release"]);
   });
 
   it("allows query-token auth only for the exact Chat WebSocket path", async () => {
@@ -323,12 +358,31 @@ describe("canonical Chat event stream", () => {
     expect(rest).toEqual({ body: { error: "Unauthorized" }, status: 401 });
   });
 
-  it("wires the exact owner-level WebSocket route through a verified request principal", () => {
-    const serverSource = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
-    const routeStart = serverSource.indexOf('"/ws/chats/events"');
-    expect(routeStart).toBeGreaterThan(-1);
-    const routeSource = serverSource.slice(routeStart, routeStart + 5_000);
-    expect(routeSource).toMatch(/requireRequestPrincipal\(c\)/);
-    expect(routeSource).toMatch(/chatEventStream\.open\(\{[\s\S]*principal/);
+  it("registers the exact owner route and passes only the verified principal into the stream", async () => {
+    expect(registerCanonicalChatEventRoute).toBeTypeOf("function");
+    const context = { requestId: "request_verified_principal" };
+    const ws = socket();
+    const open = vi.fn(async () => ({ onMessage: () => undefined, onClose: () => undefined }));
+    const getPrincipal = vi.fn(() => principalA);
+    let routePath: string | undefined;
+    let routeOpen: ((input: {
+      context: unknown;
+      ws: ChatEventStreamSocket;
+      cursor?: string;
+    }) => Promise<void>) | undefined;
+
+    registerCanonicalChatEventRoute!({
+      mount(path, handler) {
+        routePath = path;
+        routeOpen = handler;
+      },
+      getPrincipal,
+      stream: { open },
+    });
+    await routeOpen?.({ context, ws, cursor: "12" });
+
+    expect(routePath).toBe("/ws/chats/events");
+    expect(getPrincipal).toHaveBeenCalledWith(context);
+    expect(open).toHaveBeenCalledWith({ ws, principal: principalA, cursor: 12 });
   });
 });

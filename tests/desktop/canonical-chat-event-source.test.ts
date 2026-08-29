@@ -27,6 +27,7 @@ type CreateCanonicalChatEventSource = (options: {
   fetchWebSocketToken(): Promise<string>;
   createWebSocket(url: string): DesktopCanonicalChatWebSocket;
   maxConsumers?: number;
+  maxSeenCursors?: number;
   maxReconnectDelayMs?: number;
   setTimeoutFn?: (callback: () => void, delay: number) => unknown;
   clearTimeoutFn?: (timer: unknown) => void;
@@ -192,6 +193,44 @@ describe("shared Desktop canonical Chat event source", () => {
       { type: "chat.full_refresh", cursor: 3 },
       { type: "chat.changed", chatId: "chat_5", cursor: 5 },
       { type: "chat.changed", chatId: "chat_4", cursor: 4 },
+    ]);
+  });
+
+  it("caps and evicts the seen-cursor dedupe registry instead of growing for the process lifetime", async () => {
+    const sockets: FakeChatWebSocket[] = [];
+    const invalidations: CanonicalChatInvalidation[] = [];
+    const source = createSource({
+      gatewayOrigin: "https://runtime.test",
+      fetchWebSocketToken: vi.fn(async () => "ws-token"),
+      createWebSocket: (url) => {
+        const ws = new FakeChatWebSocket(url);
+        sockets.push(ws);
+        return ws;
+      },
+      maxSeenCursors: 2,
+    });
+    source.subscribe((event) => invalidations.push(event));
+    await source.start();
+    sockets[0]!.emit({ type: "chat.replay.end", nextCursor: 0 });
+    for (const cursor of [1, 2, 3, 3, 1]) {
+      sockets[0]!.emit({
+        type: "chat.event",
+        event: {
+          cursor,
+          chatId: `chat_cursor_${cursor}`,
+          revision: cursor,
+          eventType: "chat.updated",
+          createdAt: "2026-08-29T00:00:00.000Z",
+        },
+      });
+    }
+
+    expect(invalidations).toEqual([
+      { type: "chat.full_refresh", cursor: 0 },
+      { type: "chat.changed", chatId: "chat_cursor_1", cursor: 1 },
+      { type: "chat.changed", chatId: "chat_cursor_2", cursor: 2 },
+      { type: "chat.changed", chatId: "chat_cursor_3", cursor: 3 },
+      { type: "chat.changed", chatId: "chat_cursor_1", cursor: 1 },
     ]);
   });
 
