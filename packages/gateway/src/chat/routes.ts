@@ -1,4 +1,5 @@
 import {
+  CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
@@ -44,6 +45,7 @@ const CHAT_CREATE_BODY_LIMIT = 96 * 1024;
 const CHAT_TURN_BODY_LIMIT = 128 * 1024;
 const CHAT_CANCEL_BODY_LIMIT = 4 * 1024;
 const CHAT_UPDATE_BODY_LIMIT = 4 * 1024;
+const CHAT_ACKNOWLEDGEMENT_BODY_LIMIT = 4 * 1024;
 
 const ChatListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -80,6 +82,11 @@ export interface CanonicalChatRouteService {
     owner: ChatOwner,
     chatId: string,
     input: CanonicalUpdateChatUserStateRequest,
+  ): Promise<CanonicalChatRecord>;
+  acknowledgeCompletion(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
   ): Promise<CanonicalChatRecord>;
   delete(owner: ChatOwner, chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   list(owner: ChatOwner, input: {
@@ -185,6 +192,10 @@ export function createCanonicalChatRoutes(options: {
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
   const cancelBodyLimit = bodyLimit({ maxSize: CHAT_CANCEL_BODY_LIMIT, onError: bodyTooLarge });
   const updateBodyLimit = bodyLimit({ maxSize: CHAT_UPDATE_BODY_LIMIT, onError: bodyTooLarge });
+  const acknowledgementBodyLimit = bodyLimit({
+    maxSize: CHAT_ACKNOWLEDGEMENT_BODY_LIMIT,
+    onError: bodyTooLarge,
+  });
 
   routes.delete("/api/chats/:chatId", cancelBodyLimit, async (context) => {
     try {
@@ -297,6 +308,29 @@ export function createCanonicalChatRoutes(options: {
       return handleError(context, error);
     }
   });
+
+  routes.post(
+    "/api/chats/:chatId/runs/:runId/acknowledge",
+    acknowledgementBodyLimit,
+    async (context) => {
+      try {
+        const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+        const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+        const parsed = CanonicalAcknowledgeChatCompletionRequestSchema.safeParse(
+          await context.req.json(),
+        );
+        if (!parsed.success) return validationError(context);
+        const result = await options.service.acknowledgeCompletion(
+          ownerFromPrincipal(options.getPrincipal(context)),
+          chatId,
+          runId,
+        );
+        return context.json(CanonicalChatRecordSchema.parse(result));
+      } catch (error: unknown) {
+        return handleError(context, error);
+      }
+    },
+  );
 
   routes.get("/api/chats/:chatId", async (context) => {
     try {

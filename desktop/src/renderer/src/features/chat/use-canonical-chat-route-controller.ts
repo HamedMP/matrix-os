@@ -19,6 +19,26 @@ function detailWithRecord(
   return { ...detail, record };
 }
 
+function shouldApplyAcknowledgement(
+  current: CanonicalChatRecord,
+  response: CanonicalChatRecord,
+  acknowledgedRunId: string,
+): boolean {
+  if (response.chat.id !== current.chat.id) return false;
+  const currentCompletion = current.latestSuccessfulCompletion;
+  const responseCompletion = response.latestSuccessfulCompletion;
+  const responseHasStrictlyNewerCompletion = responseCompletion !== undefined
+    && (currentCompletion === undefined || responseCompletion.completedAt > currentCompletion.completedAt);
+  if (response.chat.revision < current.chat.revision) return false;
+  if (responseCompletion?.runId !== acknowledgedRunId && !responseHasStrictlyNewerCompletion) {
+    return false;
+  }
+  if (currentCompletion?.runId !== acknowledgedRunId && !responseHasStrictlyNewerCompletion) {
+    return false;
+  }
+  return true;
+}
+
 export function useCanonicalChatRouteController({
   client,
   projectId,
@@ -42,6 +62,11 @@ export function useCanonicalChatRouteController({
   const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
+  const acknowledgementAttemptRef = useRef<{
+    client: CanonicalChatClient;
+    chatId: string;
+    runId: string;
+  } | null>(null);
 
   const loadDetail = useCallback(async (chatId: string) => {
     const sequence = ++detailRequestSequence.current;
@@ -104,6 +129,7 @@ export function useCanonicalChatRouteController({
     if (!scopeChanged && initialChatId === activeChatIdRef.current) return;
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
+    acknowledgementAttemptRef.current = null;
     setItems([]);
     detailRef.current = null;
     setDetail(null);
@@ -137,6 +163,56 @@ export function useCanonicalChatRouteController({
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
   }, [active, activeChatId, detail?.record.chat.id, loadDetail]);
+
+  useEffect(() => {
+    const completion = detail?.record.latestSuccessfulCompletion;
+    if (!active || !activeChatId || detail?.record.chat.id !== activeChatId
+      || !completion?.unacknowledged) {
+      acknowledgementAttemptRef.current = null;
+      return;
+    }
+    const existing = acknowledgementAttemptRef.current;
+    if (existing?.client === client
+      && existing.chatId === activeChatId
+      && existing.runId === completion.runId) {
+      return;
+    }
+    const routeScope = routeScopeRef.current;
+    const attempt = { client, chatId: activeChatId, runId: completion.runId };
+    acknowledgementAttemptRef.current = attempt;
+    void client.acknowledgeCompletion(activeChatId, completion.runId).then((record) => {
+      if (!routeScope?.active || routeScopeRef.current !== routeScope
+        || activeChatIdRef.current !== attempt.chatId) {
+        return;
+      }
+      const current = detailRef.current;
+      if (!current || current.record.chat.id !== attempt.chatId
+        || !shouldApplyAcknowledgement(current.record, record, attempt.runId)) {
+        return;
+      }
+      const next = detailWithRecord(current, record);
+      detailRef.current = next;
+      setDetail(next);
+      setItems((items) => items.map((item) => (
+        item.chat.id === record.chat.id
+          && shouldApplyAcknowledgement(item, record, attempt.runId)
+          ? record
+          : item
+      )));
+    }).catch((error: unknown) => {
+      console.warn("[canonical-chat] completion acknowledgement failed:", diagnosticErrorKind(error));
+      if (acknowledgementAttemptRef.current === attempt) {
+        acknowledgementAttemptRef.current = null;
+      }
+    });
+  }, [
+    active,
+    activeChatId,
+    client,
+    detail?.record.chat.id,
+    detail?.record.latestSuccessfulCompletion?.runId,
+    detail?.record.latestSuccessfulCompletion?.unacknowledged,
+  ]);
 
   useEffect(() => {
     if (!active || !activeChatId || !detail?.record.activeRun) return;

@@ -246,6 +246,10 @@ describe("canonical Chat route controller", () => {
         oldCompletion.runId,
       );
       await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(acknowledgeCompletion.mock.calls).toEqual([
+        [globalRecord.chat.id, oldCompletion.runId],
+        [globalRecord.chat.id, newestCompletionRecord.latestSuccessfulCompletion.runId],
+      ]);
       expect(result.current.detail?.record.latestSuccessfulCompletion)
         .toEqual(newestCompletionRecord.latestSuccessfulCompletion);
 

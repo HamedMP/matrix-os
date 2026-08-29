@@ -15,7 +15,11 @@ import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-import { ChatBusyError, ChatConflictError } from "../../packages/gateway/src/chat/errors.js";
+import {
+  ChatBusyError,
+  ChatConflictError,
+  ChatRunNotAcknowledgeableError,
+} from "../../packages/gateway/src/chat/errors.js";
 import {
   createCanonicalChatRoutes,
   type CanonicalChatRouteService,
@@ -268,6 +272,24 @@ describe("canonical Chat routes", () => {
           safeMessage: "Chat is temporarily unavailable.",
           retryable: true,
           recoveryActions: ["retry"],
+        },
+      });
+
+      const rejected = await appFor(routeService({
+        acknowledgeCompletion: vi.fn(async () => {
+          throw new ChatRunNotAcknowledgeableError("chat_route_test", "run_route_completed");
+        }),
+      })).request("/api/chats/chat_route_test/runs/run_route_completed/acknowledge", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(rejected.status).toBe(409);
+      expect(await rejected.json()).toEqual({
+        error: {
+          code: "run_unavailable",
+          safeMessage: "Only a successful completed Run can be acknowledged.",
+          retryable: false,
         },
       });
     } finally {

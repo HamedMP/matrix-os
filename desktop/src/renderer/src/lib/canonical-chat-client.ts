@@ -1,4 +1,5 @@
 import {
+  CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
@@ -57,6 +58,7 @@ export interface CanonicalChatClient {
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
   updateUserState(chatId: string, input: CanonicalUpdateChatUserStateRequest): Promise<CanonicalChatRecord>;
+  acknowledgeCompletion(chatId: string, runId: string): Promise<CanonicalChatRecord>;
   delete(chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   getDetail(
     chatId: string,
@@ -131,6 +133,16 @@ export function createCanonicalChatClient(
       const request = CanonicalUpdateChatUserStateRequestSchema.parse(input);
       return CanonicalChatRecordSchema.parse(await api.patch(
         `/api/chats/${encodeURIComponent(parsedChatId)}/user-state`,
+        request,
+      ));
+    },
+
+    async acknowledgeCompletion(chatId, runId) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const request = CanonicalAcknowledgeChatCompletionRequestSchema.parse({});
+      return CanonicalChatRecordSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/acknowledge`,
         request,
       ));
     },

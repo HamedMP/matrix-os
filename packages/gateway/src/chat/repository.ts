@@ -5,6 +5,7 @@ import {
   CanonicalChatMessageSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatRequestIdSchema,
+  CanonicalChatRunIdSchema,
   CanonicalChatRunSchema,
   CanonicalChatTurnSchema,
   CanonicalOwnerScopeSchema,
@@ -25,6 +26,7 @@ import {
   ChatConflictError,
   ChatNotFoundError,
   ChatProviderInstanceLockedError,
+  ChatRunNotAcknowledgeableError,
 } from "./errors.js";
 import {
   asIso,
@@ -53,6 +55,7 @@ export {
   ChatConflictError,
   ChatNotFoundError,
   ChatProviderInstanceLockedError,
+  ChatRunNotAcknowledgeableError,
   ChatRunNotActiveError,
 } from "./errors.js";
 export type { ChatDetailPage } from "./detail-repository.js";
@@ -672,6 +675,55 @@ export class ChatRepository {
       if (changedState) {
         await insertOutbox(trx, owner, chatId, Number(chat.revision), "chat.user_state_updated", {
           pinned: input.pinned,
+        });
+      }
+      return toPrincipalRecord(trx, owner, chat);
+    });
+  }
+
+  async acknowledgeCompletion(
+    ownerInput: ChatOwner,
+    chatId: string,
+    runId: string,
+  ): Promise<ChatRecord> {
+    const owner = validateOwner(ownerInput);
+    CanonicalChatIdSchema.parse(chatId);
+    const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+
+    return this.transact(async (trx) => {
+      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      if (!chat) throw new ChatNotFoundError(chatId);
+      const completedRun = await trx.selectFrom("chat_runs")
+        .select(["id", "status", "outcome", "completed_at"])
+        .where("id", "=", parsedRunId)
+        .where("chat_id", "=", chatId)
+        .executeTakeFirst();
+      if (!completedRun) throw new ChatNotFoundError(chatId);
+      if (completedRun.status !== "completed"
+        || completedRun.outcome !== "completed"
+        || completedRun.completed_at === null) {
+        throw new ChatRunNotAcknowledgeableError(chatId, parsedRunId);
+      }
+      const completedAt = asIso(completedRun.completed_at)!;
+      const changedState = await trx.insertInto("chat_user_state").values({
+        chat_id: chatId,
+        principal_id: owner.ownerId,
+        read_through_seq: 0,
+        pinned: false,
+        muted: false,
+        attention_acknowledged_at: completedAt,
+        last_opened_at: null,
+      }).onConflict((conflict) => conflict.columns(["chat_id", "principal_id"]).doUpdateSet({
+        attention_acknowledged_at: completedAt,
+        updated_at: sql`now()`,
+      }).where(sql<boolean>`chat_user_state.attention_acknowledged_at IS NULL
+        OR chat_user_state.attention_acknowledged_at < ${completedAt}::timestamptz`))
+        .returning("attention_acknowledged_at")
+        .executeTakeFirst();
+      if (changedState) {
+        await insertOutbox(trx, owner, chatId, Number(chat.revision), "chat.user_state_updated", {
+          runId: parsedRunId,
+          completedAt,
         });
       }
       return toPrincipalRecord(trx, owner, chat);

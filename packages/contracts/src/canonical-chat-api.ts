@@ -72,6 +72,8 @@ export const CanonicalRetryChatTurnRequestSchema = z.object({
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 }).strict();
 
+export const CanonicalAcknowledgeChatCompletionRequestSchema = z.object({}).strict();
+
 export const CanonicalChatLatestSuccessfulCompletionSchema = z.object({
   runId: CanonicalChatRunIdSchema,
   completedAt: IsoTimestampSchema,
@@ -168,6 +170,9 @@ export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdate
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
 export type CanonicalCancelChatRunRequest = z.infer<typeof CanonicalCancelChatRunRequestSchema>;
 export type CanonicalRetryChatTurnRequest = z.infer<typeof CanonicalRetryChatTurnRequestSchema>;
+export type CanonicalAcknowledgeChatCompletionRequest = z.infer<
+  typeof CanonicalAcknowledgeChatCompletionRequestSchema
+>;
 export type CanonicalChatLatestSuccessfulCompletion = z.infer<
   typeof CanonicalChatLatestSuccessfulCompletionSchema
 >;
