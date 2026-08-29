@@ -534,7 +534,8 @@ describe("TerminalsTab", () => {
 
     expect(screen.getByRole("heading", { name: "Terminal" }).className).toContain("text-base");
     expect(screen.getByRole("list", { name: "Terminal sessions" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "New terminal session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New shell session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Choose session type" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Select terminal sessions" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Search terminal sessions" })).toBeNull();
   });
@@ -547,7 +548,79 @@ describe("TerminalsTab", () => {
     renderTab();
 
     expect(screen.getByRole("button", { name: "Delete matrix-main" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Rename matrix-main" })).toBeNull();
+    expect(screen.getByRole("button", { name: "More actions for matrix-main" })).toBeTruthy();
+  });
+
+  it("creates Claude, Codex, OpenCode, and Pi sessions from the new-terminal menu", async () => {
+    const createShell = vi.fn().mockResolvedValue({ name: "matrix-created", status: "active" });
+    useShellSessions.setState({
+      create: createShell,
+      sessions: [{ name: "matrix-main", status: "active" }],
+    });
+
+    renderTab();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Choose session type" }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByRole("menuitem", { name: /Claude Code/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Codex/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /OpenCode/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Pi/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
+    await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api, {
+      cmd: "codex",
+      agent: "codex",
+    }));
+  });
+
+  it("shows the running agent and its current activity in each session row", () => {
+    useShellSessions.setState({
+      sessions: [{
+        name: "matrix-main",
+        status: "active",
+        agent: "codex",
+        model: "gpt-5.4",
+        strength: "high",
+        lastAction: "Editing terminal sidebar",
+      }],
+    });
+
+    renderTab();
+
+    const row = screen.getByRole("button", { name: "Open matrix-main" });
+    expect(row.textContent).toContain("Codex");
+    expect(row.textContent).toContain("gpt-5.4");
+    expect(row.textContent).toContain("high");
+    expect(row.textContent).toContain("Editing terminal sidebar");
+    expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Editing terminal sidebar" })).toBeNull();
+  });
+
+  it("renames a session and copies its connect command from row actions", async () => {
+    const rename = vi.fn().mockResolvedValue(true);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active" }],
+      rename,
+    });
+
+    renderTab();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for matrix-main" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy connect command" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("matrix shell connect matrix-main"));
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for matrix-main" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const input = screen.getByRole("textbox", { name: "Terminal session name" });
+    fireEvent.change(input, { target: { value: "matrix-renamed" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(rename).toHaveBeenCalledWith(
+      useConnection.getState().api,
+      "matrix-main",
+      "matrix-renamed",
+    ));
   });
 
   it("renders canonical active, waiting, and closed lifecycle badges with relative activity", () => {
@@ -594,7 +667,7 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+    fireEvent.click(screen.getByRole("button", { name: "New shell session" }));
 
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api));
     expect(createWorkspace).not.toHaveBeenCalled();

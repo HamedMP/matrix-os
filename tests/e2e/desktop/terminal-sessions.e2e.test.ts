@@ -109,7 +109,12 @@ suite("Desktop terminal session handoff", () => {
     await page.evaluate(async () => {
       await window.operator.invoke("auth:start-device-flow", {});
     });
-    await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
+    try {
+      await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
+    } catch (error: unknown) {
+      await page.screenshot({ path: join(SCREENSHOT_DIR, "terminal-session-boot-failure.png") });
+      throw new Error(`Desktop shell did not become ready: ${await page.locator("body").innerText()}`, { cause: error });
+    }
   }, 60_000);
 
   afterAll(async () => {
@@ -135,8 +140,41 @@ suite("Desktop terminal session handoff", () => {
     }).toBe(true);
   });
 
+  it("opens the compact shell-theme picker through Electron hit testing", async () => {
+    await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick({ timeout: 5_000 });
+    const terminalWindow = page.getByRole("dialog", { name: "Terminal window" });
+    const fullWidthChrome = terminalWindow.locator('[data-os-window-chrome-placement="full-width"]');
+    await fullWidthChrome.waitFor({ timeout: 5_000 });
+    expect(await fullWidthChrome.textContent()).toContain("Terminal");
+
+    await terminalWindow.getByRole("button", { name: "Choose session type" }).click();
+    for (const agent of ["Claude Code", "Codex", "OpenCode", "Pi"]) {
+      await page.getByRole("menuitem", { name: new RegExp(agent) }).waitFor({ timeout: 5_000 });
+    }
+    await page.keyboard.press("Escape");
+
+    const session = page.getByRole("button", { name: "Open matrix-task-1" });
+    await session.waitFor({ timeout: 10_000 });
+    await session.click({ timeout: 5_000 });
+
+    const trigger = page.getByRole("button", { name: "Shell theme" });
+    await trigger.waitFor({ timeout: 5_000 });
+    expect(await trigger.isEnabled()).toBe(true);
+    const [dragBounds, triggerBounds] = await Promise.all([
+      terminalWindow.locator("[data-os-window-gesture-layer]").boundingBox(),
+      trigger.boundingBox(),
+    ]);
+    expect(dragBounds).not.toBeNull();
+    expect(triggerBounds).not.toBeNull();
+    expect(triggerBounds!.y).toBeGreaterThanOrEqual(dragBounds!.y + dragBounds!.height);
+    await trigger.click();
+
+    await page.getByRole("menu", { name: "Shell theme" }).waitFor({ timeout: 5_000 });
+    await page.getByRole("menuitemradio", { name: /P10k Rainbow/ }).waitFor({ timeout: 5_000 });
+  });
+
   it("renders the Figma-aligned list and preserves the mounted terminal buffer across list-detail navigation", async () => {
-    await page.locator("aside button", { hasText: "Terminal" }).first().click();
+    await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
     await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
     await page.getByText("Active", { exact: true }).waitFor();
     await page.getByText("Waiting", { exact: true }).waitFor();

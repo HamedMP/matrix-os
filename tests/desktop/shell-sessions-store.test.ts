@@ -220,6 +220,26 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-created"]);
   });
 
+  it("creates agent sessions with the canonical command and agent metadata", async () => {
+    const post = vi.fn().mockResolvedValue({ name: "matrix-codex" });
+    const get = vi.fn().mockResolvedValue({
+      sessions: [{ name: "matrix-codex", status: "active", agent: "codex" }],
+    });
+
+    const created = await useShellSessions.getState().create(makeApi({ post, get }), {
+      cmd: "codex",
+      agent: "codex",
+    });
+
+    expect(created).toMatchObject({ name: "matrix-codex", agent: "codex" });
+    expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
+      name: expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      cwd: "projects",
+      cmd: "codex",
+      agent: "codex",
+    });
+  });
+
   it("uses fresh two-word shell names only after repeated collisions", async () => {
     const post = vi
       .fn()

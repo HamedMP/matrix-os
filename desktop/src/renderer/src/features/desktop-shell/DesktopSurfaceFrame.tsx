@@ -94,7 +94,7 @@ export default function DesktopSurfaceFrame({
     : isDesktopHidden || isDesktopTransition || (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app";
-  const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "terminal" || tab.kind === "terminals" || tab.kind === "settings";
+  const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "settings";
   const requestedSettingsSection = useUi((state) => state.requestedSettingsSection);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("account");
   useEffect(() => {

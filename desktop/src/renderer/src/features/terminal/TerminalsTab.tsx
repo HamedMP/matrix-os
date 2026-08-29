@@ -34,6 +34,13 @@ import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
 import { relativeSessionActivity } from "./terminal-session-activity";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
+import {
+  parseTerminalAgentStatuses,
+  terminalAgentVisibleInstallCommand,
+  UNKNOWN_TERMINAL_AGENT_STATUSES,
+  type TerminalAgentMenuAction,
+  type TerminalAgentOption,
+} from "./terminal-agent-options";
 
 const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
 const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -76,87 +83,8 @@ function sessionStart(createdAt: string | undefined): string {
   return SESSION_START_FORMATTER.format(timestamp);
 }
 
-function placementFor(shell: ShellSessionSummary, openShellNames: Set<string>): ShellSessionPlacement {
-  return shell.placement ?? (openShellNames.has(shell.name) ? "active" : "background");
-}
-
 function normalizeBusyNames(names: string[]): string[] {
   return names.filter((name, index) => name.length > 0 && names.indexOf(name) === index);
-}
-
-function TerminalAppTabs({
-  openedSessionNames,
-  selectedName,
-  onSelectOverview,
-  onSelectSession,
-  onCloseSession,
-}: {
-  openedSessionNames: string[];
-  selectedName: string | null;
-  onSelectOverview: () => void;
-  onSelectSession: (name: string) => void;
-  onCloseSession: (name: string) => void;
-}) {
-  if (openedSessionNames.length === 0) return null;
-  return (
-    <div
-      role="tablist"
-      aria-label="Terminal app tabs"
-      className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b px-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
-    >
-      <button
-        type="button"
-        role="tab"
-        aria-label="Terminal sessions"
-        aria-selected={selectedName === null}
-        className="flex h-7 shrink-0 items-center gap-1.5 rounded-t-md border px-2.5 text-xs"
-        style={{
-          borderColor: selectedName === null ? "var(--border-subtle)" : "transparent",
-          borderBottomColor: selectedName === null ? "var(--bg-surface)" : "transparent",
-          background: selectedName === null ? "var(--bg-surface)" : "transparent",
-          color: selectedName === null ? "var(--text-primary)" : "var(--text-secondary)",
-        }}
-        onClick={onSelectOverview}
-      >
-        <SquareTerminal size={12} aria-hidden="true" /> Sessions
-      </button>
-      {openedSessionNames.map((name) => {
-        const selected = selectedName === name;
-        return (
-          <div
-            key={name}
-            className="group flex h-7 min-w-[116px] max-w-[190px] items-center rounded-t-md border pl-2.5 pr-1"
-            style={{
-              borderColor: selected ? "var(--border-subtle)" : "transparent",
-              borderBottomColor: selected ? "var(--bg-surface)" : "transparent",
-              background: selected ? "var(--bg-surface)" : "transparent",
-              color: selected ? "var(--text-primary)" : "var(--text-secondary)",
-            }}
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-label={name}
-              aria-selected={selected}
-              className="min-w-0 flex-1 truncate text-left font-mono text-[11px]"
-              onClick={() => onSelectSession(name)}
-            >
-              {name}
-            </button>
-            <button
-              type="button"
-              aria-label={`Close ${name} terminal tab`}
-              className="flex size-5 shrink-0 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
-              onClick={() => onCloseSession(name)}
-            >
-              <X size={11} aria-hidden="true" />
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- TerminalsTab is the cohesive shell-session workspace: network load/create, selection, rename, delete confirmation, search, and drag refs are independent UI concerns. A reducer would couple unrelated state transitions without reducing render risk; extracting subcomponents below keeps the row/empty states isolated.
@@ -178,7 +106,6 @@ export default function TerminalsTab({
   const create = useShellSessions((s) => s.create);
   const deleteSession = useShellSessions((s) => s.deleteSession);
   const rename = useShellSessions((s) => s.rename);
-  const reorder = useShellSessions((s) => s.reorder);
   const patchUiState = useShellSessions((s) => s.patchUiState);
   const tabs = useTabs((s) => s.tabs);
   const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
@@ -192,16 +119,14 @@ export default function TerminalsTab({
   const [selectedName, setSelectedName] = useState<string | null>(() => mostRecentShell(shells)?.name ?? null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
   const [openedSessionNames, setOpenedSessionNames] = useState<string[]>([]);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState("");
   const [busyNames, setBusyNames] = useState<string[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ShellSessionSummary | null>(null);
-  const draggingNameRef = useRef<string | null>(null);
-  const draggingPlacementRef = useRef<ShellSessionPlacement | null>(null);
+  const [agentStatuses, setAgentStatuses] = useState({ ...UNKNOWN_TERMINAL_AGENT_STATUSES });
+  const [checkingAgentStatuses, setCheckingAgentStatuses] = useState(false);
 
   useEffect(() => {
     void loadTerminalAppearance(api);
@@ -218,14 +143,6 @@ export default function TerminalsTab({
     setLiveSessionName((current) => current && liveNames.has(current) ? current : null);
     setSelectedName((current) => current && liveNames.has(current) ? current : null);
   }, [authoritativeRevision, error, loading, reconcileRecentTerminals, shells]);
-
-  const openShellNames = useMemo(
-    () => new Set([
-      ...tabs.flatMap((tab) => (tab.kind === "terminal" && tab.sessionName ? [tab.sessionName] : [])),
-      ...(liveSessionName ? [liveSessionName] : []),
-    ]),
-    [liveSessionName, tabs],
-  );
 
   const latestShell = useMemo(() => mostRecentShell(shells), [shells]);
   const selected = selectedName && shells.some((shell) => shell.name === selectedName)
@@ -281,6 +198,33 @@ export default function TerminalsTab({
     showShellDetail(created);
   };
 
+  const refreshAgentStatuses = useCallback(async () => {
+    if (!api || checkingAgentStatuses) return;
+    setCheckingAgentStatuses(true);
+    try {
+      setAgentStatuses(parseTerminalAgentStatuses(await api.get("/api/agents")));
+    } catch (err: unknown) {
+      console.warn("[terminal] Failed to load agent status:", err instanceof Error ? err.message : String(err));
+    } finally {
+      setCheckingAgentStatuses(false);
+    }
+  }, [api, checkingAgentStatuses]);
+
+  const createAgentSession = async (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
+    if (!api || creating) return;
+    setActionError(null);
+    const created = await create(api, {
+      cmd: action === "launch" ? option.launchCommand : terminalAgentVisibleInstallCommand(option),
+      ...(action === "launch" ? { agent: option.id } : {}),
+    });
+    if (!created) {
+      setActionError(action === "launch" ? `Could not start ${option.label}` : `Could not install ${option.label}`);
+      return;
+    }
+    recordRecentTerminal(created.name, created.name);
+    showShellDetail(created);
+  };
+
   const showShellDetail = useCallback((shell: ShellSessionSummary) => {
     setOpenedSessionNames((current) => [
       ...current.filter((name) => name !== shell.name),
@@ -329,8 +273,6 @@ export default function TerminalsTab({
     terminalSessionRequest,
   ]);
 
-  const openShellInTab = (shell: ShellSessionSummary) => showShellDetail(shell);
-
   const closeShellTab = (name: string) => {
     const remaining = openedSessionNames.filter((openedName) => openedName !== name);
     setOpenedSessionNames(remaining);
@@ -338,24 +280,6 @@ export default function TerminalsTab({
     const nextName = remaining.at(-1) ?? null;
     setSelectedName(nextName);
     setLiveSessionName(nextName);
-  };
-
-  const moveShell = async (shell: ShellSessionSummary, placement: ShellSessionPlacement) => {
-    if (!api || !markShellBusy(shell.name)) return;
-    setActionError(null);
-    const patch = placement === "active" && shell.latestSeq !== undefined && shell.latestSeq !== null
-      ? { placement, lastSeenSeq: shell.latestSeq }
-      : { placement };
-    const ok = await patchUiState(api, shell.name, patch);
-    if (!ok) setActionError("Could not update shell");
-    if (placement === "active" && ok) {
-      showShellDetail(
-        shell.latestSeq !== undefined && shell.latestSeq !== null
-          ? { ...shell, placement, lastSeenSeq: shell.latestSeq }
-          : { ...shell, placement },
-      );
-    }
-    clearShellBusy(shell.name);
   };
 
   const copyAttachCommand = async (shell: ShellSessionSummary) => {
@@ -421,26 +345,6 @@ export default function TerminalsTab({
     setLiveSessionName((current) => current === name ? null : current);
   };
 
-  const finishDrag = () => {
-    draggingNameRef.current = null;
-    draggingPlacementRef.current = null;
-  };
-
-  const dropOnShell = (target: ShellSessionSummary) => {
-    const draggingName = draggingNameRef.current;
-    const draggingPlacement = draggingPlacementRef.current;
-    if (!api || !draggingName || draggingName === target.name) {
-      finishDrag();
-      return;
-    }
-    if (draggingPlacement !== placementFor(target, openShellNames)) {
-      finishDrag();
-      return;
-    }
-    void reorder(api, draggingName, target.name);
-    finishDrag();
-  };
-
   const overviewSelected = selected === null;
 
   return (
@@ -458,8 +362,26 @@ export default function TerminalsTab({
           selectedName={selectedName}
           creating={creating}
           disabled={!api}
+          agentStatuses={agentStatuses}
+          checkingAgentStatuses={checkingAgentStatuses}
+          renamingName={renamingName}
+          renameDraft={renameDraft}
+          renameError={renameError}
           onCreate={() => void createShell()}
+          onCreateAgent={(option, action) => void createAgentSession(option, action)}
+          onRefreshAgentStatuses={() => void refreshAgentStatuses()}
           onSelect={showShellDetail}
+          onRename={startRename}
+          onRenameDraft={(value) => {
+            setRenameDraft(value);
+            setRenameError(null);
+          }}
+          onCommitRename={() => void commitRename()}
+          onCancelRename={() => {
+            setRenamingName(null);
+            setRenameError(null);
+          }}
+          onCopyConnectCommand={(shell) => void copyAttachCommand(shell)}
           onDelete={setDeleteTarget}
         />
       </div>
@@ -526,7 +448,7 @@ export default function TerminalsTab({
               style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
             >
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-xs font-medium leading-[19.5px]" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</h1>
+                <h1 className="truncate text-xs font-medium leading-[19.5px]" style={{ color: "var(--text-primary)" }}>{shell.name}</h1>
                 <p className="mt-1 truncate text-xs leading-4 tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
                   Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
                 </p>
