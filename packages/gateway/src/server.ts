@@ -206,6 +206,7 @@ import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
+import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
 import {
   createIntegrationRoutes,
   validateActionParams,
@@ -1907,6 +1908,11 @@ export async function createGateway(config: GatewayConfig) {
       run: (input) => shellCommandRunner.run(input),
     }));
   }
+  registerCustomMcpGatewayRoutes(app, {
+    homePath,
+    clerkUserId: process.env.MATRIX_CLERK_USER_ID ?? process.env.MATRIX_USER_ID,
+    projectionToken: process.env.UPGRADE_TOKEN,
+  });
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
