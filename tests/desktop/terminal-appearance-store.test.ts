@@ -197,6 +197,30 @@ describe("Terminal appearance store", () => {
     expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "matrix", hydrated: true });
   });
 
+  it("hydrates a new runtime without waiting for an old in-flight palette write", async () => {
+    let resolveWrite: (() => void) | undefined;
+    const previousApi = createApi();
+    previousApi.put = vi.fn(() => new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    }));
+    const replacementApi = createApi("matrix");
+
+    useTerminalAppearance.getState().setThemeId("powerlevel10k-pure", previousApi);
+    await vi.waitFor(() => expect(previousApi.put).toHaveBeenCalledTimes(1));
+    advanceRuntimeGeneration();
+
+    const load = useTerminalAppearance.getState().load(replacementApi);
+    try {
+      await vi.waitFor(() => expect(replacementApi.get).toHaveBeenCalledWith(
+        "/api/terminal/preferences",
+      ));
+      await load;
+      expect(useTerminalAppearance.getState()).toMatchObject({ themeId: "matrix", hydrated: true });
+    } finally {
+      resolveWrite?.();
+    }
+  });
+
   it("drops a queued palette write after the runtime generation changes", async () => {
     let resolveFirst: (() => void) | undefined;
     const previousApi = createApi();

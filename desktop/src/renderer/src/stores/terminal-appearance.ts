@@ -32,6 +32,7 @@ interface PersistCallbacks {
   onReconciled: (themeId: TerminalThemeId, selectionRevision: number) => void;
 }
 
+let persistQueueGeneration = captureRuntimeGeneration();
 let persistQueue: Promise<void> = Promise.resolve();
 
 function isSelectableTerminalThemeId(value: unknown): value is TerminalThemeId {
@@ -51,6 +52,10 @@ function warn(operation: "load" | "persist" | "reconcile", error: unknown): void
   );
 }
 
+function queueForRuntime(runtimeGeneration: number): Promise<void> {
+  return persistQueueGeneration === runtimeGeneration ? persistQueue : Promise.resolve();
+}
+
 function persist(
   api: TerminalPreferencesApi | null,
   themeId: TerminalThemeId,
@@ -59,7 +64,9 @@ function persist(
 ): void {
   if (!api) return;
   const runtimeGeneration = captureRuntimeGeneration();
-  persistQueue = persistQueue.then(async () => {
+  const previousQueue = queueForRuntime(runtimeGeneration);
+  persistQueueGeneration = runtimeGeneration;
+  persistQueue = previousQueue.then(async () => {
     if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
     try {
       await api.put("/api/terminal/preferences", { shellThemeId: themeId });
@@ -96,14 +103,17 @@ export const useTerminalAppearance = create<TerminalAppearanceState>()((set, get
   load: async (api) => {
     const loadRevision = get().loadRevision + 1;
     const selectionRevision = get().selectionRevision;
+    const runtimeGeneration = captureRuntimeGeneration();
     set({ loadRevision });
     if (!api) {
       set({ hydrated: true });
       return;
     }
     try {
-      await persistQueue;
+      await queueForRuntime(runtimeGeneration);
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       const result = await api.get<TerminalPreferencesResponse>("/api/terminal/preferences");
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       const themeId = resolveTerminalThemeId(result);
       set((state) => ({
         themeId: state.loadRevision === loadRevision && state.selectionRevision === selectionRevision
@@ -117,7 +127,9 @@ export const useTerminalAppearance = create<TerminalAppearanceState>()((set, get
       }));
     } catch (error: unknown) {
       warn("load", error);
-      set((state) => state.loadRevision === loadRevision ? { hydrated: true } : {});
+      if (isCurrentRuntimeGeneration(runtimeGeneration)) {
+        set((state) => state.loadRevision === loadRevision ? { hydrated: true } : {});
+      }
     }
   },
 
