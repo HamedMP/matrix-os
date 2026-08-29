@@ -91,6 +91,50 @@ describe("native Desktop icon layout", () => {
     expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
   });
 
+  it("replays hydration captured between two failed initial icon writes", async () => {
+    const rejectPatch: Array<(error: Error) => void> = [];
+    const api = {
+      patch: vi.fn(() => new Promise<never>((_resolve, reject) => {
+        rejectPatch.push(reject);
+      })),
+    };
+    useDesktopIcons.getState().prime([CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const intermediateHydrationRevision = captureDesktopIconsHydrationRevision();
+    const remove = useDesktopIcons.getState().remove("__file-browser__", api as never);
+    useDesktopIcons.getState().hydrate([FILES], [CHAT, FILES], intermediateHydrationRevision);
+    rejectPatch[0]?.(new Error("first offline"));
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2));
+    rejectPatch[1]?.(new Error("second offline"));
+    await Promise.all([move, remove]);
+
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
+  });
+
+  it("accepts intermediate hydration after both initial icon writes already failed", async () => {
+    const rejectPatch: Array<(error: Error) => void> = [];
+    const api = {
+      patch: vi.fn(() => new Promise<never>((_resolve, reject) => {
+        rejectPatch.push(reject);
+      })),
+    };
+    useDesktopIcons.getState().prime([CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const intermediateHydrationRevision = captureDesktopIconsHydrationRevision();
+    const remove = useDesktopIcons.getState().remove("__file-browser__", api as never);
+    rejectPatch[0]?.(new Error("first offline"));
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2));
+    rejectPatch[1]?.(new Error("second offline"));
+    await Promise.all([move, remove]);
+    useDesktopIcons.getState().hydrate([FILES], [CHAT, FILES], intermediateHydrationRevision);
+
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
+  });
+
   it("keeps a later successful queued layout when an earlier write fails", async () => {
     const api = {
       get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),

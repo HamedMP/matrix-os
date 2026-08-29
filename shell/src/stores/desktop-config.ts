@@ -52,7 +52,9 @@ let desktopIconHydrationRevision = 0;
 let confirmedDesktopIcons: DesktopIconPlacement[] | undefined;
 let hasConfirmedDesktopIcons = false;
 let unconfirmedDesktopHydrationRevision: number | null = null;
+let unconfirmedDesktopRollbackIcons: DesktopIconPlacement[] | null = null;
 let deferredDesktopHydration: { icons: DesktopIconPlacement[] | undefined } | null = null;
+let replayableDesktopHydrationRange: { min: number; max: number } | null = null;
 
 export function captureWebDesktopIconsHydrationRevision(): number {
   return desktopIconHydrationRevision;
@@ -65,7 +67,9 @@ export function resetWebDesktopIconsRuntime(): void {
   confirmedDesktopIcons = undefined;
   hasConfirmedDesktopIcons = false;
   unconfirmedDesktopHydrationRevision = null;
+  unconfirmedDesktopRollbackIcons = null;
   deferredDesktopHydration = null;
+  replayableDesktopHydrationRange = null;
   useDesktopConfigStore.setState({ desktopIcons: undefined });
 }
 
@@ -105,6 +109,8 @@ function applyDesktopIconMutation(
   const snapshot = copyDesktopIcons(icons) ?? [];
   if (!hasConfirmedDesktopIcons && unconfirmedDesktopHydrationRevision === null) {
     unconfirmedDesktopHydrationRevision = desktopIconHydrationRevision;
+    unconfirmedDesktopRollbackIcons = copyDesktopIcons(previousIcons) ?? [];
+    replayableDesktopHydrationRange = null;
   }
   desktopIconHydrationRevision += 1;
   set({ desktopIcons: snapshot });
@@ -114,7 +120,9 @@ function applyDesktopIconMutation(
       confirmedDesktopIcons = copyDesktopIcons(snapshot);
       hasConfirmedDesktopIcons = true;
       unconfirmedDesktopHydrationRevision = null;
+      unconfirmedDesktopRollbackIcons = null;
       deferredDesktopHydration = null;
+      replayableDesktopHydrationRange = null;
     }
   }).catch((error: unknown) => {
     console.warn("[desktop-config] desktopIcons persist failed:", error instanceof Error ? error.name : typeof error);
@@ -126,15 +134,22 @@ function applyDesktopIconMutation(
         confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
         hasConfirmedDesktopIcons = true;
         unconfirmedDesktopHydrationRevision = null;
+        unconfirmedDesktopRollbackIcons = null;
         deferredDesktopHydration = null;
+        replayableDesktopHydrationRange = null;
         desktopIconHydrationRevision += 1;
         set({ desktopIcons });
         restoredPendingHydration = true;
       } else {
-        set({ desktopIcons: rollbackIcons });
+        set({ desktopIcons: copyDesktopIcons(unconfirmedDesktopRollbackIcons ?? rollbackIcons) });
         if (unconfirmedDesktopHydrationRevision !== null) {
+          replayableDesktopHydrationRange = {
+            min: unconfirmedDesktopHydrationRevision,
+            max: desktopIconHydrationRevision,
+          };
           desktopIconHydrationRevision = unconfirmedDesktopHydrationRevision;
           unconfirmedDesktopHydrationRevision = null;
+          unconfirmedDesktopRollbackIcons = null;
           restoredPendingHydration = true;
         }
       }
@@ -157,12 +172,19 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     set({ desktopIcons: copyDesktopIcons(icons) });
   },
   setDesktopIcons: (desktopIcons, expectedHydrationRevision) => {
-    if (expectedHydrationRevision !== undefined
-      && expectedHydrationRevision !== desktopIconHydrationRevision) {
-      if (!hasConfirmedDesktopIcons && unconfirmedDesktopHydrationRevision === expectedHydrationRevision) {
+    if (expectedHydrationRevision !== undefined) {
+      const replayable = replayableDesktopHydrationRange !== null
+        && expectedHydrationRevision >= replayableDesktopHydrationRange.min
+        && expectedHydrationRevision <= replayableDesktopHydrationRange.max;
+      if (!replayable
+        && !hasConfirmedDesktopIcons
+        && unconfirmedDesktopHydrationRevision !== null
+        && expectedHydrationRevision >= unconfirmedDesktopHydrationRevision
+        && expectedHydrationRevision <= desktopIconHydrationRevision) {
         deferredDesktopHydration = { icons: copyDesktopIcons(desktopIcons) };
+        return;
       }
-      return;
+      if (!replayable && expectedHydrationRevision !== desktopIconHydrationRevision) return;
     }
     desktopIconMutationSequence += 1;
     desktopIconStateEpoch += 1;
@@ -170,7 +192,9 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
     hasConfirmedDesktopIcons = true;
     unconfirmedDesktopHydrationRevision = null;
+    unconfirmedDesktopRollbackIcons = null;
     deferredDesktopHydration = null;
+    replayableDesktopHydrationRange = null;
     set({ desktopIcons: copyDesktopIcons(desktopIcons) });
   },
   moveDesktopIcon: (path, x, y) => {

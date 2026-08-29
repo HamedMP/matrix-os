@@ -81,7 +81,9 @@ let hydrationRevision = 0;
 let confirmedIcons: DesktopIconPlacement[] = [];
 let hasConfirmedIcons = false;
 let unconfirmedHydrationRevision: number | null = null;
+let unconfirmedRollbackIcons: DesktopIconPlacement[] | null = null;
 let deferredHydrationIcons: DesktopIconPlacement[] | null = null;
+let replayableHydrationRange: { min: number; max: number } | null = null;
 
 function copyIcons(icons: readonly DesktopIconPlacement[]): DesktopIconPlacement[] {
   return icons.map((icon) => ({ ...icon }));
@@ -95,7 +97,9 @@ export function resetDesktopIconsRuntime(): void {
   confirmedIcons = [];
   hasConfirmedIcons = false;
   unconfirmedHydrationRevision = null;
+  unconfirmedRollbackIcons = null;
   deferredHydrationIcons = null;
+  replayableHydrationRange = null;
   useDesktopIcons.setState({ icons: [], loaded: false });
 }
 
@@ -130,6 +134,8 @@ async function applyOptimisticMutation(
   const snapshot = copyIcons(icons);
   if (!hasConfirmedIcons && unconfirmedHydrationRevision === null) {
     unconfirmedHydrationRevision = hydrationRevision;
+    unconfirmedRollbackIcons = copyIcons(previousIcons);
+    replayableHydrationRange = null;
   }
   hydrationRevision += 1;
   set({ icons: snapshot, loaded: true });
@@ -140,7 +146,9 @@ async function applyOptimisticMutation(
       confirmedIcons = copyIcons(snapshot);
       hasConfirmedIcons = true;
       unconfirmedHydrationRevision = null;
+      unconfirmedRollbackIcons = null;
       deferredHydrationIcons = null;
+      replayableHydrationRange = null;
     }
   } catch (error: unknown) {
     console.warn("[desktop-icons] persist failed:", error instanceof Error ? error.name : typeof error);
@@ -152,15 +160,22 @@ async function applyOptimisticMutation(
         confirmedIcons = copyIcons(icons);
         hasConfirmedIcons = true;
         unconfirmedHydrationRevision = null;
+        unconfirmedRollbackIcons = null;
         deferredHydrationIcons = null;
+        replayableHydrationRange = null;
         hydrationRevision += 1;
         set({ icons, loaded: true });
         restoredPendingHydration = true;
       } else {
-        set({ icons: rollbackIcons, loaded: false });
+        set({ icons: copyIcons(unconfirmedRollbackIcons ?? rollbackIcons), loaded: false });
         if (unconfirmedHydrationRevision !== null) {
+          replayableHydrationRange = {
+            min: unconfirmedHydrationRevision,
+            max: hydrationRevision,
+          };
           hydrationRevision = unconfirmedHydrationRevision;
           unconfirmedHydrationRevision = null;
+          unconfirmedRollbackIcons = null;
           restoredPendingHydration = true;
         }
       }
@@ -179,10 +194,18 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
   },
   hydrate: (value, defaults, expectedRevision) => {
     const icons = parseDesktopIcons(value) ?? copyIcons(defaults);
-    if (expectedRevision !== hydrationRevision) {
-      if (!hasConfirmedIcons && unconfirmedHydrationRevision === expectedRevision) {
-        deferredHydrationIcons = copyIcons(icons);
-      }
+    const replayable = replayableHydrationRange !== null
+      && expectedRevision >= replayableHydrationRange.min
+      && expectedRevision <= replayableHydrationRange.max;
+    if (!replayable
+      && !hasConfirmedIcons
+      && unconfirmedHydrationRevision !== null
+      && expectedRevision >= unconfirmedHydrationRevision
+      && expectedRevision <= hydrationRevision) {
+      deferredHydrationIcons = copyIcons(icons);
+      return;
+    }
+    if (!replayable && expectedRevision !== hydrationRevision) {
       return;
     }
     mutationSequence += 1;
@@ -191,7 +214,9 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     confirmedIcons = copyIcons(icons);
     hasConfirmedIcons = true;
     unconfirmedHydrationRevision = null;
+    unconfirmedRollbackIcons = null;
     deferredHydrationIcons = null;
+    replayableHydrationRange = null;
     set({ icons, loaded: true });
   },
   load: async (api, defaults) => {
@@ -203,10 +228,18 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
       if (sequence !== loadSequence
         || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       const icons = parseDesktopIcons(config.desktopIcons) ?? copyIcons(defaults);
-      if (expectedHydrationRevision !== hydrationRevision) {
-        if (!hasConfirmedIcons && unconfirmedHydrationRevision === expectedHydrationRevision) {
-          deferredHydrationIcons = copyIcons(icons);
-        }
+      const replayable = replayableHydrationRange !== null
+        && expectedHydrationRevision >= replayableHydrationRange.min
+        && expectedHydrationRevision <= replayableHydrationRange.max;
+      if (!replayable
+        && !hasConfirmedIcons
+        && unconfirmedHydrationRevision !== null
+        && expectedHydrationRevision >= unconfirmedHydrationRevision
+        && expectedHydrationRevision <= hydrationRevision) {
+        deferredHydrationIcons = copyIcons(icons);
+        return;
+      }
+      if (!replayable && expectedHydrationRevision !== hydrationRevision) {
         return;
       }
       mutationSequence += 1;
@@ -215,17 +248,27 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
       confirmedIcons = copyIcons(icons);
       hasConfirmedIcons = true;
       unconfirmedHydrationRevision = null;
+      unconfirmedRollbackIcons = null;
       deferredHydrationIcons = null;
+      replayableHydrationRange = null;
       set({ icons, loaded: true });
     } catch (error: unknown) {
       if (sequence !== loadSequence
         || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.warn("[desktop-icons] load failed:", error instanceof Error ? error.name : typeof error);
       const icons = copyIcons(defaults);
-      if (expectedHydrationRevision !== hydrationRevision) {
-        if (!hasConfirmedIcons && unconfirmedHydrationRevision === expectedHydrationRevision) {
-          deferredHydrationIcons = copyIcons(icons);
-        }
+      const replayable = replayableHydrationRange !== null
+        && expectedHydrationRevision >= replayableHydrationRange.min
+        && expectedHydrationRevision <= replayableHydrationRange.max;
+      if (!replayable
+        && !hasConfirmedIcons
+        && unconfirmedHydrationRevision !== null
+        && expectedHydrationRevision >= unconfirmedHydrationRevision
+        && expectedHydrationRevision <= hydrationRevision) {
+        deferredHydrationIcons = copyIcons(icons);
+        return;
+      }
+      if (!replayable && expectedHydrationRevision !== hydrationRevision) {
         return;
       }
       mutationSequence += 1;
@@ -234,7 +277,9 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
       confirmedIcons = copyIcons(icons);
       hasConfirmedIcons = true;
       unconfirmedHydrationRevision = null;
+      unconfirmedRollbackIcons = null;
       deferredHydrationIcons = null;
+      replayableHydrationRange = null;
       set({ icons, loaded: true });
     }
   },

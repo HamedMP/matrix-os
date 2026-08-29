@@ -1120,7 +1120,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // Shared by the Windows taskbar (start menu, quick launch) and the XP
   // desktop icons: open the app window or focus the existing one.
   const openAppOrFocus = (path: string, name?: string) => {
-    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path);
+    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path, name);
     if (builtInLaunch?.kind === "external") {
       window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
       return;
@@ -1161,7 +1161,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       setChatOpen(false);
       return;
     }
-    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path);
+    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path, name);
     if (builtInLaunch?.kind === "external") {
       window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
       setTaskBoardOpen(false);

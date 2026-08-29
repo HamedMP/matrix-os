@@ -339,6 +339,57 @@ describe("Desktop config", () => {
     await waitFor(() => expect(useDesktopConfigStore.getState().desktopIcons).toEqual(serverIcons));
   });
 
+  it("replays web hydration captured between two failed initial icon writes", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const resolvePatch: Array<(response: { ok: false; status: number }) => void> = [];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve) => {
+      resolvePatch.push(resolve);
+    })));
+    const defaults = [
+      { path: "__chat__", x: 20, y: 58 },
+      { path: "__terminal__", x: 108, y: 58 },
+    ];
+    const serverIcons = [defaults[1]];
+    useDesktopConfigStore.getState().primeDesktopIcons(defaults);
+
+    useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    const intermediateHydrationRevision = captureWebDesktopIconsHydrationRevision();
+    useDesktopConfigStore.getState().removeDesktopIcon("__terminal__");
+    useDesktopConfigStore.getState().setDesktopIcons(serverIcons, intermediateHydrationRevision);
+    resolvePatch[0]?.({ ok: false, status: 503 });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    resolvePatch[1]?.({ ok: false, status: 503 });
+
+    await waitFor(() => expect(useDesktopConfigStore.getState().desktopIcons).toEqual(serverIcons));
+  });
+
+  it("accepts intermediate web hydration after both initial icon writes already failed", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const resolvePatch: Array<(response: { ok: false; status: number }) => void> = [];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve) => {
+      resolvePatch.push(resolve);
+    })));
+    const defaults = [
+      { path: "__chat__", x: 20, y: 58 },
+      { path: "__terminal__", x: 108, y: 58 },
+    ];
+    const serverIcons = [defaults[1]];
+    useDesktopConfigStore.getState().primeDesktopIcons(defaults);
+
+    useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    const intermediateHydrationRevision = captureWebDesktopIconsHydrationRevision();
+    useDesktopConfigStore.getState().removeDesktopIcon("__terminal__");
+    resolvePatch[0]?.({ ok: false, status: 503 });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    resolvePatch[1]?.({ ok: false, status: 503 });
+    await waitFor(() => expect(useDesktopConfigStore.getState().desktopIcons).toEqual(defaults));
+    useDesktopConfigStore.getState().setDesktopIcons(serverIcons, intermediateHydrationRevision);
+
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual(serverIcons);
+  });
+
   it("ignores stale web Desktop icon hydration after a successful PATCH", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
     const confirmed = [
