@@ -288,6 +288,7 @@ export function ProviderModelPicker({
                       <button
                         key={`${instance.id}:${model.id}`}
                         type="button"
+                        data-instant-list-hover
                         role="option"
                         aria-selected={active}
                         aria-disabled={disabled}

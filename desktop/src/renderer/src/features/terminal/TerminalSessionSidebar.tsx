@@ -121,6 +121,7 @@ export function TerminalSessionSidebar({
                   <>
                     <button
                       type="button"
+                      data-instant-list-hover
                       aria-label={`Open ${session.name}`}
                       aria-current={selected || undefined}
                       className="flex min-h-16 w-full min-w-0 items-start gap-2 px-4 py-3 pr-10 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"

@@ -468,6 +468,7 @@ function SessionsSidebar({
                   <button
                     key={conv.id}
                     type="button"
+                    data-instant-list-hover
                     onClick={() => onSelect(conv.id)}
                     className={cn(
                       "group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition-colors",

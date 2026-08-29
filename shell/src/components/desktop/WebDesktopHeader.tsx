@@ -57,6 +57,7 @@ export function WebDesktopHeader({
           <button
             type="button"
             role="tab"
+            data-instant-list-hover
             aria-label="Open app previews"
             aria-selected={previewsOpen}
             title="Open app previews"
@@ -68,6 +69,7 @@ export function WebDesktopHeader({
           <button
             type="button"
             role="tab"
+            data-instant-list-hover
             aria-label="Show desktop"
             aria-selected={activeId === null}
             title="Show desktop"
@@ -80,6 +82,7 @@ export function WebDesktopHeader({
             <button
               type="button"
               role="tab"
+              data-instant-list-hover
               aria-label={fullscreenWindow.title}
               aria-selected={true}
               className="flex min-w-[132px] max-w-[220px] shrink-0 items-center gap-2 border-r border-border/70 px-3 text-left text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground aria-selected:bg-card aria-selected:text-foreground focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-primary"

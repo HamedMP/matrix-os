@@ -60,6 +60,7 @@ export function SidebarNavRow({
   return (
     <button
       type="button"
+      data-instant-list-hover
       aria-label={badge ? `${label} ${badge}` : label}
       aria-current={active ? "page" : undefined}
       data-active={active ? "true" : "false"}

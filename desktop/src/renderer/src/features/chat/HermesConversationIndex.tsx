@@ -60,6 +60,7 @@ function ConversationRow({
     >
       <button
         type="button"
+        data-instant-list-hover
         aria-label={`${conversation.title} conversation`}
         className="min-w-0 flex-1 px-4 pr-14 text-left transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px]"
         disabled={loading || !api}

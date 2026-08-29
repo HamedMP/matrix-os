@@ -316,6 +316,7 @@ export default function ProjectOverview({
                   <button
                     key={`canonical:${record.chat.id}`}
                     type="button"
+                    data-instant-list-hover
                     aria-label={`Open chat ${record.chat.title}`}
                     onClick={() => {
                       setSelectedThread(projectId, null);
@@ -355,6 +356,7 @@ export default function ProjectOverview({
                   <button
                     key={`chat:${conversation.id}`}
                     type="button"
+                    data-instant-list-hover
                     aria-label={`Open chat ${conversation.title}`}
                     onClick={() => {
                       if (!api) return;
@@ -384,6 +386,7 @@ export default function ProjectOverview({
                 <button
                   key={`coding:${thread.id}`}
                   type="button"
+                  data-instant-list-hover
                   aria-label={`Open session ${thread.title}`}
                   onClick={() => {
                     setSelectedThread(projectId, thread.id);

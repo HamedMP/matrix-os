@@ -90,6 +90,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
           <button
             ref={triggerRef}
             type="button"
+            data-instant-list-hover
             aria-label={buttonLabel}
             title={collapsed ? currentLabel : undefined}
             className={`flex w-full items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center" : "absolute inset-x-0 -top-[3px] gap-2 px-2"}`}
@@ -157,6 +158,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
                 return (
                   <DropdownMenu.RadioItem
                     key={computer.runtimeSlot}
+                    data-instant-list-hover
                     value={computer.runtimeSlot}
                     disabled={disabled}
                     className="flex cursor-default items-center gap-2 px-2 py-2 text-left outline-none data-[disabled]:opacity-60 data-[highlighted]:bg-[var(--bg-hover)]"

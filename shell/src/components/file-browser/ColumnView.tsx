@@ -96,6 +96,7 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
             return (
               <div
                 key={entry.name}
+                data-instant-list-hover
                 role="treeitem"
                 tabIndex={0}
                 aria-selected={isSelected}

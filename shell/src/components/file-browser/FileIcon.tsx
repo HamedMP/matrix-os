@@ -47,6 +47,7 @@ export function FileIcon({
 
   return (
     <div
+      data-instant-list-hover
       className={cn(
         "flex flex-col items-center gap-1 p-2 rounded-lg cursor-default select-none w-24",
         "hover:bg-accent/50 transition-colors",

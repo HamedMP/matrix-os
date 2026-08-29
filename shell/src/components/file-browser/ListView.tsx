@@ -115,6 +115,7 @@ export function ListView({ renamingPath, onStartRename, onCancelRename, onOpenFi
             return (
               <tr
                 key={entry.name}
+                data-instant-list-hover
                 className={cn(
                   "cursor-default hover:bg-accent/50 transition-colors",
                   selected && "bg-accent",

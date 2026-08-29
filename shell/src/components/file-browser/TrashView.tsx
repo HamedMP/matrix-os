@@ -104,6 +104,7 @@ export function TrashView() {
           {entries.map((entry) => (
             <div
               key={entry.originalPath + entry.deletedAt}
+              data-instant-list-hover
               className="flex items-center gap-3 px-3 py-2 border-b border-border/30 hover:bg-accent/50"
             >
               <div className="flex-1 min-w-0">

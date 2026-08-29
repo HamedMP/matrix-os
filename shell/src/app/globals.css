@@ -1739,3 +1739,21 @@ pre {
   background: rgba(0, 0, 0, 0.25);
   border-radius: 3px;
 }
+
+/* OS list rows hand hover paint directly from one item to the next. This is
+   intentionally opt-in so window, drawer, dock, and control motion is intact. */
+[data-instant-list-hover] {
+  transition: none !important;
+}
+
+/* Terminal cards still animate drag position and foregrounding opacity; only
+   their hover highlight skips the delayed color/shadow transition. */
+.terminal-session-card[data-instant-list-hover] {
+  transition: opacity 120ms ease, transform 150ms ease !important;
+}
+
+.terminal-session-card[data-instant-list-hover]:hover {
+  background: var(--terminal-drawer-card-bg) !important;
+  border-color: var(--terminal-drawer-card-border) !important;
+  box-shadow: 0 9px 22px var(--terminal-drawer-card-shadow) !important;
+}

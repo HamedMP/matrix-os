@@ -30,6 +30,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
       type="button"
       onClick={onClick}
       data-app-tile
+      data-instant-list-hover
       className="relative flex flex-col items-center gap-1.5 p-1.5 rounded-xl hover:bg-accent/50 transition-colors group"
     >
       <div className="relative">
