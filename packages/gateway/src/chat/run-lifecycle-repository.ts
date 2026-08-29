@@ -53,6 +53,23 @@ function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
       && ["completed", "failed", "aborted"].includes(activity.status));
 }
 
+function railTransitionForActivity(activity: CanonicalChatRunActivity): {
+  runStatus: "running" | "waiting_for_approval" | "waiting_for_input";
+  attention: "none" | "approval_required" | "input_required";
+} | undefined {
+  switch (activity.type) {
+    case "approval.requested":
+      return { runStatus: "waiting_for_approval", attention: "approval_required" };
+    case "input.requested":
+      return { runStatus: "waiting_for_input", attention: "input_required" };
+    case "approval.resolved":
+    case "input.resolved":
+      return { runStatus: "running", attention: "none" };
+    default:
+      return undefined;
+  }
+}
+
 async function selectOwnedChat(
   executor: Executor,
   owner: ChatOwner,
@@ -290,6 +307,7 @@ export class ChatRunLifecycleRepository {
       const existingIds = new Set(existing.map((row) => row.id));
       let nextSequence = Number(latestSequence?.sequence ?? 0);
       let inserted = 0;
+      let railTransition: ReturnType<typeof railTransitionForActivity>;
       for (const activity of activities) {
         if (existingIds.has(activity.id)) continue;
         nextSequence += 1;
@@ -307,6 +325,7 @@ export class ChatRunLifecycleRepository {
         }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
         if (row) {
           inserted += 1;
+          railTransition = railTransitionForActivity(sequenced) ?? railTransition;
           if (sequenced.type === "terminal.bound") {
             await trx.insertInto("chat_terminal_bindings").values({
               chat_id: chatId,
@@ -323,7 +342,17 @@ export class ChatRunLifecycleRepository {
       }
       if (inserted > 0) {
         const revision = Number(current.revision) + 1;
-        await trx.updateTable("chats").set({ revision, updated_at: sql`now()` }).where("id", "=", chatId).execute();
+        if (railTransition) {
+          await trx.updateTable("chat_runs").set({
+            status: railTransition.runStatus,
+            updated_at: sql`now()`,
+          }).where("id", "=", runId).where("status", "in", [...ACTIVE_RUNS]).execute();
+        }
+        await trx.updateTable("chats").set({
+          revision,
+          ...(railTransition ? { attention: railTransition.attention } : {}),
+          updated_at: sql`now()`,
+        }).where("id", "=", chatId).execute();
         await insertOutbox(trx, owner, chatId, revision, "run.activity", { runId });
       }
       return inserted;

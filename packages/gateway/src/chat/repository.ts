@@ -162,6 +162,19 @@ function userStateQuery(executor: Executor, owner: ChatOwner, chatId: string) {
     .executeTakeFirst();
 }
 
+function latestSuccessfulCompletionQuery(executor: Executor, chatId: string) {
+  return executor.selectFrom("chat_runs")
+    .select(["id", "completed_at"])
+    .where("chat_id", "=", chatId)
+    .where("status", "=", "completed")
+    .where("outcome", "=", "completed")
+    .where("completed_at", "is not", null)
+    .orderBy("completed_at", "desc")
+    .orderBy("created_at", "desc")
+    .orderBy("id", "desc")
+    .executeTakeFirst();
+}
+
 function toUserState(row: {
   read_through_seq: number;
   pinned: boolean;
@@ -221,11 +234,18 @@ async function toPrincipalRecord(
   owner: ChatOwner,
   row: Selectable<ChatsTable>,
 ): Promise<ChatRecord> {
-  const [activeRun, userState] = await Promise.all([
+  const [activeRun, userState, latestSuccessfulCompletion] = await Promise.all([
     activeRunQuery(executor, row.id),
     userStateQuery(executor, owner, row.id),
+    latestSuccessfulCompletionQuery(executor, row.id),
   ]);
-  return toChatRecord(row, activeRun, userState ? toUserState(userState) : undefined);
+  return toChatRecord(
+    row,
+    activeRun,
+    userState ? toUserState(userState) : undefined,
+    latestSuccessfulCompletion,
+    userState?.attention_acknowledged_at,
+  );
 }
 
 async function hydrateAdmission(
@@ -577,13 +597,7 @@ export class ChatRepository {
     }
     const rows = await query.orderBy("updated_at", "desc").orderBy("id").limit(limit + 1).execute();
     const pageRows = rows.slice(0, limit);
-    const items = await Promise.all(pageRows.map(async (row) => {
-      const [activeRun, userState] = await Promise.all([
-        activeRunQuery(this.kysely, row.id),
-        userStateQuery(this.kysely, owner, row.id),
-      ]);
-      return toChatRecord(row, activeRun, userState ? toUserState(userState) : undefined);
-    }));
+    const items = await Promise.all(pageRows.map((row) => toPrincipalRecord(this.kysely, owner, row)));
     const last = rows.length > limit ? pageRows.at(-1) : undefined;
     return {
       items,
@@ -1097,13 +1111,7 @@ export class ChatRepository {
     }
     const rows = await query.orderBy("chats.updated_at", "desc")
       .limit(Math.max(1, Math.min(100, Math.trunc(limitInput)))).execute();
-    return Promise.all(rows.map(async (row) => {
-      const [activeRun, userState] = await Promise.all([
-        activeRunQuery(this.kysely, row.id),
-        userStateQuery(this.kysely, owner, row.id),
-      ]);
-      return toChatRecord(row, activeRun, userState ? toUserState(userState) : undefined);
-    }));
+    return Promise.all(rows.map((row) => toPrincipalRecord(this.kysely, owner, row)));
   }
 
   async exportChat(ownerInput: ChatOwner, chatId: string): Promise<ChatExport | null> {

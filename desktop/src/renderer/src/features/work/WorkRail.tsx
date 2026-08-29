@@ -1,8 +1,10 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import {
+  AlertCircle,
   ChevronDown,
   ChevronRight,
   Folder,
+  LoaderCircle,
   MessageSquare,
   PanelLeftOpenIcon,
   PinIcon,
@@ -17,7 +19,11 @@ import type { Project } from "../../stores/board";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { DeleteConversationDialog } from "../chat/DeleteConversationDialog";
 import ProjectLifecycleDialog from "../mission-control/ProjectLifecycleDialog";
-import { buildWorkRailModel } from "./work-rail-model";
+import {
+  buildWorkRailModel,
+  resolveWorkRailAgentState,
+  type WorkRailAgentState,
+} from "./work-rail-model";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
@@ -420,6 +426,7 @@ function ChatRow({
   onDelete: () => void;
 }) {
   const pinned = Boolean(record.chat.userState?.pinned);
+  const agentState = resolveWorkRailAgentState(record);
   return (
     <ContextMenu items={[
       {
@@ -447,6 +454,7 @@ function ChatRow({
         >
           <MessageSquare size={13} aria-hidden className="shrink-0" />
           <span className="truncate">{record.chat.title}</span>
+          <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
         </button>
         <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100">
           <button
@@ -471,5 +479,46 @@ function ChatRow({
         </div>
       </div>
     </ContextMenu>
+  );
+}
+
+function ChatAgentStateIndicator({
+  state,
+  title,
+}: {
+  state: WorkRailAgentState;
+  title: string;
+}) {
+  if (state === "idle") return null;
+  if (state === "unseen_completion") {
+    return (
+      <span
+        aria-label={`Unseen completion for ${title}`}
+        className="ml-auto size-2 shrink-0 rounded-full bg-[var(--accent)]"
+      />
+    );
+  }
+  if (state === "running") {
+    return (
+      <LoaderCircle
+        aria-label={`Agent running for ${title}`}
+        className="ml-auto shrink-0 animate-spin"
+        size={13}
+      />
+    );
+  }
+  const requiresApproval = state === "approval_required";
+  const label = requiresApproval
+    ? `Approval required for ${title}`
+    : state === "input_required"
+      ? `Input required for ${title}`
+      : `Agent failed for ${title}`;
+  return (
+    <AlertCircle
+      aria-label={label}
+      className="ml-auto shrink-0"
+      size={13}
+      style={{ color: state === "failed" ? "var(--danger)" : "var(--warning)" }}
+    />
   );
 }
