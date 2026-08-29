@@ -73,10 +73,6 @@ body {
   transition: none !important;
 }
 
-[data-instant-list-hover]:hover {
-  background-color: var(--bg-hover) !important;
-}
-
 /* Inputs and content areas re-enable selection. */
 input,
 textarea,

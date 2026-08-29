@@ -50,12 +50,12 @@ describe("instant OS list hover", () => {
     expect(rule).toContain("transition: none !important");
   });
 
-  it("gives native desktop rows a shared immediate hover fill", () => {
+  it("does not let the native hover contract override selected row fills", () => {
     const css = read("desktop/src/renderer/src/design/index.css");
+    const hoverRule =
+      css.match(/\[data-instant-list-hover\]:hover\s*\{([^}]*)\}/)?.[1] ?? "";
 
-    expect(css).toMatch(
-      /\[data-instant-list-hover\]:hover\s*\{[^}]*background-color:\s*var\(--bg-hover\)\s*!important/,
-    );
+    expect(hoverRule).not.toContain("background");
   });
 
   it.each(webListSurfaces)("opts the web OS list surface into instant hover: %s", (path) => {
