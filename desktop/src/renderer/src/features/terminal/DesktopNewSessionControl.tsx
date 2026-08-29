@@ -71,14 +71,20 @@ export function DesktopNewSessionControl({
             <SessionMenuItem label="Shell" icon={<SquareTerminal size={14} />} onSelect={onCreateShell} />
             {TERMINAL_AGENT_OPTIONS.map((option) => {
               const state = agentStatuses[option.id];
-              const status = state === "missing" ? "Install" : state === "unknown" && checkingAgentStatuses ? "Checking…" : null;
+              const action = terminalAgentAction(state);
+              const status = state === "missing"
+                ? "Install"
+                : state === "unknown"
+                  ? checkingAgentStatuses ? "Checking…" : "Unavailable"
+                  : null;
               return (
                 <SessionMenuItem
                   key={option.id}
                   label={option.label}
                   badge={option.shortLabel.slice(0, 2)}
                   status={status}
-                  onSelect={() => onCreateAgent(option, terminalAgentAction(state))}
+                  disabled={action === null}
+                  onSelect={() => action && onCreateAgent(option, action)}
                 />
               );
             })}
@@ -94,18 +100,21 @@ function SessionMenuItem({
   icon,
   badge,
   status,
+  disabled = false,
   onSelect,
 }: {
   label: string;
   icon?: React.ReactNode;
   badge?: string;
   status?: string | null;
+  disabled?: boolean;
   onSelect: () => void;
 }) {
   return (
     <DropdownMenu.Item
+      disabled={disabled}
       onSelect={onSelect}
-      className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+      className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-[var(--bg-hover)]"
     >
       <span className="flex size-5 shrink-0 items-center justify-center rounded text-[9px] font-bold" style={{ background: "var(--bg-selected)", color: "var(--text-secondary)" }}>
         {icon ?? badge}

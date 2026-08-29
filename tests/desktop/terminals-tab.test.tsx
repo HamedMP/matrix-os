@@ -13,8 +13,21 @@ import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance"
 import { useTerminalAppearance } from "../../desktop/src/renderer/src/stores/terminal-appearance";
 
 const terminalMounts = vi.hoisted(() => new Map<string, number>());
-const terminalPreferencesGet = vi.fn(async () => ({ preferences: { shellThemeId: "dark" } }));
+const installedAgents = {
+  agents: ["claude", "codex", "opencode", "pi"].map((id) => ({ id, installState: "installed" })),
+};
+const terminalPreferencesGet = vi.fn(async (path: string) => (
+  path === "/api/agents" ? installedAgents : { preferences: { shellThemeId: "dark" } }
+));
 const terminalPreferencesPut = vi.fn(async () => ({ preferences: { shellThemeId: "dark" } }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
 
 vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => ({
   default: ({
@@ -56,7 +69,10 @@ function renderTab(active = true) {
 describe("TerminalsTab", () => {
   beforeEach(() => {
     terminalMounts.clear();
-    terminalPreferencesGet.mockClear();
+    terminalPreferencesGet.mockReset();
+    terminalPreferencesGet.mockImplementation(async (path: string) => (
+      path === "/api/agents" ? installedAgents : { preferences: { shellThemeId: "dark" } }
+    ));
     terminalPreferencesPut.mockClear();
     window.operator = {
       invoke: vi.fn(async () => ({ ok: true })),
@@ -571,6 +587,65 @@ describe("TerminalsTab", () => {
       cmd: "codex",
       agent: "codex",
     }));
+  });
+
+  it("keeps agents disabled when installation inventory is unresolved", async () => {
+    const createShell = vi.fn().mockResolvedValue({ name: "matrix-created", status: "active" });
+    terminalPreferencesGet.mockImplementation(async (path: string) => (
+      path === "/api/agents" ? { agents: [] } : { preferences: { shellThemeId: "dark" } }
+    ));
+    useShellSessions.setState({
+      create: createShell,
+      sessions: [{ name: "matrix-main", status: "active" }],
+    });
+
+    renderTab();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Choose session type" }), { button: 0, ctrlKey: false });
+
+    const codex = await screen.findByRole("menuitem", { name: /Codex.*Unavailable/ });
+    expect(codex.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(codex);
+    expect(createShell).not.toHaveBeenCalled();
+  });
+
+  it("ignores agent inventory that settles after the selected runtime changes", async () => {
+    const oldInventory = deferred<unknown>();
+    const oldApi = {
+      get: vi.fn((path: string) => (
+        path === "/api/agents"
+          ? oldInventory.promise
+          : Promise.resolve({ preferences: { shellThemeId: "dark" } })
+      )),
+      put: terminalPreferencesPut,
+    };
+    const newApi = {
+      get: vi.fn(async (path: string) => (
+        path === "/api/agents"
+          ? { agents: [{ id: "codex", installState: "missing" }] }
+          : { preferences: { shellThemeId: "dark" } }
+      )),
+      put: terminalPreferencesPut,
+    };
+    useConnection.setState({ api: oldApi as never, runtimeSlot: "primary" });
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active" }] });
+
+    renderTab();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Choose session type" }), { button: 0, ctrlKey: false });
+    await waitFor(() => expect(oldApi.get).toHaveBeenCalledWith("/api/agents"));
+
+    act(() => useConnection.setState({ api: newApi as never, runtimeSlot: "secondary" }));
+    act(() => oldInventory.resolve({ agents: [{ id: "codex", installState: "installed" }] }));
+
+    const staleCodex = await screen.findByRole("menuitem", { name: /Codex.*Unavailable/ });
+    expect(staleCodex.getAttribute("aria-disabled")).toBe("true");
+
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Choose session type" }), { button: 0, ctrlKey: false });
+
+    const currentCodex = await screen.findByRole("menuitem", { name: /Codex.*Install/ });
+    expect(currentCodex.getAttribute("aria-disabled")).toBeNull();
+    expect(newApi.get).toHaveBeenCalledWith("/api/agents");
   });
 
   it("shows the running agent and its current activity in each session row", () => {

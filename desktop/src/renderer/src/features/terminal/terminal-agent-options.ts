@@ -73,7 +73,8 @@ export function parseTerminalAgentStatuses(value: unknown): Record<TerminalAgent
   return statuses;
 }
 
-export function terminalAgentAction(state: TerminalAgentInstallState): TerminalAgentMenuAction {
+export function terminalAgentAction(state: TerminalAgentInstallState): TerminalAgentMenuAction | null {
+  if (state === "unknown") return null;
   return state === "missing" ? "install" : "launch";
 }
 

@@ -127,6 +127,13 @@ export default function TerminalsTab({
   const [deleteTarget, setDeleteTarget] = useState<ShellSessionSummary | null>(null);
   const [agentStatuses, setAgentStatuses] = useState({ ...UNKNOWN_TERMINAL_AGENT_STATUSES });
   const [checkingAgentStatuses, setCheckingAgentStatuses] = useState(false);
+  const agentStatusRequestRef = useRef(0);
+
+  useEffect(() => {
+    agentStatusRequestRef.current += 1;
+    setAgentStatuses({ ...UNKNOWN_TERMINAL_AGENT_STATUSES });
+    setCheckingAgentStatuses(false);
+  }, [api, runtimeSlot]);
 
   useEffect(() => {
     void loadTerminalAppearance(api);
@@ -200,13 +207,20 @@ export default function TerminalsTab({
 
   const refreshAgentStatuses = useCallback(async () => {
     if (!api || checkingAgentStatuses) return;
+    const requestId = agentStatusRequestRef.current + 1;
+    agentStatusRequestRef.current = requestId;
     setCheckingAgentStatuses(true);
     try {
-      setAgentStatuses(parseTerminalAgentStatuses(await api.get("/api/agents")));
+      const statuses = parseTerminalAgentStatuses(await api.get("/api/agents"));
+      if (agentStatusRequestRef.current === requestId) {
+        setAgentStatuses(statuses);
+      }
     } catch (err: unknown) {
       console.warn("[terminal] Failed to load agent status:", err instanceof Error ? err.message : String(err));
     } finally {
-      setCheckingAgentStatuses(false);
+      if (agentStatusRequestRef.current === requestId) {
+        setCheckingAgentStatuses(false);
+      }
     }
   }, [api, checkingAgentStatuses]);
 
