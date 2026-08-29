@@ -989,6 +989,51 @@ describe('platform billing routes', () => {
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
+  it.each(['region_ash', 'region_hil'])(
+    'keeps historical Stripe checkout metadata readable for US region %s',
+    async (regionSlug) => {
+      await insertCheckoutAttempt(db, {
+        id: `attempt_historical_${regionSlug}`,
+        clerkUserId: 'user_123',
+        stripeSessionId: `cs_historical_${regionSlug}`,
+        runtimeSlot: 'studio',
+        createdAt: '2026-05-29T23:00:00.000Z',
+        status: 'open',
+      });
+      vi.mocked(stripe.retrieveCheckoutSession).mockResolvedValue({
+        status: 'open',
+        url: 'https://checkout.stripe.test/historical-us',
+        clerkUserId: 'user_123',
+        priceId: 'price_builder_monthly',
+        regionSlug,
+      });
+      const app = createApp();
+
+      const res = await app.request('/billing/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug: 'region_fsn1',
+          runtimeSlot: 'studio',
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toEqual({
+        error: 'Checkout selection conflicts with an open session',
+        code: 'checkout_selection_conflict',
+        selection: {
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug,
+        },
+      });
+      expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+    },
+  );
+
   it('replaces a younger legacy checkout after Stripe confirms it expired', async () => {
     await insertCheckoutAttempt(db, {
       id: 'attempt_expired_legacy_studio',
@@ -1126,6 +1171,51 @@ describe('platform billing routes', () => {
     expect(await res.json()).toEqual({ error: 'Invalid request' });
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
+
+  it.each(['region_ash', 'region_hil'])(
+    'rejects new checkout requests for removed US region %s with a generic validation error',
+    async (regionSlug) => {
+      const app = createApp();
+
+      const res = await app.request('/billing/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug,
+          runtimeSlot: 'studio',
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid request' });
+      expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['region_fsn1', 'region_nbg1'])(
+    'accepts new checkout requests for German region %s',
+    async (regionSlug) => {
+      const app = createApp();
+
+      const res = await app.request('/billing/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug,
+          runtimeSlot: 'studio',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ regionSlug }),
+      );
+    },
+  );
 
   it('rejects unknown developer tool ids with a generic validation error', async () => {
     const app = createApp();

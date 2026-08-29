@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -11,6 +14,10 @@ function readPngDimensions(path: string): { width: number; height: number } {
     width: png.readUInt32BE(16),
     height: png.readUInt32BE(20),
   };
+}
+
+function sha256(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 describe("desktop packaging", () => {
@@ -92,7 +99,14 @@ describe("desktop packaging", () => {
     expect(generator).toContain("@expo-google-fonts/geist");
     expect(generator).toContain("Geist_400Regular.ttf");
     expect(generator).toContain("Geist_600SemiBold.ttf");
-    expect(generator).toContain("existsSync(packagePath) && fontPaths.every(existsSync)");
+    expect(generator).toContain("@resvg/resvg-js");
+    expect(generator).toContain("existsSync(resvgPackagePath)");
+    expect(generator).toContain("fontPaths.every(existsSync)");
+    expect(generator).toContain(
+      "fontFiles: [displayFontBoldPath, uiFontRegularPath, uiFontSemiBoldPath]",
+    );
+    expect(generator).toContain("loadSystemFonts: false");
+    expect(generator).not.toContain("@font-face");
     expect(generator).not.toContain("Instrument Serif");
     expect(generator).not.toContain("instrument-serif");
     expect(generator.match(/<text class="display text-4xl"/g)).toHaveLength(1);
@@ -118,12 +132,42 @@ describe("desktop packaging", () => {
       desktopPackageJson.devDependencies?.["@expo-google-fonts/bricolage-grotesque"],
     ).toMatch(/^\^0\.4\./);
     expect(desktopPackageJson.devDependencies?.["@expo-google-fonts/geist"]).toMatch(/^\^0\.4\./);
+    expect(desktopPackageJson.devDependencies?.["@resvg/resvg-js"]).toBe("^2.6.2");
     expect(desktopPackageJson.dependencies).not.toHaveProperty(
       "@expo-google-fonts/bricolage-grotesque",
     );
     expect(desktopPackageJson.dependencies).not.toHaveProperty("@expo-google-fonts/geist");
+    expect(desktopPackageJson.dependencies).not.toHaveProperty("@resvg/resvg-js");
     expect(desktopPackageJson.dependencies?.["@fontsource/instrument-serif"]).toMatch(/^\^5\./);
   });
+
+  it("renders the committed DMG artwork with the packaged brand fonts", () => {
+    const root = process.cwd();
+    const outputDirectory = mkdtempSync(join(tmpdir(), "matrix-dmg-background-"));
+
+    try {
+      execFileSync(process.execPath, [join(root, "scripts/generate-desktop-dmg-background.mjs")], {
+        cwd: root,
+        env: { ...process.env, MATRIX_DMG_OUTPUT_DIR: outputDirectory },
+        stdio: "pipe",
+      });
+
+      for (const filename of ["dmg-background.png", "dmg-background@2x.png"]) {
+        const committedPath = join(root, "desktop/build", filename);
+        const generatedPath = join(outputDirectory, filename);
+        expect(readFileSync(generatedPath)).toEqual(readFileSync(committedPath));
+      }
+
+      expect(sha256(join(root, "desktop/build/dmg-background.png"))).toBe(
+        "b452452bf5a9a2dc23c3bc9de1acd3f6aa880733ae501bdb322665d831f09e93",
+      );
+      expect(sha256(join(root, "desktop/build/dmg-background@2x.png"))).toBe(
+        "676b042d7498fde42cf84266cf056bfd2db05d9fb4c8b62aa11470530edb518e",
+      );
+    } finally {
+      rmSync(outputDirectory, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("uses the minimal Electron hardened-runtime entitlements for macOS", () => {
     const root = process.cwd();

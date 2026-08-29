@@ -344,7 +344,7 @@ describe("RuntimeManager", () => {
     expect(screen.getByRole("button", { name: /Max.*CPX52/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Starter.*CPX22/i }));
     fireEvent.click(screen.getByRole("button", { name: "Change region" }));
-    fireEvent.click(screen.getByRole("button", { name: /US West.*hil/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany.*nbg1/i }));
     fireEvent.click(screen.getByRole("button", { name: "Annual" }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
@@ -356,7 +356,7 @@ describe("RuntimeManager", () => {
           body: JSON.stringify({
             planSlug: "matrix_starter",
             interval: "annual",
-            regionSlug: "region_hil",
+            regionSlug: "region_nbg1",
             serverType: "cpx22",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             runtimeSlot: "research-lab",

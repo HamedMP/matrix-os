@@ -338,35 +338,40 @@ describe('platform/customer-vps', () => {
     });
   });
 
-  it('persists a selected region and uses it for provisioning', async () => {
-    const { service, hetzner } = createService({
-      config: createTestConfig({ location: 'nbg1' }),
-      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
-    });
+  it.each(['ash', 'hil'] as const)(
+    'continues to provision an existing US machine in %s',
+    async (location) => {
+      const { service, hetzner } = createService({
+        config: createTestConfig({ location: 'nbg1' }),
+        resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
+      });
 
-    await service.provision({
-      clerkUserId: 'user_123',
-      handle: 'alice',
-      serverType: 'cpx22',
-      location: 'hil',
-    });
+      await service.provision({
+        clerkUserId: 'user_123',
+        handle: 'alice',
+        serverType: 'cpx22',
+        location,
+      });
 
-    expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
-      serverType: 'cpx22',
-      location: 'hil',
-    });
-    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
-      serverType: 'cpx22',
-      location: 'hil',
-    });
-  });
+      expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+        serverType: 'cpx22',
+        location,
+      });
+      await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+        serverType: 'cpx22',
+        location,
+      });
+    },
+  );
 
   it('accepts only supported Hetzner locations at the provisioning boundary', () => {
-    expect(ProvisionRequestSchema.safeParse({
-      clerkUserId: 'user_123',
-      handle: 'alice',
-      location: 'hil',
-    }).success).toBe(true);
+    for (const location of ['fsn1', 'nbg1', 'ash', 'hil']) {
+      expect(ProvisionRequestSchema.safeParse({
+        clerkUserId: 'user_123',
+        handle: 'alice',
+        location,
+      }).success).toBe(true);
+    }
     expect(ProvisionRequestSchema.safeParse({
       clerkUserId: 'user_123',
       handle: 'alice',
