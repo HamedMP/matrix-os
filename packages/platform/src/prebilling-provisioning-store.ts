@@ -309,6 +309,9 @@ export async function admitPrebillingIntent(
       stripe_session_id: input.stripeSessionId,
       stripe_session_expires_at: input.stripeSessionExpiresAt,
       lease_expires_at: input.stripeSessionExpiresAt,
+      // The retained column is schema compatibility only. A cost-aware rollback
+      // must pause admission and drain active zero-valued rows before restoring
+      // its monetary ceiling; the shared count fence remains safe while draining.
       reserved_hourly_cost_micros: 0,
       revision: current.revision + 1,
       updated_at: input.now,

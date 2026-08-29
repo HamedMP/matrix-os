@@ -147,7 +147,7 @@ Non-negotiable implementation invariants:
 5. **Cleanup lock scope**: lock intent, cleanup action, machine, current entitlement projection, and newer owner/slot intents in one documented order before the irreversible phase transition.
 6. **Acceptable orphan states**: an open checkout with no preparation is safe and falls back after authorization; an unauthorized prepared machine is temporarily acceptable only under an active lease/cleanup action; an authorized slot with no live machine is acceptable only with one durable normal provisioning job.
 7. **Provider ambiguity**: deterministic provider identity/labels are reconciled before create/delete retry; terminal cleanup means confirmed provider absence.
-8. **Rollback**: disabling admission stops new unpaid preparation but continuation workers keep authorization, fallback provisioning, reconciliation, and cleanup alive. The legacy reservation column remains present and is written as zero so reverting can restore the former implementation without a schema migration.
+8. **Rollback**: disabling admission stops new unpaid preparation but continuation workers keep authorization, fallback provisioning, reconciliation, and cleanup alive. The legacy reservation column remains present and is written as zero so reverting needs no schema migration. A rollback to the former cost-aware binary retains the same `MAX_ACTIVE` count fence, so transitional exposure never exceeds the accepted count-only bound. To restore the former monetary ceiling immediately, operators MUST disable admission on the count-only revision and wait one 31-minute lease or verify that no active unpaid zero-valued reservations remain before shifting traffic and restoring the legacy cost settings.
 
 ## Implementation Sequence
 

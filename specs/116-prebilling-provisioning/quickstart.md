@@ -12,6 +12,18 @@ MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=<positive integer>
 
 Setting `ENABLED=false` or rollout to `0` stops only new admission. Signed subscription activation and signed-expiry cleanup remain wired so existing intents can converge safely.
 
+## Rollback to a Cost-Aware Revision
+
+The retained database column avoids a schema rollback, but count-only revisions intentionally write it as zero. A direct traffic rollback remains inside the accepted count-only exposure because the former binary also enforces `MAX_ACTIVE`; its monetary ceiling becomes exact only after those zero-valued active rows reach a terminal state.
+
+When an immediate monetary ceiling is required, use this order:
+
+1. Deploy the count-only revision with new unpaid admission disabled while leaving continuation workers enabled.
+2. Wait one full 31-minute checkout lease, or query under the prebilling advisory lock and verify there are no unpaid intents in active preparation states with a zero legacy reservation.
+3. Shift traffic to the former cost-aware revision and restore its legacy cost settings.
+
+Never restore legacy cost settings before step 2. Paid-intent continuation bypasses unpaid admission and remains available throughout the drain.
+
 ## 1. Fake Stripe and Provider Integration
 
 Required negative/race cases:
