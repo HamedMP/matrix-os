@@ -1170,9 +1170,13 @@ export async function createGateway(config: GatewayConfig) {
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
 
-  function buildIntegrationProxyUrl(c: Context, targetBase: string): string {
+  function buildIntegrationProxyUrl(
+    c: Context,
+    targetBase: string,
+    routePrefix = "/api/integrations",
+  ): string {
     const targetUrl = new URL(targetBase);
-    const suffix = c.req.path.replace("/api/integrations", "") || "";
+    const suffix = c.req.path.replace(routePrefix, "") || "";
     const decodedSuffix = decodeURIComponent(suffix);
     if (decodedSuffix.split("/").some((segment) => segment === "..")) {
       throw new Error("Invalid integration proxy path");
@@ -1208,11 +1212,12 @@ export async function createGateway(config: GatewayConfig) {
   async function proxyIntegrationRequest(
     c: Context,
     targetBase: string,
-    includeInternalAuth: boolean,
+    internalAuthToken?: string,
+    routePrefix = "/api/integrations",
   ): Promise<Response> {
     let upstreamUrl: string;
     try {
-      upstreamUrl = buildIntegrationProxyUrl(c, targetBase);
+      upstreamUrl = buildIntegrationProxyUrl(c, targetBase, routePrefix);
     } catch (err: unknown) {
       console.warn(
         "[integrations] rejected proxy path:",
@@ -1226,8 +1231,8 @@ export async function createGateway(config: GatewayConfig) {
         headers.set(key, value);
       }
     }
-    if (includeInternalAuth && internalPlatformToken) {
-      headers.set("authorization", `Bearer ${internalPlatformToken}`);
+    if (internalAuthToken) {
+      headers.set("authorization", `Bearer ${internalAuthToken}`);
     }
 
     const upstream = await fetch(upstreamUrl, {
@@ -1908,12 +1913,6 @@ export async function createGateway(config: GatewayConfig) {
       run: (input) => shellCommandRunner.run(input),
     }));
   }
-  registerCustomMcpGatewayRoutes(app, {
-    homePath,
-    clerkUserId: process.env.MATRIX_CLERK_USER_ID ?? process.env.MATRIX_USER_ID,
-    projectionToken: process.env.UPGRADE_TOKEN,
-  });
-
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
   // ephemeral process-scoped secret so the HKDF input is never predictable — an
@@ -1939,7 +1938,7 @@ export async function createGateway(config: GatewayConfig) {
     console.log("[platform-db] Integration routes mounted (after auth)");
   } else if (internalIntegrationBaseUrl && internalPlatformToken && internalPlatformUrl) {
     app.all("/api/integrations", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) =>
-      proxyIntegrationRequest(c, internalIntegrationBaseUrl, true),
+      proxyIntegrationRequest(c, internalIntegrationBaseUrl, internalPlatformToken),
     );
     app.all("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) => {
       const isPublic =
@@ -1948,10 +1947,30 @@ export async function createGateway(config: GatewayConfig) {
       const targetBase = isPublic
         ? `${internalPlatformUrl}/api/integrations`
         : internalIntegrationBaseUrl;
-      return proxyIntegrationRequest(c, targetBase, !isPublic);
+      return proxyIntegrationRequest(c, targetBase, isPublic ? undefined : internalPlatformToken);
     });
     console.log("[platform-db] Integration routes proxied via platform internal API");
   }
+  registerCustomMcpGatewayRoutes(app, {
+    homePath,
+    clerkUserId: process.env.MATRIX_CLERK_USER_ID ?? process.env.MATRIX_USER_ID,
+    projectionToken: process.env.UPGRADE_TOKEN,
+    ...(internalPlatformUrl && internalHandle && internalPlatformToken
+      ? {
+          platformProxy: {
+            internalPlatformUrl,
+            handle: internalHandle,
+            token: internalPlatformToken,
+            request: (
+              context: Context,
+              targetBase: string,
+              routePrefix: "/api/mcp-servers",
+              token: string,
+            ) => proxyIntegrationRequest(context, targetBase, token, routePrefix),
+          },
+        }
+      : {}),
+  });
 
   const processManager = registerAppRuntimeRoutes(app, {
     homePath,
@@ -2307,7 +2326,7 @@ export async function createGateway(config: GatewayConfig) {
               };
 
               dispatcher
-                .dispatch(parsed.text, dispatchSessionId, async (event) => {
+              .dispatch(parsed.text, dispatchSessionId, async (event) => {
                   const msg = withReplayId(kernelEventToServerMessage(event, requestId));
 
                   if (msg.type === "kernel:init") {
@@ -2381,10 +2400,11 @@ export async function createGateway(config: GatewayConfig) {
                     conversations.addSystemMessage(activeSessionId, "Stopped.");
                     void finalizeWithSummary(activeSessionId);
                   }
-                }, undefined, abortController, {
+              }, undefined, abortController, {
                 model: parsed.model,
                 effort: parsed.effort,
                 workingDirectory,
+                requestApproval: approvalBridge?.requestApproval,
               })
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);

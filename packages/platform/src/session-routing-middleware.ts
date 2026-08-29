@@ -438,6 +438,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       reqPath.startsWith('/api/integrations/webhook/');
     const isIntegrationPath =
       reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
+    const isCustomMcpPath =
+      reqPath === '/api/mcp-servers' || reqPath.startsWith('/api/mcp-servers/');
     if (isAppDomain && isPublicIntegrationPath) {
       return next();
     }
@@ -770,7 +772,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
     }
 
-    if (isAppDomain && isIntegrationPath) {
+    if (isAppDomain && (isIntegrationPath || isCustomMcpPath)) {
       c.set('platformUserId', identity.userId);
       c.set('platformHandle', identity.handle);
       return next();

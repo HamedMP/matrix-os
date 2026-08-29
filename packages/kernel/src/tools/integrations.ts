@@ -95,7 +95,7 @@ export async function describeServiceHandler(
     const available = (await res.json()) as Array<{
       id: string;
       name: string;
-      actions?: Record<string, { description?: string; params?: Record<string, { type?: string; required?: boolean }> }>;
+      actions?: Record<string, { description?: string; risk?: "read" | "write" | "destructive"; params?: Record<string, { type?: string; required?: boolean }> }>;
     }>;
     const service = available.find((item) => item.id === input.service);
     if (!service) return textResult(`No Matrix integration is available for ${input.service}.`);
@@ -103,7 +103,7 @@ export async function describeServiceHandler(
       const params = Object.entries(action.params ?? {}).map(([param, definition]) =>
         `${param}${definition.required ? " (required)" : ""}${definition.type ? `: ${definition.type}` : ""}`,
       );
-      return `- ${name}${action.description ? ` — ${action.description}` : ""}${params.length > 0 ? ` (${params.join(", ")})` : ""}`;
+      return `- ${name} [${action.risk ?? "read"}]${action.description ? ` — ${action.description}` : ""}${params.length > 0 ? ` (${params.join(", ")})` : ""}`;
     });
     return textResult(`${service.name} actions:\n${actions.length > 0 ? actions.join("\n") : "No approved actions are currently available."}`);
   } catch (err: unknown) {
@@ -307,5 +307,103 @@ export async function disconnectServiceHandler(
   } catch (err: unknown) {
     console.error("[integrations] disconnect_service error:", err instanceof Error ? err.message : err);
     return textResult("The integration could not be disconnected. Please try again.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Personal Custom MCP servers. Upstream credentials remain in the platform
+// broker; these handlers only exchange safe configuration and wrapped output.
+// ---------------------------------------------------------------------------
+
+interface CustomMcpInventoryItem {
+  id: string;
+  name: string;
+  url: string;
+  status: string;
+  enabled: boolean;
+  revision: number;
+  tools: Array<{
+    name: string;
+    description: string;
+    approval: "always_ask" | "allow";
+    enabled: boolean;
+  }>;
+}
+
+export async function listCustomMcpServersHandler(
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const response = await fetcher(`${GATEWAY_BASE}/api/mcp-servers`, {
+      method: "GET",
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!response.ok) return textResult("Custom MCP servers are currently unavailable.");
+    const servers = await response.json() as CustomMcpInventoryItem[];
+    if (servers.length === 0) return textResult("No personal Custom MCP servers are configured.");
+    return textResult(wrapExternalContent(`Custom MCP servers:\n${servers.map((server) =>
+      `- ${server.name} [${server.status}]${server.enabled ? " enabled" : " disabled"} [server id: ${server.id}]`,
+    ).join("\n")}`, { source: "api", includeWarning: true }));
+  } catch (error: unknown) {
+    console.error("[custom-mcp] list error:", error instanceof Error ? error.message : error);
+    return textResult("Custom MCP servers are currently unavailable.");
+  }
+}
+
+export async function describeCustomMcpServerHandler(
+  input: { server_id: string },
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const response = await fetcher(
+      `${GATEWAY_BASE}/api/mcp-servers/${encodeURIComponent(input.server_id)}`,
+      { method: "GET", headers: authHeaders(), signal: AbortSignal.timeout(API_TIMEOUT_MS) },
+    );
+    if (!response.ok) return textResult("Custom MCP server details are unavailable.");
+    const server = await response.json() as CustomMcpInventoryItem;
+    const tools = server.tools.filter((tool) => tool.enabled).map((tool) =>
+      `- ${tool.name} [approval: ${tool.approval}]${tool.description ? ` — ${tool.description}` : ""}`,
+    );
+    return textResult(wrapExternalContent(
+      `${server.name} [${server.status}]\n${tools.length ? tools.join("\n") : "No tools are enabled."}`,
+      { source: "api", includeWarning: true },
+    ));
+  } catch (error: unknown) {
+    console.error("[custom-mcp] describe error:", error instanceof Error ? error.message : error);
+    return textResult("Custom MCP server details are unavailable.");
+  }
+}
+
+export async function callCustomMcpToolHandler(
+  input: { server_id: string; tool: string; arguments?: Record<string, unknown> },
+  fetcher: GatewayFetcher = defaultFetcher(),
+  approvalGranted = false,
+): Promise<ToolResult> {
+  try {
+    const response = await fetcher(
+      `${GATEWAY_BASE}/api/mcp-servers/${encodeURIComponent(input.server_id)}/call`,
+      {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          tool: input.tool,
+          arguments: input.arguments,
+          // Only the in-process kernel passes true, after its native approval
+          // hook. External stdio MCP clients leave this false; `allow` tools
+          // still work, while `always_ask` fails closed at the broker.
+          approvalGranted,
+        }),
+        signal: AbortSignal.timeout(ACTION_TIMEOUT_MS),
+      },
+    );
+    if (!response.ok) return textResult("The Custom MCP tool call was rejected.");
+    return textResult(wrapExternalContent(JSON.stringify(await response.json(), null, 2), {
+      source: "api",
+      includeWarning: true,
+    }));
+  } catch (error: unknown) {
+    console.error("[custom-mcp] call error:", error instanceof Error ? error.message : error);
+    return textResult("The Custom MCP tool is temporarily unavailable.");
   }
 }
