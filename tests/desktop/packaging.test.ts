@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -141,14 +143,31 @@ describe("desktop packaging", () => {
 
   it("renders the committed DMG artwork with the packaged brand fonts", () => {
     const root = process.cwd();
+    const outputDirectory = mkdtempSync(join(tmpdir(), "matrix-dmg-background-"));
 
-    expect(sha256(join(root, "desktop/build/dmg-background.png"))).toBe(
-      "b452452bf5a9a2dc23c3bc9de1acd3f6aa880733ae501bdb322665d831f09e93",
-    );
-    expect(sha256(join(root, "desktop/build/dmg-background@2x.png"))).toBe(
-      "676b042d7498fde42cf84266cf056bfd2db05d9fb4c8b62aa11470530edb518e",
-    );
-  });
+    try {
+      execFileSync(process.execPath, [join(root, "scripts/generate-desktop-dmg-background.mjs")], {
+        cwd: root,
+        env: { ...process.env, MATRIX_DMG_OUTPUT_DIR: outputDirectory },
+        stdio: "pipe",
+      });
+
+      for (const filename of ["dmg-background.png", "dmg-background@2x.png"]) {
+        const committedPath = join(root, "desktop/build", filename);
+        const generatedPath = join(outputDirectory, filename);
+        expect(readFileSync(generatedPath)).toEqual(readFileSync(committedPath));
+      }
+
+      expect(sha256(join(root, "desktop/build/dmg-background.png"))).toBe(
+        "b452452bf5a9a2dc23c3bc9de1acd3f6aa880733ae501bdb322665d831f09e93",
+      );
+      expect(sha256(join(root, "desktop/build/dmg-background@2x.png"))).toBe(
+        "676b042d7498fde42cf84266cf056bfd2db05d9fb4c8b62aa11470530edb518e",
+      );
+    } finally {
+      rmSync(outputDirectory, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("uses the minimal Electron hardened-runtime entitlements for macOS", () => {
     const root = process.cwd();

@@ -79,8 +79,11 @@ const uiFontDirectory = resolve(
 );
 const uiFontRegularPath = resolve(uiFontDirectory, "400Regular/Geist_400Regular.ttf");
 const uiFontSemiBoldPath = resolve(uiFontDirectory, "600SemiBold/Geist_600SemiBold.ttf");
-const outputPath = resolve(root, "desktop/build/dmg-background.png");
-const outputRetinaPath = resolve(root, "desktop/build/dmg-background@2x.png");
+const outputDirectory = process.env.MATRIX_DMG_OUTPUT_DIR
+  ? resolve(process.env.MATRIX_DMG_OUTPUT_DIR)
+  : resolve(root, "desktop/build");
+const outputPath = resolve(outputDirectory, "dmg-background.png");
+const outputRetinaPath = resolve(outputDirectory, "dmg-background@2x.png");
 
 for (const assetPath of [
   logoPath,
