@@ -12,6 +12,7 @@ import {
 
 interface TerminalAppearanceState {
   themeId: TerminalThemeId;
+  confirmedThemeId: TerminalThemeId;
   hydrated: boolean;
   selectionRevision: number;
   loadRevision: number;
@@ -25,28 +26,69 @@ interface TerminalPreferencesResponse {
   preferences?: { shellThemeId?: unknown };
 }
 
+interface PersistCallbacks {
+  getConfirmedThemeId: () => TerminalThemeId;
+  onPersisted: (themeId: TerminalThemeId) => void;
+  onReconciled: (themeId: TerminalThemeId, selectionRevision: number) => void;
+}
+
 let persistQueue: Promise<void> = Promise.resolve();
 
 function isSelectableTerminalThemeId(value: unknown): value is TerminalThemeId {
   return typeof value === "string" && TERMINAL_THEME_OPTIONS.some((option) => option.id === value);
 }
 
-function persist(api: TerminalPreferencesApi | null, themeId: TerminalThemeId): void {
+function resolveTerminalThemeId(result: TerminalPreferencesResponse): TerminalThemeId {
+  return isSelectableTerminalThemeId(result.preferences?.shellThemeId)
+    ? result.preferences.shellThemeId
+    : DEFAULT_TERMINAL_THEME_ID;
+}
+
+function warn(operation: "load" | "persist" | "reconcile", error: unknown): void {
+  console.warn(
+    `[terminal-appearance] ${operation} failed:`,
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+function persist(
+  api: TerminalPreferencesApi | null,
+  themeId: TerminalThemeId,
+  selectionRevision: number,
+  callbacks: PersistCallbacks,
+): void {
   if (!api) return;
   const runtimeGeneration = captureRuntimeGeneration();
   persistQueue = persistQueue.then(async () => {
     if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-    await api.put("/api/terminal/preferences", { shellThemeId: themeId });
+    try {
+      await api.put("/api/terminal/preferences", { shellThemeId: themeId });
+      if (isCurrentRuntimeGeneration(runtimeGeneration)) {
+        callbacks.onPersisted(themeId);
+      }
+    } catch (error: unknown) {
+      warn("persist", error);
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
+
+      let authoritativeThemeId = callbacks.getConfirmedThemeId();
+      try {
+        const result = await api.get<TerminalPreferencesResponse>("/api/terminal/preferences");
+        authoritativeThemeId = resolveTerminalThemeId(result);
+      } catch (reconcileError: unknown) {
+        warn("reconcile", reconcileError);
+      }
+      if (isCurrentRuntimeGeneration(runtimeGeneration)) {
+        callbacks.onReconciled(authoritativeThemeId, selectionRevision);
+      }
+    }
   }).catch((error: unknown) => {
-    console.warn(
-      "[terminal-appearance] persist failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    warn("persist", error);
   });
 }
 
 export const useTerminalAppearance = create<TerminalAppearanceState>()((set, get) => ({
   themeId: DEFAULT_TERMINAL_THEME_ID,
+  confirmedThemeId: DEFAULT_TERMINAL_THEME_ID,
   hydrated: false,
   selectionRevision: 0,
   loadRevision: 0,
@@ -62,27 +104,38 @@ export const useTerminalAppearance = create<TerminalAppearanceState>()((set, get
     try {
       await persistQueue;
       const result = await api.get<TerminalPreferencesResponse>("/api/terminal/preferences");
-      const themeId = isSelectableTerminalThemeId(result.preferences?.shellThemeId)
-        ? result.preferences.shellThemeId
-        : DEFAULT_TERMINAL_THEME_ID;
+      const themeId = resolveTerminalThemeId(result);
       set((state) => ({
         themeId: state.loadRevision === loadRevision && state.selectionRevision === selectionRevision
           ? themeId
           : state.themeId,
+        confirmedThemeId: state.loadRevision === loadRevision
+          && state.selectionRevision === selectionRevision
+          ? themeId
+          : state.confirmedThemeId,
         hydrated: true,
       }));
     } catch (error: unknown) {
-      console.warn(
-        "[terminal-appearance] load failed:",
-        error instanceof Error ? error.message : String(error),
-      );
+      warn("load", error);
       set((state) => state.loadRevision === loadRevision ? { hydrated: true } : {});
     }
   },
 
   setThemeId: (themeId, api) => {
     if (!api) return;
-    set((state) => ({ themeId, selectionRevision: state.selectionRevision + 1 }));
-    persist(api, themeId);
+    const selectionRevision = get().selectionRevision + 1;
+    set({ themeId, selectionRevision });
+    persist(api, themeId, selectionRevision, {
+      getConfirmedThemeId: () => get().confirmedThemeId,
+      onPersisted: (persistedThemeId) => set({ confirmedThemeId: persistedThemeId }),
+      onReconciled: (authoritativeThemeId, failedRevision) => {
+        set((state) => ({
+          confirmedThemeId: authoritativeThemeId,
+          themeId: state.selectionRevision === failedRevision
+            ? authoritativeThemeId
+            : state.themeId,
+        }));
+      },
+    });
   },
 }));

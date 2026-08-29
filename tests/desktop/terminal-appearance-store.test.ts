@@ -57,6 +57,65 @@ describe("Terminal appearance store", () => {
     });
   });
 
+  it("reconciles a failed palette write with the authoritative saved preference", async () => {
+    const api = createApi("dark");
+    api.put = vi.fn().mockRejectedValue(new Error("offline"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      useTerminalAppearance.getState().setThemeId("matrix", api);
+      expect(useTerminalAppearance.getState().themeId).toBe("matrix");
+
+      await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/terminal/preferences"));
+      await vi.waitFor(() => expect(useTerminalAppearance.getState().themeId).toBe("dark"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not reconcile an older failed write over a newer palette selection", async () => {
+    let rejectFirst: ((error: Error) => void) | undefined;
+    const api = createApi("dark");
+    api.put = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+        rejectFirst = reject;
+      }))
+      .mockResolvedValue({ preferences: { shellThemeId: "powerlevel10k-pure" } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      useTerminalAppearance.getState().setThemeId("powerlevel10k-classic", api);
+      await vi.waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+      useTerminalAppearance.getState().setThemeId("powerlevel10k-pure", api);
+
+      rejectFirst?.(new Error("offline"));
+      await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/terminal/preferences"));
+      await vi.waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
+
+      expect(useTerminalAppearance.getState().themeId).toBe("powerlevel10k-pure");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("falls back to the last confirmed palette when failed writes cannot reload", async () => {
+    const api = createApi("dark");
+    api.put = vi.fn().mockRejectedValue(new Error("offline"));
+    api.get = vi.fn().mockRejectedValue(new Error("still offline"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      useTerminalAppearance.getState().setThemeId("powerlevel10k-classic", api);
+      useTerminalAppearance.getState().setThemeId("powerlevel10k-pure", api);
+
+      await vi.waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(useTerminalAppearance.getState().themeId).toBe("dark"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("ignores a shell palette selection while the runtime API is unavailable", () => {
     useTerminalAppearance.getState().setThemeId("matrix", null);
 
