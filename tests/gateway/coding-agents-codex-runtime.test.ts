@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
+import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   codexProviderEventPath,
@@ -597,6 +598,111 @@ describe("Codex structured event runtime", () => {
           expect.objectContaining({ type: "assistant.text.delta", delta: "The route is fixed." }),
         ]),
       }));
+    } finally {
+      await store.shutdownTurns();
+      await bridge.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("drains every durable Codex delta and terminal event across incremental bridge batches", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-runtime-canonical-"));
+    const bridge = createCodexEventBridge({
+      homePath,
+      pollIntervalMs: 60_000,
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
+    });
+    let sessionId: string | undefined;
+    const runtime = {
+      startSession: vi.fn(async ({ request }: { request: { sessionId: string } }) => {
+        sessionId = request.sessionId;
+        return {
+          ok: true as const,
+          status: 201,
+          session: {
+            id: request.sessionId,
+            runtime: { status: "running", zellijSession: request.sessionId },
+          },
+        };
+      }),
+      sendInput: vi.fn(async () => ({ ok: true as const, session: {} })),
+      stopSession: vi.fn(async () => ({ ok: true as const, session: {} })),
+    };
+    const store = createCodingAgentThreadStore({
+      homePath,
+      providers: [createWorkspaceCodingAgentProvider({
+        providerId: "codex",
+        agent: "codex",
+        runtime,
+        codexEvents: bridge,
+      })],
+    });
+    bridge.attachThreadStore(store);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store });
+    const collected: Array<{ type: string; delta?: string; outcome?: string }> = [];
+    const consumption = (async () => {
+      for await (const event of adapter.start({
+        owner: { type: "personal", ownerId: principal.userId },
+        chatId: "chat_canonical_bridge",
+        turnId: "cturn_canonical_bridge",
+        runId: "run_canonical_bridge",
+        prompt: "Inspect the calculator.",
+        parts: [{ type: "text", text: "Inspect the calculator." }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        signal: AbortSignal.timeout(5_000),
+      })) {
+        collected.push(event);
+      }
+    })();
+
+    try {
+      await vi.waitFor(() => expect(sessionId).toBeDefined());
+      const eventPath = codexProviderEventPath(homePath, sessionId!);
+      const delta = (index: number) => ({
+        type: "matrix.codex.assistant.delta",
+        messageId: "codex_item_final",
+        delta: `chunk-${index.toString().padStart(3, "0")}|`,
+      });
+      const tool = (index: number) => [
+        { type: "matrix.codex.tool.started", toolCallId: `codex_item_tool_${index}`, displayName: "Run command", kind: "command" },
+        { type: "matrix.codex.tool.output", toolCallId: `codex_item_tool_${index}`, text: "Command produced output.", truncated: true },
+        { type: "matrix.codex.tool.completed", toolCallId: `codex_item_tool_${index}`, outcome: "success" },
+      ];
+      const firstBatch = [
+        ...Array.from({ length: 40 }, (_, index) => delta(index)),
+        { type: "matrix.codex.assistant.completed", messageId: "codex_item_progress_1" },
+        ...tool(1),
+        ...Array.from({ length: 46 }, (_, index) => delta(index + 40)),
+        { type: "matrix.codex.assistant.completed", messageId: "codex_item_progress_2" },
+        ...tool(2),
+        ...tool(3),
+      ];
+      expect(firstBatch).toHaveLength(97);
+      const finalBatch = [
+        ...Array.from({ length: 3 }, (_, index) => delta(index + 86)),
+        { type: "matrix.codex.assistant.delta", messageId: "codex_item_final", delta: "\n" },
+        ...Array.from({ length: 73 }, (_, index) => delta(index + 89)),
+        { type: "matrix.codex.assistant.completed", messageId: "codex_item_final" },
+        { type: "turn.completed" },
+      ];
+      await writeFile(
+        eventPath,
+        `${[...firstBatch, ...finalBatch].map((event) => JSON.stringify(event)).join("\n")}\n`,
+        "utf-8",
+      );
+      await bridge.drain();
+      await consumption;
+
+      expect(collected.filter((event) => event.type === "assistant.delta")
+        .map((event) => event.delta ?? "").join(""))
+        .toBe([
+          ...Array.from({ length: 89 }, (_, index) => delta(index).delta),
+          "\n",
+          ...Array.from({ length: 73 }, (_, index) => delta(index + 89).delta),
+        ].join(""));
+      expect(collected.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
     } finally {
       await store.shutdownTurns();
       await bridge.shutdown();

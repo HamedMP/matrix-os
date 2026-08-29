@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
 import { SafeClientErrorSchema } from "#safe-client-error";
 import {
+  byteLength,
   boundedDisplayText,
   boundedText,
   prefixedId,
@@ -22,6 +23,10 @@ const TerminalSessionIdSchema = referenceId(128);
 const ReviewIdSchema = referenceId(128);
 const CursorSchema = referenceId(160);
 const SafeDisplayStringSchema = boundedDisplayText(120, 512);
+const AssistantTextDeltaSchema = z.string()
+  .min(1)
+  .max(4_000)
+  .refine((value) => byteLength(value) <= 16 * 1024, { message: "Text exceeds byte limit" });
 
 export const AgentThreadStatusSchema = z.enum([
   "queued", "starting", "running", "waiting_for_approval", "waiting_for_input",
@@ -158,7 +163,7 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
     turnId: AgentTurnIdSchema.optional(),
     attachments: z.array(AgentAttachmentSchema).max(8).optional(),
   }).strict(),
-  BaseThreadEventSchema.extend({ type: z.literal("assistant.text.delta"), messageId: referenceId(128), delta: boundedText(4_000, 16 * 1024) }).strict(),
+  BaseThreadEventSchema.extend({ type: z.literal("assistant.text.delta"), messageId: referenceId(128), delta: AssistantTextDeltaSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("assistant.text.completed"), messageId: referenceId(128) }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("tool.started"), toolCallId: referenceId(128), displayName: SafeDisplayStringSchema, kind: SafeDisplayStringSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("tool.output"), toolCallId: referenceId(128), text: boundedText(4_000, 16 * 1024), truncated: z.boolean().optional() }).strict(),
