@@ -187,7 +187,65 @@ describe('platform prebilling provisioning foundation', () => {
     expect(Number(row.reserved_hourly_cost_micros)).toBe(0);
   });
 
-  it('resumes the same paid intent even when unpaid preparation capacity is full', async () => {
+  it('does not admit an existing unpaid checkout intent after admission is disabled', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    const provisionForCheckout = vi.fn();
+    const resolveIdentity = vi.fn().mockResolvedValue({ handle: 'alice' });
+    const coordinator = createPrebillingProvisioningCoordinator({
+      db,
+      config: loadPrebillingProvisioningConfig({}),
+      customerVpsService: { provisionForCheckout } as never,
+      resolveIdentity,
+      now: () => new Date(CREATED_AT),
+    });
+
+    await expect(coordinator.startPreparation({
+      intentId: 'intent-1',
+      stripeSessionId: 'cs_1',
+      stripeSessionExpiresAt: EXPIRES_AT,
+    })).resolves.toBe(false);
+
+    expect(resolveIdentity).not.toHaveBeenCalled();
+    expect(provisionForCheckout).not.toHaveBeenCalled();
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'awaiting_checkout',
+      stripeSessionId: null,
+      leaseExpiresAt: null,
+    });
+  });
+
+  it('does not reset and re-admit an unpaid failed preparation after admission is disabled', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    await admitPrebillingIntent(db, {
+      intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
+      maxActive: 1, now: CREATED_AT,
+    });
+    await markPrebillingPreparationFailed(db, {
+      intentId: 'intent-1', now: CREATED_AT, errorCode: 'provider_timeout',
+    });
+    const provisionForCheckout = vi.fn();
+    const coordinator = createPrebillingProvisioningCoordinator({
+      db,
+      config: loadPrebillingProvisioningConfig({}),
+      customerVpsService: { provisionForCheckout } as never,
+      resolveIdentity: vi.fn().mockResolvedValue({ handle: 'alice' }),
+      now: () => new Date(CREATED_AT),
+    });
+
+    await expect(coordinator.retryPreparation({
+      checkoutAttemptId: 'checkout-1', clerkUserId: 'user_123',
+    })).resolves.toBe(false);
+
+    expect(provisionForCheckout).not.toHaveBeenCalled();
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'preparation_failed',
+      stripeSessionId: 'cs_1',
+    });
+  });
+
+  it('resumes the same paid intent even when unpaid admission is disabled and capacity is full', async () => {
     await seedCheckout('checkout-1', 'user_123');
     await seedCheckout('checkout-2', 'user_456');
     await createIntent('intent-1', 'checkout-1', 'user_123');
@@ -242,11 +300,7 @@ describe('platform prebilling provisioning foundation', () => {
     const provisionForCheckout = vi.spyOn(service, 'provisionForCheckout');
     const coordinator = createPrebillingProvisioningCoordinator({
       db,
-      config: loadPrebillingProvisioningConfig({
-        MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
-        MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
-        MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '1',
-      }),
+      config: loadPrebillingProvisioningConfig({}),
       customerVpsService: service,
       resolveIdentity: vi.fn().mockResolvedValue({ handle: 'bob' }),
       now: () => new Date('2026-08-24T10:02:00.000Z'),

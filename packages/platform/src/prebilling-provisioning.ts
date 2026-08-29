@@ -41,6 +41,13 @@ export function createPrebillingProvisioningCoordinator(options: {
   const startPreparation: PrebillingCheckoutCoordinator['startPreparation'] = async (input) => {
     const current = await getPrebillingIntent(options.db, input.intentId);
     if (!current) return false;
+    if (
+      current.paymentConfirmedAt === null
+      && current.state !== 'preparing'
+      && !prebillingRolloutIncludesUser(options.config, current.clerkUserId)
+    ) {
+      return false;
+    }
     const admission = await admitPrebillingIntent(options.db, {
       ...input,
       maxActive: options.config.maxActive,
@@ -122,6 +129,7 @@ export function createPrebillingProvisioningCoordinator(options: {
         return resumePreparation({ intentId: intent.id, clerkUserId: input.clerkUserId });
       }
       if (intent.state === 'preparing' || intent.state === 'ready_waiting_for_billing') return true;
+      if (!prebillingRolloutIncludesUser(options.config, intent.clerkUserId)) return false;
       if (!intent.stripeSessionId || !intent.stripeSessionExpiresAt) return false;
       const reset = await resetPrebillingPreparationForRetry(options.db, {
         intentId: intent.id,
