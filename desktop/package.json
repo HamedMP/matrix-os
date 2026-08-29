@@ -73,14 +73,14 @@
     "@expo-google-fonts/geist": "^0.4.2",
     "@matrix-os/contracts": "workspace:*",
     "@resvg/resvg-js": "^2.6.2",
-    "@tailwindcss/vite": "^4.1.18",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5.1.1",
     "electron": "^41.0.3",
     "electron-builder": "~26.15.3",
     "electron-vite": "^5.0.0",
-    "tailwindcss": "^4.1.18",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.2.6"
   }
