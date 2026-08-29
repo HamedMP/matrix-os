@@ -199,6 +199,7 @@ import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel"
 import { listApps } from "./apps.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
+import { registerNativeAppStorage } from "./native-app-storage.js";
 import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
 import { BridgeQueryBodySchema } from "./app-db-contracts.js";
 import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
@@ -907,6 +908,9 @@ export async function createGateway(config: GatewayConfig) {
       queryEngine = createQueryEngine(appDb);
       kvStore = createKvStore(kysely);
       appRegistry = createAppRegistry(appDb, kysely);
+      for (const slug of await registerNativeAppStorage(appRegistry)) {
+        rememberProvisionedAppSlug(slug);
+      }
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);

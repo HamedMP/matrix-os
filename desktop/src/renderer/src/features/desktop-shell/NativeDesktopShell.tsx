@@ -167,11 +167,11 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         openTab({ kind: "settings", title: "Settings" });
       }),
       plugins: () => openRoot(() => {
-        useUi.getState().requestSettingsSection("skills");
+        useUi.getState().requestSettingsSection("services");
         openTab({ kind: "settings", title: "Plugins" });
       }),
       browser: () => openRoot(() => openTab({ kind: "browser", title: "Browser" })),
-      notes: () => openRoot(() => openTab({ kind: "app", slug: "notes", title: "Notes" })),
+      notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes" })),
       whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard" })),
     };
     return FIXED_DESKTOP_APPS.map((app) => ({ ...app, open: openers[app.id] }));

@@ -16,6 +16,7 @@ import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 import WorkTab from "../work/WorkTab";
 import BrowserTab from "../browser/BrowserTab";
 import DesktopEditorWorkspace from "../editor/DesktopEditorWorkspace";
+import NotesWorkspace from "../notes/NotesWorkspace";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -88,6 +89,8 @@ export function TabPane({
       return <DesktopEditorWorkspace />;
     case "vscode":
       return <EmbedHost kind="code-editor" active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
+    case "notes":
+      return <NotesWorkspace active={active} />;
     case "apps":
       return <AppLauncher />;
     case "projects":

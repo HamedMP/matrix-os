@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CircleHelpIcon, ServerIcon } from "@/lib/hugeicons";
 import { UserButton } from "../UserButton";
 
-export type WebDesktopSettingsSection = "appearance" | "billing" | "plugins";
+export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations";
 
 interface WebDesktopControlsProps {
   onOpenSettings: (section: WebDesktopSettingsSection) => void;

@@ -1,4 +1,5 @@
 import { Command } from "cmdk";
+import { Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
@@ -261,6 +262,7 @@ export default function CommandPalette() {
             ))}
             <PaletteItem icon={<Globe2 size={14} />} label="Open Browser" onSelect={() => run(() => openTab(HOSTED_SHELL_TAB_SPEC))} />
             <PaletteItem icon={<SquareTerminal size={14} />} label="Open Terminal" onSelect={() => run(() => openTab({ kind: "terminals", title: "Terminal" }))} />
+            <PaletteItem icon={<Notebook size={14} />} label="Open Notes" onSelect={() => run(() => openTab({ kind: "notes", title: "Notes" }))} />
             <PaletteItem
               icon={<LayoutGrid size={14} />}
               label="Open Apps"

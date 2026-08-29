@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from "@/lib/hugeicons";
 import { WebDesktopHeader } from "./WebDesktopHeader";
+import type { WebDesktopSettingsSection } from "./WebDesktopControls";
 
 interface WebDesktopSurfaceProps {
   apps: AppEntry[];
@@ -25,7 +26,7 @@ interface WebDesktopSurfaceProps {
   launcherOpen: boolean;
   onOpenApp: (path: string, name?: string) => void;
   onOpenLauncher: () => void;
-  onOpenSettings: (section: "appearance" | "billing" | "plugins") => void;
+  onOpenSettings: (section: WebDesktopSettingsSection) => void;
   headerActions?: ReactNode;
   onActivateWindow: (id: string) => void;
   onCloseWindow: (id: string) => void;
@@ -265,7 +266,7 @@ export function WebDesktopSurface({
             onSelect={() => setSelectedPath(app.path)}
             onOpen={() => {
               if (app.path === "__settings__") onOpenSettings("appearance");
-              else if (app.path === "__plugins__") onOpenSettings("plugins");
+              else if (app.path === "__plugins__") onOpenSettings("integrations");
               else onOpenApp(app.path, app.name);
             }}
           />

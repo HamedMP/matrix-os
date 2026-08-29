@@ -18,6 +18,7 @@ export type TabKind =
   | "files"
   | "editor"
   | "vscode"
+  | "notes"
   | "apps"
   | "app"
   | "settings";

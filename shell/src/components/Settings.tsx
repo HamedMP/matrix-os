@@ -48,7 +48,7 @@ const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "agent", label: "Agent", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
-  { id: "integrations", label: "Integrations", icon: CableIcon },
+  { id: "integrations", label: "Services", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },

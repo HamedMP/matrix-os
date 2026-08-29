@@ -3,10 +3,10 @@ import {
   BrushIcon,
   Code2,
   FilePenLine,
-  FileText,
   FolderTree,
   Globe2,
   MessageSquare,
+  Notebook,
   Settings,
   SquareTerminal,
   type LucideIcon,
@@ -32,8 +32,8 @@ export interface DesktopAppConfig {
   name: string;
   color?: string;
   iconColor?: string;
-  settingsSection?: "skills";
-  slug?: "notes" | "whiteboard";
+  settingsSection?: "services";
+  slug?: "whiteboard";
 }
 
 export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
@@ -92,7 +92,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     name: "Plugins",
     color: "#7C6DB4",
     iconColor: "white",
-    settingsSection: "skills",
+    settingsSection: "services",
   },
   {
     id: "browser",
@@ -104,12 +104,11 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "notes",
-    kind: "app",
-    icon: FileText,
+    kind: "notes",
+    icon: Notebook,
     name: "Notes",
-    color: "#E3B341",
+    color: "var(--surface-purple-emphasis)",
     iconColor: "white",
-    slug: "notes",
   },
   {
     id: "whiteboard",
