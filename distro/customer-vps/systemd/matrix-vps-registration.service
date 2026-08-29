@@ -5,8 +5,10 @@ Wants=network-online.target
 Requires=matrix-gateway.service
 ConditionPathExists=/opt/matrix/bin/matrix-register-vps
 ConditionPathExists=!/opt/matrix/register-complete
-StartLimitIntervalSec=3700
-StartLimitBurst=12
+# The registration token deadline enforced by matrix-register-vps is the
+# lifetime bound. Disable systemd's independent start limiter so it cannot
+# suppress a recoverable retry while that token is still valid.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot

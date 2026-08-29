@@ -755,8 +755,8 @@ exit 99
     expect(registration).toContain('ExecStart=/opt/matrix/bin/matrix-register-vps');
     expect(registration).toContain('Restart=on-failure');
     expect(registration).toContain('SuccessExitStatus=64');
-    expect(registration).toContain('StartLimitIntervalSec=3700');
-    expect(registration).toContain('StartLimitBurst=12');
+    expect(registration).toContain('StartLimitIntervalSec=0');
+    expect(registration).not.toContain('StartLimitBurst=');
     expect(cloudInit).toContain('matrix-vps-registration.service');
   });
 
