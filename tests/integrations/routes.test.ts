@@ -86,6 +86,29 @@ describe("Integration Routes", () => {
       expect(gmail).toBeDefined();
       expect(gmail.name).toBe("Gmail");
       expect(gmail.actions).toBeDefined();
+      expect(data.some((service: { id: string }) => service.id === "granola")).toBe(false);
+    });
+
+    it("advertises MCP presets only when their broker is wired", async () => {
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string }>;
+      expect(data.some((service) => service.id === "granola")).toBe(true);
     });
   });
 

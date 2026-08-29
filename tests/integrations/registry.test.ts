@@ -10,9 +10,9 @@ import {
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("Service Registry", () => {
-  it("has 7 launch services", () => {
-    expect(listServices()).toHaveLength(7);
-    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(7);
+  it("has the 14-service managed catalog", () => {
+    expect(listServices()).toHaveLength(14);
+    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(14);
   });
 
   it("returns service by id", () => {
@@ -69,9 +69,92 @@ describe("Service Registry", () => {
       expect(service.id).toBeTruthy();
       expect(service.name).toBeTruthy();
       expect(service.category).toBeTruthy();
-      expect(service.pipedreamApp).toBeTruthy();
+      expect(["pipedream", "mcp_preset"]).toContain(service.connectorKind);
+      if (service.connectorKind === "pipedream") {
+        expect(service.pipedreamApp).toBeTruthy();
+      }
       expect(service.icon).toBeTruthy();
       expect(Object.keys(service.actions).length).toBeGreaterThan(0);
+      for (const action of Object.values(service.actions)) {
+        expect(["read", "write", "destructive"]).toContain(action.risk);
+      }
+    }
+  });
+
+  it("contains the seven expansion services with stable action contracts", () => {
+    const expected: Record<string, { read: string[]; write: string[] }> = {
+      google_docs: {
+        read: ["get_document"],
+        write: ["create_document", "batch_update_document"],
+      },
+      notion: {
+        read: ["search", "get_page", "query_database"],
+        write: ["create_page", "update_page", "append_blocks"],
+      },
+      figma: {
+        read: ["get_file", "get_nodes", "list_comments"],
+        write: ["post_comment"],
+      },
+      posthog: {
+        read: ["list_projects", "list_insights", "get_insight", "query"],
+        write: [],
+      },
+      jira: {
+        read: ["list_projects", "search_issues", "get_issue"],
+        write: ["create_issue", "update_issue", "add_comment"],
+      },
+      stripe: {
+        read: [
+          "list_customers",
+          "get_customer",
+          "list_subscriptions",
+          "list_invoices",
+          "list_payment_intents",
+          "get_balance",
+        ],
+        write: [],
+      },
+      granola: {
+        read: ["list_notes", "get_note"],
+        write: [],
+      },
+    };
+
+    for (const [serviceId, contract] of Object.entries(expected)) {
+      const service = getService(serviceId);
+      expect(service, serviceId).toBeDefined();
+      expect(Object.keys(service!.actions)).toEqual([
+        ...contract.read,
+        ...contract.write,
+      ]);
+      for (const action of contract.read) {
+        expect(service!.actions[action]!.risk).toBe("read");
+      }
+      for (const action of contract.write) {
+        expect(service!.actions[action]!.risk).toBe("write");
+      }
+    }
+
+    expect(getService("granola")).toMatchObject({
+      connectorKind: "mcp_preset",
+      mcpPreset: { url: "https://mcp.granola.ai/mcp", authMode: "oauth" },
+    });
+  });
+
+  it("keeps Stripe, PostHog, and Granola strictly read-only", () => {
+    for (const serviceId of ["stripe", "posthog", "granola"]) {
+      const actions = Object.values(getService(serviceId)!.actions);
+      expect(actions.every((action) => action.risk === "read"), serviceId).toBe(true);
+    }
+  });
+
+  it("uses only compile-time static header names", () => {
+    const notion = getService("notion")!;
+    for (const action of Object.values(notion.actions)) {
+      expect(action.directApi?.staticHeaders).toEqual({
+        "Notion-Version": "2022-06-28",
+      });
+      expect(action.params).not.toHaveProperty("headers");
     }
   });
 
@@ -86,7 +169,7 @@ describe("Service Registry", () => {
     expect(ids).toContain("discord");
   });
 
-  it("exposes Linear project, issue, workflow, comment, and GraphQL actions", () => {
+  it("exposes bounded Linear project, issue, workflow, and comment actions", () => {
     const linear = getService("linear");
     expect(linear).toBeDefined();
     expect(linear!.name).toBe("Linear");
@@ -104,17 +187,21 @@ describe("Service Registry", () => {
       "update_issue",
       "comment_issue",
       "create_workflow_state",
-      "graphql",
     ]));
 
     expect(getAction("linear", "create_issue")!.directApi).toMatchObject({
       method: "POST",
       url: "https://api.linear.app/graphql",
     });
-    expect(getAction("linear", "graphql")!.params).toMatchObject({
-      query: { type: "string", required: true },
-      variables: { type: "object" },
-    });
+    expect(getAction("linear", "graphql")).toBeUndefined();
+  });
+
+  it("does not register destructive or arbitrary-provider escape-hatch actions", () => {
+    expect(getAction("google_calendar", "delete_event")).toBeUndefined();
+    expect(getAction("linear", "graphql")).toBeUndefined();
+    for (const service of listServices()) {
+      expect(Object.values(service.actions).every((action) => action.risk !== "destructive")).toBe(true);
+    }
   });
 
   describe("validateIntegrationManifest", () => {
@@ -128,10 +215,10 @@ describe("Service Registry", () => {
 
     it("returns invalid for unknown services", () => {
       const result = validateIntegrationManifest({
-        integrations: { required: ["gmail", "notion"] },
+        integrations: { required: ["gmail", "salesforce"] },
       });
       expect(result.valid).toBe(false);
-      expect(result.missing).toEqual(["notion"]);
+      expect(result.missing).toEqual(["salesforce"]);
     });
 
     it("handles dotted service.action refs", () => {

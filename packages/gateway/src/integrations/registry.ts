@@ -1,4 +1,9 @@
-import type { ServiceAction, ServiceDefinition } from "./types.js";
+import type {
+  IntegrationActionRisk,
+  ServiceAction,
+  ServiceDefinition,
+} from "./types.js";
+import { EXPANSION_SERVICE_REGISTRY } from "./registry-expansion.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
@@ -83,7 +88,46 @@ function linearGraphqlBody(query: string, variables?: Record<string, unknown>): 
   return variables ? { query, variables } : { query };
 }
 
-export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
+type RegistryActionInput = Omit<ServiceAction, "risk"> & { risk?: IntegrationActionRisk };
+type RegistryServiceInput = Omit<ServiceDefinition, "actions" | "connectorKind"> & {
+  connectorKind?: ServiceDefinition["connectorKind"];
+  actions: Record<string, RegistryActionInput>;
+};
+
+const WRITE_ACTIONS = new Set([
+  "gmail.send_email",
+  "google_calendar.create_event",
+  "google_calendar.update_event",
+  "google_drive.upload_file",
+  "google_drive.share_file",
+  "github.create_issue",
+  "linear.create_issue",
+  "linear.update_issue",
+  "linear.comment_issue",
+  "linear.create_workflow_state",
+  "slack.send_message",
+  "slack.react",
+  "discord.send_message",
+]);
+function defineServiceRegistry(
+  input: Record<string, RegistryServiceInput>,
+): Record<string, ServiceDefinition> {
+  return Object.fromEntries(Object.entries(input).map(([serviceId, service]) => [
+    serviceId,
+    {
+      ...service,
+      connectorKind: service.connectorKind ?? "pipedream",
+      actions: Object.fromEntries(Object.entries(service.actions).map(([actionId, action]) => {
+        const key = `${serviceId}.${actionId}`;
+        const risk = action.risk
+          ?? (WRITE_ACTIONS.has(key) ? "write" : "read");
+        return [actionId, { ...action, risk }];
+      })),
+    },
+  ])) as Record<string, ServiceDefinition>;
+}
+
+export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineServiceRegistry({
   gmail: {
     id: "gmail",
     name: "Gmail",
@@ -254,18 +298,6 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
             ...(p.start !== undefined ? { start: { dateTime: String(p.start) } } : {}),
             ...(p.end !== undefined ? { end: { dateTime: String(p.end) } } : {}),
           }),
-        },
-      },
-      // GCal API: events.delete. Returns 204 No Content on success.
-      delete_event: {
-        description: "Delete a calendar event",
-        params: {
-          eventId: { type: "string", required: true },
-        },
-        directApi: {
-          method: "DELETE",
-          url: (p) =>
-            `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(String(p.eventId))}`,
         },
       },
     },
@@ -761,21 +793,6 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           }),
         },
       },
-      graphql: {
-        description: "Run a custom Linear GraphQL operation for advanced workflows",
-        params: {
-          query: { type: "string", required: true },
-          variables: { type: "object" },
-        },
-        directApi: {
-          method: "POST",
-          url: "https://api.linear.app/graphql",
-          mapBody: (p) => ({
-            query: String(p.query),
-            ...(p.variables && typeof p.variables === "object" ? { variables: p.variables } : {}),
-          }),
-        },
-      },
     },
   },
 
@@ -956,7 +973,9 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
     },
   },
-};
+
+  ...EXPANSION_SERVICE_REGISTRY,
+});
 
 export function getService(id: string): ServiceDefinition | undefined {
   return SERVICE_REGISTRY[id];
@@ -1001,6 +1020,7 @@ export async function discoverComponentKeys(
 
   for (const service of services) {
     try {
+      if (service.connectorKind !== "pipedream" || !service.pipedreamApp) continue;
       const actions = await pipedream.discoverActions(service.pipedreamApp);
       const keySet = new Map(actions.map((a) => [a.key, a]));
 
