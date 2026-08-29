@@ -36,6 +36,43 @@ describe("desktop packaging", () => {
     expect(schemes).toContain("matrix-os");
   });
 
+  it("builds a signed per-user NSIS installer with verified updates on Windows", () => {
+    const root = process.cwd();
+    const raw = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
+    const config = parse(raw) as {
+      win?: {
+        icon?: string;
+        requestedExecutionLevel?: string;
+        target?: Array<{ target?: string; arch?: string[] }>;
+        verifyUpdateCodeSignature?: boolean;
+      };
+      nsis?: Record<string, unknown>;
+    };
+
+    expect(config.win).toEqual({
+      icon: "build/icon.png",
+      requestedExecutionLevel: "asInvoker",
+      verifyUpdateCodeSignature: true,
+      target: [{ target: "nsis", arch: ["x64"] }],
+    });
+    expect(config.nsis).toMatchObject({
+      oneClick: true,
+      perMachine: false,
+      allowElevation: true,
+      createDesktopShortcut: "always",
+      createStartMenuShortcut: true,
+      shortcutName: "Matrix OS",
+      uninstallDisplayName: "Matrix OS",
+    });
+
+    const releaseConfig = readFileSync(
+      join(root, "desktop/electron-builder.windows.mjs"),
+      "utf8",
+    );
+    expect(releaseConfig).toContain('extends: "./electron-builder.yml"');
+    expect(releaseConfig).toContain("resolveWindowsSigningConfig(process.env)");
+  });
+
   it("uses the canonical Matrix brand assets for a Retina DMG installer", () => {
     const root = process.cwd();
     const raw = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");

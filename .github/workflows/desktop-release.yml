@@ -107,6 +107,9 @@ jobs:
 
   build:
     needs: prepare
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/desktop-build.yml
     with:
       channel: ${{ needs.prepare.outputs.channel }}

@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type MutableRefObject,
 } from "react";
+import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { Button, Dialog } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type CardPriority, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -190,7 +191,7 @@ function CreateTaskForm({
           variant="subtle"
           disabled={!canSubmit}
           onClick={() => void submit(true).catch(logSubmitFailure)}
-          title="Create and open (Cmd+Shift+Enter)"
+          title={`Create and open (${desktopShortcutLabel("Shift+Enter")})`}
         >
           Create + open
         </Button>
@@ -198,7 +199,7 @@ function CreateTaskForm({
           variant="primary"
           disabled={!canSubmit}
           onClick={() => void submit(false).catch(logSubmitFailure)}
-          title="Create (Cmd+Enter)"
+          title={`Create (${desktopShortcutLabel("Enter")})`}
         >
           {submitting ? "Creating…" : "Create"}
         </Button>

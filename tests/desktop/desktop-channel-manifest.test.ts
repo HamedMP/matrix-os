@@ -22,6 +22,10 @@ describe("Desktop channel manifests", () => {
       join(source, "canary-linux.yml"),
       "version: 1.2.3-canary.2\nfiles:\n  - url: app.AppImage\n    sha512: linux\npath: app.AppImage\nsha512: linux\n",
     );
+    writeFileSync(
+      join(source, "canary.yml"),
+      "version: 1.2.3-canary.2\nfiles:\n  - url: installer.exe\n    sha512: windows\npath: installer.exe\nsha512: windows\n",
+    );
     writeFileSync(notes, "## Improved\n\n- Faster startup\n");
 
     try {
@@ -38,6 +42,7 @@ describe("Desktop channel manifests", () => {
 
       const mac = readFileSync(join(output, "canary-mac.yml"), "utf8");
       const linux = readFileSync(join(output, "canary-linux.yml"), "utf8");
+      const windows = readFileSync(join(output, "canary.yml"), "utf8");
       expect(mac).toContain(
         "url: https://github.com/HamedMP/matrix-os/releases/download/desktop-v1.2.3-canary.2/arm64.zip",
       );
@@ -47,8 +52,12 @@ describe("Desktop channel manifests", () => {
       expect(linux).toContain(
         "url: https://github.com/HamedMP/matrix-os/releases/download/desktop-v1.2.3-canary.2/app.AppImage",
       );
+      expect(windows).toContain(
+        "url: https://github.com/HamedMP/matrix-os/releases/download/desktop-v1.2.3-canary.2/installer.exe",
+      );
       expect(mac).toContain("releaseNotes: |-\n  ## Improved\n  \n  - Faster startup\n");
       expect(linux).toContain("releaseNotes: |-\n  ## Improved\n  \n  - Faster startup\n");
+      expect(windows).toContain("releaseNotes: |-\n  ## Improved\n  \n  - Faster startup\n");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

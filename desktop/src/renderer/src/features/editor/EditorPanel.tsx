@@ -1,4 +1,5 @@
 import { Code2, Eye, FileCode2, X } from "@renderer/lib/hugeicons";
+import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
@@ -29,7 +30,7 @@ export default function EditorPanel({ taskId }: { taskId: string }) {
       <EmptyState
         icon={<FileCode2 size={24} />}
         headline="No file open"
-        description="Open a file from the file browser or press ⌘P to quick-open."
+        description={`Open a file from the file browser or press ${desktopShortcutLabel("P")} to quick-open.`}
       />
     );
   }

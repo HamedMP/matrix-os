@@ -375,6 +375,7 @@ jobs:
           update_port_file="$copy_dir/update-fixture.port"
           update_server_log="$copy_dir/update-fixture.log"
           node scripts/release/desktop-update-fixture-server.mjs \
+            --platform mac \
             --channel "$CHANNEL" \
             --version "$PACKAGE_VERSION" \
             --port-file "$update_port_file" >"$update_server_log" 2>&1 &
@@ -544,5 +545,254 @@ jobs:
             desktop/dist/*.AppImage
             desktop/dist/*.blockmap
             desktop/dist/*-linux.yml
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    environment: desktop-release
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MATRIX_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+      VITE_POSTHOG_PROJECT_TOKEN: ${{ vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY }}
+      VITE_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
+      MATRIX_DESKTOP_WINDOWS_SIGNING_MODE: ${{ vars.MATRIX_DESKTOP_WINDOWS_SIGNING_MODE }}
+      MATRIX_DESKTOP_WINDOWS_PUBLISHER_NAME: ${{ vars.MATRIX_DESKTOP_WINDOWS_PUBLISHER_NAME }}
+      MATRIX_DESKTOP_WINDOWS_SIGNING_ENDPOINT: ${{ vars.MATRIX_DESKTOP_WINDOWS_SIGNING_ENDPOINT }}
+      MATRIX_DESKTOP_WINDOWS_SIGNING_ACCOUNT: ${{ vars.MATRIX_DESKTOP_WINDOWS_SIGNING_ACCOUNT }}
+      MATRIX_DESKTOP_WINDOWS_CERTIFICATE_PROFILE: ${{ vars.MATRIX_DESKTOP_WINDOWS_CERTIFICATE_PROFILE }}
+      WIN_CSC_LINK: ${{ secrets.MATRIX_DESKTOP_WINDOWS_CERTIFICATE || secrets.WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.MATRIX_DESKTOP_WINDOWS_CERTIFICATE_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
+    steps:
+      - name: Validate PostHog support configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalized_posthog_token="$(printf '%s' "${VITE_POSTHOG_PROJECT_TOKEN:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -z "$normalized_posthog_token" ]; then
+            echo "Missing required public PostHog project token for Desktop Support" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate Windows signing configuration
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.MATRIX_DESKTOP_WINDOWS_AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.MATRIX_DESKTOP_WINDOWS_AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.MATRIX_DESKTOP_WINDOWS_AZURE_SUBSCRIPTION_ID }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          node --input-type=module -e "import { resolveWindowsSigningConfig } from './scripts/release/windows-signing-config.mjs'; resolveWindowsSigningConfig(process.env);"
+          if ($env:MATRIX_DESKTOP_WINDOWS_SIGNING_MODE -eq "azure") {
+            foreach ($name in @("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID")) {
+              if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+                throw "Missing required Azure OIDC configuration: $name"
+              }
+            }
+          }
+
+      - name: Authenticate to Azure for Artifact Signing
+        if: ${{ env.MATRIX_DESKTOP_WINDOWS_SIGNING_MODE == 'azure' }}
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ secrets.MATRIX_DESKTOP_WINDOWS_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.MATRIX_DESKTOP_WINDOWS_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.MATRIX_DESKTOP_WINDOWS_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Apply desktop release version
+        if: ${{ inputs.version != '' || inputs.version_suffix != '' }}
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          VERSION_SUFFIX: ${{ inputs.version_suffix }}
+        run: |
+          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
+
+      - name: Build desktop app
+        shell: pwsh
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm --filter desktop build
+
+      - name: Package signed Windows app
+        working-directory: desktop
+        shell: pwsh
+        run: pnpm exec electron-builder --config electron-builder.windows.mjs --win nsis --x64 --publish never
+
+      - name: Resolve Windows artifact metadata
+        id: windows_artifact
+        shell: pwsh
+        run: |
+          $packageVersion = node -p "require('./desktop/package.json').version"
+          "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
+          "artifact_base=Matrix-OS-${packageVersion}-win-x64" >> $env:GITHUB_OUTPUT
+
+      - name: Verify Windows artifacts and Authenticode signatures
+        shell: pwsh
+        env:
+          ARTIFACT_BASE: ${{ steps.windows_artifact.outputs.artifact_base }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installerPath = Join-Path $PWD "desktop/dist/$env:ARTIFACT_BASE.exe"
+          $blockmapPath = "$installerPath.blockmap"
+          $manifestPath = Join-Path $PWD "desktop/dist/latest.yml"
+          $appPath = Join-Path $PWD "desktop/dist/win-unpacked/Matrix OS.exe"
+          $appUpdatePath = Join-Path $PWD "desktop/dist/win-unpacked/resources/app-update.yml"
+          foreach ($path in @($installerPath, $blockmapPath, $manifestPath, $appPath, $appUpdatePath)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Missing expected Windows release artifact: $path"
+            }
+          }
+          $unexpected = Get-ChildItem desktop/dist -File -Filter "Matrix-OS-*-win-*.exe" |
+            Where-Object { $_.FullName -ne $installerPath }
+          if ($unexpected) {
+            throw "Windows build produced unexpected installer: $($unexpected[0].Name)"
+          }
+          foreach ($signedPath in @($appPath, $installerPath)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $signedPath
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+              throw "Invalid Authenticode signature on $signedPath (status: $($signature.Status))"
+            }
+            if ($signature.SignerCertificate.Subject -ne $env:MATRIX_DESKTOP_WINDOWS_PUBLISHER_NAME) {
+              throw "Unexpected Authenticode publisher on $signedPath"
+            }
+          }
+          $asarEntries = pnpm exec asar list "desktop/dist/win-unpacked/resources/app.asar"
+          if ($asarEntries -match "node_modules/@matrix-os/contracts") {
+            throw "Packaged app contains raw @matrix-os/contracts sources"
+          }
+
+      - name: Create Windows channel update manifest
+        if: ${{ inputs.channel != 'stable' }}
+        shell: pwsh
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: Copy-Item desktop/dist/latest.yml "desktop/dist/$env:CHANNEL.yml"
+
+      - name: Smoke test Windows installer, protocols, app, updater, and uninstaller
+        shell: pwsh
+        env:
+          ARTIFACT_BASE: ${{ steps.windows_artifact.outputs.artifact_base }}
+          CHANNEL: ${{ inputs.channel }}
+          PACKAGE_VERSION: ${{ steps.windows_artifact.outputs.package_version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installerPath = Join-Path $PWD "desktop/dist/$env:ARTIFACT_BASE.exe"
+          $installDirectory = Join-Path $env:LOCALAPPDATA "Programs/Matrix OS"
+          $installedAppPath = Join-Path $installDirectory "Matrix OS.exe"
+          $uninstallerPath = Join-Path $installDirectory "Uninstall Matrix OS.exe"
+          $smokeDirectory = Join-Path $env:RUNNER_TEMP "matrix-os-windows-smoke"
+          New-Item -ItemType Directory -Force -Path $smokeDirectory | Out-Null
+          $serverProcess = $null
+          $appProcess = $null
+          try {
+            Start-Process -FilePath $installerPath -ArgumentList "/S" -Wait
+            foreach ($path in @($installedAppPath, $uninstallerPath)) {
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "Silent NSIS install did not create $path"
+              }
+            }
+            foreach ($scheme in @("matrixos", "matrix-os")) {
+              $protocolKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$scheme"
+              if (-not (Test-Path -LiteralPath $protocolKey)) {
+                throw "NSIS install did not register protocol $scheme"
+              }
+            }
+
+            $portFile = Join-Path $smokeDirectory "update-fixture.port"
+            $serverLog = Join-Path $smokeDirectory "update-fixture.log"
+            $serverErrorLog = Join-Path $smokeDirectory "update-fixture-error.log"
+            $serverProcess = Start-Process -FilePath "node" -ArgumentList @(
+              "scripts/release/desktop-update-fixture-server.mjs",
+              "--platform", "windows",
+              "--channel", $env:CHANNEL,
+              "--version", $env:PACKAGE_VERSION,
+              "--port-file", $portFile
+            ) -PassThru -RedirectStandardOutput $serverLog -RedirectStandardError $serverErrorLog
+            for ($attempt = 1; $attempt -le 40 -and -not (Test-Path $portFile); $attempt++) {
+              if ($serverProcess.HasExited) {
+                throw "Desktop update fixture server exited before becoming ready"
+              }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not (Test-Path $portFile)) {
+              throw "Desktop update fixture server did not become ready"
+            }
+            $updatePort = (Get-Content -Raw $portFile).Trim()
+            if ($updatePort -notmatch "^[0-9]+$") {
+              throw "Desktop update fixture server returned an invalid port"
+            }
+
+            $env:OPERATOR_USER_DATA_DIR = Join-Path $smokeDirectory "user-data"
+            $env:OPERATOR_UPDATE_CHANNEL = $env:CHANNEL
+            $env:OPERATOR_UPDATE_FEED = "http://127.0.0.1:$updatePort/"
+            $appLog = Join-Path $smokeDirectory "matrix-os-launch.log"
+            $appErrorLog = Join-Path $smokeDirectory "matrix-os-launch-error.log"
+            $appProcess = Start-Process -FilePath $installedAppPath -ArgumentList "--disable-gpu" `
+              -PassThru -RedirectStandardOutput $appLog -RedirectStandardError $appErrorLog
+            $updateSucceeded = $false
+            for ($attempt = 1; $attempt -le 30; $attempt++) {
+              if ($appProcess.HasExited) {
+                throw "Installed Windows app exited during launch smoke test"
+              }
+              $combinedLog = ((Get-Content $appLog, $appErrorLog -Raw -ErrorAction SilentlyContinue) -join "`n")
+              if ($combinedLog.Contains("[updates] check failed:")) {
+                throw "Installed Windows updater failed its fixture feed check"
+              }
+              if ($combinedLog.Contains("[updates] update check completed: up to date")) {
+                $updateSucceeded = $true
+                break
+              }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $updateSucceeded) {
+              throw "Installed Windows updater did not complete its fixture feed check"
+            }
+            if ($combinedLog.Contains("ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING")) {
+              throw "Installed Windows app attempted to load raw TypeScript"
+            }
+          } finally {
+            if ($appProcess -and -not $appProcess.HasExited) {
+              Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue
+              $appProcess.WaitForExit()
+            }
+            if ($serverProcess -and -not $serverProcess.HasExited) {
+              Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+              $serverProcess.WaitForExit()
+            }
+            if (Test-Path -LiteralPath $uninstallerPath -PathType Leaf) {
+              Start-Process -FilePath $uninstallerPath -ArgumentList "/S" -Wait
+            }
+          }
+          if (Test-Path -LiteralPath $installedAppPath) {
+            throw "Silent NSIS uninstall left the installed app behind"
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ inputs.artifact_prefix }}-windows-x64
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.blockmap
+            desktop/dist/*.yml
           if-no-files-found: error
           retention-days: ${{ inputs.retention_days }}

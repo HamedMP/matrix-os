@@ -1,5 +1,5 @@
 name: Prune Desktop channel assets
-description: Keep a mutable Desktop channel release limited to its two update manifests.
+description: Keep a mutable Desktop channel release limited to its three update manifests.
 
 inputs:
   tag_name:
@@ -23,10 +23,12 @@ runs:
           stable)
             ALLOWED_MAC="latest-mac.yml"
             ALLOWED_LINUX="latest-linux.yml"
+            ALLOWED_WINDOWS="latest.yml"
             ;;
           beta|canary|dev)
             ALLOWED_MAC="${CHANNEL}-mac.yml"
             ALLOWED_LINUX="${CHANNEL}-linux.yml"
+            ALLOWED_WINDOWS="${CHANNEL}.yml"
             ;;
           *)
             echo "Unsupported Desktop update channel: $CHANNEL" >&2
@@ -37,7 +39,7 @@ runs:
         gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" \
           --json assets --jq '.assets[].name' \
           | while IFS= read -r asset; do
-              if [ "$asset" = "$ALLOWED_MAC" ] || [ "$asset" = "$ALLOWED_LINUX" ]; then
+              if [ "$asset" = "$ALLOWED_MAC" ] || [ "$asset" = "$ALLOWED_LINUX" ] || [ "$asset" = "$ALLOWED_WINDOWS" ]; then
                 continue
               fi
               gh release delete-asset "$TAG_NAME" "$asset" \

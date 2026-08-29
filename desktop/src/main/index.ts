@@ -41,6 +41,7 @@ import {
   type FittedWindowBounds,
   type WindowBounds,
 } from "./platform/window-bounds";
+import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
@@ -102,10 +103,7 @@ async function openExternalHttpUrl(url: string): Promise<void> {
 function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const win = new BrowserWindow({
     ...bounds,
-    // Let the renderer's active surface continue beneath the macOS controls
-    // instead of retaining an opaque native title-bar material.
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 14, y: 13 },
+    ...windowChromeOptions(process.platform),
     backgroundColor: "#0e0e13",
     show: false,
     webPreferences: {
