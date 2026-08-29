@@ -168,8 +168,11 @@ export function createCanonicalChatEventSource(options: {
     let token: string;
     try {
       token = CanonicalChatWebSocketTokenSchema.parse(await options.fetchWebSocketToken());
-    } catch {
-      console.warn("[canonical-chat] event stream credential unavailable");
+    } catch (error: unknown) {
+      console.warn(
+        "[canonical-chat] event stream credential unavailable:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
       scheduleReconnect();
       return;
     }
@@ -185,8 +188,11 @@ export function createCanonicalChatEventSource(options: {
         url.searchParams.set("runtime", options.runtimeSlot);
       }
       if (lastCursor !== undefined) url.searchParams.set("cursor", String(lastCursor));
-    } catch {
-      console.warn("[canonical-chat] event stream origin unavailable");
+    } catch (error: unknown) {
+      console.warn(
+        "[canonical-chat] event stream origin unavailable:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
       scheduleReconnect();
       return;
     }
@@ -194,8 +200,11 @@ export function createCanonicalChatEventSource(options: {
     let nextSocket: DesktopCanonicalChatWebSocket;
     try {
       nextSocket = options.createWebSocket(url.toString());
-    } catch {
-      console.warn("[canonical-chat] event stream connection unavailable");
+    } catch (error: unknown) {
+      console.warn(
+        "[canonical-chat] event stream connection unavailable:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
       scheduleReconnect();
       return;
     }
@@ -216,8 +225,11 @@ export function createCanonicalChatEventSource(options: {
       let value: unknown;
       try {
         value = JSON.parse(message.data);
-      } catch {
-        console.warn("[canonical-chat] event stream sent invalid JSON");
+      } catch (error: unknown) {
+        console.warn(
+          "[canonical-chat] event stream sent invalid JSON:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
         return;
       }
       const parsed = CanonicalChatStreamServerFrameSchema.safeParse(value);
