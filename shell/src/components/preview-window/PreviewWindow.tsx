@@ -62,6 +62,7 @@ export function PreviewWindow() {
           return (
             <div
               key={tab.id}
+              data-instant-list-hover
               role="tab"
               tabIndex={active ? 0 : -1}
               aria-selected={active}

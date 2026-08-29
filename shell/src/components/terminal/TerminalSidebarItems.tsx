@@ -589,6 +589,7 @@ function CollapsedRailGroup({
           <button
             key={shell.name}
             type="button"
+            data-instant-list-hover
             aria-label={`Open ${displayName}`}
             aria-current={selected ? "true" : undefined}
             data-selected={selected ? "true" : "false"}
@@ -1101,6 +1102,7 @@ function ShellCard({
     <div
       ref={cardRef}
       className="group terminal-session-card"
+      data-instant-list-hover
       data-testid={`terminal-session-card-${shell.name}`}
       onDragOver={(event) => {
         if (!dragging) {

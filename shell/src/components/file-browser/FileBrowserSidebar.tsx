@@ -96,6 +96,7 @@ function SidebarItem({
   return (
     <button
       type="button"
+      data-instant-list-hover
       className={cn(
         "flex items-center gap-2 w-full px-3 py-1 text-left hover:bg-accent/50 transition-colors rounded-sm",
         active && "bg-accent text-accent-foreground",

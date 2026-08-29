@@ -66,6 +66,7 @@ export function DesktopTerminalSidebar({
             >
               <button
                 type="button"
+                data-instant-list-hover
                 aria-label={`Open ${shell.name}`}
                 aria-current={selected || undefined}
                 data-session-name={shell.name}

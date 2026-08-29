@@ -106,6 +106,7 @@ function DesktopDestination({
     <button
       type="button"
       aria-label={app.name}
+      data-instant-list-hover
       data-selected={selected || undefined}
       className="group flex w-[76px] flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-white/10 focus-visible:bg-white/10 data-[selected]:bg-white/15"
       onClick={onSelect}

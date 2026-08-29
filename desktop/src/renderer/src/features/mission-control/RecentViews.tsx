@@ -212,6 +212,7 @@ export default function RecentViews() {
             <button
               key={`${recent.kind}:${recent.id}`}
               type="button"
+              data-instant-list-hover
               aria-label={`Open recent ${recent.label}`}
               aria-current={active ? "page" : undefined}
               data-active={active ? "true" : "false"}

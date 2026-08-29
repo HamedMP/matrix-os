@@ -47,6 +47,7 @@ function ThreadRow({
   return (
     <button
       type="button"
+      data-instant-list-hover
       aria-label={`Chat ${thread.title}`}
       aria-current={selected ? "page" : undefined}
       onClick={onSelect}
@@ -100,6 +101,7 @@ function HermesRow({
   return (
     <button
       type="button"
+      data-instant-list-hover
       aria-label={`Chat ${conversation.title}`}
       aria-current={selected ? "page" : undefined}
       onClick={onSelect}

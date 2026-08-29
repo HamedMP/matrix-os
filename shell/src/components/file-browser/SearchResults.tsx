@@ -65,6 +65,7 @@ export function SearchResults({ onOpenFile }: SearchResultsProps) {
       {searchResults.map((result) => (
         <div
           key={result.path}
+          data-instant-list-hover
           // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- search-result row wraps block-level <div> children (name, path, content matches); a native <button> may only contain phrasing content, so role="button" is required here.
           role="button"
           tabIndex={0}

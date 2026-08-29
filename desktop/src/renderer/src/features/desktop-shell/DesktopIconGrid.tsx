@@ -35,6 +35,7 @@ export default function DesktopIconGrid({ destinations }: { destinations: Deskto
           <button
             key={destination.kind}
             type="button"
+            data-instant-list-hover
             aria-label={destination.name}
             data-selected={selected || undefined}
             className="group flex w-[76px] flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] data-[selected]:bg-[var(--bg-selected)]"

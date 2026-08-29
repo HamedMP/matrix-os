@@ -187,6 +187,7 @@ export function EntryButton({
       <button
         ref={buttonRef}
         type="button"
+        data-instant-list-hover
         aria-label={`Open ${entry.name}`}
         aria-pressed={pressed}
         data-grid-tile
@@ -230,6 +231,7 @@ export function EntryButton({
     <button
       ref={buttonRef}
       type="button"
+      data-instant-list-hover
       aria-label={`Open ${entry.name}`}
       aria-pressed={pressed}
       data-files-list-row

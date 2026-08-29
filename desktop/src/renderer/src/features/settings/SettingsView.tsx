@@ -93,6 +93,7 @@ export function SettingsSidebar({
               <button
                 key={s.id}
                 type="button"
+                data-instant-list-hover
                 onClick={() => onSectionChange(s.id)}
                 className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 ${active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]"}`}
                 style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}

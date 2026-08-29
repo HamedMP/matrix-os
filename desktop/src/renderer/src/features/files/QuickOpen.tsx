@@ -123,6 +123,7 @@ function QuickOpenInner({ onClose }: { onClose: () => void }) {
             <button
               key={path}
               type="button"
+              data-instant-list-hover
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm"
               style={{
                 background: i === selected ? "var(--bg-selected)" : "transparent",

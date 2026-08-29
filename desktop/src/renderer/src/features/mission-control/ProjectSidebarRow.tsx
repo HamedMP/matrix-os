@@ -49,6 +49,7 @@ export default function ProjectSidebarRow({
   return (
     <>
       <div
+        data-instant-list-hover
         data-active={active ? "true" : "false"}
         className="group/project-row flex w-full items-center rounded-md transition-colors duration-100 hover:bg-[var(--bg-hover)]"
         style={{ background: active ? "var(--bg-selected)" : "transparent" }}

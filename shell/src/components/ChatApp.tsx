@@ -241,6 +241,7 @@ export function ChatApp({
                   <button
                     key={conv.id}
                     type="button"
+                    data-instant-list-hover
                     onClick={() => onSwitchConversation(conv.id)}
                     className={`group flex w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors ${mobile ? "py-3" : "py-2"} ${
                       conv.id === sessionId

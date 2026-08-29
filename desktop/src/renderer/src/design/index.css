@@ -67,6 +67,16 @@ body {
   user-select: none;
 }
 
+/* List hover is an immediate location cue. Keep this opt-in so larger shell
+   motion (windows, panels, dialogs) continues to use the design durations. */
+[data-instant-list-hover] {
+  transition: none !important;
+}
+
+[data-instant-list-hover]:hover {
+  background-color: var(--bg-hover) !important;
+}
+
 /* Inputs and content areas re-enable selection. */
 input,
 textarea,

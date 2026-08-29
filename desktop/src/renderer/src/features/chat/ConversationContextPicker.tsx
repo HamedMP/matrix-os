@@ -204,6 +204,7 @@ export default function ConversationContextPicker({
                 return (
                   <button
                     key={project.slug}
+                    data-instant-list-hover
                     ref={(element) => {
                       optionRefs.current[index] = element;
                     }}
@@ -249,6 +250,7 @@ export default function ConversationContextPicker({
               <div className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
               <button
                 type="button"
+                data-instant-list-hover
                 aria-label="Remove project context"
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
                 style={{ color: "var(--text-secondary)" }}
