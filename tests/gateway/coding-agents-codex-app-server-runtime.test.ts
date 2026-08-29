@@ -513,7 +513,10 @@ describe("Codex app-server control runtime", () => {
         modelOptions: [],
         clientRequestId: "req_control_turn_2",
       })).resolves.toEqual({ ok: true });
-      const transcript = await waitForTranscript(eventPath, /control-answer-2/);
+      const transcript = await waitForTranscript(
+        eventPath,
+        /"type":"turn\.completed"[\s\S]*"type":"turn\.completed"/,
+      );
       expect(transcript.match(/"type":"turn.completed"/g)).toHaveLength(2);
     } finally {
       child.kill("SIGTERM");
