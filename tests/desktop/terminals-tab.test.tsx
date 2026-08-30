@@ -229,7 +229,7 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
   });
 
-  it("places a compact shell theme icon beside the session status pill", () => {
+  it("places the shell theme picker beside the new-session controls in the sidebar", () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active", createdAt: "2026-08-26T09:41:00.000Z" }],
     });
@@ -243,11 +243,14 @@ describe("TerminalsTab", () => {
     const active = screen.getByText("Active");
     expect(active.className).toContain("h-5");
     expect((active as HTMLElement).style.background).toBe("var(--bg-selected)");
-    const headerActions = header.querySelector("[data-terminal-header-actions]");
     const themeButton = screen.getByRole("button", { name: "Shell theme" });
+    const sidebarActions = document.querySelector("[data-terminal-sidebar-header-actions]");
+    const headerActions = header.querySelector("[data-terminal-header-actions]");
     expect(headerActions?.contains(active)).toBe(true);
-    expect(headerActions?.contains(themeButton)).toBe(true);
-    expect(headerActions?.classList.contains("no-drag")).toBe(true);
+    expect(headerActions?.contains(themeButton)).toBe(false);
+    expect(sidebarActions?.contains(themeButton)).toBe(true);
+    expect(sidebarActions?.contains(screen.getByRole("button", { name: "New shell session" }))).toBe(true);
+    expect(sidebarActions?.classList.contains("no-drag")).toBe(true);
     expect(themeButton.className).toContain("size-7");
     expect(themeButton.textContent).toBe("");
     expect(themeButton.closest("footer")).toBeNull();
