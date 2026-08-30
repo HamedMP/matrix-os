@@ -549,8 +549,10 @@ export function createHermesChatProviderAdapter(options: {
         const failed = hermesToolFailed(parsed.data.result);
         if (failed) {
           recoverableActivityFailureObserved = true;
-          deferAssistantAfterToolFailure = true;
-          deferredSegmentPrefixLength = Math.max(0, currentSegment.length - pendingStreamBoundaryText.length);
+          if (!deferAssistantAfterToolFailure) {
+            deferAssistantAfterToolFailure = true;
+            deferredSegmentPrefixLength = Math.max(0, currentSegment.length - pendingStreamBoundaryText.length);
+          }
           collectUnsafeToolFragments(parsed.data.result, unsafeToolFragments);
         }
         emitAgentActivity({
