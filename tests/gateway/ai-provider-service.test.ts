@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AiProviderSnapshotV3Schema } from "@matrix-os/contracts";
+import { AiProviderSnapshotV3Schema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import {
   AiProviderService,
   type AiProviderHealthProbe,
@@ -27,6 +27,7 @@ describe("AiProviderService", () => {
     fundedEnabled?: boolean;
     healthProbe?: AiProviderHealthProbe;
     healthTimeoutMs?: number;
+    driverInventory?: () => Promise<AiProviderSnapshotV3["drivers"]>;
   } = {}) {
     return new AiProviderService({
       homePath,
@@ -37,6 +38,9 @@ describe("AiProviderService", () => {
       now: () => NOW,
       healthProbe: options.healthProbe,
       healthTimeoutMs: options.healthTimeoutMs,
+      driverInventory: options.driverInventory === undefined
+        ? undefined
+        : async () => options.driverInventory!(),
     });
   }
 
@@ -66,6 +70,22 @@ describe("AiProviderService", () => {
       modelId: "claude-sonnet-5",
     });
     expect(JSON.stringify(snapshot)).not.toContain("platform-secret");
+  });
+
+  it("adds only validated real driver inventory while keeping the kernel driver canonical", async () => {
+    const snapshot = await createService({
+      driverInventory: async () => [{
+        id: "codex",
+        displayName: "Codex",
+        kind: "cli",
+        installState: "installed",
+        health: "ready",
+        capabilities: ["tools", "resume", "project_context"],
+        setupActions: ["connect_account", "open_terminal"],
+      }],
+    }).getSnapshot();
+    expect(snapshot.drivers.map((driver) => driver.id)).toEqual(["kernel", "codex"]);
+    expect(AiProviderSnapshotV3Schema.safeParse(snapshot).success).toBe(true);
   });
 
   it("does not label a legacy platform key as Matrix-funded access", async () => {

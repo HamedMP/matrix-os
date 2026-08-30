@@ -201,8 +201,8 @@ export const ProviderHarnessInstanceSchema = z.object({
   version: canonicalSafeLabel(64, 256).nullable(),
   installState: ProviderHarnessInstallStateSchema,
   authState: ProviderAuthenticationStateSchema,
-  loginMethods: z.array(ProviderLoginMethodSchema).min(1).max(3),
-  recommendedLoginMethod: ProviderLoginMethodSchema,
+  loginMethods: z.array(ProviderLoginMethodSchema).max(3),
+  recommendedLoginMethod: ProviderLoginMethodSchema.nullable(),
   connectivity: ProviderConnectivityStateSchema,
   accountIds: z.array(ReferenceIdSchema).max(32),
   selectedAccountId: ReferenceIdSchema.nullable(),
@@ -213,7 +213,12 @@ export const ProviderHarnessInstanceSchema = z.object({
   if (!unique(harness.accountIds) || !unique(harness.loginMethods)) {
     ctx.addIssue({ code: "custom", message: "Harness account and login method sets must be unique" });
   }
-  if (!harness.loginMethods.includes(harness.recommendedLoginMethod)) {
+  if (harness.loginMethods.length === 0 && harness.recommendedLoginMethod !== null) {
+    ctx.addIssue({ code: "custom", path: ["recommendedLoginMethod"], message: "Unavailable login cannot recommend a method" });
+  }
+  if (harness.loginMethods.length > 0
+    && (harness.recommendedLoginMethod === null
+      || !harness.loginMethods.includes(harness.recommendedLoginMethod))) {
     ctx.addIssue({ code: "custom", path: ["recommendedLoginMethod"], message: "Recommended login must be supported" });
   }
   if (harness.selectedAccountId !== null && !harness.accountIds.includes(harness.selectedAccountId)) {

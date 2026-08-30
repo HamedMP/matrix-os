@@ -93,6 +93,7 @@ describe("ProviderSettingsStore", () => {
       }),
     };
     login = {
+      supportedMethods: vi.fn(() => ["terminal", "oauth", "api_key"]),
       startLogin: vi.fn(async ({ mutation }) => ({
         id: "attempt_real_terminal_1",
         harnessInstanceId: mutation.harnessInstanceId,
@@ -105,6 +106,16 @@ describe("ProviderSettingsStore", () => {
       })),
     };
     runtime = {
+      supportedActions: [
+        "add_harness",
+        "update_harness",
+        "set_harness_enabled",
+        "set_route",
+        "select_account",
+        "select_access_source",
+        "set_gateway_budget",
+        "set_gateway_allowlist",
+      ],
       applyConfiguration: vi.fn(async () => undefined),
     };
   });

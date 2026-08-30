@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
@@ -9,8 +9,6 @@ import {
   type AiProviderSnapshotV3,
   type ProviderConnectionAttempt,
   type ProviderDependencyCounts,
-  type ProviderHarnessKind,
-  type ProviderLoginMethod,
   type ProviderSettingsMutation,
   type ProviderSettingsMutationResponse,
   type ProviderSettingsSnapshot,
@@ -38,20 +36,21 @@ import type {
   ProviderLoginCoordinator,
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
+import {
+  coordinatorLoginHarness,
+  coordinatorLoginMethods,
+  supportedProviderSettingsActions,
+} from "./provider-settings-capability-policy.js";
+import {
+  currentProviderConnectionAttempt,
+  hashProviderSettingsMutation,
+  sameProviderDependencyCounts,
+} from "./provider-settings-receipts.js";
 
 const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
 const DEFAULT_PROJECTION_AGE_MS = 5 * 60_000;
 const SECRET_MAX_CHARS = 64 * 1024;
-const CONFIGURATION_ACTIONS = [
-  "add_harness",
-  "update_harness",
-  "set_harness_enabled",
-  "set_route",
-  "select_account",
-  "select_access_source",
-] as const satisfies readonly ProviderSettingsSupportedAction[];
-
 export { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 export type {
   CanonicalProviderSnapshotReader,
@@ -75,22 +74,6 @@ interface ProviderSettingsStoreOptions {
   now?: () => Date;
   idGenerator?: () => string;
   maxProjectionAgeMs?: number;
-}
-
-function hashMutation(mutation: ProviderSettingsMutation): string {
-  return createHash("sha256").update(JSON.stringify(mutation)).digest("hex");
-}
-
-function sameCounts(left: ProviderDependencyCounts, right: ProviderDependencyCounts): boolean {
-  return left.activeChatCount === right.activeChatCount
-    && left.resumableChatCount === right.resumableChatCount
-    && left.harnessInstanceCount === right.harnessInstanceCount;
-}
-
-function loginMethods(kind: ProviderHarnessKind): readonly ProviderLoginMethod[] {
-  return kind === "codex"
-    ? ["terminal", "oauth", "api_key"] as const
-    : ["terminal", "api_key"] as const;
 }
 
 export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
@@ -174,7 +157,12 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         config,
         now: this.#now(),
         dependencies: this.#dependencies,
-        supportedActions: this.#supportedActions(config),
+        supportedActions: this.#supportedActions(config, canonical),
+        loginMethods: (harness) => coordinatorLoginMethods({
+          login: this.#login,
+          harness,
+          canonical,
+        }),
       });
     } catch (error) {
       if (error instanceof ProviderSettingsStoreError) throw error;
@@ -186,21 +174,26 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     }
   }
 
-  #supportedActions(config: ProviderSettingsConfiguration): ProviderSettingsSupportedAction[] {
-    const actions: ProviderSettingsSupportedAction[] = this.#runtime ? [...CONFIGURATION_ACTIONS] : [];
-    if (this.#runtime && config.gatewayPolicy) actions.push("set_gateway_budget", "set_gateway_allowlist");
-    if (this.#login) actions.push("start_login");
-    if (this.#lifecycle) actions.push("logout_account");
-    if (this.#lifecycle && this.#dependencies) actions.push("remove_account");
-    if (this.#dependencies) actions.push("reassign_account");
-    return actions;
+  #supportedActions(
+    config: ProviderSettingsConfiguration,
+    canonical: AiProviderSnapshotV3,
+  ): ProviderSettingsSupportedAction[] {
+    return supportedProviderSettingsActions({
+      runtime: this.#runtime,
+      login: this.#login,
+      lifecycle: this.#lifecycle,
+      dependencies: this.#dependencies,
+      config,
+      canonical,
+    });
   }
 
   #assertSupported(
     type: ProviderSettingsMutation["type"],
     config: ProviderSettingsConfiguration,
+    canonical: AiProviderSnapshotV3,
   ): void {
-    if (this.#supportedActions(config).includes(type)) return;
+    if (this.#supportedActions(config, canonical).includes(type)) return;
     if (type === "remove_account" || type === "reassign_account") {
       throw new ProviderSettingsStoreError("dependency_unavailable", 503);
     }
@@ -275,7 +268,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       console.warn("[provider-settings] Account dependency check unavailable");
       throw new ProviderSettingsStoreError("dependency_unavailable", 503);
     }
-    if (!sameCounts(actual, expected)) {
+    if (!sameProviderDependencyCounts(actual, expected)) {
       throw new ProviderSettingsStoreError("revision_conflict", 409, {
         latestRevision: config.revision,
       });
@@ -287,8 +280,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     mutation: Extract<ProviderSettingsMutation, { type: "start_login" }>,
     harness: ProviderSettingsConfiguration["harnesses"][number],
     snapshot: ProviderSettingsSnapshot,
+    canonical: AiProviderSnapshotV3,
   ): Promise<ProviderConnectionAttempt> {
-    if (!loginMethods(harness.harness).includes(mutation.method)) {
+    const methods = coordinatorLoginMethods({ login: this.#login, harness, canonical });
+    if (!methods.includes(mutation.method)) {
       throw new ProviderSettingsStoreError("invalid_request", 400);
     }
     const account = mutation.accountId === null
@@ -305,8 +300,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       const attempt = ProviderConnectionAttemptSchema.parse(await this.#login.startLogin({
         mutation,
         harness: {
-          id: harness.id,
-          harness: harness.harness,
+          ...coordinatorLoginHarness({ harness, canonical }),
           providerId: harness.route.providerId,
           modelId: harness.route.modelId,
         },
@@ -358,7 +352,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       let canonical = await this.#canonical();
       let config = await this.#configuration(canonical);
       const mutation = parsed.data;
-      const payloadHash = hashMutation(mutation);
+      const payloadHash = hashProviderSettingsMutation(mutation);
       const duplicate = config.receipts.find((receipt) => receipt.key === mutation.idempotencyKey);
       if (duplicate) {
         if (duplicate.payloadHash !== payloadHash) {
@@ -367,7 +361,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         const snapshot = await this.#project(canonical, config);
         const attempt = duplicate.attempt === undefined
           ? undefined
-          : ProviderConnectionAttemptSchema.parse(duplicate.attempt);
+          : currentProviderConnectionAttempt(duplicate.attempt, this.#now());
         return attempt
           ? { kind: "login_attempt", snapshot, attempt }
           : { kind: "snapshot", snapshot };
@@ -377,7 +371,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           latestRevision: config.revision,
         });
       }
-      this.#assertSupported(mutation.type, config);
+      this.#assertSupported(mutation.type, config, canonical);
       const snapshot = await this.#project(canonical, config);
       for (const account of snapshot.accounts) {
         if (config.accountProfiles.some((profile) => profile.id === account.id)) continue;
@@ -415,7 +409,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         case "start_login": {
           const harness = config.harnesses.find((candidate) => candidate.id === mutation.harnessInstanceId);
           if (!harness) throw new ProviderSettingsStoreError("not_found", 404);
-          attempt = await this.#connectionAttempt(mutation, harness, snapshot);
+          attempt = await this.#connectionAttempt(mutation, harness, snapshot, canonical);
           break;
         }
         case "logout_account":
