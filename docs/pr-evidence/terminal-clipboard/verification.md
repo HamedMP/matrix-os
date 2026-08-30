@@ -2,12 +2,16 @@
 
 ## Feature checks
 
-- Focused Vitest matrix: 16 files, 299 tests passed.
+- Focused Vitest matrix: 18 files, 306 tests passed.
 
   ```bash
-  pnpm vitest run tests/contracts/terminal-clipboard.test.ts tests/desktop/menu-template.test.ts tests/desktop/native-desktop-shell.test.tsx tests/desktop/terminal-link-actions.test.ts tests/desktop/terminal-link-context-menu.test.tsx tests/desktop/terminal-view.test.tsx tests/desktop/terminals-tab.test.tsx tests/shell/canvas-window-terminal-overlay.test.tsx tests/shell/terminal-link-actions.test.ts tests/shell/terminal-link-context-menu.test.tsx tests/shell/terminal-pane-privacy.test.tsx tests/shell/terminal-pane-scrolling.test.tsx tests/shell/terminal-pane-zoom-correction.test.ts tests/shell/terminal-pointer-interception.test.ts tests/shell/terminal-rich-paste.test.ts tests/shell/terminal-soft-grid.test.ts
+  pnpm vitest run tests/contracts/terminal-clipboard.test.ts tests/desktop/menu-template.test.ts tests/desktop/native-desktop-shell.test.tsx tests/desktop/terminal-link-actions.test.ts tests/desktop/terminal-link-context-menu.test.tsx tests/desktop/terminal-view.test.tsx tests/desktop/terminals-tab.test.tsx tests/shell/canvas-window-terminal-overlay.test.tsx tests/shell/terminal-file-paste.test.ts tests/shell/terminal-link-actions.test.ts tests/shell/terminal-link-context-menu.test.tsx tests/shell/terminal-pane-privacy.test.tsx tests/shell/terminal-pane-scrolling.test.tsx tests/shell/terminal-pane-zoom-correction.test.ts tests/shell/terminal-pointer-interception.test.ts tests/shell/terminal-rich-paste.test.ts tests/shell/terminal-soft-grid.test.ts tests/shell/terminal-xterm-runtime.test.ts
   ```
-- Packaged Electron Playwright journey after restacking: 1 test passed in 53.70 seconds.
+- Packaged Electron Playwright journey after restacking: 1 test passed in 53.77 seconds.
+
+  ```bash
+  MATRIX_DESKTOP_E2E_REQUIRED=1 xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/terminal-clipboard.e2e.test.ts
+  ```
 - Desktop production package build: passed.
 - TypeScript builds/typechecks for all workspace packages: passed.
 - Pattern scanner: passed with zero violations.

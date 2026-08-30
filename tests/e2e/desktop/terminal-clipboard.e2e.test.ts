@@ -31,6 +31,9 @@ suite("packaged Electron terminal clipboard", () => {
   let page: Page;
   let userDataDir: string;
   let activeSessionName: "matrix-task-1" | "matrix-review" = "matrix-task-1";
+  const copyShortcut = process.platform === "darwin" ? "Meta+C" : "Control+Shift+C";
+  const alternateCopyShortcut = process.platform === "darwin" ? "Meta+Shift+C" : copyShortcut;
+  const pasteShortcut = process.platform === "darwin" ? "Meta+V" : "Control+Shift+V";
 
   const terminalSurface = () => page
     .getByRole("heading", { name: activeSessionName, exact: true })
@@ -131,9 +134,9 @@ suite("packaged Electron terminal clipboard", () => {
     await terminalSurface().getByText(secondLine, { exact: false }).waitFor({ timeout: 10_000 });
 
     await selectBetween(firstLine, 0, secondLine, secondLine.length);
-    await page.keyboard.press("Meta+C");
+    await page.keyboard.press(copyShortcut);
     await expect.poll(clipboardText).toBe(exactSelection);
-    await page.keyboard.press("Meta+Shift+C");
+    await page.keyboard.press(alternateCopyShortcut);
     await expect.poll(clipboardText).toBe(exactSelection);
 
     const rightClickTrials = [
@@ -190,18 +193,23 @@ suite("packaged Electron terminal clipboard", () => {
     const inputCount = gateway.state.terminalInputs.length;
     await writeClipboard(pastePayload);
     await terminalSurface().locator(".xterm-helper-textarea").focus();
-    await page.keyboard.press("Meta+V");
+    await page.keyboard.press(pasteShortcut);
     await expect.poll(() => gateway.state.terminalInputs.slice(inputCount)).toEqual([pastePayload]);
     expect(gateway.state.terminalInputs.slice(inputCount).join("")).not.toContain("\r");
 
     gateway.sendTerminalOutput("\u001b[?1003h\u001b[?1006h");
-    await page.keyboard.press("Meta+A");
-    await page.keyboard.press("Meta+C");
-    await expect.poll(clipboardText).toContain(firstLine);
-    const selectAllSnapshot = await clipboardText();
     const screen = terminalSurface().locator(".xterm-screen");
     const screenBox = await screen.boundingBox();
     if (!screenBox) throw new Error("terminal screen geometry is unavailable");
+    if (process.platform === "darwin") {
+      await page.keyboard.press("Meta+A");
+    } else {
+      await page.mouse.click(screenBox.x + 30, screenBox.y + 30, { button: "right" });
+      await page.getByRole("menuitem", { name: "Select All", exact: true }).click();
+    }
+    await page.keyboard.press(copyShortcut);
+    await expect.poll(clipboardText).toContain(firstLine);
+    const selectAllSnapshot = await clipboardText();
     for (let move = 0; move < 20; move += 1) {
       await page.mouse.move(
         screenBox.x + 10 + ((move * 31) % Math.max(20, screenBox.width - 20)),
@@ -209,7 +217,7 @@ suite("packaged Electron terminal clipboard", () => {
       );
       await page.waitForTimeout(500);
     }
-    await page.keyboard.press("Meta+C");
+    await page.keyboard.press(copyShortcut);
     await expect.poll(clipboardText).toBe(selectAllSnapshot);
 
     const mouseInputCount = gateway.state.terminalInputs.length;
@@ -224,14 +232,14 @@ suite("packaged Electron terminal clipboard", () => {
     gateway.sendTerminalOutput(`\r\n${reviewLine}\r\n`, "matrix-review");
     await terminalSurface().getByText(reviewLine, { exact: false }).waitFor({ timeout: 10_000 });
     await selectBetween(reviewLine, 0, reviewLine, reviewLine.length);
-    await page.keyboard.press("Meta+C");
+    await page.keyboard.press(copyShortcut);
     await expect.poll(clipboardText).toBe(reviewLine);
     expect(await clipboardText()).not.toContain("CLIP-FIRST");
 
     const reviewPaste = "review-pane-paste";
     const reviewInputCount = gateway.state.terminalInputs.length;
     await writeClipboard(reviewPaste);
-    await page.keyboard.press("Meta+V");
+    await page.keyboard.press(pasteShortcut);
     await expect.poll(() => gateway.state.terminalInputs.slice(reviewInputCount)).toEqual([reviewPaste]);
     expect(gateway.state.terminalInputEvents.at(-1)).toEqual({
       session: "matrix-review",
