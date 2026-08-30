@@ -13,6 +13,7 @@ export interface TerminalLaunchConfig {
   label: string;
   command: string;
   claudeMode?: boolean;
+  targetId?: string;
 }
 
 const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
@@ -112,9 +113,13 @@ function writeLaunchQueue(launches: QueuedTerminalLaunch[]) {
   }
 }
 
-export function enqueueTerminalLaunch(action: TerminalLaunchAction, targetId?: string): void {
+export function requeueTerminalLaunch(action: TerminalLaunchAction, targetId?: string): void {
   if (!isTerminalLaunchAction(action)) return;
   writeLaunchQueue([...readLaunchQueue(), { action, targetId }]);
+}
+
+export function enqueueTerminalLaunch(action: TerminalLaunchAction, targetId?: string): void {
+  requeueTerminalLaunch(action, targetId);
   window.dispatchEvent(new CustomEvent(TERMINAL_LAUNCH_EVENT, { detail: { targetId } }));
 }
 
@@ -127,5 +132,8 @@ export function drainTerminalLaunchQueue(targetId?: string): TerminalLaunchConfi
     else remaining.push(launch);
   }
   writeLaunchQueue(remaining);
-  return matched.map((launch) => terminalLaunchConfig(launch.action));
+  return matched.map((launch) => ({
+    ...terminalLaunchConfig(launch.action),
+    ...(launch.targetId ? { targetId: launch.targetId } : {}),
+  }));
 }

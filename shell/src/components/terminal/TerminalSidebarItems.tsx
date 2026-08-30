@@ -580,8 +580,8 @@ function CollapsedRailGroup({
   return (
     <div className="flex flex-col items-center" style={{ gap: 9 }}>
       {shells.map((shell) => {
-        const displayName = formatShellDisplayName(shell.name);
-        const label = formatCollapsedShellLabel(shell.name);
+        const displayName = shell.subtitle?.trim() || formatShellDisplayName(shell.name);
+        const label = formatCollapsedShellLabel(displayName);
         const selected = shell.name === selectedShellName;
         const accent = sessionAccent(shell.name);
         const showStatusDot = shouldShowShellStatusDot(shell);
@@ -719,6 +719,7 @@ export function ShellSessionGroup({
 }) {
   const collapsible = label === "Background";
   const contentId = `terminal-session-group-${label.toLowerCase()}-content`;
+  const projectGroups = Object.entries(Object.groupBy(shells, (shell) => shell.project || "main"));
   return (
     <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
@@ -770,25 +771,32 @@ export function ShellSessionGroup({
               <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 12, padding: "8px 0 6px" }}>
                 {foreground ? "No active sessions" : "Nothing running in background"}
               </div>
-            ) : shells.map((shell) => (
-              <ShellCard
-                key={`${label}-${shell.name}`}
-                shell={shell}
-                canvasZoom={canvasZoom}
-                foreground={foreground}
-                deleting={deletingShellNames.includes(shell.name)}
-                selected={shell.name === selectedShellName}
-                onOpen={() => onOpen(shell)}
-                onToggle={() => onToggle(shell)}
-                onRename={(nextName) => onRename(shell, nextName)}
-                onDelete={(anchorElement, returnFocusElement) => onDelete(shell, anchorElement, returnFocusElement)}
-                dragging={shell.name === draggingShellName}
-                dropTarget={shell.name === dragOverShellName}
-                onDragStart={() => onDragStart(shell)}
-                onDragOver={() => onDragOver(shell)}
-                onDrop={() => onDrop(shell)}
-                onDragEnd={onDragEnd}
-              />
+            ) : projectGroups.map(([project, projectShells]) => (
+              <div key={`${label}-${project}`} data-terminal-project-group={project} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>
+                  {project === "main" ? "Main" : project}
+                </div>
+                {(projectShells ?? []).map((shell) => (
+                  <ShellCard
+                    key={`${label}-${shell.name}`}
+                    shell={shell}
+                    canvasZoom={canvasZoom}
+                    foreground={foreground}
+                    deleting={deletingShellNames.includes(shell.name)}
+                    selected={shell.name === selectedShellName}
+                    onOpen={() => onOpen(shell)}
+                    onToggle={() => onToggle(shell)}
+                    onRename={(nextName) => onRename(shell, nextName)}
+                    onDelete={(anchorElement, returnFocusElement) => onDelete(shell, anchorElement, returnFocusElement)}
+                    dragging={shell.name === draggingShellName}
+                    dropTarget={shell.name === dragOverShellName}
+                    onDragStart={() => onDragStart(shell)}
+                    onDragOver={() => onDragOver(shell)}
+                    onDrop={() => onDrop(shell)}
+                    onDragEnd={onDragEnd}
+                  />
+                ))}
+              </div>
             ))}
           </>
         ) : null}
@@ -894,12 +902,12 @@ function ShellCard({
 }) {
   const showStatusDot = shouldShowShellStatusDot(shell);
   const [copyFeedback, setCopyFeedback] = useState<"copied" | "failed" | null>(null);
-  const displayName = formatShellDisplayName(shell.name);
+  const displayName = shell.subtitle?.trim() || formatShellDisplayName(shell.name);
   const [actionsVisible, setActionsVisible] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [hoverCardOpen, setHoverCardOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
-  const [renameDraft, setRenameDraft] = useState(shell.name);
+  const [renameDraft, setRenameDraft] = useState(displayName);
   const [renameSaving, setRenameSaving] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -1033,9 +1041,9 @@ function ShellCard({
     }
   };
   const cancelRename = useCallback(() => {
-    setRenameDraft(shell.name);
+    setRenameDraft(displayName);
     setRenaming(false);
-  }, [shell.name]);
+  }, [displayName]);
 
   const commitRename = useCallback(async (draft = renameDraft) => {
     const nextName = draft.trim();
@@ -1044,7 +1052,7 @@ function ShellCard({
       return;
     }
     if (renameSaving || renameCommittingRef.current) return;
-    if (nextName === shell.name) {
+    if (nextName === displayName) {
       setRenaming(false);
       return;
     }
@@ -1061,21 +1069,21 @@ function ShellCard({
     }
     renameCommittingRef.current = false;
     setRenameSaving(false);
-  }, [cancelRename, onRename, renameDraft, renameSaving, shell.name]);
+  }, [cancelRename, displayName, onRename, renameDraft, renameSaving]);
 
   const finishRename = useCallback(() => {
     if (renameCommittingRef.current) return;
     const nextDraft = renameInputRef.current?.value ?? renameDraft;
-    if (nextDraft.trim() === shell.name || nextDraft.trim().length === 0) {
+    if (nextDraft.trim() === displayName || nextDraft.trim().length === 0) {
       cancelRename();
       return;
     }
     void commitRename(nextDraft);
-  }, [cancelRename, commitRename, renameDraft, shell.name]);
+  }, [cancelRename, commitRename, displayName, renameDraft]);
 
   const beginRename = () => {
     cancelHoverCardOpen();
-    setRenameDraft(shell.name);
+    setRenameDraft(displayName);
     setRenaming(true);
   };
 

@@ -26,7 +26,13 @@ function node(type: any, metadata: Record<string, unknown> = {}) {
     size: { width: 320, height: 180 },
     zIndex: 0,
     displayState: "normal",
-    sourceRef: type === "terminal" ? { kind: "terminal_session", id: "550e8400-e29b-41d4-a716-446655440000" } : null,
+    sourceRef: type === "terminal" ? {
+      kind: "terminal_tab",
+      terminalRef: {
+        workspaceId: "tws_00000000000000000000000000000001",
+        tabId: "tt_00000000000000000000000000000001",
+      },
+    } : null,
     metadata,
   };
 }
@@ -36,12 +42,11 @@ describe("workspace canvas renderer", () => {
     useWorkspaceCanvasStore.setState({ focusedNodeId: "node_terminal" });
     render(<WorkspaceCanvasNode node={{
       ...node("terminal", { label: "Main" }),
-      sourceRef: { kind: "terminal_session", id: "main" },
     } as any} />);
 
     expect(terminalPaneSpy).toHaveBeenCalledWith(expect.objectContaining({
       paneId: "canvas-node_terminal",
-      sessionId: "main",
+      sessionId: "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
       isFocused: true,
     }));
   });

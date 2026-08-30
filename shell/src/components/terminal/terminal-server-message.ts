@@ -1,41 +1,36 @@
+import { TerminalTabServerFrameSchema } from "@matrix-os/contracts";
+import { terminalRefKey } from "./terminal-session-id";
+
+interface TerminalMessageIdentity {
+  sessionId: string;
+  revision: number;
+}
+
 export type TerminalServerMessage =
-  | {
+  | (TerminalMessageIdentity & {
       type: "attached";
-      sessionId: string;
-      state: "running" | "exited";
-      exitCode: number | null;
-      fromSeq: number | null;
-      canonicalSize: TerminalCanonicalSize | null;
-    }
-  | { type: "canonical-size"; cols: number; rows: number }
-  | { type: "lease-revoked" }
-  | { type: "presentation-reset" }
-  | { type: "output"; data: string; seq: number | null }
-  | { type: "block-mark"; seq: number | null; mark: { code: "A" | "B" | "C" | "D"; exitCode?: number } }
-  | { type: "replay-start" }
-  | { type: "replay-end" }
-  | { type: "exit"; code: number | null }
-  | { type: "error"; message: string };
+      state: "running";
+      exitCode: null;
+      fromSeq: number;
+      canonicalSize: TerminalCanonicalSize;
+    })
+  | (TerminalMessageIdentity & { type: "canonical-size"; cols: number; rows: number })
+  | (TerminalMessageIdentity & { type: "output"; data: string; seq: number })
+  | (TerminalMessageIdentity & {
+      type: "snapshot";
+      data: string;
+      seq: number;
+      canonicalSize: TerminalCanonicalSize;
+    })
+  | (TerminalMessageIdentity & { type: "replay-start" })
+  | (TerminalMessageIdentity & { type: "replay-end" })
+  | (TerminalMessageIdentity & { type: "pong" })
+  | (TerminalMessageIdentity & { type: "exit"; code: number | null })
+  | { type: "error"; message: string; sessionId?: string };
 
 export interface TerminalCanonicalSize {
   cols: number;
   rows: number;
-}
-
-function toFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function toCanonicalSize(value: unknown): TerminalCanonicalSize | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const cols = (value as { cols?: unknown }).cols;
-  const rows = (value as { rows?: unknown }).rows;
-  return Number.isInteger(cols) && (cols as number) >= 1 && (cols as number) <= 500
-    && Number.isInteger(rows) && (rows as number) >= 1 && (rows as number) <= 200
-    ? { cols: cols as number, rows: rows as number }
-    : null;
 }
 
 export function stripTerminalControls(value: string): string {
@@ -50,75 +45,53 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
     return null;
   }
 
-  if (!parsed || typeof parsed !== "object") {
-    return null;
+  const validated = TerminalTabServerFrameSchema.safeParse(parsed);
+  if (!validated.success) return null;
+  const msg = validated.data;
+
+  if (msg.type === "error" || msg.type === "safe-error") {
+    return {
+      type: "error",
+      message: msg.type === "error" ? msg.message : msg.error.safeMessage,
+      ...(msg.terminalRef ? { sessionId: terminalRefKey(msg.terminalRef) } : {}),
+    };
   }
 
-  const msg = parsed as Record<string, unknown>;
+  const identity: TerminalMessageIdentity = {
+    sessionId: terminalRefKey(msg.terminalRef),
+    revision: msg.revision,
+  };
   switch (msg.type) {
-    case "attached": {
-      const sessionId = typeof msg.sessionId === "string"
-        ? msg.sessionId
-        : typeof msg.session === "string"
-          ? msg.session
-          : null;
-      if (!sessionId || (msg.state !== "running" && msg.state !== "exited")) {
-        return null;
-      }
+    case "attached":
       return {
+        ...identity,
         type: "attached",
-        sessionId,
-        state: msg.state,
-        exitCode: toFiniteNumber(msg.exitCode),
-        fromSeq: Number.isInteger(msg.fromSeq) && (msg.fromSeq as number) >= 0 ? (msg.fromSeq as number) : null,
-        canonicalSize: toCanonicalSize(msg.canonicalSize),
+        state: "running",
+        exitCode: null,
+        fromSeq: msg.nextSeq,
+        canonicalSize: msg.canonicalSize,
       };
-    }
-    case "canonical-size": {
-      const canonicalSize = toCanonicalSize(msg);
-      return canonicalSize ? { type: "canonical-size", ...canonicalSize } : null;
-    }
-    case "lease-revoked":
-      return { type: "lease-revoked" };
-    case "presentation-reset":
-      return { type: "presentation-reset" };
+    case "canonical-size":
+      return { ...identity, type: "canonical-size", ...msg.canonicalSize };
     case "output":
-      if (typeof msg.data !== "string") {
-        return null;
-      }
+      return { ...identity, type: "output", data: msg.data, seq: msg.seq };
+    case "snapshot":
       return {
-        type: "output",
-        data: msg.data,
-        seq: Number.isInteger(msg.seq) && (msg.seq as number) >= 0 ? (msg.seq as number) : null,
+        ...identity,
+        type: "snapshot",
+        data: msg.ansi,
+        seq: msg.seq,
+        canonicalSize: msg.canonicalSize,
       };
-    case "block-mark": {
-      const mark = msg.mark;
-      if (!mark || typeof mark !== "object" || !("code" in mark)) {
-        return null;
-      }
-      const code = (mark as { code?: unknown }).code;
-      if (code !== "A" && code !== "B" && code !== "C" && code !== "D") {
-        return null;
-      }
-      const exitCode = toFiniteNumber((mark as { exitCode?: unknown }).exitCode);
-      return {
-        type: "block-mark",
-        seq: Number.isInteger(msg.seq) && (msg.seq as number) >= 0 ? (msg.seq as number) : null,
-        mark: exitCode === null ? { code } : { code, exitCode },
-      };
-    }
     case "replay-start":
-      return { type: "replay-start" };
+    case "replay-evicted":
+    case "replay-gap":
+      return { ...identity, type: "replay-start" };
     case "replay-end":
-      return { type: "replay-end" };
+      return { ...identity, type: "replay-end" };
+    case "pong":
+      return { ...identity, type: "pong" };
     case "exit":
-      return { type: "exit", code: toFiniteNumber(msg.code) };
-    case "error":
-      return {
-        type: "error",
-        message: typeof msg.message === "string" ? msg.message : "Unknown error",
-      };
-    default:
-      return null;
+      return { ...identity, type: "exit", code: msg.exitCode };
   }
 }
