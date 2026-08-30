@@ -9,11 +9,18 @@
 
 Give eligible Matrix users a working AI kernel without BYOK by placing a Matrix-controlled, Anthropic-compatible relay between each owner VPS and Cloudflare AI Gateway Unified Billing. Keep the shared upstream credential only at the relay; authenticate every runtime with a scoped/revocable service credential; disable payload logging; allowlist funded models; and ship the first version without a user-visible allowance while retaining global budget, rate, concurrency, size, telemetry, eligibility, and kill-switch controls.
 
-In parallel, update the Claude Agent SDK through real-runtime spikes, publish the current Anthropic model catalog, and replace the misleading single Anthropic auth badge with a canonical provider snapshot that separates execution harness, provider account, funding source, and model. Add OpenRouter OAuth PKCE and the best officially supported Anthropic login flow behind that same contract. Metering/add-ons and extra ACP harnesses are later additive phases.
+In parallel, update the Claude Agent SDK through real-runtime spikes, publish the current Anthropic model catalog, and replace the misleading single Anthropic auth badge with a canonical provider snapshot that separates harness, model provider, account, access source, and model. Add OpenRouter OAuth PKCE and the best officially supported Anthropic login flow behind that same contract. Metering/add-ons and extra ACP harnesses are later additive phases.
 
 ### Current implementation checkpoint
 
-This first PR freezes the approved multi-phase design and lands only the default-off, stateless Cloudflare-funded transport boundary in `packages/proxy`. It does not enable funded AI on production VPSes, issue owner-scoped relay credentials, add the dynamic eligibility/kill-switch source, change Chat or Settings, upgrade the Agent SDK, or create the Postgres credit ledger. Those remain separate TDD slices below so review of the secret-bearing relay is not mixed with billing, provider-account, and renderer migrations.
+The staged work through Phase 2 provides the default-off Cloudflare transport
+boundary plus a read-only V3 snapshot and compatibility projections for Chat
+and Settings. It does not enable funded AI on production VPSes, complete the
+shared **Agents & providers** redesign, mutate provider accounts, issue the
+production runtime-scoped relay credentials, or create the Postgres credit
+ledger. Those remain separate TDD slices below so the secret-bearing relay,
+account lifecycle, shell convergence, and commercial billing are reviewed
+independently.
 
 ## Technical Context
 
@@ -117,16 +124,39 @@ packages/platform/src/
 └── db/migrations/                  # later usage/reservation tables only
 
 shell/src/
-├── components/settings/sections/AgentRuntimePanel.tsx
+├── components/settings/agents-providers/ # shared Canvas/Web Desktop feature UI
+├── components/settings/sections/AgentRuntimePanel.tsx # migration adapter
 ├── components/chat/                # account/model/access-source UI
 ├── stores/                          # serializable provider snapshot/draft restoration
 └── lib/terminal-launch.ts           # safe Anthropic CLI fallback
 
 tests/
-└── integration/                     # owner gateway -> relay -> fake upstream stream
+├── integration/                     # owner gateway -> relay -> fake upstream stream
+└── shell/                           # shared derivation/actions + three-surface parity
 ```
 
-**Structure decision**: keep shared funded request transport and platform usage policy in `packages/proxy`, which already owns shared API proxy/usage concerns, but split its current catch-all implementation into bounded services and document the domain. Owner provider accounts remain in `packages/gateway`; canonical public schemas live in `packages/contracts`; the shell renders them. Do not create a second Chat implementation or import `t3code` runtime internals.
+**Structure decision**: keep shared funded request transport and platform usage policy in `packages/proxy`, which already owns shared API proxy/usage concerns, but split its current catch-all implementation into bounded services and document the domain. Owner provider accounts remain in `packages/gateway`; canonical public schemas live in `packages/contracts`; shared shell feature code renders them in Canvas and Web Desktop, while Electron consumes the same contract/derivations through a thin shell adapter. Do not create a second Chat implementation or import `t3code` runtime internals.
+
+## Product Information Architecture and Parity
+
+The normative UI and lifecycle contract is
+[`docs/dev/provider-settings-parity.md`](../../docs/dev/provider-settings-parity.md).
+
+- **Harness** is the executable agent runtime. Internal V3
+  `ProviderDriver`/`ProviderInstance` values project harness definitions and
+  runnable configurations.
+- **Model provider** serves inference. **Account** is an owner-scoped login or
+  profile. **Access source** is the exact credential and funding path for a run.
+- **Agents & providers** owns harness installation/configuration, accounts and
+  authentication, routing, models, and truthful usage.
+- **Identity & personality** owns Matrix identity and `soul.md`.
+- **Custom agents** is reserved for the future `~/agents/custom/` definition
+  surface.
+- V3 is the sole state truth. Legacy Settings/Chat shapes are projections only.
+- Canvas, Web Desktop, and Electron share feature state, derivations, actions,
+  and as much component code as practical. Electron Desktop is the visual and
+  interaction ground truth during convergence; validation runs Canvas first,
+  then Web Desktop, then Electron.
 
 ## Architecture and Invariants
 
@@ -152,11 +182,13 @@ The first implementation does **not** place the platform Anthropic/Cloudflare cr
 
 - `AiAccessSource` answers who supplies credentials and who is billed.
 - `ProviderAccount` answers whether the owner's external account is connected and verified.
-- `ProviderDriver` answers whether a harness is installed and what it can do.
-- `ProviderInstance` binds a driver, access source/account, and capability snapshot.
+- `ProviderDriver` is the internal definition of a harness and answers whether it is installed and what it can do.
+- `ProviderInstance` is a runnable harness configuration and binds a driver, one explicit access source/account, and a capability snapshot.
 - `ModelDescriptor` answers whether a model is valid for that exact intersection.
 - A platform fallback can make `matrix_included` ready; it never makes `owner_anthropic` connected.
+- `matrix_included` is ready only when explicit current policy eligibility and fresh bounded relay health are both ready.
 - Chat persistence stores stable IDs and remains readable if a catalog entry becomes legacy or unavailable.
+- Logout, account removal, and harness disable are separate server-confirmed transitions and never delete Chat history.
 
 ### Security architecture
 
@@ -246,6 +278,33 @@ Every numbered slice is an independently reviewable PR. Tests are written red fi
 
 **PR**: `feat(chat): unify provider account and model state`
 
+### Phase 2B — Shared Agents & providers foundation
+
+**Goal**: converge Canvas, Web Desktop, and Electron on the approved Settings
+information architecture before adding account mutations.
+
+1. Add shared bounded derivations and action contracts over V3; do not create a
+   renderer-owned provider store.
+2. Add the **Agents & providers** surface with a **Harness instances** rail,
+   harness health, selected account/access source, model provider, model route,
+   and truthful read-only usage authority.
+3. Move Matrix identity and `soul.md` concerns to **Identity & personality**;
+   reserve **Custom agents** for a future `~/agents/custom/` surface.
+4. Reuse the feature implementation in Canvas and Web Desktop. Adapt Electron
+   to the same schemas, derivations, action semantics, and layout; its window
+   chrome and Terminal launcher may remain native.
+5. Define but do not enable mutation controls whose server authority has not
+   shipped. Missing install, signed-out, stale, unavailable, offline, and
+   read-only states must be explicit.
+6. Capture Canvas, Web Desktop, and Electron evidence from the same fixture.
+
+**Checkpoint**: V3 fixture/component tests prove identical state and available
+actions across all three surfaces; Canvas is validated first, then Web Desktop,
+then Electron; no UI claims multi-account mutation, funded credit, or add-ons
+before those authorities exist.
+
+**PR**: `feat(settings): add shared agents and providers foundation`
+
 ### Phase 3 — Matrix-funded relay preview
 
 **Goal**: enable first Chat without BYOK, with no per-user balance UI yet.
@@ -256,7 +315,10 @@ Every numbered slice is an independently reviewable PR. Tests are written red fi
 4. Forward only allowlisted models/fields/headers to fixed Cloudflare Anthropic endpoints. Disable payload logging and reject redirects.
 5. Enforce feature flag, cohort, Cloudflare spend fuse, global/per-runtime rates and concurrency, size/output/tool limits, timeouts, stream bounds, cancellation, and shutdown drain.
 6. Provision relay URL/runtime token to VPSes, never the central upstream secret.
-7. Advertise `matrix_included` only when policy and relay health say it is usable.
+7. Advertise `matrix_included` only when an explicit current policy authorizes
+   the owner/runtime for at least one allowed model and a fresh bounded relay
+   health result says the route is usable. Fail closed if either source is
+   missing, stale, disabled, or unavailable.
 8. Add bounded-cardinality, content-free metrics and alerts.
 
 **Checkpoint**: runtime-auth rejection suite; owner gateway -> relay -> fake Cloudflare SSE integration including abort/failure; rate/concurrency/eviction and leakage tests; test/typecheck/coverage/pattern/production-shell gates. A local Docker scenario may test packaged proxy compatibility, but release verification uses an exact bundle on a disposable VPS.
@@ -273,10 +335,16 @@ Every numbered slice is an independently reviewable PR. Tests are written red fi
 2. Implement OpenRouter OAuth PKCE with one-time owner-bound state, fixed callback, bounded exchange/probe, atomic credential write, and idempotent callbacks.
 3. Implement the spike-proven Anthropic flow: supported in-app authorization/polling if available, otherwise visible canonical `__terminal__` login plus health polling and automatic draft return.
 4. Keep API-key entry; save only after successful probe and distinguish timeout from rejection.
-5. Add connect/reconnect/disconnect/retry/stale and account/funding labels through V3.
-6. Add owner OpenRouter transport/models only when spike-proven; owner keys never pass through funded relay.
+5. Add multiple owner-scoped accounts without overwriting existing profiles;
+   every runnable harness instance names its selected account/access source.
+6. Add connect/reconnect/logout/remove/retry/stale and account/funding labels
+   through V3. Logout retains the account entry where supported; removal deletes
+   the credential/profile after active-Chat reassignment or confirmation;
+   disabling a harness remains a separate operation that preserves accounts and
+   readable Chats.
+7. Add owner OpenRouter transport/models only when spike-proven; owner keys never pass through funded relay.
 
-**Checkpoint**: replay/wrong-owner/expiry/denial/duplicate/timeout/malformed-response/failed-write/disconnect/draft tests; fake-provider OAuth E2E and reviewed manual real-account test; test/typecheck/coverage/React Doctor/pattern/build gates; Canvas-first disposable-VPS login validation.
+**Checkpoint**: replay/wrong-owner/expiry/denial/duplicate/timeout/malformed-response/failed-write/logout/remove/disable/reassignment/draft tests; fake-provider OAuth E2E and reviewed manual real-account test; test/typecheck/coverage/React Doctor/pattern/build gates; Canvas-first, then Web Desktop and Electron disposable-VPS login validation.
 
 **PR**: `feat(chat): add anthropic and openrouter account connections`
 
@@ -288,7 +356,7 @@ Every numbered slice is an independently reviewable PR. Tests are written red fi
 2. Add Kysely migrations for entitlements, atomic reservations, content-free usage, and reconciliation.
 3. Reserve before dispatch in one transaction with budget predicate in the write and unique request ID.
 4. Reconcile canonical model/tokens/cost; bounded job releases/reconciles abandoned holds.
-5. Add allowance/add-on UI, warnings, stops, exports, deletion/retention, and support tools.
+5. Add allowance/add-on UI, warnings, stops, exports, deletion/retention, and support tools. Exact remaining credit comes only from the authoritative Matrix ledger; provider subscription allowance and provider API balance remain separately labeled sources.
 6. Retain Cloudflare limits as a second, eventually consistent fuse.
 7. Do not model variable user add-ons as Cloudflare rules: a split-by-user rule gives each value the same budget, Cloudflare caps gateways at 20 spend rules, and concurrent requests can briefly overshoot.
 
@@ -302,7 +370,10 @@ Every numbered slice is an independently reviewable PR. Tests are written red fi
 
 1. Add a Matrix-published signed/validated catalog with bundled and last-known-good fallback, borrowing the useful `t3code` lifecycle.
 2. Add Baseten as an optional OpenAI-compatible source after transport, data policy, quality, and cost evaluation.
-3. Reuse Matrix OpenCode.
+3. Reuse Matrix OpenCode and converge generic harness routing for Hermes,
+   OpenClaw, Pi, and OpenCode. Generic harnesses may select a compatible model
+   provider and model; model-specific Claude/Codex routes expose only proven
+   overrides.
 4. Build one generic bounded ACP driver with process/env isolation, probes, cancellation, resume semantics, caps, and shutdown ownership.
 5. Add Cursor or Grok only as thin, separate adapters after ACP passes; do not copy the comparison registry wholesale.
 6. Add current Codex model IDs only after Matrix's harness reports and validates them.
@@ -312,7 +383,8 @@ Every numbered slice is an independently reviewable PR. Tests are written red fi
 ## Test Strategy
 
 - **Unit/contract**: Zod boundaries, header allowlists, model intersection, source precedence, statuses, safe errors, usage normalization, limiter eviction, callback state, and redaction. Shared provider/model derivation is pure and reused by service/store/UI tests.
-- **Integration**: real Agent SDK; authenticated Hono routes/body limits; streaming relay/backpressure/disconnect/timeout/malformed data/shutdown; provisioning secret isolation; Chat/Settings parity.
+- **Integration**: real Agent SDK; authenticated Hono routes/body limits; streaming relay/backpressure/disconnect/timeout/malformed data/shutdown; provisioning secret isolation; Chat/Settings parity; logout/remove/disable and active-Chat reassignment.
+- **Renderer parity**: one V3 fixture and shared action harness run through Canvas, Web Desktop, and Electron. Component/contract tests compare state and available actions; manual evidence follows Canvas -> Web Desktop -> Electron.
 - **Security/failure**: exercise every auth row; no wildcard CORS/untrusted identity/arbitrary URL/redirect; timing-safe comparisons; every fetch/buffer/map/timer bounded; safe error mapping; canary leakage scan; atomic writes and later transaction predicates.
 
 Applicable implementation PR gates:
@@ -335,11 +407,29 @@ Use targeted tests during red/green iteration, then repository gates. Real model
 - Alerts: Cloudflare balance/spend, request/auth/error spikes, latency, limiter saturation, callback failures, catalog rejection, and later reconciliation lag.
 - Rollback: disable funded admission, retain owner paths, revoke relay credentials, pin bundled catalog, and deploy the previous exact host bundle through platform. Never overwrite owner Chat/provider files.
 
+## Graphite Delivery Order
+
+Do not flatten these review boundaries. Restack each layer on the accepted head
+of the prior layer and publish only after its tests and invariants are complete:
+
+1. `feat(gateway): add canonical ai provider snapshot`
+2. `feat(chat): unify provider account and model state`
+3. `feat(settings): add shared agents and providers foundation`
+4. `feat(chat): add multi-account provider authentication`
+5. `feat(proxy): activate policy-gated matrix-funded ai`
+6. accounting, billing/add-on, and truthful credit UI as separate PRs
+7. catalog/model-provider additions and each new harness adapter as separate PRs
+
+Layers 1-2 establish read-only truth. Layer 3 establishes renderer parity but
+must leave unimplemented mutations disabled or labeled. Layer 4 owns account
+lifecycle. Layer 5 may advertise Matrix AI as ready only after policy and relay
+health are wired. Exact per-user remaining credit waits for layer 6.
+
 ## Documentation and Review Deliverables
 
 Every implementation PR uses a Conventional Commit title, states source of truth/lock or transaction scope/acceptable orphan states/auth source/deferred scope, passes applicable gates, and reaches Greptile 5/5.
 
-Before general availability, open a separate `FinnaAI/matrix-os-site` PR under `content/docs/` covering Matrix AI funding versus provider login, models, connections/disconnection, data flow/logging, fair-use controls, safe troubleshooting, and later allowances/add-ons.
+Before general availability, open a separate `FinnaAI/matrix-os-site` PR under `content/docs/` covering harness/model-provider/account/access-source terminology, Matrix AI funding versus provider login, models, login/logout/removal/disable behavior, data flow/logging, fair-use controls, safe troubleshooting, and later allowances/add-ons. Keep the public page aligned with shipped layers only.
 
 ## Complexity Tracking
 
