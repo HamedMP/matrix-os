@@ -287,6 +287,7 @@ export const ProviderGatewayPolicySchema = z.object({
  */
 export const ProviderSettingsSupportedActionSchema = z.enum([
   "add_harness",
+  "remove_harness",
   "update_harness",
   "set_harness_enabled",
   "set_route",
@@ -313,7 +314,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   revision: RevisionSchema,
   refreshedAt: IsoTimestampSchema,
   access: ProviderSettingsAccessSchema,
-  supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(14),
+  supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(15),
   modelProviders: z.array(ProviderModelProviderSchema).max(32),
   accessSources: z.array(ProviderAccessSourceSchema).max(64),
   accounts: z.array(ProviderAccountSchema).max(128),
@@ -430,6 +431,8 @@ export const ProviderSettingsMutationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("add_harness"), ...MutationBase, harness: ProviderHarnessKindSchema,
     displayName: DisplayNameSchema, accentColor: ProviderAccentColorSchema.nullable().optional(),
     route: ProviderHarnessRouteSchema, accessSourceId: ReferenceIdSchema, accountId: ReferenceIdSchema.nullable() }).strict(),
+  z.object({ type: z.literal("remove_harness"), ...MutationBase, harnessInstanceId: ReferenceIdSchema,
+    confirmation: z.literal("remove_harness") }).strict(),
   z.object({ type: z.literal("update_harness"), ...MutationBase, harnessInstanceId: ReferenceIdSchema,
     displayName: DisplayNameSchema.optional(), accentColor: ProviderAccentColorSchema.nullable().optional() }).strict()
     .refine((value) => value.displayName !== undefined || value.accentColor !== undefined, { message: "Harness update requires a change" }),

@@ -40,6 +40,13 @@ describe("provider settings fail-closed capabilities", () => {
         accessSourceId: "matrix_included",
         accountId: null,
       },
+      {
+        ...base,
+        type: "remove_harness",
+        idempotencyKey: "unsupported_01b",
+        harnessInstanceId: "harness_kernel",
+        confirmation: "remove_harness",
+      },
       { ...base, type: "update_harness", idempotencyKey: "unsupported_02", harnessInstanceId: "harness_kernel", displayName: "Claude" },
       { ...base, type: "set_harness_enabled", idempotencyKey: "unsupported_03", harnessInstanceId: "harness_kernel", enabled: false },
       { ...base, type: "set_route", idempotencyKey: "unsupported_04", harnessInstanceId: "harness_kernel", route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" }, accessSourceId: "matrix_included", accountId: null },

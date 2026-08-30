@@ -116,6 +116,24 @@ These actions are distinct:
 - **Disable harness** prevents new selection/execution for that harness while
   preserving its installation, instances, accounts, and configuration. Existing
   Chats stay readable and require a compatible route before another turn.
+- **Remove harness instance** is available only after that instance is disabled.
+  It removes the owner Settings instance, not the installed binary, credentials,
+  or existing Chat history. A later turn in an existing Chat still resolves its
+  durable provider selection independently and must pass normal readiness checks.
+
+Generic lifecycle mutations are admitted only for exact runtime support. Hermes
+and OpenClaw reuse the bounded messaging-runtime controller. Pi and OpenCode must
+be registered coding runtimes at gateway startup in addition to appearing in
+binary inventory; their current installation probe does not claim authenticated
+health. Codex and Claude remain specialized model-specific drivers;
+their existing login/logout commands are not routed through the generic
+coordinator. Multiple account rows are a forward-compatible data shape, not a
+claim that a CLI can run concurrent profiles today; generic runtimes do not
+advertise standalone account/source selection until they own a real profile
+switch.
+Disabled instance removal and non-active disable remain local cleanup operations,
+so an unavailable or uninstalled runtime cannot strand stale owner Settings rows.
+Operations that enable, route, or switch an active runtime still fail closed.
 
 Multiple accounts are first-class. Account IDs are stable and owner-scoped;
 labels are safe display metadata, not secret suffixes. Adding an account must

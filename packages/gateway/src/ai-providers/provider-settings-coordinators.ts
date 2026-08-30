@@ -55,6 +55,9 @@ export interface ProviderSettingsRuntimeCoordinator {
   applyConfiguration(input: {
     mutation: ProviderConfigurationMutation;
     idempotencyKey: string;
+    before: import("./provider-settings-persistence.js").ProviderSettingsConfiguration;
+    after: import("./provider-settings-persistence.js").ProviderSettingsConfiguration;
+    canonical: AiProviderSnapshotV3;
   }): Promise<void>;
 }
 
