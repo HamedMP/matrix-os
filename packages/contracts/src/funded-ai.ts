@@ -127,6 +127,23 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   maxCostMicrousd: MicrousdSchema.min(1),
 }).strict();
 
+export const FundedAiPolicyCheckRequestSchema = z.object({
+  credential: OpaqueCredentialSchema,
+  modelId: ProviderModelReferenceSchema,
+}).strict();
+
+export const FundedAiPolicyCheckResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  authorized: z.literal(true),
+  identity: FundedAiIdentitySchema.extend({
+    tokenId: TokenIdSchema,
+    audience: z.literal(FUNDED_AI_AUDIENCE),
+    scope: z.literal(FUNDED_AI_SCOPE),
+    expiresAt: IsoTimestampSchema,
+  }).strict(),
+  policy: FundedAiEffectivePolicySchema,
+}).strict();
+
 export const FundedAiFundingSummarySchema = z.object({
   asOf: IsoTimestampSchema,
   periodStart: IsoTimestampSchema,
@@ -289,6 +306,8 @@ export type FundedAiEffectivePolicy = z.infer<typeof FundedAiEffectivePolicySche
 export type FundedAiRuntimeCredentialIssueResponse = z.infer<typeof FundedAiRuntimeCredentialIssueResponseSchema>;
 export type FundedAiAuthorizationRequest = z.infer<typeof FundedAiAuthorizationRequestSchema>;
 export type FundedAiAuthorizationResponse = z.infer<typeof FundedAiAuthorizationResponseSchema>;
+export type FundedAiPolicyCheckRequest = z.infer<typeof FundedAiPolicyCheckRequestSchema>;
+export type FundedAiPolicyCheckResponse = z.infer<typeof FundedAiPolicyCheckResponseSchema>;
 export type FundedAiSettlementRequest = z.infer<typeof FundedAiSettlementRequestSchema>;
 export type FundedAiSettlementResponse = z.infer<typeof FundedAiSettlementResponseSchema>;
 export type FundedAiStartRequest = z.infer<typeof FundedAiStartRequestSchema>;

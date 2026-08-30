@@ -9,6 +9,8 @@ import {
   FundedAiOperatorRuntimePolicyResponseSchema,
   FundedAiPromotionalGrantResponseSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
+  FundedAiPolicyCheckRequestSchema,
+  FundedAiPolicyCheckResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiSafeErrorSchema,
 } from "@matrix-os/contracts";
@@ -134,6 +136,31 @@ describe("funded AI control-plane contracts", () => {
     } as const;
     expect(FundedAiAuthorizationResponseSchema.parse(response)).toEqual(response);
     expect(FundedAiAuthorizationResponseSchema.safeParse({ ...response, token: credential }).success).toBe(false);
+  });
+
+  it("checks policy without accepting caller identity, request cost, or exposing funding", () => {
+    const request = { credential, modelId: "anthropic/claude-sonnet-5" } as const;
+    expect(FundedAiPolicyCheckRequestSchema.parse(request)).toEqual(request);
+    expect(FundedAiPolicyCheckRequestSchema.safeParse({ ...request, ownerId: "user_bob" }).success).toBe(false);
+    expect(FundedAiPolicyCheckRequestSchema.safeParse({ ...request, maxCostMicrousd: 1 }).success).toBe(false);
+
+    const response = {
+      contractVersion: 1,
+      authorized: true,
+      identity: {
+        tokenId,
+        ownerId: "user_alice",
+        machineId: "machine_123",
+        runtimeSlot: "primary",
+        audience: "matrix-funded-relay",
+        scope: "ai:invoke",
+        expiresAt,
+      },
+      policy,
+    } as const;
+    expect(FundedAiPolicyCheckResponseSchema.parse(response)).toEqual(response);
+    expect(FundedAiPolicyCheckResponseSchema.safeParse({ ...response, funding }).success).toBe(false);
+    expect(FundedAiPolicyCheckResponseSchema.safeParse({ ...response, credential }).success).toBe(false);
   });
 
   it("allows only coarse, secret-free control-plane errors", () => {

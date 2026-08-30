@@ -206,4 +206,68 @@ describe("funded AI policy repository", () => {
     await expect(expired.authorize({ credential: issued.credential.token, requestId: "request_6", modelId: models[0], maxCostMicrousd: 100 }))
       .rejects.toMatchObject({ code: "unauthorized" });
   });
+
+  it("checks the current effective policy without mutating balances or reservations", async () => {
+    const repo = await enableRuntime();
+    const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;
+    const issued = await repo.issueRuntimeCredential(identity);
+    const balanceBefore = await db.executor.selectFrom("ai_funded_runtime_balances")
+      .selectAll().where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+
+    await expect(repo.checkPolicy({ credential: issued.credential.token, modelId: models[0] }))
+      .resolves.toMatchObject({
+        authorized: true,
+        identity: { ...identity, tokenId: issued.credential.tokenId },
+        policy: { enabled: true, allowedModelIds: [models[0]] },
+      });
+    await expect(repo.checkPolicy({
+      credential: issued.credential.token,
+      modelId: models[0],
+      maxCostMicrousd: 1,
+    } as never)).rejects.toMatchObject({ name: "ZodError" });
+    await expect(repo.checkPolicy({ credential: issued.credential.token, modelId: models[1] }))
+      .rejects.toMatchObject({ code: "model_not_allowed" });
+
+    const balanceAfter = await db.executor.selectFrom("ai_funded_runtime_balances")
+      .selectAll().where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+    expect(balanceAfter).toEqual(balanceBefore);
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("reservation_id").execute()).toEqual([]);
+  });
+
+  it("checks credential, canonical machine binding, and live enablement on every request", async () => {
+    const repo = await enableRuntime();
+    const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;
+    const issued = await repo.issueRuntimeCredential(identity);
+
+    await expect(repo.checkPolicy({
+      credential: `sk-matrix-funded-${issued.credential.tokenId}.${"x".repeat(43)}`,
+      modelId: models[0],
+    })).rejects.toMatchObject({ code: "unauthorized" });
+
+    await db.executor.updateTable("user_machines").set({ status: "stopped" })
+      .where("machine_id", "=", identity.machineId).execute();
+    await expect(repo.checkPolicy({ credential: issued.credential.token, modelId: models[0] }))
+      .rejects.toMatchObject({ code: "unauthorized" });
+
+    await db.executor.updateTable("user_machines").set({ status: "running" })
+      .where("machine_id", "=", identity.machineId).execute();
+    await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: false, allowedModelIds: models });
+    await expect(repo.checkPolicy({ credential: issued.credential.token, modelId: models[0] }))
+      .rejects.toMatchObject({ code: "access_disabled" });
+
+    await repo.updateGlobalPolicy({ expectedRevision: 2, enabled: true, allowedModelIds: models });
+    await db.executor.updateTable("ai_funded_runtime_policies")
+      .set({ expires_at: "2026-08-30T19:59:59.000Z" })
+      .where("machine_id", "=", identity.machineId).execute();
+    await expect(repo.checkPolicy({ credential: issued.credential.token, modelId: models[0] }))
+      .rejects.toMatchObject({ code: "access_disabled" });
+
+    const expired = createAiFundedPolicyRepository({
+      db,
+      credentialHashSecret: "h".repeat(32),
+      now: () => new Date("2026-08-30T20:16:00.000Z"),
+    });
+    await expect(expired.checkPolicy({ credential: issued.credential.token, modelId: models[0] }))
+      .rejects.toMatchObject({ code: "unauthorized" });
+  });
 });
