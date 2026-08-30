@@ -300,84 +300,92 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     return (await getRuntimeFundingSummary(identityInput)).funding;
   }
 
-  async function grantCredit(input: z.input<typeof GrantSchema>) {
+  async function grantCreditInTransaction(
+    transaction: PlatformDB,
+    input: z.input<typeof GrantSchema>,
+    createdAt = options.now().toISOString(),
+  ) {
     const grant = GrantSchema.parse(input);
-    const at = options.now().toISOString();
+    const at = IsoTimestampSchema.parse(createdAt);
     if (grant.expiresAt !== null && grant.expiresAt <= at) {
       throw new AiFundedPolicyError("access_disabled");
     }
-    await options.db.ready;
-    return options.db.transaction(async (trx) => {
-      const machine = await trx.executor.selectFrom("user_machines").select([
+    await transaction.ready;
+    const machine = await transaction.executor.selectFrom("user_machines").select([
         "machine_id", "clerk_user_id", "runtime_slot", "deleted_at",
       ]).where("machine_id", "=", grant.identity.machineId).forUpdate().executeTakeFirst();
-      if (!machine || machine.clerk_user_id !== grant.identity.ownerId
-        || machine.runtime_slot !== grant.identity.runtimeSlot || machine.deleted_at !== null) {
-        throw new AiFundedPolicyError("identity_mismatch");
-      }
-      const inserted = await trx.executor.insertInto("ai_funded_credit_ledger").values({
-        entry_id: grant.entryId,
-        owner_id: grant.identity.ownerId,
-        machine_id: grant.identity.machineId,
-        runtime_slot: grant.identity.runtimeSlot,
-        kind: grant.kind,
-        amount_microusd: grant.amountMicrousd,
-        source_reference: grant.sourceReference,
-        reservation_id: null,
-        period_start: null,
-        expires_at: grant.expiresAt,
-        created_at: at,
-      }).onConflict((conflict) => conflict.column("entry_id").doNothing())
-        .returning("entry_id").executeTakeFirst();
-      const stored = await trx.executor.selectFrom("ai_funded_credit_ledger")
-        .selectAll().where("entry_id", "=", grant.entryId).executeTakeFirstOrThrow();
-      if (stored.owner_id !== grant.identity.ownerId || stored.machine_id !== grant.identity.machineId
-        || stored.runtime_slot !== grant.identity.runtimeSlot || stored.kind !== grant.kind
-        || exactInteger(stored.amount_microusd) !== grant.amountMicrousd
-        || stored.source_reference !== grant.sourceReference || stored.reservation_id !== null
-        || stored.expires_at !== grant.expiresAt) {
-        throw new AiFundedPolicyError("idempotency_conflict");
-      }
-      if (inserted) {
-        if (grant.kind === "promotional_grant") {
-          await reconcileExpiredPromotionalCredit(trx.executor, grant.identity, at);
-          const activeGrantCount = await trx.executor.selectFrom("ai_funded_promotional_grant_balances")
-            .select(({ fn }) => fn.countAll<number>().as("count"))
-            .where("owner_id", "=", grant.identity.ownerId)
-            .where("machine_id", "=", grant.identity.machineId)
-            .where("runtime_slot", "=", grant.identity.runtimeSlot)
-            .where("remaining_microusd", ">", 0).executeTakeFirstOrThrow();
-          if (exactInteger(activeGrantCount.count) >= MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
-            throw new AiFundedPolicyError("rate_limited");
-          }
-          await trx.executor.insertInto("ai_funded_promotional_grant_balances").values({
-            grant_entry_id: grant.entryId,
-            owner_id: grant.identity.ownerId,
-            machine_id: grant.identity.machineId,
-            runtime_slot: grant.identity.runtimeSlot,
-            remaining_microusd: grant.amountMicrousd,
-            expires_at: grant.expiresAt,
-            created_at: at,
-            updated_at: at,
-            revision: 0,
-          }).execute();
-        }
-        const bucketUpdate = grant.kind === "promotional_grant"
-          ? { promotional_balance_microusd: sql<number>`promotional_balance_microusd + ${grant.amountMicrousd}` }
-          : { addon_balance_microusd: sql<number>`addon_balance_microusd + ${grant.amountMicrousd}` };
-        const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-          credit_balance_microusd: sql<number>`credit_balance_microusd + ${grant.amountMicrousd}`,
-          ...bucketUpdate,
-          updated_at: at,
-        }).where("machine_id", "=", grant.identity.machineId)
+    if (!machine || machine.clerk_user_id !== grant.identity.ownerId
+      || machine.runtime_slot !== grant.identity.runtimeSlot || machine.deleted_at !== null) {
+      throw new AiFundedPolicyError("identity_mismatch");
+    }
+    const inserted = await transaction.executor.insertInto("ai_funded_credit_ledger").values({
+      entry_id: grant.entryId,
+      owner_id: grant.identity.ownerId,
+      machine_id: grant.identity.machineId,
+      runtime_slot: grant.identity.runtimeSlot,
+      kind: grant.kind,
+      amount_microusd: grant.amountMicrousd,
+      source_reference: grant.sourceReference,
+      reservation_id: null,
+      period_start: null,
+      expires_at: grant.expiresAt,
+      created_at: at,
+    }).onConflict((conflict) => conflict.column("entry_id").doNothing())
+      .returning("entry_id").executeTakeFirst();
+    const stored = await transaction.executor.selectFrom("ai_funded_credit_ledger")
+      .selectAll().where("entry_id", "=", grant.entryId).executeTakeFirstOrThrow();
+    if (stored.owner_id !== grant.identity.ownerId || stored.machine_id !== grant.identity.machineId
+      || stored.runtime_slot !== grant.identity.runtimeSlot || stored.kind !== grant.kind
+      || exactInteger(stored.amount_microusd) !== grant.amountMicrousd
+      || stored.source_reference !== grant.sourceReference || stored.reservation_id !== null
+      || stored.expires_at !== grant.expiresAt) {
+      throw new AiFundedPolicyError("idempotency_conflict");
+    }
+    if (inserted) {
+      if (grant.kind === "promotional_grant") {
+        await reconcileExpiredPromotionalCredit(transaction.executor, grant.identity, at);
+        const activeGrantCount = await transaction.executor.selectFrom("ai_funded_promotional_grant_balances")
+          .select(({ fn }) => fn.countAll<number>().as("count"))
           .where("owner_id", "=", grant.identity.ownerId)
+          .where("machine_id", "=", grant.identity.machineId)
           .where("runtime_slot", "=", grant.identity.runtimeSlot)
-          .where(sql<boolean>`credit_balance_microusd <= ${Number.MAX_SAFE_INTEGER - grant.amountMicrousd}`)
-          .returning("machine_id").executeTakeFirst();
-        if (!balance) throw new Error("Funded AI credit balance exceeds supported bounds");
+          .where("remaining_microusd", ">", 0).executeTakeFirstOrThrow();
+        if (exactInteger(activeGrantCount.count) >= MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
+          throw new AiFundedPolicyError("rate_limited");
+        }
+        await transaction.executor.insertInto("ai_funded_promotional_grant_balances").values({
+          grant_entry_id: grant.entryId,
+          owner_id: grant.identity.ownerId,
+          machine_id: grant.identity.machineId,
+          runtime_slot: grant.identity.runtimeSlot,
+          remaining_microusd: grant.amountMicrousd,
+          expires_at: grant.expiresAt,
+          created_at: at,
+          updated_at: at,
+          revision: 0,
+        }).execute();
       }
-      return { ...grant, createdAt: stored.created_at };
-    });
+      const bucketUpdate = grant.kind === "promotional_grant"
+        ? { promotional_balance_microusd: sql<number>`promotional_balance_microusd + ${grant.amountMicrousd}` }
+        : { addon_balance_microusd: sql<number>`addon_balance_microusd + ${grant.amountMicrousd}` };
+      const balance = await transaction.executor.updateTable("ai_funded_runtime_balances").set({
+        credit_balance_microusd: sql<number>`credit_balance_microusd + ${grant.amountMicrousd}`,
+        ...bucketUpdate,
+        updated_at: at,
+      }).where("machine_id", "=", grant.identity.machineId)
+        .where("owner_id", "=", grant.identity.ownerId)
+        .where("runtime_slot", "=", grant.identity.runtimeSlot)
+        .where(sql<boolean>`credit_balance_microusd <= ${Number.MAX_SAFE_INTEGER - grant.amountMicrousd}`)
+        .returning("machine_id").executeTakeFirst();
+      if (!balance) throw new Error("Funded AI credit balance exceeds supported bounds");
+    }
+    return { ...grant, createdAt: stored.created_at };
+  }
+
+  async function grantCredit(input: z.input<typeof GrantSchema>) {
+    await options.db.ready;
+    const createdAt = options.now().toISOString();
+    return options.db.transaction((trx) => grantCreditInTransaction(trx, input, createdAt));
   }
 
   async function checkPolicy(
@@ -1088,5 +1096,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     releaseReservation,
     cleanupExpiredReservations,
     grantCredit,
+    grantCreditInTransaction,
   };
 }

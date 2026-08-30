@@ -63,7 +63,7 @@ describe("funded AI policy routes", () => {
     vi.restoreAllMocks();
   });
 
-  async function createTestApp(options: { promotionalGrantEnabled?: boolean } = {}) {
+  async function createTestApp(options: { promotionalGrantEnabled?: boolean; topUpEnabled?: boolean } = {}) {
     const repository = createAiFundedPolicyRepository({
       db, credentialHashSecret: hashSecret, now: () => new Date(now),
       tokenIdFactory: () => "credential_123", tokenSecretFactory: () => "s".repeat(43),
@@ -89,7 +89,12 @@ describe("funded AI policy routes", () => {
         db,
         orchestrator: stubOrchestrator(),
         platformSecret,
-        internalFundedAiRuntimeRoutes: createAiFundedRuntimeRoutes({ db, platformSecret, repository }),
+        internalFundedAiRuntimeRoutes: createAiFundedRuntimeRoutes({
+          db,
+          platformSecret,
+          repository,
+          topUpEnabled: options.topUpEnabled,
+        }),
         internalFundedAiRelayRoutes: createAiFundedRelayRoutes({ relayControlToken, repository }),
         internalFundedAiOperatorRoutes: createAiFundedOperatorRoutes({
           db,
@@ -381,7 +386,7 @@ describe("funded AI policy routes", () => {
   });
 
   it("returns the exact identity-free Postgres funding summary for the authenticated runtime", async () => {
-    const { app } = await createTestApp();
+    const { app, repository } = await createTestApp();
     for (const authorization of [
       undefined,
       "Bearer wrong-runtime-token",
@@ -426,6 +431,22 @@ describe("funded AI policy routes", () => {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}` },
     })).status).toBe(400);
+
+    const enabledApp = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret,
+      internalFundedAiRuntimeRoutes: createAiFundedRuntimeRoutes({
+        db, platformSecret, repository, topUpEnabled: true,
+      }),
+    });
+    const enabledResponse = await enabledApp.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.parse(await enabledResponse.json()).funding.topUpEnabled)
+      .toBe(true);
   });
 
   it("rejects missing auth, malformed or oversized bodies, caller identity fields, and legacy-only handles", async () => {

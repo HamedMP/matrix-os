@@ -30,6 +30,7 @@ describe('platform/stripe-billing', () => {
 
     expect(sessionsCreate).toHaveBeenCalledWith({
       mode: 'subscription',
+      integration_identifier: expect.stringMatching(/^matrix-subscription-[a-z]{8}$/),
       customer: 'cus_123',
       client_reference_id: 'user_123',
       line_items: [{ price: 'price_builder_monthly', quantity: 1 }],
@@ -86,7 +87,7 @@ describe('platform/stripe-billing', () => {
     });
   });
 
-  it('creates a card-required native Stripe trial when trial days are present', async () => {
+  it('collects a trial payment method without restricting Stripe dynamic payment methods', async () => {
     const sessionsCreate = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/trial', id: 'cs_trial' });
     const client = createStripeBillingClient({
       secretKey: 'sk_test_123',
@@ -109,7 +110,6 @@ describe('platform/stripe-billing', () => {
     });
 
     expect(sessionsCreate).toHaveBeenCalledWith(expect.objectContaining({
-      payment_method_types: ['card'],
       payment_method_collection: 'always',
       subscription_data: expect.objectContaining({
         trial_period_days: 7,
@@ -118,6 +118,7 @@ describe('platform/stripe-billing', () => {
         },
       }),
     }), { idempotencyKey: 'attempt_trial' });
+    expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
   });
 
   it('binds an eligible preparation intent to an explicitly expiring checkout and subscription', async () => {
@@ -205,8 +206,53 @@ describe('platform/stripe-billing', () => {
     });
   });
 
+  it('creates one-time AI credit checkout with only server-written identity and package metadata', async () => {
+    const sessionsCreate = vi.fn().mockResolvedValue({
+      url: 'https://checkout.stripe.com/c/pay/cs_ai_5',
+      id: 'cs_ai_5',
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { create: sessionsCreate } } }),
+    });
+
+    await expect(client.createAiCreditCheckoutSession({
+      clerkUserId: 'user_123',
+      requestId: '77f105df-6e24-4e13-a881-af9ce20d6a63',
+      machineId: 'machine_123',
+      runtimeSlot: 'primary',
+      packageId: 'usd_5',
+      priceId: 'price_ai_5',
+      amountMicrousd: 5_000_000,
+      automaticTax: false,
+      idempotencyKey: '77f105df-6e24-4e13-a881-af9ce20d6a63',
+      successUrl: 'https://app.matrix-os.com/?billing=success',
+      cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
+    })).resolves.toEqual({ url: 'https://checkout.stripe.com/c/pay/cs_ai_5', id: 'cs_ai_5' });
+    expect(sessionsCreate).toHaveBeenCalledWith({
+      mode: 'payment',
+      integration_identifier: expect.stringMatching(/^matrix-ai-credit-[a-z]{8}$/),
+      client_reference_id: 'user_123',
+      line_items: [{ price: 'price_ai_5', quantity: 1 }],
+      success_url: 'https://app.matrix-os.com/?billing=success',
+      cancel_url: 'https://app.matrix-os.com/?billing=canceled',
+      automatic_tax: { enabled: false },
+      metadata: {
+        matrix_checkout_kind: 'ai_credit_addon',
+        matrix_owner_id: 'user_123',
+        matrix_machine_id: 'machine_123',
+        matrix_runtime_slot: 'primary',
+        matrix_ai_credit_package_id: 'usd_5',
+        matrix_ai_credit_request_id: '77f105df-6e24-4e13-a881-af9ce20d6a63',
+        matrix_ai_credit_price_id: 'price_ai_5',
+        matrix_ai_credit_microusd: '5000000',
+      },
+    }, { idempotencyKey: '77f105df-6e24-4e13-a881-af9ce20d6a63' });
+    expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
+  });
+
   it('uses the newest mature Stripe API version allowed by package policy', () => {
-    expect(MATRIX_STRIPE_API_VERSION).toBe('2026-04-22.dahlia');
+    expect(MATRIX_STRIPE_API_VERSION).toBe('2026-07-29.dahlia');
   });
 
   it('bounds Stripe API calls to the platform API timeout budget', () => {
