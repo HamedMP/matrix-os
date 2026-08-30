@@ -126,10 +126,12 @@ describe("Desktop config", () => {
     };
     await saveDesktopConfig(config);
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
     const [url, opts] = mockFetch.mock.calls[0];
     expect(url).toContain("/api/settings/desktop");
     expect(opts.method).toBe("PUT");
+    expect(mockFetch.mock.calls[1][0]).toContain("/api/os-view-state");
+    expect(mockFetch.mock.calls[1][1]).toEqual(expect.objectContaining({ method: "PATCH" }));
   });
 
   it("saveDesktopConfigPatch preserves existing desktop metadata", async () => {
@@ -279,9 +281,9 @@ describe("Desktop config", () => {
     expect(useDesktopConfigStore.getState().desktopIcons?.some((icon) => icon.path === "__terminal__")).toBe(false);
     expect(useDesktopConfigStore.getState().desktopIcons?.some((icon) => icon.path === "apps/notes/index.html")).toBe(true);
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3));
-    expect(JSON.parse(mockFetch.mock.calls.at(-1)?.[1].body)).toEqual({
-      desktopIcons: useDesktopConfigStore.getState().desktopIcons,
-    });
+    expect(JSON.parse(mockFetch.mock.calls.at(-1)?.[1].body)).toEqual(expect.objectContaining({
+      patch: { desktop: { icons: useDesktopConfigStore.getState().desktopIcons } },
+    }));
   });
 
   it("restores the confirmed web Desktop icon layout after a failed PATCH", async () => {

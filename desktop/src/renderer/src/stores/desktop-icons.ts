@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import type { ApiClient } from "../lib/api";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
+import {
+  patchNativeOsViewState,
+  primeNativeOsViewState,
+  resetNativeOsViewStateClientForTests,
+} from "../lib/os-view-state-client";
+import { createDefaultOsViewDocument, OsViewStateResponseSchema } from "@matrix-os/contracts";
 
 export interface DesktopIconPlacement {
   path: string;
@@ -91,6 +97,7 @@ function copyIcons(icons: readonly DesktopIconPlacement[]): DesktopIconPlacement
 }
 
 export function resetDesktopIconsRuntime(): void {
+  resetNativeOsViewStateClientForTests();
   loadSequence += 1;
   mutationSequence += 1;
   stateEpoch += 1;
@@ -114,7 +121,7 @@ function persist(api: ApiClient, icons: DesktopIconPlacement[]): Promise<void> {
   const snapshot = icons.map((icon) => ({ ...icon }));
   const write = async () => {
     if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-    await api.patch("/api/settings/desktop", { desktopIcons: snapshot });
+    await patchNativeOsViewState(api, { desktop: { icons: snapshot } });
   };
   const pending = persistQueue.then(write, write);
   persistQueue = pending.catch((error: unknown) => {
@@ -234,10 +241,20 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     const expectedHydrationRevision = hydrationRevision;
     const runtimeGeneration = captureRuntimeGeneration();
     try {
-      const config = await api.get<{ desktopIcons?: unknown }>("/api/settings/desktop");
+      const config = await api.get<unknown>("/api/os-view-state");
       if (sequence !== loadSequence
         || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
-      const icons = parseDesktopIcons(config.desktopIcons) ?? copyIcons(defaults);
+      const parsedState = OsViewStateResponseSchema.safeParse(config);
+      const legacyIcons = config && typeof config === "object"
+        ? (config as { desktopIcons?: unknown }).desktopIcons
+        : undefined;
+      const icons = parseDesktopIcons(parsedState.success ? parsedState.data.document.desktop.icons : legacyIcons)
+        ?? copyIcons(defaults);
+      primeNativeOsViewState(api, parsedState.success ? parsedState.data : {
+        revision: 1,
+        document: { ...createDefaultOsViewDocument(), desktop: { windows: [], icons } },
+        updatedAt: new Date(0).toISOString(),
+      });
       const replayable = replayableHydrationRange !== null
         && expectedHydrationRevision >= replayableHydrationRange.min
         && expectedHydrationRevision <= replayableHydrationRange.max;

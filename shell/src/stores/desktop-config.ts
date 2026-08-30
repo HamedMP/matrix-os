@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
+import { patchWebOsViewState, resetWebOsViewStateClientForTests } from "@/lib/os-view-state-client";
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 
 export interface DockConfig {
@@ -61,6 +62,7 @@ export function captureWebDesktopIconsHydrationRevision(): number {
 }
 
 export function resetWebDesktopIconsRuntime(): void {
+  resetWebOsViewStateClientForTests();
   desktopIconMutationSequence += 1;
   desktopIconStateEpoch += 1;
   desktopIconHydrationRevision += 1;
@@ -79,6 +81,15 @@ function copyDesktopIcons(icons: readonly DesktopIconPlacement[] | undefined): D
 
 function persistDesktopPatch(patch: Record<string, unknown>): Promise<void> {
   const gatewayUrl = getGatewayUrl();
+  const osViewPatch = {
+    ...(Array.isArray(patch.pinnedApps) ? { pinnedApps: patch.pinnedApps as string[] } : {}),
+    ...(Array.isArray(patch.desktopIcons) ? {
+      desktop: { icons: patch.desktopIcons as DesktopIconPlacement[] },
+    } : {}),
+  };
+  if (Object.keys(osViewPatch).length > 0) {
+    return patchWebOsViewState(gatewayUrl, osViewPatch);
+  }
   const url = `${gatewayUrl}/api/settings/desktop`;
   const snapshot = JSON.stringify(patch);
   const write = async () => {

@@ -49,6 +49,10 @@ import {
   createOsViewLayoutMemory,
   transitionOsViewLayout,
 } from "@/lib/os-view-layout-memory";
+import {
+  loadWebOsViewPresentation,
+} from "@/lib/os-view-state-client";
+import { useCanvasTransformPersistence } from "@/hooks/useOsViewStatePersistence";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
@@ -104,6 +108,7 @@ interface DesktopProps {
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
+  useCanvasTransformPersistence(GATEWAY_URL);
   const windows = useWindowManager((s) => s.windows);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
   const wmMinimizeWindow = useWindowManager((s) => s.minimizeWindow);
@@ -622,6 +627,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (bootstrapRes === null) return;
       const bootstrap = bootstrapRes?.ok ? await readJsonForLoad<ShellBootstrap>(bootstrapRes) : {};
       if (bootstrap === null) return;
+      if (!isPreVpsBillingSetupRoute()) {
+        const presentation = await loadWebOsViewPresentation(GATEWAY_URL, useDesktopMode.getState().mode, signal);
+        if (presentation) {
+          bootstrap.layout = { windows: presentation.windows };
+          useCanvasTransform.getState().setTransform(
+            presentation.transform.zoom,
+            presentation.transform.panX,
+            presentation.transform.panY,
+          );
+        }
+      }
       if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
       await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
     } catch (err) {

@@ -263,6 +263,8 @@ import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+import { OsViewStateRepository } from "./os-view-state/repository.js";
+import { createOsViewStateRoutes } from "./os-view-state/routes.js";
 import { ChatRepository } from "./chat/repository.js";
 import {
   createGatewayChatTerminalWiring,
@@ -838,6 +840,7 @@ export async function createGateway(config: GatewayConfig) {
   let appRegistry: AppRegistry | null = null;
   let kyselyInstance: Kysely<any> | null = null;
   let canvasRepository: CanvasRepository | null = null;
+  let osViewStateRepository: OsViewStateRepository | null = null;
 
   // Apps whose Postgres schema we've already ensured this process lifetime.
   // The startup loop pre-registers shipped apps, but apps BUILT in-OS after boot
@@ -922,6 +925,8 @@ export async function createGateway(config: GatewayConfig) {
       }
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
+      osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
+      await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
       canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
@@ -1037,6 +1042,7 @@ export async function createGateway(config: GatewayConfig) {
       kvStore = null;
       appRegistry = null;
       canvasRepository = null;
+      osViewStateRepository = null;
       canvasService = null;
       canvasSubscriptionHub = null;
       messagingRepository = null;
@@ -4224,6 +4230,14 @@ export async function createGateway(config: GatewayConfig) {
     agentRuntimeController: agentRuntimeServices.controller,
   });
   app.route("/api/settings", settingsRoutes);
+  if (osViewStateRepository) {
+    app.route("/api/os-view-state", createOsViewStateRoutes({
+      repository: osViewStateRepository,
+      getOwnerId: (c) => requireRequestPrincipal(c).userId,
+    }));
+  } else {
+    app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));
+  }
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
   if (messagingRepository) {

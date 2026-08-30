@@ -1141,5 +1141,26 @@ export {
   isOsViewDestinationPath,
   normalizeOsViewMode,
   otherOsViewMode,
+  createDefaultOsViewDocument,
+  mergeOsViewStatePatch,
+  OsViewAppStateSchema,
+  OsViewCanvasTransformSchema,
+  OsViewDesktopIconSchema,
+  OsViewDocumentSchema,
+  OsViewMutationIdSchema,
+  OsViewStatePatchSchema,
+  OsViewStateResponseSchema,
+  OsViewWindowGeometrySchema,
+  PatchOsViewStateRequestSchema,
 } from "./os-view.js";
-export type { OsViewMode } from "./os-view.js";
+export type {
+  OsViewAppState,
+  OsViewCanvasTransform,
+  OsViewDesktopIcon,
+  OsViewDocument,
+  OsViewMode,
+  OsViewStatePatch,
+  OsViewStateResponse,
+  OsViewWindowGeometry,
+  PatchOsViewStateRequest,
+} from "./os-view.js";

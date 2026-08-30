@@ -15,6 +15,7 @@ import {
   saveShellSnapshot,
   type ShellSnapshotScope,
 } from "@/lib/shell-snapshot-cache";
+import { loadWebOsViewState, patchWebOsViewState } from "@/lib/os-view-state-client";
 export type { DockConfig };
 
 export interface DesktopConfig {
@@ -194,6 +195,26 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
         desktopIconsHydrationRevision,
       );
       saveShellSnapshot(cacheScope, { desktopConfig: cfg });
+      const durableHydrationRevision = captureWebDesktopIconsHydrationRevision();
+      void loadWebOsViewState(gatewayUrl, controller.signal).then((osViewState) => {
+        if (controller.signal.aborted) return;
+        if (osViewState.revision === 1) {
+          void patchWebOsViewState(gatewayUrl, {
+            pinnedApps: cfg.pinnedApps,
+            desktop: { icons: cfg.desktopIcons ?? [] },
+          }).catch(() => undefined);
+          return;
+        }
+        const durableConfig: DesktopConfig = {
+          ...cfg,
+          pinnedApps: osViewState.document.pinnedApps,
+          desktopIcons: osViewState.document.desktop.icons,
+        };
+        setConfig(durableConfig);
+        setPinnedApps(durableConfig.pinnedApps);
+        setDesktopIcons(durableConfig.desktopIcons, durableHydrationRevision);
+        saveShellSnapshot(cacheScope, { desktopConfig: durableConfig });
+      }).catch(() => undefined);
     });
 
     return () => controller.abort();
@@ -233,7 +254,10 @@ async function fetchDesktopConfig(gatewayUrl: string, signal?: AbortSignal): Pro
     });
     if (res.ok) {
       const data = await res.json();
-      const merged = { ...DEFAULT_DESKTOP_CONFIG, ...data };
+      const merged = {
+        ...DEFAULT_DESKTOP_CONFIG,
+        ...data,
+      };
       merged.dock = { ...merged.dock, autoHide: false };
       return merged;
     }
@@ -258,9 +282,17 @@ export async function saveDesktopConfig(
     body: JSON.stringify(config),
   });
   if (res.ok) {
-    saveShellSnapshot(options.cacheScope, { desktopConfig: config });
+    const normalizedConfig: DesktopConfig = {
+      ...config,
+      pinnedApps: config.pinnedApps ?? useDesktopConfigStore.getState().pinnedApps ?? DEFAULT_DESKTOP_CONFIG.pinnedApps,
+    };
+    await patchWebOsViewState(gatewayUrl, {
+      pinnedApps: normalizedConfig.pinnedApps,
+      desktop: { icons: normalizedConfig.desktopIcons ?? [] },
+    });
+    saveShellSnapshot(options.cacheScope, { desktopConfig: normalizedConfig });
     const store = useDesktopConfigStore.getState();
-    applyDesktopConfigSnapshot(config, gatewayUrl, store);
+    applyDesktopConfigSnapshot(normalizedConfig, gatewayUrl, store);
   }
 }
 
@@ -296,6 +328,15 @@ export async function saveDesktopConfigPatch(
       ? nextConfig.pinnedApps.filter((value): value is string => typeof value === "string")
       : DEFAULT_DESKTOP_CONFIG.pinnedApps,
   } as DesktopConfig;
+  const durablePatch = {
+    ...(patch.pinnedApps !== undefined ? { pinnedApps: normalizedConfig.pinnedApps } : {}),
+    ...(patch.desktopIcons !== undefined ? {
+      desktop: { icons: normalizedConfig.desktopIcons ?? [] },
+    } : {}),
+  };
+  if (Object.keys(durablePatch).length > 0) {
+    await patchWebOsViewState(gatewayUrl, durablePatch);
+  }
   saveShellSnapshot(options.cacheScope, { desktopConfig: normalizedConfig });
   const store = useDesktopConfigStore.getState();
   applyDesktopConfigSnapshot(normalizedConfig, gatewayUrl, store);

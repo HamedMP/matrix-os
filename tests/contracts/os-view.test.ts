@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  PatchOsViewStateRequestSchema,
+  createDefaultOsViewDocument,
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_LABELS,
   isOsViewDestinationPath,
+  mergeOsViewStatePatch,
   normalizeOsViewMode,
   otherOsViewMode,
 } from "@matrix-os/contracts";
@@ -24,5 +27,34 @@ describe("shared OS-view contract", () => {
     expect(normalizeOsViewMode("removed-mode")).toBe("desktop");
     expect(otherOsViewMode("desktop")).toBe("canvas");
     expect(otherOsViewMode("canvas")).toBe("desktop");
+  });
+
+  it("keeps Desktop and Canvas presentation geometry in separate namespaces", () => {
+    const initial = createDefaultOsViewDocument();
+    const next = mergeOsViewStatePatch(initial, {
+      apps: [{ path: "__chat__", title: "Chat", state: "open" }],
+      desktop: { windows: [{ path: "__chat__", x: 40, y: 60, width: 800, height: 600 }] },
+      canvas: {
+        windows: [{ path: "__chat__", x: -900, y: 240, width: 720, height: 540 }],
+        transform: { panX: 120, panY: -80, zoom: 0.75 },
+      },
+    });
+
+    expect(next.desktop.windows[0]?.x).toBe(40);
+    expect(next.canvas.windows[0]?.x).toBe(-900);
+    expect(next.canvas.transform).toEqual({ panX: 120, panY: -80, zoom: 0.75 });
+  });
+
+  it("requires bounded revisioned mutations", () => {
+    expect(PatchOsViewStateRequestSchema.safeParse({
+      baseRevision: 1,
+      mutationId: `osvm_${"a".repeat(32)}`,
+      patch: { desktop: { icons: [{ path: "__chat__", x: 20, y: 20 }] } },
+    }).success).toBe(true);
+    expect(PatchOsViewStateRequestSchema.safeParse({
+      baseRevision: 0,
+      mutationId: "retry-me",
+      patch: {},
+    }).success).toBe(false);
   });
 });
