@@ -65,7 +65,11 @@ describe("kernel credential resolution", () => {
 
     await expect(buildKernelEnv(
       homePath,
-      { ANTHROPIC_API_KEY: "platform-key", ANTHROPIC_BASE_URL: "https://relay.example.com" },
+      {
+        ANTHROPIC_API_KEY: "platform-key",
+        ANTHROPIC_BASE_URL: "https://relay.example.com",
+        MATRIX_FUNDED_AI_ENABLED: "1",
+      },
       "matrix_included",
     )).resolves.toMatchObject({
       ANTHROPIC_API_KEY: "platform-key",

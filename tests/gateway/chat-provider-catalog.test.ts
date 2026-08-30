@@ -108,7 +108,10 @@ describe("canonical Chat Provider catalog", () => {
     writeFileSync(join(homePath, "system/config.json"), "{}");
     const aiProviderSource = new AiProviderService({
       homePath,
-      env: { ANTHROPIC_API_KEY: "platform-secret" },
+      env: {
+        ANTHROPIC_API_KEY: "platform-secret",
+        MATRIX_FUNDED_AI_ENABLED: "1",
+      },
     });
     try {
       const service = createChatProviderCatalogService({
