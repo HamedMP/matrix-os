@@ -605,7 +605,8 @@ describe("Hermes canonical Chat Provider adapter", () => {
     gateway.event("message.complete", { text: "# Result\n\n- Completed\n", status: "complete" });
 
     expect(await eventsPromise).toEqual([
-      { type: "assistant.delta", delta: "# Result\n\n- Completed\n" },
+      { type: "assistant.delta", delta: "# Result\n\n- Completed" },
+      { type: "assistant.delta", delta: "\n" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
@@ -675,8 +676,8 @@ describe("Hermes canonical Chat Provider adapter", () => {
     gateway.event("message.complete", { text: "hello from hermes", status: "complete" });
 
     expect(await eventsPromise).toEqual([
-      { type: "assistant.delta", delta: "hello " },
-      { type: "assistant.delta", delta: "from hermes" },
+      { type: "assistant.delta", delta: "hello" },
+      { type: "assistant.delta", delta: " from hermes" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
@@ -896,8 +897,8 @@ describe("Hermes canonical Chat Provider adapter", () => {
     });
 
     expect(await eventsPromise).toEqual([
-      { type: "assistant.delta", delta: "Checking " },
-      { type: "assistant.delta", delta: "the preview." },
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "assistant.delta", delta: " the preview." },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
@@ -922,8 +923,8 @@ describe("Hermes canonical Chat Provider adapter", () => {
     });
 
     expect(await eventsPromise).toEqual([
-      { type: "assistant.delta", delta: "Checking " },
-      { type: "assistant.delta", delta: " the preview." },
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "assistant.delta", delta: "  the preview." },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);

@@ -135,7 +135,6 @@ function remainingHermesInterimText(streamed: string, interim: string): string |
   const normalizedStreamed = normalizedHermesInterimText(streamed);
   const normalizedInterim = normalizedHermesInterimText(interim);
   if (!normalizedStreamed || !normalizedInterim.startsWith(normalizedStreamed)) return undefined;
-  if (normalizedInterim === normalizedStreamed) return "";
 
   let interimIndex = 0;
   let normalizedIndex = 0;
@@ -331,6 +330,7 @@ export function createHermesChatProviderAdapter(options: {
     let emittedOutputBytes = 0;
     let emittedDeltaEvents = 0;
     let pendingVisibleText = "";
+    let pendingStreamBoundaryText = "";
     let deltaFlushTimer: NodeJS.Timeout | undefined;
     let separatorPending = false;
     let completionSettled = false;
@@ -408,6 +408,26 @@ export function createHermesChatProviderAdapter(options: {
       }
     };
 
+    const emitStreamText = (text: string) => {
+      const projected = pendingStreamBoundaryText + sanitizeAssistantText(text, {
+        homePath: options.homePath,
+        executionRoot: input.executionRoot,
+      });
+      if (emittedOutputBytes + Buffer.byteLength(projected, "utf8") > MAX_OUTPUT_BYTES) {
+        throw new HermesRunFailure("run", "Hermes output exceeded limit");
+      }
+      const trailingWhitespace = projected.match(/\s+$/)?.[0] ?? "";
+      const boundary = trailingWhitespace;
+      pendingStreamBoundaryText = boundary;
+      emitVisibleText(projected.slice(0, projected.length - boundary.length));
+    };
+
+    const flushStreamBoundary = () => {
+      const boundary = pendingStreamBoundaryText;
+      pendingStreamBoundaryText = "";
+      emitVisibleText(boundary);
+    };
+
     const handleEvent = (event: HermesGatewayEvent) => {
       if (completionSettled || !liveSessionId || event.session_id !== liveSessionId) return;
       if (event.type === "message.delta") {
@@ -416,19 +436,21 @@ export function createHermesChatProviderAdapter(options: {
         if (!text) return;
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
         if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
-          emitVisibleText(sanitizeAssistantText(text, {
-            homePath: options.homePath,
-            executionRoot: input.executionRoot,
-          }));
+          emitStreamText(text);
         }
         currentSegment += text;
       } else if (event.type === "message.interim") {
         const interim = HermesInterimSchema.parse(event.payload);
         if (interim.already_streamed) {
-          const remainingText = remainingHermesInterimText(currentSegment, interim.text);
-          if (remainingText === undefined) {
+          if (remainingHermesInterimText(currentSegment, interim.text) === undefined) {
             throw new Error("Hermes interim response did not match streamed output");
           }
+          const publishedSegment = pendingStreamBoundaryText
+            ? currentSegment.slice(0, -pendingStreamBoundaryText.length)
+            : currentSegment;
+          pendingStreamBoundaryText = "";
+          const remainingText = remainingHermesInterimText(publishedSegment, interim.text);
+          if (remainingText === undefined) throw new Error("Hermes interim response did not match published output");
           if (remainingText && !currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
             emitVisibleText(sanitizeAssistantText(remainingText, {
               homePath: options.homePath,
@@ -436,6 +458,7 @@ export function createHermesChatProviderAdapter(options: {
             }));
           }
         } else {
+          flushStreamBoundary();
           if (currentSegment) separatorPending = true;
           if (!deferAssistantAfterToolFailure) {
             emitVisibleText(sanitizeAssistantText(interim.text, {
@@ -453,6 +476,7 @@ export function createHermesChatProviderAdapter(options: {
         flushVisibleText(true);
         lastSealedSegment = interim.text;
         currentSegment = "";
+        pendingStreamBoundaryText = "";
         currentSegmentSuppressed = false;
         deferredSegmentPrefixLength = 0;
         separatorPending = emittedOutputBytes > 0;
@@ -497,6 +521,7 @@ export function createHermesChatProviderAdapter(options: {
           ...(summary ? { summary } : {}),
         });
       } else if (event.type === "tool.start") {
+        flushStreamBoundary();
         const parsed = HermesToolStartSchema.safeParse(event.payload);
         if (!parsed.success) return;
         const activityId = hermesToolReference(parsed.data.tool_id);
@@ -692,9 +717,13 @@ export function createHermesChatProviderAdapter(options: {
           if (!final.text.startsWith(currentSegment)) {
             throw new HermesRunFailure("run", "Hermes final response did not match streamed output");
           }
+          const publishedSegmentLength = pendingStreamBoundaryText
+            ? currentSegment.length - pendingStreamBoundaryText.length
+            : currentSegment.length;
+          pendingStreamBoundaryText = "";
           const finalTail = deferAssistantAfterToolFailure
             ? redactFailedToolOutput(final.text.slice(deferredSegmentPrefixLength), unsafeToolFragments)
-            : final.text.slice(currentSegment.length);
+            : final.text.slice(publishedSegmentLength);
           emitVisibleText(sanitizeAssistantText(finalTail, {
             homePath: options.homePath,
             executionRoot: input.executionRoot,
