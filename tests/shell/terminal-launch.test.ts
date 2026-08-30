@@ -57,8 +57,8 @@ describe("terminal launch paths", () => {
     });
   });
 
-  it("targets setup actions at the canonical terminal surface", () => {
-    expect(TERMINAL_SETUP_WINDOW_PATH).toBe("__terminal__");
+  it("targets setup actions at a dedicated ephemeral terminal surface", () => {
+    expect(TERMINAL_SETUP_WINDOW_PATH).toBe("__terminal__:setup");
   });
 
   it("queues setup actions so an existing terminal can open them as tabs", () => {

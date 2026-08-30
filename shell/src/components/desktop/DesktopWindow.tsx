@@ -3,6 +3,7 @@ import type { ChatState } from "@/hooks/useChatState";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import { cn } from "@/lib/utils";
 import {
   Card,
@@ -185,6 +186,8 @@ export function DesktopWindow({
         {win.path.startsWith("__terminal__") ? (
           <TerminalApp
             launchTargetId={win.id}
+            layoutId={win.terminalLayoutId}
+            persistence={win.path === TERMINAL_SETUP_WINDOW_PATH ? "ephemeral" : "durable"}
             embeddedChrome
             desktopParity={desktopParity}
             windowControls={{

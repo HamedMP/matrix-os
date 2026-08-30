@@ -73,6 +73,7 @@ const terminalWindow: AppWindow = {
   height: 420,
   minimized: false,
   zIndex: 1,
+  terminalLayoutId: "term-layout_0123456789abcdef0123456789abcdef",
 };
 
 const iframeWindow: AppWindow = {
@@ -210,6 +211,8 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(container.textContent).toContain("Terminal tab one");
     expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
       launchTargetId: "win-terminal",
+      layoutId: terminalWindow.terminalLayoutId,
+      persistence: "durable",
       windowControls: expect.objectContaining({
         close: expect.any(Function),
         minimize: expect.any(Function),

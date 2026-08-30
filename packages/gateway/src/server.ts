@@ -300,6 +300,7 @@ import {
   ShellPreferencesStore,
   createShellCommandRunner,
   createTerminalAcceptanceRoutes,
+  createTerminalWindowLayoutRoutes,
   createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
@@ -307,6 +308,7 @@ import {
   createUserSystemdZellijAdapter,
   loadInstalledTerminalRuntimeGeneration,
   ShellRegistry as ZellijShellRegistry,
+  TerminalWindowLayoutStore,
   shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
@@ -422,8 +424,30 @@ export async function createGateway(config: GatewayConfig) {
         generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
       })
     : null;
+  let terminalOrphanSweepTimer: ReturnType<typeof setInterval> | null = null;
+  let terminalOrphanSweepPromise: Promise<void> | null = null;
+  const runTerminalOrphanSweep = () => {
+    if (!userSystemdTerminalController || terminalOrphanSweepPromise) return;
+    const promise = userSystemdTerminalController.sweepOrphanedSessions()
+      .then((result) => {
+        console.info("[terminal-runtime]", {
+          event: "terminal.runtime.orphan.sweep.completed",
+          ...result,
+        });
+      })
+      .catch((err: unknown) => {
+        console.warn("[terminal-runtime] orphan sweep failed:", err instanceof Error ? err.name : "UnknownError");
+      });
+    terminalOrphanSweepPromise = promise;
+    void promise.finally(() => {
+      if (terminalOrphanSweepPromise === promise) terminalOrphanSweepPromise = null;
+    });
+  };
   if (userSystemdTerminalController) {
     await userSystemdTerminalController.assertInstallationReady();
+    runTerminalOrphanSweep();
+    terminalOrphanSweepTimer = setInterval(runTerminalOrphanSweep, 15 * 60 * 1_000);
+    terminalOrphanSweepTimer.unref?.();
   }
   const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
     ? createUserSystemdZellijRuntime({
@@ -455,6 +479,7 @@ export async function createGateway(config: GatewayConfig) {
       })
     : zellijAdapter;
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
+  const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
@@ -1850,6 +1875,7 @@ export async function createGateway(config: GatewayConfig) {
     commandRunner: shellCommandRunner,
     terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
+    sessionLifecycle: terminalWindowLayoutStore,
     chatTerminals: {
       prepare: async (principal: RequestPrincipal, chatId: string) => {
         if (!chatRepository || !canonicalChatExecutionRoots) {
@@ -1902,6 +1928,10 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  app.route(
+    "/api/terminal/window-layouts",
+    createTerminalWindowLayoutRoutes({ store: terminalWindowLayoutStore }),
+  );
   const runtimeHandle = process.env.MATRIX_HANDLE ?? "";
   const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)
     && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
@@ -4469,6 +4499,11 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      if (terminalOrphanSweepTimer) {
+        clearInterval(terminalOrphanSweepTimer);
+        terminalOrphanSweepTimer = null;
+      }
+      await terminalOrphanSweepPromise;
       // T939: Fire gateway_stop hook
       await hookRunner.fireVoidHook("gateway_stop", {}).catch((err: unknown) => {
         logBestEffortFailure("gateway_stop hook failed", err);

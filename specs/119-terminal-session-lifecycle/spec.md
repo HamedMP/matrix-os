@@ -22,11 +22,11 @@ Deleting a shell session can leave three independent kinds of state behind: a sa
 
 ## Source of truth and invariants
 
-1. `shell-sessions.json` is authoritative for durable shell identity and bounded deletion tombstones.
-2. `system/terminal-layouts/<layoutId>.json` is authoritative for one ordinary Terminal window's visual tabs and panes.
+1. `shell-sessions.json` is authoritative for durable shell identity.
+2. `system/terminal-window-layouts.json` is the owner-controlled, revisioned source of truth for ordinary Terminal window layouts and bounded deletion tombstones.
 3. A layout reference is never authority to create a runtime.
 4. Runtime descriptors map durable shell names to internal `matrix-rt_*` Zellij names; only descriptors whose exact user unit is active are live.
-5. Deletion removes the runtime, exact raw Zellij session, registry record, aliases/references, and every persisted layout reference before success is reported.
+5. Deletion removes the runtime, exact raw Zellij session, registry record, aliases/references, and every persisted layout reference before success is reported. A failure after runtime deletion returns an error and remains idempotently retryable.
 6. A 30-day tombstone (maximum 256, oldest evicted) prevents stale layout writes from restoring a deliberately deleted name. Explicit creation or recovery of the same valid name clears its tombstone.
 7. Ordinary outer-window close does not delete durable sessions. Setup windows explicitly opt out of persistence and delete their temporary session when closed.
 
@@ -44,13 +44,13 @@ All routes use the existing authenticated VPS gateway boundary. No route is publ
 
 | Route | Method | Authentication | Validation | Result |
 |---|---|---|---|---|
-| `/api/terminal/layouts/:layoutId` | GET | Existing gateway session/JWT | `layoutId`: `term-layout_` plus 32 lowercase hex chars | Returns `{ layoutId, revision, layout }`; missing returns an empty revision-0 layout |
-| `/api/terminal/layouts/:layoutId` | PUT | Existing gateway session/JWT | 100 KB body limit; strict bounded layout schema; exact `baseRevision` | Atomically writes the next revision, or returns `409 layout_revision_conflict` |
-| `/api/terminal/layouts/:layoutId` | DELETE | Existing gateway session/JWT | 512-byte body limit; validated ID | Deletes only that visual layout; shells remain durable |
+| `/api/terminal/window-layouts/:layoutId` | GET | Existing gateway session/JWT | `layoutId`: `term-layout_` plus 32 lowercase hex chars | Returns `{ layoutId, revision, layout }`; missing returns an empty revision-0 layout |
+| `/api/terminal/window-layouts/:layoutId` | PUT | Existing gateway session/JWT | 100 KB body limit; strict bounded layout schema; exact `baseRevision` | Atomically writes the next revision, or returns `409 layout_revision_conflict` |
+| `/api/terminal/window-layouts/:layoutId` | DELETE | Existing gateway session/JWT | 512-byte body limit; validated ID | Deletes only that visual layout; shells remain durable |
 | `/api/terminal/sessions/:name/recover` | POST | Existing gateway session/JWT | 1 KB body limit; existing safe session-name schema; optional bounded relative cwd | Explicitly creates one missing recoverable runtime and clears its tombstone |
 | `/api/terminal/sessions/:name` | DELETE | Existing gateway session/JWT | Existing validation/body limit | Performs authoritative cross-store deletion |
 
-The legacy `/api/terminal/layout` endpoint remains read-compatible for migration but must not be used by new Terminal windows.
+`window-layouts` is deliberately distinct from the existing `/api/terminal/layouts/:name` KDL-layout API. The legacy `/api/terminal/layout` endpoint remains read-compatible for migration but must not be used by new Terminal windows.
 
 ## Security architecture
 
@@ -65,16 +65,16 @@ The legacy `/api/terminal/layout` endpoint remains read-compatible for migration
 ## Concurrency and failure modes
 
 - Layout PUT enforces optimistic concurrency in the atomic mutation under the per-layout lock. On conflict, the client keeps its local layout visible and offers/retries an explicit refresh; it never silently replaces local tabs.
-- Session deletion and layout reconciliation run under one gateway orchestration lock. If runtime deletion fails, the registry record and tombstone are not committed, leaving the delete retryable.
-- Once runtime deletion succeeds, a tombstone is committed before success. Layout cleanup is idempotent and may be retried during reads if a crash happens between files.
+- Runtime/registry deletion and layout reconciliation use their respective bounded mutation locks. If runtime deletion fails, the registry record and tombstone are not committed, leaving the delete retryable.
+- Once runtime deletion succeeds, the layout tombstone is committed before success is returned. A crash or layout-write failure in between returns an error; repeating forced deletion completes the idempotent tombstone/layout cleanup even when the runtime is already absent.
 - Zellij exit code 2 during exact deletion means the session is already absent and is accepted. Other failures retain the descriptor for retry.
-- Invalid/corrupt layout files fail closed to an empty layout and produce a structured server log without exposing paths.
+- Invalid/corrupt layout state fails closed with a generic server error, preserves the owner's file without overwriting it, and produces a structured server log without exposing paths.
 - A recover request is idempotent: an already-live name returns its active session; concurrent recovery resolves through the registry mutation lock.
 
 ## Resource management
 
 - Tombstones: maximum 256, 30-day TTL, pruned during registry reads and writes.
-- Layout files: maximum 64 ordinary Terminal layouts; oldest empty/unreferenced layout is evicted first. Setup terminals create no layout file.
+- Layout state: maximum 64 ordinary Terminal layouts in one atomic owner-controlled file; the oldest layout is evicted first. Setup terminals create no layout record.
 - Layouts: maximum 32 tabs, 64 panes, 128-character labels, and 4,096-character cwd values within the 100 KB route limit.
 - Runtime descriptor listing remains capped at 256.
 - Orphan sweep runs at startup and every 15 minutes, checks at most 32 `matrix-rt_*` candidates per pass, skips descriptor-backed runtimes, and clears its timer on shutdown.
@@ -112,3 +112,8 @@ Fields are bounded identifiers, revision numbers, reason codes, and counts.
 - Publish a separate `FinnaAI/matrix-os-site` documentation PR describing durable sessions, window close versus shell delete, recovery, and setup-terminal behavior.
 - Ship through the VPS-native host bundle channel, deploy to a disposable test VPS first, then deploy the exact verified bundle to `@nima`.
 - Before deployment, capture counts from registry, layouts, descriptors, active units, and raw Zellij. After deployment, verify deleted names remain absent across reload and orphan counts converge to zero.
+
+## Visual evidence
+
+- [Canvas recoverable session](evidence/canvas-recoverable-session.png): a saved missing shell renders an explicit recovery action and does not attach or create a session.
+- [Desktop empty Terminal](evidence/desktop-empty-terminal.png): an empty durable Terminal stays empty until **New shell** is selected.

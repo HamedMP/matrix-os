@@ -39,6 +39,11 @@ interface SessionRegistryRoutes {
   }): Promise<unknown>;
 }
 
+interface ShellSessionLifecycleRoutes {
+  deleteSessionReferences(name: string): Promise<void>;
+  clearSessionTombstone(name: string): Promise<void>;
+}
+
 interface ChatTerminalRoutes {
   prepare(principal: RequestPrincipal, chatId: string): Promise<{ runId?: string; cwd?: string }>;
   bind(principal: RequestPrincipal, input: {
@@ -105,6 +110,7 @@ export interface ShellRouteDeps {
   commandRunner?: ShellCommandRunner;
   terminalInput?: TerminalInputRoutes;
   sessionCreateRateLimiter?: RateLimiter;
+  sessionLifecycle?: ShellSessionLifecycleRoutes;
   getPrincipal?: (c: Context) => RequestPrincipal;
   listChatBoundSessionIds?: (
     principal: RequestPrincipal,
@@ -172,6 +178,9 @@ const SessionRenameBodySchema = z.object({
 }).strict();
 const SessionOrderBodySchema = z.object({
   order: z.array(SafeSessionNameSchema).max(100),
+}).strict();
+const RecoverSessionBodySchema = z.object({
+  cwd: safeCwdSchema().optional(),
 }).strict();
 
 function safeCwdSchema() {
@@ -291,11 +300,17 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         ...(body.cmd ? { cmd: body.cmd } : {}),
         ...(body.agent ? { agent: body.agent } : {}),
       };
+      if (body.name) {
+        await deps.sessionLifecycle?.clearSessionTombstone(body.name);
+      }
       const session = await deps.registry.create(sessionInput);
       const name =
         typeof session === "object" && session !== null && "name" in session
           ? String((session as { name: unknown }).name)
           : body.name;
+      if (!body.name || name !== body.name) {
+        await deps.sessionLifecycle?.clearSessionTombstone(name);
+      }
       const sessionCreatedAt =
         typeof session === "object" && session !== null && "createdAt" in session
           ? z.iso.datetime().parse((session as { createdAt: unknown }).createdAt)
@@ -339,11 +354,44 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
 
   app.delete("/sessions/:name", deleteBodyLimit, async (c) => {
     try {
-      await deps.registry.delete(SafeSessionNameSchema.parse(c.req.param("name")), {
+      const name = SafeSessionNameSchema.parse(c.req.param("name"));
+      console.info("[terminal-lifecycle]", { event: "terminal.session.delete.requested", name });
+      await deps.registry.delete(name, {
         force: new URL(c.req.url).searchParams.get("force") === "1",
       });
+      await deps.sessionLifecycle?.deleteSessionReferences(name);
+      console.info("[terminal-lifecycle]", { event: "terminal.session.delete.completed", name });
       return c.json({ ok: true });
     } catch (err) {
+      console.warn("[terminal-lifecycle]", {
+        event: "terminal.session.delete.failed",
+        error: err instanceof Error ? err.name : "UnknownError",
+      });
+      return safeError(c, err);
+    }
+  });
+
+  app.post("/sessions/:name/recover", sessionBodyLimit, async (c) => {
+    try {
+      const name = SafeSessionNameSchema.parse(c.req.param("name"));
+      const body = RecoverSessionBodySchema.parse(await c.req.json());
+      if (!sessionCreateRateLimiter.check("shell-session-create")) {
+        return c.json(
+          { error: { code: "rate_limited", message: "Request failed" } },
+          429,
+          { "Retry-After": String(Math.ceil(SHELL_SESSION_CREATE_RATE_LIMIT.lockoutMs / 1000)) },
+        );
+      }
+      console.info("[terminal-lifecycle]", { event: "terminal.session.recover.requested", name });
+      await deps.sessionLifecycle?.clearSessionTombstone(name);
+      const session = await deps.registry.create({ name, ...(body.cwd ? { cwd: body.cwd } : {}) });
+      console.info("[terminal-lifecycle]", { event: "terminal.session.recover.completed", name });
+      return c.json({ session }, 201);
+    } catch (err: unknown) {
+      console.warn("[terminal-lifecycle]", {
+        event: "terminal.session.recover.failed",
+        error: err instanceof Error ? err.name : "UnknownError",
+      });
       return safeError(c, err);
     }
   });
