@@ -120,6 +120,31 @@ function snapshot(): ProviderSettingsSnapshot {
           asOf: now,
         },
       },
+      {
+        id: "source_openai",
+        kind: "provider_account",
+        fundingKind: "owner_subscription",
+        providerId: "openai",
+        accountId: "account_openai",
+        displayName: "Personal OpenAI subscription",
+        readiness: {
+          state: "ready",
+          checkedAt: now,
+          staleAfter: later,
+          action: "none",
+          safeReason: null,
+        },
+        eligibleModelIds: ["openai/gpt-5.6"],
+        usage: {
+          kind: "subscription_allowance",
+          authority: "provider_allowance",
+          state: "current",
+          scope: "account",
+          usedBasisPoints: 1_000,
+          resetsAt: later,
+          asOf: now,
+        },
+      },
     ],
     accounts: [
       {
@@ -140,6 +165,16 @@ function snapshot(): ProviderSettingsSnapshot {
         authState: "unauthenticated",
         lastCheckedAt: now,
         accessSourceId: "source_work",
+        dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 },
+      },
+      {
+        id: "account_openai",
+        providerId: "openai",
+        displayName: "OpenAI personal",
+        authMethod: "oauth",
+        authState: "authenticated",
+        lastCheckedAt: now,
+        accessSourceId: "source_openai",
         dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 },
       },
     ],
@@ -242,17 +277,19 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Personal Anthropic subscription");
   });
 
-  it("emits controlled route and enable intents without exposing incompatible providers", () => {
+  it("switches a generic harness to another provider as one coherent route intent", () => {
     const { onMutate } = setup();
 
-    expect(within(screen.getByLabelText("Model provider")).queryByRole("option", { name: "OpenAI" })).toBeNull();
-    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "anthropic/claude-sonnet-5" } });
+    expect(within(screen.getByLabelText("Model provider")).getByRole("option", { name: "OpenAI" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Model provider"), { target: { value: "openai" } });
     fireEvent.click(screen.getByRole("switch", { name: "Enable Hermes" }));
 
     expect(onMutate).toHaveBeenCalledWith({
       type: "set_route",
       harnessInstanceId: "harness_hermes",
-      route: { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-sonnet-5" },
+      route: { kind: "configurable", providerId: "openai", modelId: "openai/gpt-5.6" },
+      accessSourceId: "source_openai",
+      accountId: "account_openai",
     });
     expect(onMutate).toHaveBeenCalledWith({ type: "set_harness_enabled", harnessInstanceId: "harness_hermes", enabled: false });
   });
@@ -263,6 +300,7 @@ describe("AgentsProvidersView", () => {
     harness.route = { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-sonnet-5" };
     harness.accessSourceId = "source_matrix";
     harness.selectedAccountId = null;
+    next.gatewayPolicy!.allowedModelIds = ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"];
     const { onMutate } = setup({ snapshot: next });
 
     fireEvent.change(screen.getByLabelText("Access source"), { target: { value: "source_personal" } });
