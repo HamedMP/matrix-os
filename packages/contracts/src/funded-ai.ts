@@ -229,6 +229,20 @@ export const FundedAiSettlementRequestSchema = z.object({
   actualCostMicrousd: MicrousdSchema,
 }).strict();
 
+export const FundedAiFinalizationRequestSchema = z.discriminatedUnion("mode", [
+  z.object({
+    reservationId: canonicalReferenceId(160),
+    tokenId: TokenIdSchema,
+    mode: z.literal("exact"),
+    actualCostMicrousd: MicrousdSchema,
+  }).strict(),
+  z.object({
+    reservationId: canonicalReferenceId(160),
+    tokenId: TokenIdSchema,
+    mode: z.literal("conservative"),
+  }).strict(),
+]);
+
 export const FundedAiStartRequestSchema = z.object({
   reservationId: canonicalReferenceId(160),
   tokenId: TokenIdSchema,
@@ -256,6 +270,10 @@ export const FundedAiSettlementResponseSchema = z.object({
   funding: FundedAiFundingSummarySchema,
   settledAt: IsoTimestampSchema,
   status: z.literal("settled"),
+}).strict();
+
+export const FundedAiFinalizationResponseSchema = FundedAiSettlementResponseSchema.extend({
+  finalizationMode: z.enum(["exact", "conservative"]),
 }).strict();
 
 export const FundedAiReleaseRequestSchema = z.object({
@@ -310,6 +328,8 @@ export type FundedAiPolicyCheckRequest = z.infer<typeof FundedAiPolicyCheckReque
 export type FundedAiPolicyCheckResponse = z.infer<typeof FundedAiPolicyCheckResponseSchema>;
 export type FundedAiSettlementRequest = z.infer<typeof FundedAiSettlementRequestSchema>;
 export type FundedAiSettlementResponse = z.infer<typeof FundedAiSettlementResponseSchema>;
+export type FundedAiFinalizationRequest = z.infer<typeof FundedAiFinalizationRequestSchema>;
+export type FundedAiFinalizationResponse = z.infer<typeof FundedAiFinalizationResponseSchema>;
 export type FundedAiStartRequest = z.infer<typeof FundedAiStartRequestSchema>;
 export type FundedAiStartResponse = z.infer<typeof FundedAiStartResponseSchema>;
 export type FundedAiReleaseRequest = z.infer<typeof FundedAiReleaseRequestSchema>;

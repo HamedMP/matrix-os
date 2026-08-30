@@ -10,6 +10,10 @@ const DEFAULT_GLOBAL_RATE_LIMIT = 180;
 const DEFAULT_RUNTIME_CONCURRENCY = 2;
 const DEFAULT_RATE_LIMIT = 60;
 const DEFAULT_RUNTIME_REGISTRY_SIZE = 10_000;
+const DEFAULT_SETTLEMENT_QUEUE_CAPACITY = 1_024;
+const DEFAULT_SETTLEMENT_BATCH_SIZE = 16;
+const DEFAULT_SETTLEMENT_RETRY_INTERVAL_MS = 5_000;
+const DEFAULT_SETTLEMENT_TTL_MS = 25 * 60_000;
 const CLOUDFLARE_GATEWAY_HOST = "gateway.ai.cloudflare.com";
 
 export const COUNT_TOKENS_BODY_LIMIT_BYTES = 256 * 1024;
@@ -34,6 +38,10 @@ export interface FundedRelayConfig {
   runtimeConcurrency: number;
   rateLimitPerMinute: number;
   maxRuntimeEntries: number;
+  settlementQueueCapacity: number;
+  settlementBatchSize: number;
+  settlementRetryIntervalMs: number;
+  settlementTtlMs: number;
 }
 
 function readEnabled(value: string | undefined): boolean {
@@ -171,6 +179,18 @@ export function resolveFundedRelayConfig(
     ),
     maxRuntimeEntries: readInteger(
       env, "MATRIX_FUNDED_AI_MAX_RUNTIME_ENTRIES", DEFAULT_RUNTIME_REGISTRY_SIZE, 1, 100_000,
+    ),
+    settlementQueueCapacity: readInteger(
+      env, "MATRIX_FUNDED_AI_SETTLEMENT_QUEUE_CAPACITY", DEFAULT_SETTLEMENT_QUEUE_CAPACITY, 1, 10_000,
+    ),
+    settlementBatchSize: readInteger(
+      env, "MATRIX_FUNDED_AI_SETTLEMENT_BATCH_SIZE", DEFAULT_SETTLEMENT_BATCH_SIZE, 1, 100,
+    ),
+    settlementRetryIntervalMs: readInteger(
+      env, "MATRIX_FUNDED_AI_SETTLEMENT_RETRY_INTERVAL_MS", DEFAULT_SETTLEMENT_RETRY_INTERVAL_MS, 500, 60_000,
+    ),
+    settlementTtlMs: readInteger(
+      env, "MATRIX_FUNDED_AI_SETTLEMENT_TTL_MS", DEFAULT_SETTLEMENT_TTL_MS, 60_000, 30 * 60_000,
     ),
   };
 }

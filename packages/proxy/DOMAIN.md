@@ -40,7 +40,9 @@
 - Only explicit top-level Anthropic fields, client-defined tools, and operator-allowlisted beta identifiers are reconstructed for upstream forwarding; server tools, service-tier overrides, and unknown fields are rejected.
 - Downstream cancellation propagates to the Cloudflare request, and admission leases remain held until the response stream completes or is cancelled.
 - The relay is conversation-stateless. Restarting it can drop in-flight streams but cannot corrupt Chat state; the owner kernel handles retry/resume deliberately.
-- Cloudflare token counting feeds a conservative, expiring integer-microusd estimate. Matrix reserves that worst case atomically, then the relay marks it in-flight immediately before generation. This layer deliberately leaves exact stream settlement to the next layer; expired in-flight reservations are charged conservatively by platform cleanup.
+- Cloudflare token counting feeds a conservative, expiring integer-microusd estimate. Matrix reserves that worst case atomically, then the relay marks it in-flight immediately before generation.
+- A complete valid Anthropic SSE or JSON response is priced with the reservation's versioned integer-microusd table and finalized exactly once through the idempotent platform API. Malformed, truncated, cancelled, timed-out, oversized, or otherwise ambiguous post-start responses finalize at the full reservation; the relay never releases after start.
+- Failed finalizations enter a capped, expiring retry queue with bounded batches and a shutdown drain. Queue expiry/eviction falls back to the platform's conservative in-flight expiry cleanup rather than risking free upstream usage.
 
 ## Tests
 

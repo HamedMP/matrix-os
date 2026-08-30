@@ -1,9 +1,12 @@
 import {
   FundedAiAuthorizationResponseSchema,
+  FundedAiFinalizationResponseSchema,
   FundedAiPolicyCheckResponseSchema,
   FundedAiReleaseResponseSchema,
   FundedAiStartResponseSchema,
   type FundedAiAuthorizationResponse,
+  type FundedAiFinalizationRequest,
+  type FundedAiFinalizationResponse,
   type FundedAiPolicyCheckResponse,
   type FundedAiReleaseResponse,
   type FundedAiStartResponse,
@@ -61,6 +64,7 @@ export interface FundedPlatformClient {
     tokenId: string;
     reason: "pre_upstream_failure";
   }, signal: AbortSignal): Promise<FundedAiReleaseResponse>;
+  finalize(input: FundedAiFinalizationRequest, signal: AbortSignal): Promise<FundedAiFinalizationResponse>;
 }
 
 export function createFundedPlatformClient(options: Pick<
@@ -68,7 +72,7 @@ export function createFundedPlatformClient(options: Pick<
   "platformBaseUrl" | "relayControlToken" | "platformTimeoutMs" | "maxControlResponseBytes"
 > & { fetch: typeof fetch }): FundedPlatformClient {
   async function call<T>(
-    action: "authorize" | "check" | "release" | "start",
+    action: "authorize" | "check" | "finalize" | "release" | "start",
     body: unknown,
     schema: z.ZodType<T>,
     lifetimeSignal: AbortSignal,
@@ -100,5 +104,6 @@ export function createFundedPlatformClient(options: Pick<
     authorize: (input, signal) => call("authorize", input, FundedAiAuthorizationResponseSchema, signal),
     start: (input, signal) => call("start", input, FundedAiStartResponseSchema, signal),
     release: (input, signal) => call("release", input, FundedAiReleaseResponseSchema, signal),
+    finalize: (input, signal) => call("finalize", input, FundedAiFinalizationResponseSchema, signal),
   };
 }

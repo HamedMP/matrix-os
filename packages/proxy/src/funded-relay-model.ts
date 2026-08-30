@@ -24,6 +24,13 @@ export interface FundedModelMapping {
   canonicalModelId: typeof CANONICAL_SONNET_5;
 }
 
+export interface FundedTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 export function mapFundedModel(modelId: string): FundedModelMapping {
   if (modelId !== NATIVE_SONNET_5) throw new Error("Unsupported funded AI model");
   return { nativeModelId: NATIVE_SONNET_5, canonicalModelId: CANONICAL_SONNET_5 };
@@ -55,4 +62,31 @@ export function estimateWorstCaseMicrousd(input: {
     pricingVersion: pricing.version,
     pricingValidThrough: pricing.validThrough,
   };
+}
+
+export function priceActualUsageMicrousd(input: {
+  canonicalModelId: string;
+  pricingVersion: string;
+  usage: FundedTokenUsage;
+}): number {
+  const pricing = PRICING[input.canonicalModelId as keyof typeof PRICING];
+  if (!pricing || pricing.version !== input.pricingVersion) {
+    throw new Error("Funded AI pricing version is unavailable");
+  }
+  const inputTokens = TokenCountSchema.parse(input.usage.inputTokens);
+  const outputTokens = TokenCountSchema.parse(input.usage.outputTokens);
+  const cacheReadTokens = TokenCountSchema.parse(input.usage.cacheReadTokens);
+  const cacheWriteTokens = TokenCountSchema.parse(input.usage.cacheWriteTokens);
+  const totalInputTokens = inputTokens + cacheReadTokens + cacheWriteTokens;
+  const isLongContext = totalInputTokens > LONG_CONTEXT_THRESHOLD;
+  // Rates are stored in tenths of a microusd so discounted cache pricing
+  // remains integer-only through the calculation.
+  const numerator = isLongContext
+    ? inputTokens * 40 + outputTokens * 150 + cacheReadTokens * 4 + cacheWriteTokens * 50
+    : inputTokens * 20 + outputTokens * 100 + cacheReadTokens * 2 + cacheWriteTokens * 25;
+  const amountMicrousd = Math.ceil(numerator / 10);
+  if (!Number.isSafeInteger(amountMicrousd) || amountMicrousd < 0) {
+    throw new Error("Funded AI actual cost exceeds supported bounds");
+  }
+  return amountMicrousd;
 }

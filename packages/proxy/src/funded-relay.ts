@@ -18,7 +18,9 @@ import {
   serializeFundedRequest,
   type FundedRequest,
 } from "./funded-relay-request.js";
+import { SettlementRetryQueue } from "./funded-relay-settlement-queue.js";
 import { boundedBody, safeUpstreamHeaders } from "./funded-relay-stream.js";
+import { createFundedUsageTracker, type FundedFinalization } from "./funded-relay-usage.js";
 
 const MESSAGES_PATH = "/v1/messages";
 const COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
@@ -50,7 +52,7 @@ interface ActiveRequestState {
 
 export interface FundedRelay {
   register(app: Hono): void;
-  close(): void;
+  close(): Promise<void>;
 }
 
 function opaqueRef(secret: string, domain: string, value: string): string {
@@ -164,7 +166,7 @@ function createDisabledRelay(): FundedRelay {
         return errorResponse(c, 403, "permission_error", "Matrix-funded AI is disabled");
       });
     },
-    close() {
+    async close() {
       // Disabled relays own no resources.
     },
   };
@@ -178,6 +180,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   const requestIdFactory = config.requestIdFactory ?? randomUUID;
   const admission = new AdmissionController(config, () => now().getTime());
   const platform = config.platformClient ?? createFundedPlatformClient({ ...config, fetch: fetchImpl });
+  const settlementQueue = new SettlementRetryQueue({
+    capacity: config.settlementQueueCapacity,
+    batchSize: config.settlementBatchSize,
+    ttlMs: config.settlementTtlMs,
+    retryIntervalMs: config.settlementRetryIntervalMs,
+    now: () => now().getTime(),
+    finalize: (task) => platform.finalize(task, AbortSignal.timeout(config.platformTimeoutMs)),
+  });
   const activeRequests = new Set<AbortController>();
   const requestStates = new WeakMap<Context, ActiveRequestState>();
 
@@ -297,19 +307,20 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     if (c.req.path === COUNT_TOKENS_PATH) return counted.response;
 
-    let maxCostMicrousd: number;
+    let estimate: ReturnType<typeof estimateWorstCaseMicrousd>;
     try {
-      maxCostMicrousd = estimateWorstCaseMicrousd({
+      estimate = estimateWorstCaseMicrousd({
         canonicalModelId: model.canonicalModelId,
         inputTokens: counted.inputTokens,
         maxOutputTokens: parsedBody.max_tokens!,
         now: now(),
-      }).amountMicrousd;
+      });
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI pricing unavailable", { errorName });
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
+    const maxCostMicrousd = estimate.amountMicrousd;
 
     let authorization: Awaited<ReturnType<FundedPlatformClient["authorize"]>>;
     try {
@@ -345,6 +356,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       },
     };
     state.resourceLease = resourceLease;
+    const finalizationLocator = {
+      reservationId: reservation.reservationId,
+      tokenId: authorization.identity.tokenId,
+    };
+    const enqueueFinalization = (result: FundedFinalization): void => {
+      if (result.mode === "exact" && result.actualCostMicrousd <= reservation.reservedMicrousd) {
+        settlementQueue.enqueue({ ...finalizationLocator, ...result });
+      } else {
+        settlementQueue.enqueue({ ...finalizationLocator, mode: "conservative" });
+      }
+    };
 
     const firstResponseController = new AbortController();
     const firstResponseTimer = setTimeout(() => {
@@ -367,6 +389,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       const upstream = await fetchImpl(generationUrl, generationInit);
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
+        enqueueFinalization({ mode: "conservative" });
         await upstream.body?.cancel("upstream rejected request");
         resourceLease.release();
         state.resourceLease = null;
@@ -377,6 +400,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         return errorResponse(c, 502, "api_error", "AI access is temporarily unavailable");
       }
       if (!upstream.body) {
+        enqueueFinalization({ mode: "conservative" });
         resourceLease.release();
         state.resourceLease = null;
         return new Response(null, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
@@ -387,11 +411,26 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         resourceLease,
         (reason) => state.controller.abort(reason),
         state.lifetimeSignal,
+        (() => {
+          const tracker = createFundedUsageTracker({
+            contentType: upstream.headers.get("content-type") ?? "application/json",
+            nativeModelId: model.nativeModelId,
+            canonicalModelId: model.canonicalModelId,
+            pricingVersion: estimate.pricingVersion,
+            maxCaptureBytes: config.maxResponseBytes,
+          });
+          return {
+            push: (chunk: Uint8Array) => tracker.push(chunk),
+            complete: () => enqueueFinalization(tracker.complete()),
+            ambiguous: () => enqueueFinalization({ mode: "conservative" }),
+          };
+        })(),
       );
       state.handedOff = true;
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
     } catch (error) {
       clearTimeout(firstResponseTimer);
+      enqueueFinalization({ mode: "conservative" });
       resourceLease.release();
       state.resourceLease = null;
       const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -459,10 +498,11 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         return state ? handle(c, state) : next();
       });
     },
-    close() {
+    async close() {
       for (const controller of activeRequests) controller.abort("relay shutting down");
       activeRequests.clear();
       admission.close();
+      await settlementQueue.close();
     },
   };
 }

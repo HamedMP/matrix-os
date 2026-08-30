@@ -5,6 +5,8 @@ import {
   FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
   FundedAiFundingSummarySchema,
+  FundedAiFinalizationRequestSchema,
+  FundedAiFinalizationResponseSchema,
   FundedAiPolicyCheckRequestSchema,
   FundedAiPolicyCheckResponseSchema,
   FundedAiReleaseRequestSchema,
@@ -16,6 +18,7 @@ import {
   IsoTimestampSchema,
   type FundedAiAuthorizationResponse,
   type FundedAiFundingSummary,
+  type FundedAiFinalizationResponse,
   type FundedAiPolicyCheckResponse,
   type FundedAiReleaseResponse,
   type FundedAiSettlementResponse,
@@ -584,6 +587,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         payload_hash: payloadHash,
         authorization_response: JSON.stringify(response),
         settlement_response: null,
+        finalization_mode: null,
         start_response: null,
         release_response: null,
         release_reason: null,
@@ -687,6 +691,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     input: z.input<typeof FundedAiSettlementRequestSchema>,
   ): Promise<FundedAiSettlementResponse> {
     const request = FundedAiSettlementRequestSchema.parse(input);
+    return (await settleReservationInternal(request, "exact")).response;
+  }
+
+  async function settleReservationInternal(request: {
+    reservationId: string;
+    tokenId: string;
+    actualCostMicrousd: number | null;
+  }, finalizationMode: "exact" | "conservative"): Promise<{
+    response: FundedAiSettlementResponse;
+    finalizationMode: "exact" | "conservative";
+  }> {
     const checked = options.now();
     const checkedAt = checked.toISOString();
     await options.db.ready;
@@ -701,12 +716,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirstOrThrow();
+      const reserved = exactInteger(reservation.reserved_microusd);
+      const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
       if (reservation.status === "settled") {
-        if (exactInteger(reservation.actual_microusd) !== request.actualCostMicrousd) {
+        if (exactInteger(reservation.actual_microusd) !== actualCostMicrousd) {
           throw new AiFundedPolicyError("idempotency_conflict");
         }
         if (reservation.settlement_response === null) throw new Error("Settled reservation is missing its response");
-        return FundedAiSettlementResponseSchema.parse(JSON.parse(reservation.settlement_response));
+        return {
+          response: FundedAiSettlementResponseSchema.parse(JSON.parse(reservation.settlement_response)),
+          finalizationMode: reservation.finalization_mode === "conservative" ? "conservative" : "exact",
+        } as const;
       }
       if (reservation.status !== "in_flight" && reservation.status !== "expired") {
         throw new AiFundedPolicyError("reservation_closed");
@@ -714,8 +734,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       if (reservation.status === "expired" || Date.parse(reservation.expires_at) <= checked.getTime()) {
         throw new AiFundedPolicyError("reservation_expired");
       }
-      const reserved = exactInteger(reservation.reserved_microusd);
-      if (request.actualCostMicrousd > reserved) throw new AiFundedPolicyError("over_settlement");
+      if (actualCostMicrousd > reserved) throw new AiFundedPolicyError("over_settlement");
       const reservationIdentity = {
         ownerId: reservation.owner_id,
         machineId: reservation.machine_id,
@@ -735,9 +754,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       if (!claimed) {
         const latest = await trx.executor.selectFrom("ai_funded_usage_reservations").selectAll()
           .where("reservation_id", "=", reservation.reservation_id).executeTakeFirstOrThrow();
-        if (latest.status === "settled" && exactInteger(latest.actual_microusd) === request.actualCostMicrousd
+        if (latest.status === "settled" && exactInteger(latest.actual_microusd) === actualCostMicrousd
           && latest.settlement_response !== null) {
-          return FundedAiSettlementResponseSchema.parse(JSON.parse(latest.settlement_response));
+          return {
+            response: FundedAiSettlementResponseSchema.parse(JSON.parse(latest.settlement_response)),
+            finalizationMode: latest.finalization_mode === "conservative" ? "conservative" : "exact",
+          } as const;
         }
         if (latest.status === "settled") throw new AiFundedPolicyError("idempotency_conflict");
         if (latest.status === "settling") throw new AiFundedPolicyError("rate_limited");
@@ -754,7 +776,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         trx.executor,
         reservationIdentity,
         reservation,
-        request.actualCostMicrousd,
+        actualCostMicrousd,
         currentBalance,
       );
       let appliedPromotionalDebit = promotionalDebit;
@@ -790,8 +812,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       );
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations").set({
         status: "settled",
-        actual_microusd: request.actualCostMicrousd,
+        actual_microusd: actualCostMicrousd,
         settled_at: checkedAt,
+        finalization_mode: finalizationMode,
       }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")
         .returningAll().executeTakeFirstOrThrow();
       const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
@@ -806,8 +829,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         reservationId: updated.reservation_id,
         requestId: updated.request_id,
         tokenId: updated.token_id,
-        actualCostMicrousd: request.actualCostMicrousd,
-        releasedMicrousd: reserved - request.actualCostMicrousd,
+        actualCostMicrousd,
+        releasedMicrousd: reserved - actualCostMicrousd,
         remainingBalanceMicrousd: funding.remainingBalanceMicrousd,
         remainingBudgetMicrousd: funding.remainingBudgetMicrousd,
         funding,
@@ -817,9 +840,24 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       await trx.executor.updateTable("ai_funded_usage_reservations")
         .set({ settlement_response: JSON.stringify(response) })
         .where("reservation_id", "=", reservation.reservation_id).execute();
-      return response;
+      return { response, finalizationMode } as const;
     });
     return result;
+  }
+
+  async function finalizeReservation(
+    input: z.input<typeof FundedAiFinalizationRequestSchema>,
+  ): Promise<FundedAiFinalizationResponse> {
+    const request = FundedAiFinalizationRequestSchema.parse(input);
+    const settlement = await settleReservationInternal({
+      reservationId: request.reservationId,
+      tokenId: request.tokenId,
+      actualCostMicrousd: request.mode === "exact" ? request.actualCostMicrousd : null,
+    }, request.mode);
+    return FundedAiFinalizationResponseSchema.parse({
+      ...settlement.response,
+      finalizationMode: settlement.finalizationMode,
+    });
   }
 
   async function releaseReservation(
@@ -1014,6 +1052,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           });
           const settled = await trx.executor.updateTable("ai_funded_usage_reservations").set({
             status: "settled", actual_microusd: reserved, settled_at: checkedAt,
+            finalization_mode: "conservative",
             settlement_response: JSON.stringify(response),
           }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")
             .returning("reservation_id").executeTakeFirst();
@@ -1045,6 +1084,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     authorize,
     startReservation,
     settleReservation,
+    finalizeReservation,
     releaseReservation,
     cleanupExpiredReservations,
     grantCredit,
