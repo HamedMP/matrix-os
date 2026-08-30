@@ -29,7 +29,10 @@ vi.mock("../../shell/src/components/settings/sections/AppearanceSection.js", () 
   AppearanceSection: () => <div>Appearance settings</div>,
 }));
 vi.mock("../../shell/src/components/settings/sections/AgentSection.js", () => ({
-  AgentSection: () => <div>Agent settings</div>,
+  AgentSection: () => <div>Agents and providers settings</div>,
+}));
+vi.mock("../../shell/src/components/settings/sections/IdentityPersonalitySection.js", () => ({
+  IdentityPersonalitySection: () => <div>Identity and personality settings</div>,
 }));
 vi.mock("../../shell/src/components/settings/sections/ChannelsSection.js", () => ({
   ChannelsSection: () => <div>Channel settings</div>,
@@ -75,16 +78,29 @@ describe("Settings panel", () => {
     expect(accountRegion.className).toContain("sm:mt-auto");
   });
 
-  it("unhides only the Agent section from the deferred settings set", async () => {
+  it("shows canonical Agents & providers and Identity & personality sections", async () => {
     const { Settings } = await import("../../shell/src/components/Settings.js");
 
     render(<Settings open onOpenChange={() => {}} />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Agent" }).isConnected).toBe(true));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Agents & providers" }).isConnected).toBe(true));
+    expect(screen.getByRole("button", { name: "Identity & personality" }).isConnected).toBe(true);
     expect(screen.queryByRole("button", { name: "Channels" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Skills" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
-    expect(screen.getByText("Agent settings").isConnected).toBe(true);
+    expect(screen.queryByRole("button", { name: "Agent" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+    expect(screen.getByText("Agents and providers settings").isConnected).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Identity & personality" }));
+    expect(screen.getByText("Identity and personality settings").isConnected).toBe(true);
+  });
+
+  it.each(["agent", "providers"] as const)("maps the legacy %s deep link to Agents & providers", async (legacySection) => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+
+    render(<Settings open defaultSection={legacySection} onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("Agents and providers settings").isConnected).toBe(true));
+    expect(screen.getByRole("button", { name: "Agents & providers" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("honors a Desktop deep link when Settings opens", async () => {
