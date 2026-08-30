@@ -6,15 +6,13 @@ const SESSION_APPROVAL_METHODS = new Set([
 export function createCodexSessionApprovalGrants() {
   const grantedMethods = new Set();
   return {
-    grant(method, nativeDecision) {
-      if (SESSION_APPROVAL_METHODS.has(method) && nativeDecision === "acceptForSession") {
-        grantedMethods.add(method);
-      }
+    grant(method) {
+      if (SESSION_APPROVAL_METHODS.has(method)) grantedMethods.add(method);
     },
     decisionFor(method, nativeDecisionByMatrixDecision) {
       if (!grantedMethods.has(method)) return undefined;
-      const nativeDecision = nativeDecisionByMatrixDecision.approve_for_session;
-      return nativeDecision === "acceptForSession" ? nativeDecision : undefined;
+      return nativeDecisionByMatrixDecision.approve_for_session ??
+        nativeDecisionByMatrixDecision.approve;
     },
   };
 }

@@ -815,7 +815,7 @@ async function applyControl(control) {
       result: { decision: nativeDecision },
     });
     if (control.decision === "approve_for_session") {
-      sessionApprovalGrants.grant(pending.method, nativeDecision);
+      sessionApprovalGrants.grant(pending.method);
     }
     pendingApprovals.delete(control.approvalId);
   } else {

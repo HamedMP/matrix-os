@@ -63,10 +63,10 @@ describe("Codex app-server control runtime", () => {
       "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-session-approval' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
       "  else if (message.method === 'turn/start') {",
       "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-session-approval' } } }));",
-      "    console.log(JSON.stringify({ id: 41, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-1', availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'] } }));",
+      "    console.log(JSON.stringify({ id: 41, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-1', availableDecisions: ['accept', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['mkdir'] } }, 'decline', 'cancel'] } }));",
       "  } else if (message.id === 41) {",
       "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
-      "    console.log(JSON.stringify({ id: 42, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-2', availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'] } }));",
+      "    console.log(JSON.stringify({ id: 42, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-2', availableDecisions: ['accept', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['rmdir'] } }, 'decline', 'cancel'] } }));",
       "  } else if (message.id === 42) {",
       "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
       "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-session-approval', status: 'completed', items: [] } } }));",
@@ -100,8 +100,8 @@ describe("Codex app-server control runtime", () => {
 
       const responses = (await readFile(responsesPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
       expect(responses).toEqual([
-        { id: 41, result: { decision: "acceptForSession" } },
-        { id: 42, result: { decision: "acceptForSession" } },
+        { id: 41, result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["mkdir"] } } } },
+        { id: 42, result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["rmdir"] } } } },
       ]);
       const transcript = await readFile(eventPath, "utf8");
       expect(transcript.match(/matrix\.codex\.approval\.requested/g)).toHaveLength(1);
