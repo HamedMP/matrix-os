@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
 import DesktopSupportWidget from "@desktop/renderer/src/features/support/DesktopSupportWidget";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
+import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 
 const posthogClient = vi.hoisted(() => ({
@@ -79,6 +81,8 @@ describe("Desktop support widget", () => {
       platformHost: "https://app.matrix-os.com",
       authGeneration: 1,
     });
+    useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
+    useTabs.setState(useTabs.getInitialState(), true);
   });
 
   afterEach(() => {
@@ -103,6 +107,18 @@ describe("Desktop support widget", () => {
       "[desktop-support] PostHog initialization failed:",
       "Error",
     );
+  });
+
+  it("keeps Support visible without redirecting an unconfigured chat button to docs", async () => {
+    vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
+
+    render(<DesktopModeControls />);
+    expect(screen.getByRole("button", { name: "Support" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+
+    await act(async () => Promise.resolve());
+    expect(useTabs.getState().tabs).toEqual([]);
+    expect(useBrowserNavigation.getState().pending).toBeNull();
   });
 
   it("loads PostHog Conversations through the first-party relay without broad Desktop capture", async () => {
@@ -172,7 +188,7 @@ describe("Desktop support widget", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
-      .toEqual(["Search", "Main computer", "Support", "Open account menu"]);
+      .toEqual(["Search", "Support", "Main computer", "Open account menu"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(useUi.getState().paletteOpen).toBe(true);

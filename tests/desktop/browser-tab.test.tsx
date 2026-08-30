@@ -5,6 +5,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BrowserTab from "@desktop/renderer/src/features/browser/BrowserTab";
 import { invoke } from "@desktop/renderer/src/lib/operator";
+import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
 
 const mocks = vi.hoisted(() => ({ embedRender: vi.fn() }));
 
@@ -21,6 +22,7 @@ describe("BrowserTab", () => {
     window.localStorage.clear();
     vi.mocked(invoke).mockReset();
     mocks.embedRender.mockReset();
+    useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
   });
 
   it("keeps loopback navigation inside the selected runtime embed", () => {
@@ -106,5 +108,35 @@ describe("BrowserTab", () => {
     expect((within(settings).getByRole("checkbox", { name: "Restore previous tabs" }) as HTMLInputElement).checked).toBe(true);
     expect(within(settings).getByText("Cookies and sign-ins persist in the browser profile.")).toBeTruthy();
     expect(within(settings).getByText(/Password saving requires an OS-encrypted browser vault/)).toBeTruthy();
+  });
+
+  it("opens requested Help pages in Matrix Browser with an external-browser option", () => {
+    useBrowserNavigation.getState().request("https://matrix-os.com/docs");
+
+    render(<BrowserTab active />);
+
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("https://matrix-os.com/docs");
+    expect(screen.getByTestId("embed").textContent).toBe("browser:https://matrix-os.com/docs");
+    expect(useBrowserNavigation.getState().pending).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open current page in external browser" }));
+    expect(invoke).toHaveBeenCalledWith("shell:open-external", {
+      url: "https://matrix-os.com/docs",
+    });
+  });
+
+  it("does not offer the external-browser escape hatch for tunneled runtime pages", () => {
+    useBrowserNavigation.getState().request("http://127.0.0.1:3000");
+
+    render(<BrowserTab active />);
+
+    expect(screen.getByTestId("embed").textContent).toBe("browser:http://127.0.0.1:3000/");
+    expect(screen.queryByRole("button", { name: "Open current page in external browser" })).toBeNull();
+  });
+
+  it("rejects oversized cross-app browser navigation requests", () => {
+    expect(useBrowserNavigation.getState().request("x".repeat(4_097))).toBeNull();
+    expect(useBrowserNavigation.getState().pending).toBeNull();
   });
 });

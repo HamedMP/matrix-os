@@ -29,7 +29,7 @@ function configuredToken(): string | null {
   return token || null;
 }
 
-export function isDesktopSupportConfigured(): boolean {
+function isDesktopSupportConfigured(): boolean {
   return configuredToken() !== null;
 }
 
@@ -158,6 +158,7 @@ async function openSupportPanel(generation: number): Promise<boolean> {
 }
 
 export function openDesktopSupport(): Promise<boolean> {
+  if (!isDesktopSupportConfigured()) return Promise.resolve(false);
   if (!openSupportPromise) {
     const generation = supportLifecycleGeneration;
     const promise = openSupportPanel(generation)

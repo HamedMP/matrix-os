@@ -1,6 +1,8 @@
 import { ExternalLink, Globe2, Plus, SlidersHorizontalIcon, X } from "@renderer/lib/hugeicons";
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { resolveBrowserAddress } from "../../../../shared/runtime-browser-url";
+import { invoke } from "../../lib/operator";
+import { useBrowserNavigation } from "../../stores/browser-navigation";
 import EmbedHost from "../embeds/EmbedHost";
 
 const BROWSER_SESSION_KEY = "matrix.desktop.browser.session.v1";
@@ -97,6 +99,9 @@ export default function BrowserTab({
   const [restorePreviousTabs, setRestorePreviousTabs] = useState(restorePreviousTabsEnabled);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const pendingNavigation = useBrowserNavigation((state) => state.pending);
+  const consumeNavigation = useBrowserNavigation((state) => state.consume);
+  const handledNavigationId = useRef<number | null>(null);
   const activeTab = useMemo(
     () => session.tabs.find((tab) => tab.id === session.activeId) ?? session.tabs[0]!,
     [session],
@@ -107,6 +112,35 @@ export default function BrowserTab({
     if (restorePreviousTabs) window.localStorage.setItem(BROWSER_SESSION_KEY, JSON.stringify(session));
     else window.localStorage.removeItem(BROWSER_SESSION_KEY);
   }, [restorePreviousTabs, session]);
+
+  useEffect(() => {
+    if (!pendingNavigation || handledNavigationId.current === pendingNavigation.id) return;
+    handledNavigationId.current = pendingNavigation.id;
+    consumeNavigation(pendingNavigation.id);
+    setSettingsOpen(false);
+    setMessage(null);
+    setSession((current) => {
+      const activePage = current.tabs.find((tab) => tab.id === current.activeId);
+      const target = activePage && activePage.url === null && activePage.address === ""
+        ? activePage
+        : current.tabs.length < MAX_BROWSER_TABS
+          ? createBrowserPage()
+          : activePage ?? current.tabs[0]!;
+      const nextPage: BrowserPage = {
+        ...target,
+        address: pendingNavigation.url,
+        url: pendingNavigation.url,
+        navigationRevision: target.navigationRevision + 1,
+      };
+      const replacing = current.tabs.some((tab) => tab.id === target.id);
+      return {
+        tabs: replacing
+          ? current.tabs.map((tab) => tab.id === target.id ? nextPage : tab)
+          : [...current.tabs, nextPage],
+        activeId: target.id,
+      };
+    });
+  }, [consumeNavigation, pendingNavigation]);
 
   const updateActiveTab = (update: (tab: BrowserPage) => BrowserPage) => {
     setSession((current) => ({
@@ -162,6 +196,8 @@ export default function BrowserTab({
     setSettingsOpen(false);
     setSession((current) => ({ ...current, activeId: tabId }));
   };
+
+  const activeResolution = activeTab.url ? resolveBrowserAddress(activeTab.url) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" style={{ background: "var(--bg-app)" }}>
@@ -243,6 +279,31 @@ export default function BrowserTab({
           <ExternalLink size={13} aria-hidden="true" />
           Go
         </button>
+        {activeResolution?.disposition === "public" ? (
+          <button
+            type="button"
+            aria-label="Open current page in external browser"
+            title="Open in external browser"
+            className="inline-flex size-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)]"
+            style={{ color: "var(--text-secondary)" }}
+            onClick={() => {
+              const url = activeTab.url;
+              if (!url) return;
+              void (async () => {
+                try {
+                  await invoke("shell:open-external", { url });
+                } catch (error: unknown) {
+                  console.warn(
+                    "[browser] Failed to open the current page externally:",
+                    error instanceof Error ? error.name : typeof error,
+                  );
+                }
+              })();
+            }}
+          >
+            <ExternalLink size={15} aria-hidden="true" />
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label="Browser settings"

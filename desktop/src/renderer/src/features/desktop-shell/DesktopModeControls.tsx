@@ -18,10 +18,10 @@ export default function DesktopModeControls() {
       >
         <Search aria-hidden="true" size={16} />
       </button>
+      <DesktopSupportButton />
       <div className="relative w-[156px]">
         <RuntimeComputerMenu collapsed={false} />
       </div>
-      <DesktopSupportButton />
       <AccountMenu collapsed compact />
     </div>
   );
