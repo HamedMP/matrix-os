@@ -849,6 +849,8 @@ describe("TerminalsTab", () => {
 
     expect(screen.getByRole("button", { name: "Open matrix-active" }).parentElement?.textContent)
       .toContain("2 minutes ago");
+    expect(screen.getByRole("button", { name: "Open matrix-waiting" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open matrix-closed" })).toBeTruthy();
     expect(document.querySelector("[data-terminal-session-status]")).toBeNull();
   });
 
