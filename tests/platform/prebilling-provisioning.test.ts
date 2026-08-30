@@ -47,34 +47,35 @@ describe('platform prebilling provisioning foundation', () => {
     await destroyTestPlatformDb(db);
   });
 
-  it('is disabled by default and parses bounded rollout and capacity settings', () => {
+  it('is disabled by default and enables count-only capacity without legacy cost settings', () => {
     const defaults = loadPrebillingProvisioningConfig({});
     expect(defaults).toMatchObject({
       enabled: false,
       rolloutPercent: 0,
       maxActive: 0,
-      maxHourlyCostMicros: 0,
       leaseMs: 31 * 60 * 1_000,
     });
+    expect(defaults).not.toHaveProperty('maxHourlyCostMicros');
+    expect(defaults).not.toHaveProperty('serverHourlyCostMicros');
     expect(prebillingRolloutIncludesUser(defaults, 'user_123')).toBe(false);
 
     const enabled = loadPrebillingProvisioningConfig({
       MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
       MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
-      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '2',
-      MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '250000',
-      MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx22":50000}',
+      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '4',
     });
-    expect(enabled.serverHourlyCostMicros.get('cpx22')).toBe(50_000);
+    expect(enabled).toMatchObject({ enabled: true, rolloutPercent: 100, maxActive: 4 });
     expect(prebillingRolloutIncludesUser(enabled, 'user_123')).toBe(true);
-    expect(loadPrebillingProvisioningConfig({
+
+    const legacyValuesAreIgnored = loadPrebillingProvisioningConfig({
       MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
+      MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
+      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '4',
+      MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '1',
       MATRIX_PREBILLING_PROVISIONING_COSTS: 'cpx22:92900;cpx32:169900;cpx52:254000',
-    }).serverHourlyCostMicros).toEqual(new Map([
-      ['cpx22', 92_900],
-      ['cpx32', 169_900],
-      ['cpx52', 254_000],
-    ]));
+      MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx22":999999999}',
+    });
+    expect(legacyValuesAreIgnored).toEqual(enabled);
   });
 
   it('creates one immutable intent for a checkout and canonical selection', async () => {
@@ -115,58 +116,178 @@ describe('platform prebilling provisioning foundation', () => {
     });
   });
 
-  it('admits within global count and cost ceilings and defers without reserving when full', async () => {
-    await seedCheckout('checkout-1', 'user_123');
-    await seedCheckout('checkout-2', 'user_456');
-    await createIntent('intent-1', 'checkout-1', 'user_123');
-    await createIntent('intent-2', 'checkout-2', 'user_456');
+  it('concurrently admits four mixed-size intents and defers exactly the fifth', async () => {
+    const serverTypes = ['cpx22', 'cpx52', 'cpx32', 'cpx22', 'cpx52'];
+    for (const index of [1, 2, 3, 4, 5]) {
+      await seedCheckout(`checkout-${index}`, `user_${index}`, serverTypes[index - 1]);
+      await createIntent(`intent-${index}`, `checkout-${index}`, `user_${index}`, serverTypes[index - 1]);
+    }
 
-    const admitted = await admitPrebillingIntent(db, {
-      intentId: 'intent-1',
-      stripeSessionId: 'cs_1',
+    const admitted = await Promise.all([1, 2, 3, 4].map((index) => admitPrebillingIntent(db, {
+      intentId: `intent-${index}`,
+      stripeSessionId: `cs_${index}`,
       stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000,
-      maxActive: 1,
-      maxHourlyCostMicros: 50_000,
+      maxActive: 4,
       now: CREATED_AT,
-    });
+    })));
     const deferred = await admitPrebillingIntent(db, {
-      intentId: 'intent-2',
-      stripeSessionId: 'cs_2',
+      intentId: 'intent-5',
+      stripeSessionId: 'cs_5',
       stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000,
-      maxActive: 1,
-      maxHourlyCostMicros: 50_000,
+      maxActive: 4,
       now: CREATED_AT,
     });
 
-    expect(admitted).toMatchObject({ admitted: true, reason: 'admitted' });
-    expect(admitted.intent).toMatchObject({ state: 'preparing', reservedHourlyCostMicros: 50_000 });
+    expect(admitted).toHaveLength(4);
+    expect(admitted.every((result) => result.admitted)).toBe(true);
+    expect(admitted.every((result) => result.intent.state === 'preparing')).toBe(true);
     expect(deferred).toMatchObject({ admitted: false, reason: 'capacity' });
-    expect(deferred.intent).toMatchObject({ state: 'preparation_deferred', reservedHourlyCostMicros: 0 });
+    expect(deferred.intent).toMatchObject({ state: 'preparation_deferred' });
     await expect(resetPrebillingPreparationForRetry(db, {
-      intentId: 'intent-2',
-      clerkUserId: 'user_456',
+      intentId: 'intent-5',
+      clerkUserId: 'user_5',
       now: CREATED_AT,
     })).resolves.toBe(true);
     await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-2')).resolves.toMatchObject({
+      state: 'preparing',
+    });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-5')).resolves.toMatchObject({
       state: 'awaiting_checkout',
       lastErrorCode: null,
     });
   });
 
-  it('resumes the same paid intent even when unpaid preparation capacity is full', async () => {
+  it('ignores old nonzero reservation rows when admitting by active count', async () => {
+    await seedCheckout('checkout-1', 'user_123', 'cpx52');
+    await seedCheckout('checkout-2', 'user_456', 'cpx22');
+    await createIntent('intent-1', 'checkout-1', 'user_123', 'cpx52');
+    await createIntent('intent-2', 'checkout-2', 'user_456', 'cpx22');
+
+    await db.executor.updateTable('prebilling_provisioning_intents').set({
+      state: 'preparing',
+      stripe_session_id: 'cs_legacy',
+      stripe_session_expires_at: EXPIRES_AT,
+      lease_expires_at: EXPIRES_AT,
+      reserved_hourly_cost_micros: 999_999_999,
+    }).where('id', '=', 'intent-1').execute();
+
+    const admitted = await admitPrebillingIntent(db, {
+      intentId: 'intent-2',
+      stripeSessionId: 'cs_2',
+      stripeSessionExpiresAt: EXPIRES_AT,
+      maxActive: 4,
+      now: CREATED_AT,
+    });
+
+    expect(admitted).toMatchObject({ admitted: true, reason: 'admitted' });
+    const row = await db.executor.selectFrom('prebilling_provisioning_intents')
+      .select('reserved_hourly_cost_micros')
+      .where('id', '=', 'intent-2')
+      .executeTakeFirstOrThrow();
+    expect(Number(row.reserved_hourly_cost_micros)).toBe(0);
+  });
+
+  it('does not admit an existing unpaid checkout intent after admission is disabled', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    const provisionForCheckout = vi.fn();
+    const resolveIdentity = vi.fn().mockResolvedValue({ handle: 'alice' });
+    const coordinator = createPrebillingProvisioningCoordinator({
+      db,
+      config: loadPrebillingProvisioningConfig({}),
+      customerVpsService: { provisionForCheckout } as never,
+      resolveIdentity,
+      now: () => new Date(CREATED_AT),
+    });
+
+    await expect(coordinator.startPreparation({
+      intentId: 'intent-1',
+      stripeSessionId: 'cs_1',
+      stripeSessionExpiresAt: EXPIRES_AT,
+    })).resolves.toBe(false);
+
+    expect(resolveIdentity).not.toHaveBeenCalled();
+    expect(provisionForCheckout).not.toHaveBeenCalled();
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'awaiting_checkout',
+      stripeSessionId: null,
+      leaseExpiresAt: null,
+    });
+  });
+
+  it('does not reset and re-admit an unpaid failed preparation after admission is disabled', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    await admitPrebillingIntent(db, {
+      intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
+      maxActive: 1, now: CREATED_AT,
+    });
+    await markPrebillingPreparationFailed(db, {
+      intentId: 'intent-1', now: CREATED_AT, errorCode: 'provider_timeout',
+    });
+    const provisionForCheckout = vi.fn();
+    const coordinator = createPrebillingProvisioningCoordinator({
+      db,
+      config: loadPrebillingProvisioningConfig({}),
+      customerVpsService: { provisionForCheckout } as never,
+      resolveIdentity: vi.fn().mockResolvedValue({ handle: 'alice' }),
+      now: () => new Date(CREATED_AT),
+    });
+
+    await expect(coordinator.retryPreparation({
+      checkoutAttemptId: 'checkout-1', clerkUserId: 'user_123',
+    })).resolves.toBe(false);
+
+    expect(provisionForCheckout).not.toHaveBeenCalled();
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'preparation_failed',
+      stripeSessionId: 'cs_1',
+    });
+  });
+
+  it('does not create a first machine for an unpaid preparing intent after admission is disabled', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    await admitPrebillingIntent(db, {
+      intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
+      maxActive: 1, now: CREATED_AT,
+    });
+    const provisionForCheckout = vi.fn().mockResolvedValue({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      status: 'provisioning',
+      etaSeconds: 90,
+    });
+    const coordinator = createPrebillingProvisioningCoordinator({
+      db,
+      config: loadPrebillingProvisioningConfig({}),
+      customerVpsService: { provisionForCheckout } as never,
+      resolveIdentity: vi.fn().mockResolvedValue({ handle: 'alice' }),
+      now: () => new Date(CREATED_AT),
+    });
+
+    await expect(coordinator.resumePreparation({
+      intentId: 'intent-1', clerkUserId: 'user_123',
+    })).resolves.toBe(false);
+
+    expect(provisionForCheckout).not.toHaveBeenCalled();
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'preparing',
+      machineId: null,
+    });
+  });
+
+  it('resumes the same paid intent even when unpaid admission is disabled and capacity is full', async () => {
     await seedCheckout('checkout-1', 'user_123');
     await seedCheckout('checkout-2', 'user_456');
     await createIntent('intent-1', 'checkout-1', 'user_123');
     await createIntent('intent-2', 'checkout-2', 'user_456');
     await admitPrebillingIntent(db, {
       intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+      maxActive: 1, now: CREATED_AT,
     });
     await admitPrebillingIntent(db, {
       intentId: 'intent-2', stripeSessionId: 'cs_2', stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+      maxActive: 1, now: CREATED_AT,
     });
     await db.transaction((trx) => authorizePrebillingIntent(trx, {
       intentId: 'intent-2',
@@ -210,13 +331,7 @@ describe('platform prebilling provisioning foundation', () => {
     const provisionForCheckout = vi.spyOn(service, 'provisionForCheckout');
     const coordinator = createPrebillingProvisioningCoordinator({
       db,
-      config: loadPrebillingProvisioningConfig({
-        MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
-        MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
-        MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '1',
-        MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '50000',
-        MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
-      }),
+      config: loadPrebillingProvisioningConfig({}),
       customerVpsService: service,
       resolveIdentity: vi.fn().mockResolvedValue({ handle: 'bob' }),
       now: () => new Date('2026-08-24T10:02:00.000Z'),
@@ -242,7 +357,6 @@ describe('platform prebilling provisioning foundation', () => {
       id: 'intent-2',
       state: 'payment_settling',
       paymentConfirmedAt: '2026-08-24T10:01:00.000Z',
-      reservedHourlyCostMicros: 0,
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff456',
     });
     await expect(getActiveUserMachineByClerkId(db, 'user_456', 'primary')).resolves.toMatchObject({
@@ -254,6 +368,8 @@ describe('platform prebilling provisioning foundation', () => {
       db,
       '2026-08-24T10:03:00.000Z',
     )).resolves.toEqual([]);
+    await expect(coordinator.reconcilePreparations()).resolves.toEqual({ checked: 0, resumed: 0 });
+    expect(provisionForCheckout).toHaveBeenCalledOnce();
 
     await updateUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff456', {
       status: 'failed',
@@ -322,9 +438,7 @@ describe('platform prebilling provisioning foundation', () => {
       intentId: 'intent-1',
       stripeSessionId: 'cs_1',
       stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000,
       maxActive: 1,
-      maxHourlyCostMicros: 50_000,
       now: CREATED_AT,
     });
     const hetzner = createMockHetznerClient();
@@ -401,7 +515,7 @@ describe('platform prebilling provisioning foundation', () => {
     await createIntent('intent-1', 'checkout-1', 'user_123');
     await admitPrebillingIntent(db, {
       intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+      maxActive: 1, now: CREATED_AT,
     });
     const hetzner = createMockHetznerClient();
     vi.mocked(hetzner.getServer).mockResolvedValue(null);
@@ -468,8 +582,6 @@ describe('platform prebilling provisioning foundation', () => {
         MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
         MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
         MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '1',
-        MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '50000',
-        MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
       }),
       customerVpsService: { provisionForCheckout } as never,
       resolveIdentity: vi.fn().mockResolvedValue({ handle: 'alice' }),
@@ -533,9 +645,7 @@ describe('platform prebilling provisioning foundation', () => {
       intentId: 'intent-1',
       stripeSessionId: 'cs_1',
       stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000,
       maxActive: 1,
-      maxHourlyCostMicros: 50_000,
       now: CREATED_AT,
     });
     await insertUserMachine(db, {
@@ -601,9 +711,7 @@ describe('platform prebilling provisioning foundation', () => {
       intentId: 'intent-1',
       stripeSessionId: 'cs_1',
       stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000,
       maxActive: 1,
-      maxHourlyCostMicros: 50_000,
       now: CREATED_AT,
     });
     await insertUserMachine(db, {
@@ -661,7 +769,7 @@ describe('platform prebilling provisioning foundation', () => {
     await createIntent('intent-1', 'checkout-1', 'user_123');
     const admitted = await admitPrebillingIntent(db, {
       intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+      maxActive: 1, now: CREATED_AT,
     });
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112', clerkUserId: 'user_123',
@@ -680,7 +788,7 @@ describe('platform prebilling provisioning foundation', () => {
     }))).resolves.toEqual({ cleaned: true, intentId: 'intent-1' });
     await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
     await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
-      state: 'cleaned', machineId: null, reservedHourlyCostMicros: 0,
+      state: 'cleaned', machineId: null,
     });
   });
 
@@ -689,7 +797,7 @@ describe('platform prebilling provisioning foundation', () => {
     await createIntent('intent-1', 'checkout-1', 'user_123');
     await admitPrebillingIntent(db, {
       intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
-      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+      maxActive: 1, now: CREATED_AT,
     });
     await expect(db.transaction((trx) => authorizePrebillingIntent(trx, {
       intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
@@ -720,7 +828,7 @@ describe('platform prebilling provisioning foundation', () => {
     });
   });
 
-  async function seedCheckout(id: string, clerkUserId: string): Promise<void> {
+  async function seedCheckout(id: string, clerkUserId: string, serverType = 'cpx32'): Promise<void> {
     const claimed = await claimCheckoutAttempt(db, {
       id,
       clerkUserId,
@@ -728,14 +836,19 @@ describe('platform prebilling provisioning foundation', () => {
       planSlug: 'matrix_builder',
       billingInterval: 'monthly',
       regionSlug: 'region_fsn1',
-      serverType: 'cpx32',
+      serverType,
       developerTools: ['codex', 'claude-code'],
       createdAt: CREATED_AT,
     });
     expect(claimed.claimed).toBe(true);
   }
 
-  async function createIntent(id: string, checkoutAttemptId: string, clerkUserId: string): Promise<void> {
+  async function createIntent(
+    id: string,
+    checkoutAttemptId: string,
+    clerkUserId: string,
+    serverType = 'cpx32',
+  ): Promise<void> {
     await createPrebillingIntent(db, {
       id,
       checkoutAttemptId,
@@ -743,7 +856,7 @@ describe('platform prebilling provisioning foundation', () => {
       runtimeSlot: 'primary',
       planSlug: 'matrix_builder',
       billingInterval: 'monthly',
-      serverType: 'cpx32',
+      serverType,
       regionSlug: 'region_fsn1',
       developerTools: ['codex', 'claude-code'],
       createdAt: CREATED_AT,

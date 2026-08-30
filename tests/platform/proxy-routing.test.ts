@@ -2106,9 +2106,7 @@ describe("platform proxy routing", () => {
       intentId: "intent_prebilling",
       stripeSessionId: "cs_prebilling",
       stripeSessionExpiresAt: "2026-08-28T12:30:00.000Z",
-      reservedHourlyCostMicros: 50_000,
       maxActive: 1,
-      maxHourlyCostMicros: 50_000,
       now: "2026-08-28T11:56:00.000Z",
     });
     await db.transaction((trx) => authorizePrebillingIntent(trx, {
@@ -2160,8 +2158,6 @@ describe("platform proxy routing", () => {
         MATRIX_PREBILLING_PROVISIONING_ENABLED: "true",
         MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: "100",
         MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: "1",
-        MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: "50000",
-        MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
       },
     });
     expect(customerVpsService.setPrebillingFallbackReconciler).toHaveBeenCalledOnce();
