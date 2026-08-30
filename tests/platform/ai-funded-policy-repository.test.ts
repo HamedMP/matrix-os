@@ -57,7 +57,12 @@ describe("funded AI policy repository", () => {
       expectedRevision: 0,
       enabled: true,
       allowedModelIds: [models[0]],
+      monthlyBudgetMicrousd: 1_000,
       expiresAt: null,
+    });
+    await repo.grantCredit({
+      entryId: "grant_test", identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      kind: "promotional_grant", amountMicrousd: 1_000, sourceReference: "test-fixture",
     });
     return repo;
   }
@@ -122,6 +127,7 @@ describe("funded AI policy repository", () => {
       expectedRevision: 0,
       enabled: true,
       allowedModelIds: [models[0]],
+      monthlyBudgetMicrousd: 1_000,
       expiresAt: null,
     })).rejects.toMatchObject({ code: "identity_mismatch" });
     await expect(repo.setRuntimePolicy({
@@ -129,6 +135,7 @@ describe("funded AI policy repository", () => {
       expectedRevision: -1,
       enabled: true,
       allowedModelIds: [models[0]],
+      monthlyBudgetMicrousd: 1_000,
       expiresAt: "not-a-timestamp",
     })).rejects.toMatchObject({ name: "ZodError" });
   });
@@ -160,11 +167,11 @@ describe("funded AI policy repository", () => {
     const repo = await enableRuntime();
     const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;
     const issued = await repo.issueRuntimeCredential(identity);
-    await expect(repo.authorize({ credential: issued.credential.token, modelId: models[0] }))
+    await expect(repo.authorize({ credential: issued.credential.token, requestId: "request_1", modelId: models[0], maxCostMicrousd: 100 }))
       .resolves.toMatchObject({ authorized: true, identity });
 
     await repo.revokeRuntimeCredential({ tokenId: issued.credential.tokenId, identity });
-    await expect(repo.authorize({ credential: issued.credential.token, modelId: models[0] }))
+    await expect(repo.authorize({ credential: issued.credential.token, requestId: "request_2", modelId: models[0], maxCostMicrousd: 100 }))
       .rejects.toMatchObject({ code: "unauthorized" });
 
     const nextRepo = createAiFundedPolicyRepository({
@@ -178,7 +185,7 @@ describe("funded AI policy repository", () => {
     });
     const second = await nextRepo.issueRuntimeCredential(identity);
     await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: false, allowedModelIds: [] });
-    await expect(nextRepo.authorize({ credential: second.credential.token, modelId: models[0] }))
+    await expect(nextRepo.authorize({ credential: second.credential.token, requestId: "request_3", modelId: models[0], maxCostMicrousd: 100 }))
       .rejects.toMatchObject({ code: "access_disabled" });
   });
 
@@ -186,7 +193,7 @@ describe("funded AI policy repository", () => {
     const repo = await enableRuntime();
     const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;
     const issued = await repo.issueRuntimeCredential(identity);
-    await expect(repo.authorize({ credential: issued.credential.token, modelId: models[1] }))
+    await expect(repo.authorize({ credential: issued.credential.token, requestId: "request_4", modelId: models[1], maxCostMicrousd: 100 }))
       .rejects.toMatchObject({ code: "model_not_allowed" });
 
     const expired = createAiFundedPolicyRepository({
@@ -194,9 +201,9 @@ describe("funded AI policy repository", () => {
       credentialHashSecret: "h".repeat(32),
       now: () => new Date("2026-08-30T20:16:00.000Z"),
     });
-    await expect(expired.authorize({ credential: issued.credential.token, modelId: models[0] }))
+    await expect(expired.authorize({ credential: issued.credential.token, requestId: "request_5", modelId: models[0], maxCostMicrousd: 100 }))
       .rejects.toBeInstanceOf(AiFundedPolicyError);
-    await expect(expired.authorize({ credential: issued.credential.token, modelId: models[0] }))
+    await expect(expired.authorize({ credential: issued.credential.token, requestId: "request_6", modelId: models[0], maxCostMicrousd: 100 }))
       .rejects.toMatchObject({ code: "unauthorized" });
   });
 });

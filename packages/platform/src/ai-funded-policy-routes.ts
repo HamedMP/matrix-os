@@ -1,6 +1,9 @@
 import {
   FundedAiAuthorizationRequestSchema,
   FundedAiSafeErrorSchema,
+  FundedAiReleaseRequestSchema,
+  FundedAiSettlementRequestSchema,
+  FundedAiStartRequestSchema,
   type FundedAiSafeError,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -16,6 +19,7 @@ const RELAY_BODY_LIMIT = 4 * 1024;
 const HandleSchema = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
 const EmptyBodySchema = z.object({}).strict();
 const RuntimeQuerySchema = z.object({ runtimeSlot: RuntimeSlotSchema }).strict();
+const CleanupBodySchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 
 export type AiFundedControlPlaneConfig = { enabled: false } | {
   enabled: true;
@@ -69,6 +73,12 @@ function safeError(code: FundedAiSafeError["error"]["code"]): FundedAiSafeError 
     model_not_allowed: "This model is not available",
     rate_limited: "Try again later",
     revision_conflict: "Policy changed; refresh and try again",
+    insufficient_credit: "Not enough Matrix AI credit",
+    budget_exceeded: "Monthly AI budget reached",
+    idempotency_conflict: "Request already used",
+    reservation_expired: "AI usage reservation expired",
+    over_settlement: "AI usage exceeds its reservation",
+    reservation_closed: "AI usage reservation is already closed",
     invalid_request: "Invalid request",
     not_found: "Runtime not found",
     unavailable: "Service unavailable",
@@ -82,6 +92,12 @@ function policyErrorResponse(c: Context, error: unknown) {
     if (error.code === "identity_mismatch") return c.json(safeError("not_found"), 404);
     if (error.code === "rate_limited") return c.json(safeError("rate_limited"), 429);
     if (error.code === "revision_conflict") return c.json(safeError("revision_conflict"), 409);
+    if (error.code === "idempotency_conflict") return c.json(safeError("idempotency_conflict"), 409);
+    if (error.code === "reservation_expired") return c.json(safeError("reservation_expired"), 409);
+    if (error.code === "over_settlement") return c.json(safeError("over_settlement"), 409);
+    if (error.code === "reservation_closed") return c.json(safeError("reservation_closed"), 409);
+    if (error.code === "insufficient_credit") return c.json(safeError("insufficient_credit"), 402);
+    if (error.code === "budget_exceeded") return c.json(safeError("budget_exceeded"), 403);
     if (error.code === "model_not_allowed") return c.json(safeError("model_not_allowed"), 403);
     return c.json(safeError("access_disabled"), 403);
   }
@@ -109,6 +125,7 @@ export function createAiFundedRuntimeRoutes(options: {
   platformSecret: string;
   repository: AiFundedPolicyRepository;
 }) {
+  if (!options.repository || !options.db) throw new Error("Funded AI runtime dependencies are missing");
   if (options.platformSecret.length < 32) throw new Error("Funded AI runtime authentication is misconfigured");
   const app = new Hono();
   app.use("*", async (c, next) => {
@@ -156,6 +173,7 @@ export function createAiFundedRelayRoutes(options: {
   relayControlToken: string;
   repository: AiFundedPolicyRepository;
 }) {
+  if (!options.repository) throw new Error("Funded AI relay dependencies are missing");
   if (options.relayControlToken.length < 32) throw new Error("Funded AI relay authentication is misconfigured");
   const app = new Hono();
   app.use("*", async (c, next) => {
@@ -171,10 +189,43 @@ export function createAiFundedRelayRoutes(options: {
     const request = FundedAiAuthorizationRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
-      return c.json(await options.repository.authorize({
-        credential: request.data.credential,
-        modelId: request.data.modelId,
-      }), 200);
+      return c.json(await options.repository.authorize(request.data), 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
+  app.post("/settle", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const request = FundedAiSettlementRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      return c.json(await options.repository.settleReservation(request.data), 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
+  app.post("/start", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const request = FundedAiStartRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      return c.json(await options.repository.startReservation(request.data), 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
+  app.post("/release", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const request = FundedAiReleaseRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      return c.json(await options.repository.releaseReservation(request.data), 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
+  app.post("/reservations/cleanup", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {
+    const request = CleanupBodySchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      return c.json({ processed: await options.repository.cleanupExpiredReservations(request.data) }, 200);
     } catch (error) {
       return policyErrorResponse(c, error);
     }

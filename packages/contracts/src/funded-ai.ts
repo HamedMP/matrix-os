@@ -10,6 +10,7 @@ const RuntimeSlotSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$
 const UniqueModelIdsSchema = z.array(ProviderModelReferenceSchema).max(64)
   .refine((models) => new Set(models).size === models.length, "Model IDs must be unique");
 const TokenIdSchema = canonicalReferenceId(80);
+const MicrousdSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const OpaqueCredentialSchema = z.string()
   .min(64)
   .max(256)
@@ -33,6 +34,7 @@ export const FundedAiEffectivePolicySchema = z.object({
   globalRevision: RevisionSchema,
   runtimeRevision: RevisionSchema,
   allowedModelIds: UniqueModelIdsSchema,
+  monthlyBudgetMicrousd: MicrousdSchema,
   checkedAt: IsoTimestampSchema,
   staleAfter: IsoTimestampSchema,
 }).strict().superRefine((value, ctx) => {
@@ -76,7 +78,36 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   credential: OpaqueCredentialSchema,
   requestId: canonicalReferenceId(160),
   modelId: ProviderModelReferenceSchema,
+  maxCostMicrousd: MicrousdSchema.min(1),
 }).strict();
+
+export const FundedAiFundingSummarySchema = z.object({
+  asOf: IsoTimestampSchema,
+  periodStart: IsoTimestampSchema,
+  monthlyBudgetMicrousd: MicrousdSchema,
+  settledThisMonthMicrousd: MicrousdSchema,
+  reservedMicrousd: MicrousdSchema,
+  reservedThisMonthMicrousd: MicrousdSchema,
+  promotionalBalanceMicrousd: MicrousdSchema,
+  addonBalanceMicrousd: MicrousdSchema,
+  creditBalanceMicrousd: MicrousdSchema,
+  remainingBalanceMicrousd: MicrousdSchema,
+  remainingBudgetMicrousd: MicrousdSchema,
+}).strict().superRefine((value, ctx) => {
+  if (value.creditBalanceMicrousd !== value.promotionalBalanceMicrousd + value.addonBalanceMicrousd) {
+    ctx.addIssue({ code: "custom", path: ["creditBalanceMicrousd"], message: "Credit buckets must equal total credit" });
+  }
+  if (value.remainingBalanceMicrousd !== Math.max(0, value.creditBalanceMicrousd - value.reservedMicrousd)) {
+    ctx.addIssue({ code: "custom", path: ["remainingBalanceMicrousd"], message: "Remaining credit is inconsistent" });
+  }
+  const expectedBudget = Math.max(
+    0,
+    value.monthlyBudgetMicrousd - value.settledThisMonthMicrousd - value.reservedThisMonthMicrousd,
+  );
+  if (value.remainingBudgetMicrousd !== expectedBudget) {
+    ctx.addIssue({ code: "custom", path: ["remainingBudgetMicrousd"], message: "Remaining budget is inconsistent" });
+  }
+});
 
 export const FundedAiAuthorizationResponseSchema = z.object({
   contractVersion: z.literal(1),
@@ -88,6 +119,71 @@ export const FundedAiAuthorizationResponseSchema = z.object({
     expiresAt: IsoTimestampSchema,
   }).strict(),
   policy: FundedAiEffectivePolicySchema,
+  funding: FundedAiFundingSummarySchema,
+  reservation: z.object({
+    reservationId: canonicalReferenceId(160),
+    requestId: canonicalReferenceId(160),
+    modelId: ProviderModelReferenceSchema,
+    reservedMicrousd: MicrousdSchema.min(1),
+    remainingBalanceMicrousd: MicrousdSchema,
+    remainingBudgetMicrousd: MicrousdSchema,
+    periodStart: IsoTimestampSchema,
+    expiresAt: IsoTimestampSchema,
+    status: z.literal("reserved"),
+  }).strict(),
+}).strict();
+
+export const FundedAiSettlementRequestSchema = z.object({
+  reservationId: canonicalReferenceId(160),
+  tokenId: TokenIdSchema,
+  actualCostMicrousd: MicrousdSchema,
+}).strict();
+
+export const FundedAiStartRequestSchema = z.object({
+  reservationId: canonicalReferenceId(160),
+  tokenId: TokenIdSchema,
+}).strict();
+
+export const FundedAiStartResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  reservationId: canonicalReferenceId(160),
+  requestId: canonicalReferenceId(160),
+  tokenId: TokenIdSchema,
+  startedAt: IsoTimestampSchema,
+  expiresAt: IsoTimestampSchema,
+  status: z.literal("in_flight"),
+}).strict();
+
+export const FundedAiSettlementResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  reservationId: canonicalReferenceId(160),
+  requestId: canonicalReferenceId(160),
+  tokenId: TokenIdSchema,
+  actualCostMicrousd: MicrousdSchema,
+  releasedMicrousd: MicrousdSchema,
+  remainingBalanceMicrousd: MicrousdSchema,
+  remainingBudgetMicrousd: MicrousdSchema,
+  funding: FundedAiFundingSummarySchema,
+  settledAt: IsoTimestampSchema,
+  status: z.literal("settled"),
+}).strict();
+
+export const FundedAiReleaseRequestSchema = z.object({
+  reservationId: canonicalReferenceId(160),
+  tokenId: TokenIdSchema,
+  reason: z.literal("pre_upstream_failure"),
+}).strict();
+
+export const FundedAiReleaseResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  reservationId: canonicalReferenceId(160),
+  requestId: canonicalReferenceId(160),
+  tokenId: TokenIdSchema,
+  releasedMicrousd: MicrousdSchema.min(1),
+  releasedAt: IsoTimestampSchema,
+  reason: z.literal("pre_upstream_failure"),
+  status: z.literal("released"),
+  funding: FundedAiFundingSummarySchema,
 }).strict();
 
 const SafeErrorSchema = z.discriminatedUnion("code", [
@@ -96,6 +192,12 @@ const SafeErrorSchema = z.discriminatedUnion("code", [
   z.object({ code: z.literal("model_not_allowed"), message: z.literal("This model is not available") }).strict(),
   z.object({ code: z.literal("rate_limited"), message: z.literal("Try again later") }).strict(),
   z.object({ code: z.literal("revision_conflict"), message: z.literal("Policy changed; refresh and try again") }).strict(),
+  z.object({ code: z.literal("insufficient_credit"), message: z.literal("Not enough Matrix AI credit") }).strict(),
+  z.object({ code: z.literal("budget_exceeded"), message: z.literal("Monthly AI budget reached") }).strict(),
+  z.object({ code: z.literal("idempotency_conflict"), message: z.literal("Request already used") }).strict(),
+  z.object({ code: z.literal("reservation_expired"), message: z.literal("AI usage reservation expired") }).strict(),
+  z.object({ code: z.literal("over_settlement"), message: z.literal("AI usage exceeds its reservation") }).strict(),
+  z.object({ code: z.literal("reservation_closed"), message: z.literal("AI usage reservation is already closed") }).strict(),
   z.object({ code: z.literal("invalid_request"), message: z.literal("Invalid request") }).strict(),
   z.object({ code: z.literal("not_found"), message: z.literal("Runtime not found") }).strict(),
   z.object({ code: z.literal("unavailable"), message: z.literal("Service unavailable") }).strict(),
@@ -109,4 +211,11 @@ export type FundedAiEffectivePolicy = z.infer<typeof FundedAiEffectivePolicySche
 export type FundedAiRuntimeCredentialIssueResponse = z.infer<typeof FundedAiRuntimeCredentialIssueResponseSchema>;
 export type FundedAiAuthorizationRequest = z.infer<typeof FundedAiAuthorizationRequestSchema>;
 export type FundedAiAuthorizationResponse = z.infer<typeof FundedAiAuthorizationResponseSchema>;
+export type FundedAiSettlementRequest = z.infer<typeof FundedAiSettlementRequestSchema>;
+export type FundedAiSettlementResponse = z.infer<typeof FundedAiSettlementResponseSchema>;
+export type FundedAiStartRequest = z.infer<typeof FundedAiStartRequestSchema>;
+export type FundedAiStartResponse = z.infer<typeof FundedAiStartResponseSchema>;
+export type FundedAiReleaseRequest = z.infer<typeof FundedAiReleaseRequestSchema>;
+export type FundedAiReleaseResponse = z.infer<typeof FundedAiReleaseResponseSchema>;
+export type FundedAiFundingSummary = z.infer<typeof FundedAiFundingSummarySchema>;
 export type FundedAiSafeError = z.infer<typeof FundedAiSafeErrorSchema>;
