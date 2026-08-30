@@ -252,6 +252,8 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
+  '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
   '      POSTHOG_TOKEN={{posthogToken}}',
   '      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
   '      POSTHOG_HOST={{posthogHost}}',
@@ -375,6 +377,8 @@ function buildHostConfig(
     posthogHost: config.posthogHost,
     posthogPublicHost: config.posthogPublicHost,
     posthogApiHost: config.posthogApiHost,
+    fundedAiEnabled: config.fundedAiEnabled ? 'true' : 'false',
+    fundedAiRelayUrl: config.fundedAiRelayUrl,
   };
 }
 

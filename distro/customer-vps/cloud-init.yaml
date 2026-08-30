@@ -398,6 +398,8 @@ write_files:
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
+      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}
+      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
       POSTHOG_TOKEN={{posthogToken}}
       POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}

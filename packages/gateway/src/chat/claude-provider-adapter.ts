@@ -1,6 +1,9 @@
 import { z } from "zod/v4";
 import { buildAgentLaunch } from "../agent-launcher.js";
-import { buildKernelEnv } from "../kernel-credentials.js";
+import {
+  buildKernelCredentialLaunch,
+  type KernelCredentialLaunch,
+} from "../kernel-credentials.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -101,6 +104,7 @@ export function createClaudeChatProviderAdapter(options: {
   spawnFn?: CanonicalCliSpawn;
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
+  resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -132,9 +136,15 @@ export function createClaudeChatProviderAdapter(options: {
       const separator = launch.args.indexOf("--");
       launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--resume", resumeState.sessionId);
     }
-    const credentialEnv = await (
-      options.resolveCredentialEnv ?? (() => buildKernelEnv(options.homePath))
-    )();
+    const credentialLaunch = options.resolveCredentialLaunch
+      ? await options.resolveCredentialLaunch()
+      : {
+          env: await (
+            options.resolveCredentialEnv
+            ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
+          )(),
+        };
+    const credentialEnv = credentialLaunch.env;
     const runEnv = credentialEnv === undefined
       ? launch.env
       : definedEnvironment({ ...credentialEnv, ...launch.env });
@@ -321,7 +331,7 @@ export function createClaudeChatProviderAdapter(options: {
       env: runEnv,
       replaceEnv: credentialEnv !== undefined,
       signal: input.signal,
-      timeoutMs,
+      timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,
       spawnFn: options.spawnFn,
       onStdout(chunk) {

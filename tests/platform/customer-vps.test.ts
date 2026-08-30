@@ -1455,6 +1455,23 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).not.toContain('PIPEDREAM_CLIENT_SECRET');
   });
 
+  it('templates only the funded runtime flag and relay URL into customer hosts', async () => {
+    const { service, hetzner } = createService({
+      config: createTestConfig({
+        fundedAiEnabled: true,
+        fundedAiRelayUrl: 'https://relay.matrix-os.com',
+      }),
+    });
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain('MATRIX_FUNDED_AI_ENABLED=true');
+    expect(createInput?.userData).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.matrix-os.com');
+    expect(createInput?.userData).not.toContain('AI_RELAY_CONTROL_TOKEN');
+    expect(createInput?.userData).not.toContain('CF_AIG_AUTHORIZATION');
+  });
+
   it('never templates platform R2 credentials into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 

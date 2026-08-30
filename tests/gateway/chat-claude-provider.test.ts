@@ -330,6 +330,42 @@ describe("Claude canonical Chat Provider adapter", () => {
     });
   });
 
+  it("uses the rotating funded credential and its shorter run deadline", async () => {
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const process = new EventEmitter() as EventEmitter & {
+      stdout: FakeStream;
+      stderr: FakeStream;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    process.stdout = stdout;
+    process.stderr = stderr;
+    process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
+    const spawnFn = vi.fn(() => process);
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn,
+      timeoutMs: 60_000,
+      resolveCredentialLaunch: vi.fn(async () => ({
+        env: {
+          ANTHROPIC_API_KEY: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
+          ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
+        },
+        fundedRunTimeoutMs: 10,
+      })),
+    });
+
+    const events = [];
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(spawnFn.mock.calls[0]![2].env).toMatchObject({
+      ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
+      ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
+    });
+    expect(process.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+  });
+
   it("resumes the persisted Claude session and maps full access explicitly", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "resumed", session_id: "claude_session" }),

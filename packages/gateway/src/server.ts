@@ -13,6 +13,11 @@ import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import {
+  createFundedAiCredentialManager,
+  loadFundedAiRuntimeConfig,
+} from "./funded-ai-credential-manager.js";
+import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
@@ -394,6 +399,10 @@ const MAX_MAIN_WS_CLIENTS = 100;
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
+  const fundedAiRuntimeConfig = loadFundedAiRuntimeConfig(process.env);
+  const fundedCredentialProvider = fundedAiRuntimeConfig
+    ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
+    : undefined;
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,
   );
@@ -556,6 +565,7 @@ export async function createGateway(config: GatewayConfig) {
     maxTurns: config.maxTurns,
     spawnFn: config.spawnFn,
     onAiGeneration: recordAiGeneration,
+    fundedCredentialProvider,
   });
 
   const watcher: Watcher = createWatcher(homePath);
@@ -4153,6 +4163,7 @@ export async function createGateway(config: GatewayConfig) {
   await agentRuntimeServices.controller.reconcile();
   const aiProviderService = new AiProviderService({
     homePath,
+    fundedCredentialProvider,
     driverInventory: createProviderDriverInventoryReader({
       detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
       runtimeSource: agentRuntimeServices.source,
@@ -4210,7 +4221,15 @@ export async function createGateway(config: GatewayConfig) {
       createHermesChatProviderAdapter({ homePath }),
     ];
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
-      canonicalAdapters.push(createClaudeChatProviderAdapter({ homePath }));
+      canonicalAdapters.push(createClaudeChatProviderAdapter({
+        homePath,
+        resolveCredentialLaunch: () => buildKernelCredentialLaunch(
+          homePath,
+          process.env,
+          undefined,
+          fundedCredentialProvider,
+        ),
+      }));
     }
     if (codingAgentThreadStore) {
       if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
@@ -4561,6 +4580,7 @@ export async function createGateway(config: GatewayConfig) {
       codingAgentWorkspaceRuntime = null;
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
+      fundedCredentialProvider?.close();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();
