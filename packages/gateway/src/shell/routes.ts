@@ -208,6 +208,38 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     onError: bodyTooLarge,
   });
 
+  const rollbackCreatedSession = async (name: string, restoreTombstone: boolean): Promise<void> => {
+    try {
+      await deps.registry.delete(name, { force: true });
+    } catch (cleanupError: unknown) {
+      console.error(
+        "[shell] Created terminal session cleanup failed:",
+        cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+      );
+      return;
+    }
+
+    if (!restoreTombstone || !deps.sessionLifecycle) return;
+    try {
+      await deps.sessionLifecycle.deleteSessionReferences(name);
+    } catch (cleanupError: unknown) {
+      console.error(
+        "[shell] Terminal session tombstone restoration failed:",
+        cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+      );
+    }
+  };
+
+  const commitCreatedSession = async (name: string): Promise<void> => {
+    if (!deps.sessionLifecycle) return;
+    try {
+      await deps.sessionLifecycle.clearSessionTombstone(name);
+    } catch (error: unknown) {
+      await rollbackCreatedSession(name, false);
+      throw error;
+    }
+  };
+
   app.get("/health", async (c) => {
     if (!deps.shellBackend) {
       console.warn("[shell] shell health route missing backend dependency");
@@ -300,17 +332,12 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         ...(body.cmd ? { cmd: body.cmd } : {}),
         ...(body.agent ? { agent: body.agent } : {}),
       };
-      if (body.name) {
-        await deps.sessionLifecycle?.clearSessionTombstone(body.name);
-      }
       const session = await deps.registry.create(sessionInput);
       const name =
         typeof session === "object" && session !== null && "name" in session
           ? String((session as { name: unknown }).name)
           : body.name;
-      if (!body.name || name !== body.name) {
-        await deps.sessionLifecycle?.clearSessionTombstone(name);
-      }
+      await commitCreatedSession(name);
       const sessionCreatedAt =
         typeof session === "object" && session !== null && "createdAt" in session
           ? z.iso.datetime().parse((session as { createdAt: unknown }).createdAt)
@@ -325,14 +352,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
             sessionCreatedAt,
           });
         } catch (error: unknown) {
-          try {
-            await deps.registry.delete(name, { force: true });
-          } catch (cleanupError: unknown) {
-            console.error(
-              "[shell] Chat terminal cleanup failed:",
-              cleanupError instanceof Error ? cleanupError.name : "UnknownError",
-            );
-          }
+          await rollbackCreatedSession(name, true);
           throw error;
         }
       }
@@ -383,8 +403,8 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         );
       }
       console.info("[terminal-lifecycle]", { event: "terminal.session.recover.requested", name });
-      await deps.sessionLifecycle?.clearSessionTombstone(name);
       const session = await deps.registry.create({ name, ...(body.cwd ? { cwd: body.cwd } : {}) });
+      await commitCreatedSession(name);
       console.info("[terminal-lifecycle]", { event: "terminal.session.recover.completed", name });
       return c.json({ session }, 201);
     } catch (err: unknown) {

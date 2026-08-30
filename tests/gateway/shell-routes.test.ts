@@ -227,12 +227,17 @@ describe("gateway shell routes", () => {
       create: vi.fn(async (input: { name: string }) => ({ name: input.name })),
       delete: vi.fn(async () => undefined),
     };
+    const sessionLifecycle = {
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
     const app = appWithRegistry(registry, undefined, {
       getPrincipal: () => ({ userId: "user_a", source: "jwt" }),
       chatTerminals: {
         prepare: vi.fn(async () => ({ runId: "run_selected" })),
         bind: vi.fn(async () => { throw new Error("private database failure"); }),
       },
+      sessionLifecycle,
     });
 
     const response = await app.request("/api/terminal/sessions", {
@@ -243,6 +248,7 @@ describe("gateway shell routes", () => {
 
     expect(response.status).toBe(500);
     expect(registry.delete).toHaveBeenCalledWith("chat-cleanup", { force: true });
+    expect(sessionLifecycle.deleteSessionReferences).toHaveBeenCalledWith("chat-cleanup");
   });
 
   it("serves reconciled aliases and stale pane recovery through the terminal sessions route", async () => {
@@ -332,7 +338,7 @@ describe("gateway shell routes", () => {
     expect(registry.create).toHaveBeenCalledWith({ name: "main", cwd: "~/projects" });
   });
 
-  it("clears an explicit session tombstone before creating its runtime", async () => {
+  it("keeps an explicit session tombstone until runtime creation succeeds", async () => {
     const registry = {
       list: vi.fn(async () => []),
       create: vi.fn(async () => ({ name: "main" })),
@@ -351,9 +357,53 @@ describe("gateway shell routes", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0]).toBeLessThan(
-      registry.create.mock.invocationCallOrder[0],
+    expect(registry.create.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0],
     );
+  });
+
+  it("preserves deletion protection when runtime creation fails", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => { throw new Error("runtime unavailable"); }),
+      delete: vi.fn(),
+    };
+    const sessionLifecycle = {
+      deleteSessionReferences: vi.fn(),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+
+    expect(res.status).toBe(500);
+    expect(sessionLifecycle.clearSessionTombstone).not.toHaveBeenCalled();
+  });
+
+  it("removes a new runtime when committing its tombstone clear fails", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "main" })),
+      delete: vi.fn(async () => undefined),
+    };
+    const sessionLifecycle = {
+      deleteSessionReferences: vi.fn(),
+      clearSessionTombstone: vi.fn(async () => { throw new Error("layout unavailable"); }),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+
+    expect(res.status).toBe(500);
+    expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
   });
 
   it("accepts optional recognized agent identity during session creation", async () => {
@@ -694,8 +744,8 @@ describe("gateway shell routes", () => {
     await expect(res.json()).resolves.toEqual({ session: { name: "bench", status: "active" } });
     expect(registry.create).toHaveBeenCalledWith({ name: "bench", cwd: "projects/demo" });
     expect(sessionLifecycle.clearSessionTombstone).toHaveBeenCalledWith("bench");
-    expect(sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0]).toBeLessThan(
-      registry.create.mock.invocationCallOrder[0],
+    expect(registry.create.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0],
     );
   });
 
