@@ -239,6 +239,7 @@ import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js
 import { createProviderSettingsRoutes } from "./ai-providers/provider-settings-routes.js";
 import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
+import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
@@ -4164,10 +4165,15 @@ export async function createGateway(config: GatewayConfig) {
       (agent): agent is "codex" | "claude" => agent === "codex" || agent === "claude",
     ),
   });
+  const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({
+    homePath,
+    enabledHarnesses: codingAgentWorkspaceAgents,
+  });
   const providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
+    accountLifecycle: providerAccountLifecycle,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,

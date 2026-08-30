@@ -48,6 +48,7 @@ function selectedCanonicalSources(
   const sourceByAccount = new Map<string, string>();
   for (const account of canonical.accounts) {
     const stored = config.accountProfiles.find((profile) => profile.id === account.id);
+    if (account.authMethod === null && !stored) continue;
     const instance = canonical.instances.find((candidate) => {
       if (candidate.accountId !== account.id) return false;
       const source = canonical.accessSources.find((value) => value.id === candidate.accessSourceId);
