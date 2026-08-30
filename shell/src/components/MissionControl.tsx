@@ -8,6 +8,7 @@ import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { AppTile } from "./AppTile";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { Launchpad } from "./launchpad/Launchpad";
+import { isOsViewDestinationPath } from "@/lib/web-desktop-app-launch";
 import {
   XIcon,
   Loader2Icon,
@@ -233,6 +234,7 @@ function LauncherGrid({
   // tiles here are plain divs.
   const renderTile = (app: AppEntry, indexInAll: number) => {
     const slug = nameToSlug(app.name);
+    const isOsViewDestination = isOsViewDestinationPath(app.path);
     return (
       <div
         key={app.path}
@@ -246,18 +248,18 @@ function LauncherGrid({
         <AppTile
           name={app.name}
           createApp={app.path === CREATE_APP.path}
-          onAddToDesktop={app.path !== CREATE_APP.path && onAddToDesktop ? () => onAddToDesktop(app.path) : undefined}
+          onAddToDesktop={!isOsViewDestination && app.path !== CREATE_APP.path && onAddToDesktop ? () => onAddToDesktop(app.path) : undefined}
           isOpen={openWindows.has(app.path)}
           onClick={() => {
             onOpenApp(app.name, app.path);
             onClose();
           }}
-          pinned={pinnedApps.includes(app.path)}
-          onTogglePin={() => onTogglePin(app.path)}
+          pinned={!isOsViewDestination && pinnedApps.includes(app.path)}
+          onTogglePin={isOsViewDestination ? undefined : () => onTogglePin(app.path)}
           iconUrl={app.iconUrl}
-          onRegenerateIcon={() => onRegenerateIcon(slug)}
-          onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
-          onRemoveFromCanvas={onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
+          onRegenerateIcon={isOsViewDestination ? undefined : () => onRegenerateIcon(slug)}
+          onRename={!isOsViewDestination && onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
+          onRemoveFromCanvas={!isOsViewDestination && onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
         />
       </div>
     );

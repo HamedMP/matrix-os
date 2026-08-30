@@ -43,6 +43,10 @@ import {
   buildWebDesktopLauncherApps,
   resolveWebDesktopBuiltInLaunch,
 } from "@/lib/web-desktop-app-launch";
+import {
+  createOsViewLayoutMemory,
+  transitionOsViewLayout,
+} from "@/lib/os-view-layout-memory";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
@@ -113,7 +117,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const wmSetApps = useWindowManager((s) => s.setApps);
   const wmSetWindows = useWindowManager((s) => s.setWindows);
   const wmLoadLayout = useWindowManager((s) => s.loadLayout);
-  const wmCascadeWindows = useWindowManager((s) => s.cascadeWindows);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
   const wmToggleFullscreen = useWindowManager((s) => s.toggleFullscreen);
   const wmExitFullscreen = useWindowManager((s) => s.exitFullscreen);
@@ -424,6 +427,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
     if (builtInLaunch?.kind === "app") {
       focusOrOpen(builtInLaunch.name, builtInLaunch.path);
+      return;
+    }
+    if (builtInLaunch?.kind === "os-view") {
+      useDesktopMode.getState().setMode(builtInLaunch.mode);
       return;
     }
     focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
@@ -774,6 +781,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const setDesktopMode = useDesktopMode((s) => s.setMode);
   const visibleModes = useDesktopMode((s) => s.visibleModes);
   const themeStyle = useThemeStyle();
+  const osViewLayoutsRef = useRef(createOsViewLayoutMemory());
   // Windows designs replace the mac menu bar + dock with a bottom taskbar.
   const isWindowsDesign = themeStyle === "winxp" || themeStyle === "win11";
 
@@ -814,13 +822,23 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     })();
     return () => { cancelled = true; };
   }, [themeStyle, wmSetApps]);
-  // Cascade windows back to the viewport when leaving canvas. Canvas
-  // positions use a wide grid that extends off-screen in other modes.
+  // Geometry belongs to the presentation namespace. Switching OS views keeps
+  // canonical windows and sessions alive while restoring each view's last
+  // in-memory geometry. Durable namespaced geometry follows in the persistence
+  // slice; viewport reconciliation remains a renderer concern.
   useEffect(() => {
-    if (desktopMode !== "canvas" && previousMode === "canvas") {
-      wmCascadeWindows(dockXOffset, 20, 30);
-    }
-  }, [desktopMode, previousMode, dockXOffset, wmCascadeWindows]);
+    if (!previousMode || previousMode === desktopMode) return;
+    const currentWindows = useWindowManager.getState().windows;
+    const transition = transitionOsViewLayout(
+      osViewLayoutsRef.current,
+      previousMode,
+      desktopMode,
+      currentWindows,
+    );
+    osViewLayoutsRef.current = transition.memory;
+    useWindowManager.setState({ windows: transition.windows });
+    if (desktopMode === "desktop") wmReconcileWindowsToViewport();
+  }, [desktopMode, previousMode, wmReconcileWindowsToViewport]);
 
   // Aoede is orthogonal to mode now — a pointer-events-none overlay that
   // can ride on top of any mode. The dock button toggles it.
@@ -1062,7 +1080,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     />
   ) : null;
 
-  const launcherApps = useMemo(() => buildWebDesktopLauncherApps(apps), [apps]);
+  const launcherApps = useMemo(
+    () => buildWebDesktopLauncherApps(apps, desktopMode),
+    [apps, desktopMode],
+  );
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
     if (path === "__settings__" || path === "__plugins__") {

@@ -178,6 +178,18 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(handlers.onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html");
   });
 
+  it("keeps OS-view destinations launcher-only", async () => {
+    setDesign("macos-glass");
+    const { handlers } = await renderLauncher({
+      apps: [{ name: "Canvas", path: "__os-view-canvas__", iconUrl: "/icons/canvas.svg" }],
+    });
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Canvas" }));
+
+    expect(screen.queryByRole("menuitem", { name: "Add Canvas to Desktop" })).toBeNull();
+    expect(handlers.onAddToDesktop).not.toHaveBeenCalled();
+  });
+
   it("reserves the grid padding and gaps so launchpad stays centered in the viewport", () => {
     expect(computeLaunchpadColumns(560)).toBe(3);
     expect(computeLaunchpadColumns(1024)).toBe(6);

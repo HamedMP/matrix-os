@@ -38,7 +38,23 @@ vi.mock("../../shell/src/components/AIButton.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/MissionControl.js", () => ({
-  MissionControl: () => null,
+  MissionControl: ({
+    open,
+    apps,
+    onOpenApp,
+  }: {
+    open: boolean;
+    apps: Array<{ name: string; path: string }>;
+    onOpenApp: (name: string, path: string) => void;
+  }) => open ? (
+    <div data-testid="launcher-destinations">
+      {apps.map((app) => (
+        <button key={app.path} type="button" onClick={() => onOpenApp(app.name, app.path)}>
+          {app.name}
+        </button>
+      ))}
+    </div>
+  ) : null,
 }));
 
 vi.mock("../../shell/src/components/DotGrid.js", () => ({
@@ -218,6 +234,31 @@ describe("Desktop launcher dock button by mode", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     expect(windowManagerStore.getState().windows.find((windowRecord) => windowRecord.path === "__chat__"))
       .toMatchObject({ title: "Chat", path: "__chat__" });
+  });
+
+  it("switches Web Desktop to Web Canvas and back from the app launcher without closing apps", async () => {
+    resetShellMode("desktop", true);
+    render(<DesktopComponent />);
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Chat" }));
+    const chatWindow = windowManagerStore.getState().windows.find(
+      (windowRecord) => windowRecord.path === "__chat__",
+    );
+    expect(chatWindow).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Canvas" }));
+    expect(desktopModeStore.getState().mode).toBe("canvas");
+    expect(windowManagerStore.getState().windows.find(
+      (windowRecord) => windowRecord.path === "__chat__",
+    )).toEqual(chatWindow);
+
+    fireEvent.click(screen.getByTestId("dock-tasks"));
+    fireEvent.click(await screen.findByRole("button", { name: "Desktop" }));
+    expect(desktopModeStore.getState().mode).toBe("desktop");
+    expect(windowManagerStore.getState().windows.find(
+      (windowRecord) => windowRecord.path === "__chat__",
+    )).toEqual(chatWindow);
   });
 
   it("routes an installed Browser command through the dedicated public browser launch", async () => {

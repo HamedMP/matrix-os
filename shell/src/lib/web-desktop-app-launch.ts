@@ -1,9 +1,16 @@
 import type { AppEntry } from "@/hooks/useWindowManager";
+import type { DesktopMode } from "@/stores/desktop-mode";
+import { iconUrlForSlug } from "@/lib/app-launch";
 
 export type WebDesktopBuiltInLaunch =
   | { kind: "external"; url: string }
   | { kind: "external-code" }
+  | { kind: "os-view"; mode: DesktopMode }
   | { kind: "app"; name: string; path: string };
+
+export function isOsViewDestinationPath(path: string): boolean {
+  return path === "__os-view-canvas__" || path === "__os-view-desktop__";
+}
 
 export function resolveWebDesktopBuiltInLaunch(path: string): WebDesktopBuiltInLaunch | null {
   if (
@@ -19,6 +26,12 @@ export function resolveWebDesktopBuiltInLaunch(path: string): WebDesktopBuiltInL
   if (path === "__editor__") {
     return { kind: "app", name: "Files", path: "__file-browser__" };
   }
+  if (path === "__os-view-canvas__") {
+    return { kind: "os-view", mode: "canvas" };
+  }
+  if (path === "__os-view-desktop__") {
+    return { kind: "os-view", mode: "desktop" };
+  }
   return null;
 }
 
@@ -26,7 +39,7 @@ function findCanonicalApp(apps: readonly AppEntry[], paths: readonly string[]): 
   return apps.find((app) => paths.includes(app.path));
 }
 
-export function buildWebDesktopLauncherApps(apps: readonly AppEntry[]): AppEntry[] {
+export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
   const chat = findCanonicalApp(apps, ["__chat__"]);
   const firstClass: AppEntry[] = [
     chat ? { ...chat, name: "Chat" } : { name: "Chat", path: "__chat__" },
@@ -45,4 +58,14 @@ export function buildWebDesktopLauncherApps(apps: readonly AppEntry[]): AppEntry
   ];
   const firstClassPaths = new Set(firstClass.map((app) => app.path));
   return [...firstClass, ...apps.filter((app) => !firstClassPaths.has(app.path))];
+}
+
+export function buildWebDesktopLauncherApps(
+  apps: readonly AppEntry[],
+  currentMode: DesktopMode = "desktop",
+): AppEntry[] {
+  const viewDestination: AppEntry = currentMode === "canvas"
+    ? { name: "Desktop", path: "__os-view-desktop__", iconUrl: iconUrlForSlug("desktop") }
+    : { name: "Canvas", path: "__os-view-canvas__", iconUrl: iconUrlForSlug("canvas") };
+  return [viewDestination, ...buildWebDesktopIconApps(apps)];
 }
