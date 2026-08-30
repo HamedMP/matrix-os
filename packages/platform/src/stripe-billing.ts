@@ -7,7 +7,9 @@ import type {
   StripeWebhookEvent,
 } from './billing-routes.js';
 
-export const MATRIX_STRIPE_API_VERSION = '2026-07-29.dahlia';
+// Keep the requested API version aligned with the generated types shipped by
+// the newest Stripe SDK eligible under the repository's seven-day age gate.
+export const MATRIX_STRIPE_API_VERSION = '2026-04-22.dahlia';
 export const MATRIX_STRIPE_API_TIMEOUT_MS = 10_000;
 
 function checkoutIntegrationIdentifier(
