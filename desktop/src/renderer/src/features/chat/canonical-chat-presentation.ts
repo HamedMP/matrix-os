@@ -15,6 +15,15 @@ import type {
   ConversationWorkPresentation,
 } from "../../components/conversation/presentation";
 
+const MAX_MESSAGE_PART_PROJECTIONS = 64;
+const MAX_RUN_ACTIVITY_PROJECTIONS = 500;
+
+function setBounded<K, V>(map: Map<K, V>, key: K, value: V, limit: number): boolean {
+  if (!map.has(key) && map.size >= limit) return false;
+  map.set(key, value);
+  return true;
+}
+
 function messageText(message: CanonicalChatMessage): string {
   let output = "";
   let previousWasText = false;
@@ -138,16 +147,22 @@ function messageWork(message: CanonicalChatMessage): ConversationWorkPresentatio
 
   for (const part of message.parts) {
     if (part.type === "tool_request") {
-      if (!toolRequests.has(part.toolCallId)) toolOrder.push(part.toolCallId);
-      toolRequests.set(part.toolCallId, part);
+      const isNew = !toolRequests.has(part.toolCallId);
+      if (setBounded(toolRequests, part.toolCallId, part, MAX_MESSAGE_PART_PROJECTIONS) && isNew) {
+        toolOrder.push(part.toolCallId);
+      }
     } else if (part.type === "tool_result") {
-      if (!toolRequests.has(part.toolCallId) && !toolResults.has(part.toolCallId)) toolOrder.push(part.toolCallId);
-      toolResults.set(part.toolCallId, part);
+      const isNew = !toolRequests.has(part.toolCallId) && !toolResults.has(part.toolCallId);
+      if (setBounded(toolResults, part.toolCallId, part, MAX_MESSAGE_PART_PROJECTIONS) && isNew) {
+        toolOrder.push(part.toolCallId);
+      }
     } else if (part.type === "approval_request") {
-      if (!approvals.has(part.approvalId)) approvalOrder.push(part.approvalId);
-      approvals.set(part.approvalId, part);
+      const isNew = !approvals.has(part.approvalId);
+      if (setBounded(approvals, part.approvalId, part, MAX_MESSAGE_PART_PROJECTIONS) && isNew) {
+        approvalOrder.push(part.approvalId);
+      }
     } else if (part.type === "approval_result") {
-      approvalResults.set(part.approvalId, part);
+      setBounded(approvalResults, part.approvalId, part, MAX_MESSAGE_PART_PROJECTIONS);
     } else if (part.type === "status") {
       notices.push({
         kind: "notice",
@@ -291,7 +306,9 @@ function runPresentation(
       return left.index - right.index;
     });
   const uniqueRunActivities = new Map<string, CanonicalChatRunActivity>();
-  for (const { activity } of ordered) uniqueRunActivities.set(activity.id, activity);
+  for (const { activity } of ordered) {
+    setBounded(uniqueRunActivities, activity.id, activity, MAX_RUN_ACTIVITY_PROJECTIONS);
+  }
   const runActivities = [...uniqueRunActivities.values()];
   const toolProgress = new Map<string, Extract<CanonicalChatRunActivity, { type: "tool.progress" }>>();
   const agentActivities = new Map<string, Extract<CanonicalChatRunActivity, { type: "agent.activity" }>>();
@@ -317,7 +334,7 @@ function runPresentation(
           ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
         });
       }
-      toolProgress.set(activity.toolCallId, activity);
+      setBounded(toolProgress, activity.toolCallId, activity, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "agent.activity") {
       if (!agentActivities.has(activity.activityId)) {
         activityOrder.push({
@@ -327,23 +344,23 @@ function runPresentation(
           ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
         });
       }
-      agentActivities.set(activity.activityId, activity);
+      setBounded(agentActivities, activity.activityId, activity, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "tool.output") {
       const output = toolOutput.get(activity.toolCallId) ?? [];
       output.push(activity.text);
-      toolOutput.set(activity.toolCallId, output);
+      setBounded(toolOutput, activity.toolCallId, output, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "assistant.delta") {
       const current = streamed.get(activity.messageId);
-      streamed.set(activity.messageId, {
+      setBounded(streamed, activity.messageId, {
         text: `${current?.text ?? ""}${activity.delta}`,
         occurredAt: activity.occurredAt,
-      });
+      }, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "run.error") {
       runError = activity;
     } else if (activity.type === "approval.requested") {
       const key = `approval:${activity.approvalId}`;
-      if (!requests.has(key)) requestOrder.push(key);
-      requests.set(key, {
+      const isNew = !requests.has(key);
+      if (setBounded(requests, key, {
         kind: "request",
         id: activity.id,
         phase: "commentary",
@@ -353,15 +370,15 @@ function runPresentation(
         label: activity.title,
         risk: activity.risk,
         timestamp: Date.parse(activity.occurredAt),
-      });
+      }, MAX_RUN_ACTIVITY_PROJECTIONS) && isNew) requestOrder.push(key);
     } else if (activity.type === "approval.resolved") {
       const key = `approval:${activity.approvalId}`;
       const request = requests.get(key);
-      if (request) requests.set(key, { ...request, state: "resolved", actions: undefined });
+      if (request) setBounded(requests, key, { ...request, state: "resolved", actions: undefined }, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "input.requested") {
       const key = `input:${activity.requestId}`;
-      if (!requests.has(key)) requestOrder.push(key);
-      requests.set(key, {
+      const isNew = !requests.has(key);
+      if (setBounded(requests, key, {
         kind: "request",
         id: activity.id,
         phase: "commentary",
@@ -371,11 +388,11 @@ function runPresentation(
         label: activity.title,
         timestamp: Date.parse(activity.occurredAt),
         actions: [{ kind: "input", requestId: activity.requestId, label: "Submit" }],
-      });
+      }, MAX_RUN_ACTIVITY_PROJECTIONS) && isNew) requestOrder.push(key);
     } else if (activity.type === "input.resolved") {
       const key = `input:${activity.requestId}`;
       const request = requests.get(key);
-      if (request) requests.set(key, { ...request, state: "resolved", actions: undefined });
+      if (request) setBounded(requests, key, { ...request, state: "resolved", actions: undefined }, MAX_RUN_ACTIVITY_PROJECTIONS);
     }
   }
 
