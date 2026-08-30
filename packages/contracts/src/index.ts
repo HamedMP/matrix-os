@@ -40,6 +40,7 @@ export * from "#canonical-chat-surface";
 export * from "#hermes-configuration";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
+export * from "#provider-settings";
 export * from "#safe-client-error";
 export * from "#terminal-links";
 export { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
