@@ -797,6 +797,24 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("records a bounded protocol category when an official Hermes event is rejected", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: 42 });
+
+    await eventsPromise;
+    expect(warn).toHaveBeenCalledWith(
+      "[chat/hermes] Provider Run failed:",
+      "HermesGatewayProtocolError:event_invalid",
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("42");
+    warn.mockRestore();
+  });
+
   it("reports a Hermes Run failure without mislabeling it as a transport failure", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
