@@ -14,6 +14,9 @@ import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 import WorkTab from "../work/WorkTab";
+import BrowserTab from "../browser/BrowserTab";
+import DesktopEditorWorkspace from "../editor/DesktopEditorWorkspace";
+import NotesWorkspace from "../notes/NotesWorkspace";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -65,6 +68,8 @@ export function TabPane({
   switch (tab.kind) {
     case "home":
       return <HomeTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
+    case "browser":
+      return <BrowserTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "work":
       return <WorkTab
         route={tab.workRoute ?? "chat"}
@@ -80,6 +85,12 @@ export function TabPane({
       return <TerminalsTab active={active} visible={visible} />;
     case "files":
       return <FilesWorkspace />;
+    case "editor":
+      return <DesktopEditorWorkspace />;
+    case "vscode":
+      return <EmbedHost kind="code-editor" active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
+    case "notes":
+      return <NotesWorkspace active={active} />;
     case "apps":
       return <AppLauncher />;
     case "projects":
@@ -135,7 +146,7 @@ export default function TabContent() {
       {tabs.map((tab) => {
         const active = tab.id === activeTabId;
         // Embeds also detach while a modal overlay is open so it isn't obscured.
-        const isEmbed = tab.kind === "home" || tab.kind === "app";
+        const isEmbed = tab.kind === "home" || tab.kind === "app" || tab.kind === "browser" || tab.kind === "vscode";
         const paneActive = active && !(isEmbed && overlayOpen);
         return (
           <RetainedPane

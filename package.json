@@ -39,6 +39,7 @@
     "docker:build": "docker compose --env-file .env.docker -f docker-compose.dev.yml build --no-cache",
     "cleanup:local-artifacts": "node scripts/cleanup-local-artifacts.mjs",
     "observability:posthog-alerts": "node scripts/observability/setup-posthog-alerts.mjs",
+    "spike:agent-sdk": "node scripts/spikes/agent-sdk-gateway/run.mjs",
     "release:enqueue-golden-snapshot": "node scripts/enqueue-golden-snapshot.mjs",
     "test": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && vitest run \"$@\"' --",
     "test:golden-snapshots": "bun run test -- --maxWorkers=1 --no-file-parallelism tests/platform/golden-snapshot-*.test.ts tests/platform/host-bundle-snapshot-workflow.test.ts tests/platform/host-bundle-route.test.ts tests/platform/r2-client.test.ts tests/platform/ci-workflows.test.ts tests/platform/customer-vps.test.ts tests/platform/customer-vps-cloud-init.test.ts tests/platform/customer-vps-hetzner.test.ts tests/platform/customer-vps-host-bundle.test.ts",

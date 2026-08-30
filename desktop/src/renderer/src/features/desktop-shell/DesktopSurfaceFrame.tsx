@@ -93,8 +93,8 @@ export default function DesktopSurfaceFrame({
     ? isWindow
     : isDesktopHidden || isDesktopTransition || (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
-  const isNativeEmbed = tab.kind === "home" || tab.kind === "app";
-  const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "settings";
+  const isNativeEmbed = tab.kind === "home" || tab.kind === "app" || tab.kind === "browser" || tab.kind === "vscode";
+  const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "settings" || tab.kind === "notes";
   const requestedSettingsSection = useUi((state) => state.requestedSettingsSection);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("account");
   useEffect(() => {
@@ -209,7 +209,7 @@ export default function DesktopSurfaceFrame({
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBar={isWindow || surfaceChrome ? (
         <TopBar
-          title={tab.kind === "settings" ? undefined : surfaceChrome ? surfaceChrome.title : tab.title}
+          title={tab.kind === "settings" || tab.kind === "notes" ? undefined : surfaceChrome ? surfaceChrome.title : tab.title}
           leftActions={surfaceChrome?.leftActions}
           rightActions={surfaceChrome?.rightActions}
           leftPaneWidth={surfaceChrome?.leftPaneWidth}

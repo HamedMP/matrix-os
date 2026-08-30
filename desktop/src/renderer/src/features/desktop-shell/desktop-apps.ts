@@ -1,14 +1,29 @@
 import {
+  Blocks,
+  BrushIcon,
+  Code2,
+  FilePenLine,
   FolderTree,
   Globe2,
   MessageSquare,
+  Notebook,
   Settings,
   SquareTerminal,
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
 
-export type DesktopAppId = "browser" | "work" | "terminal" | "files" | "settings";
+export type DesktopAppId =
+  | "work"
+  | "terminal"
+  | "files"
+  | "editor"
+  | "vscode"
+  | "settings"
+  | "plugins"
+  | "browser"
+  | "notes"
+  | "whiteboard";
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
@@ -17,17 +32,11 @@ export interface DesktopAppConfig {
   name: string;
   color?: string;
   iconColor?: string;
+  settingsSection?: "services";
+  slug?: "whiteboard";
 }
 
 export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
-  {
-    id: "browser",
-    kind: "home",
-    icon: Globe2,
-    name: "Browser",
-    color: "var(--surface-info-emphasis, #3B85BA)",
-    iconColor: "white",
-  },
   {
     id: "work",
     kind: "work",
@@ -53,12 +62,62 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     iconColor: "white",
   },
   {
+    id: "editor",
+    kind: "editor",
+    icon: FilePenLine,
+    name: "Editor",
+    color: "#4D7FA8",
+    iconColor: "white",
+  },
+  {
+    id: "vscode",
+    kind: "vscode",
+    icon: Code2,
+    name: "VS Code",
+    color: "#007ACC",
+    iconColor: "white",
+  },
+  {
     id: "settings",
     kind: "settings",
     icon: Settings,
     name: "Settings",
     color: "var(--surface-neutral-emphasis, #6B7280)",
     iconColor: "white",
+  },
+  {
+    id: "plugins",
+    kind: "settings",
+    icon: Blocks,
+    name: "Plugins",
+    color: "#7C6DB4",
+    iconColor: "white",
+    settingsSection: "services",
+  },
+  {
+    id: "browser",
+    kind: "browser",
+    icon: Globe2,
+    name: "Browser",
+    color: "var(--surface-info-emphasis, #3B85BA)",
+    iconColor: "white",
+  },
+  {
+    id: "notes",
+    kind: "notes",
+    icon: Notebook,
+    name: "Notes",
+    color: "var(--surface-purple-emphasis)",
+    iconColor: "white",
+  },
+  {
+    id: "whiteboard",
+    kind: "app",
+    icon: BrushIcon,
+    name: "Whiteboard",
+    color: "#D46A92",
+    iconColor: "white",
+    slug: "whiteboard",
   },
 ];
 

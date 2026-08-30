@@ -4,6 +4,7 @@
 // unbounded.
 import { randomUUID } from "node:crypto";
 import { isNavigationAllowed } from "./origin-policy";
+import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
 
 export interface Bounds {
   x: number;
@@ -21,7 +22,7 @@ export interface EmbedViewLike {
   destroy(): void;
 }
 
-export type EmbedKind = "hosted-shell" | "app";
+export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "browser";
 
 type EmbedOriginOptions =
   | { allowedOrigins: string[]; getAllowedOrigins?: never }
@@ -33,6 +34,8 @@ export type EmbedManagerOptions = {
     kind: EmbedKind;
     slug: string | null;
     routeSlug: string | null;
+    allowedOrigins: string[];
+    resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
     onState: (state: "loading" | "ready" | "failed") => void;
   }) => EmbedViewLike;
   maxLive?: number;
@@ -52,6 +55,7 @@ interface EmbedRecord {
   loadGeneration: number;
   lastUsed: number;
   onState: (state: "loading" | "ready" | "failed") => void;
+  onDispose?: () => void;
 }
 
 function isAbortedLoadError(err: unknown): boolean {
@@ -96,19 +100,27 @@ export class EmbedManager {
       id?: string;
       active?: boolean;
       routeSlug?: string;
+      allowedOrigins?: string[];
+      resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
       onState?: (state: "loading" | "ready" | "failed") => void;
+      onDispose?: () => void;
     },
   ): string {
-    if (!isNavigationAllowed(url, this.getAllowedOrigins())) {
+    const allowedOrigins = options?.allowedOrigins ?? this.getAllowedOrigins();
+    if (!isNavigationAllowed(url, allowedOrigins)) {
       throw new Error("embed URL is not allowed");
     }
 
+    const id = options?.id ?? randomUUID();
     const partition =
       kind === "hosted-shell"
         ? "persist:hosted-shell"
-        : this.appPartition(options?.routeSlug ?? slug);
+        : kind === "code-editor"
+          ? "persist:code-editor"
+        : kind === "browser"
+          ? `runtime-browser-${id}`
+          : this.appPartition(options?.routeSlug ?? slug);
 
-    const id = options?.id ?? randomUUID();
     const active = options?.active ?? true;
     if (this.records.has(id)) throw new Error("embed id already exists");
     const onState = options?.onState ?? (() => undefined);
@@ -130,6 +142,8 @@ export class EmbedManager {
       kind,
       slug,
       routeSlug: kind === "app" ? options?.routeSlug ?? slug : null,
+      allowedOrigins,
+      resolveNavigation: options?.resolveNavigation,
       onState: emitState,
     });
     record = {
@@ -141,6 +155,7 @@ export class EmbedManager {
       loadGeneration: 0,
       lastUsed: ++this.tick,
       onState: emitState,
+      onDispose: options?.onDispose,
     };
     if (active) view.attach();
     view.setBounds(bounds);
@@ -298,6 +313,17 @@ export class EmbedManager {
       record.live = false;
     }
     record.view.destroy();
+    const onDispose = record.onDispose;
+    record.onDispose = undefined;
+    if (!onDispose) return;
+    try {
+      onDispose();
+    } catch (err: unknown) {
+      console.warn(
+        "[embed-manager] embed disposal failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   private leastRecentlyUsed(predicate: (record: EmbedRecord) => boolean): EmbedRecord | null {

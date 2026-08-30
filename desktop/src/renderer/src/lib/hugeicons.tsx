@@ -1,4 +1,5 @@
 import { HugeiconsIcon } from "@hugeicons/react";
+import { Note01Icon as Note01Data } from "@hugeicons/core-free-icons";
 import type { ComponentProps, ComponentType } from "react";
 import type { IconSvgElement } from "@hugeicons/react";
 
@@ -567,3 +568,4 @@ export const XCircleIcon: LucideIcon = createIcon(XCircleIconData);
 export const XIcon: LucideIcon = createIcon(XIconData);
 export const Zap: LucideIcon = createIcon(ZapData);
 export const ArrowExpand01: LucideIcon = createIcon(ArrowExpand01Data);
+export const Notebook: LucideIcon = createIcon(Note01Data);

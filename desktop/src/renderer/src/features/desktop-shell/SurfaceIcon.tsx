@@ -1,10 +1,13 @@
 import {
   FileCode2,
+  FilePenLine,
+  Code2,
   FolderKanban,
   FolderTree,
   Globe2,
   LayoutGrid,
   MessageCircle,
+  Notebook,
   Settings,
   SquareTerminal,
   type LucideIcon,
@@ -14,6 +17,7 @@ import type { Tab, TabKind } from "../../stores/tabs";
 
 const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   home: Globe2,
+  browser: Globe2,
   work: FolderKanban,
   chat: MessageCircle,
   projects: FolderKanban,
@@ -22,6 +26,9 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   terminal: SquareTerminal,
   terminals: SquareTerminal,
   files: FolderTree,
+  editor: FilePenLine,
+  vscode: Code2,
+  notes: Notebook,
   apps: LayoutGrid,
   app: LayoutGrid,
   settings: Settings,

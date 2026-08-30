@@ -5,12 +5,12 @@ import {
   type DesktopViewport,
 } from "../../stores/desktop-surfaces";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
+import { EDITOR_WORKSPACE_TAB_SPEC } from "../editor/desktop-editor-store";
 import { openChatIndex, openProjectsIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
 import { FIXED_DESKTOP_APPS, type DesktopAppId } from "./desktop-apps";
 import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
 import DesktopTaskbar from "./DesktopTaskbar";
-import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 import { NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
 import DesktopBackground from "./DesktopBackground";
 import DesktopLaunchpad from "./DesktopLaunchpad";
@@ -157,11 +157,22 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
 
   const destinations = useMemo<DesktopDestination[]>(() => {
     const openers: Record<DesktopAppId, () => void> = {
-      browser: () => openRoot(() => openTab(HOSTED_SHELL_TAB_SPEC)),
       work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
-      settings: () => openRoot(() => openTab({ kind: "settings", title: "Settings" })),
+      editor: () => openRoot(() => openTab(EDITOR_WORKSPACE_TAB_SPEC)),
+      vscode: () => openRoot(() => openTab({ kind: "vscode", title: "VS Code", closable: false })),
+      settings: () => openRoot(() => {
+        useUi.getState().requestSettingsSection("account");
+        openTab({ kind: "settings", title: "Settings" });
+      }),
+      plugins: () => openRoot(() => {
+        useUi.getState().requestSettingsSection("services");
+        openTab({ kind: "settings", title: "Plugins" });
+      }),
+      browser: () => openRoot(() => openTab({ kind: "browser", title: "Browser" })),
+      notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes" })),
+      whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard" })),
     };
     return FIXED_DESKTOP_APPS.map((app) => ({ ...app, open: openers[app.id] }));
   }, [openRoot, openTab]);
@@ -180,7 +191,9 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     const minimizedTab = useTabs.getState().tabs.find((tab) => tab.id === tabId);
     minimizeSurface(tabId);
     if (useTabs.getState().activeTabId === tabId) focusFallback(tabId);
-    if (minimizedTab?.kind === "home") requestBackgroundRefresh();
+    if (minimizedTab?.kind === "home" || minimizedTab?.kind === "browser") {
+      requestBackgroundRefresh();
+    }
   }, [focusFallback, minimizeSurface, requestBackgroundRefresh]);
 
   const close = useCallback((tab: Tab) => {
@@ -188,7 +201,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
     if (wasActive) focusFallback(tab.id);
-    if (tab.kind === "home") requestBackgroundRefresh();
+    if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
 
   const activateFromDrawer = useCallback((tabId: string) => {

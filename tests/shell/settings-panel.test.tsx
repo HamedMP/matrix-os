@@ -87,6 +87,19 @@ describe("Settings panel", () => {
     expect(screen.getByText("Agent settings").isConnected).toBe(true);
   });
 
+  it("honors a Desktop deep link when Settings opens", async () => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+    const { rerender } = render(
+      <Settings open={false} defaultSection="appearance" onOpenChange={() => {}} />,
+    );
+
+    rerender(<Settings open defaultSection="integrations" onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("Integration settings").isConnected).toBe(true));
+    expect(screen.queryByText("Appearance settings")).toBeNull();
+    expect(screen.getByRole("button", { name: "Services" }).getAttribute("aria-current")).toBe("page");
+  });
+
   it("keeps account controls available while billing is locked for provisioning", async () => {
     billingState.active = false;
     const { Settings } = await import("../../shell/src/components/Settings.js");
@@ -161,7 +174,7 @@ describe("Settings panel", () => {
     const defaultInstallsTab = screen.getByRole("button", { name: "Default installs" });
     expect(defaultInstallsTab.getAttribute("aria-current")).toBe("page");
     expect((screen.getByRole("button", { name: "Billing Completed" }) as HTMLButtonElement).disabled).toBe(true);
-    for (const label of ["Appearance", "Integrations", "System"]) {
+    for (const label of ["Appearance", "Services", "System"]) {
       expect((screen.getByRole("button", { name: `${label} Unavailable until your VPS is ready` }) as HTMLButtonElement).disabled).toBe(true);
     }
 

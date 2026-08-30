@@ -11,6 +11,7 @@ import type {
 import { MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -522,7 +523,7 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail && globalView === "conversation" ? (
           <>
-            <ConversationTranscript turns={transcript} callbacks={{ copyText }} />
+            <ConversationTranscript turns={transcript} callbacks={{ copyText, openFile: openFileInDesktopEditor }} />
             <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (

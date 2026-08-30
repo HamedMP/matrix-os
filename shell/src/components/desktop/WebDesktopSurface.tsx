@@ -5,6 +5,8 @@ import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   Blocks,
+  BrushIcon,
+  FileText,
   FolderKanban,
   FolderTree,
   Globe2,
@@ -15,6 +17,7 @@ import {
   type LucideIcon,
 } from "@/lib/hugeicons";
 import { WebDesktopHeader } from "./WebDesktopHeader";
+import type { WebDesktopSettingsSection } from "./WebDesktopControls";
 
 interface WebDesktopSurfaceProps {
   apps: AppEntry[];
@@ -23,7 +26,8 @@ interface WebDesktopSurfaceProps {
   launcherOpen: boolean;
   onOpenApp: (path: string, name?: string) => void;
   onOpenLauncher: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (section: WebDesktopSettingsSection) => void;
+  headerActions?: ReactNode;
   onActivateWindow: (id: string) => void;
   onCloseWindow: (id: string) => void;
   onShowDesktop: () => void;
@@ -62,6 +66,12 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   }
   if (app.path === "__settings__") {
     return { color: "var(--surface-neutral-emphasis, #6B7280)", iconColor: "white", icon: SettingsGlyph };
+  }
+  if (name === "notes") {
+    return { color: "#E3B341", iconColor: "white", icon: FileText };
+  }
+  if (name === "whiteboard") {
+    return { color: "#D46A92", iconColor: "white", icon: BrushIcon };
   }
   if (app.path === "__workspace__" || name === "projects") {
     return { color: "var(--surface-error-emphasis, #BA5236)", iconColor: "white", icon: FolderKanban };
@@ -177,6 +187,7 @@ export function WebDesktopSurface({
   onOpenApp,
   onOpenLauncher,
   onOpenSettings,
+  headerActions,
   onActivateWindow,
   onCloseWindow,
   onShowDesktop,
@@ -186,12 +197,16 @@ export function WebDesktopSurface({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const desktopApps = useMemo(() => {
     const preferred = [
-      apps.find((app) => app.name.toLowerCase() === "browser"),
-      apps.find((app) => app.path === "__chat__"),
+      apps.find((app) => app.path === "__chat__")
+        ? { ...apps.find((app) => app.path === "__chat__")!, name: "Chat" }
+        : undefined,
       apps.find((app) => app.path === "__terminal__"),
       apps.find((app) => app.path === "__file-browser__"),
       { name: "Settings", path: "__settings__" },
-      apps.find((app) => app.path === "__workspace__" || app.name.toLowerCase() === "projects"),
+      { name: "Plugins", path: "__plugins__" },
+      apps.find((app) => app.name.toLowerCase() === "browser"),
+      apps.find((app) => app.name.toLowerCase() === "notes"),
+      apps.find((app) => app.name.toLowerCase() === "whiteboard"),
     ];
     const seen = new Set<string>();
     return preferred.filter((app): app is AppEntry => {
@@ -235,6 +250,7 @@ export function WebDesktopSurface({
         onCloseWindow={onCloseWindow}
         onShowDesktop={onShowDesktop}
         onToggleFullscreen={onToggleFullscreen}
+        rightActions={headerActions}
       />
 
       <nav
@@ -249,7 +265,8 @@ export function WebDesktopSurface({
             selected={selectedPath === app.path}
             onSelect={() => setSelectedPath(app.path)}
             onOpen={() => {
-              if (app.path === "__settings__") onOpenSettings();
+              if (app.path === "__settings__") onOpenSettings("appearance");
+              else if (app.path === "__plugins__") onOpenSettings("integrations");
               else onOpenApp(app.path, app.name);
             }}
           />

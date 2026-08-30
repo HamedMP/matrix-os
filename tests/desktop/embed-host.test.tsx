@@ -4,7 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
-import { invoke } from "../../desktop/src/renderer/src/lib/operator";
+import { invoke, onEvent } from "../../desktop/src/renderer/src/lib/operator";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
@@ -18,6 +18,8 @@ describe("EmbedHost", () => {
 
   beforeEach(() => {
     vi.mocked(invoke).mockClear();
+    vi.mocked(onEvent).mockReset();
+    vi.mocked(onEvent).mockReturnValue(() => undefined);
     useConnection.setState(useConnection.getInitialState(), true);
     useConnection.setState({ runtimeSlot: "primary" });
     openResolve = null;
@@ -187,6 +189,81 @@ describe("EmbedHost", () => {
       expect(invoke).toHaveBeenCalledWith(
         "embed:set-active",
         { embedId: "embed-2", active: true },
+      );
+    });
+  });
+
+  it("wires runtime Browser URLs through the typed embed request", async () => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "browser-1", state: "loading" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="browser" url="http://127.0.0.1:3000/docs" />);
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", {
+      kind: "browser",
+      url: "http://127.0.0.1:3000/docs",
+      bounds: { x: 10, y: 20, width: 300, height: 200 },
+      active: true,
+    }));
+  });
+
+  it("opens VS Code through the fixed trusted code-editor request", async () => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "code-1", state: "loading" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="code-editor" />);
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", {
+      kind: "code-editor",
+      bounds: { x: 10, y: 20, width: 300, height: 200 },
+      active: true,
+    }));
+  });
+
+  it("reopens the same runtime Browser URL after an unexpected tunnel failure", async () => {
+    let nextEmbedId = 0;
+    let emitState: ((payload: { embedId: string; state: "failed" }) => void) | null = null;
+    vi.mocked(onEvent).mockImplementation((_channel, callback) => {
+      emitState = callback as typeof emitState;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        nextEmbedId += 1;
+        return Promise.resolve({ embedId: `browser-${nextEmbedId}`, state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="browser" url="http://127.0.0.1:3000/docs" />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "browser-1", active: true },
+    ));
+
+    act(() => emitState?.({ embedId: "browser-1", state: "failed" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:close", { embedId: "browser-1" });
+      expect(vi.mocked(invoke).mock.calls.filter(([channel]) => channel === "embed:open")).toHaveLength(2);
+      expect(invoke).toHaveBeenCalledWith("embed:open", {
+        kind: "browser",
+        url: "http://127.0.0.1:3000/docs",
+        bounds: { x: 10, y: 20, width: 300, height: 200 },
+        active: true,
+      });
+      expect(invoke).toHaveBeenCalledWith(
+        "embed:set-active",
+        { embedId: "browser-2", active: true },
       );
     });
   });

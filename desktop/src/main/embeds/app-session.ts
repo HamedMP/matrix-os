@@ -150,6 +150,8 @@ export interface HandoffDeps {
   ) => Promise<{ status: number; setCookieHeaders: string[] }>;
   cookieJar: CookieJarLike;
   gatewayOrigin: string;
+  /** Optional fixed origin that receives the exchanged host-only cookies. */
+  cookieOrigin?: string;
 }
 
 export type HandoffResult = { ok: true } | { ok: false; reason: "auth" | "unavailable" };
@@ -158,6 +160,7 @@ export async function performAppSessionHandoff(
   deps: HandoffDeps,
   redirectTo: string,
 ): Promise<HandoffResult> {
+  const cookieOrigin = deps.cookieOrigin ?? deps.gatewayOrigin;
   let response: { status: number; setCookieHeaders: string[] };
   try {
     response = await deps.request(`${deps.gatewayOrigin}/api/auth/app-session`, {
@@ -186,12 +189,16 @@ export async function performAppSessionHandoff(
     const existing = await deps.cookieJar.get({});
     for (const cookie of existing) {
       if (isStaleClerkCookie(cookie)) {
-        await deps.cookieJar.remove(removalUrlForCookie(cookie, deps.gatewayOrigin), cookie.name);
+        await deps.cookieJar.remove(removalUrlForCookie(cookie, cookieOrigin), cookie.name);
       }
     }
     for (const name of REQUIRED_COOKIES) {
       const cookie = cookies.find((c) => c.name === name);
-      if (cookie) await deps.cookieJar.set({ ...cookie, url: deps.gatewayOrigin });
+      if (cookie) {
+        const cookieToInstall = { ...cookie, url: cookieOrigin };
+        if (deps.cookieOrigin) delete cookieToInstall.domain;
+        await deps.cookieJar.set(cookieToInstall);
+      }
     }
   } catch (err: unknown) {
     console.warn(
