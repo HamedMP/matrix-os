@@ -56,9 +56,10 @@ describe("bench-shell-latency script helpers", () => {
   });
 
   it("keeps bearer tokens out of terminal websocket URLs", () => {
-    const url = attachUrl("https://app.matrix-os.com", "bench-main");
+    const terminalRef = { workspaceId: "tws_bench", tabId: "tt_main" };
+    const url = attachUrl("https://app.matrix-os.com", terminalRef);
 
-    expect(url).toBe(`wss://app.matrix-os.com/ws/terminal/session?session=bench-main&fromSeq=${LIVE_TAIL_FROM_SEQ}`);
+    expect(url).toBe(`wss://app.matrix-os.com/ws/terminal/tab?workspaceId=tws_bench&tabId=tt_main&client=hard&cols=120&rows=40&fromSeq=${LIVE_TAIL_FROM_SEQ}`);
     expect(url).not.toContain("token=");
   });
 
@@ -90,17 +91,36 @@ describe("bench-shell-latency script helpers", () => {
   });
 
   it("creates benchmark sessions with the deterministic echo command", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 201 }));
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const path = new URL(input instanceof URL ? input : String(input)).pathname;
+      if (path === "/api/terminal/workspaces/ensure") {
+        return new Response(JSON.stringify({ workspace: { id: "tws_bench" } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ tab: { id: "tt_main" } }), { status: 201 });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const cmd = buildEchoCommand();
 
-    await createSession({ gateway: "https://gateway.example", token: "secret" }, "bench-main", cmd);
+    await expect(createSession(
+      { gateway: "https://gateway.example", token: "secret" },
+      "bench-main",
+      cmd,
+    )).resolves.toEqual({ workspaceId: "tws_bench", tabId: "tt_main" });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      new URL("/api/terminal/sessions", "https://gateway.example"),
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      new URL("/api/terminal/workspaces/ensure", "https://gateway.example"),
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ name: "bench-main", cmd }),
+        body: "{}",
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      new URL("/api/terminal/workspaces/tws_bench/tabs", "https://gateway.example"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "bench-main", command: ["sh", "-lc", cmd] }),
         headers: expect.objectContaining({
           Authorization: "Bearer secret",
           "Content-Type": "application/json",

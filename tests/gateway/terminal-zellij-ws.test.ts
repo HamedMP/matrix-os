@@ -1381,7 +1381,7 @@ describe("zellij terminal WebSocket", () => {
     const next = vi.fn();
     const makeContext = (url: string, authorization?: string) => ({
       req: {
-        path: "/ws/terminal",
+        path: "/ws/terminal/tab",
         url,
         header: (name: string) => (
           name.toLowerCase() === "authorization" ? authorization : undefined
@@ -1392,10 +1392,10 @@ describe("zellij terminal WebSocket", () => {
     });
     const middleware = authMiddleware("secret-token");
 
-    await middleware(makeContext("http://localhost/ws/terminal?token=secret-token") as never, next);
-    await middleware(makeContext("http://localhost/ws/terminal", "Bearer secret-token") as never, next);
+    await middleware(makeContext("http://localhost/ws/terminal/tab?token=secret-token") as never, next);
+    await middleware(makeContext("http://localhost/ws/terminal/tab", "Bearer secret-token") as never, next);
     const rejected = await middleware(
-      makeContext("http://localhost/ws/terminal?token=secret-token-extra") as never,
+      makeContext("http://localhost/ws/terminal/tab?token=secret-token-extra") as never,
       next,
     );
 

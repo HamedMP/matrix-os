@@ -14,6 +14,7 @@ import {
 } from "@desktop/renderer/src/features/terminal/terminal-rich-paste";
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const TERMINAL_REF_KEY = `tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`;
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const attachmentResize = vi.fn();
@@ -431,7 +432,7 @@ describe("TerminalView session switching", () => {
 
   it("intercepts primary and secondary link mouseup before xterm can activate it", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const terminal = createdTerminals.at(-1)!;
     const provider = terminal.registeredProviders[0] as {
       provideLinks: (
@@ -493,7 +494,7 @@ describe("TerminalView session switching", () => {
       configurable: true,
       value: { writeText },
     });
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const terminal = createdTerminals.at(-1)!;
     terminal.selection = "content-type: application/json";
     const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
@@ -545,7 +546,7 @@ describe("TerminalView session switching", () => {
       .mockReturnValueOnce(firstUpload)
       .mockReturnValueOnce(secondUpload);
     useConnection.setState({ api: { postBytes } as never });
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const first = new File(["first"], "first.png", { type: "image/png" });
     const second = new File(["second"], "second.png", { type: "image/png" });
@@ -559,7 +560,7 @@ describe("TerminalView session switching", () => {
     resolveFirst({ terminalPath: paths[0]! });
     expect(postBytes).toHaveBeenNthCalledWith(
       1,
-      "/api/terminal/sessions/alpha/paste-assets",
+      `/api/terminal/workspaces/tws_${"a".repeat(32)}/tabs/tt_${"b".repeat(32)}/paste-assets`,
       first,
       { "Content-Type": "image/png", "X-Matrix-Filename": "first.png" },
       { timeoutMs: 30_000 },
@@ -574,7 +575,7 @@ describe("TerminalView session switching", () => {
   it("supports drop but leaves unsupported and inactive terminal paste untouched", async () => {
     const postBytes = vi.fn(async () => ({ terminalPath: "/home/matrix/home/projects/drop.webp" }));
     useConnection.setState({ api: { postBytes } as never });
-    const { container, rerender } = render(<TerminalView sessionName="alpha" />);
+    const { container, rerender } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const unsupported = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(unsupported, "clipboardData", {
@@ -589,7 +590,7 @@ describe("TerminalView session switching", () => {
     });
     await waitFor(() => expect(attachmentWrite).toHaveBeenCalledTimes(1));
 
-    rerender(<TerminalView sessionName="alpha" active={false} />);
+    rerender(<TerminalView sessionName={TERMINAL_REF_KEY} active={false} />);
     const inactivePaste = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(inactivePaste, "clipboardData", {
       value: { files: [new File(["png"], "inactive.png", { type: "image/png" })] },
@@ -603,7 +604,7 @@ describe("TerminalView session switching", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const postBytes = vi.fn().mockRejectedValue(new Error("preview gateway offline"));
     useConnection.setState({ api: { postBytes } as never });
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
 
     fireEvent.paste(host, {

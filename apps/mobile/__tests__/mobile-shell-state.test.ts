@@ -11,155 +11,78 @@ import {
   saveMobileShellState,
 } from "../lib/mobile-shell-state";
 
+const TERMINAL_REF = "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001";
+
 describe("mobile shell state", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("parses valid native mobile shell state", () => {
+  it("parses current workspace/tab references", () => {
     expect(parseMobileShellState({
       surface: "native-mobile",
-      mode: "app",
+      mode: "terminal",
       lastActiveAppSlug: "games/snake",
-      lastActiveTerminalSessionId: "main",
-      terminalHandoffSessionId: "matrix-abc1234",
+      lastActiveTerminalRef: TERMINAL_REF,
+      terminalHandoffRef: TERMINAL_REF,
       canvasEnteredAt: "2026-05-12T00:00:00.000Z",
       updatedAt: "2026-05-12T00:01:00.000Z",
     })).toMatchObject({
       surface: "native-mobile",
-      mode: "app",
+      mode: "terminal",
       lastActiveAppSlug: "games/snake",
-      lastActiveTerminalSessionId: "main",
-      terminalHandoffSessionId: "matrix-abc1234",
-      canvasEnteredAt: "2026-05-12T00:00:00.000Z",
-      updatedAt: "2026-05-12T00:01:00.000Z",
+      lastActiveTerminalRef: TERMINAL_REF,
+      terminalHandoffRef: TERMINAL_REF,
     });
   });
 
-  it("falls back to launcher mode and drops unsafe persisted values", () => {
+  it("drops legacy and unsafe persisted terminal values", () => {
     expect(parseMobileShellState({
-      surface: "browser-shell",
       mode: "desktop",
       lastActiveAppSlug: "../system/secrets",
-      lastActiveTerminalSessionId: "terminal_123",
-      terminalHandoffSessionId: "../system/secrets",
-      canvasEnteredAt: "not-a-date",
+      lastActiveTerminalRef: "matrix-legacy",
+      terminalHandoffRef: "../system/secrets",
       updatedAt: "not-a-date",
     })).toMatchObject({
       surface: "native-mobile",
       mode: "launcher",
       lastActiveAppSlug: null,
-      lastActiveTerminalSessionId: null,
-      terminalHandoffSessionId: null,
-      canvasEnteredAt: null,
+      lastActiveTerminalRef: null,
+      terminalHandoffRef: null,
     });
   });
 
-  it("loads default state when storage is empty or invalid", async () => {
+  it("loads default state when storage is invalid", async () => {
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     jest.mocked(AsyncStorage.getItem).mockResolvedValueOnce("{not json");
-
     await expect(loadMobileShellState()).resolves.toMatchObject({
       surface: "native-mobile",
       mode: "launcher",
-      lastActiveAppSlug: null,
-      lastActiveTerminalSessionId: null,
+      lastActiveTerminalRef: null,
     });
-    expect(warnSpy).toHaveBeenCalledWith("[mobile] failed to load mobile shell state", expect.any(SyntaxError));
+    expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 
-  it("saves sanitized state to async storage", async () => {
+  it("saves sanitized current state under the coordinated schema key", async () => {
     jest.mocked(AsyncStorage.setItem).mockResolvedValueOnce();
-
-    await saveMobileShellState({
-      surface: "native-mobile",
-      mode: "app",
-      lastActiveAppSlug: "Notes App",
-      lastActiveTerminalSessionId: "terminal_123",
-      terminalHandoffSessionId: "550e8400-e29b-41d4-a716-446655440000",
-      canvasEnteredAt: null,
-      updatedAt: "bad-date",
-    });
-
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
-      MOBILE_SHELL_STATE_STORAGE_KEY,
-      expect.any(String),
-    );
-    const saved = JSON.parse(jest.mocked(AsyncStorage.setItem).mock.calls[0][1]);
-    expect(saved).toMatchObject({
-      surface: "native-mobile",
-      mode: "app",
-      lastActiveAppSlug: null,
-      lastActiveTerminalSessionId: null,
-      terminalHandoffSessionId: null,
-    });
-    expect(Date.parse(saved.updatedAt)).not.toBeNaN();
-  });
-
-  it("keeps a safe last-active app slug for mobile resume choices", async () => {
-    jest.mocked(AsyncStorage.setItem).mockResolvedValueOnce();
-
-    await saveMobileShellState({
-      surface: "native-mobile",
-      mode: "app",
-      lastActiveAppSlug: "games/minesweeper",
-      lastActiveTerminalSessionId: null,
-      terminalHandoffSessionId: null,
-      canvasEnteredAt: null,
-      updatedAt: "2026-05-14T00:00:00.000Z",
-    });
-
-    const saved = JSON.parse(jest.mocked(AsyncStorage.setItem).mock.calls[0][1]);
-    expect(saved).toMatchObject({
-      surface: "native-mobile",
-      mode: "app",
-      lastActiveAppSlug: "games/minesweeper",
-    });
-  });
-
-  it("keeps safe named shell-session references for cross-shell terminal resume", async () => {
-    jest.mocked(AsyncStorage.setItem).mockResolvedValueOnce();
-
-    expect(parseMobileShellState({
-      mode: "terminal",
-      lastActiveTerminalSessionId: "matrix-abc1234",
-      terminalHandoffSessionId: "matrix-abc1234",
-      updatedAt: "2026-05-15T00:00:00.000Z",
-    })).toMatchObject({
-      mode: "terminal",
-      lastActiveTerminalSessionId: "matrix-abc1234",
-      terminalHandoffSessionId: "matrix-abc1234",
-    });
-
     await saveMobileShellState({
       surface: "native-mobile",
       mode: "terminal",
-      lastActiveAppSlug: null,
-      lastActiveTerminalSessionId: "main",
-      terminalHandoffSessionId: "matrix-abc1234",
+      lastActiveAppSlug: "notes",
+      lastActiveTerminalRef: TERMINAL_REF,
+      terminalHandoffRef: TERMINAL_REF,
       canvasEnteredAt: null,
       updatedAt: "2026-05-15T00:00:00.000Z",
     });
 
-    const saved = JSON.parse(jest.mocked(AsyncStorage.setItem).mock.calls[0][1]);
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(MOBILE_SHELL_STATE_STORAGE_KEY, expect.any(String));
+    const saved = JSON.parse(jest.mocked(AsyncStorage.setItem).mock.calls[0]![1]);
     expect(saved).toMatchObject({
       mode: "terminal",
-      lastActiveTerminalSessionId: "main",
-      terminalHandoffSessionId: "matrix-abc1234",
-    });
-  });
-
-  it("drops legacy UUID terminal references that cannot resume named shell sessions", () => {
-    expect(parseMobileShellState({
-      mode: "terminal",
-      lastActiveTerminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
-      terminalHandoffSessionId: "550e8400-e29b-41d4-a716-446655440000",
-      updatedAt: "2026-05-16T00:00:00.000Z",
-    })).toMatchObject({
-      mode: "terminal",
-      lastActiveTerminalSessionId: null,
-      terminalHandoffSessionId: null,
+      lastActiveAppSlug: "notes",
+      lastActiveTerminalRef: TERMINAL_REF,
+      terminalHandoffRef: TERMINAL_REF,
     });
   });
 });

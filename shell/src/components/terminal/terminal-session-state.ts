@@ -1,5 +1,11 @@
 export interface ShellSessionSummary {
   name: string;
+  workspaceId: string;
+  tabId: string;
+  revision: number;
+  workspaceRevision: number;
+  projectId?: string;
+  cwd?: string;
   status?: "active" | "exited" | "degraded";
   placement?: "active" | "background";
   updatedAt?: string;

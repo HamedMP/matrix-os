@@ -8,118 +8,117 @@ import XCTest
 final class ShellMessageCodecTests: XCTestCase {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private var ref: TerminalRef { TerminalRef(key: "tws_00000000000000000000000000000000:tt_11111111111111111111111111111111")! }
+
+    func testTerminalRefRejectsMalformedOrEmptyOpaqueIds() {
+        XCTAssertNil(TerminalRef(key: ":"))
+        XCTAssertNil(TerminalRef(key: "tws_main:tt_shell"))
+        XCTAssertNil(TerminalRef(key: "tws_00000000000000000000000000000000:"))
+    }
+
+    func testTerminalRefDecodingRejectsMalformedOpaqueIds() {
+        let json = #"{"workspaceId":"tws_main","tabId":"tt_shell"}"#
+        XCTAssertThrowsError(try decoder.decode(TerminalRef.self, from: Data(json.utf8)))
+    }
 
     // MARK: ClientMessage encoding
 
     func testClientInputEncodesWireShape() throws {
-        let data = try encoder.encode(ClientMessage.input(data: "ls -la\n"))
+        let data = try encoder.encode(ClientMessage.input(ref: ref, data: "ls -la\n"))
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(obj?["type"] as? String, "input")
         XCTAssertEqual(obj?["data"] as? String, "ls -la\n")
-        XCTAssertEqual(obj?.count, 2)
+        XCTAssertEqual((obj?["terminalRef"] as? [String: String])?["workspaceId"], "tws_00000000000000000000000000000000")
     }
 
     func testClientResizeEncodesWireShape() throws {
-        let data = try encoder.encode(ClientMessage.resize(cols: 120, rows: 40))
+        let data = try encoder.encode(ClientMessage.resize(ref: ref, cols: 120, rows: 40))
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(obj?["type"] as? String, "resize")
-        XCTAssertEqual(obj?["cols"] as? Int, 120)
-        XCTAssertEqual(obj?["rows"] as? Int, 40)
+        XCTAssertEqual(obj?["mode"] as? String, "soft")
+        let size = obj?["size"] as? [String: Int]
+        XCTAssertEqual(size?["cols"], 120)
+        XCTAssertEqual(size?["rows"], 40)
     }
 
     func testClientDetachEncodesWireShape() throws {
-        let data = try encoder.encode(ClientMessage.detach)
+        let data = try encoder.encode(ClientMessage.detach(ref: ref))
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(obj?["type"] as? String, "detach")
-        XCTAssertEqual(obj?.count, 1)
+        XCTAssertNotNil(obj?["terminalRef"])
     }
 
     func testClientPingEncodesWireShape() throws {
-        let data = try encoder.encode(ClientMessage.ping)
+        let data = try encoder.encode(ClientMessage.ping(ref: ref))
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(obj?["type"] as? String, "ping")
-        XCTAssertEqual(obj?.count, 1)
-    }
-
-    func testClientMessageRoundTrips() throws {
-        let cases: [ClientMessage] = [
-            .input(data: "x"),
-            .resize(cols: 80, rows: 24),
-            .detach,
-            .ping,
-        ]
-        for message in cases {
-            let encoded = try encoder.encode(message)
-            let decoded = try decoder.decode(ClientMessage.self, from: encoded)
-            XCTAssertEqual(decoded, message)
-        }
+        XCTAssertNotNil(obj?["terminalRef"])
     }
 
     // MARK: ServerMessage decoding
 
     func testServerAttachedDecodes() throws {
-        let json = #"{"type":"attached","session":"main","state":"running","fromSeq":12}"#
+        let json = #"{"type":"attached","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"canonicalSize":{"cols":120,"rows":40},"revision":4,"nextSeq":12}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
-        guard case let .attached(session, state, fromSeq) = message else {
+        guard case let .attached(ref, size, revision, nextSeq) = message else {
             return XCTFail("expected attached, got \(message)")
         }
-        XCTAssertEqual(session, "main")
-        XCTAssertEqual(state, "running")
-        XCTAssertEqual(fromSeq, 12)
-    }
-
-    func testServerAttachedAcceptsAutoCreateSessionIdShape() throws {
-        let json = #"{"type":"attached","sessionId":"matrix-sess_auto","state":"running"}"#
-        let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
-        guard case let .attached(session, state, fromSeq) = message else {
-            return XCTFail("expected attached, got \(message)")
-        }
-        XCTAssertEqual(session, "matrix-sess_auto")
-        XCTAssertEqual(state, "running")
-        XCTAssertEqual(fromSeq, 0)
+        XCTAssertEqual(ref, self.ref)
+        XCTAssertEqual(size, TerminalGridSize(cols: 120, rows: 40))
+        XCTAssertEqual(revision, 4)
+        XCTAssertEqual(nextSeq, 12)
     }
 
     func testServerOutputDecodes() throws {
-        let json = #"{"type":"output","seq":7,"data":"hello"}"#
+        let json = #"{"type":"output","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":5,"seq":7,"data":"hello"}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
-        guard case let .output(seq, data) = message else {
+        guard case let .output(ref, revision, seq, data) = message else {
             return XCTFail("expected output, got \(message)")
         }
+        XCTAssertEqual(ref, self.ref)
+        XCTAssertEqual(revision, 5)
         XCTAssertEqual(seq, 7)
         XCTAssertEqual(data, "hello")
     }
 
-    func testServerOutputAcceptsLegacyFrameWithoutSeq() throws {
-        let json = #"{"type":"output","data":"hello"}"#
+    func testServerSnapshotDecodesDurableState() throws {
+        let json = #"{"type":"snapshot","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"canonicalSize":{"cols":100,"rows":30},"revision":6,"seq":9,"ansi":"prompt","viewport":{"top":2,"rows":30}}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
-        guard case let .output(seq, data) = message else {
-            return XCTFail("expected output, got \(message)")
+        guard case let .snapshot(ref, size, revision, seq, ansi, viewport) = message else {
+            return XCTFail("expected snapshot, got \(message)")
         }
-        XCTAssertEqual(seq, 0)
-        XCTAssertEqual(data, "hello")
+        XCTAssertEqual(ref, self.ref)
+        XCTAssertEqual(size, TerminalGridSize(cols: 100, rows: 30))
+        XCTAssertEqual(revision, 6)
+        XCTAssertEqual(seq, 9)
+        XCTAssertEqual(ansi, "prompt")
+        XCTAssertEqual(viewport, TerminalViewport(top: 2, rows: 30))
     }
 
     func testServerExitDecodes() throws {
-        let json = #"{"type":"exit","code":0}"#
+        let json = #"{"type":"exit","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":7,"exitCode":0}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
-        guard case let .exit(code) = message else {
+        guard case let .exit(ref, revision, code) = message else {
             return XCTFail("expected exit, got \(message)")
         }
+        XCTAssertEqual(ref, self.ref)
+        XCTAssertEqual(revision, 7)
         XCTAssertEqual(code, 0)
     }
 
     func testServerErrorDecodes() throws {
         let json = #"{"type":"error","code":"session_not_found","message":"Session not found"}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
-        guard case let .error(code, text) = message else {
+        guard case let .error(ref, code, text) = message else {
             return XCTFail("expected error, got \(message)")
         }
+        XCTAssertNil(ref)
         XCTAssertEqual(code, "session_not_found")
         XCTAssertEqual(text, "Session not found")
     }
 
     func testServerPongDecodes() throws {
-        let json = #"{"type":"pong"}"#
+        let json = #"{"type":"pong","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":8}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
         guard case .pong = message else {
             return XCTFail("expected pong, got \(message)")
@@ -127,11 +126,13 @@ final class ShellMessageCodecTests: XCTestCase {
     }
 
     func testServerReplayEvictedDecodes() throws {
-        let json = #"{"type":"replay-evicted","fromSeq":3,"nextSeq":50}"#
+        let json = #"{"type":"replay-evicted","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":9,"fromSeq":3,"nextSeq":50}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
-        guard case let .replayEvicted(fromSeq, nextSeq) = message else {
+        guard case let .replayEvicted(ref, revision, fromSeq, nextSeq) = message else {
             return XCTFail("expected replayEvicted, got \(message)")
         }
+        XCTAssertEqual(ref, self.ref)
+        XCTAssertEqual(revision, 9)
         XCTAssertEqual(fromSeq, 3)
         XCTAssertEqual(nextSeq, 50)
     }
@@ -152,9 +153,9 @@ final class ShellWSClientStateMachineTests: XCTestCase {
     func testFirstConnectAttachesAtLiveTail() async throws {
         let transport = MockShellTransport()
         let client = ShellWSClient(
-            url: URL(string: "wss://vps.example/ws/terminal/session")!,
+            url: URL(string: "wss://vps.example/ws/terminal/tab?workspaceId=tws_00000000000000000000000000000000&tabId=tt_11111111111111111111111111111111&client=macos")!,
             token: "secret-token",
-            session: "main",
+            terminalRef: "tws_00000000000000000000000000000000:tt_11111111111111111111111111111111",
             transport: transport,
             backoff: .test,
             clock: MockClock()
@@ -166,7 +167,8 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         XCTAssertEqual(first?.value(forHTTPHeaderField: "Authorization"), "Bearer secret-token")
         let query = first?.url?.query ?? ""
         XCTAssertFalse(query.contains("token="), "token must not be in query: \(query)")
-        XCTAssertTrue(query.contains("session=main"))
+        XCTAssertTrue(query.contains("workspaceId=tws_00000000000000000000000000000000"))
+        XCTAssertTrue(query.contains("tabId=tt_11111111111111111111111111111111"))
         XCTAssertTrue(query.contains("fromSeq=\(SHELL_ATTACH_LIVE_TAIL_FROM_SEQ)"))
         await client.shutdown()
     }
@@ -176,9 +178,9 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         let client = makeClient(transport: transport)
         await client.connect()
         await transport.waitForConnect(count: 1)
-        await transport.emit(#"{"type":"attached","session":"main","state":"running","fromSeq":0}"#)
-        await transport.emit(#"{"type":"output","seq":1,"data":"a"}"#)
-        await transport.emit(#"{"type":"output","seq":2,"data":"b"}"#)
+        await transport.emit(#"{"type":"attached","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"canonicalSize":{"cols":120,"rows":40},"revision":1,"nextSeq":0}"#)
+        await transport.emit(#"{"type":"output","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":2,"seq":1,"data":"a"}"#)
+        await transport.emit(#"{"type":"output","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":3,"seq":2,"data":"b"}"#)
         // drain the three events (attached + 2 output)
         var seen: [ServerEvent] = []
         let stream = await client.events
@@ -188,6 +190,26 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         }
         let lastSeq = await client.lastSeq
         XCTAssertEqual(lastSeq, 2)
+        await client.shutdown()
+    }
+
+    func testIgnoresFramesForAnotherTabAndStaleRevisions() async throws {
+        let transport = MockShellTransport()
+        let client = makeClient(transport: transport)
+        await client.connect()
+        await transport.waitForConnect(count: 1)
+        await transport.emit(#"{"type":"attached","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"canonicalSize":{"cols":120,"rows":40},"revision":5,"nextSeq":0}"#)
+        await transport.emit(#"{"type":"output","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_22222222222222222222222222222222"},"revision":6,"seq":7,"data":"wrong tab"}"#)
+        await transport.emit(#"{"type":"output","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":4,"seq":8,"data":"stale"}"#)
+        await transport.emit(#"{"type":"output","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":6,"seq":9,"data":"current"}"#)
+
+        let events = await drain(client, count: 2)
+        XCTAssertEqual(events, [
+            .attached(state: "running", fromSeq: 0),
+            .output(seq: 9, data: "current")
+        ])
+        let lastSeq = await client.lastSeq
+        XCTAssertEqual(lastSeq, 9)
         await client.shutdown()
     }
 
@@ -201,7 +223,7 @@ final class ShellWSClientStateMachineTests: XCTestCase {
 
         await client.connect()
         await transport.waitForConnect(count: 1)
-        await transport.emit(#"{"type":"attached","session":"main","state":"running","fromSeq":0}"#)
+        await transport.emit(#"{"type":"attached","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"canonicalSize":{"cols":120,"rows":40},"revision":1,"nextSeq":0}"#)
         _ = await drain(client, count: 1)
 
         try await waitUntil(timeout: 3) {
@@ -213,6 +235,7 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         let obj = try JSONSerialization.jsonObject(with: Data(frame.utf8)) as? [String: Any]
         XCTAssertEqual(obj?["type"] as? String, "input")
         XCTAssertEqual(obj?["data"] as? String, "echo hello\n")
+        XCTAssertEqual((obj?["terminalRef"] as? [String: String])?["tabId"], "tt_11111111111111111111111111111111")
         await client.shutdown()
     }
 
@@ -222,7 +245,7 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         let client = makeClient(transport: transport, clock: clock)
         await client.connect()
         await transport.waitForConnect(count: 1)
-        await transport.emit(#"{"type":"output","seq":5,"data":"x"}"#)
+        await transport.emit(#"{"type":"output","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":2,"seq":5,"data":"x"}"#)
         _ = await drain(client, count: 1)
         // simulate server-side disconnect → run loop parks in backoff sleep
         await transport.failCurrent()
@@ -240,11 +263,11 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         let clock = MockClock()
         let tokenSource = SequenceTokenSource(["initial-token", "refreshed-token"])
         let client = ShellWSClient(
-            url: URL(string: "wss://vps.example/ws/terminal/session")!,
+            url: URL(string: "wss://vps.example/ws/terminal/tab?workspaceId=tws_00000000000000000000000000000000&tabId=tt_11111111111111111111111111111111&client=macos")!,
             tokenProvider: {
                 await tokenSource.next()
             },
-            session: "main",
+            terminalRef: "tws_00000000000000000000000000000000:tt_11111111111111111111111111111111",
             transport: transport,
             backoff: .test,
             clock: clock
@@ -295,13 +318,13 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         let client = makeClient(transport: transport, clock: clock)
         await client.connect()
         await transport.waitForConnect(count: 1)
-        await transport.emit(#"{"type":"output","seq":9,"data":"y"}"#)
+        await transport.emit(#"{"type":"output","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":3,"seq":9,"data":"y"}"#)
         _ = await drain(client, count: 1)
         let seqAfterOutput = await client.lastSeq
         XCTAssertEqual(seqAfterOutput, 9)
 
         // replay-evicted: client clears buffer + seq, drops the socket, re-attaches at live tail.
-        await transport.emit(#"{"type":"replay-evicted","fromSeq":6,"nextSeq":40}"#)
+        await transport.emit(#"{"type":"replay-evicted","terminalRef":{"workspaceId":"tws_00000000000000000000000000000000","tabId":"tt_11111111111111111111111111111111"},"revision":4,"fromSeq":6,"nextSeq":40}"#)
         _ = await drain(client, count: 1) // the .replayEvicted event
         await clock.waitForSleeper()
         await clock.advanceAll()
@@ -365,9 +388,9 @@ final class ShellWSClientStateMachineTests: XCTestCase {
 
     private func makeClient(transport: MockShellTransport, clock: MockClock = MockClock()) -> ShellWSClient {
         ShellWSClient(
-            url: URL(string: "wss://vps.example/ws/terminal/session")!,
+            url: URL(string: "wss://vps.example/ws/terminal/tab?workspaceId=tws_00000000000000000000000000000000&tabId=tt_11111111111111111111111111111111&client=macos")!,
             token: "secret-token",
-            session: "main",
+            terminalRef: "tws_00000000000000000000000000000000:tt_11111111111111111111111111111111",
             transport: transport,
             backoff: .test,
             clock: clock

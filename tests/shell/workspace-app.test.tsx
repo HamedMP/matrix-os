@@ -61,10 +61,10 @@ describe("WorkspaceApp", () => {
         return json({ events: [{ id: "evt_abc123", type: "task.updated", createdAt: "2026-04-26T00:00:00.000Z" }] });
       }
       if (url.includes("/api/sessions/sess_abc123/observe") && init?.method === "POST") {
-        return json({ terminalSessionId: "term_abc123" });
+        return json({ terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" } });
       }
       if (url.includes("/api/sessions/sess_abc123/takeover") && init?.method === "POST") {
-        return json({ terminalSessionId: "term_owner_abc123" });
+        return json({ terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000002" } });
       }
       if (url.includes("/api/sessions/sess_abc123") && init?.method === "DELETE") {
         return json({ session: { id: "sess_abc123", status: "exited" } });
@@ -234,7 +234,7 @@ describe("WorkspaceApp", () => {
                 status: "running",
                 attention: "none",
                 projectId: "repo",
-                terminalSessionId: "matrix-agent",
+                terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
                 createdAt: "2026-07-07T16:00:00.000Z",
                 updatedAt: "2026-07-07T16:03:00.000Z",
               },
@@ -304,7 +304,7 @@ describe("WorkspaceApp", () => {
     expect(screen.getByText("Active duplicate survives")).toBeTruthy();
     expect(screen.queryByText("Unscoped duplicate")).toBeNull();
     expect(screen.getAllByText("running · codex").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("Terminal matrix-agent")).toBeTruthy();
+    expect(screen.getByText("Terminal tws_00000000000000000000000000000001/tt_00000000000000000000000000000001")).toBeTruthy();
     expect(screen.queryByText("Other project run")).toBeNull();
   });
 
@@ -374,12 +374,12 @@ describe("WorkspaceApp", () => {
       expect.stringContaining("/api/sessions/sess_abc123/observe"),
       expect.objectContaining({ method: "POST" }),
     );
-    expect(await screen.findByText("Attached term_abc123")).toBeTruthy();
+    expect(await screen.findByText("Attached tws_00000000000000000000000000000001:tt_00000000000000000000000000000001")).toBeTruthy();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /take over sess_abc123/i }));
     });
-    expect(await screen.findByText("Attached term_owner_abc123")).toBeTruthy();
+    expect(await screen.findByText("Attached tws_00000000000000000000000000000001:tt_00000000000000000000000000000002")).toBeTruthy();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /duplicate sess_abc123/i }));
@@ -677,7 +677,7 @@ function codingAgentRuntimeSummary(overrides: Record<string, unknown> = {}) {
     projects: { items: [], hasMore: false, limit: 50 },
     activeThreads: { items: [], hasMore: false, limit: 50 },
     attentionThreads: { items: [], hasMore: false, limit: 50 },
-    terminalSessions: { items: [], hasMore: false, limit: 50 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 50 },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 100 },
     limits: {

@@ -34,6 +34,40 @@ function thread(id: string, title: string): AgentThread {
   };
 }
 
+function codingAgentSummaryFixture() {
+  return {
+    runtime: { id: "rt_primary", label: "Primary", status: "available" },
+    capabilities: [],
+    providers: [],
+    projects: { items: [], hasMore: false, limit: 20 },
+    activeThreads: {
+      items: [
+        {
+          id: "thread_server",
+          providerId: "codex",
+          title: "Server-backed run",
+          status: "running",
+          attention: "none",
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:01:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+    attentionThreads: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
+    recentActivity: { items: [], hasMore: false, limit: 20 },
+    limits: {
+      maxPromptBytes: 16384,
+      maxAttachmentCount: 8,
+      maxTerminalInputBytes: 8192,
+      maxListItems: 20,
+    },
+    serverTime: "2026-07-06T00:03:00.000Z",
+  };
+}
+
 describe("ChatTab", () => {
   beforeEach(() => {
     class MockResizeObserver {
@@ -692,10 +726,16 @@ describe("ChatTab", () => {
       status: "ready",
       refresh: vi.fn(async () => undefined),
     });
-    let resolveSetupSession!: (value: { name: string }) => void;
-    const post = vi.fn(() => new Promise<{ name: string }>((resolve) => {
-      resolveSetupSession = resolve;
-    }));
+    const workspaceId = "tws_00000000000000000000000000000001";
+    const tabId = "tt_00000000000000000000000000000001";
+    const post = vi.fn(async (path: string, body: unknown) => {
+      if (path === "/api/terminal/workspaces/ensure") return { workspace: { id: workspaceId } };
+      if (path === `/api/terminal/workspaces/${workspaceId}/tabs`) {
+        expect(body).toEqual(expect.objectContaining({ command: ["sh", "-lc", "claude"] }));
+        return { tab: { id: tabId } };
+      }
+      throw new Error(`unexpected POST ${path}`);
+    });
     useConnection.setState({
       api: {
         get: vi.fn(async (path: string) => {
@@ -712,16 +752,16 @@ describe("ChatTab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Claude Code harness, Unavailable" }));
     fireEvent.click(await screen.findByRole("button", { name: "Connect Claude" }));
 
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
-      expect.objectContaining({ cmd: "claude" }),
-    ));
-    await act(async () => resolveSetupSession({ name: "matrix-setup-claude" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/terminal/workspaces/ensure", {}));
+    expect(post).toHaveBeenCalledWith(
+      `/api/terminal/workspaces/${workspaceId}/tabs`,
+      expect.objectContaining({ command: ["sh", "-lc", "claude"] }),
+    );
     expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
       kind: "terminals",
       title: "Terminal",
     }));
-    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-claude");
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(`${workspaceId}:${tabId}`);
   });
 
   it("persists Global Chat effort and permission selections", async () => {

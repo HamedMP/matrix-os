@@ -121,6 +121,20 @@ wait_http_ok() {
   fail "${description} did not become reachable. ${log_hint}"
 }
 
+wait_terminal_runtime_ready() {
+  local attempt
+  for attempt in $(seq 1 30); do
+    if timeout 10 /opt/matrix/bin/matrix-terminal-runtime --health-check >>"$MATRIX_INSTALL_LOG" 2>&1; then
+      ok "matrix-terminal-runtime socket is ready"
+      return 0
+    fi
+    systemctl is-active --quiet matrix-terminal-runtime \
+      || fail "matrix-terminal-runtime stopped before its socket became ready. Check: journalctl -u matrix-terminal-runtime -n 200 --no-pager"
+    sleep 2
+  done
+  fail "matrix-terminal-runtime socket did not become ready. Check: journalctl -u matrix-terminal-runtime -n 200 --no-pager"
+}
+
 wait_http_ok_auth() {
   local description url password log_hint attempt code
   description="$1"
@@ -521,6 +535,7 @@ EOF
 install_systemd_units() {
   section "Installing systemd units"
   install -m 0644 /opt/matrix/systemd/matrix-gateway.service /etc/systemd/system/matrix-gateway.service
+  install -m 0644 /opt/matrix/systemd/matrix-terminal-runtime.service /etc/systemd/system/matrix-terminal-runtime.service
   install -m 0644 /opt/matrix/systemd/matrix-shell.service /etc/systemd/system/matrix-shell.service
   install -m 0644 /opt/matrix/systemd/matrix-code.service /etc/systemd/system/matrix-code.service
   install -m 0644 /opt/matrix/systemd/matrix-code-server.service /etc/systemd/system/matrix-code-server.service
@@ -529,7 +544,7 @@ install_systemd_units() {
   fi
   write_self_host_restore_service
   run_required "reloading systemd" systemctl daemon-reload
-  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server
+  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-terminal-runtime matrix-gateway matrix-shell matrix-code matrix-code-server
   if [ -f /etc/systemd/system/matrix-developer-tools.service ] && [ -n "$MATRIX_DEVELOPER_TOOLS" ]; then
     run_required "enabling optional developer tools service" systemctl enable matrix-developer-tools
   fi
@@ -665,6 +680,7 @@ start_services() {
   section "Starting Matrix OS services"
   run_required "starting docker" systemctl enable --now docker
   restart_required_service matrix-restore
+  restart_required_service matrix-terminal-runtime
   restart_required_service matrix-gateway
   restart_required_service matrix-shell
   restart_optional_service matrix-code-server "code-server proxy"
@@ -678,6 +694,9 @@ start_services() {
 verify_services() {
   local password status
   section "Verifying Matrix OS"
+  run_required "verifying matrix-terminal-runtime" systemctl is-active --quiet matrix-terminal-runtime
+  ok "matrix-terminal-runtime is active"
+  wait_terminal_runtime_ready
   wait_http_ok "Matrix gateway" "http://127.0.0.1:4000/health" "Check: journalctl -u matrix-gateway -n 200 --no-pager"
   wait_http_ok "Matrix shell" "http://127.0.0.1:3000/" "Check: journalctl -u matrix-shell -n 200 --no-pager"
   if [ -f /opt/matrix/env/initial-ui-password ]; then
@@ -722,8 +741,8 @@ CLI gateway: ${ui_url%/}/cli
 Home: ${MATRIX_HOME_DIR}
 
 Useful commands:
-  systemctl status matrix-gateway matrix-shell matrix-code nginx --no-pager
-  journalctl -u matrix-gateway -u matrix-shell -u matrix-code -n 200 --no-pager
+  systemctl status matrix-terminal-runtime matrix-gateway matrix-shell matrix-code nginx --no-pager
+  journalctl -u matrix-terminal-runtime -u matrix-gateway -u matrix-shell -u matrix-code -n 200 --no-pager
   sudo -iu matrix
   MATRIX_TOKEN=\$(sudo sed -n 's/^MATRIX_AUTH_TOKEN=//p' /opt/matrix/env/host.env)
   matrix shell ls --gateway ${ui_url%/}/cli --token "\$MATRIX_TOKEN"

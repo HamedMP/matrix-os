@@ -264,7 +264,7 @@ describe("shouldInjectAuth", () => {
   });
 
   it("injects for websocket upgrades to the same host", () => {
-    expect(shouldInjectAuth("wss://app.matrix-os.com/ws/terminal/session?session=x", GATEWAY)).toBe(true);
+    expect(shouldInjectAuth("wss://app.matrix-os.com/ws/terminal/tab?workspaceId=tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&tabId=tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", GATEWAY)).toBe(true);
   });
 
   it("never injects for other origins", () => {

@@ -5,6 +5,12 @@ import {
 } from "../../shell/src/components/terminal/terminal-soft-grid.js";
 import { parseTerminalServerMessage } from "../../shell/src/components/terminal/terminal-server-message.js";
 
+const TERMINAL_REF = {
+  workspaceId: `tws_${"8".repeat(32)}`,
+  tabId: `tt_${"9".repeat(32)}`,
+};
+const TERMINAL_REF_KEY = `${TERMINAL_REF.workspaceId}:${TERMINAL_REF.tabId}`;
+
 describe("terminal soft-client canonical grid", () => {
   it("keeps a 140x40 logical grid readable and horizontally pannable in a 70-column viewport", () => {
     const layout = computeSoftGridLayout({
@@ -79,13 +85,14 @@ describe("terminal soft-client canonical grid", () => {
   it("accepts authoritative canonical dimensions on attach and later size changes", () => {
     expect(parseTerminalServerMessage(JSON.stringify({
       type: "attached",
-      session: "main",
-      state: "running",
-      fromSeq: 0,
+      terminalRef: TERMINAL_REF,
+      revision: 4,
+      nextSeq: 0,
       canonicalSize: { cols: 140, rows: 40 },
     }))).toEqual({
       type: "attached",
-      sessionId: "main",
+      sessionId: TERMINAL_REF_KEY,
+      revision: 4,
       state: "running",
       exitCode: null,
       fromSeq: 0,
@@ -93,25 +100,29 @@ describe("terminal soft-client canonical grid", () => {
     });
     expect(parseTerminalServerMessage(JSON.stringify({
       type: "canonical-size",
+      terminalRef: TERMINAL_REF,
+      revision: 5,
+      canonicalSize: { cols: 132, rows: 36 },
+    }))).toEqual({
+      type: "canonical-size",
+      sessionId: TERMINAL_REF_KEY,
+      revision: 5,
       cols: 132,
       rows: 36,
-    }))).toEqual({ type: "canonical-size", cols: 132, rows: 36 });
+    });
   });
 
   it("rejects out-of-bounds canonical dimensions", () => {
     expect(parseTerminalServerMessage(JSON.stringify({
       type: "canonical-size",
-      cols: 501,
-      rows: 40,
+      terminalRef: TERMINAL_REF,
+      revision: 6,
+      canonicalSize: { cols: 501, rows: 40 },
     }))).toBeNull();
   });
 
-  it("accepts live-lease revocation frames", () => {
-    expect(parseTerminalServerMessage(JSON.stringify({ type: "lease-revoked", epoch: 7 }))).toEqual({
-      type: "lease-revoked",
-    });
-    expect(parseTerminalServerMessage(JSON.stringify({ type: "presentation-reset" }))).toEqual({
-      type: "presentation-reset",
-    });
+  it("rejects retired exclusive-lease frames", () => {
+    expect(parseTerminalServerMessage(JSON.stringify({ type: "lease-revoked", epoch: 7 }))).toBeNull();
+    expect(parseTerminalServerMessage(JSON.stringify({ type: "presentation-reset" }))).toBeNull();
   });
 });

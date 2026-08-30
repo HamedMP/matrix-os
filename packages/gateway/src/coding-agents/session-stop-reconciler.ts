@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { TerminalSessionIdSchema } from "@matrix-os/contracts";
+import { TerminalRefSchema, type TerminalRef } from "@matrix-os/contracts";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import type { CodingAgentThreadStore } from "./thread-store.js";
 
@@ -16,14 +16,14 @@ const SessionStopInputSchema = z.object({
   runtime: z.object({
     status: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
   }).passthrough(),
-  terminalSessionId: TerminalSessionIdSchema,
+  terminalRef: TerminalRefSchema,
 }).passthrough();
 
 type SessionStopInput = z.infer<typeof SessionStopInputSchema>;
 type PendingStop = {
   ownerId: string;
   workspaceSessionId: string;
-  terminalSessionId: string;
+  terminalRef: TerminalRef;
   runtimeStatus: "exited" | "failed" | "degraded";
 };
 
@@ -37,7 +37,7 @@ export function createCodingAgentSessionStopReconciler(options: {
 } = {}) {
   const maxPending = Math.max(1, Math.min(options.maxPending ?? DEFAULT_MAX_PENDING_STOPS, DEFAULT_MAX_PENDING_STOPS));
   const retryDelayMs = Math.max(10, Math.min(options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS));
-  let threadStore: Pick<CodingAgentThreadStore, "reconcileTerminalSessionStopped"> | undefined;
+  let threadStore: Pick<CodingAgentThreadStore, "reconcileTerminalTabStopped"> | undefined;
   let pendingStops: PendingStop[] = [];
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -47,7 +47,8 @@ export function createCodingAgentSessionStopReconciler(options: {
       ...pendingStops.filter((candidate) =>
         candidate.ownerId !== stop.ownerId ||
         candidate.workspaceSessionId !== stop.workspaceSessionId ||
-        candidate.terminalSessionId !== stop.terminalSessionId
+        candidate.terminalRef.workspaceId !== stop.terminalRef.workspaceId ||
+        candidate.terminalRef.tabId !== stop.terminalRef.tabId
       ),
       stop,
     ].slice(-maxPending);
@@ -78,10 +79,10 @@ export function createCodingAgentSessionStopReconciler(options: {
       return;
     }
     try {
-      await store.reconcileTerminalSessionStopped({
+      await store.reconcileTerminalTabStopped({
         ownerId: stop.ownerId,
         workspaceSessionId: stop.workspaceSessionId,
-        terminalSessionId: stop.terminalSessionId,
+        terminalRef: stop.terminalRef,
         runtimeStatus: stop.runtimeStatus,
       });
     } catch (err: unknown) {
@@ -126,7 +127,7 @@ export function createCodingAgentSessionStopReconciler(options: {
         await reconcileOrRetain({
           ownerId: parsed.ownerId,
           workspaceSessionId: parsed.id,
-          terminalSessionId: parsed.terminalSessionId,
+          terminalRef: parsed.terminalRef,
           runtimeStatus: parsed.runtime.status,
         });
       } catch (err: unknown) {
@@ -135,7 +136,7 @@ export function createCodingAgentSessionStopReconciler(options: {
       if (firstError) throw firstError;
     },
 
-    async attachThreadStore(store: Pick<CodingAgentThreadStore, "reconcileTerminalSessionStopped">): Promise<void> {
+    async attachThreadStore(store: Pick<CodingAgentThreadStore, "reconcileTerminalTabStopped">): Promise<void> {
       threadStore = store;
       await drainPendingStops();
     },

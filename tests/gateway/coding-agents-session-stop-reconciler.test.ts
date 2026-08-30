@@ -1,186 +1,72 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCodingAgentSessionStopReconciler } from "../../packages/gateway/src/coding-agents/session-stop-reconciler.js";
 
-function stoppedSession(terminalSessionId: string, runtimeStatus: "exited" | "failed" | "degraded" = "exited") {
+const WORKSPACE_ID = "tws_00000000000000000000000000000001";
+function ref(index: number) {
+  return { workspaceId: WORKSPACE_ID, tabId: `tt_${index.toString(16).padStart(32, "0")}` };
+}
+
+function stoppedSession(index: number, runtimeStatus: "exited" | "failed" | "degraded" = "exited") {
   return {
-    id: `sess_${terminalSessionId.replace(/[^A-Za-z0-9_-]/g, "_")}`,
+    id: `sess_${index}`,
     kind: "agent",
     ownerId: "owner_user",
     runtime: { status: runtimeStatus },
-    terminalSessionId,
+    terminalRef: ref(index),
   };
 }
 
 describe("coding agent session stop reconciler", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  afterEach(() => vi.useRealTimers());
 
-  it("buffers stopped sessions until the thread store is attached", async () => {
-    const store = {
-      reconcileTerminalSessionStopped: vi.fn(async () => []),
-    };
+  it("buffers stopped tabs until the thread store is attached", async () => {
+    const store = { reconcileTerminalTabStopped: vi.fn(async () => []) };
     const reconciler = createCodingAgentSessionStopReconciler({ maxPending: 4 });
 
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_early", "failed"));
-    expect(store.reconcileTerminalSessionStopped).not.toHaveBeenCalled();
-
+    await reconciler.handleSessionStopped(stoppedSession(1, "failed"));
+    expect(store.reconcileTerminalTabStopped).not.toHaveBeenCalled();
     await reconciler.attachThreadStore(store);
 
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledWith({
+    expect(store.reconcileTerminalTabStopped).toHaveBeenCalledWith({
       ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_early",
-      terminalSessionId: "term_sess_early",
+      workspaceSessionId: "sess_1",
+      terminalRef: ref(1),
       runtimeStatus: "failed",
     });
   });
 
-  it("caps pending stopped sessions and evicts the oldest before attach", async () => {
-    const store = {
-      reconcileTerminalSessionStopped: vi.fn(async () => []),
-    };
+  it("caps pending stopped tabs and evicts the oldest", async () => {
+    const store = { reconcileTerminalTabStopped: vi.fn(async () => []) };
     const reconciler = createCodingAgentSessionStopReconciler({ maxPending: 2 });
-
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_one"));
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_two"));
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_three"));
+    await reconciler.handleSessionStopped(stoppedSession(1));
+    await reconciler.handleSessionStopped(stoppedSession(2));
+    await reconciler.handleSessionStopped(stoppedSession(3));
     await reconciler.attachThreadStore(store);
 
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(2);
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(1, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_two",
-      terminalSessionId: "term_sess_two",
-      runtimeStatus: "exited",
-    });
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(2, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_three",
-      terminalSessionId: "term_sess_three",
-      runtimeStatus: "exited",
-    });
+    expect(store.reconcileTerminalTabStopped).toHaveBeenCalledTimes(2);
+    expect(store.reconcileTerminalTabStopped).toHaveBeenNthCalledWith(1, expect.objectContaining({ terminalRef: ref(2) }));
+    expect(store.reconcileTerminalTabStopped).toHaveBeenNthCalledWith(2, expect.objectContaining({ terminalRef: ref(3) }));
   });
 
-  it("retains only failed buffered stops when startup flush partially fails", async () => {
-    let failFirstStop = true;
-    const store = {
-      reconcileTerminalSessionStopped: vi.fn(async (input: { terminalSessionId: string }) => {
-        if (input.terminalSessionId === "term_sess_one" && failFirstStop) {
-          throw new Error("store unavailable");
-        }
-        return [];
-      }),
-    };
-    const reconciler = createCodingAgentSessionStopReconciler({ maxPending: 4 });
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_one"));
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_two"));
-
-    await expect(reconciler.attachThreadStore(store)).rejects.toThrow("store unavailable");
-    failFirstStop = false;
-    await reconciler.attachThreadStore(store);
-
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(3);
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(1, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_one",
-      terminalSessionId: "term_sess_one",
-      runtimeStatus: "exited",
-    });
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(2, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_two",
-      terminalSessionId: "term_sess_two",
-      runtimeStatus: "exited",
-    });
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(3, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_one",
-      terminalSessionId: "term_sess_one",
-      runtimeStatus: "exited",
-    });
-  });
-
-  it("drains retained startup failures before handling later stop events", async () => {
-    let failFirstStop = true;
-    const store = {
-      reconcileTerminalSessionStopped: vi.fn(async (input: { terminalSessionId: string }) => {
-        if (input.terminalSessionId === "term_sess_one" && failFirstStop) {
-          throw new Error("store unavailable");
-        }
-        return [];
-      }),
-    };
-    const reconciler = createCodingAgentSessionStopReconciler({ maxPending: 4 });
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_one"));
-    await expect(reconciler.attachThreadStore(store)).rejects.toThrow("store unavailable");
-
-    failFirstStop = false;
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_two"));
-
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(3);
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(1, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_one",
-      terminalSessionId: "term_sess_one",
-      runtimeStatus: "exited",
-    });
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(2, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_one",
-      terminalSessionId: "term_sess_one",
-      runtimeStatus: "exited",
-    });
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(3, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_two",
-      terminalSessionId: "term_sess_two",
-      runtimeStatus: "exited",
-    });
-  });
-
-  it("retries retained startup failures without requiring a later stop event", async () => {
+  it("retains failed flushes for bounded retry and cancels retries on dispose", async () => {
     vi.useFakeTimers();
-    let failFirstStop = true;
+    let fail = true;
     const store = {
-      reconcileTerminalSessionStopped: vi.fn(async (input: { terminalSessionId: string }) => {
-        if (input.terminalSessionId === "term_sess_one" && failFirstStop) {
-          throw new Error("store unavailable");
-        }
+      reconcileTerminalTabStopped: vi.fn(async () => {
+        if (fail) throw new Error("store unavailable");
         return [];
       }),
     };
-    const reconciler = createCodingAgentSessionStopReconciler({ maxPending: 4, retryDelayMs: 25 });
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_one"));
+    const reconciler = createCodingAgentSessionStopReconciler({ maxPending: 4, retryDelayMs: 100 });
+    await reconciler.handleSessionStopped(stoppedSession(1));
     await expect(reconciler.attachThreadStore(store)).rejects.toThrow("store unavailable");
-
-    failFirstStop = false;
-    await vi.advanceTimersByTimeAsync(25);
-
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(2);
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(2, {
-      ownerId: "owner_user",
-      workspaceSessionId: "sess_term_sess_one",
-      terminalSessionId: "term_sess_one",
-      runtimeStatus: "exited",
-    });
-
-    reconciler.dispose();
-  });
-
-  it("cancels retained-stop retries on dispose", async () => {
-    vi.useFakeTimers();
-    const store = {
-      reconcileTerminalSessionStopped: vi.fn(async () => {
-        throw new Error("store unavailable");
-      }),
-    };
-    const reconciler = createCodingAgentSessionStopReconciler({ maxPending: 4, retryDelayMs: 25 });
-    await reconciler.handleSessionStopped(stoppedSession("term_sess_one"));
-    await expect(reconciler.attachThreadStore(store)).rejects.toThrow("store unavailable");
-
-    reconciler.dispose();
+    fail = false;
     await vi.advanceTimersByTimeAsync(100);
+    expect(store.reconcileTerminalTabStopped).toHaveBeenCalledTimes(2);
 
-    expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(1);
+    await reconciler.handleSessionStopped(stoppedSession(2));
+    reconciler.dispose();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(store.reconcileTerminalTabStopped).toHaveBeenCalledTimes(3);
   });
 });
