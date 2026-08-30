@@ -730,6 +730,54 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("does not attribute an independent terminal failure to an earlier recovered tool failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_search_failure",
+      name: "web_search",
+      args: { query: "recoverable lookup" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_search_failure",
+      name: "web_search",
+      result: { success: false, error: "lookup unavailable" },
+    });
+    gateway.event("tool.start", {
+      tool_id: "tool_command_success",
+      name: "terminal",
+      args: { command: "printf recovered" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_command_success",
+      name: "terminal",
+      result: { output: "recovered", exit_code: 0, error: null },
+    });
+    gateway.event("message.delta", { text: "Useful partial after recovery." });
+    gateway.event("message.complete", { text: "Useful partial after recovery.", status: "error" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "running" },
+      { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "failed", summary: "Web search failed." },
+      { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "running", preview: "printf recovered", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "printf recovered", previewKind: "command" },
+      { type: "assistant.delta", delta: "Useful partial after recovery." },
+      {
+        type: "run.completed",
+        outcome: "failed",
+        error: {
+          code: "run_failed",
+          safeMessage: "Hermes could not complete this Run.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        },
+      },
+    ]);
+  });
+
   it.each([false, true])("keeps a raw Provider HTTP failure out of assistant output (streamed=%s)", async (streamed) => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
