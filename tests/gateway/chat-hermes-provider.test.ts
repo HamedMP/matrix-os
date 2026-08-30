@@ -957,6 +957,44 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).not.toHaveBeenCalled();
   });
 
+  it("keeps an unsealed Hermes stream boundary deferred across tool activity", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking  " });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 0, output: "ready" },
+    });
+    gateway.event("message.interim", {
+      text: "Checking the preview.",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Checking the preview.",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "assistant.delta", delta: " the preview." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
   it("publishes authoritative trailing Hermes whitespace when sealing a streamed segment", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
