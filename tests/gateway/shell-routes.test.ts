@@ -228,6 +228,7 @@ describe("gateway shell routes", () => {
       delete: vi.fn(async () => undefined),
     };
     const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
       deleteSessionReferences: vi.fn(async () => undefined),
       clearSessionTombstone: vi.fn(async () => undefined),
     };
@@ -345,6 +346,7 @@ describe("gateway shell routes", () => {
       delete: vi.fn(),
     };
     const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
       deleteSessionReferences: vi.fn(),
       clearSessionTombstone: vi.fn(async () => undefined),
     };
@@ -369,6 +371,7 @@ describe("gateway shell routes", () => {
       delete: vi.fn(),
     };
     const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
       deleteSessionReferences: vi.fn(),
       clearSessionTombstone: vi.fn(async () => undefined),
     };
@@ -391,6 +394,7 @@ describe("gateway shell routes", () => {
       delete: vi.fn(async () => undefined),
     };
     const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
       deleteSessionReferences: vi.fn(),
       clearSessionTombstone: vi.fn(async () => { throw new Error("layout unavailable"); }),
     };
@@ -413,6 +417,7 @@ describe("gateway shell routes", () => {
       delete: vi.fn(async () => { throw new Error("runtime cleanup unavailable"); }),
     };
     const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
       deleteSessionReferences: vi.fn(async () => undefined),
       clearSessionTombstone: vi.fn(async () => { throw new Error("layout unavailable"); }),
       listSessionTombstones: vi.fn(async () => ["main"]),
@@ -734,6 +739,7 @@ describe("gateway shell routes", () => {
       delete: vi.fn(async () => undefined),
     };
     const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
       deleteSessionReferences: vi.fn(async () => undefined),
       clearSessionTombstone: vi.fn(async () => undefined),
     };
@@ -751,10 +757,12 @@ describe("gateway shell routes", () => {
   it("recovers a missing session only through the explicit recover endpoint", async () => {
     const registry = {
       list: vi.fn(async () => []),
-      create: vi.fn(async () => ({ name: "bench", status: "active" })),
+      create: vi.fn(),
+      recover: vi.fn(async () => ({ name: "bench", status: "active" })),
       delete: vi.fn(),
     };
     const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
       deleteSessionReferences: vi.fn(),
       clearSessionTombstone: vi.fn(async () => undefined),
     };
@@ -768,11 +776,62 @@ describe("gateway shell routes", () => {
 
     expect(res.status).toBe(201);
     await expect(res.json()).resolves.toEqual({ session: { name: "bench", status: "active" } });
-    expect(registry.create).toHaveBeenCalledWith({ name: "bench", cwd: "projects/demo" });
+    expect(registry.recover).toHaveBeenCalledWith("bench", { cwd: "projects/demo" });
+    expect(registry.create).not.toHaveBeenCalled();
     expect(sessionLifecycle.clearSessionTombstone).toHaveBeenCalledWith("bench");
-    expect(registry.create.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(registry.recover.mock.invocationCallOrder[0]).toBeLessThan(
       sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0],
     );
+  });
+
+  it("serializes delete and create across both route mounts until tombstone reconciliation commits", async () => {
+    const root = await tempRoot();
+    const { TerminalWindowLayoutStore } = await import(
+      "../../packages/gateway/src/shell/terminal-window-layout-store.js"
+    );
+    const store = new TerminalWindowLayoutStore({ homePath: root });
+    let releaseReconciliation!: () => void;
+    let reconciliationStarted!: () => void;
+    const reconciliationBarrier = new Promise<void>((resolve) => { releaseReconciliation = resolve; });
+    const reconciliationReached = new Promise<void>((resolve) => { reconciliationStarted = resolve; });
+    let runtimeExists = true;
+    const registry = {
+      list: vi.fn(async () => runtimeExists ? [{ name: "main", status: "active" }] : []),
+      create: vi.fn(async () => {
+        runtimeExists = true;
+        return { name: "main", status: "active" };
+      }),
+      delete: vi.fn(async () => {
+        runtimeExists = false;
+      }),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: store.withSessionLifecycleLock.bind(store),
+      deleteSessionReferences: vi.fn(async (name: string) => {
+        reconciliationStarted();
+        await reconciliationBarrier;
+        await store.deleteSessionReferences(name);
+      }),
+      clearSessionTombstone: store.clearSessionTombstone.bind(store),
+      listSessionTombstones: store.listSessionTombstones.bind(store),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const deletion = app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+    await reconciliationReached;
+    const creation = app.request("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+    await Promise.resolve();
+
+    expect(registry.create).not.toHaveBeenCalled();
+    releaseReconciliation();
+    expect((await deletion).status).toBe(200);
+    expect((await creation).status).toBe(201);
+    expect(runtimeExists).toBe(true);
+    await expect(store.listSessionTombstones()).resolves.toEqual([]);
   });
 
   it("deletes legacy matrix session names with force query support under both mounts", async () => {

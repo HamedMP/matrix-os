@@ -67,6 +67,7 @@ export interface ShellRegistryAdapter {
   getSessionCreatedAt?(name: string): Promise<string | null>;
   focusedPaneRuntime?(name: string): Promise<FocusedPaneRuntimeObservation>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
+  recoverSession?(options: { name: string; cwd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession?(name: string, nextName: string): Promise<void>;
 }
@@ -354,6 +355,51 @@ export class ShellRegistry {
         throw err;
       }
 
+      return this.decorateSession(session, file);
+    });
+  }
+
+  async recover(name: string, input: { cwd?: string } = {}): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const cwd = input.cwd ? await resolveShellCwd(input.cwd, this.options.homePath) : undefined;
+      const file = await this.read();
+      const live = new Set(await this.options.adapter.listSessions());
+      const changed = await this.markMissingMetadataExited(file, live);
+      if (changed) await this.write(file);
+
+      if (!live.has(safeName)) {
+        if (this.options.adapter.recoverSession) {
+          await this.options.adapter.recoverSession({ name: safeName, ...(cwd ? { cwd } : {}) });
+        } else {
+          await this.options.adapter.createSession({ name: safeName, ...(cwd ? { cwd } : {}) });
+        }
+      }
+
+      const now = new Date().toISOString();
+      const runtimeCreatedAt = await this.runtimeCreatedAt(safeName);
+      const existing = file.sessions[safeName];
+      const session: PersistedShellSession = {
+        ...(existing ?? this.adoptSession(safeName, now)),
+        name: safeName,
+        status: "active",
+        createdAt: runtimeCreatedAt ?? existing?.createdAt ?? now,
+        ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
+        updatedAt: now,
+        ...(cwd ? { cwd } : {}),
+      };
+      file.sessions[safeName] = session;
+      try {
+        await this.write(file);
+      } catch (err: unknown) {
+        await this.options.adapter.deleteSession(safeName, { force: true }).catch((rollbackErr: unknown) => {
+          console.warn(
+            "[shell] failed to rollback recovered zellij session:",
+            rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+          );
+        });
+        throw err;
+      }
       return this.decorateSession(session, file);
     });
   }

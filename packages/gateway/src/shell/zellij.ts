@@ -100,6 +100,7 @@ export interface ZellijAdapter {
   getSessionCreatedAt?(name: string): Promise<string | null>;
   focusedPaneRuntime(name: string): Promise<FocusedPaneRuntimeObservation>;
   createSession(options: CreateSessionOptions): Promise<void>;
+  recoverSession?(options: Pick<CreateSessionOptions, "name" | "cwd">): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession(name: string, nextName: string): Promise<void>;
   validateLayout(path: string): Promise<void>;

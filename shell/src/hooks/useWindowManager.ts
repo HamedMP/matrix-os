@@ -4,7 +4,10 @@ import { TERMINAL_MIN_WINDOW_HEIGHT, TERMINAL_MIN_WINDOW_WIDTH } from "@/lib/bui
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";
-import { TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
+import {
+  createTerminalLayoutId,
+  type TerminalPersistence,
+} from "@/lib/terminal-window-metadata";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { patchWebOsViewState, resetWebOsViewStateClientForTests } from "@/lib/os-view-state-client";
 
@@ -19,6 +22,7 @@ export interface AppWindow {
   minimized: boolean;
   zIndex: number;
   terminalLayoutId?: string;
+  terminalPersistence?: TerminalPersistence;
 }
 
 export interface LayoutWindow {
@@ -86,14 +90,12 @@ interface ClosedLayout {
 
 const TERMINAL_LAYOUT_ID_PATTERN = /^term-layout_[0-9a-f]{32}$/;
 
-function createTerminalLayoutId(): string {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return `term-layout_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
-function terminalLayoutIdForPath(path: string, existing?: string): string | undefined {
-  if (!isTerminalWindowPath(path) || path === TERMINAL_SETUP_WINDOW_PATH) return undefined;
+function terminalLayoutIdForPath(
+  path: string,
+  persistence: TerminalPersistence | undefined,
+  existing?: string,
+): string | undefined {
+  if (!isTerminalWindowPath(path) || persistence === "ephemeral") return undefined;
   return existing && TERMINAL_LAYOUT_ID_PATTERN.test(existing) ? existing : createTerminalLayoutId();
 }
 
@@ -144,7 +146,12 @@ interface WindowManagerState {
 }
 
 interface WindowManagerActions {
-  openWindow: (name: string, path: string, dockXOffset: number) => void;
+  openWindow: (
+    name: string,
+    path: string,
+    dockXOffset: number,
+    options?: { terminalPersistence?: TerminalPersistence },
+  ) => void;
   openWindowExclusive: (name: string, path: string, dockXOffset: number, basePath?: string) => void;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
@@ -188,7 +195,7 @@ function debouncedSave(
     if (isPreVpsBillingSetupRoute()) return;
     const gatewayUrl = getGatewayUrl();
     const layoutWindows: LayoutWindow[] = state.windows.flatMap((w) => (
-      w.path === TERMINAL_SETUP_WINDOW_PATH
+      w.terminalPersistence === "ephemeral"
         ? []
         : [{
             path: w.path,
@@ -204,7 +211,7 @@ function debouncedSave(
 
     const layoutPaths = new Set(layoutWindows.map((lw) => lw.path));
     for (const path of state.closedPaths) {
-      if (path !== TERMINAL_SETUP_WINDOW_PATH && !layoutPaths.has(path)) {
+      if (!layoutPaths.has(path)) {
         const closedLayout = state.closedLayouts.get(path);
         layoutWindows.push({
           path,
@@ -268,12 +275,16 @@ function createWindowRecord(
   path: string,
   fallbackX: number,
   fallbackY: number,
+  options: { terminalPersistence?: TerminalPersistence } = {},
 ): AppWindow {
   const storedLayout = state.closedLayouts.get(path);
   const saved = storedLayout ? normalizeRestoredLayout(path, storedLayout) : undefined;
   const minSize = getEffectiveMinimumWindowSize(path);
   const { width: defaultWidth, height: defaultHeight } = computeDefaultWindowSize(path);
 
+  const terminalPersistence = isTerminalWindowPath(path)
+    ? options.terminalPersistence ?? "durable"
+    : undefined;
   return {
     id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     title: name,
@@ -284,7 +295,8 @@ function createWindowRecord(
     height: Math.max(saved?.height ?? defaultHeight, minSize.height),
     minimized: false,
     zIndex: state.nextZ,
-    terminalLayoutId: terminalLayoutIdForPath(path, saved?.terminalLayoutId),
+    terminalLayoutId: terminalLayoutIdForPath(path, terminalPersistence, saved?.terminalLayoutId),
+    ...(terminalPersistence ? { terminalPersistence } : {}),
   };
 }
 
@@ -324,16 +336,22 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     appLaunchTimes: {},
     fullscreenWindowId: null,
 
-    openWindow: (name, path, dockXOffset) => {
+    openWindow: (name, path, dockXOffset, options = {}) => {
       markUserLayoutMutation();
       set((state) => {
         const zState = normalizeWindowZOrder(state.windows, state.nextZ);
         const launchTimes = { ...state.appLaunchTimes, [path]: Date.now() };
-        const existing = zState.windows.find((w) => w.path === path);
+        const desiredPersistence = isTerminalWindowPath(path)
+          ? options.terminalPersistence ?? "durable"
+          : undefined;
+        const existing = zState.windows.find((w) => (
+          w.path === path
+          && (!desiredPersistence || (w.terminalPersistence ?? "durable") === desiredPersistence)
+        ));
         if (existing) {
           return {
             windows: zState.windows.map((w) =>
-              w.path === path
+              w.id === existing.id
                 ? { ...w, minimized: false, zIndex: zState.nextZ }
                 : w,
             ),
@@ -372,6 +390,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           path,
           fallbackX,
           fallbackY,
+          options,
         );
         return {
           windows: [...zState.windows, nextWindow],
@@ -430,7 +449,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         const win = state.windows.find((w) => w.id === id);
         const newClosed = new Set(state.closedPaths);
         const newLayouts = new Map(state.closedLayouts);
-        if (win) {
+        if (win && win.terminalPersistence !== "ephemeral") {
           newClosed.add(win.path);
           newLayouts.set(win.path, {
             title: win.title,
@@ -596,7 +615,8 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             height: restored.height,
             minimized: s.state === "minimized",
             zIndex: z++,
-            terminalLayoutId: terminalLayoutIdForPath(s.path, s.terminalLayoutId),
+            terminalLayoutId: terminalLayoutIdForPath(s.path, "durable", s.terminalLayoutId),
+            ...(isTerminalWindowPath(s.path) ? { terminalPersistence: "durable" as const } : {}),
           });
         }
 
