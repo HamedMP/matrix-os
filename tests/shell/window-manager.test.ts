@@ -350,10 +350,14 @@ describe("Window Manager Store", () => {
 
     it("keeps setup terminals separate, ephemeral, and out of desktop persistence", () => {
       useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
-      useWindowManager.getState().openWindow("Terminal", "__terminal__:setup", 80);
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80, {
+        terminalPersistence: "ephemeral",
+      });
 
-      const ordinary = useWindowManager.getState().windows.find((win) => win.path === "__terminal__");
-      const setup = useWindowManager.getState().windows.find((win) => win.path === "__terminal__:setup");
+      const ordinary = useWindowManager.getState().windows.find((win) => win.terminalPersistence !== "ephemeral");
+      const setup = useWindowManager.getState().windows.find((win) => win.terminalPersistence === "ephemeral");
+      expect(ordinary?.path).toBe("__terminal__");
+      expect(setup?.path).toBe("__terminal__");
       expect(ordinary?.terminalLayoutId).toMatch(/^term-layout_[0-9a-f]{32}$/);
       expect(setup?.terminalLayoutId).toBeUndefined();
 

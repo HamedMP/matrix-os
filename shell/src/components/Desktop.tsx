@@ -53,7 +53,6 @@ import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
   enqueueTerminalLaunch,
-  TERMINAL_SETUP_WINDOW_PATH,
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
 import {
@@ -400,7 +399,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     // In canvas mode, pan to center on the window after it opens/focuses
     if (useDesktopMode.getState().mode === "canvas") {
       requestAnimationFrame(() => {
-        const win = useWindowManager.getState().windows.find((w) => w.path === path);
+        const win = useWindowManager.getState().windows.find((w) => (
+          w.path === path && (path !== "__terminal__" || w.terminalPersistence !== "ephemeral")
+        ));
         if (win) {
           const cRect = useCanvasTransform.getState().containerRect;
           useCanvasTransform.getState().focusOnWindow(
@@ -431,7 +432,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the launch-path useEffect dependency array (L~930); a fresh function each render would re-fire that effect every render
   const focusOrOpen = useCallback((name: string, path: string) => {
     const existing = useWindowManager.getState().windows.find(
-      (w) => w.path === path || (path !== "__terminal__" && w.path.startsWith(path + ":")),
+      (w) => path === "__terminal__"
+        ? w.path === path && w.terminalPersistence !== "ephemeral"
+        : w.path === path || w.path.startsWith(path + ":"),
     );
 
     if (existing) {
@@ -444,16 +447,20 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   const openSetupTerminal = (action: TerminalLaunchAction) => {
     const windows = useWindowManager.getState().windows;
-    const setupTerminal = windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH);
+    const setupTerminal = windows.find((w) => (
+      w.path === "__terminal__" && w.terminalPersistence === "ephemeral"
+    ));
     if (setupTerminal) {
       wmRestoreAndFocusWindow(setupTerminal.id);
     } else {
-      wmOpenWindow("Terminal", TERMINAL_SETUP_WINDOW_PATH, dockXOffset);
+      wmOpenWindow("Terminal", "__terminal__", dockXOffset, { terminalPersistence: "ephemeral" });
     }
     const resolveTargetTerminal = () => (
       setupTerminal
         ? useWindowManager.getState().getWindow(setupTerminal.id)
-        : useWindowManager.getState().windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH)
+        : useWindowManager.getState().windows.find((w) => (
+            w.path === "__terminal__" && w.terminalPersistence === "ephemeral"
+          ))
     );
 
     requestAnimationFrame(() => {

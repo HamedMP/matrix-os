@@ -1,9 +1,17 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUserSystemdZellijAdapter } from "../../packages/gateway/src/shell/user-systemd-zellij-adapter.js";
-import type { UserSystemdTerminalDescriptor } from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
+import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
+import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
+import { TerminalWindowLayoutStore } from "../../packages/gateway/src/shell/terminal-window-layout-store.js";
+import {
+  createUserSystemdTerminalRuntime,
+  type UserSystemdCommandRunner,
+  type UserSystemdTerminalDescriptor,
+} from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
 import type { ZellijAdapter } from "../../packages/gateway/src/shell/zellij.js";
 
 const RUNTIME_ID = "rt_0123456789abcdef0123456789abcdef";
@@ -70,6 +78,7 @@ describe("user-systemd zellij adapter", () => {
     homePath = await mkdtemp(join(tmpdir(), "matrix-user-systemd-adapter-"));
     await mkdir(join(homePath, "system", "zellij", "layouts"), { recursive: true });
     await writeFile(join(homePath, "system", "zellij", "layouts", "default.kdl"), "layout { pane }\n");
+    await writeFile(join(homePath, "system", "zellij", "layouts", "matrix.kdl"), "layout { pane }\n");
     base = fakeAdapter();
     pinned = fakeAdapter();
     controller = {
@@ -222,5 +231,95 @@ describe("user-systemd zellij adapter", () => {
 
     expect(controller.start).not.toHaveBeenCalled();
     expect(controller.create).not.toHaveBeenCalled();
+  });
+
+  it("recovers an interrupted descriptor through the real runtime controller", async () => {
+    const cwd = join(homePath, "projects");
+    const layoutPath = join(homePath, "system", "zellij", "layouts", "default.kdl");
+    await mkdir(cwd, { recursive: true });
+    let active = true;
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => {
+      if (args.includes("start")) active = true;
+      if (args.includes("is-active")) {
+        if (active) return { stdout: "active\n", stderr: "" };
+        throw Object.assign(new Error("inactive"), { code: 3 });
+      }
+      return { stdout: "", stderr: "" };
+    });
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe: vi.fn(async () => true),
+      readinessStabilityMs: 0,
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+    await runtime.create({
+      runtimeId: RUNTIME_ID,
+      scope: "terminal",
+      kind: "shell",
+      displayName: "main",
+      cwd,
+      layoutPath,
+    });
+    active = false;
+    runCommand.mockClear();
+    const adapter = createUserSystemdZellijAdapter({
+      homePath,
+      generation: GENERATION,
+      controller: runtime,
+      baseAdapter: base,
+      adapterFactory: vi.fn(() => pinned),
+    });
+
+    const registry = new ShellRegistry({ homePath, adapter });
+    const sessionLifecycle = new TerminalWindowLayoutStore({ homePath });
+    await sessionLifecycle.deleteSessionReferences("main");
+    const app = new Hono().route(
+      "/api/terminal",
+      createShellRoutes({ registry, sessionLifecycle }),
+    );
+
+    const response = await app.request("/api/terminal/sessions/main/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "projects" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(runCommand).toHaveBeenCalledWith(
+      "systemctl",
+      ["--user", "start", `matrix-zellij@${RUNTIME_ID}.service`],
+      expect.any(Object),
+    );
+    await expect(runtime.findByDisplayName("terminal", "main")).resolves.toMatchObject({
+      runtimeId: RUNTIME_ID,
+      createdAt: "2026-07-31T12:00:00.000Z",
+    });
+    await expect(sessionLifecycle.listSessionTombstones()).resolves.toEqual([]);
+    await expect(registry.list()).resolves.toEqual([
+      expect.objectContaining({ name: "main", status: "active" }),
+    ]);
+  });
+
+  it("creates a replacement when explicit recovery finds no durable descriptor", async () => {
+    const adapter = createUserSystemdZellijAdapter({
+      homePath,
+      generation: GENERATION,
+      controller,
+      baseAdapter: base,
+      adapterFactory: vi.fn(() => pinned),
+      runtimeIdGenerator: () => RUNTIME_ID,
+    });
+
+    await adapter.recoverSession?.({ name: "main", cwd: homePath });
+
+    expect(controller.start).not.toHaveBeenCalled();
+    expect(controller.create).toHaveBeenCalledWith(expect.objectContaining({
+      runtimeId: RUNTIME_ID,
+      displayName: "main",
+      cwd: homePath,
+    }));
   });
 });

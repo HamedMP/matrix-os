@@ -654,10 +654,12 @@ export function createUserSystemdTerminalRuntime(options: {
     },
 
     async start(runtimeId: string): Promise<UserSystemdRuntimeResult> {
-      const descriptor = await readDescriptor(runtimeId);
-      if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
-      await startInterruptedRuntime(descriptor);
-      return { ...descriptor, lifecycle: "running" };
+      return withMutationLock(async () => {
+        const descriptor = await readDescriptor(runtimeId);
+        if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
+        await startInterruptedRuntime(descriptor);
+        return { ...descriptor, lifecycle: "running" };
+      });
     },
 
     get(runtimeId: string): Promise<UserSystemdTerminalDescriptor | null> {

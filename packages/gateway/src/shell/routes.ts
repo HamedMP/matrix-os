@@ -29,6 +29,7 @@ interface SessionRegistryRoutes {
     agent?: AgentKind;
     exclusive?: boolean;
   }): Promise<unknown>;
+  recover?(name: string, input: { cwd?: string }): Promise<unknown>;
   delete(name: string, options?: { force?: boolean }): Promise<void>;
   rename?(name: string, nextName: string): Promise<unknown>;
   reorder?(order: string[]): Promise<unknown[]>;
@@ -40,6 +41,7 @@ interface SessionRegistryRoutes {
 }
 
 interface ShellSessionLifecycleRoutes {
+  withSessionLifecycleLock<T>(name: string, operation: () => Promise<T>): Promise<T>;
   deleteSessionReferences(name: string): Promise<void>;
   clearSessionTombstone(name: string): Promise<void>;
   listSessionTombstones(): Promise<string[]>;
@@ -209,6 +211,12 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     onError: bodyTooLarge,
   });
 
+  const withSessionLifecycleLock = <T>(name: string, operation: () => Promise<T>): Promise<T> => (
+    deps.sessionLifecycle
+      ? deps.sessionLifecycle.withSessionLifecycleLock(name, operation)
+      : operation()
+  );
+
   const rollbackCreatedSession = async (name: string, restoreTombstone: boolean): Promise<void> => {
     let runtimeCleanupError: unknown;
     try {
@@ -357,31 +365,33 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         ...(body.cmd ? { cmd: body.cmd } : {}),
         ...(body.agent ? { agent: body.agent } : {}),
       };
-      const session = await deps.registry.create(sessionInput);
-      const name =
-        typeof session === "object" && session !== null && "name" in session
-          ? String((session as { name: unknown }).name)
-          : body.name;
-      await commitCreatedSession(name);
-      const sessionCreatedAt =
-        typeof session === "object" && session !== null && "createdAt" in session
-          ? z.iso.datetime().parse((session as { createdAt: unknown }).createdAt)
-          : null;
-      if (body.chatId && principal && binding && deps.chatTerminals) {
-        try {
-          if (!sessionCreatedAt) throw new Error("Chat terminal session incarnation unavailable");
-          await deps.chatTerminals.bind(principal, {
-            chatId: body.chatId,
-            ...(binding.runId ? { runId: binding.runId } : {}),
-            sessionId: name,
-            sessionCreatedAt,
-          });
-        } catch (error: unknown) {
-          await rollbackCreatedSession(name, true);
-          throw error;
+      return await withSessionLifecycleLock(body.name, async () => {
+        const session = await deps.registry.create(sessionInput);
+        const name =
+          typeof session === "object" && session !== null && "name" in session
+            ? String((session as { name: unknown }).name)
+            : body.name;
+        await commitCreatedSession(name);
+        const sessionCreatedAt =
+          typeof session === "object" && session !== null && "createdAt" in session
+            ? z.iso.datetime().parse((session as { createdAt: unknown }).createdAt)
+            : null;
+        if (body.chatId && principal && binding && deps.chatTerminals) {
+          try {
+            if (!sessionCreatedAt) throw new Error("Chat terminal session incarnation unavailable");
+            await deps.chatTerminals.bind(principal, {
+              chatId: body.chatId,
+              ...(binding.runId ? { runId: binding.runId } : {}),
+              sessionId: name,
+              sessionCreatedAt,
+            });
+          } catch (error: unknown) {
+            await rollbackCreatedSession(name, true);
+            throw error;
+          }
         }
-      }
-      return c.json({ name, created: true }, 201);
+        return c.json({ name, created: true }, 201);
+      });
     } catch (err) {
       return safeError(c, err);
     }
@@ -401,12 +411,14 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     try {
       const name = SafeSessionNameSchema.parse(c.req.param("name"));
       console.info("[terminal-lifecycle]", { event: "terminal.session.delete.requested", name });
-      await deps.registry.delete(name, {
-        force: new URL(c.req.url).searchParams.get("force") === "1",
+      return await withSessionLifecycleLock(name, async () => {
+        await deps.registry.delete(name, {
+          force: new URL(c.req.url).searchParams.get("force") === "1",
+        });
+        await deps.sessionLifecycle?.deleteSessionReferences(name);
+        console.info("[terminal-lifecycle]", { event: "terminal.session.delete.completed", name });
+        return c.json({ ok: true });
       });
-      await deps.sessionLifecycle?.deleteSessionReferences(name);
-      console.info("[terminal-lifecycle]", { event: "terminal.session.delete.completed", name });
-      return c.json({ ok: true });
     } catch (err) {
       console.warn("[terminal-lifecycle]", {
         event: "terminal.session.delete.failed",
@@ -427,11 +439,14 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
           { "Retry-After": String(Math.ceil(SHELL_SESSION_CREATE_RATE_LIMIT.lockoutMs / 1000)) },
         );
       }
+      if (!deps.registry.recover) return unavailable(c, "session_recovery_unavailable");
       console.info("[terminal-lifecycle]", { event: "terminal.session.recover.requested", name });
-      const session = await deps.registry.create({ name, ...(body.cwd ? { cwd: body.cwd } : {}) });
-      await commitCreatedSession(name);
-      console.info("[terminal-lifecycle]", { event: "terminal.session.recover.completed", name });
-      return c.json({ session }, 201);
+      return await withSessionLifecycleLock(name, async () => {
+        const session = await deps.registry.recover!(name, body.cwd ? { cwd: body.cwd } : {});
+        await commitCreatedSession(name);
+        console.info("[terminal-lifecycle]", { event: "terminal.session.recover.completed", name });
+        return c.json({ session }, 201);
+      });
     } catch (err: unknown) {
       console.warn("[terminal-lifecycle]", {
         event: "terminal.session.recover.failed",

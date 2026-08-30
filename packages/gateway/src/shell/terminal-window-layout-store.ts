@@ -12,6 +12,7 @@ const MAX_TABS = 32;
 const MAX_PANES = 64;
 const MAX_TREE_DEPTH = 10;
 const MAX_TOMBSTONES = 256;
+const MAX_SESSION_LIFECYCLE_LOCKS = 256;
 const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 
 const PaneSchema = z.object({
@@ -150,6 +151,7 @@ export class TerminalWindowLayoutStore {
   private readonly legacyLayoutPath: string;
   private readonly now: () => Date;
   private mutationTail: Promise<void> = Promise.resolve();
+  private readonly sessionLifecycleTails = new Map<string, Promise<void>>();
 
   constructor(options: { homePath: string; now?: () => Date }) {
     this.statePath = join(resolve(options.homePath), "system", "terminal-window-layouts.json");
@@ -288,6 +290,31 @@ export class TerminalWindowLayoutStore {
       if (pruned.changed) await this.write(pruned.state);
       return pruned.state.tombstones.some((entry) => entry.sessionName === safeSessionName);
     });
+  }
+
+  async withSessionLifecycleLock<T>(sessionName: string, operation: () => Promise<T>): Promise<T> {
+    const safeSessionName = SessionNameSchema.parse(sessionName);
+    const previous = this.sessionLifecycleTails.get(safeSessionName) ?? Promise.resolve();
+    if (
+      !this.sessionLifecycleTails.has(safeSessionName)
+      && this.sessionLifecycleTails.size >= MAX_SESSION_LIFECYCLE_LOCKS
+    ) {
+      throw new Error("Terminal session lifecycle capacity exceeded");
+    }
+    let release!: () => void;
+    const tail = new Promise<void>((resolveRelease) => {
+      release = resolveRelease;
+    });
+    this.sessionLifecycleTails.set(safeSessionName, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.sessionLifecycleTails.get(safeSessionName) === tail) {
+        this.sessionLifecycleTails.delete(safeSessionName);
+      }
+    }
   }
 
   private async withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
