@@ -29,6 +29,52 @@ export const FundedAiGlobalPolicySchema = z.object({
   updatedAt: IsoTimestampSchema,
 }).strict();
 
+export const FundedAiOperatorGlobalPolicyUpdateRequestSchema = z.object({
+  expectedRevision: RevisionSchema.max(Number.MAX_SAFE_INTEGER - 1),
+  enabled: z.boolean(),
+  allowedModelIds: UniqueModelIdsSchema,
+}).strict();
+
+export const FundedAiOperatorGlobalPolicyResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  policy: FundedAiGlobalPolicySchema,
+}).strict();
+
+export const FundedAiOperatorRuntimePolicyUpdateRequestSchema = z.object({
+  expectedRevision: RevisionSchema.max(Number.MAX_SAFE_INTEGER - 1),
+  enabled: z.boolean(),
+  allowedModelIds: UniqueModelIdsSchema,
+  monthlyBudgetMicrousd: MicrousdSchema,
+  expiresAt: IsoTimestampSchema.nullable(),
+}).strict();
+
+export const FundedAiOperatorRuntimePolicyResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  policy: z.object({
+    enabled: z.boolean(),
+    revision: RevisionSchema,
+    allowedModelIds: UniqueModelIdsSchema,
+    monthlyBudgetMicrousd: MicrousdSchema,
+    expiresAt: IsoTimestampSchema.nullable(),
+    updatedAt: IsoTimestampSchema,
+  }).strict(),
+}).strict();
+
+export const FundedAiPromotionalGrantResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  grant: z.object({
+    kind: z.literal("promotional"),
+    amountMicrousd: MicrousdSchema.min(1),
+    expiresAt: IsoTimestampSchema,
+    createdAt: IsoTimestampSchema,
+    status: z.literal("active"),
+  }).strict(),
+}).strict().superRefine((value, ctx) => {
+  if (Date.parse(value.grant.expiresAt) <= Date.parse(value.grant.createdAt)) {
+    ctx.addIssue({ code: "custom", path: ["grant", "expiresAt"], message: "Promotional grant must expire after creation" });
+  }
+});
+
 export const FundedAiEffectivePolicySchema = z.object({
   enabled: z.boolean(),
   globalRevision: RevisionSchema,
@@ -222,6 +268,11 @@ export const FundedAiSafeErrorSchema = z.object({ error: SafeErrorSchema }).stri
 
 export type FundedAiIdentity = z.infer<typeof FundedAiIdentitySchema>;
 export type FundedAiGlobalPolicy = z.infer<typeof FundedAiGlobalPolicySchema>;
+export type FundedAiOperatorGlobalPolicyUpdateRequest = z.infer<typeof FundedAiOperatorGlobalPolicyUpdateRequestSchema>;
+export type FundedAiOperatorGlobalPolicyResponse = z.infer<typeof FundedAiOperatorGlobalPolicyResponseSchema>;
+export type FundedAiOperatorRuntimePolicyUpdateRequest = z.infer<typeof FundedAiOperatorRuntimePolicyUpdateRequestSchema>;
+export type FundedAiOperatorRuntimePolicyResponse = z.infer<typeof FundedAiOperatorRuntimePolicyResponseSchema>;
+export type FundedAiPromotionalGrantResponse = z.infer<typeof FundedAiPromotionalGrantResponseSchema>;
 export type FundedAiEffectivePolicy = z.infer<typeof FundedAiEffectivePolicySchema>;
 export type FundedAiRuntimeCredentialIssueResponse = z.infer<typeof FundedAiRuntimeCredentialIssueResponseSchema>;
 export type FundedAiAuthorizationRequest = z.infer<typeof FundedAiAuthorizationRequestSchema>;

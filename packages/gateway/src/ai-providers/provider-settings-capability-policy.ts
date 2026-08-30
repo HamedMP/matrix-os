@@ -169,11 +169,14 @@ export function supportedProviderSettingsActions(input: {
   dependencies?: ProviderAccountDependencyCoordinator;
   config: ProviderSettingsConfiguration;
   canonical: AiProviderSnapshotV3;
+  gatewayPolicyAuthority?: "local" | "platform";
 }): ProviderSettingsSupportedAction[] {
   const actions: ProviderSettingsSupportedAction[] = input.runtime
     ? input.runtime.supportedActions.filter((action) =>
-        input.config.gatewayPolicy !== null
-        || (action !== "set_gateway_budget" && action !== "set_gateway_allowlist"))
+        (input.config.gatewayPolicy !== null
+          || (action !== "set_gateway_budget" && action !== "set_gateway_allowlist"))
+        && (input.gatewayPolicyAuthority !== "platform"
+          || (action !== "set_gateway_budget" && action !== "set_gateway_allowlist")))
     : [];
   if (input.login && input.config.harnesses.some((harness) => coordinatorLoginMethods({
       login: input.login,

@@ -4,6 +4,7 @@ import {
   FUNDED_AI_SCOPE,
   FundedAiGlobalPolicySchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
+  IsoTimestampSchema,
   type FundedAiGlobalPolicy,
   type FundedAiIdentity,
   type FundedAiRuntimeCredentialIssueResponse,
@@ -34,7 +35,7 @@ const RuntimePolicyUpdateSchema = z.object({
   enabled: z.boolean(),
   allowedModelIds: ModelIdsSchema,
   monthlyBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  expiresAt: z.string().datetime({ offset: true }).nullable(),
+  expiresAt: IsoTimestampSchema.nullable(),
 }).strict();
 const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A-Za-z0-9_-]{43})$/;
 
@@ -108,6 +109,40 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       allowedModelIds: parseModels(row.allowed_model_ids),
       updatedAt: row.updated_at,
     });
+  }
+
+  async function getRuntimePolicy(identityInput: FundedAiIdentity) {
+    const identity = IdentitySchema.parse(identityInput);
+    await options.db.ready;
+    const row = await options.db.executor.selectFrom("ai_funded_runtime_policies as runtime")
+      .innerJoin("user_machines as machine", "machine.machine_id", "runtime.machine_id")
+      .select([
+        "runtime.enabled",
+        "runtime.revision",
+        "runtime.allowed_model_ids",
+        "runtime.monthly_budget_microusd",
+        "runtime.expires_at",
+        "runtime.updated_at",
+      ])
+      .where("runtime.machine_id", "=", identity.machineId)
+      .where("runtime.owner_id", "=", identity.ownerId)
+      .where("runtime.runtime_slot", "=", identity.runtimeSlot)
+      .where("machine.clerk_user_id", "=", identity.ownerId)
+      .where("machine.runtime_slot", "=", identity.runtimeSlot)
+      .where("machine.status", "=", "running")
+      .where("machine.activation_state", "=", "authorized")
+      .where("machine.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!row) throw new AiFundedPolicyError("identity_mismatch");
+    return {
+      identity,
+      enabled: row.enabled,
+      revision: row.revision,
+      allowedModelIds: parseModels(row.allowed_model_ids),
+      monthlyBudgetMicrousd: Number(row.monthly_budget_microusd),
+      expiresAt: row.expires_at,
+      updatedAt: row.updated_at,
+    };
   }
 
   async function updateGlobalPolicy(input: {
@@ -240,6 +275,21 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           AND runtime.enabled = TRUE
           AND global_policy.enabled = TRUE
           AND (runtime.expires_at IS NULL OR runtime.expires_at > ${checkedAt})
+          AND NOT EXISTS (
+            SELECT 1
+            FROM ai_funded_credit_ledger ledger
+            JOIN ai_funded_runtime_balances balance
+              ON balance.machine_id = ledger.machine_id
+              AND balance.owner_id = ledger.owner_id
+              AND balance.runtime_slot = ledger.runtime_slot
+            WHERE ledger.owner_id = runtime.owner_id
+              AND ledger.machine_id = runtime.machine_id
+              AND ledger.runtime_slot = runtime.runtime_slot
+              AND ledger.kind = 'promotional_grant'
+              AND ledger.expires_at IS NOT NULL
+              AND ledger.expires_at <= ${checkedAt}
+              AND balance.promotional_balance_microusd > 0
+          )
           AND EXISTS (
             SELECT 1
             FROM jsonb_array_elements_text(global_policy.allowed_model_ids::jsonb) global_model(value)
@@ -316,7 +366,15 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     inFlightTtlMs,
     reservationIdFactory: options.reservationIdFactory,
   });
-  return { getGlobalPolicy, updateGlobalPolicy, setRuntimePolicy, issueRuntimeCredential, revokeRuntimeCredential, ...metering };
+  return {
+    getGlobalPolicy,
+    getRuntimePolicy,
+    updateGlobalPolicy,
+    setRuntimePolicy,
+    issueRuntimeCredential,
+    revokeRuntimeCredential,
+    ...metering,
+  };
 }
 
 export type AiFundedPolicyRepository = ReturnType<typeof createAiFundedPolicyRepository>;

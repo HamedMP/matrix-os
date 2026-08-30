@@ -11,6 +11,7 @@ import {
   FundedAiSettlementResponseSchema,
   FundedAiStartRequestSchema,
   FundedAiStartResponseSchema,
+  IsoTimestampSchema,
   type FundedAiAuthorizationResponse,
   type FundedAiFundingSummary,
   type FundedAiReleaseResponse,
@@ -36,7 +37,12 @@ const GrantSchema = z.object({
   kind: z.enum(["promotional_grant", "addon_grant"]),
   amountMicrousd: MoneySchema.min(1),
   sourceReference: ReferenceSchema,
-}).strict();
+  expiresAt: IsoTimestampSchema.nullable().optional().default(null),
+}).strict().superRefine((value, ctx) => {
+  if (value.kind === "addon_grant" && value.expiresAt !== null) {
+    ctx.addIssue({ code: "custom", path: ["expiresAt"], message: "Add-on credit cannot expire" });
+  }
+});
 const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 const ModelIdsSchema = z.array(z.string().min(3).max(200)).max(64);
 
@@ -137,7 +143,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const checkedAt = checked.toISOString();
     const currentPeriod = utcMonthStart(checked);
     await options.db.ready;
-    type FundingRow = BalanceSnapshot & { monthly_budget_microusd: unknown };
+    type FundingRow = BalanceSnapshot & {
+      monthly_budget_microusd: unknown;
+      has_expired_promotional_credit: boolean;
+    };
     const result = await sql<FundingRow>`
       SELECT
         balance.credit_balance_microusd,
@@ -147,7 +156,20 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         balance.month_period_start,
         balance.month_spent_microusd,
         balance.month_reserved_microusd,
-        runtime.monthly_budget_microusd
+        runtime.monthly_budget_microusd,
+        (
+          balance.promotional_balance_microusd > 0
+          AND EXISTS (
+            SELECT 1
+            FROM ai_funded_credit_ledger ledger
+            WHERE ledger.owner_id = balance.owner_id
+              AND ledger.machine_id = balance.machine_id
+              AND ledger.runtime_slot = balance.runtime_slot
+              AND ledger.kind = 'promotional_grant'
+              AND ledger.expires_at IS NOT NULL
+              AND ledger.expires_at <= ${checkedAt}
+          )
+        ) AS has_expired_promotional_credit
       FROM ai_funded_runtime_balances balance
       JOIN ai_funded_runtime_policies runtime
         ON runtime.machine_id = balance.machine_id
@@ -167,6 +189,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     `.execute(options.db.executor);
     const row = result.rows[0];
     if (!row) throw new AiFundedPolicyError("identity_mismatch");
+    if (row.has_expired_promotional_credit) throw new AiFundedPolicyError("access_disabled");
     return fundingSummary({
       ...row,
       month_period_start: currentPeriod,
@@ -178,6 +201,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   async function grantCredit(input: z.input<typeof GrantSchema>) {
     const grant = GrantSchema.parse(input);
     const at = options.now().toISOString();
+    if (grant.expiresAt !== null && grant.expiresAt <= at) {
+      throw new AiFundedPolicyError("access_disabled");
+    }
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       const machine = await trx.executor.selectFrom("user_machines").select([
@@ -197,6 +223,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         source_reference: grant.sourceReference,
         reservation_id: null,
         period_start: null,
+        expires_at: grant.expiresAt,
         created_at: at,
       }).onConflict((conflict) => conflict.column("entry_id").doNothing())
         .returning("entry_id").executeTakeFirst();
@@ -205,7 +232,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       if (stored.owner_id !== grant.identity.ownerId || stored.machine_id !== grant.identity.machineId
         || stored.runtime_slot !== grant.identity.runtimeSlot || stored.kind !== grant.kind
         || exactInteger(stored.amount_microusd) !== grant.amountMicrousd
-        || stored.source_reference !== grant.sourceReference || stored.reservation_id !== null) {
+        || stored.source_reference !== grant.sourceReference || stored.reservation_id !== null
+        || stored.expires_at !== grant.expiresAt) {
         throw new AiFundedPolicyError("idempotency_conflict");
       }
       if (inserted) {
@@ -264,6 +292,23 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         || (runtime.expires_at !== null && Date.parse(runtime.expires_at) <= checked.getTime())) {
         throw new AiFundedPolicyError("access_disabled");
       }
+      const expiredPromotionalCredit = await trx.executor
+        .selectFrom("ai_funded_credit_ledger as ledger")
+        .innerJoin("ai_funded_runtime_balances as balance", (join) => join
+          .onRef("balance.machine_id", "=", "ledger.machine_id")
+          .onRef("balance.owner_id", "=", "ledger.owner_id")
+          .onRef("balance.runtime_slot", "=", "ledger.runtime_slot"))
+        .select("ledger.entry_id")
+        .where("ledger.owner_id", "=", credential.owner_id)
+        .where("ledger.machine_id", "=", credential.machine_id)
+        .where("ledger.runtime_slot", "=", credential.runtime_slot)
+        .where("ledger.kind", "=", "promotional_grant")
+        .where("ledger.expires_at", "is not", null)
+        .where("ledger.expires_at", "<=", checkedAt)
+        .where("balance.promotional_balance_microusd", ">", 0)
+        .limit(1)
+        .executeTakeFirst();
+      if (expiredPromotionalCredit) throw new AiFundedPolicyError("access_disabled");
       const allowedModelIds = intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids));
       if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
 
@@ -513,6 +558,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           source_reference: reservation.request_id,
           reservation_id: reservation.reservation_id,
           period_start: reservation.period_start,
+          expires_at: null,
           created_at: checkedAt,
         }).execute();
       }
@@ -527,6 +573,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           source_reference: reservation.request_id,
           reservation_id: reservation.reservation_id,
           period_start: reservation.period_start,
+          expires_at: null,
           created_at: checkedAt,
         }).execute();
       }
@@ -696,6 +743,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
               source_reference: reservation.request_id,
               reservation_id: reservation.reservation_id,
               period_start: reservation.period_start,
+              expires_at: null,
               created_at: checkedAt,
             } : null,
             addonDebit > 0 ? {
@@ -708,6 +756,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
               source_reference: reservation.request_id,
               reservation_id: reservation.reservation_id,
               period_start: reservation.period_start,
+              expires_at: null,
               created_at: checkedAt,
             } : null,
           ].filter((row): row is NonNullable<typeof row> => row !== null);

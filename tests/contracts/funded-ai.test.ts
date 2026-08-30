@@ -3,6 +3,11 @@ import {
   FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
   FundedAiGlobalPolicySchema,
+  FundedAiOperatorGlobalPolicyUpdateRequestSchema,
+  FundedAiOperatorGlobalPolicyResponseSchema,
+  FundedAiOperatorRuntimePolicyUpdateRequestSchema,
+  FundedAiOperatorRuntimePolicyResponseSchema,
+  FundedAiPromotionalGrantResponseSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiSafeErrorSchema,
@@ -158,6 +163,82 @@ describe("funded AI control-plane contracts", () => {
     expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
       ...response,
       funding: { ...funding, reservedThisMonthMicrousd: 200_001 },
+    }).success).toBe(false);
+  });
+
+  it("keeps operator policy and promotional grant payloads bounded and identity-free", () => {
+    const globalRequest = {
+      expectedRevision: 4,
+      enabled: true,
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+    } as const;
+    expect(FundedAiOperatorGlobalPolicyUpdateRequestSchema.parse(globalRequest)).toEqual(globalRequest);
+    expect(FundedAiOperatorGlobalPolicyUpdateRequestSchema.safeParse({
+      ...globalRequest,
+      relayToken: "secret",
+    }).success).toBe(false);
+    expect(FundedAiOperatorGlobalPolicyResponseSchema.parse({
+      contractVersion: 1,
+      policy: {
+        enabled: globalRequest.enabled,
+        revision: 5,
+        allowedModelIds: globalRequest.allowedModelIds,
+        updatedAt: now,
+      },
+    })).toEqual({
+      contractVersion: 1,
+      policy: {
+        enabled: true,
+        revision: 5,
+        allowedModelIds: ["anthropic/claude-sonnet-5"],
+        updatedAt: now,
+      },
+    });
+
+    const runtimeRequest = {
+      expectedRevision: 2,
+      enabled: true,
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+      monthlyBudgetMicrousd: 1_000_000,
+      expiresAt: "2026-09-30T20:00:00.000Z",
+    } as const;
+    expect(FundedAiOperatorRuntimePolicyUpdateRequestSchema.parse(runtimeRequest)).toEqual(runtimeRequest);
+    expect(FundedAiOperatorRuntimePolicyUpdateRequestSchema.safeParse({
+      ...runtimeRequest,
+      ownerId: "user_alice",
+      machineId: "machine_123",
+    }).success).toBe(false);
+    const runtimeResponse = {
+      contractVersion: 1,
+      policy: {
+        enabled: true,
+        revision: 3,
+        allowedModelIds: ["anthropic/claude-sonnet-5"],
+        monthlyBudgetMicrousd: 1_000_000,
+        expiresAt: runtimeRequest.expiresAt,
+        updatedAt: now,
+      },
+    } as const;
+    expect(FundedAiOperatorRuntimePolicyResponseSchema.parse(runtimeResponse)).toEqual(runtimeResponse);
+    expect(FundedAiOperatorRuntimePolicyResponseSchema.safeParse({
+      ...runtimeResponse,
+      ownerId: "user_alice",
+    }).success).toBe(false);
+
+    const grantResponse = {
+      contractVersion: 1,
+      grant: {
+        kind: "promotional" as const,
+        amountMicrousd: 500_000,
+        expiresAt: "2026-09-30T20:00:00.000Z",
+        createdAt: now,
+        status: "active" as const,
+      },
+    };
+    expect(FundedAiPromotionalGrantResponseSchema.parse(grantResponse)).toEqual(grantResponse);
+    expect(FundedAiPromotionalGrantResponseSchema.safeParse({
+      ...grantResponse,
+      grant: { ...grantResponse.grant, entryId: "machine_123" },
     }).success).toBe(false);
   });
 });

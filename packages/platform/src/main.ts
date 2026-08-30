@@ -324,6 +324,7 @@ export function createApp(deps: {
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
+  internalFundedAiOperatorRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -732,6 +733,9 @@ export function createApp(deps: {
   }
   if (deps.internalFundedAiRelayRoutes) {
     app.route('/internal/ai/funded', deps.internalFundedAiRelayRoutes);
+  }
+  if (deps.internalFundedAiOperatorRoutes) {
+    app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {
