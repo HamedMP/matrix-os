@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   drainExistingTerminalSessionQueue,
+  drainExistingTerminalSessionQueueWithRetry,
   enqueueExistingTerminalSession,
 } from "../../shell/src/lib/provider-terminal-session.js";
 
@@ -73,5 +74,40 @@ describe("provider terminal session handoff", () => {
     await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: active }))
       .resolves.toEqual(["provider-login"]);
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
+  });
+
+  it("retries retained handoffs with a bounded backoff until the session becomes active", async () => {
+    enqueueExistingTerminalSession("provider-login", "window-a");
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(Response.json({ sessions: [{ name: "provider-login", status: "exited" }] }))
+      .mockResolvedValueOnce(Response.json({ sessions: [{ name: "provider-login", status: "active" }] }));
+    const wait = vi.fn(async () => {});
+
+    await expect(drainExistingTerminalSessionQueueWithRetry("window-a", {
+      fetcher,
+      wait,
+      maxAttempts: 3,
+    })).resolves.toEqual(["provider-login"]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledWith(250);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
+  });
+
+  it("stops retrying after the bounded attempt count and preserves the handoff", async () => {
+    enqueueExistingTerminalSession("provider-login", "window-a");
+    const fetcher = vi.fn(async () => Response.json({
+      sessions: [{ name: "provider-login", status: "exited" }],
+    }));
+    const wait = vi.fn(async () => {});
+
+    await expect(drainExistingTerminalSessionQueueWithRetry("window-a", {
+      fetcher,
+      wait,
+      maxAttempts: 4,
+    })).resolves.toEqual([]);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(wait).toHaveBeenCalledTimes(3);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue"))
+      .toContain("provider-login");
   });
 });

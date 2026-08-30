@@ -118,3 +118,34 @@ export async function drainExistingTerminalSessionQueue(
     return [];
   }
 }
+
+function hasQueuedSessionForTarget(targetId?: string): boolean {
+  return readQueue().some((entry) => !targetId || entry.targetId === targetId || !entry.targetId);
+}
+
+export async function drainExistingTerminalSessionQueueWithRetry(
+  targetId?: string,
+  options: {
+    fetcher?: Fetcher;
+    wait?: (delayMs: number) => Promise<void>;
+    maxAttempts?: number;
+  } = {},
+): Promise<string[]> {
+  const maxAttempts = Number.isSafeInteger(options.maxAttempts)
+    ? Math.max(1, Math.min(options.maxAttempts!, 8))
+    : 6;
+  const wait = options.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  }));
+  const accepted = new Set<string>();
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    for (const sessionId of await drainExistingTerminalSessionQueue(targetId, {
+      ...(options.fetcher ? { fetcher: options.fetcher } : {}),
+    })) {
+      accepted.add(sessionId);
+    }
+    if (!hasQueuedSessionForTarget(targetId) || attempt === maxAttempts - 1) break;
+    await wait(Math.min(250 * (2 ** attempt), 2_000));
+  }
+  return [...accepted];
+}
