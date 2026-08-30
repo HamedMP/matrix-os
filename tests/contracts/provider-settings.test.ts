@@ -6,6 +6,7 @@ import {
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
   ProviderSettingsSnapshotSchema,
+  ProviderSettingsSupportedActionSchema,
   ProviderUsageSchema,
   type ProviderSettingsMutation,
   type ProviderSettingsSnapshot,
@@ -31,6 +32,16 @@ function makeSnapshot(): ProviderSettingsSnapshot {
     revision: 12,
     refreshedAt: now,
     access: { mode: "writable" },
+    supportedActions: [
+      "add_harness",
+      "update_harness",
+      "set_harness_enabled",
+      "set_route",
+      "select_account",
+      "select_access_source",
+      "set_gateway_budget",
+      "set_gateway_allowlist",
+    ],
     modelProviders: [{
       id: "anthropic",
       displayName: "Anthropic",
@@ -299,8 +310,58 @@ describe("provider settings contracts", () => {
     expect(ProviderSettingsSnapshotSchema.safeParse({
       ...snapshot,
       access: { mode: "read_only", reason: "remote_policy" },
+      supportedActions: [],
       harnesses: snapshot.harnesses.map((harness) => ({ ...harness, connectivity: "offline" })),
     }).success).toBe(true);
+  });
+
+  it("advertises only explicit, unique mutation capabilities", () => {
+    const snapshot = makeSnapshot();
+    expect(ProviderSettingsSupportedActionSchema.parse("set_route")).toBe("set_route");
+    expect(snapshot.supportedActions).not.toContain("start_login");
+    expect(snapshot.supportedActions).not.toContain("logout_account");
+    expect(snapshot.supportedActions).not.toContain("remove_account");
+    expect(snapshot.supportedActions).not.toContain("reassign_account");
+    expect(snapshot.supportedActions).not.toContain("add_credit");
+    expect(snapshot.supportedActions).not.toContain("submit_api_key");
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      supportedActions: [...snapshot.supportedActions, "set_route"],
+    }).success).toBe(false);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      supportedActions: ["unknown_action"],
+    }).success).toBe(false);
+  });
+
+  it("never advertises mutations while settings are read-only", () => {
+    const snapshot = makeSnapshot();
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      access: { mode: "read_only", reason: "runtime_unavailable" },
+    }).success).toBe(false);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      access: { mode: "read_only", reason: "runtime_unavailable" },
+      supportedActions: [],
+    }).success).toBe(true);
+  });
+
+  it("requires an explicit capability before future credit or API-key UI exists", () => {
+    const snapshot = makeSnapshot();
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      supportedActions: [...snapshot.supportedActions, "add_credit"],
+    }).success).toBe(true);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      gatewayPolicy: { ...snapshot.gatewayPolicy!, topUpEnabled: false },
+      supportedActions: [...snapshot.supportedActions, "add_credit"],
+    }).success).toBe(false);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      supportedActions: [...snapshot.supportedActions, "submit_api_key"],
+    }).success).toBe(false);
   });
 
   const mutations: ProviderSettingsMutation[] = [
