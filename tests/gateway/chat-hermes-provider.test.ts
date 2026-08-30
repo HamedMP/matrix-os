@@ -1074,6 +1074,56 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).not.toHaveBeenCalled();
   });
 
+  it("does not republish an interim after a later recoverable Hermes tool failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_build",
+      name: "terminal",
+      args: { command: "pnpm build" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_build",
+      name: "terminal",
+      result: { exit_code: 1, output: "build failed" },
+    });
+    gateway.event("message.delta", { text: "Checking the preview." });
+    gateway.event("message.interim", {
+      text: "Checking the preview.",
+      already_streamed: true,
+    });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 1, output: "preview failed" },
+    });
+    gateway.event("message.delta", { text: "The preview is ready." });
+    gateway.event("message.interim", {
+      text: "The preview is ready.",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "The preview is ready.",
+      status: "complete",
+    });
+
+    const events = await eventsPromise;
+    expect(events.filter((event) => event.type === "assistant.delta")).toEqual([
+      { type: "assistant.delta", delta: "Checking the preview." },
+      { type: "assistant.delta", delta: "\n\nThe preview is ready." },
+    ]);
+    expect(events).toContainEqual({ type: "run.completed", outcome: "completed" });
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
   it("publishes authoritative trailing Hermes whitespace when sealing a streamed segment", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
