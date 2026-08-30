@@ -464,7 +464,9 @@ export function createHermesChatProviderAdapter(options: {
         const activity = hermesStatusActivity(parsed.data.kind);
         if (!activity) return;
         const normalizedKind = parsed.data.kind.trim().toLowerCase();
-        const publishesRawProcessNotification = ["process", "loop", "lifecycle"].includes(normalizedKind);
+        const safeModelStatus = /^Current model:\s+[^\r\n]{1,240}$/i.test(parsed.data.text?.trim() ?? "");
+        const publishesRawProcessNotification = ["process", "loop", "lifecycle"].includes(normalizedKind)
+          && !safeModelStatus;
         const summary = publishesRawProcessNotification ? undefined : safePublishedText(parsed.data.text, {
           homePath: options.homePath,
           executionRoot: input.executionRoot,
