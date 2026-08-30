@@ -905,6 +905,31 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).not.toHaveBeenCalled();
   });
 
+  it("seals a whitespace-only streamed Hermes segment", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: " \n" });
+    gateway.event("message.interim", {
+      text: " \n",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: " \n",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: " \n" },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
   it("preserves authoritative whitespace beyond an already-streamed Hermes boundary", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
