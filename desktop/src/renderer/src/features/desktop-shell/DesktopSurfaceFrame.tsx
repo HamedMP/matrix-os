@@ -114,6 +114,7 @@ export default function DesktopSurfaceFrame({
     || tab.kind === "terminals"
     || tab.kind === "settings"
     || tab.kind === "notes";
+  const terminalUsesSidebarChrome = tab.kind === "terminal" || tab.kind === "terminals";
   const sidebarHidesTitle = tab.kind === "terminal"
     || tab.kind === "terminals"
     || tab.kind === "settings"
@@ -236,7 +237,7 @@ export default function DesktopSurfaceFrame({
       sidebar={tab.kind === "settings" ? (
         <SettingsSidebar section={settingsSection} onSectionChange={setSettingsSection} />
       ) : undefined}
-      safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
+      safeAreaLayout={sidebarOwnsChrome && !terminalUsesSidebarChrome ? "sidebar" : "pane"}
       topBar={isWindow || surfaceChrome ? (
         <TopBar
           title={sidebarHidesTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title}
