@@ -73,9 +73,11 @@ function attachCommand(shell: ShellSessionSummary): string {
 export default function TerminalsTab({
   active = true,
   visible = active,
+  visualScale = 1,
 }: {
   active?: boolean;
   visible?: boolean;
+  visualScale?: number;
 }) {
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
@@ -469,6 +471,7 @@ export default function TerminalsTab({
                 <TerminalView
                   sessionName={sessionName}
                   active={active && liveSessionName === sessionName}
+                  visualScale={visualScale}
                 />
               </div>
             </div>

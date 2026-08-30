@@ -42,6 +42,7 @@ import { sendTerminalResize } from "./terminal-remote-resize";
 import {
   computeSoftGridLayout,
   correctTerminalPointerCoordinates,
+  shouldCorrectTerminalPointerCoordinates,
 } from "./terminal-soft-grid";
 import {
   installTerminalPointerInterception,
@@ -319,7 +320,6 @@ export function TerminalPane({
         cancelable: e.cancelable,
         composed: e.composed,
         detail: e.detail,
-        view: e.view ?? window,
         screenX: e.screenX,
         screenY: e.screenY,
         clientX: corrected.clientX,
@@ -343,6 +343,11 @@ export function TerminalPane({
       container,
       getTerminal: () => termRef.current,
       getVisualScale: () => canvasZoomRef.current * softGridScaleRef.current,
+      shouldCorrectPointer: (event) => shouldCorrectTerminalPointerCoordinates({
+        type: event.type as "mousedown" | "mousemove" | "mouseup",
+        alreadyCorrected: false,
+        visualScale: canvasZoomRef.current * softGridScaleRef.current,
+      }),
       correctPointer: correct,
     });
   // Effect wires once and reads zoom through the ref — no dependency on

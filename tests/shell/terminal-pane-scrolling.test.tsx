@@ -24,7 +24,6 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   clearSelection: ReturnType<typeof vi.fn>;
   selectAll: ReturnType<typeof vi.fn>;
   hasSelection: ReturnType<typeof vi.fn>;
-  selectAll: ReturnType<typeof vi.fn>;
 }>);
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
@@ -195,7 +194,6 @@ vi.mock("@xterm/xterm", () => ({
     clearSelection = vi.fn();
     selectAll = vi.fn();
     hasSelection = vi.fn(() => this.selection.length > 0);
-    selectAll = vi.fn();
     getSelection = vi.fn(() => this.selection);
     scrollToBottom = vi.fn();
     registerLinkProvider = vi.fn();

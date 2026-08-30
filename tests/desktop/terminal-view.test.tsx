@@ -776,6 +776,59 @@ describe("TerminalView session switching", () => {
     expect(reports).toEqual(["mousedown", "mousemove"]);
   });
 
+  it.each([0.5, 1, 2])(
+    "maps xterm cell events through native Canvas scale %s while keeping context menus in screen space",
+    (visualScale) => {
+      const { container } = render(
+        <TerminalView sessionName="alpha" visualScale={visualScale} />,
+      );
+      const terminal = createdTerminals.at(-1)!;
+      const root = terminal.element!;
+      const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+      vi.spyOn(root, "getBoundingClientRect").mockReturnValue({
+        left: 100,
+        top: 50,
+        right: 500,
+        bottom: 350,
+        width: 400,
+        height: 300,
+        x: 100,
+        y: 50,
+        toJSON: () => ({}),
+      });
+      const xtermCoordinates: Array<[number, number]> = [];
+      root.addEventListener("mousedown", (event) => {
+        xtermCoordinates.push([event.clientX, event.clientY]);
+      });
+
+      fireEvent.mouseDown(root, {
+        button: 0,
+        buttons: 1,
+        clientX: 100 + 36 * visualScale,
+        clientY: 50 + 24 * visualScale,
+      });
+
+      expect(xtermCoordinates).toEqual([[136, 74]]);
+
+      fireEvent.contextMenu(root, { clientX: 320, clientY: 210 });
+      const menu = screen.getByRole("menu", { name: "Terminal actions" });
+      expect(menu.style.left).toBe("320px");
+      expect(menu.style.top).toBe("210px");
+      expect(host.contains(root)).toBe(true);
+    },
+  );
+
+  it("updates native Canvas scale without recreating xterm", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" visualScale={0.5} />);
+    const terminal = createdTerminals.at(-1)!;
+
+    rerender(<TerminalView sessionName="alpha" visualScale={1} />);
+    rerender(<TerminalView sessionName="alpha" visualScale={2} />);
+
+    expect(createdTerminals).toHaveLength(1);
+    expect(createdTerminals[0]).toBe(terminal);
+  });
+
   it("opens terminal actions without a selection and can select the buffer", () => {
     const { container } = render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;
