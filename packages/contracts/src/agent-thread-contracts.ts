@@ -19,7 +19,12 @@ const EventIdSchema = prefixedId("evt_");
 const ApprovalIdSchema = prefixedId("appr_");
 const RequestIdSchema = prefixedId("req_");
 const CorrelationIdSchema = prefixedId("corr_");
-const TerminalSessionIdSchema = referenceId(128);
+const TerminalWorkspaceIdSchema = z.string().regex(/^tws_[0-9a-f]{32}$/, "Invalid terminal workspace id");
+const TerminalTabIdSchema = z.string().regex(/^tt_[0-9a-f]{32}$/, "Invalid terminal tab id");
+const TerminalRefSchema = z.object({
+  workspaceId: TerminalWorkspaceIdSchema,
+  tabId: TerminalTabIdSchema,
+}).strict();
 const ReviewIdSchema = referenceId(128);
 const CursorSchema = referenceId(160);
 const SafeDisplayStringSchema = boundedDisplayText(120, 512);
@@ -54,7 +59,8 @@ export const AgentThreadSummarySchema = z.object({
   attention: AgentAttentionSchema.default("none"),
   projectId: ProjectIdSchema.optional(),
   taskId: TaskIdSchema.optional(),
-  terminalSessionId: TerminalSessionIdSchema.optional(),
+  terminalSessionId: referenceId(128).optional(),
+  terminalRef: TerminalRefSchema.optional(),
   eventCursor: CursorSchema.optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
@@ -185,7 +191,8 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("terminal.bound"),
-    terminalSessionId: TerminalSessionIdSchema,
+    terminalRef: TerminalRefSchema.optional(),
+    terminalSessionId: referenceId(128),
     terminalSessionCreatedAt: IsoTimestampSchema.optional(),
   }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("thread.error"), error: SafeClientErrorSchema }).strict(),
