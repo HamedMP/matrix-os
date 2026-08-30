@@ -1028,6 +1028,52 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).not.toHaveBeenCalled();
   });
 
+  it("keeps the first Hermes recovery checkpoint across repeated tool failures", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking " });
+    gateway.event("tool.start", {
+      tool_id: "tool_build",
+      name: "terminal",
+      args: { command: "pnpm build" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_build",
+      name: "terminal",
+      result: { exit_code: 1, output: "build failed" },
+    });
+    gateway.event("message.delta", { text: "the preview " });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 1, output: "preview failed" },
+    });
+    gateway.event("message.complete", {
+      text: "Checking the preview is ready.",
+      status: "complete",
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "agent.activity", activityId: "tool_build", kind: "command", label: "Run command", status: "running", preview: "pnpm build", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_build", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm build", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "assistant.delta", delta: " the preview is ready." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
   it("publishes authoritative trailing Hermes whitespace when sealing a streamed segment", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
