@@ -298,6 +298,38 @@ describe("canonical Chat presentation adapter", () => {
         markdown: "I’ll inspect the project first.",
       }),
     ]);
+
+    const [withRealActivity] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [reasoning, {
+        id: "activity_command_after_thinking",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 2,
+        type: "agent.activity",
+        activityId: "command_after_thinking",
+        kind: "command",
+        label: "Run command",
+        preview: "pnpm build",
+        previewKind: "command",
+        status: "running",
+        occurredAt: "2026-08-26T00:00:02.000Z",
+      }, {
+        ...reasoning,
+        id: "activity_late_thinking_placeholder",
+        activityId: "late_reasoning_placeholder",
+        sequence: 3,
+        occurredAt: "2026-08-26T00:00:03.000Z",
+      }],
+    });
+    expect(withRealActivity?.work).toEqual([
+      expect.objectContaining({
+        kind: "activity-group",
+        activities: [expect.objectContaining({ kind: "command", label: "Run command" })],
+      }),
+    ]);
   });
 
   it("omits generic Thinking rows from completed Worked history", () => {
@@ -509,6 +541,52 @@ describe("canonical Chat presentation adapter", () => {
       label: "Agent work failed",
       markdown: "The agent run failed.",
     });
+  });
+
+  it("drops assistant text from a failed attempt once its retry becomes authoritative", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const firstRun = snapshot.runs[0]!;
+    const turn = snapshot.turns[0]!;
+    const failedAt = "2026-08-26T00:01:00.000Z";
+    const retryAt = "2026-08-26T00:01:01.000Z";
+    const stalePartial = {
+      id: "msg_failed_attempt_partial",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "failed" as const,
+      turnId: turn.id,
+      runId: firstRun.id,
+      parts: [{ type: "text" as const, text: "I’ll look for flappy bird code in the repo." }],
+      createdAt: failedAt,
+    };
+    const retryRun = {
+      ...firstRun,
+      id: "run_retry_attempt_2",
+      attempt: 2,
+      status: "accepted" as const,
+      outcome: undefined,
+      createdAt: retryAt,
+      updatedAt: retryAt,
+      startedAt: undefined,
+      completedAt: undefined,
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, stalePartial],
+      turns: snapshot.turns,
+      runs: [{
+        ...firstRun,
+        status: "failed",
+        outcome: "failed",
+        completedAt: failedAt,
+        updatedAt: failedAt,
+      }, retryRun],
+      activities: [],
+    });
+
+    expect(presented?.active).toBe(true);
+    expect(JSON.stringify(presented?.work)).not.toContain("I’ll look for flappy bird code in the repo.");
   });
 
   it("keeps aborted partial text and exposes a stopped terminal notice", () => {

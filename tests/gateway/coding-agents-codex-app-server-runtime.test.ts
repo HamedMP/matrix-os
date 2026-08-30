@@ -318,6 +318,8 @@ describe("Codex app-server control runtime", () => {
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-command-item', type: 'commandExecution', command: 'pnpm build', cwd: '/home/matrix/home/apps/flappy-bird', aggregatedOutput: '', exitCode: 0, status: 'completed', durationMs: 12 } } }));",
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-file-item', type: 'fileChange', changes: [{ path: '/home/matrix/home/apps/flappy-bird/src/App.tsx', kind: 'update' }], status: 'inProgress' } } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-file-item', type: 'fileChange', changes: [{ path: '/home/matrix/home/apps/flappy-bird/src/App.tsx', kind: 'update' }], status: 'completed' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-mcp-item', type: 'mcpToolCall', server: 'linear', tool: 'get_issue', arguments: { token: 'secret-mcp-token' }, status: 'inProgress' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-mcp-item', type: 'mcpToolCall', server: 'linear', tool: 'get_issue', arguments: { token: 'secret-mcp-token' }, status: 'completed', result: { content: [{ type: 'text', text: 'private result' }] } } } }));",
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-command-item', type: 'commandExecution', command: 'cat /home/matrix/.codex/auth.json', cwd: '/private/project', aggregatedOutput: '', exitCode: null, status: 'inProgress', durationMs: null } } }));",
       "    console.log(JSON.stringify({ method: 'item/commandExecution/outputDelta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-command-item', delta: 'secret-token-output' } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-command-item', type: 'commandExecution', command: 'cat /home/matrix/.codex/auth.json', cwd: '/private/project', aggregatedOutput: 'secret-token-output', exitCode: 0, status: 'completed', durationMs: 12 } } }));",
@@ -346,7 +348,7 @@ describe("Codex app-server control runtime", () => {
     ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
     try {
       const transcript = await waitForTranscript(eventPath, /"type":"turn.completed"/);
-      expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output/);
+      expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output|secret-mcp-token|private result/);
 
       let sequence = 0;
       const events = transcript.trim().split("\n").flatMap((line) => parseCodexExecJsonLine(line, {
@@ -366,6 +368,9 @@ describe("Codex app-server control runtime", () => {
         "tool.started",
         "tool.output",
         "tool.completed",
+        "tool.started",
+        "tool.output",
+        "tool.completed",
         "assistant.text.delta",
         "assistant.text.completed",
       ]);
@@ -378,6 +383,9 @@ describe("Codex app-server control runtime", () => {
         safeCommandCompleted,
         safeFileStarted,
         safeFileCompleted,
+        safeMcpStarted,
+        safeMcpOutput,
+        safeMcpCompleted,
         toolStarted,
         toolOutput,
         toolCompleted,
@@ -412,6 +420,13 @@ describe("Codex app-server control runtime", () => {
         previewKind: "path",
       });
       expect(safeFileCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
+      expect(safeMcpStarted).toMatchObject({
+        type: "tool.started",
+        displayName: "Use linear.get_issue",
+        kind: "tool",
+      });
+      expect(safeMcpOutput).toMatchObject({ type: "tool.output", text: "Tool returned a result.", truncated: true });
+      expect(safeMcpCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
       expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command", kind: "command" });
       expect(toolStarted).not.toHaveProperty("preview");
       expect(toolOutput).toMatchObject({ type: "tool.output", text: "Command produced output.", truncated: true });

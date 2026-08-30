@@ -163,6 +163,8 @@ const AgentMessageLifecycleItemSchema = z.object({
 const ToolLifecycleItemSchema = z.object({
   id: NativeReferenceSchema,
   type: ToolLifecycleTypeSchema,
+  server: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
+  tool: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
   status: z.string().max(80).optional(),
   command: z.string().max(MAX_PROVIDER_LINE_BYTES).optional(),
   cwd: z.string().max(4_096).optional(),
@@ -319,13 +321,16 @@ function assertTrackedItemCapacity(collection, value) {
   }
 }
 
-function toolPresentation(type) {
-  if (type === "commandExecution") return { displayName: "Run command", kind: "command" };
-  if (type === "fileChange") return { displayName: "Update files", kind: "file_change" };
-  if (type === "webSearch") return { displayName: "Search web", kind: "search" };
-  if (type === "plan") return { displayName: "Update plan", kind: "plan" };
-  if (type === "reasoning") return { displayName: "Thinking", kind: "reasoning" };
-  if (type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
+function toolPresentation(item) {
+  if (item.type === "commandExecution") return { displayName: "Run command", kind: "command" };
+  if (item.type === "fileChange") return { displayName: "Update files", kind: "file_change" };
+  if (item.type === "webSearch") return { displayName: "Search web", kind: "search" };
+  if (item.type === "plan") return { displayName: "Update plan", kind: "plan" };
+  if (item.type === "reasoning") return { displayName: "Thinking", kind: "reasoning" };
+  if (item.type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
+  if (item.type === "mcpToolCall" && item.server && item.tool) {
+    return { displayName: `Use ${item.server}.${item.tool}`, kind: "tool" };
+  }
   return { displayName: "Use tool", kind: "tool" };
 }
 
@@ -632,7 +637,7 @@ async function handleItemLifecycle(raw) {
     return true;
   }
 
-  const presentation = toolPresentation(item.type);
+  const presentation = toolPresentation(item);
   const details = safeToolDetails(item);
   if (parsed.data.method === "item/started") {
     assertTrackedItemCapacity(startedToolItems, matrixItemId);

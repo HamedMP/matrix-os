@@ -250,13 +250,16 @@ function replaceThinkingPlaceholders(
   if (!active) return work.filter((item) => !isGenericThinkingPlaceholder(item));
   const visible: ConversationWorkPresentation[] = [];
   let pendingThinkingIndex: number | undefined;
+  let hasVisibleWork = false;
   for (const item of work) {
     if (isGenericThinkingPlaceholder(item)) {
+      if (hasVisibleWork) continue;
       visible.push(item);
       pendingThinkingIndex = visible.length - 1;
       continue;
     }
-    if (item.kind === "message" && pendingThinkingIndex !== undefined) {
+    hasVisibleWork = true;
+    if (pendingThinkingIndex !== undefined) {
       visible.splice(pendingThinkingIndex, 1);
       pendingThinkingIndex = undefined;
     }
@@ -481,7 +484,9 @@ export function canonicalChatPresentation(input: {
       .sort((left, right) => left.attempt - right.attempt);
     const run = runs.at(-1);
     const assistantMessages = input.messages.filter((message) => (
-      message.turnId === turn.id && message.role === "assistant"
+      message.turnId === turn.id
+      && message.role === "assistant"
+      && (run === undefined || message.runId === run.id)
     )).sort((left, right) => left.seq - right.seq);
     const terminalFailure = run?.status === "failed" || run?.status === "aborted"
       || run?.outcome === "failed" || run?.outcome === "aborted";

@@ -190,6 +190,30 @@ describe("Codex structured event normalization", () => {
     );
   });
 
+  it("names the bounded Codex MCP tool without exposing its arguments", () => {
+    const started = parseCodexExecJsonLine(JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "item_mcp_tool",
+        type: "mcp_tool_call",
+        server: "linear",
+        tool: "get_issue",
+        arguments: { token: "secret-value", issue: "OM-134" },
+        status: "in_progress",
+      },
+    }), context);
+
+    expect(started.events).toEqual([
+      expect.objectContaining({
+        type: "tool.started",
+        toolCallId: "item_mcp_tool",
+        displayName: "Use linear.get_issue",
+        kind: "tool",
+      }),
+    ]);
+    expect(JSON.stringify(started.events)).not.toMatch(/secret-value|arguments|OM-134/);
+  });
+
   it("keeps a bounded safe Codex command preview while rejecting sensitive command text", () => {
     const safe = parseCodexExecJsonLine(JSON.stringify({
       type: "item.started",

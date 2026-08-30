@@ -51,6 +51,8 @@ const FileChangeItemSchema = z.object({
 const McpToolItemSchema = z.object({
   id: CodexItemIdSchema,
   type: z.literal("mcp_tool_call"),
+  server: CodexItemIdSchema,
+  tool: CodexItemIdSchema,
   status: z.enum(["in_progress", "completed", "failed"]),
   result: z.unknown().nullable().optional(),
   error: z.unknown().nullable().optional(),
@@ -321,7 +323,9 @@ function startedItemEvents(
       ? { preview, previewKind: "command" }
       : {})];
   }
-  if (item.type === "mcp_tool_call") return [toolStarted(context, item.id, "Use tool", "tool")];
+  if (item.type === "mcp_tool_call") {
+    return [toolStarted(context, item.id, `Use ${item.server}.${item.tool}`, "tool")];
+  }
   if (item.type === "collab_tool_call") return [toolStarted(context, item.id, "Coordinate agents", "agent")];
   if (item.type === "web_search") return [toolStarted(context, item.id, "Search web", "search")];
   if (item.type === "todo_list") return [toolStarted(context, item.id, "Update plan", "plan")];
