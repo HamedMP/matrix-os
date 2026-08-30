@@ -6,6 +6,7 @@ import {
   type ProviderDependencyCounts,
   type ProviderHarnessInstance,
   type ProviderHarnessKind,
+  type ProviderLoginMethod,
   type ProviderSettingsSupportedAction,
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
@@ -33,7 +34,7 @@ function connectivity(readiness: AiProviderReadiness): ProviderHarnessInstance["
   return "unknown";
 }
 
-function loginMethods(kind: ProviderHarnessKind) {
+function defaultLoginMethods(kind: ProviderHarnessKind) {
   return kind === "codex"
     ? ["terminal", "oauth", "api_key"] as const
     : ["terminal", "api_key"] as const;
@@ -142,6 +143,7 @@ function projectHarness(input: {
   accounts: ProviderAccount[];
   sources: ReturnType<typeof projectAccessSources>["sources"];
   allowedGatewayModels: ReadonlySet<string>;
+  loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): ProviderHarnessInstance | null {
   const model = input.canonical.models.find((candidate) => candidate.id === input.stored.route.modelId);
   if (!model || model.vendor !== input.stored.route.providerId) return null;
@@ -163,6 +165,9 @@ function projectHarness(input: {
     safeReason: "unknown" as const,
   };
   const accounts = input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
+  const visibleMethods = input.loginMethods === undefined
+    ? defaultLoginMethods(input.stored.harness)
+    : input.loginMethods(input.stored);
   return {
     id: input.stored.id,
     harness: input.stored.harness,
@@ -172,8 +177,8 @@ function projectHarness(input: {
     version: null,
     installState: driver?.installState ?? "missing",
     authState: authState(readiness),
-    loginMethods: [...loginMethods(input.stored.harness)],
-    recommendedLoginMethod: "terminal",
+    loginMethods: [...visibleMethods],
+    recommendedLoginMethod: visibleMethods[0] ?? null,
     connectivity: connectivity(readiness),
     accountIds: accounts.map((account) => account.id),
     selectedAccountId,
@@ -191,6 +196,7 @@ export async function projectProviderSettings(input: {
   now: Date;
   dependencies?: ProviderSettingsDependencyReader;
   supportedActions: ProviderSettingsSupportedAction[];
+  loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): Promise<ProviderSettingsSnapshot> {
   const { sources, sourceByAccount } = projectAccessSources(input.canonical, input.config);
   const accounts = await projectAccounts({
@@ -224,6 +230,7 @@ export async function projectProviderSettings(input: {
       accounts,
       sources,
       allowedGatewayModels,
+      loginMethods: input.loginMethods,
     });
     return harness ? [harness] : [];
   });

@@ -2,7 +2,9 @@ import type {
   AiProviderSnapshotV3,
   ProviderConnectionAttempt,
   ProviderDependencyCounts,
+  ProviderHarnessInstallState,
   ProviderHarnessKind,
+  ProviderLoginMethod,
   ProviderSettingsMutation,
 } from "@matrix-os/contracts";
 import type { ProviderConfigurationMutation } from "./provider-settings-mutations.js";
@@ -31,6 +33,7 @@ export interface ProviderAccountLifecycleCoordinator {
 
 /** Applies settings to the real runtime/control plane and durably deduplicates the key. */
 export interface ProviderSettingsRuntimeCoordinator {
+  readonly supportedActions: readonly ProviderConfigurationMutation["type"][];
   applyConfiguration(input: {
     mutation: ProviderConfigurationMutation;
     idempotencyKey: string;
@@ -39,13 +42,21 @@ export interface ProviderSettingsRuntimeCoordinator {
 
 /** Creates/adopts the actual auth surface and durably deduplicates by mutation key. */
 export interface ProviderLoginCoordinator {
+  supportedMethods(harness: {
+    id: string;
+    driverId: string;
+    harness: ProviderHarnessKind;
+    installState: ProviderHarnessInstallState;
+  }): readonly ProviderLoginMethod[];
   startLogin(input: {
     mutation: Extract<ProviderSettingsMutation, { type: "start_login" }>;
     harness: {
       id: string;
+      driverId: string;
       harness: ProviderHarnessKind;
       providerId: string;
       modelId: string;
+      installState: ProviderHarnessInstallState;
     };
   }): Promise<ProviderConnectionAttempt>;
 }

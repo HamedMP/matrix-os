@@ -1,6 +1,7 @@
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
+  AiProviderDriverViewSchema,
   type AiAccessSourceView,
   type AiProviderAccountView,
   type AiProviderReadiness,
@@ -41,6 +42,7 @@ interface AiProviderServiceOptions {
   healthProbe?: AiProviderHealthProbe;
   healthCache?: ProviderHealthCache<AiProviderReadiness>;
   healthTimeoutMs?: number;
+  driverInventory?: (signal: AbortSignal) => Promise<AiProviderSnapshotV3["drivers"]>;
 }
 
 function readinessForObservation(
@@ -111,6 +113,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #healthCache: ProviderHealthCache<AiProviderReadiness>;
   readonly #ownsHealthCache: boolean;
   readonly #healthTimeoutMs: number;
+  readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
 
   constructor(options: AiProviderServiceOptions) {
     if (!options.homePath) throw new Error("AI provider home path is required");
@@ -126,6 +129,48 @@ export class AiProviderService implements AiProviderSnapshotReader {
       1,
       Math.min(options.healthTimeoutMs ?? HEALTH_TIMEOUT_MS, HEALTH_TIMEOUT_MS),
     );
+    this.#driverInventory = options.driverInventory;
+  }
+
+  async #drivers(): Promise<AiProviderSnapshotV3["drivers"]> {
+    const kernel = AiProviderDriverViewSchema.parse({
+      id: "kernel",
+      displayName: "Matrix Agent",
+      kind: "agent_sdk",
+      installState: "installed",
+      health: "ready",
+      capabilities: [...KERNEL_CAPABILITIES],
+      setupActions: [],
+    });
+    if (!this.#driverInventory) return [kernel];
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error("Driver inventory timed out"));
+        }, 6_000);
+      });
+      const discovered = AiProviderDriverViewSchema.array().max(19).parse(
+        await Promise.race([this.#driverInventory(controller.signal), deadline]),
+      );
+      const seen = new Set([kernel.id]);
+      const unique = discovered.filter((driver) => {
+        if (seen.has(driver.id)) return false;
+        seen.add(driver.id);
+        return true;
+      });
+      return [kernel, ...unique];
+    } catch (error) {
+      console.warn(
+        "[ai-providers] Driver inventory unavailable:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      return [kernel];
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   async #resolveOwnerReadiness(
@@ -315,15 +360,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       refreshedAt: now,
       accessSources,
       accounts,
-      drivers: [{
-        id: "kernel",
-        displayName: "Matrix Agent",
-        kind: "agent_sdk",
-        installState: "installed",
-        health: "ready",
-        capabilities: [...KERNEL_CAPABILITIES],
-        setupActions: [],
-      }],
+      drivers: await this.#drivers(),
       instances,
       models: catalog,
       active,

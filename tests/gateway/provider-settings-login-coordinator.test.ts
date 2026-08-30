@@ -1,0 +1,243 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createProviderTerminalLoginCoordinator,
+} from "../../packages/gateway/src/ai-providers/provider-terminal-login-coordinator.js";
+
+describe("provider terminal login coordinator", () => {
+  let homePath: string;
+  const now = new Date("2026-08-30T12:00:00.000Z");
+  const sessions = new Set<string>();
+  const registry = {
+    get: vi.fn(async (name: string) => {
+      if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" });
+      return { name };
+    }),
+    create: vi.fn(async (input: { name: string }) => {
+      sessions.add(input.name);
+      return { name: input.name };
+    }),
+    delete: vi.fn(async (name: string) => {
+      sessions.delete(name);
+    }),
+  };
+
+  beforeEach(async () => {
+    homePath = await mkdtemp(join(tmpdir(), "provider-terminal-login-"));
+    sessions.clear();
+    registry.get.mockClear();
+    registry.create.mockClear();
+    registry.delete.mockClear();
+  });
+
+  afterEach(async () => {
+    await rm(homePath, { recursive: true, force: true });
+  });
+
+  function coordinator(enabledHarnesses: Array<"codex" | "claude"> = ["codex", "claude"]) {
+    return createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses,
+      now: () => now,
+    });
+  }
+
+  it("creates a visible canonical session with the allowlisted Codex device-login command", async () => {
+    const login = coordinator();
+    expect(login.supportedMethods({
+      id: "harness_codex",
+      driverId: "codex",
+      harness: "codex",
+      installState: "installed",
+    })).toEqual(["terminal"]);
+
+    const attempt = await login.startLogin({
+      mutation: {
+        type: "start_login",
+        expectedRevision: 0,
+        idempotencyKey: "login_codex_1",
+        harnessInstanceId: "harness_codex",
+        accountId: null,
+        method: "terminal",
+      },
+      harness: {
+        id: "harness_codex",
+        driverId: "codex",
+        harness: "codex",
+        providerId: "openai",
+        modelId: "gpt-5",
+        installState: "installed",
+      },
+    });
+
+    expect(attempt).toMatchObject({
+      harnessInstanceId: "harness_codex",
+      method: "terminal",
+      state: "pending",
+      action: { kind: "open_terminal" },
+      safeFailure: null,
+    });
+    expect(Date.parse(attempt.expiresAt) - now.getTime()).toBe(10 * 60_000);
+    expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({
+      name: attempt.action.kind === "open_terminal" ? attempt.action.terminalSessionId : "",
+      cwd: "~",
+      agent: "codex",
+      exclusive: false,
+      cmd: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; codex login --device-auth'",
+    }));
+  });
+
+  it("supports only installed, server-enabled Codex and Claude terminal login", () => {
+    const login = coordinator(["claude"]);
+    expect(login.supportedMethods({
+      id: "harness_kernel",
+      driverId: "kernel",
+      harness: "claude",
+      installState: "installed",
+    })).toEqual([]);
+    expect(login.supportedMethods({
+      id: "harness_kernel",
+      driverId: "claude_code",
+      harness: "claude",
+      installState: "installed",
+    })).toEqual(["terminal"]);
+    expect(login.supportedMethods({
+      id: "harness_codex",
+      driverId: "codex",
+      harness: "codex",
+      installState: "installed",
+    })).toEqual([]);
+    expect(login.supportedMethods({
+      id: "harness_claude",
+      driverId: "claude_code",
+      harness: "claude",
+      installState: "missing",
+    })).toEqual([]);
+    expect(login.supportedMethods({
+      id: "harness_opencode",
+      driverId: "opencode",
+      harness: "opencode",
+      installState: "installed",
+    })).toEqual([]);
+  });
+
+  it("refuses to launch a configured harness when the canonical CLI driver is not installed", async () => {
+    const login = coordinator(["claude"]);
+    await expect(login.startLogin({
+      mutation: {
+        type: "start_login",
+        expectedRevision: 0,
+        idempotencyKey: "missing_claude_1",
+        harnessInstanceId: "harness_kernel",
+        accountId: null,
+        method: "terminal",
+      },
+      harness: {
+        id: "harness_kernel",
+        driverId: "claude_code",
+        harness: "claude",
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
+        installState: "missing",
+      },
+    })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    expect(registry.create).not.toHaveBeenCalled();
+  });
+
+  it("durably deduplicates a login key and adopts the same real session after restart", async () => {
+    const input = {
+      mutation: {
+        type: "start_login" as const,
+        expectedRevision: 0,
+        idempotencyKey: "login_claude_1",
+        harnessInstanceId: "harness_kernel",
+        accountId: null,
+        method: "terminal" as const,
+      },
+      harness: {
+        id: "harness_kernel",
+        driverId: "claude_code",
+        harness: "claude" as const,
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
+        installState: "installed" as const,
+      },
+    };
+    const first = await coordinator().startLogin(input);
+    const second = await coordinator().startLogin(input);
+    expect(second).toEqual(first);
+    expect(registry.create).toHaveBeenCalledOnce();
+    const receipts = await readFile(join(homePath, "system/ai-providers/login-receipts.json"), "utf8");
+    expect(receipts).toContain("login_claude_1");
+    expect(receipts).not.toMatch(/token|secret|apiKey/i);
+  });
+
+  it("rejects unsupported methods and idempotency-key payload conflicts before launch", async () => {
+    const login = coordinator();
+    const base = {
+      mutation: {
+        type: "start_login" as const,
+        expectedRevision: 0,
+        idempotencyKey: "login_conflict_1",
+        harnessInstanceId: "harness_kernel",
+        accountId: null,
+        method: "terminal" as const,
+      },
+      harness: {
+        id: "harness_kernel",
+        driverId: "claude_code",
+        harness: "claude" as const,
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
+        installState: "installed" as const,
+      },
+    };
+    await login.startLogin(base);
+    await expect(login.startLogin({
+      ...base,
+      mutation: { ...base.mutation, harnessInstanceId: "harness_other" },
+      harness: { ...base.harness, id: "harness_other" },
+    })).rejects.toMatchObject({ code: "idempotency_conflict" });
+    await expect(login.startLogin({
+      ...base,
+      mutation: { ...base.mutation, idempotencyKey: "login_oauth_1", method: "oauth" },
+    })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    expect(registry.create).toHaveBeenCalledOnce();
+  });
+
+  it("deletes a newly-created login session when receipt persistence fails", async () => {
+    const persistReceipt = vi.fn(async () => {
+      throw new Error("disk unavailable");
+    });
+    const login = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => now,
+      persistReceipt,
+    });
+    await expect(login.startLogin({
+      mutation: {
+        type: "start_login",
+        expectedRevision: 0,
+        idempotencyKey: "login_persist_failure_1",
+        harnessInstanceId: "harness_claude",
+        accountId: null,
+        method: "terminal",
+      },
+      harness: {
+        id: "harness_claude",
+        driverId: "claude_code",
+        harness: "claude",
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
+        installState: "installed",
+      },
+    })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    expect(registry.delete).toHaveBeenCalledWith(expect.stringMatching(/^provider-login-claude-/), { force: true });
+    expect(sessions.size).toBe(0);
+  });
+});

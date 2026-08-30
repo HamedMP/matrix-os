@@ -150,6 +150,12 @@ describe("provider settings contracts", () => {
       ...makeSnapshot(),
       projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: 11 },
     }).success).toBe(true);
+    const unavailableLogin = makeSnapshot();
+    unavailableLogin.harnesses[0]!.loginMethods = [];
+    unavailableLogin.harnesses[0]!.recommendedLoginMethod = null;
+    expect(ProviderSettingsSnapshotSchema.safeParse(unavailableLogin).success).toBe(true);
+    unavailableLogin.harnesses[0]!.recommendedLoginMethod = "terminal";
+    expect(ProviderSettingsSnapshotSchema.safeParse(unavailableLogin).success).toBe(false);
   });
 
   it("keeps accounts owner-funded, opaque, reciprocal, and secret-free", () => {
