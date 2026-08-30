@@ -32,7 +32,9 @@ import {
 } from "@expo-google-fonts/geist";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
+import { mobileQueryClient } from "@/lib/query-client";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
@@ -166,9 +168,11 @@ export default function RootLayout() {
 
   return (
     <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-      <AnalyticsProvider>
-        <GatewayShell />
-      </AnalyticsProvider>
+      <QueryClientProvider client={mobileQueryClient}>
+        <AnalyticsProvider>
+          <GatewayShell />
+        </AnalyticsProvider>
+      </QueryClientProvider>
     </ClerkProvider>
   );
 }

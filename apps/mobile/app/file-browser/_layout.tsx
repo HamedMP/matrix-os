@@ -68,6 +68,18 @@ export default function FileBrowserLayout() {
           }],
         }}
       />
+      <Stack.Screen
+        name="file"
+        options={{
+          headerBackVisible: false,
+          headerLeft: backButton,
+          unstable_headerLeftItems: () => [{
+            type: "custom",
+            element: backButton(),
+            hidesSharedBackground: true,
+          }],
+        }}
+      />
     </Stack>
   );
 }

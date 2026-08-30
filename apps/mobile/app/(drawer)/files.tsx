@@ -1,37 +1,62 @@
 import { StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import File01Icon from "@hugeicons/core-free-icons/File01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 
-import { GridTile, GridTileGrid, MockSearchField } from "@/components/mock-shell/MockControls";
+import {
+  FileTileSkeletonGrid,
+  GridTile,
+  GridTileGrid,
+  MockSearchField,
+} from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { Spacer } from "@/components/ui";
-
-const folders = ["Projects", "Documents", "Photos", "Downloads", "Shared", "Archive"];
+import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 
 export default function FilesScreen() {
   const router = useRouter();
+  const { computer, entries, isPending, isError } = useComputerDirectory("");
+  const sectionMeta = isPending
+    ? "Loading…"
+    : isError
+      ? "Unavailable"
+      : `${entries.length} ${entries.length === 1 ? "item" : "items"}`;
 
   return (
-    <MockPage title="Files" subtitle="Everything on solar-vale">
+    <MockPage title="Files" subtitle={`Everything on ${computer?.handle ?? "your computer"}`}>
       <MockSearchField placeholder="Search files" />
       <Spacer size="2xl" />
       <View testID="files-section-heading" style={styles.sectionHeading}>
-        <Text style={styles.sectionTitle}>Folders</Text>
-        <Text style={styles.sectionMeta}>6 items</Text>
+        <Text style={styles.sectionTitle}>Items</Text>
+        <Text style={styles.sectionMeta}>{sectionMeta}</Text>
       </View>
       <Spacer size="md" />
-      <GridTileGrid>
-        {folders.map((folder) => (
+      {isPending ? <FileTileSkeletonGrid /> : null}
+      {isError ? <Text style={styles.statusText}>Files unavailable. Try again.</Text> : null}
+      {!isPending && !isError ? (
+        <GridTileGrid>
+        {entries.map((entry) => (
           <GridTile
-            key={folder}
-            label={folder}
-            icon={Folder01Icon}
-            accessibilityLabel={`Open ${folder} folder`}
-            onPress={() => router.push({ pathname: "/file-browser", params: { folder } } as never)}
+            key={entry.name}
+            label={entry.name}
+            icon={entry.type === "directory" ? Folder01Icon : File01Icon}
+            accessibilityLabel={entry.type === "directory"
+              ? `Open ${entry.name} folder`
+              : `Open ${entry.name} file`}
+            onPress={entry.type === "directory"
+              ? () => router.push({
+                  pathname: "/file-browser",
+                  params: { folder: entry.name },
+                } as never)
+              : () => router.push({
+                  pathname: "/file-browser/file",
+                  params: { name: entry.name, path: entry.name },
+                } as never)}
           />
         ))}
-      </GridTileGrid>
+        </GridTileGrid>
+      ) : null}
     </MockPage>
   );
 }
@@ -50,6 +75,11 @@ const styles = StyleSheet.create({
   sectionMeta: {
     fontFamily: mockFonts.body,
     fontSize: 12,
+    color: mockColors.muted,
+  },
+  statusText: {
+    fontFamily: mockFonts.body,
+    fontSize: 14,
     color: mockColors.muted,
   },
 });

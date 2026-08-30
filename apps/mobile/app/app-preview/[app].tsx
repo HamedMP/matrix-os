@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import AppWindowIcon from "@hugeicons/core-free-icons/AppWindowIcon";
 import { Stack, useLocalSearchParams } from "expo-router";
 
@@ -10,7 +10,7 @@ export default function AppPreviewScreen() {
   const app = Array.isArray(params.app) ? params.app[0] : params.app;
 
   return (
-    <View style={styles.screen}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Stack.Screen options={{ title: app || "App" }} />
       <View style={styles.placeholder}>
         <View style={styles.icon}>
@@ -19,12 +19,13 @@ export default function AppPreviewScreen() {
         <Text style={styles.title}>{app || "Matrix app"}</Text>
         <Text style={styles.subtitle}>Authenticated app WebView mock</Text>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: mockColors.surface },
+  content: { flexGrow: 1 },
   placeholder: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   icon: {
     width: 68,

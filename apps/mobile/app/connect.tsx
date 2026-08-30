@@ -1,4 +1,4 @@
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,7 +11,7 @@ export default function ConnectScreen() {
   const { connectionState } = useGateway();
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.iconShell}>
         <Ionicons name="cloud-done-outline" size={34} color={theme.colors.forest} />
       </View>
@@ -33,13 +33,17 @@ export default function ConnectScreen() {
         <Ionicons name="apps" size={17} color={theme.colors.primaryForeground} />
         <Text style={styles.buttonText}>Open Apps</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: {
+  screen: {
     flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  container: {
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: theme.spacing.xl,

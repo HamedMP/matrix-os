@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useEffect } from "react";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 import GridViewIcon from "@hugeicons/core-free-icons/GridViewIcon";
@@ -8,9 +8,17 @@ import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
 import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
 import { Pressable, StyleSheet, View } from "react-native";
+import Animated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from "react-native-reanimated";
 import { DrawerContentScrollView, type DrawerContentComponentProps } from "expo-router/drawer";
 
 import { Icon, IconButton, Spacer, Text, type IconData } from "@/components/ui";
+import type { ConversationSummary } from "@/lib/requests";
 import { designShadows, palette, semanticColors } from "@/lib/theme";
 import { mockColors } from "./theme";
 
@@ -21,9 +29,18 @@ const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
   { route: "apps", label: "Apps", icon: GridViewIcon },
 ];
 
-const recentChats = ["matrix-os", "solar-vale", "Notes", "Launch plan"];
+interface MockDrawerContentProps extends DrawerContentComponentProps {
+  computerName: string;
+  recentChats: ConversationSummary[];
+  recentChatsLoading: boolean;
+}
 
-export function MockDrawerContent(props: DrawerContentComponentProps) {
+export function MockDrawerContent({
+  computerName,
+  recentChats,
+  recentChatsLoading,
+  ...props
+}: MockDrawerContentProps) {
   function navigate(route: string) {
     props.navigation.navigate(route);
     props.navigation.closeDrawer();
@@ -42,7 +59,7 @@ export function MockDrawerContent(props: DrawerContentComponentProps) {
           >
             <Text size="large">Matrix OS</Text>
             <Spacer size="xs" />
-            <Text size="muted" tone="subtle">solar-vale</Text>
+            <Text size="muted" tone="subtle">{computerName}</Text>
           </Pressable>
 
           <Pressable
@@ -92,27 +109,30 @@ export function MockDrawerContent(props: DrawerContentComponentProps) {
         </View>
         <Spacer size="sm" />
 
-        {recentChats.map((chat, index) => (
-          <Fragment key={chat}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Open recent chat ${chat}`}
-              onPress={() => navigate("index")}
-              style={({ pressed }) => [styles.padded, pressed && styles.pressed]}
-            >
-              <View style={styles.itemContainer}>
-                <Icon
-                  icon={Message01Icon}
-                  size={20}
-                  color={mockColors.ink}
-                  style={styles.itemIcon}
-                />
-                <Text size="body">{chat}</Text>
-              </View>
-            </Pressable>
-            {index < recentChats.length - 1 ? <Spacer size="sm" /> : null}
-          </Fragment>
-        ))}
+        {recentChatsLoading ? <RecentChatsSkeleton /> : recentChats.map((chat, index) => {
+          const label = chat.preview.trim() || "New chat";
+          return (
+            <Fragment key={chat.id}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open recent chat ${label}`}
+                onPress={() => navigate("index")}
+                style={({ pressed }) => [styles.padded, pressed && styles.pressed]}
+              >
+                <View style={styles.itemContainer}>
+                  <Icon
+                    icon={Message01Icon}
+                    size={20}
+                    color={mockColors.ink}
+                    style={styles.itemIcon}
+                  />
+                  <Text size="body" numberOfLines={1}>{label}</Text>
+                </View>
+              </Pressable>
+              {index < recentChats.length - 1 ? <Spacer size="sm" /> : null}
+            </Fragment>
+          );
+        })}
       </DrawerContentScrollView>
       <Spacer size="4xl" />
 
@@ -150,6 +170,35 @@ export function MockDrawerContent(props: DrawerContentComponentProps) {
   );
 }
 
+function RecentChatsSkeleton() {
+  const opacity = useSharedValue(0.45);
+
+  useEffect(() => {
+    opacity.value = withRepeat(withTiming(0.9, { duration: 700 }), -1, true);
+    return () => cancelAnimation(opacity);
+  }, [opacity]);
+
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+
+  return (
+    <Animated.View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={animatedStyle}
+    >
+      {(["72%", "58%", "66%"] as const).map((width, index, rows) => (
+        <Fragment key={width}>
+          <View testID="recent-chat-skeleton-row" style={[styles.padded, styles.skeletonRow]}>
+            <View style={styles.skeletonIcon} />
+            <View style={[styles.skeletonText, { width }]} />
+          </View>
+          {index < rows.length - 1 ? <Spacer size="sm" /> : null}
+        </Fragment>
+      ))}
+    </Animated.View>
+  );
+}
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -176,6 +225,22 @@ const styles = StyleSheet.create({
   },
   itemIcon: {
     marginRight: 8,
+  },
+  skeletonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  skeletonIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 16,
+    borderRadius: 999,
+    backgroundColor: palette.neutral[200],
+  },
+  skeletonText: {
+    height: 14,
+    borderRadius: 999,
+    backgroundColor: palette.neutral[200],
   },
   pressed: {
     opacity: 0.65,

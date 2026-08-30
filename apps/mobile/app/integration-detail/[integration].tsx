@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
 import { Stack, useLocalSearchParams } from "expo-router";
 
@@ -10,7 +10,7 @@ export default function IntegrationDetailScreen() {
   const integration = Array.isArray(params.integration) ? params.integration[0] : params.integration;
 
   return (
-    <View style={styles.screen}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: integration || "Integration" }} />
       <Spacer size="3xl" />
       <View style={styles.icon}>
@@ -38,12 +38,14 @@ export default function IntegrationDetailScreen() {
         <Text style={styles.buttonText}>Continue</Text>
         <Spacer size="lg" />
       </Pressable>
-    </View>
+      <Spacer size="3xl" />
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: "center", paddingHorizontal: 24, backgroundColor: mockColors.canvas },
+  screen: { flex: 1, backgroundColor: mockColors.canvas },
+  content: { flexGrow: 1, alignItems: "center", paddingHorizontal: 24 },
   icon: { width: 72, height: 72, alignItems: "center", justifyContent: "center", borderRadius: 22, backgroundColor: mockColors.blueSoft },
   title: { fontFamily: mockFonts.display, fontSize: 26, color: mockColors.ink },
   body: { maxWidth: 320, fontFamily: mockFonts.body, fontSize: 14, lineHeight: 21, textAlign: "center", color: mockColors.muted },

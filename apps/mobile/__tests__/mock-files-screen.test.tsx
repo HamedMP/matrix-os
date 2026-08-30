@@ -1,4 +1,5 @@
 const mockPush = jest.fn();
+const mockUseComputerDirectory = jest.fn();
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -6,6 +7,10 @@ jest.mock("expo-router", () => ({
 
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
+
+jest.mock("@/lib/queries/use-computer-directory", () => ({
+  useComputerDirectory: (...args: unknown[]) => mockUseComputerDirectory(...args),
 }));
 
 import React from "react";
@@ -16,6 +21,16 @@ import FilesScreen from "../app/(drawer)/files";
 describe("mock files screen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseComputerDirectory.mockReturnValue({
+      computer: { handle: "solar-vale" },
+      entries: [
+        { name: "Projects", type: "directory" },
+        { name: "Documents", type: "directory" },
+        { name: "README.md", type: "file" },
+      ],
+      isPending: false,
+      isError: false,
+    });
   });
 
   it("opens a folder as one modal workspace", () => {
@@ -29,12 +44,43 @@ describe("mock files screen", () => {
     });
   });
 
+  it("shows folders loaded from the selected computer", () => {
+    render(<FilesScreen />);
+
+    expect(mockUseComputerDirectory).toHaveBeenCalledWith("");
+    expect(screen.getByText("Everything on solar-vale")).toBeTruthy();
+    expect(screen.getByText("3 items")).toBeTruthy();
+    expect(screen.getByLabelText("Open Projects folder")).toBeTruthy();
+    expect(screen.getByText("README.md")).toBeTruthy();
+    expect(screen.getByTestId("grid-tile-icon-README.md")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Open README.md file"));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/file-browser/file",
+      params: { name: "README.md", path: "README.md" },
+    });
+    expect(screen.queryByLabelText("Open Photos folder")).toBeNull();
+  });
+
   it("renders folder icons without a background by default", () => {
     render(<FilesScreen />);
 
     expect(
       NativeStyleSheet.flatten(screen.getByTestId("grid-tile-icon-Projects").props.style),
     ).toMatchObject({ backgroundColor: "transparent" });
+  });
+
+  it("shows three skeleton tiles while the root directory is loading", () => {
+    mockUseComputerDirectory.mockReturnValue({
+      computer: { handle: "solar-vale" },
+      entries: [],
+      isPending: true,
+      isError: false,
+    });
+
+    render(<FilesScreen />);
+
+    expect(screen.getAllByTestId("file-tile-skeleton")).toHaveLength(3);
+    expect(screen.getAllByTestId("file-tile-skeleton-shimmer")).toHaveLength(3);
   });
 
   it("does not mark any folder tile as active", () => {

@@ -171,6 +171,15 @@ describe("mobile terminal state", () => {
     expect(sessions[1]?.sessionId).toBe("main");
   });
 
+  it("accepts the gateway's full canonical shell-session name format", () => {
+    const longestName = `a${"b".repeat(62)}_`;
+    expect(parseShellSessions([
+      { name: "dev_session", visualStatus: "running" },
+      { name: longestName, visualStatus: "idle" },
+      { name: "../unsafe", visualStatus: "running" },
+    ]).map((session) => session.sessionId)).toEqual(["dev_session", longestName]);
+  });
+
   it("maps finished/exited shell sessions to an exited state", () => {
     const [session] = parseShellSessions([{ name: "matrix-done01", visualStatus: "finished" }]);
     expect(session?.state).toBe("exited");

@@ -4,10 +4,20 @@ import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
 import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
 import { Pressable, StyleSheet, Text, TextInput, View, type ColorValue } from "react-native";
 
-import { Icon, Spacer, type IconData } from "@/components/ui";
+import { Icon, Skeleton, Spacer, type IconData } from "@/components/ui";
 import { mockColors, mockFonts } from "./theme";
 
-export function MockSearchField({ placeholder = "Search" }: { placeholder?: string }) {
+interface MockSearchFieldProps {
+  placeholder?: string;
+  value?: string;
+  onChangeText?: (value: string) => void;
+}
+
+export function MockSearchField({
+  placeholder = "Search",
+  value,
+  onChangeText,
+}: MockSearchFieldProps) {
   return (
     <View style={styles.search}>
       <Icon icon={Search01Icon} size={17} color={mockColors.muted} />
@@ -15,6 +25,8 @@ export function MockSearchField({ placeholder = "Search" }: { placeholder?: stri
         accessibilityLabel={placeholder}
         placeholder={placeholder}
         placeholderTextColor={mockColors.muted}
+        value={value}
+        onChangeText={onChangeText}
         style={styles.searchInput}
       />
     </View>
@@ -27,7 +39,7 @@ interface GridTileProps {
   accent?: boolean;
   iconBackgroundColor?: ColorValue;
   accessibilityLabel?: string;
-  onPress: () => void;
+  onPress?: () => void;
 }
 
 export function GridTileGrid({ children }: { children: ReactNode }) {
@@ -49,6 +61,21 @@ export function GridTileGrid({ children }: { children: ReactNode }) {
   );
 }
 
+export function FileTileSkeletonGrid() {
+  return (
+    <View style={styles.tileRow}>
+      {Array.from({ length: 3 }, (_, index) => (
+        <Skeleton
+          key={index}
+          testID="file-tile-skeleton"
+          shimmerTestID="file-tile-skeleton-shimmer"
+          style={styles.skeletonTile}
+        />
+      ))}
+    </View>
+  );
+}
+
 export function GridTile({
   label,
   icon,
@@ -59,8 +86,10 @@ export function GridTile({
 }: GridTileProps) {
   return (
     <Pressable
-      accessibilityRole="button"
+      accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilityLabel ?? `Open ${label}`}
+      accessibilityState={onPress ? undefined : { disabled: true }}
+      disabled={!onPress}
       onPress={onPress}
       style={({ pressed }) => [
         styles.tile,
@@ -85,6 +114,7 @@ export function GridTile({
 interface ListRowProps {
   title: string;
   detail?: string;
+  detailLeading?: ReactNode;
   icon?: IconData;
   accent?: string;
   actionIcon?: IconData;
@@ -107,9 +137,31 @@ export function ListRowStack({ children }: { children: ReactNode }) {
   );
 }
 
+export function ListRowSkeletonStack({
+  count = 3,
+  testID = "list-row-skeleton",
+}: {
+  count?: number;
+  testID?: string;
+}) {
+  return (
+    <ListRowStack>
+      {Array.from({ length: count }, (_, index) => (
+        <Skeleton
+          key={index}
+          testID={testID}
+          shimmerTestID="terminal-skeleton-shimmer"
+          style={styles.skeletonRow}
+        />
+      ))}
+    </ListRowStack>
+  );
+}
+
 export function ListRow({
   title,
   detail,
+  detailLeading,
   icon = CubeIcon,
   accent = mockColors.soft,
   actionIcon = ArrowRight01Icon,
@@ -125,7 +177,7 @@ export function ListRow({
     >
       <Spacer size="md" />
       <View style={styles.rowContent}>
-        <View style={[styles.rowGlyph, { backgroundColor: accent }]}>
+      <View testID={`list-row-icon-${title}`} style={[styles.rowGlyph, { backgroundColor: accent }]}>
           <Icon icon={icon} size={20} color={mockColors.ink} />
         </View>
         <View style={styles.rowText}>
@@ -133,7 +185,20 @@ export function ListRow({
           {detail ? (
             <>
               <Spacer size="xs" />
-              <Text numberOfLines={1} style={styles.rowDetail}>{detail}</Text>
+              <View style={styles.rowDetailLine}>
+                {detailLeading}
+                {detailLeading ? (
+                  <Text
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    testID="terminal-session-agent-separator"
+                    style={styles.rowDetail}
+                  >
+                    ·
+                  </Text>
+                ) : null}
+                <Text numberOfLines={1} style={styles.rowDetail}>{detail}</Text>
+              </View>
             </>
           ) : null}
         </View>
@@ -186,6 +251,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 13,
   },
+  skeletonTile: {
+    width: "31.5%",
+    aspectRatio: 0.9,
+    borderWidth: 1,
+    borderColor: mockColors.line,
+    borderRadius: 18,
+  },
   tileLabel: {
     fontFamily: mockFonts.semibold,
     fontSize: 13,
@@ -223,9 +295,23 @@ const styles = StyleSheet.create({
     color: mockColors.ink,
   },
   rowDetail: {
+    flexShrink: 1,
     fontFamily: mockFonts.body,
     fontSize: 12,
     color: mockColors.muted,
+  },
+  rowDetailLine: {
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    columnGap: 5,
+  },
+  skeletonRow: {
+    height: 66,
+    borderWidth: 1,
+    borderColor: mockColors.line,
+    borderRadius: 16,
+    paddingHorizontal: 13,
   },
   pressed: {
     opacity: 0.7,

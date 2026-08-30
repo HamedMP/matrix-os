@@ -1,0 +1,111 @@
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text as NativeText,
+  View,
+} from "react-native";
+import { Image } from "expo-image";
+
+import { AnalyticsMask } from "@/lib/analytics";
+import { useComputerFilePreview } from "@/lib/queries/use-computer-file-preview";
+import { mockColors, mockFonts } from "@/components/mock-shell/theme";
+import { Spacer, Text } from "@/components/ui";
+
+export function ComputerFilePreview({ name, path }: { name: string; path: string }) {
+  const { preview, isPending, isError } = useComputerFilePreview(path);
+
+  return (
+    <AnalyticsMask testID="file-preview-screen" style={styles.screen}>
+      {isPending ? (
+        <View style={styles.centered}>
+          <ActivityIndicator color={mockColors.ink} />
+          <Spacer size="md" />
+          <Text size="muted" tone="subtle">Loading preview…</Text>
+        </View>
+      ) : null}
+
+      {isError ? (
+        <View style={styles.centered}>
+          <Text size="body" align="center">Preview unavailable.</Text>
+          <Spacer size="sm" />
+          <Text size="muted" tone="subtle" align="center">Try opening the file again.</Text>
+        </View>
+      ) : null}
+
+      {preview?.kind === "unpreviewable" ? (
+        <View style={styles.centered}>
+          <Text size="body" align="center">
+            {preview.reason === "too-large"
+              ? "This file is too large to preview."
+              : preview.reason === "binary"
+                ? "This binary file cannot be previewed."
+                : "This file cannot be previewed safely."}
+          </Text>
+        </View>
+      ) : null}
+
+      {preview?.kind === "image" ? (
+        <ScrollView contentContainerStyle={styles.imageContent} maximumZoomScale={4} minimumZoomScale={1}>
+          <Spacer size="lg" />
+          <Image
+            accessibilityLabel={name}
+            source={{
+              uri: preview.uri,
+              headers: { Authorization: preview.authorization },
+            }}
+            contentFit="contain"
+            style={styles.image}
+          />
+          <Spacer size="3xl" />
+        </ScrollView>
+      ) : null}
+
+      {preview?.kind === "text" ? (
+        <ScrollView style={styles.textViewport} contentContainerStyle={styles.textContent}>
+          <Spacer size="lg" />
+          <ScrollView horizontal showsHorizontalScrollIndicator>
+            <NativeText selectable style={styles.code}>{preview.content}</NativeText>
+          </ScrollView>
+          <Spacer size="3xl" />
+        </ScrollView>
+      ) : null}
+    </AnalyticsMask>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: mockColors.canvas,
+  },
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  imageContent: {
+    flexGrow: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  image: {
+    width: "100%",
+    height: 420,
+  },
+  textViewport: {
+    flex: 1,
+  },
+  textContent: {
+    flexGrow: 1,
+    paddingHorizontal: 16,
+  },
+  code: {
+    fontFamily: mockFonts.mono,
+    fontSize: 12,
+    lineHeight: 18,
+    color: mockColors.ink,
+  },
+});
