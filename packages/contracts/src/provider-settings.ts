@@ -235,6 +235,28 @@ export const ProviderGatewayPolicySchema = z.object({
   }
 });
 
+/**
+ * Server-confirmed capabilities for the current owner/runtime. Values matching
+ * mutation discriminants mean the corresponding mutation endpoint is wired;
+ * reserved values stay absent until their dedicated workflows exist.
+ */
+export const ProviderSettingsSupportedActionSchema = z.enum([
+  "add_harness",
+  "update_harness",
+  "set_harness_enabled",
+  "set_route",
+  "select_account",
+  "select_access_source",
+  "start_login",
+  "logout_account",
+  "remove_account",
+  "reassign_account",
+  "set_gateway_budget",
+  "set_gateway_allowlist",
+  "add_credit",
+  "submit_api_key",
+]);
+
 /** UI mutation projection derived from, and explicitly lineaged to, AiProviderSnapshotV3. */
 export const ProviderSettingsSnapshotSchema = z.object({
   contractVersion: z.literal(1),
@@ -246,6 +268,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   revision: RevisionSchema,
   refreshedAt: IsoTimestampSchema,
   access: ProviderSettingsAccessSchema,
+  supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(14),
   modelProviders: z.array(ProviderModelProviderSchema).max(32),
   accessSources: z.array(ProviderAccessSourceSchema).max(64),
   accounts: z.array(ProviderAccountSchema).max(128),
@@ -258,6 +281,24 @@ export const ProviderSettingsSnapshotSchema = z.object({
     ["accounts", snapshot.accounts.map((value) => value.id)],
     ["harnesses", snapshot.harnesses.map((value) => value.id)],
   ] as const;
+  if (!unique(snapshot.supportedActions)) {
+    ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Duplicate supported action" });
+  }
+  if (snapshot.access.mode === "read_only" && snapshot.supportedActions.length > 0) {
+    ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Read-only settings cannot advertise mutations" });
+  }
+  if (snapshot.supportedActions.includes("add_credit") && snapshot.gatewayPolicy?.topUpEnabled !== true) {
+    ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Credit purchase requires an enabled top-up workflow" });
+  }
+  if (snapshot.supportedActions.includes("submit_api_key")
+    && !snapshot.harnesses.some((harness) => harness.loginMethods.includes("api_key"))) {
+    ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "API-key submission requires a compatible harness" });
+  }
+  if ((snapshot.supportedActions.includes("set_gateway_budget")
+    || snapshot.supportedActions.includes("set_gateway_allowlist"))
+    && snapshot.gatewayPolicy === null) {
+    ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Gateway policy mutations require a gateway policy" });
+  }
   for (const [key, ids] of collections) {
     if (!unique(ids)) ctx.addIssue({ code: "custom", path: [key], message: `Duplicate ${key} id` });
   }
@@ -416,6 +457,7 @@ export type ProviderDependencyCounts = z.infer<typeof ProviderDependencyCountsSc
 export type ProviderAccount = z.infer<typeof ProviderAccountSchema>;
 export type ProviderHarnessInstance = z.infer<typeof ProviderHarnessInstanceSchema>;
 export type ProviderGatewayPolicy = z.infer<typeof ProviderGatewayPolicySchema>;
+export type ProviderSettingsSupportedAction = z.infer<typeof ProviderSettingsSupportedActionSchema>;
 /** Mutable Settings projection with explicit lineage to its canonical V3 input. */
 export type ProviderSettingsSnapshot = z.infer<typeof ProviderSettingsSnapshotSchema>;
 export type ProviderSettingsMutation = z.infer<typeof ProviderSettingsMutationSchema>;
