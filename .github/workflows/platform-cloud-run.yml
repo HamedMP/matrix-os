@@ -748,6 +748,38 @@ jobs:
           fi
           echo "PRODUCTION_REVISION=$production_revision" >> "$GITHUB_ENV"
 
+      - name: Verify production provisioning contract
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        run: |
+          set -euo pipefail
+          revision_json="$(gcloud run revisions describe "$PRODUCTION_REVISION" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json)"
+          required_production_env=(
+            "PLATFORM_BACKGROUND_WORKERS_ENABLED=true"
+            "MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}"
+            "MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}"
+            "MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED}"
+            "MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT}"
+            "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE}"
+            "MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS=${MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS}"
+            "MATRIX_PREBILLING_PROVISIONING_COSTS=${MATRIX_PREBILLING_PROVISIONING_COSTS}"
+            "GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}"
+            "GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}"
+            "GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}"
+          )
+          for binding in "${required_production_env[@]}"; do
+            name="${binding%%=*}"
+            expected="${binding#*=}"
+            actual="$(printf '%s\n' "$revision_json" | jq -r --arg name "$name" \
+              '.spec.containers[0].env[]? | select(.name == $name) | .value // empty')"
+            if [ "$actual" != "$expected" ]; then
+              echo "production provisioning deployment contract is missing or incorrect for $name" >&2
+              exit 1
+            fi
+          done
+
       - name: Promote revision
         if: ${{ github.event_name == 'push' || inputs.promote }}
         run: |

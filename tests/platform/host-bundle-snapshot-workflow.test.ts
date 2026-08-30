@@ -177,6 +177,9 @@ describe('host bundle golden snapshot release hook', () => {
     expect(productionDeploy).toContain('GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}');
     expect(productionDeploy).toContain('GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}');
     expect(productionDeploy).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}');
+    expect(productionDeploy).toContain('Verify production provisioning contract');
+    expect(productionDeploy).toContain('gcloud run revisions describe "$PRODUCTION_REVISION"');
+    expect(productionDeploy).toContain('production provisioning deployment contract is missing or incorrect');
 
     const deployedContract = workflow.slice(
       workflow.indexOf('      - name: Verify deployed provisioning contract'),
