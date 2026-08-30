@@ -17,7 +17,6 @@ import {
 import TerminalView from "./TerminalView";
 import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
-import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
 import {
   parseTerminalAgentStatuses,
   terminalAgentVisibleInstallCommand,
@@ -459,7 +458,6 @@ export default function TerminalsTab({
                 >
                   {statusLabel}
                 </span>
-                <DesktopTerminalThemePicker />
               </div>
             </header>
             <div data-terminal-detail className="flex min-h-0 flex-1">
