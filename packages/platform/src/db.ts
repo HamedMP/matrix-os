@@ -208,6 +208,42 @@ export interface AiFundedPromotionalGrantBalancesTable {
   revision: number;
 }
 
+export interface AiCreditCheckoutClaimsTable {
+  request_id: string;
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  package_id: string;
+  stripe_price_id: string;
+  amount_microusd: number;
+  amount_cents: number;
+  currency: string;
+  automatic_tax: boolean;
+  idempotency_key: string;
+  stripe_session_id: string | null;
+  checkout_url: string | null;
+  payment_intent_id: string | null;
+  charge_id: string | null;
+  status: string;
+  granted_microusd: number;
+  reversed_microusd: number;
+  reversal_debt_microusd: number;
+  refunded_at: string | null;
+  dispute_status: string;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+}
+
+export interface AiFundedCreditRestrictionsTable {
+  machine_id: string;
+  owner_id: string;
+  runtime_slot: string;
+  debt_microusd: number;
+  frozen: boolean;
+  updated_at: string;
+}
+
 export interface ProvisioningJobsTable {
   job_id: string;
   machine_id: string;
@@ -695,6 +731,8 @@ export interface PlatformDatabase {
   ai_funded_credit_ledger: AiFundedCreditLedgerTable;
   ai_funded_promotional_grant_balances: AiFundedPromotionalGrantBalancesTable;
   ai_funded_runtime_balances: AiFundedRuntimeBalancesTable;
+  ai_credit_checkout_claims: AiCreditCheckoutClaimsTable;
+  ai_funded_credit_restrictions: AiFundedCreditRestrictionsTable;
   provisioning_jobs: ProvisioningJobsTable;
   billing_checkout_attempts: BillingCheckoutAttemptsTable;
   prebilling_provisioning_intents: PrebillingProvisioningIntentsTable;
@@ -1446,7 +1484,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
       runtime_slot TEXT NOT NULL,
       kind TEXT NOT NULL CONSTRAINT ai_funded_credit_ledger_kind_v3_check
-        CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry', 'usage_shortfall')),
+        CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry', 'addon_reversal', 'usage_shortfall')),
       amount_microusd BIGINT NOT NULL,
       source_reference TEXT NOT NULL,
       reservation_id TEXT REFERENCES ai_funded_usage_reservations(reservation_id) ON UPDATE CASCADE ON DELETE CASCADE,
@@ -1457,7 +1495,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
         (kind IN ('promotional_grant', 'addon_grant') AND amount_microusd > 0 AND reservation_id IS NULL AND period_start IS NULL)
         OR (kind IN ('promotional_debit', 'addon_debit') AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL)
         OR (kind = 'usage_shortfall' AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL AND expires_at IS NULL)
-        OR (kind = 'promotional_expiry' AND amount_microusd < 0 AND reservation_id IS NULL AND period_start IS NULL AND expires_at IS NULL)
+        OR (kind IN ('promotional_expiry', 'addon_reversal') AND amount_microusd < 0 AND reservation_id IS NULL AND period_start IS NULL AND expires_at IS NULL)
       )
     )
   `.execute(db);
@@ -1472,7 +1510,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       BEGIN
         ALTER TABLE ai_funded_credit_ledger
           ADD CONSTRAINT ai_funded_credit_ledger_kind_v3_check
-          CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry', 'usage_shortfall'));
+          CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry', 'addon_reversal', 'usage_shortfall'));
       EXCEPTION WHEN duplicate_object THEN NULL;
       END;
       BEGIN
@@ -1481,7 +1519,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
             (kind IN ('promotional_grant', 'addon_grant') AND amount_microusd > 0 AND reservation_id IS NULL AND period_start IS NULL)
             OR (kind IN ('promotional_debit', 'addon_debit') AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL)
             OR (kind = 'usage_shortfall' AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL AND expires_at IS NULL)
-            OR (kind = 'promotional_expiry' AND amount_microusd < 0 AND reservation_id IS NULL AND period_start IS NULL AND expires_at IS NULL)
+            OR (kind IN ('promotional_expiry', 'addon_reversal') AND amount_microusd < 0 AND reservation_id IS NULL AND period_start IS NULL AND expires_at IS NULL)
           );
       EXCEPTION WHEN duplicate_object THEN NULL;
       END;
@@ -1493,6 +1531,53 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_ai_funded_ledger_promotional_expiry
     ON ai_funded_credit_ledger(machine_id, runtime_slot, expires_at)
     WHERE kind = 'promotional_grant' AND expires_at IS NOT NULL
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_credit_checkout_claims (
+      request_id TEXT PRIMARY KEY CHECK (length(request_id) <= 64),
+      owner_id TEXT NOT NULL CHECK (length(owner_id) <= 160),
+      machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE,
+      runtime_slot TEXT NOT NULL CHECK (length(runtime_slot) <= 80),
+      package_id TEXT NOT NULL CHECK (package_id IN ('usd_5', 'usd_10', 'usd_25')),
+      stripe_price_id TEXT NOT NULL CHECK (length(stripe_price_id) <= 255),
+      amount_microusd BIGINT NOT NULL CHECK (amount_microusd > 0),
+      amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+      currency TEXT NOT NULL CHECK (currency = 'usd'),
+      automatic_tax BOOLEAN NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) <= 160),
+      stripe_session_id TEXT UNIQUE,
+      checkout_url TEXT CHECK (checkout_url IS NULL OR length(checkout_url) <= 2048),
+      payment_intent_id TEXT UNIQUE,
+      charge_id TEXT UNIQUE,
+      status TEXT NOT NULL CHECK (status IN ('creating', 'open', 'awaiting_payment', 'paid', 'payment_failed', 'expired')),
+      granted_microusd BIGINT NOT NULL DEFAULT 0 CHECK (granted_microusd >= 0),
+      reversed_microusd BIGINT NOT NULL DEFAULT 0 CHECK (reversed_microusd >= 0),
+      reversal_debt_microusd BIGINT NOT NULL DEFAULT 0 CHECK (reversal_debt_microusd >= 0),
+      refunded_at TEXT,
+      dispute_status TEXT NOT NULL DEFAULT 'none' CHECK (dispute_status IN ('none', 'open', 'won', 'lost')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ai_credit_checkout_claims_runtime_created
+    ON ai_credit_checkout_claims(owner_id, runtime_slot, created_at DESC)
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_credit_checkout_claims_active_runtime
+    ON ai_credit_checkout_claims(owner_id, runtime_slot)
+    WHERE status IN ('creating', 'open', 'awaiting_payment')
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_credit_restrictions (
+      machine_id TEXT PRIMARY KEY REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      debt_microusd BIGINT NOT NULL DEFAULT 0 CHECK (debt_microusd >= 0),
+      frozen BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at TEXT NOT NULL
+    )
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_promotional_grant_balances (

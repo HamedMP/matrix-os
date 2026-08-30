@@ -184,12 +184,24 @@ derive the exact owner/runtime. Web navigates to hosted Stripe Checkout and
 Electron opens that same validated `https://checkout.stripe.com` URL in the
 external browser. Both render the shared package picker and safe retry state.
 
-The signed `checkout.session.completed` webhook validates payment mode,
-complete/paid state, USD currency, exact total, package/Price metadata, and the
-owner/machine/runtime binding. It writes the webhook receipt and non-expiring
-add-on ledger grant in one database transaction. The ledger entry uses the
-Checkout Session ID with `ON CONFLICT`, so duplicate delivery cannot add credit
-twice; invalid, expired, or unpaid events return non-2xx and add no credit.
+Creation first persists an immutable, bounded checkout claim. Active attempts
+are reused and each owner/runtime is durably limited to five new attempts per
+hour. The signed Checkout lifecycle validates payment mode, USD currency, exact
+pre-tax `amount_subtotal`, `amount_total >= amount_subtotal`, package/Price
+metadata, and the owner/machine/runtime binding against that claim rather than
+mutable environment configuration. Completed unpaid sessions wait for
+`checkout.session.async_payment_succeeded`; failed or expired sessions add no
+credit. The webhook receipt and non-expiring add-on ledger grant commit in one
+database transaction. The ledger entry uses the Checkout Session ID with
+`ON CONFLICT`, so duplicate delivery cannot add credit twice. Mismatches return
+non-2xx so Stripe retries; valid unpaid, failed, and expired lifecycle events
+are recorded as 2xx no-ops for credit.
+
+Any positive refund reverses the full associated add-on grant. Available
+unused credit is removed atomically; already consumed or reserved credit
+becomes durable debt and freezes further funded authorization. A dispute does
+the same while open or lost. A won dispute restores only the amount previously
+removed, clears that claim's debt, and unfreezes the runtime when safe.
 Cloudflare remains the upstream billing/spend fuse while Matrix Postgres remains
 the user-credit authority.
 

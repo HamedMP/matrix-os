@@ -41,13 +41,27 @@ machine, Price, currency, or amount makes the request invalid. The Checkout
 create uses a fixed-length idempotency key derived from owner, machine, and
 request UUID. Browser retries reuse the same UUID.
 
-Only a signed `checkout.session.completed` event can grant credit. Validation
-requires `mode=payment`, `status=complete`, `payment_status=paid`, `currency=usd`,
-the exact configured `amount_total`, and exact server-written kind, owner,
-machine, runtime, package, Price, request, and microusd metadata. The platform
-inserts the Stripe event receipt and `addon:<checkout-session-id>` ledger entry
-in one Kysely transaction. Mismatch, expiry, or unpaid state rolls back and
-returns non-2xx so Stripe can retry; duplicate valid delivery is a 2xx no-op.
+Before Stripe is called, the platform inserts an immutable Checkout claim. It
+reuses an active same-package claim and permits at most five new claims per
+owner/runtime in a rolling hour. The claim, not mutable environment state, is
+the fulfillment authority after Price rotation or feature disable.
+
+Signed `checkout.session.completed` and
+`checkout.session.async_payment_succeeded` events can grant credit only with
+`mode=payment`, `status=complete`, `payment_status=paid`, `currency=usd`, exact
+pre-tax `amount_subtotal`, `amount_total >= amount_subtotal`, and exact
+server-written kind, owner, machine, runtime, package, Price, request, and
+microusd metadata. Unpaid completion waits; async failure and expiry close the
+attempt without credit. The platform inserts the event receipt and
+`addon:<checkout-session-id>` ledger entry in one Kysely transaction. Mismatch
+rolls back and returns non-2xx; duplicate valid delivery is a 2xx no-op.
+
+Signed `charge.refunded` and dispute lifecycle events resolve through the
+persisted payment-intent/charge association. Any positive refund or open/lost
+dispute reverses the full grant exactly once. Unused balance is removed;
+already consumed/reserved credit becomes durable debt and freezes further
+authorization. A won dispute restores only the removed portion and clears its
+debt atomically.
 
 ## `GET /api/ai/providers`
 

@@ -14,7 +14,7 @@ describe('platform/stripe-billing', () => {
     const client = createStripeBillingClient({ secretKey: 'sk_test_123', stripe });
 
     expect(client.apiTimeoutMs).toBe(MATRIX_STRIPE_API_TIMEOUT_MS);
-    await expect(client.createCheckoutSession({
+    const subscriptionInput = {
       clerkUserId: 'user_123',
       idempotencyKey: 'attempt_123',
       customerId: 'cus_123',
@@ -26,7 +26,10 @@ describe('platform/stripe-billing', () => {
       runtimeSlot: 'studio',
       successUrl: 'https://app.matrix-os.com/?checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
-    })).resolves.toEqual({ url: 'https://checkout.stripe.test/session', id: 'cs_123' });
+    } as const;
+    await expect(client.createCheckoutSession(subscriptionInput))
+      .resolves.toEqual({ url: 'https://checkout.stripe.test/session', id: 'cs_123' });
+    await client.createCheckoutSession(subscriptionInput);
 
     expect(sessionsCreate).toHaveBeenCalledWith({
       mode: 'subscription',
@@ -57,6 +60,7 @@ describe('platform/stripe-billing', () => {
       },
     }, { idempotencyKey: 'attempt_123' });
     expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
+    expect(sessionsCreate.mock.calls[1]).toEqual(sessionsCreate.mock.calls[0]);
   });
 
   it('creates checkout sessions without customer-write permission when no customer exists yet', async () => {
@@ -216,7 +220,7 @@ describe('platform/stripe-billing', () => {
       stripe: fakeStripe({ checkout: { sessions: { create: sessionsCreate } } }),
     });
 
-    await expect(client.createAiCreditCheckoutSession({
+    const checkoutInput = {
       clerkUserId: 'user_123',
       requestId: '77f105df-6e24-4e13-a881-af9ce20d6a63',
       machineId: 'machine_123',
@@ -228,7 +232,10 @@ describe('platform/stripe-billing', () => {
       idempotencyKey: '77f105df-6e24-4e13-a881-af9ce20d6a63',
       successUrl: 'https://app.matrix-os.com/?billing=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
-    })).resolves.toEqual({ url: 'https://checkout.stripe.com/c/pay/cs_ai_5', id: 'cs_ai_5' });
+    } as const;
+    await expect(client.createAiCreditCheckoutSession(checkoutInput))
+      .resolves.toEqual({ url: 'https://checkout.stripe.com/c/pay/cs_ai_5', id: 'cs_ai_5' });
+    await client.createAiCreditCheckoutSession(checkoutInput);
     expect(sessionsCreate).toHaveBeenCalledWith({
       mode: 'payment',
       integration_identifier: expect.stringMatching(/^matrix-ai-credit-[a-z]{8}$/),
@@ -247,8 +254,21 @@ describe('platform/stripe-billing', () => {
         matrix_ai_credit_price_id: 'price_ai_5',
         matrix_ai_credit_microusd: '5000000',
       },
+      payment_intent_data: {
+        metadata: {
+          matrix_checkout_kind: 'ai_credit_addon',
+          matrix_owner_id: 'user_123',
+          matrix_machine_id: 'machine_123',
+          matrix_runtime_slot: 'primary',
+          matrix_ai_credit_package_id: 'usd_5',
+          matrix_ai_credit_request_id: '77f105df-6e24-4e13-a881-af9ce20d6a63',
+          matrix_ai_credit_price_id: 'price_ai_5',
+          matrix_ai_credit_microusd: '5000000',
+        },
+      },
     }, { idempotencyKey: '77f105df-6e24-4e13-a881-af9ce20d6a63' });
     expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
+    expect(sessionsCreate.mock.calls[1]).toEqual(sessionsCreate.mock.calls[0]);
   });
 
   it('uses the newest mature Stripe API version allowed by package policy', () => {

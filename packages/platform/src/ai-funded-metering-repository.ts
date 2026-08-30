@@ -400,6 +400,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const row = await options.db.executor.selectFrom("ai_runtime_credentials as credential")
       .innerJoin("ai_funded_runtime_policies as runtime", "runtime.machine_id", "credential.machine_id")
       .innerJoin("user_machines as machine", "machine.machine_id", "credential.machine_id")
+      .leftJoin("ai_funded_credit_restrictions as restriction", "restriction.machine_id", "credential.machine_id")
       .innerJoin("ai_funded_global_policy as global_policy", (join) => (
         join.on("global_policy.policy_id", "=", "default")
       ))
@@ -413,6 +414,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         "machine.clerk_user_id", "machine.runtime_slot as machine_runtime_slot", "machine.status",
         "machine.activation_state", "machine.deleted_at", "global_policy.enabled as global_enabled",
         "global_policy.revision as global_revision", "global_policy.allowed_model_ids as global_models",
+        "restriction.debt_microusd as funding_debt_microusd", "restriction.frozen as funding_frozen",
       ])
       .where("credential.token_id", "=", tokenMatch[1])
       .where("global_policy.policy_id", "=", "default")
@@ -426,6 +428,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       throw new AiFundedPolicyError("unauthorized");
     }
     if (!row.global_enabled || !row.runtime_enabled
+      || row.funding_frozen === true || exactInteger(row.funding_debt_microusd ?? 0) > 0
       || (row.runtime_expires_at !== null && Date.parse(row.runtime_expires_at) <= checked.getTime())) {
       throw new AiFundedPolicyError("access_disabled");
     }
@@ -482,13 +485,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       ]).where("machine_id", "=", credential.machine_id).executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")
         .selectAll().where("policy_id", "=", "default").executeTakeFirstOrThrow();
+      const restriction = await trx.executor.selectFrom("ai_funded_credit_restrictions")
+        .select(["debt_microusd", "frozen"]).where("machine_id", "=", credential.machine_id)
+        .forUpdate().executeTakeFirst();
       if (!runtime || !machine || machine.clerk_user_id !== credential.owner_id
         || machine.runtime_slot !== credential.runtime_slot || machine.status !== "running"
         || machine.activation_state !== "authorized" || machine.deleted_at !== null
         || runtime.owner_id !== credential.owner_id || runtime.runtime_slot !== credential.runtime_slot) {
         throw new AiFundedPolicyError("unauthorized");
       }
-      if (!global.enabled || !runtime.enabled
+      if (!global.enabled || !runtime.enabled || restriction?.frozen === true
+        || exactInteger(restriction?.debt_microusd ?? 0) > 0
         || (runtime.expires_at !== null && Date.parse(runtime.expires_at) <= checked.getTime())) {
         throw new AiFundedPolicyError("access_disabled");
       }

@@ -135,6 +135,8 @@ mutation or funded balances.
 - [X] T046C Gate `topUpEnabled` and `add_credit` only from authoritative platform checkout configuration, failing closed when absent
 - [X] T046D Add one shared package/busy/safe-error UI with same-origin web navigation and authenticated Electron external-browser handoff
 - [X] T046E Cover package spoofing, unpaid/expired/mismatched events, duplicate delivery, transaction rollback, shell parity, redirect validation, and Stripe integration metadata
+- [X] T046F Persist immutable Checkout claims, reuse active attempts, enforce a durable five-per-hour owner/runtime creation limit, and fulfill paid asynchronous methods against the claim after configuration rotation
+- [X] T046G Reverse refunded/disputed grants idempotently, convert consumed credit to frozen debt, restore won disputes, and cover tax-on-top subtotal validation
 
 ---
 
