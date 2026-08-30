@@ -378,7 +378,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         const layoutToAdopt = changedDuringSave
           ? mergeTerminalLayouts(layout, latestLayout, persistedLayout)
           : persistedLayout;
-        if (JSON.stringify(layoutToAdopt) !== JSON.stringify(latestLayout)) {
+        if (mountedRef.current && JSON.stringify(layoutToAdopt) !== JSON.stringify(latestLayout)) {
           const nextTabs = layoutToAdopt.tabs ?? [];
           const nextActiveTabId = nextTabs.some((tab) => tab.id === layoutToAdopt.activeTabId)
             ? layoutToAdopt.activeTabId ?? ""
@@ -436,8 +436,16 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       mountedRef.current = false;
       if (persistence === "ephemeral") {
         destroyTerminalSessions(tabsRef.current.flatMap((tab) => getSessionIds(tab.paneTree)));
+        return;
       }
+      if (!terminalLayoutDirtyRef.current) return;
+      if (layoutSaveTimerRef.current) {
+        clearTimeout(layoutSaveTimerRef.current);
+        layoutSaveTimerRef.current = null;
+      }
+      void persistLayoutNow();
     };
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- persistence is a mount-time window policy; persistLayoutNow reads the latest layout exclusively through refs, and re-subscribing this cleanup would flush during ordinary renders
   }, [persistence]);
 
   useEffect(() => {
