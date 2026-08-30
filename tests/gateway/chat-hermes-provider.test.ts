@@ -347,6 +347,34 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|API_TOKEN|Authorization|raw page|raw delegated|private query/);
   });
 
+  it("keeps official Hermes process status advisory when its raw notification is unsafe", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("status.update", {
+      kind: "process",
+      text: [
+        "[IMPORTANT: Background process proc_preview completed normally (exit code 0).",
+        "Command: inspect .ssh/config",
+        "Output:",
+        "Preview ready.]",
+      ].join("\n"),
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      { type: "agent.activity", activityId: "status_process", kind: "phase", label: "Working", status: "running" },
+      { type: "agent.activity", activityId: "status_process", kind: "phase", label: "Working", status: "completed" },
+      { type: "assistant.delta", delta: "Created the app." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/proc_preview|\.ssh|Preview ready/);
+  });
+
   it("projects safe Hermes command, file, and published reasoning details without raw payloads", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
