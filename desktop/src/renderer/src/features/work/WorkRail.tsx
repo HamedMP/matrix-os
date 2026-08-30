@@ -10,6 +10,7 @@ import {
   PinIcon,
   PinOffIcon,
   Plus,
+  Search,
   Trash2,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -27,6 +28,8 @@ import {
   resolveWorkRailAgentState,
   type WorkRailAgentState,
 } from "./work-rail-model";
+import { OverflowingChatTitle } from "./OverflowingChatTitle";
+import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
@@ -88,6 +91,7 @@ export function WorkRail({
   const [deletingChat, setDeletingChat] = useState(false);
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
   if (routeScopeRef.current.key !== routeScope || routeScopeRef.current.client !== client) {
@@ -98,6 +102,10 @@ export function WorkRail({
     };
   }
   const model = useMemo(() => buildWorkRailModel(records, projects), [projects, records]);
+
+  useEffect(() => {
+    if (!active || !client) setSearchOpen(false);
+  }, [active, client]);
 
   useEffect(() => {
     let current = true;
@@ -212,7 +220,7 @@ export function WorkRail({
       className={`flex min-h-0 shrink-0 flex-col border-r ${className}`}
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
     >
-      <div className="mx-3 flex items-center gap-1 border-b py-3" style={{ borderColor: "var(--border-subtle)" }}>
+      <div className="mx-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-1 border-b py-3" style={{ borderColor: "var(--border-subtle)" }}>
         <button
           type="button"
           className="flex h-9 min-w-0 flex-1 items-center justify-start gap-2 rounded-md px-2 text-left text-[15px] font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
@@ -232,6 +240,16 @@ export function WorkRail({
         >
           <PanelLeftOpenIcon size={15} aria-hidden />
         </button> : null}
+        <button
+          type="button"
+          aria-label="Search chats"
+          className="col-span-2 flex h-9 min-w-0 items-center justify-start gap-2 rounded-md px-2 text-left text-[15px] outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          style={{ color: "var(--text-secondary)" }}
+          onClick={() => setSearchOpen(true)}
+        >
+          <Search size={17} aria-hidden />
+          Search
+        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         <RailSection
@@ -397,6 +415,18 @@ export function WorkRail({
           onClose={() => setDeleteProjectTarget(null)}
         />
       ) : null}
+      <WorkRailSearchDialog
+        open={searchOpen}
+        records={records}
+        projects={projects}
+        status={status}
+        onClose={() => setSearchOpen(false)}
+        onSelect={(record, project) => {
+          setSearchOpen(false);
+          if (project) onSelectChat(record, project);
+          else onSelectChat(record);
+        }}
+      />
     </nav>
   );
 }
@@ -466,22 +496,25 @@ function ChatRow({
       },
     ]}>
       <div
-        className="group/chat flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]"
+        className="group/chat relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)] focus-within:bg-[var(--bg-hover)]"
         style={{ background: active ? "var(--bg-selected)" : undefined }}
       >
         <button
           type="button"
           aria-label={record.chat.title}
           aria-current={active ? "page" : undefined}
-          className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+          className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
           style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
           onClick={onSelect}
         >
           <MessageSquare size={13} aria-hidden className="shrink-0" />
-          <span className="truncate">{record.chat.title}</span>
+          <OverflowingChatTitle title={record.chat.title} />
           <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
         </button>
-        <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100">
+        <div
+          className="absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100"
+          style={{ background: active ? "var(--bg-selected)" : "var(--bg-hover)" }}
+        >
           <button
             type="button"
             aria-label={`${pinned ? "Unpin" : "Pin"} ${record.chat.title}`}

@@ -2,6 +2,7 @@ import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
 import {
   buildWorkRailModel,
+  buildWorkRailSearchResults,
   resolveWorkRailAgentState,
 } from "@desktop/renderer/src/features/work/work-rail-model";
 import type { Project } from "@desktop/renderer/src/stores/board";
@@ -149,5 +150,96 @@ describe("buildWorkRailModel", () => {
       "chat_recent_older",
       "chat_recent_newer",
     ]);
+  });
+
+  it("builds bounded canonical search results from safe title and context fields", () => {
+    const global = chat("chat_global", "Deploy release", {
+      updatedAt: "2026-08-28T11:00:00.000Z",
+    });
+    const project = chat("chat_project", "Deploy release", {
+      projectId: "project_alpha_id",
+      updatedAt: "2026-08-28T12:00:00.000Z",
+    });
+    const providerBound = {
+      ...project,
+      chat: { ...project.chat, lastMessagePreview: "private-secret-needle" },
+      providerBinding: {
+        driverKind: "codex",
+        instanceId: "provider_private_secret",
+        lockedAtTurnId: "cturn_search",
+      },
+    } as CanonicalChatRecord;
+
+    expect(buildWorkRailSearchResults([global, providerBound], projects, "deploy"))
+      .toEqual([
+        { record: providerBound, project: projects[0], contextLabel: "Alpha · Codex" },
+        { record: global, contextLabel: "Global" },
+      ]);
+    expect(buildWorkRailSearchResults([global, providerBound], projects, "alpha"))
+      .toEqual([{ record: providerBound, project: projects[0], contextLabel: "Alpha · Codex" }]);
+    expect(buildWorkRailSearchResults([global, providerBound], projects, "codex"))
+      .toHaveLength(1);
+    expect(buildWorkRailSearchResults([global, providerBound], projects, "private-secret"))
+      .toEqual([]);
+    const unresolvedProject = chat("chat_missing_project", "Deploy missing", {
+      projectId: "project_missing",
+      updatedAt: "2026-08-28T12:30:00.000Z",
+    });
+    expect(buildWorkRailSearchResults([unresolvedProject], projects, "deploy"))
+      .toEqual([]);
+    const olderProjectDuplicate = {
+      ...providerBound,
+      chat: {
+        ...providerBound.chat,
+        id: "chat_project_duplicate",
+        updatedAt: "2026-08-28T10:30:00.000Z",
+      },
+    } as CanonicalChatRecord;
+    expect(buildWorkRailSearchResults(
+      [providerBound, olderProjectDuplicate],
+      projects,
+      "deploy",
+    ).map((result) => result.contextLabel)).toEqual([
+      "Alpha · Codex · 2026-08-28 12:00:00 UTC",
+      "Alpha · Codex · 2026-08-28 10:30:00 UTC",
+    ]);
+    const sameMinuteDuplicate = {
+      ...providerBound,
+      chat: {
+        ...providerBound.chat,
+        id: "chat_project_same_minute",
+        updatedAt: "2026-08-28T12:00:59.000Z",
+      },
+    } as CanonicalChatRecord;
+    expect(buildWorkRailSearchResults(
+      [providerBound, sameMinuteDuplicate],
+      projects,
+      "deploy",
+    ).map((result) => result.contextLabel)).toEqual([
+      "Alpha · Codex · 2026-08-28 12:00:59 UTC",
+      "Alpha · Codex · 2026-08-28 12:00:00 UTC",
+    ]);
+    const sameTimestampDuplicate = {
+      ...providerBound,
+      chat: {
+        ...providerBound.chat,
+        id: "chat_project_same_timestamp",
+      },
+    } as CanonicalChatRecord;
+    expect(buildWorkRailSearchResults(
+      [providerBound, sameTimestampDuplicate],
+      projects,
+      "deploy",
+    ).map((result) => result.contextLabel)).toEqual([
+      "Alpha · Codex · 2026-08-28 12:00:00 UTC · 1",
+      "Alpha · Codex · 2026-08-28 12:00:00 UTC · 2",
+    ]);
+    expect(buildWorkRailSearchResults(
+      Array.from({ length: 75 }, (_, index) => chat(`chat_${index}`, `Chat ${index}`, {
+        updatedAt: new Date(Date.UTC(2026, 7, 28, 0, index)).toISOString(),
+      })),
+      projects,
+      "",
+    )).toHaveLength(50);
   });
 });

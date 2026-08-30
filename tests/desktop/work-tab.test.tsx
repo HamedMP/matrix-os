@@ -147,27 +147,34 @@ vi.mock("@desktop/renderer/src/features/work/WorkFilesInspector", () => ({
   },
 }));
 
-const resizeObserverCallbacks: ResizeObserverCallback[] = [];
+const resizeObserverEntries: Array<{
+  callback: ResizeObserverCallback;
+  elements: Set<Element>;
+}> = [];
 let initialWorkWidth = 1_400;
 const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
 const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
 
 class WorkResizeObserver implements ResizeObserver {
+  private readonly entry: (typeof resizeObserverEntries)[number];
   constructor(callback: ResizeObserverCallback) {
-    resizeObserverCallbacks.push(callback);
+    this.entry = { callback, elements: new Set() };
+    resizeObserverEntries.push(this.entry);
   }
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  observe(element: Element) { this.entry.elements.add(element); }
+  unobserve(element: Element) { this.entry.elements.delete(element); }
+  disconnect() { this.entry.elements.clear(); }
   takeRecords() { return []; }
 }
 
 function resizeWork(width: number) {
   initialWorkWidth = width;
-  const callback = resizeObserverCallbacks.at(-1);
-  if (!callback) throw new Error("Work ResizeObserver was not registered");
+  const observer = resizeObserverEntries.find((entry) => (
+    [...entry.elements].some((element) => element.hasAttribute("data-layout"))
+  ));
+  if (!observer) throw new Error("Work ResizeObserver was not registered");
   const entry = { contentRect: { width } } as unknown as ResizeObserverEntry;
-  act(() => callback([entry], {} as ResizeObserver));
+  act(() => observer.callback([entry], {} as ResizeObserver));
 }
 
 const alpha: Project = {
@@ -204,7 +211,7 @@ function activeWorkTab() {
 
 describe("WorkTab rail integration", () => {
   beforeEach(() => {
-    resizeObserverCallbacks.length = 0;
+    resizeObserverEntries.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
     eventSourceProps.rail = [];
