@@ -78,6 +78,7 @@ let persistQueue: Promise<void> = Promise.resolve();
 let mutationSequence = 0;
 let stateEpoch = 0;
 let hydrationRevision = 0;
+let pendingMutationCount = 0;
 let confirmedIcons: DesktopIconPlacement[] = [];
 let hasConfirmedIcons = false;
 let unconfirmedHydrationRevision: number | null = null;
@@ -94,6 +95,7 @@ export function resetDesktopIconsRuntime(): void {
   mutationSequence += 1;
   stateEpoch += 1;
   hydrationRevision += 1;
+  pendingMutationCount = 0;
   confirmedIcons = [];
   hasConfirmedIcons = false;
   unconfirmedHydrationRevision = null;
@@ -129,6 +131,7 @@ async function applyOptimisticMutation(
 ): Promise<void> {
   const sequence = ++mutationSequence;
   const epoch = stateEpoch;
+  pendingMutationCount += 1;
   const runtimeGeneration = captureRuntimeGeneration();
   const rollbackIcons = copyIcons(previousIcons);
   const snapshot = copyIcons(icons);
@@ -154,6 +157,7 @@ async function applyOptimisticMutation(
     console.warn("[desktop-icons] persist failed:", error instanceof Error ? error.name : typeof error);
     if (epoch === stateEpoch && sequence === mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
       if (hasConfirmedIcons) {
+        deferredHydrationIcons = null;
         set({ icons: copyIcons(confirmedIcons), loaded: true });
       } else if (deferredHydrationIcons !== null) {
         const icons = copyIcons(deferredHydrationIcons);
@@ -181,7 +185,10 @@ async function applyOptimisticMutation(
       }
     }
   } finally {
-    if (epoch === stateEpoch && !restoredPendingHydration) hydrationRevision += 1;
+    if (epoch === stateEpoch) {
+      pendingMutationCount = Math.max(0, pendingMutationCount - 1);
+      if (!restoredPendingHydration) hydrationRevision += 1;
+    }
   }
 }
 
@@ -197,6 +204,10 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     const replayable = replayableHydrationRange !== null
       && expectedRevision >= replayableHydrationRange.min
       && expectedRevision <= replayableHydrationRange.max;
+    if (!replayable && pendingMutationCount > 0 && expectedRevision === hydrationRevision) {
+      deferredHydrationIcons = copyIcons(icons);
+      return;
+    }
     if (!replayable
       && !hasConfirmedIcons
       && unconfirmedHydrationRevision !== null
@@ -231,6 +242,10 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
       const replayable = replayableHydrationRange !== null
         && expectedHydrationRevision >= replayableHydrationRange.min
         && expectedHydrationRevision <= replayableHydrationRange.max;
+      if (!replayable && pendingMutationCount > 0 && expectedHydrationRevision === hydrationRevision) {
+        deferredHydrationIcons = copyIcons(icons);
+        return;
+      }
       if (!replayable
         && !hasConfirmedIcons
         && unconfirmedHydrationRevision !== null
@@ -260,6 +275,10 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
       const replayable = replayableHydrationRange !== null
         && expectedHydrationRevision >= replayableHydrationRange.min
         && expectedHydrationRevision <= replayableHydrationRange.max;
+      if (!replayable && pendingMutationCount > 0 && expectedHydrationRevision === hydrationRevision) {
+        deferredHydrationIcons = copyIcons(icons);
+        return;
+      }
       if (!replayable
         && !hasConfirmedIcons
         && unconfirmedHydrationRevision !== null
