@@ -1,8 +1,8 @@
 # Feature Specification: Reliable Terminal Clipboard and Selection
 
-**Feature Branch**: `118-fix-terminal-clipboard`  
-**Created**: 2026-08-29  
-**Status**: Draft  
+**Feature Branch**: `118-fix-terminal-clipboard`
+**Created**: 2026-08-29
+**Status**: Draft
 **Input**: User description: "Make terminal copy, paste, right-click Copy, and Select All work reliably on macOS. Command+C, Command+V, and Command+Shift+C must work; multi-word and multi-row selections must copy exactly; right-click must not replace a larger selection with one word; and selections must not disappear when the mouse moves, including while Codex or another mouse-aware terminal application is running."
 
 ## User Scenarios & Testing *(mandatory)*
@@ -184,4 +184,3 @@ As a user whose clipboard access is unavailable or denied, I receive clear feedb
 - **SC-005**: Keyboard Copy and context-menu Copy produce identical text for the same selection in 100% of test cases.
 - **SC-006**: Clipboard success or failure feedback appears within one second of the user's action, and failures preserve the selection with zero partial or duplicate paste events.
 - **SC-007**: At least 95% of representative users can select multiple terminal rows and copy the intended text successfully on their first attempt without changing zoom or shell mode.
-
