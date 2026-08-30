@@ -152,7 +152,11 @@ function remainingHermesInterimText(streamed: string, interim: string): string |
     normalizedIndex += 1;
     interimIndex += 1;
   }
-  return normalizedIndex === normalizedStreamed.length ? interim.slice(interimIndex) : undefined;
+  if (normalizedIndex !== normalizedStreamed.length) return undefined;
+  if (/\s$/.test(streamed)) {
+    while (interimIndex < interim.length && /\s/.test(interim[interimIndex] ?? "")) interimIndex += 1;
+  }
+  return interim.slice(interimIndex);
 }
 
 function hermesToolActivity(name: string): Pick<HermesActivity, "kind" | "label"> {
