@@ -71,19 +71,23 @@ export function applyProviderConfigurationMutation(input: {
       return true;
     }
     case "set_route": {
-      if (!harness || harness.harness === "claude") {
+      if (!harness || harness.route.kind !== "configurable") {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
-      const source = harness.accessSourceId === null
-        ? undefined
-        : input.snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+      const source = input.snapshot.accessSources.find((candidate) => candidate.id === mutation.accessSourceId);
+      const account = mutation.accountId === null
+        ? null
+        : input.snapshot.accounts.find((candidate) => candidate.id === mutation.accountId) ?? null;
       const gatewayAllowed = source?.kind !== "matrix_gateway"
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(mutation.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
-        || !source.eligibleModelIds.includes(mutation.route.modelId)) {
+        || !source.eligibleModelIds.includes(mutation.route.modelId)
+        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       harness.route = mutation.route;
+      harness.accessSourceId = source.id;
+      harness.selectedAccountId = account?.id ?? null;
       return true;
     }
     case "select_account": {
