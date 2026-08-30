@@ -77,7 +77,7 @@ describe("canonical shell Chat client", () => {
     }]);
 
     expect(projected[0]?.metadata?.canonicalApproval).toEqual({
-      approvalId: "approval_1", title: "Run command", description: "Allow this command?",
+      runId: "run_shell", approvalId: "approval_1", title: "Run command", description: "Allow this command?",
       risk: "medium", allowedDecisions: ["approve", "decline"], pending: true,
     });
     await client.submitApproval("chat_shell_test", "run_shell", "approval_1", "approve", "req_shell_approval");

@@ -248,6 +248,7 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
       ...(toolRequest?.type === "tool_request" ? { tool: toolRequest.name } : {}),
       ...(message.runId ? { requestId: message.runId } : {}),
       ...(approvalRequest?.type === "approval_request" ? { metadata: { canonicalApproval: {
+        ...(message.runId ? { runId: message.runId } : {}),
         approvalId: approvalRequest.approvalId,
         title: approvalRequest.title,
         description: approvalRequest.description,

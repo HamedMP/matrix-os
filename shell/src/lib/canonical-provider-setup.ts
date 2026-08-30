@@ -10,6 +10,7 @@ const ACTION_PREFIX_LIMIT = 18;
 export const OPEN_PROVIDER_SETTINGS_EVENT = "matrix:open-provider-settings";
 export const OPEN_PROVIDER_TERMINAL_EVENT = "matrix:open-provider-terminal";
 export const PROVIDER_SETTINGS_CHANGED_EVENT = "matrix:provider-settings-changed";
+export const CANONICAL_PROVIDER_SETUP_ERROR = "Could not open setup. Open Settings to continue.";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 

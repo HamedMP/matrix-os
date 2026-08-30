@@ -1,4 +1,7 @@
-import type { CanonicalChatApprovalDecision } from "@matrix-os/contracts";
+import {
+  CanonicalChatRunIdSchema,
+  type CanonicalChatApprovalDecision,
+} from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
 
@@ -7,6 +10,7 @@ const APPROVAL_DECISIONS = new Set<CanonicalChatApprovalDecision>([
 ]);
 
 interface CanonicalApprovalView {
+  runId: string;
   approvalId: string;
   title: string;
   description: string;
@@ -19,13 +23,14 @@ export function canonicalApproval(message: ChatMessage): CanonicalApprovalView |
   const value = message.metadata?.canonicalApproval;
   if (typeof value !== "object" || value === null) return null;
   const candidate = value as Partial<CanonicalApprovalView>;
-  if (typeof candidate.approvalId !== "string" || typeof candidate.title !== "string"
+  const runId = CanonicalChatRunIdSchema.safeParse(candidate.runId);
+  if (!runId.success || typeof candidate.approvalId !== "string" || typeof candidate.title !== "string"
     || typeof candidate.description !== "string" || !["low", "medium", "high"].includes(candidate.risk ?? "")
     || !Array.isArray(candidate.allowedDecisions) || typeof candidate.pending !== "boolean") return null;
   const allowedDecisions = candidate.allowedDecisions.filter((decision): decision is CanonicalChatApprovalDecision =>
     typeof decision === "string" && APPROVAL_DECISIONS.has(decision as CanonicalChatApprovalDecision));
   if (allowedDecisions.length === 0) return null;
-  return { ...candidate, allowedDecisions } as CanonicalApprovalView;
+  return { ...candidate, runId: runId.data, allowedDecisions } as CanonicalApprovalView;
 }
 
 function approvalLabel(decision: CanonicalChatApprovalDecision): string {
@@ -40,7 +45,7 @@ export function CanonicalApprovalMessage({
 }: {
   message: ChatMessage;
   submitting: boolean;
-  onSubmit?: (approvalId: string, decision: CanonicalChatApprovalDecision) => Promise<void>;
+  onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision) => Promise<void>;
 }) {
   const approval = canonicalApproval(message);
   if (!approval) {
@@ -61,7 +66,7 @@ export function CanonicalApprovalMessage({
               size="sm"
               variant={decision === "approve" || decision === "approve_for_session" ? "default" : "outline"}
               disabled={submitting}
-              onClick={() => void onSubmit(approval.approvalId, decision)}
+              onClick={() => void onSubmit(approval.runId, approval.approvalId, decision)}
             >
               {approvalLabel(decision)}
             </Button>

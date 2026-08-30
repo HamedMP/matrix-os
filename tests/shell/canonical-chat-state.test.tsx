@@ -269,4 +269,43 @@ describe("canonical shell Chat state", () => {
 
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chats?"))).toHaveLength(2);
   });
+
+  it("refuses a reused approval id when its carried run is no longer active", async () => {
+    const currentRecord = {
+      ...record("chat_a", "A"),
+      activeRun: { runId: "run_current", turnId: "cturn_current", status: "waiting_for_approval" as const },
+    };
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [currentRecord] });
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
+        return Response.json({
+          ...detail("chat_a", "A"),
+          record: currentRecord,
+          messages: [{
+            id: "msg_old_approval", chatId: "chat_a", seq: 1, role: "system", state: "committed",
+            runId: "run_previous", parts: [{
+              type: "approval_request", approvalId: "approval_reused", title: "Old command",
+              description: "Allow the old command?", risk: "medium", allowedDecisions: ["approve", "decline"],
+            }], createdAt: "2026-08-31T00:00:00.000Z",
+          }],
+        });
+      }
+      if (url.includes("/approvals/")) throw new Error(`Wrong approval run: ${url}`);
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.metadata?.canonicalApproval)
+      .toMatchObject({ runId: "run_previous", approvalId: "approval_reused" }));
+
+    await act(async () => {
+      await result.current.submitApproval?.("run_previous", "approval_reused", "approve");
+    });
+
+    expect(result.current.messages.at(-1)?.content)
+      .toBe("The approval could not be submitted. Refresh and try again.");
+    expect(fetchFn.mock.calls.some(([url]) => String(url).includes("/approvals/"))).toBe(false);
+    expect(fetchFn.mock.calls.some(([url]) =>
+      String(url).includes("/runs/run_current/approvals/approval_reused"))).toBe(false);
+  });
 });

@@ -208,7 +208,11 @@ export function createProviderGenericHarnessCoordinator(options: {
   }
 
   return {
-    supportedHarnessKinds: GenericHarnessSchema.options,
+    supportedHarnessKinds: [
+      "hermes" as const,
+      "openclaw" as const,
+      ...CodingHarnessSchema.options.filter((harness) => enabledCodingHarnesses.has(harness)),
+    ],
     supportedActions: [
       "add_harness",
       "remove_harness",

@@ -350,6 +350,19 @@ describe("AgentsProvidersView", () => {
     expect(within(dialog).queryByRole("radio", { name: "Claude" })).toBeNull();
   });
 
+  it("offers only harness kinds enabled by the runtime workspace", () => {
+    const limited = snapshot();
+    limited.configurationHarnessKinds = ["hermes", "openclaw"];
+    setup({ snapshot: limited });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    expect(within(dialog).getByRole("radio", { name: "Hermes" })).toBeVisible();
+    expect(within(dialog).getByRole("radio", { name: "OpenClaw" })).toBeVisible();
+    expect(within(dialog).queryByRole("radio", { name: "Pi" })).toBeNull();
+    expect(within(dialog).queryByRole("radio", { name: "OpenCode" })).toBeNull();
+  });
+
   it("shows exact, stale, and unavailable gateway credit without inventing balances", () => {
     const current = snapshot();
     const { rerender } = setup({ snapshot: current });
