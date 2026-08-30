@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FundedAiCredentialError,
+  FundedAiRuntimeConfigError,
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
 } from "../../packages/gateway/src/funded-ai-credential-manager.js";
@@ -54,8 +55,11 @@ describe("funded AI runtime credential manager", () => {
 
   it("is disabled by default and fails startup closed for partial or unsafe configuration", () => {
     expect(loadFundedAiRuntimeConfig({})).toBeUndefined();
-    expect(() => loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_FUNDED_AI_RUNTIME_TOKEN: "short" })))
-      .toThrow("Funded AI runtime is misconfigured");
+    const invalidToken = () => loadFundedAiRuntimeConfig(runtimeEnv({
+      MATRIX_FUNDED_AI_RUNTIME_TOKEN: "short",
+    }));
+    expect(invalidToken).toThrow(FundedAiRuntimeConfigError);
+    expect(invalidToken).toThrow("Funded AI runtime is misconfigured");
     expect(() => loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_FUNDED_AI_RUNTIME_TOKEN: undefined })))
       .toThrow("Funded AI runtime is misconfigured");
     expect(() => loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_FUNDED_AI_RELAY_URL: "http://relay.example" })))

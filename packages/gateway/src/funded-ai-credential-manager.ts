@@ -55,71 +55,82 @@ export class FundedAiCredentialError extends Error {
   }
 }
 
+export class FundedAiRuntimeConfigError extends Error {
+  constructor(cause?: unknown) {
+    super("Funded AI runtime is misconfigured", cause === undefined ? undefined : { cause });
+    this.name = "FundedAiRuntimeConfigError";
+  }
+}
+
+function parseConfigValue<T>(schema: z.ZodType<T>, value: unknown): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new FundedAiRuntimeConfigError(parsed.error);
+  return parsed.data;
+}
+
 function boundedInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value < min || value > max) {
-    throw new Error("Funded AI runtime is misconfigured");
+    throw new FundedAiRuntimeConfigError();
   }
   return value;
 }
 
 function parseServiceUrl(raw: string | undefined, originOnly: boolean): URL {
-  try {
-    if (!raw || raw.length > 2_048 || !/^[A-Za-z0-9:/._~%\[\]-]+$/.test(raw)) {
-      throw new Error("invalid");
-    }
-    const url = new URL(raw ?? "");
-    const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
-    if ((url.protocol !== "https:" && !(loopback && url.protocol === "http:"))
-      || url.username || url.password || url.search || url.hash
-      || (originOnly && url.pathname !== "/")) {
-      throw new Error("invalid");
-    }
-    return url;
-  } catch {
-    throw new Error("Funded AI runtime is misconfigured");
+  if (!raw || raw.length > 2_048 || !/^[A-Za-z0-9:/._~%\[\]-]+$/.test(raw)) {
+    throw new FundedAiRuntimeConfigError();
   }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    throw new FundedAiRuntimeConfigError(error);
+  }
+  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+  if ((url.protocol !== "https:" && !(loopback && url.protocol === "http:"))
+    || url.username || url.password || url.search || url.hash
+    || (originOnly && url.pathname !== "/")) {
+    throw new FundedAiRuntimeConfigError();
+  }
+  return url;
 }
 
 export function loadFundedAiRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): FundedAiRuntimeConfig | undefined {
   if (env.MATRIX_FUNDED_AI_ENABLED !== "true" && env.MATRIX_FUNDED_AI_ENABLED !== "1") return undefined;
-  try {
-    const platform = parseServiceUrl(env.PLATFORM_INTERNAL_URL, true);
-    const relay = parseServiceUrl(env.MATRIX_FUNDED_AI_RELAY_URL, false);
-    const handle = HandleSchema.parse(env.MATRIX_HANDLE);
-    const runtimeAuthToken = AuthTokenSchema.parse(env.MATRIX_FUNDED_AI_RUNTIME_TOKEN);
-    const identity = {
-      ownerId: IdentityValueSchema.parse(env.MATRIX_CLERK_USER_ID),
-      machineId: IdentityValueSchema.parse(env.MATRIX_MACHINE_ID),
-      runtimeSlot: RuntimeSlotSchema.parse(env.MATRIX_RUNTIME_SLOT),
-    };
-    return {
-      issueUrl: new URL(
-        `/internal/containers/${encodeURIComponent(handle)}/ai/funded-credential`,
-        platform,
-      ).toString(),
-      relayBaseUrl: relay.toString().replace(/\/$/, ""),
-      runtimeAuthToken,
-      identity,
-      maxRunMs: boundedInteger(
-        env.MATRIX_FUNDED_AI_RUN_TIMEOUT_MS,
-        DEFAULT_MAX_RUN_MS,
-        MIN_RUN_MS,
-        MAX_RUN_MS,
-      ),
-      requestTimeoutMs: boundedInteger(
-        env.MATRIX_FUNDED_AI_CREDENTIAL_TIMEOUT_MS,
-        DEFAULT_REQUEST_TIMEOUT_MS,
-        500,
-        10_000,
-      ),
-    };
-  } catch {
-    throw new Error("Funded AI runtime is misconfigured");
-  }
+  const platform = parseServiceUrl(env.PLATFORM_INTERNAL_URL, true);
+  const relay = parseServiceUrl(env.MATRIX_FUNDED_AI_RELAY_URL, false);
+  const handle = parseConfigValue(HandleSchema, env.MATRIX_HANDLE);
+  const runtimeAuthToken = parseConfigValue(AuthTokenSchema, env.MATRIX_FUNDED_AI_RUNTIME_TOKEN);
+  const identity = {
+    ownerId: parseConfigValue(IdentityValueSchema, env.MATRIX_CLERK_USER_ID),
+    machineId: parseConfigValue(IdentityValueSchema, env.MATRIX_MACHINE_ID),
+    runtimeSlot: parseConfigValue(RuntimeSlotSchema, env.MATRIX_RUNTIME_SLOT),
+  };
+  return {
+    issueUrl: new URL(
+      `/internal/containers/${encodeURIComponent(handle)}/ai/funded-credential`,
+      platform,
+    ).toString(),
+    relayBaseUrl: relay.toString().replace(/\/$/, ""),
+    runtimeAuthToken,
+    identity,
+    maxRunMs: boundedInteger(
+      env.MATRIX_FUNDED_AI_RUN_TIMEOUT_MS,
+      DEFAULT_MAX_RUN_MS,
+      MIN_RUN_MS,
+      MAX_RUN_MS,
+    ),
+    requestTimeoutMs: boundedInteger(
+      env.MATRIX_FUNDED_AI_CREDENTIAL_TIMEOUT_MS,
+      DEFAULT_REQUEST_TIMEOUT_MS,
+      500,
+      10_000,
+    ),
+  };
 }
 
 async function readBoundedJson(response: Response): Promise<unknown> {
@@ -156,7 +167,8 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   }
   try {
     return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-  } catch {
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
     throw new FundedAiCredentialError();
   }
 }
