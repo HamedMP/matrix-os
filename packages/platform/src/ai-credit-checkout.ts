@@ -83,19 +83,41 @@ const AiCreditCheckoutMetadataSchema = z.object({
   matrix_ai_credit_microusd: z.string().regex(/^[1-9][0-9]{0,15}$/),
 }).passthrough();
 
-const AiCreditCompletedSessionSchema = z.object({
+const StripeExpandableIdSchema = z.union([
+  z.string().min(3).max(255),
+  z.object({ id: z.string().min(3).max(255) }).passthrough(),
+]).nullable().optional();
+
+const AiCreditSessionSchema = z.object({
   id: z.string().min(3).max(255).regex(/^cs_[A-Za-z0-9_]+$/),
   mode: z.literal("payment"),
-  status: z.literal("complete"),
-  payment_status: z.literal("paid"),
+  status: z.enum(["open", "complete", "expired"]),
+  payment_status: z.enum(["paid", "unpaid", "no_payment_required"]),
+  amount_subtotal: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   amount_total: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   currency: z.literal("usd"),
   client_reference_id: z.string().min(1).max(160),
+  payment_intent: StripeExpandableIdSchema,
   metadata: AiCreditCheckoutMetadataSchema,
 }).passthrough();
 
-export interface AiCreditCheckoutCompletion {
+export interface AiCreditCheckoutClaimExpectation {
+  requestId: string;
+  ownerId: string;
+  machineId: string;
+  runtimeSlot: string;
+  packageId: AiCreditPackageId;
+  priceId: string;
+  amountMicrousd: number;
+  amountCents: number;
+  currency: "usd";
+}
+
+export interface AiCreditCheckoutSession {
   sessionId: string;
+  paymentIntentId: string | null;
+  status: "open" | "complete" | "expired";
+  paymentStatus: "paid" | "unpaid" | "no_payment_required";
   requestId: string;
   identity: { ownerId: string; machineId: string; runtimeSlot: string };
   packageId: AiCreditPackageId;
@@ -109,31 +131,56 @@ export function isAiCreditCheckoutObject(value: unknown): boolean {
     && (metadata as { matrix_checkout_kind?: unknown }).matrix_checkout_kind === AI_CREDIT_CHECKOUT_KIND);
 }
 
-export function parseAiCreditCheckoutCompletion(
+export function readAiCreditCheckoutRequestId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const parsed = AiCreditCheckoutMetadataSchema.safeParse((value as { metadata?: unknown }).metadata);
+  return parsed.success ? parsed.data.matrix_ai_credit_request_id : null;
+}
+
+export function assertAiCreditCheckoutMetadata(
   value: unknown,
-  config: AiCreditCheckoutConfig,
-): AiCreditCheckoutCompletion {
-  if (!config.enabled) throw new Error("Funded AI add-on checkout is unavailable");
-  const session = AiCreditCompletedSessionSchema.parse(value);
-  const packageConfig = findAiCreditPackage(config, session.metadata.matrix_ai_credit_package_id);
+  claim: AiCreditCheckoutClaimExpectation,
+) {
+  if (!value || typeof value !== "object") throw new Error("Funded AI checkout metadata is missing");
+  const metadata = AiCreditCheckoutMetadataSchema.parse((value as { metadata?: unknown }).metadata);
+  if (metadata.matrix_owner_id !== claim.ownerId || metadata.matrix_machine_id !== claim.machineId
+    || metadata.matrix_runtime_slot !== claim.runtimeSlot
+    || metadata.matrix_ai_credit_request_id !== claim.requestId
+    || metadata.matrix_ai_credit_package_id !== claim.packageId
+    || metadata.matrix_ai_credit_price_id !== claim.priceId
+    || Number(metadata.matrix_ai_credit_microusd) !== claim.amountMicrousd) {
+    throw new Error("Funded AI add-on checkout verification failed");
+  }
+  return metadata;
+}
+
+export function parseAiCreditCheckoutSession(
+  value: unknown,
+  claim: AiCreditCheckoutClaimExpectation,
+): AiCreditCheckoutSession {
+  const session = AiCreditSessionSchema.parse(value);
+  assertAiCreditCheckoutMetadata(value, claim);
   const amountMicrousd = Number(session.metadata.matrix_ai_credit_microusd);
-  if (!packageConfig
-    || session.client_reference_id !== session.metadata.matrix_owner_id
-    || session.amount_total !== packageConfig.amountCents
-    || session.currency !== packageConfig.currency
-    || session.metadata.matrix_ai_credit_price_id !== packageConfig.priceId
-    || amountMicrousd !== packageConfig.amountMicrousd) {
+  if (session.client_reference_id !== claim.ownerId
+    || amountMicrousd !== claim.amountMicrousd || session.amount_subtotal !== claim.amountCents
+    || session.amount_total < session.amount_subtotal
+    || session.currency !== claim.currency) {
     throw new Error("Funded AI add-on checkout verification failed");
   }
   return {
     sessionId: session.id,
+    paymentIntentId: typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id ?? null,
+    status: session.status,
+    paymentStatus: session.payment_status,
     requestId: session.metadata.matrix_ai_credit_request_id,
     identity: {
       ownerId: session.metadata.matrix_owner_id,
       machineId: session.metadata.matrix_machine_id,
       runtimeSlot: session.metadata.matrix_runtime_slot,
     },
-    packageId: packageConfig.id,
-    amountMicrousd: packageConfig.amountMicrousd,
+    packageId: claim.packageId,
+    amountMicrousd: claim.amountMicrousd,
   };
 }

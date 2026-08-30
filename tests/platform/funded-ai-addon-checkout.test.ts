@@ -57,6 +57,11 @@ describe("funded AI add-on checkout", () => {
       monthlyBudgetMicrousd: 50_000_000,
       expiresAt: null,
     });
+    await repository.updateGlobalPolicy({
+      expectedRevision: 0,
+      enabled: true,
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+    });
     stripe = {
       apiTimeoutMs: 10_000,
       createCheckoutSession: vi.fn(),
@@ -86,6 +91,14 @@ describe("funded AI add-on checkout", () => {
       fundedAiRepository: repository,
     }));
     return hono;
+  }
+
+  async function createCheckout(env: NodeJS.ProcessEnv = checkoutEnv, requestId = completedMetadata().matrix_ai_credit_request_id) {
+    return app(identity.ownerId, env).request("/billing/ai-credit/checkout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ packageId: "usd_5", runtimeSlot: "primary", requestId }),
+    });
   }
 
   it("loads a complete, bounded, server-owned package catalog or disables checkout", () => {
@@ -169,6 +182,7 @@ describe("funded AI add-on checkout", () => {
   });
 
   it("atomically records one signed receipt and grants exact non-expiring add-on credit once", async () => {
+    expect((await createCheckout()).status).toBe(200);
     const first = await app().request("/billing/webhooks/stripe", {
       method: "POST",
       headers: { "stripe-signature": "signed" },
@@ -203,14 +217,14 @@ describe("funded AI add-on checkout", () => {
   });
 
   it.each([
-    ["unpaid", { payment_status: "unpaid" }],
-    ["expired", { status: "expired" }],
     ["wrong amount", { amount_total: 499 }],
+    ["wrong subtotal", { amount_subtotal: 499 }],
     ["wrong currency", { currency: "eur" }],
     ["wrong owner", { client_reference_id: "user_other" }],
     ["wrong machine", { metadata: { ...completedMetadata(), matrix_machine_id: "machine_other" } }],
     ["wrong mode", { mode: "subscription" }],
   ])("rejects %s completion without persisting a receipt or credit", async (_label, patch) => {
+    expect((await createCheckout()).status).toBe(200);
     webhookEvent = completedEvent(patch);
     const response = await app().request("/billing/webhooks/stripe", {
       method: "POST",
@@ -220,6 +234,130 @@ describe("funded AI add-on checkout", () => {
 
     expect(response.status).toBe(500);
     expect(await getBillingWebhookEvent(db, webhookEvent.id)).toBeUndefined();
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual([]);
+  });
+
+  it("uses the immutable checkout claim after feature disable or price rotation and treats tax as additional", async () => {
+    const taxEnv = { ...checkoutEnv, MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED: "true" };
+    expect((await createCheckout(taxEnv)).status).toBe(200);
+    webhookEvent = completedEvent({ amount_subtotal: 500, amount_total: 550 });
+    const disabledEnv = { ...checkoutEnv, MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false", STRIPE_PRICE_AI_CREDIT_USD_5: "price_rotated" };
+    const retry = await createCheckout(disabledEnv);
+    expect(retry.status).toBe(200);
+    expect(stripe.createAiCreditCheckoutSession).toHaveBeenCalledTimes(1);
+    const response = await app(identity.ownerId, disabledEnv).request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    });
+    expect(response.status).toBe(200);
+    await expect(repository.getFundingSummary(identity)).resolves.toMatchObject({ creditBalanceMicrousd: 5_000_000 });
+  });
+
+  it("waits for asynchronous payment success and never grants failed or unpaid Checkout", async () => {
+    expect((await createCheckout()).status).toBe(200);
+    webhookEvent = completedEvent({ payment_status: "unpaid" });
+    expect((await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    })).status).toBe(200);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual([]);
+
+    webhookEvent = completedEvent({ payment_status: "paid" });
+    webhookEvent.id = "evt_ai_async_success";
+    webhookEvent.type = "checkout.session.async_payment_succeeded";
+    expect((await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    })).status).toBe(200);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toHaveLength(1);
+  });
+
+  it("records asynchronous failure and expiry without ever granting credit", async () => {
+    expect((await createCheckout()).status).toBe(200);
+    webhookEvent = completedEvent({ payment_status: "unpaid" });
+    webhookEvent.id = "evt_ai_async_failed";
+    webhookEvent.type = "checkout.session.async_payment_failed";
+    expect((await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    })).status).toBe(200);
+    webhookEvent = completedEvent({ status: "expired", payment_status: "unpaid" });
+    webhookEvent.id = "evt_ai_expired";
+    webhookEvent.type = "checkout.session.expired";
+    expect((await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    })).status).toBe(200);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual([]);
+    expect(await db.executor.selectFrom("ai_credit_checkout_claims").select("status").executeTakeFirst())
+      .toEqual({ status: "expired" });
+  });
+
+  it("reuses an active attempt and durably rate limits repeated Checkout creation", async () => {
+    expect((await createCheckout()).status).toBe(200);
+    const second = await createCheckout(checkoutEnv, "2cdca480-3baa-42ae-a77b-e1a0cb51f1ea");
+    expect(second.status).toBe(200);
+    expect(stripe.createAiCreditCheckoutSession).toHaveBeenCalledTimes(1);
+
+    await db.executor.updateTable("ai_credit_checkout_claims").set({ status: "expired" }).execute();
+    vi.mocked(stripe.createAiCreditCheckoutSession).mockImplementation(async (input) => ({
+      id: `cs_${input.requestId.replaceAll("-", "")}`,
+      url: `https://checkout.stripe.test/${input.requestId}`,
+    }));
+    for (let index = 1; index < 5; index += 1) {
+      const response = await createCheckout(checkoutEnv, `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`);
+      expect(response.status).toBe(200);
+      await db.executor.updateTable("ai_credit_checkout_claims").set({ status: "expired" })
+        .where("request_id", "=", `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`).execute();
+    }
+    const limited = await createCheckout(checkoutEnv, "00000000-0000-4000-8000-000000000099");
+    expect(limited.status).toBe(429);
+  });
+
+  it("atomically reverses refunded credit, records consumed-credit debt, and restores a won dispute", async () => {
+    const credential = await repository.issueRuntimeCredential(identity);
+    expect((await createCheckout()).status).toBe(200);
+    expect((await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    })).status).toBe(200);
+
+    webhookEvent = disputeEvent("charge.dispute.created", "under_review", "evt_dispute_created");
+    expect((await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    })).status).toBe(200);
+    expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst()).toMatchObject({ frozen: true });
+    await expect(repository.getFundingSummary(identity)).resolves.toMatchObject({ creditBalanceMicrousd: 0 });
+
+    webhookEvent = disputeEvent("charge.dispute.closed", "won", "evt_dispute_won");
+    expect((await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    })).status).toBe(200);
+    await expect(repository.getFundingSummary(identity)).resolves.toMatchObject({ creditBalanceMicrousd: 5_000_000 });
+    expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst()).toMatchObject({ frozen: false, debt_microusd: 0 });
+
+    await db.executor.updateTable("ai_funded_runtime_balances").set({
+      credit_balance_microusd: 0, addon_balance_microusd: 0,
+    }).where("machine_id", "=", identity.machineId).execute();
+    webhookEvent = refundedEvent();
+    expect((await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    })).status).toBe(200);
+    expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst()).toMatchObject({
+      frozen: true, debt_microusd: 5_000_000,
+    });
+    await expect(repository.authorize({
+      credential: credential.credential.token,
+      requestId: "refund_blocked_spend",
+      modelId: "anthropic/claude-sonnet-5",
+      maxCostMicrousd: 1,
+    })).rejects.toMatchObject({ code: "access_disabled" });
+  });
+
+  it("ignores unrelated Stripe refunds without trapping subscription webhook delivery", async () => {
+    webhookEvent = {
+      id: "evt_unrelated_refund", type: "charge.refunded", created: 1_788_172_700,
+      data: { object: { id: "ch_subscription", payment_intent: "pi_subscription", amount_refunded: 1_000, currency: "eur" } },
+    };
+    const response = await app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ received: true, ignored: true });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual([]);
   });
 });
@@ -248,6 +386,8 @@ function completedEvent(patch: Record<string, unknown> = {}): StripeWebhookEvent
         mode: "payment",
         status: "complete",
         payment_status: "paid",
+        payment_intent: "pi_ai_5",
+        amount_subtotal: 500,
         amount_total: 500,
         currency: "usd",
         client_reference_id: identity.ownerId,
@@ -255,5 +395,19 @@ function completedEvent(patch: Record<string, unknown> = {}): StripeWebhookEvent
         ...patch,
       },
     },
+  };
+}
+
+function disputeEvent(type: string, status: string, id: string): StripeWebhookEvent {
+  return {
+    id, type, created: 1_788_172_500,
+    data: { object: { id: `dp_${id}`, charge: "ch_ai_5", payment_intent: "pi_ai_5", status } },
+  };
+}
+
+function refundedEvent(): StripeWebhookEvent {
+  return {
+    id: "evt_refund", type: "charge.refunded", created: 1_788_172_600,
+    data: { object: { id: "ch_ai_5", payment_intent: "pi_ai_5", amount_refunded: 500, currency: "usd" } },
   };
 }

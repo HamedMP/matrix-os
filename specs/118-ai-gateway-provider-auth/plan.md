@@ -356,7 +356,7 @@ before those authorities exist.
 2. Add Kysely migrations for entitlements, atomic reservations, content-free usage, and reconciliation.
 3. Reserve before dispatch in one transaction with budget predicate in the write and unique request ID.
 4. Reconcile canonical model/tokens/cost; bounded job releases/reconciles abandoned holds.
-5. Add allowance/add-on UI, warnings, stops, exports, deletion/retention, and support tools. Exact remaining credit comes only from the authoritative Matrix ledger; provider subscription allowance and provider API balance remain separately labeled sources. Add-on Checkout accepts only a bounded server-owned package ID and request UUID; Clerk auth plus the active machine row derive owner/machine/runtime, and a signed webhook verifies exact paid USD totals before atomically recording its receipt and idempotent ledger grant.
+5. Add allowance/add-on UI, warnings, stops, exports, deletion/retention, and support tools. Exact remaining credit comes only from the authoritative Matrix ledger; provider subscription allowance and provider API balance remain separately labeled sources. Add-on Checkout accepts only a bounded server-owned package ID and request UUID; Clerk auth plus the active machine row derive owner/machine/runtime. Persist an immutable claim before calling Stripe, reuse one active attempt, and durably rate-limit creation. Signed synchronous or asynchronous payment lifecycle events verify the claim and exact USD subtotal before atomically recording the receipt and idempotent ledger grant.
 6. Retain Cloudflare limits as a second, eventually consistent fuse.
 7. Do not model variable user add-ons as Cloudflare rules: a split-by-user rule gives each value the same budget, Cloudflare caps gateways at 20 spend rules, and concurrent requests can briefly overshoot.
 
@@ -434,10 +434,15 @@ grant workflow is authoritatively configured. `topUpEnabled` comes from the
 platform funding summary (never owner-local JSON), and `add_credit` appears only
 with it. The shared Canvas/Web Desktop/Electron package picker sends
 `$5/$10/$25` package IDs to one Clerk-authenticated platform route. Hosted
-Stripe Checkout owns card collection; the signed completion webhook verifies
-kind, mode, status, payment status, currency, exact amount, Price, request,
-owner, machine, and runtime. Webhook receipt and non-expiring add-on grant
-commit in one transaction and use `ON CONFLICT` idempotency. Cloudflare remains
+Stripe Checkout owns card collection; its integration identifier is derived
+deterministically from the server idempotency key. A pre-call immutable claim
+survives feature disable or Price rotation. Signed completion/async lifecycle
+events verify kind, mode, status, payment status, currency, exact pre-tax
+subtotal, non-decreasing tax-inclusive total, Price, request, owner, machine,
+and runtime. Webhook receipt and non-expiring add-on grant commit in one
+transaction and use `ON CONFLICT` idempotency. Refunds and disputes reverse the
+grant; consumed/reserved remainder becomes frozen debt, and a won dispute
+restores only the previously removed portion. Cloudflare remains
 upstream; Matrix's ledger owns the credit. Add-on Stripe Tax remains disabled
 until operators explicitly attest that required registrations are active.
 

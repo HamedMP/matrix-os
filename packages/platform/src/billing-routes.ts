@@ -54,10 +54,15 @@ import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schem
 import {
   AiCreditCheckoutRequestSchema,
   findAiCreditPackage,
-  isAiCreditCheckoutObject,
   loadAiCreditCheckoutConfig,
-  parseAiCreditCheckoutCompletion,
 } from './ai-credit-checkout.js';
+import {
+  AiCreditCheckoutStoreError,
+  finalizeAiCreditCheckoutClaim,
+  getClaimByRequestId,
+  prepareAiCreditCheckoutClaim,
+} from './ai-credit-checkout-store.js';
+import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -72,6 +77,7 @@ const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
   code: 'billing_unavailable',
 } as const;
+
 const BILLING_CHECKOUT_STARTED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_STARTED ?? 'matrix_billing_checkout_started';
 const BILLING_CHECKOUT_CREATED_EVENT =
@@ -616,7 +622,7 @@ export function createBillingRoutes(options: {
   app.post('/ai-credit/checkout', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), async (c) => {
     const clerkUserId = await resolveRouteClerkUserId(c, 'ai-credit checkout');
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
-    if (!aiCreditCheckout.enabled || !options.fundedAiRepository) {
+    if (!options.fundedAiRepository) {
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
     let body: unknown;
@@ -628,8 +634,6 @@ export function createBillingRoutes(options: {
     }
     const parsed = AiCreditCheckoutRequestSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
-    const selectedPackage = findAiCreditPackage(aiCreditCheckout, parsed.data.packageId);
-    if (!selectedPackage) return c.json({ error: 'Invalid request' }, 400);
     try {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
         throw new Error('stripe_timeout_exceeds_budget');
@@ -641,21 +645,44 @@ export function createBillingRoutes(options: {
       const idempotencyKey = `matrix-ai-credit:${createHash('sha256')
         .update(`${clerkUserId}\0${machine.machineId}\0${parsed.data.requestId}`)
         .digest('hex')}`;
+      const persisted = await getClaimByRequestId(options.db, parsed.data.requestId);
+      if (persisted && (persisted.owner_id !== clerkUserId || persisted.machine_id !== machine.machineId
+        || persisted.runtime_slot !== machine.runtimeSlot || persisted.package_id !== parsed.data.packageId
+        || persisted.idempotency_key !== idempotencyKey)) {
+        throw new AiCreditCheckoutStoreError('conflict');
+      }
+      const selectedPackage = findAiCreditPackage(aiCreditCheckout, parsed.data.packageId);
+      if (!persisted && !selectedPackage) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      const claim = persisted ?? await prepareAiCreditCheckoutClaim(options.db, {
+        idempotencyKey, requestId: parsed.data.requestId, ownerId: clerkUserId,
+        machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
+        packageId: selectedPackage!.id, priceId: selectedPackage!.priceId,
+        amountMicrousd: selectedPackage!.amountMicrousd, amountCents: selectedPackage!.amountCents,
+        currency: selectedPackage!.currency, automaticTax: aiCreditCheckout.enabled && aiCreditCheckout.automaticTax,
+      }, now());
+      if (claim.checkout_url) return c.json({ url: claim.checkout_url }, 200);
       const session = await options.stripe.createAiCreditCheckoutSession({
-        idempotencyKey,
-        requestId: parsed.data.requestId,
-        clerkUserId,
-        machineId: machine.machineId,
-        runtimeSlot: machine.runtimeSlot,
-        packageId: selectedPackage.id,
-        priceId: selectedPackage.priceId,
-        amountMicrousd: selectedPackage.amountMicrousd,
-        automaticTax: aiCreditCheckout.automaticTax,
+        idempotencyKey: claim.idempotency_key,
+        requestId: claim.request_id,
+        clerkUserId: claim.owner_id,
+        machineId: claim.machine_id,
+        runtimeSlot: claim.runtime_slot,
+        packageId: claim.package_id,
+        priceId: claim.stripe_price_id,
+        amountMicrousd: Number(claim.amount_microusd),
+        automaticTax: claim.automatic_tax,
         successUrl: resolveBillingReturnUrl(env, 'success'),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled'),
       });
-      return c.json({ url: session.url }, 200);
+      const finalized = await finalizeAiCreditCheckoutClaim(
+        options.db, claim.request_id, session, now().toISOString(),
+      );
+      return c.json({ url: finalized.checkout_url }, 200);
     } catch (err: unknown) {
+      if (err instanceof AiCreditCheckoutStoreError) {
+        if (err.code === 'rate_limited') return c.json({ error: 'Too many requests' }, 429);
+        if (err.code === 'conflict') return c.json({ error: 'Checkout already active' }, 409);
+      }
       console.error('[billing] AI credit checkout failed:', err instanceof Error ? err.name : typeof err);
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
@@ -807,19 +834,10 @@ export function createBillingRoutes(options: {
           return { received: true, duplicate: true };
         }
 
-        if (event.type === 'checkout.session.completed' && isAiCreditCheckoutObject(event.data.object)) {
-          if (!options.fundedAiRepository) throw new Error('Funded AI credit ledger is unavailable');
-          const completion = parseAiCreditCheckoutCompletion(event.data.object, aiCreditCheckout);
-          await options.fundedAiRepository.grantCreditInTransaction(trx, {
-            entryId: `addon:${completion.sessionId}`,
-            identity: completion.identity,
-            kind: 'addon_grant',
-            amountMicrousd: completion.amountMicrousd,
-            sourceReference: completion.sessionId,
-            expiresAt: null,
-          }, webhookProcessedAt.toISOString());
-          return { received: true, processed: true };
-        }
+        const aiCreditResult = await processAiCreditWebhookEvent({
+          event, trx, repository: options.fundedAiRepository, at: webhookProcessedAt.toISOString(),
+        });
+        if (aiCreditResult) return aiCreditResult;
 
         // Checkout session lifecycle drives the settling-attempt status: a
         // confirmed payment marks the attempt `paid` (sticky), an expiry marks

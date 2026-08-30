@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type {
   StripeBillingClient,
   StripeAiCreditCheckoutSessionInput,
@@ -10,8 +10,14 @@ import type {
 export const MATRIX_STRIPE_API_VERSION = '2026-07-29.dahlia';
 export const MATRIX_STRIPE_API_TIMEOUT_MS = 10_000;
 
-function checkoutIntegrationIdentifier(prefix: 'matrix-subscription' | 'matrix-ai-credit'): string {
-  const suffix = [...randomBytes(8)]
+function checkoutIntegrationIdentifier(
+  prefix: 'matrix-subscription' | 'matrix-ai-credit',
+  idempotencyKey: string,
+): string {
+  // Stripe requires retries with an idempotency key to send byte-for-byte
+  // equivalent parameters. Derive the opaque suffix from that server-owned
+  // key so a process retry does not mutate the Checkout request.
+  const suffix = [...createHash('sha256').update(`${prefix}\0${idempotencyKey}`).digest().subarray(0, 8)]
     .map((value) => String.fromCharCode(97 + (value % 26)))
     .join('');
   return `${prefix}-${suffix}`;
@@ -94,24 +100,26 @@ export function createStripeBillingClient(options: {
     },
 
     async createAiCreditCheckoutSession(input: StripeAiCreditCheckoutSessionInput) {
+      const metadata = {
+        matrix_checkout_kind: 'ai_credit_addon',
+        matrix_owner_id: input.clerkUserId,
+        matrix_machine_id: input.machineId,
+        matrix_runtime_slot: input.runtimeSlot,
+        matrix_ai_credit_package_id: input.packageId,
+        matrix_ai_credit_request_id: input.requestId,
+        matrix_ai_credit_price_id: input.priceId,
+        matrix_ai_credit_microusd: String(input.amountMicrousd),
+      };
       const session = await stripe.checkout.sessions.create({
         mode: 'payment',
-        integration_identifier: checkoutIntegrationIdentifier('matrix-ai-credit'),
+        integration_identifier: checkoutIntegrationIdentifier('matrix-ai-credit', input.idempotencyKey),
         client_reference_id: input.clerkUserId,
         line_items: [{ price: input.priceId, quantity: 1 }],
         success_url: input.successUrl,
         cancel_url: input.cancelUrl,
         automatic_tax: { enabled: input.automaticTax },
-        metadata: {
-          matrix_checkout_kind: 'ai_credit_addon',
-          matrix_owner_id: input.clerkUserId,
-          matrix_machine_id: input.machineId,
-          matrix_runtime_slot: input.runtimeSlot,
-          matrix_ai_credit_package_id: input.packageId,
-          matrix_ai_credit_request_id: input.requestId,
-          matrix_ai_credit_price_id: input.priceId,
-          matrix_ai_credit_microusd: String(input.amountMicrousd),
-        },
+        metadata,
+        payment_intent_data: { metadata },
       }, { idempotencyKey: input.idempotencyKey });
       if (!session.url) throw new Error('Stripe checkout session missing redirect URL');
       return { url: session.url, id: session.id };
