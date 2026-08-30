@@ -284,6 +284,20 @@ describe("zellij adapter", () => {
     await expect(adapter.listSessions()).resolves.toEqual([]);
   });
 
+  it("does not expose exited resurrectable zellij sessions as live sessions", async () => {
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, [
+        "active-shell [Created 1m ago]",
+        "deleted-shell [Created 2h ago] (EXITED - attach to resurrect)",
+        "matrix-rt_0123456789abcdef0123456789abcdef [Created 3h ago] (EXITED - attach to resurrect)",
+      ].join("\n"), "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.listSessions()).resolves.toEqual(["active-shell"]);
+  });
+
   it("sanitizes stderr before surfacing execFile errors", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(new Error("boom"), "", "failed in /home/alice/.ssh with zellij internals");

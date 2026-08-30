@@ -554,6 +554,13 @@ export function createUserSystemdTerminalRuntime(options: {
         throw err;
       }
     }
+    await deleteExactZellijSession(descriptor);
+    await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
+    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
+    await waitUntilReady(descriptor);
+  }
+
+  async function deleteExactZellijSession(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
     const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
     try {
       await runCommand(zellijPath, ["delete-session", descriptor.sessionName, "--force"], {
@@ -567,9 +574,6 @@ export function createUserSystemdTerminalRuntime(options: {
         : undefined;
       if (code !== 2 && code !== "2") throw new TerminalRuntimeUnavailableError(err);
     }
-    await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
-    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
-    await waitUntilReady(descriptor);
   }
 
   return {
@@ -720,6 +724,7 @@ export function createUserSystemdTerminalRuntime(options: {
         const descriptor = await readDescriptor(parsed.data);
         await runSystemctl(["stop", unitName(parsed.data)]);
         try {
+          if (descriptor) await deleteExactZellijSession(descriptor);
           const generatedLayoutRoot = join(homePath, "system", "zellij", "runtime-layouts");
           const generatedEnvironmentRoot = join(descriptorRoot, "env");
           if (

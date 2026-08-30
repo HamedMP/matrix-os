@@ -33,7 +33,6 @@ import {
   closePaneInTree,
   compatModeForShellSession,
   destroyTerminalSessions,
-  getCanonicalShellSessionIds,
   getFirstPaneId,
   getPaneIdsForSession,
   getPaneSessionId,
