@@ -65,6 +65,7 @@ describe("kernel credential resolution", () => {
 
     const sources = await resolveKernelCredentialSources(homePath, {
       ANTHROPIC_API_KEY: "platform-key",
+      MATRIX_FUNDED_AI_ENABLED: "1",
     });
 
     expect(sources).toEqual({
@@ -76,6 +77,16 @@ describe("kernel credential resolution", () => {
     });
     expect(JSON.stringify(sources)).not.toContain("owner-key");
     expect(JSON.stringify(sources)).not.toContain("platform-key");
+  });
+
+  it("does not infer Matrix-funded readiness from a legacy platform key", async () => {
+    await expect(resolveKernelCredentialSources(homePath, {
+      ANTHROPIC_API_KEY: "legacy-platform-key",
+      MATRIX_FUNDED_AI_ENABLED: "0",
+    })).resolves.toMatchObject({
+      selectedMode: "platform",
+      matrixIncluded: { state: "disabled" },
+    });
   });
 
   it("keeps a discovered owner profile unverified until a bounded probe succeeds", async () => {
