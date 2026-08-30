@@ -41,8 +41,8 @@ const HermesCompletionSchema = z.object({
   response_previewed: z.boolean().default(false),
 }).passthrough();
 const HermesToolStartSchema = z.object({
-  tool_id: z.string().min(1).max(4_096),
-  name: z.string().trim().min(1).max(160),
+  tool_id: z.unknown(),
+  name: z.unknown(),
   args: z.unknown().optional(),
 }).passthrough();
 const HermesToolCompleteSchema = HermesToolStartSchema.extend({
@@ -196,6 +196,23 @@ function providerReference(prefix: string, value: string): string {
   const candidate = `${prefix}${value}`;
   if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(candidate)) return candidate;
   return `${prefix}${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
+}
+
+function hermesToolReference(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const candidate = value.trim();
+    if (candidate && candidate.length <= 4_096) return providerReference("", candidate);
+  }
+  if (typeof value === "number" && Number.isSafeInteger(value)) {
+    return providerReference("", String(value));
+  }
+  return undefined;
+}
+
+function hermesToolName(value: unknown): string {
+  if (typeof value !== "string") return "tool";
+  const candidate = value.trim();
+  return candidate && candidate.length <= 160 ? candidate : "tool";
 }
 
 function setBounded<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number): void {
@@ -460,11 +477,14 @@ export function createHermesChatProviderAdapter(options: {
           ...(summary ? { summary } : {}),
         });
       } else if (event.type === "tool.start") {
-        const parsed = HermesToolStartSchema.parse(event.payload);
-        const activityId = providerReference("", parsed.tool_id);
+        const parsed = HermesToolStartSchema.safeParse(event.payload);
+        if (!parsed.success) return;
+        const activityId = hermesToolReference(parsed.data.tool_id);
+        if (!activityId) return;
+        const toolName = hermesToolName(parsed.data.name);
         const activity = {
-          ...hermesToolActivity(parsed.name),
-          ...safeToolPreview(parsed.name, parsed.args, {
+          ...hermesToolActivity(toolName),
+          ...safeToolPreview(toolName, parsed.data.args, {
             homePath: options.homePath,
             executionRoot: input.executionRoot,
           }),
@@ -476,16 +496,18 @@ export function createHermesChatProviderAdapter(options: {
           status: "running",
         });
       } else if (event.type === "tool.complete") {
-        const parsed = HermesToolCompleteSchema.parse(event.payload);
-        const activityId = providerReference("", parsed.tool_id);
-        const activity = toolActivities.get(activityId) ?? hermesToolActivity(parsed.name);
+        const parsed = HermesToolCompleteSchema.safeParse(event.payload);
+        if (!parsed.success) return;
+        const activityId = hermesToolReference(parsed.data.tool_id);
+        if (!activityId) return;
+        const activity = toolActivities.get(activityId) ?? hermesToolActivity(hermesToolName(parsed.data.name));
         toolActivities.delete(activityId);
-        const failed = hermesToolFailed(parsed.result);
+        const failed = hermesToolFailed(parsed.data.result);
         if (failed) {
           recoverableActivityFailureObserved = true;
           deferAssistantAfterToolFailure = true;
           deferredSegmentPrefixLength = currentSegment.length;
-          collectUnsafeToolFragments(parsed.result, unsafeToolFragments);
+          collectUnsafeToolFragments(parsed.data.result, unsafeToolFragments);
         }
         emitAgentActivity({
           activityId,
