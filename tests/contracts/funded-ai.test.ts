@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
+  FundedAiFinalizationRequestSchema,
   FundedAiGlobalPolicySchema,
   FundedAiOperatorGlobalPolicyUpdateRequestSchema,
   FundedAiOperatorGlobalPolicyResponseSchema,
@@ -161,6 +162,22 @@ describe("funded AI control-plane contracts", () => {
     expect(FundedAiPolicyCheckResponseSchema.parse(response)).toEqual(response);
     expect(FundedAiPolicyCheckResponseSchema.safeParse({ ...response, funding }).success).toBe(false);
     expect(FundedAiPolicyCheckResponseSchema.safeParse({ ...response, credential }).success).toBe(false);
+  });
+
+  it("distinguishes exact completion from conservative post-start finalization", () => {
+    const locator = { reservationId: "reservation_123", tokenId } as const;
+    expect(FundedAiFinalizationRequestSchema.parse({
+      ...locator, mode: "exact", actualCostMicrousd: 42,
+    })).toEqual({ ...locator, mode: "exact", actualCostMicrousd: 42 });
+    expect(FundedAiFinalizationRequestSchema.parse({
+      ...locator, mode: "conservative",
+    })).toEqual({ ...locator, mode: "conservative" });
+    expect(FundedAiFinalizationRequestSchema.safeParse({
+      ...locator, mode: "conservative", actualCostMicrousd: 1,
+    }).success).toBe(false);
+    expect(FundedAiFinalizationRequestSchema.safeParse({
+      ...locator, mode: "exact",
+    }).success).toBe(false);
   });
 
   it("allows only coarse, secret-free control-plane errors", () => {

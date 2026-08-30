@@ -4,6 +4,7 @@ import {
   FundedAiOperatorGlobalPolicyResponseSchema,
   FundedAiOperatorRuntimePolicyResponseSchema,
   FundedAiPromotionalGrantResponseSchema,
+  FundedAiFinalizationResponseSchema,
   FundedAiPolicyCheckResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
@@ -539,6 +540,38 @@ describe("funded AI policy routes", () => {
       body: JSON.stringify({ ...lifecycleBody, reason: "ambiguous_upstream_failure" }),
     });
     expect(invalidRelease.status).toBe(400);
+  });
+
+  it("finalizes ambiguous post-start usage at the reserved amount", async () => {
+    const { app } = await createTestApp();
+    const issuedResponse = await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await issuedResponse.json());
+    const authorizationResponse = await app.request("/internal/ai/funded/authorize", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        credential: issued.credential.token, requestId: "request_finalize", modelId, maxCostMicrousd: 100,
+      }),
+    });
+    const authorization = FundedAiAuthorizationResponseSchema.parse(await authorizationResponse.json());
+    const locator = { reservationId: authorization.reservation.reservationId, tokenId: issued.credential.tokenId };
+    await app.request("/internal/ai/funded/start", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify(locator),
+    });
+    const finalized = await app.request("/internal/ai/funded/finalize", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ ...locator, mode: "conservative" }),
+    });
+    expect(finalized.status).toBe(200);
+    expect(FundedAiFinalizationResponseSchema.parse(await finalized.json()))
+      .toMatchObject({ finalizationMode: "conservative", actualCostMicrousd: 100, releasedMicrousd: 0 });
   });
 
   it("checks policy through service auth without reserving credit", async () => {
