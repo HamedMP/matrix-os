@@ -342,6 +342,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
+      '@matrix-os/ui':
+        specifier: workspace:*
+        version: link:../packages/ui
       '@radix-ui/react-context-menu':
         specifier: ^2.2.16
         version: 2.2.16(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -936,6 +939,9 @@ importers:
 
   packages/ui:
     dependencies:
+      '@matrix-os/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       react:
         specifier: ^19.0.0
         version: 19.2.3
@@ -1009,6 +1015,9 @@ importers:
       '@matrix-os/observability':
         specifier: workspace:*
         version: link:../packages/observability
+      '@matrix-os/ui':
+        specifier: workspace:*
+        version: link:../packages/ui
       '@react-three/drei':
         specifier: ^10.7.7
         version: 10.7.7(@react-three/fiber@9.6.1(55bcdcd534dc5f40e9f34a7ab33a16a6))(@types/react@19.2.14)(@types/three@0.183.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(three@0.184.0)
