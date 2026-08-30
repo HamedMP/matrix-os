@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ProviderAccountSchema,
+  ProviderConnectionAttemptActionSchema,
   ProviderConnectionAttemptSchema,
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
@@ -393,5 +394,16 @@ describe("provider settings contracts", () => {
       attempt,
     }).success).toBe(true);
     expect(ProviderConnectionAttemptSchema.safeParse({ ...attempt, apiKey: "sk-secret" }).success).toBe(false);
+  });
+
+  it("represents browser login with an owner-gateway path, never a credential-bearing URL", () => {
+    expect(ProviderConnectionAttemptActionSchema.safeParse({
+      kind: "open_browser",
+      authorizationPath: "/api/ai/providers/login-attempts/attempt_123/authorize",
+    }).success).toBe(true);
+    expect(ProviderConnectionAttemptActionSchema.safeParse({
+      kind: "open_browser",
+      authorizationUrl: "https://provider.example/authorize?access_token=secret",
+    }).success).toBe(false);
   });
 });
