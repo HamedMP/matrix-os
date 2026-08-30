@@ -153,7 +153,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
         outcome: "failed",
         error: {
           code: "run_failed",
-          safeMessage: "A command failed during this Run.",
+          safeMessage: "Hermes could not complete this Run.",
           retryable: true,
           recoveryActions: ["retry"],
         },
@@ -241,7 +241,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
         outcome: "failed",
         error: {
           code: "run_failed",
-          safeMessage: "A command failed during this Run.",
+          safeMessage: "Hermes could not complete this Run.",
           retryable: true,
           recoveryActions: ["retry"],
         },
@@ -775,6 +775,46 @@ describe("Hermes canonical Chat Provider adapter", () => {
           recoveryActions: ["retry"],
         },
       },
+    ]);
+  });
+
+  it("keeps an active Hermes turn alive after an advisory error event", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_search_failure",
+      name: "web_search",
+      args: { query: "recoverable lookup" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_search_failure",
+      name: "web_search",
+      result: { success: false, error: "lookup unavailable" },
+    });
+    gateway.event("error", { message: "recoverable tool error" });
+    gateway.event("tool.start", {
+      tool_id: "tool_command_success",
+      name: "terminal",
+      args: { command: "printf recovered" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_command_success",
+      name: "terminal",
+      result: { output: "recovered", exit_code: 0, error: null },
+    });
+    gateway.event("message.complete", { text: "Recovered and completed.", status: "complete" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "running" },
+      { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "failed", summary: "Web search failed." },
+      { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "running", preview: "printf recovered", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "printf recovered", previewKind: "command" },
+      { type: "assistant.delta", delta: "Recovered and completed." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
     ]);
   });
 

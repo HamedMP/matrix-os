@@ -163,14 +163,6 @@ function hermesActivitySummary(kind: HermesActivity["kind"], failed: boolean): s
   return failed ? "Tool failed." : "Tool completed.";
 }
 
-function hermesFailedActivityMessage(kind: HermesActivity["kind"]): string {
-  if (kind === "command") return "A command failed during this Run.";
-  if (kind === "web_search") return "A web search failed during this Run.";
-  if (kind === "delegation") return "Delegated work failed during this Run.";
-  if (kind === "file_change") return "A file update failed during this Run.";
-  return "A tool failed during this Run.";
-}
-
 function providerReference(prefix: string, value: string): string {
   const candidate = `${prefix}${value}`;
   if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(candidate)) return candidate;
@@ -288,7 +280,7 @@ export function createHermesChatProviderAdapter(options: {
     let deltaFlushTimer: NodeJS.Timeout | undefined;
     let separatorPending = false;
     let completionSettled = false;
-    let failedActivityKind: HermesActivity["kind"] | undefined;
+    let recoverableActivityFailureObserved = false;
     let deferAssistantAfterToolFailure = false;
     let deferredSegmentPrefixLength = 0;
     const unsafeToolFragments = new Set<string>();
@@ -442,7 +434,7 @@ export function createHermesChatProviderAdapter(options: {
         toolActivities.delete(parsed.tool_id);
         const failed = hermesToolFailed(parsed.result);
         if (failed) {
-          failedActivityKind = activity.kind;
+          recoverableActivityFailureObserved = true;
           deferAssistantAfterToolFailure = true;
           deferredSegmentPrefixLength = currentSegment.length;
           collectUnsafeToolFragments(parsed.result, unsafeToolFragments);
@@ -474,7 +466,7 @@ export function createHermesChatProviderAdapter(options: {
           : ["cancelled", "canceled", "aborted", "interrupted"].includes(normalizedStatus)
             ? "cancelled" as const
             : "failed" as const;
-        if (status === "failed") failedActivityKind = "delegation";
+        if (status === "failed") recoverableActivityFailureObserved = true;
         emitAgentActivity({
           activityId,
           kind: "delegation",
@@ -504,6 +496,9 @@ export function createHermesChatProviderAdapter(options: {
           title: "Hermes needs input",
         }));
       } else if (event.type === "error") {
+        // Hermes may publish this untyped advisory after a failed activity while the turn continues.
+        // Only its terminal completion frame or process failure can end such a recovered turn.
+        if (recoverableActivityFailureObserved) return;
         completionSettled = true;
         completion.resolve({ ok: false, error: new Error("Hermes Run failed") });
       }
@@ -637,19 +632,17 @@ export function createHermesChatProviderAdapter(options: {
           }
         }
         console.warn("[chat/hermes] Provider Run failed:", error instanceof Error ? error.name : "UnknownError");
-        const safeFailure = failedActivityKind
-          ? { code: "run_failed" as const, safeMessage: hermesFailedActivityMessage(failedActivityKind) }
-          : error instanceof HermesRunFailure
-            ? {
-                code: "run_failed" as const,
-                safeMessage: error.reason === "interrupted"
-                  ? "The Hermes Run was interrupted before completion."
-                  : error.reason === "timeout" ? "The Hermes Run timed out." : "Hermes could not complete this Run.",
-              }
-            : {
-                code: "provider_unavailable" as const,
-                safeMessage: "The Hermes connection failed. Try again.",
-              };
+        const safeFailure = error instanceof HermesRunFailure
+          ? {
+              code: "run_failed" as const,
+              safeMessage: error.reason === "interrupted"
+                ? "The Hermes Run was interrupted before completion."
+                : error.reason === "timeout" ? "The Hermes Run timed out." : "Hermes could not complete this Run.",
+            }
+          : {
+              code: "provider_unavailable" as const,
+              safeMessage: "The Hermes connection failed. Try again.",
+            };
         queue.push(CanonicalProviderRunEventSchema.parse({
           type: "run.completed",
           outcome: input.signal.aborted ? "aborted" : "failed",
