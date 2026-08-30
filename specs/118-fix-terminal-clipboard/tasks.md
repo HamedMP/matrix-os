@@ -121,14 +121,14 @@
 
 ### Tests for User Story 4 — write and observe RED first
 
-- [ ] T031 [P] [US4] Add failing native Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/desktop/terminal-view.test.tsx` and `tests/desktop/terminal-link-context-menu.test.tsx`
-- [ ] T032 [P] [US4] Add failing web Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/shell/terminal-pane-scrolling.test.tsx` and `tests/shell/terminal-link-context-menu.test.tsx`
+- [x] T031 [P] [US4] Add failing native Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/desktop/terminal-view.test.tsx` and `tests/desktop/terminal-link-context-menu.test.tsx`
+- [x] T032 [P] [US4] Add failing web Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/shell/terminal-pane-scrolling.test.tsx` and `tests/shell/terminal-link-context-menu.test.tsx`
 
 ### Implementation for User Story 4
 
-- [ ] T033 [P] [US4] Route native Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T034 [P] [US4] Route web Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T035 [US4] Run all User Story 4 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
+- [x] T033 [P] [US4] Route native Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
+- [x] T034 [P] [US4] Route web Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
+- [x] T035 [US4] Run all User Story 4 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
 
 **Checkpoint**: Select All is independently usable in native and web terminals.
 
