@@ -27,6 +27,7 @@ function runtimeConfig() {
     MATRIX_FUNDED_AI_ENABLED: "true",
     MATRIX_FUNDED_AI_RELAY_URL: "https://relay.matrix-os.com",
     PLATFORM_INTERNAL_URL: "https://platform.matrix-os.com",
+    MATRIX_AUTH_TOKEN: "legacy-token-must-not-authorize-funded-ai",
     MATRIX_FUNDED_AI_RUNTIME_TOKEN: "p".repeat(64),
     MATRIX_HANDLE: "alice",
     MATRIX_CLERK_USER_ID: "user_123",
