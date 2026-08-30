@@ -129,6 +129,52 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   const hashCredential = (credential: string) => createHmac("sha256", options.credentialHashSecret)
     .update(credential).digest("hex");
 
+  async function getFundingSummary(
+    identityInput: z.input<typeof IdentitySchema>,
+  ): Promise<FundedAiFundingSummary> {
+    const identity = IdentitySchema.parse(identityInput);
+    const checked = options.now();
+    const checkedAt = checked.toISOString();
+    const currentPeriod = utcMonthStart(checked);
+    await options.db.ready;
+    type FundingRow = BalanceSnapshot & { monthly_budget_microusd: unknown };
+    const result = await sql<FundingRow>`
+      SELECT
+        balance.credit_balance_microusd,
+        balance.promotional_balance_microusd,
+        balance.addon_balance_microusd,
+        balance.reserved_microusd,
+        balance.month_period_start,
+        balance.month_spent_microusd,
+        balance.month_reserved_microusd,
+        runtime.monthly_budget_microusd
+      FROM ai_funded_runtime_balances balance
+      JOIN ai_funded_runtime_policies runtime
+        ON runtime.machine_id = balance.machine_id
+        AND runtime.owner_id = balance.owner_id
+        AND runtime.runtime_slot = balance.runtime_slot
+      JOIN user_machines machine
+        ON machine.machine_id = balance.machine_id
+        AND machine.clerk_user_id = balance.owner_id
+        AND machine.runtime_slot = balance.runtime_slot
+      WHERE balance.machine_id = ${identity.machineId}
+        AND balance.owner_id = ${identity.ownerId}
+        AND balance.runtime_slot = ${identity.runtimeSlot}
+        AND machine.status = 'running'
+        AND machine.activation_state = 'authorized'
+        AND machine.deleted_at IS NULL
+      LIMIT 1
+    `.execute(options.db.executor);
+    const row = result.rows[0];
+    if (!row) throw new AiFundedPolicyError("identity_mismatch");
+    return fundingSummary({
+      ...row,
+      month_period_start: currentPeriod,
+      month_spent_microusd: row.month_period_start === currentPeriod ? row.month_spent_microusd : 0,
+      month_reserved_microusd: row.month_period_start === currentPeriod ? row.month_reserved_microusd : 0,
+    }, exactInteger(row.monthly_budget_microusd), checkedAt);
+  }
+
   async function grantCredit(input: z.input<typeof GrantSchema>) {
     const grant = GrantSchema.parse(input);
     const at = options.now().toISOString();
@@ -717,5 +763,13 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     });
   }
 
-  return { authorize, startReservation, settleReservation, releaseReservation, cleanupExpiredReservations, grantCredit };
+  return {
+    getFundingSummary,
+    authorize,
+    startReservation,
+    settleReservation,
+    releaseReservation,
+    cleanupExpiredReservations,
+    grantCredit,
+  };
 }

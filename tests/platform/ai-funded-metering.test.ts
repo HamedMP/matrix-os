@@ -87,6 +87,36 @@ describe("funded AI metering", () => {
     expect(Number(reservations[0].reserved_microusd)).toBe(80);
   });
 
+  it("reads one exact runtime funding summary and rolls the monthly projection forward", async () => {
+    await enableAndFund({ budget: 1_000, credit: 1_000 });
+    await repo.grantCredit({
+      entryId: "grant_addon_summary",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 400,
+      sourceReference: "addon-summary",
+    });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      periodStart: "2026-08-01T00:00:00.000Z",
+      monthlyBudgetMicrousd: 1_000,
+      promotionalBalanceMicrousd: 1_000,
+      addonBalanceMicrousd: 400,
+      creditBalanceMicrousd: 1_400,
+      remainingBalanceMicrousd: 1_400,
+      remainingBudgetMicrousd: 1_000,
+    });
+
+    clock = new Date("2026-09-01T00:00:01.000Z");
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      periodStart: "2026-09-01T00:00:00.000Z",
+      settledThisMonthMicrousd: 0,
+      reservedThisMonthMicrousd: 0,
+      remainingBudgetMicrousd: 1_000,
+    });
+    await expect(repo.getFundingSummary({ ...identity, ownerId: "user_other" }))
+      .rejects.toMatchObject({ code: "identity_mismatch" });
+  });
+
   it("replays the same reservation and rejects reuse with a different payload", async () => {
     const credential = await enableAndFund();
     const request = { credential: credential.token, requestId: "request_replay", modelId, maxCostMicrousd: 70 };

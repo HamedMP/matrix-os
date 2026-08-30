@@ -425,6 +425,14 @@ must leave unimplemented mutations disabled or labeled. Layer 4 owns account
 lifecycle. Layer 5 may advertise Matrix AI as ready only after policy and relay
 health are wired. Exact per-user remaining credit waits for layer 6.
 
+The first layer-6 increment exposes the platform Postgres metering summary to
+the exact authenticated runtime and projects it into provider settings. The
+Matrix card distinguishes promotional and add-on balances, held reservations,
+settled monthly use, remaining monthly budget, and the smaller amount currently
+spendable. Stripe purchase is deliberately not advertised: `topUpEnabled`
+remains false and `add_credit` remains absent until a real checkout and ledger
+grant workflow exists.
+
 ## Documentation and Review Deliverables
 
 Every implementation PR uses a Conventional Commit title, states source of truth/lock or transaction scope/acceptable orphan states/auth source/deferred scope, passes applicable gates, and reaches Greptile 5/5.

@@ -2,6 +2,7 @@ import {
   FundedAiAuthorizationRequestSchema,
   FundedAiSafeErrorSchema,
   FundedAiReleaseRequestSchema,
+  FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiSettlementRequestSchema,
   FundedAiStartRequestSchema,
   type FundedAiSafeError,
@@ -162,6 +163,32 @@ export function createAiFundedRuntimeRoutes(options: {
         runtimeSlot: machine.runtimeSlot,
       });
       return c.json(issued, 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
+  app.post("/funding-summary", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {
+    const query = RuntimeQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+    const body = EmptyBodySchema.safeParse(await readStrictJson(c));
+    if (!query.success || !body.success) return c.json(safeError("invalid_request"), 400);
+    const handle = HandleSchema.parse(c.req.param("handle"));
+    try {
+      const machine = await getRunningUserMachineByHandle(options.db, handle, query.data.runtimeSlot);
+      if (!machine) return c.json(safeError("not_found"), 404);
+      const authorization = c.req.header("authorization");
+      const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
+      const expected = buildPlatformRuntimeVerificationToken({
+        handle,
+        machineId: machine.machineId,
+        runtimeSlot: machine.runtimeSlot,
+      }, options.platformSecret);
+      if (!timingSafeTokenEquals(token, expected)) return c.json(safeError("unauthorized"), 401);
+      const funding = await options.repository.getFundingSummary({
+        ownerId: machine.clerkUserId,
+        machineId: machine.machineId,
+        runtimeSlot: machine.runtimeSlot,
+      });
+      return c.json(FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, funding }), 200);
     } catch (error) {
       return policyErrorResponse(c, error);
     }

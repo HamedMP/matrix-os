@@ -94,7 +94,8 @@ export const FundedAiFundingSummarySchema = z.object({
   remainingBalanceMicrousd: MicrousdSchema,
   remainingBudgetMicrousd: MicrousdSchema,
 }).strict().superRefine((value, ctx) => {
-  if (value.creditBalanceMicrousd !== value.promotionalBalanceMicrousd + value.addonBalanceMicrousd) {
+  const creditTotal = value.promotionalBalanceMicrousd + value.addonBalanceMicrousd;
+  if (!Number.isSafeInteger(creditTotal) || value.creditBalanceMicrousd !== creditTotal) {
     ctx.addIssue({ code: "custom", path: ["creditBalanceMicrousd"], message: "Credit buckets must equal total credit" });
   }
   if (value.remainingBalanceMicrousd !== Math.max(0, value.creditBalanceMicrousd - value.reservedMicrousd)) {
@@ -107,7 +108,21 @@ export const FundedAiFundingSummarySchema = z.object({
   if (value.remainingBudgetMicrousd !== expectedBudget) {
     ctx.addIssue({ code: "custom", path: ["remainingBudgetMicrousd"], message: "Remaining budget is inconsistent" });
   }
+  if (value.reservedThisMonthMicrousd > value.reservedMicrousd) {
+    ctx.addIssue({ code: "custom", path: ["reservedThisMonthMicrousd"], message: "Monthly reservations cannot exceed all reservations" });
+  }
+  const period = new Date(value.periodStart);
+  const canonicalPeriod = new Date(Date.UTC(period.getUTCFullYear(), period.getUTCMonth(), 1)).toISOString();
+  if (value.periodStart !== canonicalPeriod) {
+    ctx.addIssue({ code: "custom", path: ["periodStart"], message: "Funding period must start at a UTC month boundary" });
+  }
 });
+
+/** Shell-safe metering projection for one server-derived runtime identity. */
+export const FundedAiRuntimeFundingSummaryResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  funding: FundedAiFundingSummarySchema,
+}).strict();
 
 export const FundedAiAuthorizationResponseSchema = z.object({
   contractVersion: z.literal(1),
@@ -218,4 +233,5 @@ export type FundedAiStartResponse = z.infer<typeof FundedAiStartResponseSchema>;
 export type FundedAiReleaseRequest = z.infer<typeof FundedAiReleaseRequestSchema>;
 export type FundedAiReleaseResponse = z.infer<typeof FundedAiReleaseResponseSchema>;
 export type FundedAiFundingSummary = z.infer<typeof FundedAiFundingSummarySchema>;
+export type FundedAiRuntimeFundingSummaryResponse = z.infer<typeof FundedAiRuntimeFundingSummaryResponseSchema>;
 export type FundedAiSafeError = z.infer<typeof FundedAiSafeErrorSchema>;

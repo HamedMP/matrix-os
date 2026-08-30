@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FundedAiAuthorizationResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
+  FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiSettlementResponseSchema,
   FundedAiStartResponseSchema,
 } from "@matrix-os/contracts";
@@ -71,6 +72,10 @@ describe("funded AI policy routes", () => {
     await repository.grantCredit({
       entryId: "grant_routes", identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
       kind: "promotional_grant", amountMicrousd: 1_000, sourceReference: "route-fixture",
+    });
+    await repository.grantCredit({
+      entryId: "grant_routes_addon", identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      kind: "addon_grant", amountMicrousd: 500, sourceReference: "route-addon-fixture",
     });
     return {
       repository,
@@ -163,6 +168,35 @@ describe("funded AI policy routes", () => {
     });
   });
 
+  it("returns the exact identity-free Postgres funding summary for the authenticated runtime", async () => {
+    const { app } = await createTestApp();
+    const response = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    const summary = FundedAiRuntimeFundingSummaryResponseSchema.parse(await response.json());
+    expect(summary.funding).toMatchObject({
+      monthlyBudgetMicrousd: 1_000,
+      promotionalBalanceMicrousd: 1_000,
+      addonBalanceMicrousd: 500,
+      creditBalanceMicrousd: 1_500,
+      remainingBalanceMicrousd: 1_500,
+      remainingBudgetMicrousd: 1_000,
+    });
+    expect(JSON.stringify(summary)).not.toMatch(/user_alice|machine_123|primary|credential|token/i);
+    expect((await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice", "machine_predecessor")}` },
+    })).status).toBe(401);
+    expect((await app.request("/internal/containers/alice/ai/funding-summary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}` },
+    })).status).toBe(400);
+  });
+
   it("rejects missing auth, malformed or oversized bodies, caller identity fields, and legacy-only handles", async () => {
     const { app } = await createTestApp();
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -197,6 +231,25 @@ describe("funded AI policy routes", () => {
       body: JSON.stringify({ padding: "x".repeat(2_000) }),
     });
     expect(oversized.status).toBe(413);
+
+    const summarySpoof = await app.request("/internal/containers/alice/ai/funding-summary?ownerId=user_bob", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(summarySpoof.status).toBe(400);
+    const summaryBodySpoof = await app.request("/internal/containers/alice/ai/funding-summary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: JSON.stringify({ machineId: "machine_other" }),
+    });
+    expect(summaryBodySpoof.status).toBe(400);
+    const summaryOversized = await app.request("/internal/containers/alice/ai/funding-summary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(2_000) }),
+    });
+    expect(summaryOversized.status).toBe(413);
 
     await insertContainer(db, {
       handle: "legacy", clerkUserId: "user_legacy", port: 5001, shellPort: 6001, status: "running",

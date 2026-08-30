@@ -17,6 +17,7 @@ import {
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
+import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
@@ -402,6 +403,9 @@ export async function createGateway(config: GatewayConfig) {
   const fundedAiRuntimeConfig = loadFundedAiRuntimeConfig(process.env);
   const fundedCredentialProvider = fundedAiRuntimeConfig
     ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
+    : undefined;
+  const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
+    ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
     : undefined;
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,
@@ -4185,6 +4189,7 @@ export async function createGateway(config: GatewayConfig) {
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
+    fundingSummaryReader: fundedAiFundingSummaryReader,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,

@@ -3,6 +3,7 @@ import {
   FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
   FundedAiGlobalPolicySchema,
+  FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiSafeErrorSchema,
 } from "@matrix-os/contracts";
@@ -136,6 +137,27 @@ describe("funded AI control-plane contracts", () => {
     }).success).toBe(true);
     expect(FundedAiSafeErrorSchema.safeParse({
       error: { code: "database_error", message: "postgresql://secret@db.internal" },
+    }).success).toBe(false);
+  });
+
+  it("returns an identity-free runtime funding summary", () => {
+    const response = { contractVersion: 1, funding } as const;
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.parse(response)).toEqual(response);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
+      ...response,
+      ownerId: "user_alice",
+    }).success).toBe(false);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
+      ...response,
+      credential,
+    }).success).toBe(false);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
+      ...response,
+      funding: { ...funding, periodStart: "2026-08-02T00:00:00.000Z" },
+    }).success).toBe(false);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
+      ...response,
+      funding: { ...funding, reservedThisMonthMicrousd: 200_001 },
     }).success).toBe(false);
   });
 });
