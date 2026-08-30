@@ -145,6 +145,8 @@ export const FundedAiPolicyCheckResponseSchema = z.object({
 }).strict();
 
 export const FundedAiFundingSummarySchema = z.object({
+  /** Platform-authoritative capability; local runtime JSON cannot enable purchases. */
+  topUpEnabled: z.boolean().optional(),
   asOf: IsoTimestampSchema,
   periodStart: IsoTimestampSchema,
   monthlyBudgetMicrousd: MicrousdSchema,

@@ -345,6 +345,12 @@ describe("ProviderSettingsStore", () => {
     expect(snapshot.supportedActions).not.toContain("add_credit");
     expect(snapshot.supportedActions).not.toContain("set_gateway_budget");
     expect(snapshot.supportedActions).not.toContain("set_gateway_allowlist");
+
+    const purchasable = await createStore({
+      fundingSummary: { ...fundingSummary, topUpEnabled: true },
+    }).getSnapshot();
+    expect(purchasable.gatewayPolicy?.topUpEnabled).toBe(true);
+    expect(purchasable.supportedActions).toContain("add_credit");
     await expect(store.mutate({
       type: "set_gateway_budget",
       expectedRevision: snapshot.revision,

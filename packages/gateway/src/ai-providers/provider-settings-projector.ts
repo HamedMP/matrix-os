@@ -280,6 +280,10 @@ export async function projectProviderSettings(input: {
   fundedPolicyAuthoritative?: boolean;
   loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): Promise<ProviderSettingsSnapshot> {
+  const supportedActions = input.fundingSummary?.topUpEnabled === true
+    && !input.supportedActions.includes("add_credit")
+    ? [...input.supportedActions, "add_credit" as const]
+    : input.supportedActions;
   const { sources, sourceByAccount } = projectAccessSources(
     input.canonical,
     input.config,
@@ -319,8 +323,9 @@ export async function projectProviderSettings(input: {
         monthlyBudgetMicrousd: input.fundedPolicyAuthoritative
           ? input.fundingSummary?.monthlyBudgetMicrousd ?? null
           : input.config.gatewayPolicy.monthlyBudgetMicrousd,
-        // Stripe top-ups are not wired yet; schemas alone never advertise purchase capability.
-        topUpEnabled: false,
+        // Only the machine-authenticated platform funding response can enable
+        // purchase. Owner-controlled provider JSON remains incapable of doing so.
+        topUpEnabled: input.fundingSummary?.topUpEnabled === true,
       } : null;
   const allowedGatewayModels = new Set(gatewayPolicy?.allowedModelIds ?? []);
   const harnesses = input.config.harnesses.flatMap((stored) => {
@@ -343,10 +348,10 @@ export async function projectProviderSettings(input: {
     },
     revision: input.config.revision,
     refreshedAt: input.now.toISOString(),
-    access: input.supportedActions.length > 0
+    access: supportedActions.length > 0
       ? { mode: "writable" }
       : { mode: "read_only", reason: "runtime_unavailable" },
-    supportedActions: input.supportedActions,
+    supportedActions,
     modelProviders,
     accessSources: sources,
     accounts,

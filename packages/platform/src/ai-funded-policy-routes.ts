@@ -180,6 +180,7 @@ export function createAiFundedRuntimeRoutes(options: {
   db: PlatformDB;
   platformSecret: string;
   repository: AiFundedPolicyRepository;
+  topUpEnabled?: boolean;
 }) {
   if (!options.repository || !options.db) throw new Error("Funded AI runtime dependencies are missing");
   if (options.platformSecret.length < 32) throw new Error("Funded AI runtime authentication is misconfigured");
@@ -231,7 +232,11 @@ export function createAiFundedRuntimeRoutes(options: {
         machineId: machine.machineId,
         runtimeSlot: machine.runtimeSlot,
       });
-      return c.json(FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...summary }), 200);
+      return c.json(FundedAiRuntimeFundingSummaryResponseSchema.parse({
+        contractVersion: 1,
+        funding: { ...summary.funding, topUpEnabled: options.topUpEnabled === true },
+        policy: summary.policy,
+      }), 200);
     } catch (error) {
       return policyErrorResponse(c, error);
     }

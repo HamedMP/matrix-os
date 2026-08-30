@@ -42,13 +42,14 @@ import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { dispatchBillingRuntimeActions } from './billing-runtime-actions.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
-import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
+import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import {
   createAiFundedOperatorRoutes,
   createAiFundedRelayRoutes,
   createAiFundedRuntimeRoutes,
   loadAiFundedControlPlaneConfig,
 } from './ai-funded-policy-routes.js';
+import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
 import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
@@ -166,6 +167,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
+  fundedAiRepository?: AiFundedPolicyRepository;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -263,8 +265,9 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
+  let fundedAiRepository: AiFundedPolicyRepository | undefined;
   if (fundedAiConfig.enabled) {
-    const fundedAiRepository = createAiFundedPolicyRepository({
+    fundedAiRepository = createAiFundedPolicyRepository({
       db,
       credentialHashSecret: fundedAiConfig.credentialHashSecret,
       credentialTtlMs: fundedAiConfig.credentialTtlMs,
@@ -275,6 +278,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
       db,
       platformSecret: fundedAiConfig.platformSecret,
       repository: fundedAiRepository,
+      topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
@@ -780,6 +784,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
+    fundedAiRepository,
     customerVpsService,
     goldenSnapshotService,
     goldenSnapshotConfig,

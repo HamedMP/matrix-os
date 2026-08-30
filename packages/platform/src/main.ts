@@ -325,6 +325,7 @@ export function createApp(deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
+  fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -574,6 +575,7 @@ export function createApp(deps: {
     resolveClerkUserId: resolveBillingClerkUserId,
     captureEvent: captureFunnelEvent,
     prebilling,
+    fundedAiRepository: deps.fundedAiRepository,
   }));
 
   // Onboarding journey (spec 092): one server-owned signup-to-ready state every
