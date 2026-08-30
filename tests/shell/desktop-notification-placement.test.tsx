@@ -99,8 +99,16 @@ vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => <div data-testid="runtime-identity-banner" />,
 }));
 
-vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
-  BillingTrialNotification: () => <div data-testid="billing-trial-notification" />,
+vi.mock("@/hooks/useMatrixBillingAccess", () => ({
+  useMatrixBillingAccess: () => ({
+    active: true,
+    entitlement: {
+      status: "trialing",
+      trialEndsAt: "2026-09-05T00:00:00.000Z",
+      planSlug: "matrix_builder",
+      billingInterval: "monthly",
+    },
+  }),
 }));
 
 function jsonResponse(body: unknown) {
@@ -155,26 +163,25 @@ describe("Desktop shell notifications", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders connection, runtime, billing, and vocal notices in the shared top-right stack outside the dock", async () => {
+  it("renders shell notices without showing a trial-ending banner", async () => {
     render(<Desktop />);
 
     const indicator = await screen.findByTestId("connection-indicator");
     const banner = screen.getByTestId("runtime-identity-banner");
-    const billingTrial = screen.getByTestId("billing-trial-notification");
     const stack = screen.getByTestId("shell-notification-stack");
     const vocalError = await screen.findByRole("alert");
 
     await waitFor(() => {
       expect(stack.contains(indicator)).toBe(true);
       expect(stack.contains(banner)).toBe(true);
-      expect(stack.contains(billingTrial)).toBe(true);
       expect(stack.contains(vocalError)).toBe(true);
     });
+
+    expect(screen.queryByRole("status", { name: "Matrix free trial" })).toBeNull();
 
     const dock = document.querySelector("[data-dock]");
     expect(dock).toBeTruthy();
     expect(dock?.contains(indicator)).toBe(false);
-    expect(dock?.contains(billingTrial)).toBe(false);
     expect(vocalError.textContent).toContain("Aoede could not connect");
   });
 });
