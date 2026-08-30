@@ -28,11 +28,6 @@ on:
         required: true
         default: false
         type: boolean
-      prebilling_rollback_drain:
-        description: Disable only new unpaid prebilling admission while continuation workers drain before a cost-aware rollback
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -63,11 +58,9 @@ jobs:
       GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}
       MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
       MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
-      MATRIX_PREBILLING_PROVISIONING_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.prebilling_rollback_drain && 'false' || 'true' }}
+      MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'
       MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100'
       MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '4' }}
-      PREBILLING_ROLLBACK_DRAIN: ${{ github.event_name == 'workflow_dispatch' && inputs.prebilling_rollback_drain || false }}
-      PROMOTE_REVISION: ${{ github.event_name == 'push' || inputs.promote }}
       POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
@@ -124,12 +117,6 @@ jobs:
             echo "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE must be a positive integer." >&2
             exit 1
           fi
-          if [ "$PREBILLING_ROLLBACK_DRAIN" = "true" ] && \
-            { [ "$DEPLOY_ENVIRONMENT" != "production" ] || [ "$PROMOTE_REVISION" != "true" ]; }; then
-            echo "Rollback drain requires a promoted production deployment." >&2
-            exit 1
-          fi
-
       - name: Authenticate to Google Cloud
         # google-github-actions v4 tags are not published yet; v3 is the latest
         # major tag currently resolvable by GitHub Actions.
@@ -765,7 +752,7 @@ jobs:
             --region "$GCP_REGION" \
             --format=json)"
           for entry in \
-            MATRIX_PREBILLING_PROVISIONING_ENABLED="$MATRIX_PREBILLING_PROVISIONING_ENABLED" \
+            MATRIX_PREBILLING_PROVISIONING_ENABLED=true \
             MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=100 \
             MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE="$MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE"; do
             name="${entry%%=*}"

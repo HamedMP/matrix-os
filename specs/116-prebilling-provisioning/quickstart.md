@@ -1,8 +1,8 @@
 # Validation Quickstart: Prebilling Provisioning
 
-This feature is developed test-first and remains disabled by default until every access and cleanup invariant passes. Commands run from the repository root of the feature worktree.
+This feature is developed test-first. The production deployment contract keeps count-only prebilling enabled at 100% rollout with a global maximum of four active unpaid preparations. Commands run from the repository root of the feature worktree.
 
-Admission requires all of these server-owned settings; missing values keep it off:
+Admission requires all of these server-owned settings:
 
 ```text
 MATRIX_PREBILLING_PROVISIONING_ENABLED=true
@@ -12,17 +12,11 @@ MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=<positive integer>
 
 Setting `ENABLED=false` or rollout to `0` stops new unpaid provider work: awaiting intents are not admitted, failed unpaid preparations are not reset for retry, and a `preparing` crash state cannot create its first machine on resume. Detached work already in flight may settle, while paid-intent bypass, signed subscription activation, and signed-expiry cleanup remain wired so existing intents can converge safely.
 
-## Rollback to a Cost-Aware Revision
+## Operational Policy and Future Rollback
 
-The retained database column avoids a schema rollback, but count-only revisions intentionally write it as zero. A direct traffic rollback remains inside the accepted count-only exposure because the former binary also enforces `MAX_ACTIVE`; its monetary ceiling becomes exact only after those zero-valued active rows reach a terminal state.
+Count-only prebilling remains enabled in the production deployment workflow. There is no prebuilt workflow-dispatch path that disables admission for a rollback drain. If exceptional rollback behavior is ever required, it must be introduced through a separate reviewed workflow/code PR with an explicit transition plan.
 
-When an immediate monetary ceiling is required, use this order:
-
-1. Manually dispatch `platform-cloud-run.yml` from the count-only revision with `environment=production`, `promote=true`, and `prebilling_rollback_drain=true`. The workflow rejects drain requests that are not promoted production deployments, verifies admission is disabled, leaves continuation workers enabled, and sends 100% of traffic to the drain revision.
-2. Wait one full 31-minute checkout lease, or query under the prebilling advisory lock and verify there are no unpaid intents in active preparation states with a zero legacy reservation.
-3. Shift traffic to the former cost-aware revision and restore its legacy cost settings.
-
-Never restore legacy cost settings before step 2. Paid-intent continuation bypasses unpaid admission and remains available throughout the drain.
+The retained database cost column avoids a schema migration and remains written as zero by count-only revisions. It is excluded from the provisioning domain and admission decisions, while preserving schema compatibility for a future reviewed PR that deliberately restores cost-based behavior.
 
 ## 1. Fake Stripe and Provider Integration
 
