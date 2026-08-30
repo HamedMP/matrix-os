@@ -146,17 +146,18 @@ describe("canonical Chat API contracts", () => {
   });
 
   it("preserves the exact successful completion fact in canonical list and detail records", () => {
+    const completion = {
+      runId: "run_completed_exact",
+      completedAt: "2026-08-25T12:02:00.000Z",
+      unacknowledged: true,
+    };
     const completedRecord = {
       ...chatRecord,
-      latestSuccessfulCompletion: {
-        runId: "run_completed_exact",
-        completedAt: "2026-08-25T12:02:00.000Z",
-        unacknowledged: true,
-      },
+      latestSuccessfulCompletion: completion,
     };
 
-    const list = CanonicalChatListResponseSchema.safeParse({ items: [completedRecord] });
-    const detail = CanonicalChatDetailResponseSchema.safeParse({
+    const list = CanonicalChatListResponseSchema.parse({ items: [completedRecord] });
+    const detail = CanonicalChatDetailResponseSchema.parse({
       record: completedRecord,
       messages: [],
       turns: [],
@@ -164,17 +165,8 @@ describe("canonical Chat API contracts", () => {
       activities: [],
     });
 
-    expect(list.success).toBe(true);
-    expect(detail.success).toBe(true);
-    if (!list.success || !detail.success) return;
-    expect(list.data.items[0]).toMatchObject({
-      latestSuccessfulCompletion: {
-        runId: "run_completed_exact",
-        completedAt: "2026-08-25T12:02:00.000Z",
-        unacknowledged: true,
-      },
-    });
-    expect(detail.data.record).toEqual(list.data.items[0]);
+    expect(list.items[0]?.latestSuccessfulCompletion).toEqual(completion);
+    expect(detail.record).toEqual(list.items[0]);
   });
 
   it("accepts only bounded user Turn input and keeps ownership and paths server-owned", () => {

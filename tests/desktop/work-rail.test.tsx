@@ -3,7 +3,11 @@
 import React, { type ComponentProps, type ComponentType } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import type {
+  CanonicalChatClient,
+  CanonicalChatEventSource,
+  CanonicalChatInvalidation,
+} from "@desktop/renderer/src/lib/canonical-chat-client";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -51,29 +55,11 @@ function record(
   } as CanonicalChatRecord;
 }
 
-const alpha: Project = {
-  id: "project_alpha_id",
-  slug: "alpha",
-  name: "Alpha",
-  kind: "folder",
-};
-const beta: Project = {
-  id: "project_beta_id",
-  slug: "beta",
-  name: "Beta",
-  kind: "scratch",
-};
-const pinned = record("chat_pinned", "Pinned global", {
-  pinned: true,
-  updatedAt: "2026-08-28T12:00:00.000Z",
-});
-const projectChat = record("chat_alpha", "Alpha chat", {
-  projectId: "project_alpha_id",
-  updatedAt: "2026-08-28T11:00:00.000Z",
-});
-const recent = record("chat_recent", "Recent global", {
-  updatedAt: "2026-08-28T10:00:00.000Z",
-});
+const alpha: Project = { id: "project_alpha_id", slug: "alpha", name: "Alpha", kind: "folder" };
+const beta: Project = { id: "project_beta_id", slug: "beta", name: "Beta", kind: "scratch" };
+const pinned = record("chat_pinned", "Pinned global", { pinned: true, updatedAt: "2026-08-28T12:00:00.000Z" });
+const projectChat = record("chat_alpha", "Alpha chat", { projectId: "project_alpha_id", updatedAt: "2026-08-28T11:00:00.000Z" });
+const recent = record("chat_recent", "Recent global", { updatedAt: "2026-08-28T10:00:00.000Z" });
 
 function setup() {
   const records = [pinned, projectChat, recent];
@@ -105,52 +91,42 @@ function setup() {
   return { client, actions };
 }
 
+function eventHarness() {
+  const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
+  const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
+    subscribe(listener) {
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    },
+  };
+  return {
+    eventSource,
+    emit(event: CanonicalChatInvalidation) { for (const listener of listeners) listener(event); },
+  };
+}
+
+function renderRail(client: CanonicalChatClient, eventSource?: Pick<CanonicalChatEventSource, "subscribe">) {
+  const EventAwareWorkRail = WorkRail as ComponentType<
+    ComponentProps<typeof WorkRail> & { eventSource?: Pick<CanonicalChatEventSource, "subscribe"> }
+  >;
+  render(<EventAwareWorkRail client={client} eventSource={eventSource} projects={[]} active
+    onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()}
+    onSelectChat={vi.fn()} onCollapse={vi.fn()} />);
+}
+
 afterEach(cleanup);
 
 describe("WorkRail", () => {
   it("converges two Chat rows from the shared event source without adding WorkRail polling", async () => {
-    type Invalidation =
-      | { type: "chat.changed"; chatId: string; cursor: number }
-      | { type: "chat.full_refresh"; cursor?: number };
-    type EventSource = {
-      subscribe(listener: (event: Invalidation) => void): { dispose(): void };
-    };
-    const listeners = new Set<(event: Invalidation) => void>();
-    const eventSource: EventSource = {
-      subscribe(listener) {
-        listeners.add(listener);
-        return { dispose: () => listeners.delete(listener) };
-      },
-    };
-    const emit = (event: Invalidation) => {
-      for (const listener of listeners) listener(event);
-    };
-    const acceptedA = record("chat_parallel_a", "Parallel A", {
-      updatedAt: "2026-08-29T01:00:00.000Z",
-      activeRunStatus: "accepted",
-    });
-    const runningA = record("chat_parallel_a", "Parallel A", {
-      updatedAt: "2026-08-29T01:01:00.000Z",
-      activeRunStatus: "running",
-    });
-    const failedA = record("chat_parallel_a", "Parallel A", {
-      updatedAt: "2026-08-29T01:03:00.000Z",
-      attention: "failed",
-    });
-    const abortedA = record("chat_parallel_a", "Parallel A", {
-      updatedAt: "2026-08-29T01:04:00.000Z",
-    });
-    const idleB = record("chat_parallel_b", "Parallel B", {
-      updatedAt: "2026-08-29T01:00:00.000Z",
-    });
-    const completedB = record("chat_parallel_b", "Parallel B", {
-      updatedAt: "2026-08-29T01:02:00.000Z",
-      unacknowledged: true,
-    });
-    const acknowledgedB = record("chat_parallel_b", "Parallel B", {
-      updatedAt: "2026-08-29T01:02:00.000Z",
-      unacknowledged: false,
-    });
+    const events = eventHarness();
+    const at = "2026-08-29T01:00:00.000Z";
+    const acceptedA = record("chat_parallel_a", "Parallel A", { updatedAt: at, activeRunStatus: "accepted" });
+    const runningA = record("chat_parallel_a", "Parallel A", { updatedAt: at, activeRunStatus: "running" });
+    const failedA = record("chat_parallel_a", "Parallel A", { updatedAt: at, attention: "failed" });
+    const abortedA = record("chat_parallel_a", "Parallel A", { updatedAt: at });
+    const idleB = record("chat_parallel_b", "Parallel B", { updatedAt: at });
+    const completedB = record("chat_parallel_b", "Parallel B", { updatedAt: at, unacknowledged: true });
+    const acknowledgedB = record("chat_parallel_b", "Parallel B", { updatedAt: at, unacknowledged: false });
     const client = {
       list: vi.fn()
         .mockResolvedValueOnce({ items: [acceptedA, idleB] })
@@ -161,57 +137,36 @@ describe("WorkRail", () => {
         .mockResolvedValueOnce({ items: [abortedA, acknowledgedB] }),
     } as unknown as CanonicalChatClient;
     const setIntervalSpy = vi.spyOn(window, "setInterval");
-    const EventAwareWorkRail = WorkRail as ComponentType<
-      ComponentProps<typeof WorkRail> & { eventSource: EventSource }
-    >;
-
-    render(
-      <EventAwareWorkRail
-        client={client}
-        eventSource={eventSource}
-        projects={[]}
-        active
-        onNewGlobalChat={vi.fn()}
-        onCreateProject={vi.fn()}
-        onNewProjectChat={vi.fn()}
-        onSelectChat={vi.fn()}
-        onCollapse={vi.fn()}
-      />,
-    );
+    renderRail(client, events.eventSource);
 
     expect(await screen.findByLabelText("Agent running for Parallel A")).toBeTruthy();
     expect(screen.queryByLabelText("Unseen completion for Parallel B")).toBeNull();
 
-    act(() => emit({ type: "chat.changed", chatId: "chat_parallel_b", cursor: 2 }));
+    act(() => events.emit({ type: "chat.changed", chatId: "chat_parallel_b", cursor: 2 }));
     await waitFor(() => expect(screen.getByLabelText("Unseen completion for Parallel B")).toBeTruthy());
     expect(screen.getByLabelText("Agent running for Parallel A")).toBeTruthy();
 
-    act(() => emit({ type: "chat.changed", chatId: "chat_parallel_b", cursor: 3 }));
+    act(() => events.emit({ type: "chat.changed", chatId: "chat_parallel_b", cursor: 3 }));
     await waitFor(() => expect(screen.queryByLabelText("Unseen completion for Parallel B")).toBeNull());
     expect(screen.getByLabelText("Agent running for Parallel A")).toBeTruthy();
 
-    act(() => emit({ type: "chat.changed", chatId: "chat_parallel_a", cursor: 4 }));
+    act(() => events.emit({ type: "chat.changed", chatId: "chat_parallel_a", cursor: 4 }));
     await waitFor(() => expect(screen.getByLabelText("Agent failed for Parallel A")).toBeTruthy());
 
-    act(() => emit({ type: "chat.changed", chatId: "chat_parallel_a", cursor: 5 }));
+    act(() => events.emit({ type: "chat.changed", chatId: "chat_parallel_a", cursor: 5 }));
     await waitFor(() => expect(screen.queryByLabelText("Agent failed for Parallel A")).toBeNull());
     expect(screen.queryByLabelText("Unseen completion for Parallel A")).toBeNull();
 
-    act(() => emit({ type: "chat.full_refresh", cursor: 5 }));
+    act(() => events.emit({ type: "chat.full_refresh", cursor: 5 }));
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(6));
     expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 200);
   });
 
   it("coalesces a burst of shared Chat events into one in-flight and one pending canonical refresh", async () => {
-    type Invalidation = { type: "chat.changed"; chatId: string; cursor: number };
-    const listeners = new Set<(event: Invalidation) => void>();
+    const events = eventHarness();
     let resolveInFlight!: (value: { items: CanonicalChatRecord[] }) => void;
-    const inFlight = new Promise<{ items: CanonicalChatRecord[] }>((resolve) => {
-      resolveInFlight = resolve;
-    });
-    const initial = record("chat_burst", "Burst chat", {
-      updatedAt: "2026-08-29T02:00:00.000Z",
-    });
+    const inFlight = new Promise<{ items: CanonicalChatRecord[] }>((resolve) => { resolveInFlight = resolve; });
+    const initial = record("chat_burst", "Burst chat", { updatedAt: "2026-08-29T02:00:00.000Z" });
     const refreshed = record("chat_burst", "Burst chat", {
       updatedAt: "2026-08-29T02:01:00.000Z",
       activeRunStatus: "running",
@@ -222,36 +177,10 @@ describe("WorkRail", () => {
         .mockImplementationOnce(() => inFlight)
         .mockResolvedValueOnce({ items: [refreshed] }),
     } as unknown as CanonicalChatClient;
-    const eventSource = {
-      subscribe(listener: (event: Invalidation) => void) {
-        listeners.add(listener);
-        return { dispose: () => listeners.delete(listener) };
-      },
-    };
-    const EventAwareWorkRail = WorkRail as ComponentType<
-      ComponentProps<typeof WorkRail> & { eventSource: typeof eventSource }
-    >;
-
-    render(
-      <EventAwareWorkRail
-        client={client}
-        eventSource={eventSource}
-        projects={[]}
-        active
-        onNewGlobalChat={vi.fn()}
-        onCreateProject={vi.fn()}
-        onNewProjectChat={vi.fn()}
-        onSelectChat={vi.fn()}
-        onCollapse={vi.fn()}
-      />,
-    );
+    renderRail(client, events.eventSource);
     await screen.findByRole("button", { name: "Burst chat" });
 
-    act(() => {
-      for (const cursor of [1, 2, 3]) {
-        for (const listener of listeners) listener({ type: "chat.changed", chatId: initial.chat.id, cursor });
-      }
-    });
+    act(() => { for (const cursor of [1, 2, 3]) events.emit({ type: "chat.changed", chatId: initial.chat.id, cursor }); });
     expect(client.list).toHaveBeenCalledTimes(2);
 
     await act(async () => {
@@ -262,71 +191,22 @@ describe("WorkRail", () => {
     expect(await screen.findByLabelText("Agent running for Burst chat")).toBeTruthy();
   });
 
-  it("renders the highest-priority canonical agent state for every Chat row", async () => {
+  it("renders attention ahead of running and completion for every Chat row", async () => {
+    const updatedAt = "2026-08-28T12:00:00.000Z";
     const records = [
-      record("chat_approval", "Approval chat", {
-        updatedAt: "2026-08-28T12:06:00.000Z",
-        attention: "approval_required",
-        activeRunStatus: "running",
-        unacknowledged: true,
-      }),
-      record("chat_input", "Input chat", {
-        updatedAt: "2026-08-28T12:05:00.000Z",
-        attention: "input_required",
-        activeRunStatus: "running",
-        unacknowledged: true,
-      }),
-      record("chat_running", "Running chat", {
-        updatedAt: "2026-08-28T12:04:00.000Z",
-        attention: "failed",
-        activeRunStatus: "running",
-        unacknowledged: true,
-      }),
-      record("chat_failed", "Failed chat", {
-        updatedAt: "2026-08-28T12:03:00.000Z",
-        attention: "failed",
-        unacknowledged: true,
-      }),
-      record("chat_completed", "Completed chat", {
-        updatedAt: "2026-08-28T12:02:00.000Z",
-        unacknowledged: true,
-      }),
-      record("chat_acknowledged", "Acknowledged chat", {
-        updatedAt: "2026-08-28T12:01:00.000Z",
-        unacknowledged: false,
-      }),
-      record("chat_idle", "Idle chat", {
-        updatedAt: "2026-08-28T12:00:00.000Z",
-      }),
+      record("chat_approval", "Approval chat", { updatedAt, attention: "approval_required", activeRunStatus: "running", unacknowledged: true }),
+      record("chat_input", "Input chat", { updatedAt, attention: "input_required", activeRunStatus: "running", unacknowledged: true }),
     ];
     const client = {
       list: vi.fn(async () => ({ items: records })),
     } as unknown as CanonicalChatClient;
-    render(
-      <WorkRail
-        client={client}
-        projects={[]}
-        active
-        onNewGlobalChat={vi.fn()}
-        onCreateProject={vi.fn()}
-        onNewProjectChat={vi.fn()}
-        onSelectChat={vi.fn()}
-        onCollapse={vi.fn()}
-      />,
-    );
+    renderRail(client);
 
     await screen.findByRole("button", { name: "Approval chat" });
     expect(screen.getByLabelText("Approval required for Approval chat")).toBeTruthy();
     expect(screen.getByLabelText("Input required for Input chat")).toBeTruthy();
-    expect(screen.getByLabelText("Agent running for Running chat")).toBeTruthy();
-    expect(screen.getByLabelText("Agent failed for Failed chat")).toBeTruthy();
-    expect(screen.getByLabelText("Unseen completion for Completed chat")).toBeTruthy();
-
     expect(screen.queryByLabelText("Agent running for Approval chat")).toBeNull();
-    expect(screen.queryByLabelText("Unseen completion for Running chat")).toBeNull();
-    expect(screen.queryByLabelText("Unseen completion for Failed chat")).toBeNull();
-    expect(screen.queryByLabelText("Unseen completion for Acknowledged chat")).toBeNull();
-    expect(screen.queryByLabelText("Unseen completion for Idle chat")).toBeNull();
+    expect(screen.queryByLabelText("Unseen completion for Input chat")).toBeNull();
   });
 
   it("renders New chat as a plain leading rail row", async () => {

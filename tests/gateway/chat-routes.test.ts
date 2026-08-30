@@ -41,11 +41,7 @@ const record: CanonicalChatRecord = {
   },
 };
 
-type AcknowledgingRouteService = CanonicalChatRouteService & {
-  acknowledgeCompletion(owner: ChatOwner, chatId: string, runId: string): Promise<CanonicalChatRecord>;
-};
-
-function routeService(overrides: Partial<AcknowledgingRouteService> = {}): AcknowledgingRouteService {
+function routeService(overrides: Partial<CanonicalChatRouteService> = {}): CanonicalChatRouteService {
   return {
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
@@ -71,7 +67,7 @@ function routeService(overrides: Partial<AcknowledgingRouteService> = {}): Ackno
       throw new Error("not configured");
     }),
     ...overrides,
-  } as AcknowledgingRouteService;
+  };
 }
 
 function appFor(service: CanonicalChatRouteService) {
@@ -79,6 +75,18 @@ function appFor(service: CanonicalChatRouteService) {
     service,
     getPrincipal: () => ({ userId: "owner_1", source: "jwt" }),
   }));
+}
+
+function acknowledge(
+  app: ReturnType<typeof appFor>,
+  path = "/api/chats/chat_route_test/runs/run_route_completed/acknowledge",
+  body: unknown = {},
+) {
+  return app.request(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 describe("canonical Chat routes", () => {
@@ -208,14 +216,7 @@ describe("canonical Chat routes", () => {
       },
     };
     const acknowledgeCompletion = vi.fn(async () => acknowledged);
-    const response = await appFor(routeService({ acknowledgeCompletion })).request(
-      "/api/chats/chat_route_test/runs/run_route_completed/acknowledge",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      },
-    );
+    const response = await acknowledge(appFor(routeService({ acknowledgeCompletion })));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(acknowledged);
@@ -228,42 +229,25 @@ describe("canonical Chat routes", () => {
 
   it("rejects malformed acknowledgement paths, non-empty bodies, and oversized bodies", async () => {
     const app = appFor(routeService());
-    const request = (path: string, body: unknown) => app.request(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    expect((await request(
-      "/api/chats/not-a-chat/runs/run_route_completed/acknowledge",
-      {},
-    )).status).toBe(400);
-    expect((await request(
-      "/api/chats/chat_route_test/runs/not-a-run/acknowledge",
-      {},
-    )).status).toBe(400);
-    expect((await request(
-      "/api/chats/chat_route_test/runs/run_route_completed/acknowledge",
-      { completedAt: "2026-08-25T12:02:00.000Z" },
-    )).status).toBe(400);
-    expect((await request(
-      "/api/chats/chat_route_test/runs/run_route_completed/acknowledge",
-      { padding: "x".repeat(5 * 1024) },
-    )).status).toBe(413);
+    const cases: Array<[string, unknown, number]> = [
+      ["/api/chats/not-a-chat/runs/run_route_completed/acknowledge", {}, 400],
+      ["/api/chats/chat_route_test/runs/not-a-run/acknowledge", {}, 400],
+      ["/api/chats/chat_route_test/runs/run_route_completed/acknowledge", { completedAt: "2026-08-25T12:02:00.000Z" }, 400],
+      ["/api/chats/chat_route_test/runs/run_route_completed/acknowledge", { padding: "x".repeat(5 * 1024) }, 413],
+    ];
+    for (const [path, body, status] of cases) {
+      expect((await acknowledge(app, path, body)).status).toBe(status);
+    }
   });
 
   it("returns a safe acknowledgement error without exposing repository details", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      const response = await appFor(routeService({
+      const response = await acknowledge(appFor(routeService({
         acknowledgeCompletion: vi.fn(async () => {
           throw new Error("postgres://secret-host/private-owner");
         }),
-      })).request("/api/chats/chat_route_test/runs/run_route_completed/acknowledge", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      });
+      })));
 
       expect(response.status).toBe(503);
       expect(await response.json()).toEqual({
@@ -275,15 +259,11 @@ describe("canonical Chat routes", () => {
         },
       });
 
-      const rejected = await appFor(routeService({
+      const rejected = await acknowledge(appFor(routeService({
         acknowledgeCompletion: vi.fn(async () => {
           throw new ChatRunNotAcknowledgeableError("chat_route_test", "run_route_completed");
         }),
-      })).request("/api/chats/chat_route_test/runs/run_route_completed/acknowledge", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      });
+      })));
       expect(rejected.status).toBe(409);
       expect(await rejected.json()).toEqual({
         error: {

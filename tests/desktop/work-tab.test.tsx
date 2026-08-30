@@ -19,16 +19,9 @@ const inspectorProps = vi.hoisted(() => ({
 }));
 const chatTabProps = vi.hoisted(() => ({
   tabIds: [] as Array<string | undefined>,
-  eventSources: [] as unknown[],
 }));
-const projectChatProps = vi.hoisted(() => ({
-  eventSources: [] as unknown[],
-}));
-const workRailProps = vi.hoisted(() => ({
-  eventSources: [] as unknown[],
-}));
+const eventSourceProps = vi.hoisted(() => ({ rail: [] as unknown[], chat: [] as unknown[], project: [] as unknown[] }));
 const chatEventSourceFactory = vi.hoisted(() => ({
-  calls: [] as unknown[],
   sources: [] as Array<{
     subscribe: ReturnType<typeof vi.fn>;
     start: ReturnType<typeof vi.fn>;
@@ -40,8 +33,7 @@ vi.mock("@desktop/renderer/src/lib/canonical-chat-client", async (importOriginal
   const actual = await importOriginal<typeof import("@desktop/renderer/src/lib/canonical-chat-client")>();
   return {
     ...actual,
-    createCanonicalChatEventSource: (options: unknown) => {
-      chatEventSourceFactory.calls.push(options);
+    createCanonicalChatEventSource: () => {
       const source = {
         subscribe: vi.fn(() => ({ dispose: vi.fn() })),
         start: vi.fn(async () => undefined),
@@ -58,7 +50,7 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", async (importOriginal) =
   return {
     ...actual,
     WorkRail: (props: React.ComponentProps<typeof actual.WorkRail> & { eventSource?: unknown }) => {
-      workRailProps.eventSources.push(props.eventSource);
+      eventSourceProps.rail.push(props.eventSource);
       return <actual.WorkRail {...props} />;
     },
   };
@@ -77,7 +69,7 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
     inspectorExclusive?: boolean;
   }) => {
     chatTabProps.tabIds.push(tabId);
-    chatTabProps.eventSources.push(eventSource);
+    eventSourceProps.chat.push(eventSource);
     return (
       <>
         <main aria-hidden={inspectorExclusive || undefined}>Chat center</main>
@@ -96,7 +88,7 @@ vi.mock("@desktop/renderer/src/features/project/ProjectChatsView", () => ({
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
   }) => {
-    projectChatProps.eventSources.push(eventSource);
+    eventSourceProps.project.push(eventSource);
     return (
       <>
         <main aria-hidden={inspectorExclusive || undefined}>Project center</main>
@@ -211,10 +203,9 @@ describe("WorkTab rail integration", () => {
     resizeObserverCallbacks.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
-    chatTabProps.eventSources = [];
-    projectChatProps.eventSources = [];
-    workRailProps.eventSources = [];
-    chatEventSourceFactory.calls = [];
+    eventSourceProps.rail = [];
+    eventSourceProps.chat = [];
+    eventSourceProps.project = [];
     chatEventSourceFactory.sources = [];
     initialWorkWidth = 1_400;
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
@@ -272,49 +263,34 @@ describe("WorkTab rail integration", () => {
   });
 
   it("owns one shared Chat event source across rail and content and replaces it on runtime identity changes", async () => {
-    const view = render(
-      <WorkTab
-        route="chat"
-        active
-        initialChatId="chat_global"
-        initialChatView="conversation"
-      />,
-    );
+    const view = render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
     await screen.findByRole("button", { name: "Global chat" });
 
-    expect(chatEventSourceFactory.calls).toHaveLength(1);
+    expect(chatEventSourceFactory.sources).toHaveLength(1);
     const firstSource = chatEventSourceFactory.sources[0];
     expect(firstSource).toBeDefined();
-    expect(workRailProps.eventSources.at(-1)).toBe(firstSource);
-    expect(chatTabProps.eventSources.at(-1)).toBe(firstSource);
+    expect(eventSourceProps.rail.at(-1)).toBe(firstSource);
+    expect(eventSourceProps.chat.at(-1)).toBe(firstSource);
 
-    view.rerender(
-      <WorkTab
-        route="project"
-        projectSlug="alpha"
-        active
-        initialChatId="chat_alpha"
-        initialChatView="conversation"
-      />,
-    );
+    view.rerender(<WorkTab route="project" projectSlug="alpha" active initialChatId="chat_alpha" initialChatView="conversation" />);
     await screen.findByText("Project center");
-    expect(chatEventSourceFactory.calls).toHaveLength(1);
-    expect(workRailProps.eventSources.at(-1)).toBe(firstSource);
-    expect(projectChatProps.eventSources.at(-1)).toBe(firstSource);
+    expect(chatEventSourceFactory.sources).toHaveLength(1);
+    expect(eventSourceProps.rail.at(-1)).toBe(firstSource);
+    expect(eventSourceProps.project.at(-1)).toBe(firstSource);
 
     act(() => useConnection.setState({ authGeneration: 2 }));
-    await waitFor(() => expect(chatEventSourceFactory.calls).toHaveLength(2));
+    await waitFor(() => expect(chatEventSourceFactory.sources).toHaveLength(2));
     const secondSource = chatEventSourceFactory.sources[1];
     expect(firstSource?.dispose).toHaveBeenCalledTimes(1);
-    expect(workRailProps.eventSources.at(-1)).toBe(secondSource);
-    expect(projectChatProps.eventSources.at(-1)).toBe(secondSource);
+    expect(eventSourceProps.rail.at(-1)).toBe(secondSource);
+    expect(eventSourceProps.project.at(-1)).toBe(secondSource);
 
     act(() => useConnection.setState({ runtimeSlot: "secondary" }));
-    await waitFor(() => expect(chatEventSourceFactory.calls).toHaveLength(3));
+    await waitFor(() => expect(chatEventSourceFactory.sources).toHaveLength(3));
     const thirdSource = chatEventSourceFactory.sources[2];
     expect(secondSource?.dispose).toHaveBeenCalledTimes(1);
-    expect(workRailProps.eventSources.at(-1)).toBe(thirdSource);
-    expect(projectChatProps.eventSources.at(-1)).toBe(thirdSource);
+    expect(eventSourceProps.rail.at(-1)).toBe(thirdSource);
+    expect(eventSourceProps.project.at(-1)).toBe(thirdSource);
 
     view.unmount();
     expect(thirdSource?.dispose).toHaveBeenCalledTimes(1);

@@ -145,12 +145,7 @@ describe("canonical Chat client", () => {
     };
     const post = vi.fn(async () => acknowledged);
     const client = createCanonicalChatClient(api({ post }));
-    const acknowledgeCompletion = (client as typeof client & {
-      acknowledgeCompletion(chatId: string, runId: string): Promise<typeof acknowledged>;
-    }).acknowledgeCompletion;
-
-    expect(acknowledgeCompletion).toBeTypeOf("function");
-    if (!acknowledgeCompletion) return;
+    const { acknowledgeCompletion } = client;
     await expect(acknowledgeCompletion(record.chat.id, "run_client_completed"))
       .resolves.toEqual(acknowledged);
     expect(post).toHaveBeenCalledWith(

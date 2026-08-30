@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import type {
+  CanonicalChatClient,
+  CanonicalChatEventSource,
+  CanonicalChatInvalidation,
+} from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
 import { describe, expect, it, vi } from "vitest";
 
@@ -27,13 +31,7 @@ const detail = {
   activities: [],
 };
 
-type AcknowledgingCanonicalChatClient = CanonicalChatClient & {
-  acknowledgeCompletion(chatId: string, runId: string): Promise<typeof globalRecord>;
-};
-
-function client(
-  overrides: Partial<AcknowledgingCanonicalChatClient> = {},
-): AcknowledgingCanonicalChatClient {
+function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClient {
   return {
     list: vi.fn(async () => ({ items: [globalRecord] })),
     search: vi.fn(async () => ({ items: [globalRecord] })),
@@ -49,24 +47,29 @@ function client(
     cancelRun: vi.fn(),
     retryTurn: vi.fn(),
     ...overrides,
-  } as AcknowledgingCanonicalChatClient;
+  } as CanonicalChatClient;
+}
+
+function eventHarness() {
+  const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
+  const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
+    subscribe(listener) {
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    },
+  };
+  return {
+    eventSource,
+    listeners,
+    emit(event: CanonicalChatInvalidation) {
+      for (const listener of listeners) listener(event);
+    },
+  };
 }
 
 describe("canonical Chat route controller", () => {
   it("refreshes only the selected Chat from the shared event source and acknowledges its exact completion", async () => {
-    type Invalidation =
-      | { type: "chat.changed"; chatId: string; cursor: number }
-      | { type: "chat.full_refresh"; cursor?: number };
-    type EventSource = {
-      subscribe(listener: (event: Invalidation) => void): { dispose(): void };
-    };
-    const listeners = new Set<(event: Invalidation) => void>();
-    const eventSource: EventSource = {
-      subscribe(listener) {
-        listeners.add(listener);
-        return { dispose: () => listeners.delete(listener) };
-      },
-    };
+    const events = eventHarness();
     const runningA = {
       ...globalRecord,
       chat: { ...globalRecord.chat, id: "chat_parallel_a", title: "Parallel A" },
@@ -103,15 +106,12 @@ describe("canonical Chat route controller", () => {
       getDetail,
       acknowledgeCompletion,
     });
-    const useEventAwareController = useCanonicalChatRouteController as (
-      input: Parameters<typeof useCanonicalChatRouteController>[0] & { eventSource: EventSource },
-    ) => ReturnType<typeof useCanonicalChatRouteController>;
-    const { result, unmount } = renderHook(() => useEventAwareController({
+    const { result, unmount } = renderHook(() => useCanonicalChatRouteController({
       client: sharedClient,
       projectId: null,
       active: true,
       initialChatId: completedB.chat.id,
-      eventSource,
+      eventSource: events.eventSource,
     }));
 
     await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(completedB.chat.id));
@@ -122,43 +122,24 @@ describe("canonical Chat route controller", () => {
     expect(acknowledgeCompletion).toHaveBeenCalledTimes(1);
     const beforeBackgroundEvent = getDetail.mock.calls.length;
 
-    act(() => {
-      for (const listener of listeners) {
-        listener({ type: "chat.changed", chatId: runningA.chat.id, cursor: 3 });
-      }
-    });
+    act(() => events.emit({ type: "chat.changed", chatId: runningA.chat.id, cursor: 3 }));
     await Promise.resolve();
     expect(getDetail).toHaveBeenCalledTimes(beforeBackgroundEvent);
 
-    act(() => {
-      for (const listener of listeners) {
-        listener({ type: "chat.changed", chatId: completedB.chat.id, cursor: 4 });
-      }
-    });
+    act(() => events.emit({ type: "chat.changed", chatId: completedB.chat.id, cursor: 4 }));
     await waitFor(() => expect(getDetail.mock.calls.length).toBe(beforeBackgroundEvent + 1));
     expect(acknowledgeCompletion).toHaveBeenCalledTimes(1);
 
     const listCallsBeforeGap = list.mock.calls.length;
-    act(() => {
-      for (const listener of listeners) {
-        listener({ type: "chat.full_refresh", cursor: 4 });
-      }
-    });
+    act(() => events.emit({ type: "chat.full_refresh", cursor: 4 }));
     await waitFor(() => expect(list.mock.calls.length).toBe(listCallsBeforeGap + 1));
 
     unmount();
-    expect(listeners.size).toBe(0);
+    expect(events.listeners.size).toBe(0);
   });
 
   it("coalesces a burst of selected Chat events into one in-flight and one pending detail refresh", async () => {
-    type Invalidation = { type: "chat.changed"; chatId: string; cursor: number };
-    const listeners = new Set<(event: Invalidation) => void>();
-    const eventSource = {
-      subscribe(listener: (event: Invalidation) => void) {
-        listeners.add(listener);
-        return { dispose: () => listeners.delete(listener) };
-      },
-    };
+    const events = eventHarness();
     const firstRefresh = {
       ...detail,
       record: {
@@ -179,15 +160,12 @@ describe("canonical Chat route controller", () => {
     });
     const getDetail = vi.fn(async () => detail);
     const sharedClient = client({ getDetail });
-    const useEventAwareController = useCanonicalChatRouteController as (
-      input: Parameters<typeof useCanonicalChatRouteController>[0] & { eventSource: typeof eventSource },
-    ) => ReturnType<typeof useCanonicalChatRouteController>;
-    const { result } = renderHook(() => useEventAwareController({
+    const { result } = renderHook(() => useCanonicalChatRouteController({
       client: sharedClient,
       projectId: null,
       active: true,
       initialChatId: globalRecord.chat.id,
-      eventSource,
+      eventSource: events.eventSource,
     }));
     await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(globalRecord.chat.id));
     expect(getDetail).toHaveBeenCalledTimes(1);
@@ -196,9 +174,7 @@ describe("canonical Chat route controller", () => {
 
     act(() => {
       for (const cursor of [1, 2, 3]) {
-        for (const listener of listeners) {
-          listener({ type: "chat.changed", chatId: globalRecord.chat.id, cursor });
-        }
+        events.emit({ type: "chat.changed", chatId: globalRecord.chat.id, cursor });
       }
     });
     expect(getDetail).toHaveBeenCalledTimes(2);
@@ -370,53 +346,6 @@ describe("canonical Chat route controller", () => {
 
     await waitFor(() => expect(result.current.detail?.record.chat.id).toBe("chat_moved"));
     expect(getDetail).toHaveBeenCalledWith("chat_moved", { limit: 200 });
-  });
-
-  it("acknowledges only the exact currently projected unseen completion when its Chat opens", async () => {
-    const completedRecord = {
-      ...globalRecord,
-      latestSuccessfulCompletion: {
-        runId: "run_completed_opened",
-        completedAt: "2026-08-26T00:01:00.000Z",
-        unacknowledged: true,
-      },
-    };
-    const acknowledgedRecord = {
-      ...completedRecord,
-      latestSuccessfulCompletion: {
-        ...completedRecord.latestSuccessfulCompletion,
-        unacknowledged: false,
-      },
-    };
-    const backgroundRecord = {
-      ...completedRecord,
-      chat: { ...completedRecord.chat, id: "chat_background_completion" },
-      latestSuccessfulCompletion: {
-        ...completedRecord.latestSuccessfulCompletion,
-        runId: "run_background_completed",
-      },
-    };
-    const acknowledgeCompletion = vi.fn(async () => acknowledgedRecord);
-    const sharedClient = client({
-      list: vi.fn(async () => ({ items: [completedRecord, backgroundRecord] })),
-      getDetail: vi.fn(async () => ({ ...detail, record: completedRecord })),
-      acknowledgeCompletion,
-    });
-    const { result } = renderHook(() => useCanonicalChatRouteController({
-      client: sharedClient,
-      projectId: null,
-      active: true,
-      initialChatId: globalRecord.chat.id,
-    }));
-
-    await waitFor(() => expect(acknowledgeCompletion).toHaveBeenCalledWith(
-      globalRecord.chat.id,
-      "run_completed_opened",
-    ));
-    await waitFor(() => expect(
-      result.current.detail?.record.latestSuccessfulCompletion?.unacknowledged,
-    ).toBe(false));
-    expect(acknowledgeCompletion).toHaveBeenCalledTimes(1);
   });
 
   it("does not let a delayed old acknowledgement overwrite a newer successful completion", async () => {

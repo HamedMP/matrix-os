@@ -112,40 +112,73 @@ function terminalBinding(
   };
 }
 
-async function acknowledgeCompletion(
-  repository: ChatRepository,
-  acknowledgementOwner: { type: "personal"; ownerId: string },
-  chatId: string,
-  runId: string,
-): Promise<CanonicalChatRecord> {
-  return (repository as ChatRepository & {
-    acknowledgeCompletion(
-      owner: { type: "personal"; ownerId: string },
-      chatId: string,
-      runId: string,
-    ): Promise<CanonicalChatRecord>;
-  }).acknowledgeCompletion(acknowledgementOwner, chatId, runId);
+function createChat(repository: ChatRepository, suffix: string, creationOwner = owner) {
+  return repository.create(creationOwner, {
+    id: `chat_${suffix}`, clientRequestId: `req_${suffix}`, title: suffix,
+  });
 }
 
-type CanonicalChatOutboxSink = (input: {
-  owner: ChatOwner;
-  event: ChatOutboxEvent;
-}) => void;
+async function admitChat(repository: ChatRepository, suffix: string) {
+  const created = await createChat(repository, suffix);
+  const input = message(created.chat.id);
+  const acceptedTurn = turn(created.chat.id, input, `req_turn_${suffix}`);
+  const acceptedRun = run(created.chat.id, acceptedTurn);
+  await repository.admitTurn(owner, {
+    chatId: created.chat.id,
+    baseRevision: created.chat.revision,
+    message: input,
+    turn: acceptedTurn,
+    run: acceptedRun,
+  });
+  return { chatId: created.chat.id, runId: acceptedRun.id, turn: acceptedTurn, run: acceptedRun };
+}
 
-type ChatEventRepository = ChatRepository & {
-  registerOutboxSink(sink: CanonicalChatOutboxSink): { dispose(): void };
-  replayOutboxWindow(owner: ChatOwner, input: {
-    afterCursor?: number;
-    limit: number;
-  }): Promise<{
-    events: ChatOutboxEvent[];
-    gap: boolean;
-    nextCursor?: number;
-  }>;
-};
+type AdmittedChat = Awaited<ReturnType<typeof admitChat>>;
+type ActivityInput = CanonicalChatRunActivity extends infer Activity
+  ? Activity extends CanonicalChatRunActivity
+    ? Omit<Activity, "chatId" | "runId">
+    : never
+  : never;
 
-function eventRepository(repository: ChatRepository): ChatEventRepository {
-  return repository as ChatEventRepository;
+function finishChat(
+  repository: ChatRepository,
+  admitted: Pick<AdmittedChat, "chatId" | "runId">,
+  outcome: "completed" | "failed" | "aborted",
+  completedAt: string,
+) {
+  return repository.finishRun(owner, { ...admitted, outcome, completedAt });
+}
+
+function appendActivity(
+  repository: ChatRepository,
+  admitted: Pick<AdmittedChat, "chatId" | "runId">,
+  activity: ActivityInput,
+) {
+  return repository.appendRunActivities(owner, admitted.chatId, admitted.runId, [{
+    ...activity,
+    chatId: admitted.chatId,
+    runId: admitted.runId,
+  } as CanonicalChatRunActivity]);
+}
+
+async function retryAndFinish(
+  repository: ChatRepository,
+  admitted: AdmittedChat,
+  suffix: string,
+  completedAt: string,
+) {
+  const current = await repository.get(owner, admitted.chatId);
+  expect(current).not.toBeNull();
+  const retry = run(admitted.chatId, admitted.turn, 2);
+  await repository.admitRetry(owner, {
+    chatId: admitted.chatId,
+    turnId: admitted.turn.id,
+    clientRequestId: `req_retry_${suffix}`,
+    baseRevision: current!.chat.revision,
+    run: retry,
+  });
+  await finishChat(repository, { chatId: admitted.chatId, runId: retry.id }, "completed", completedAt);
+  return retry;
 }
 
 describe("ChatRepository", () => {
@@ -236,14 +269,10 @@ describe("ChatRepository", () => {
 
   it("notifies the single bounded outbox sink only after commit and never after rollback", async () => {
     const delivered: Array<{ owner: ChatOwner; event: ChatOutboxEvent }> = [];
-    const events = eventRepository(repository);
+    const events = repository;
     const registration = events.registerOutboxSink((event) => delivered.push(event));
 
-    await repository.create(owner, {
-      id: "chat_sink_committed",
-      clientRequestId: "req_sink_committed",
-      title: "Committed sink event",
-    });
+    await createChat(repository, "sink_committed");
     expect(delivered).toEqual([
       expect.objectContaining({
         owner,
@@ -256,11 +285,7 @@ describe("ChatRepository", () => {
 
     let deliveredBeforeOuterCommit = -1;
     await repository.withTransaction(async (transaction) => {
-      await transaction.create(owner, {
-        id: "chat_sink_outer_transaction",
-        clientRequestId: "req_sink_outer_transaction",
-        title: "Outer transaction event",
-      });
+      await createChat(transaction, "sink_outer_transaction");
       deliveredBeforeOuterCommit = delivered.length;
     });
     expect(deliveredBeforeOuterCommit).toBe(1);
@@ -270,11 +295,7 @@ describe("ChatRepository", () => {
     }));
 
     await expect(repository.withTransaction(async (transaction) => {
-      await transaction.create(owner, {
-        id: "chat_sink_rolled_back",
-        clientRequestId: "req_sink_rolled_back",
-        title: "Rolled-back sink event",
-      });
+      await createChat(transaction, "sink_rolled_back");
       throw new Error("force rollback");
     })).rejects.toThrow("force rollback");
     expect(delivered).toHaveLength(2);
@@ -287,31 +308,23 @@ describe("ChatRepository", () => {
   });
 
   it("drains the registered outbox sink before repository release", async () => {
-    const events = eventRepository(repository);
+    const events = repository;
     const delivered: ChatOutboxEvent[] = [];
     events.registerOutboxSink(({ event }) => delivered.push(event));
 
     await repository.release();
-    await repository.create(owner, {
-      id: "chat_after_repository_release",
-      clientRequestId: "req_after_repository_release",
-      title: "No late delivery",
-    });
+    await createChat(repository, "after_repository_release");
 
     expect(delivered).toEqual([]);
   });
 
   it("fails closed and rolls back when one transaction exceeds the pending outbox cap", async () => {
     const delivered: ChatOutboxEvent[] = [];
-    eventRepository(repository).registerOutboxSink(({ event }) => delivered.push(event));
+    repository.registerOutboxSink(({ event }) => delivered.push(event));
 
     await expect(repository.withTransaction(async (transaction) => {
       for (let index = 0; index <= 100; index += 1) {
-        await transaction.create(owner, {
-          id: `chat_pending_cap_${index}`,
-          clientRequestId: `req_pending_cap_${index}`,
-          title: `Pending event ${index}`,
-        });
+        await createChat(transaction, `pending_cap_${index}`);
       }
     })).rejects.toThrow(/outbox limit/i);
 
@@ -320,22 +333,10 @@ describe("ChatRepository", () => {
   });
 
   it("replays an owner-isolated bounded monotonic window and reports a pruned cursor gap", async () => {
-    const events = eventRepository(repository);
-    await repository.create(owner, {
-      id: "chat_replay_first",
-      clientRequestId: "req_replay_first",
-      title: "First replay event",
-    });
-    await repository.create(otherOwner, {
-      id: "chat_replay_other_owner",
-      clientRequestId: "req_replay_other_owner",
-      title: "Other owner event",
-    });
-    await repository.create(owner, {
-      id: "chat_replay_second",
-      clientRequestId: "req_replay_second",
-      title: "Second replay event",
-    });
+    const events = repository;
+    await createChat(repository, "replay_first");
+    await createChat(repository, "replay_other_owner", otherOwner);
+    await createChat(repository, "replay_second");
 
     const firstWindow = await events.replayOutboxWindow(owner, { limit: 1 });
     expect(firstWindow).toMatchObject({ gap: false });
@@ -354,11 +355,7 @@ describe("ChatRepository", () => {
     expect(remaining.events).toHaveLength(1);
 
     await repository.pruneOutbox(owner, remaining.events[0]!.cursor + 1, 100);
-    await repository.create(owner, {
-      id: "chat_replay_after_prune",
-      clientRequestId: "req_replay_after_prune",
-      title: "After prune",
-    });
+    await createChat(repository, "replay_after_prune");
     const gap = await events.replayOutboxWindow(owner, {
       afterCursor: firstWindow.nextCursor,
       limit: 10,
@@ -368,12 +365,8 @@ describe("ChatRepository", () => {
   });
 
   it("caps one replay window even when the caller requests an oversized page", async () => {
-    const events = eventRepository(repository);
-    await repository.create(owner, {
-      id: "chat_replay_cap",
-      clientRequestId: "req_replay_cap",
-      title: "Replay cap",
-    });
+    const events = repository;
+    await createChat(repository, "replay_cap");
     await repository.kysely.insertInto("chat_outbox").values(
       Array.from({ length: 105 }, (_, index) => ({
         owner_type: owner.type,
@@ -433,28 +426,10 @@ describe("ChatRepository", () => {
   });
 
   it("projects accepted, running, approval, and input Run states in fresh list and detail snapshots", async () => {
-    const admit = async (suffix: string) => {
-      const created = await repository.create(owner, {
-        id: `chat_rail_${suffix}`,
-        clientRequestId: `req_rail_${suffix}`,
-        title: `Rail ${suffix}`,
-      });
-      const input = message(created.chat.id);
-      const acceptedTurn = turn(created.chat.id, input, `req_turn_rail_${suffix}`);
-      const acceptedRun = run(created.chat.id, acceptedTurn);
-      await repository.admitTurn(owner, {
-        chatId: created.chat.id,
-        baseRevision: created.chat.revision,
-        message: input,
-        turn: acceptedTurn,
-        run: acceptedRun,
-      });
-      return { chatId: created.chat.id, runId: acceptedRun.id };
-    };
-    const accepted = await admit("accepted");
-    const running = await admit("running");
-    const approval = await admit("approval");
-    const inputRequired = await admit("input");
+    const accepted = await admitChat(repository, "rail_accepted");
+    const running = await admitChat(repository, "rail_running");
+    const approval = await admitChat(repository, "rail_approval");
+    const inputRequired = await admitChat(repository, "rail_input");
 
     for (const state of [running, approval, inputRequired]) {
       await repository.markRunRunning(owner, {
@@ -463,43 +438,31 @@ describe("ChatRepository", () => {
         startedAt: "2026-08-25T00:00:30.000Z",
       });
     }
-    await repository.appendRunActivities(owner, approval.chatId, approval.runId, [{
+    await appendActivity(repository, approval, {
       id: "activity_rail_approval",
-      chatId: approval.chatId,
-      runId: approval.runId,
       occurredAt: "2026-08-25T00:00:40.000Z",
       type: "approval.requested",
       approvalId: "approval_rail_exact",
       title: "Allow the command",
       risk: "medium",
-    }]);
-    await repository.appendRunActivities(owner, inputRequired.chatId, inputRequired.runId, [{
+    });
+    await appendActivity(repository, inputRequired, {
       id: "activity_rail_input",
-      chatId: inputRequired.chatId,
-      runId: inputRequired.runId,
       occurredAt: "2026-08-25T00:00:50.000Z",
       type: "input.requested",
       requestId: "input_rail_exact",
       title: "Choose an option",
-    }]);
+    });
 
     const list = await repository.list(owner, { limit: 100 });
     const byId = new Map(list.items.map((record) => [record.chat.id, record]));
-    expect(byId.get(accepted.chatId)).toMatchObject({
-      chat: { attention: "none" },
-      activeRun: { runId: accepted.runId, status: "accepted" },
-    });
-    expect(byId.get(running.chatId)).toMatchObject({
-      chat: { attention: "none" },
-      activeRun: { runId: running.runId, status: "running" },
-    });
-    expect(byId.get(approval.chatId)).toMatchObject({
-      chat: { attention: "approval_required" },
-      activeRun: { runId: approval.runId, status: "waiting_for_approval" },
-    });
-    expect(byId.get(inputRequired.chatId)).toMatchObject({
-      chat: { attention: "input_required" },
-      activeRun: { runId: inputRequired.runId, status: "waiting_for_input" },
+    for (const [state, attention, status] of [
+      [accepted, "none", "accepted"],
+      [running, "none", "running"],
+      [approval, "approval_required", "waiting_for_approval"],
+      [inputRequired, "input_required", "waiting_for_input"],
+    ] as const) expect(byId.get(state.chatId)).toMatchObject({
+      chat: { attention }, activeRun: { runId: state.runId, status },
     });
 
     for (const expected of [accepted, running, approval, inputRequired]) {
@@ -509,30 +472,14 @@ describe("ChatRepository", () => {
   });
 
   it("projects each newly persisted approval and input transition once with one refresh signal", async () => {
-    const created = await repository.create(owner, {
-      id: "chat_rail_activity_transitions",
-      clientRequestId: "req_rail_activity_transitions",
-      title: "Rail activity transitions",
-    });
-    const input = message(created.chat.id);
-    const acceptedTurn = turn(created.chat.id, input, "req_turn_rail_activity_transitions");
-    const acceptedRun = run(created.chat.id, acceptedTurn);
-    await repository.admitTurn(owner, {
-      chatId: created.chat.id,
-      baseRevision: created.chat.revision,
-      message: input,
-      turn: acceptedTurn,
-      run: acceptedRun,
-    });
+    const admitted = await admitChat(repository, "rail_activity_transitions");
     await repository.markRunRunning(owner, {
-      chatId: created.chat.id,
-      runId: acceptedRun.id,
+      chatId: admitted.chatId,
+      runId: admitted.runId,
       startedAt: "2026-08-25T00:00:30.000Z",
     });
-    const approvalRequested: CanonicalChatRunActivity = {
+    const approvalRequested: ActivityInput = {
       id: "activity_rail_transition_approval_requested",
-      chatId: created.chat.id,
-      runId: acceptedRun.id,
       occurredAt: "2026-08-25T00:00:40.000Z",
       type: "approval.requested",
       approvalId: "approval_rail_transition",
@@ -540,70 +487,32 @@ describe("ChatRepository", () => {
       risk: "medium",
     };
 
-    await expect(repository.appendRunActivities(
-      owner,
-      created.chat.id,
-      acceptedRun.id,
-      [approvalRequested],
-    )).resolves.toBe(1);
-    const afterApproval = await repository.get(owner, created.chat.id);
+    await expect(appendActivity(repository, admitted, approvalRequested)).resolves.toBe(1);
+    const afterApproval = await repository.get(owner, admitted.chatId);
     expect(afterApproval).toMatchObject({
       chat: { attention: "approval_required", revision: 2 },
       activeRun: { status: "waiting_for_approval" },
     });
     const outboxAfterApproval = await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 });
 
-    await expect(repository.appendRunActivities(
-      owner,
-      created.chat.id,
-      acceptedRun.id,
-      [approvalRequested],
-    )).resolves.toBe(0);
-    expect(await repository.get(owner, created.chat.id)).toEqual(afterApproval);
+    await expect(appendActivity(repository, admitted, approvalRequested)).resolves.toBe(0);
+    expect(await repository.get(owner, admitted.chatId)).toEqual(afterApproval);
     expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 }))
       .toEqual(outboxAfterApproval);
 
-    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
-      id: "activity_rail_transition_approval_resolved",
-      chatId: created.chat.id,
-      runId: acceptedRun.id,
-      occurredAt: "2026-08-25T00:00:50.000Z",
-      type: "approval.resolved",
-      approvalId: "approval_rail_transition",
-      decision: "approve",
-    }]);
-    expect(await repository.get(owner, created.chat.id)).toMatchObject({
-      chat: { attention: "none", revision: 3 },
-      activeRun: { status: "running" },
-    });
-
-    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
-      id: "activity_rail_transition_input_requested",
-      chatId: created.chat.id,
-      runId: acceptedRun.id,
-      occurredAt: "2026-08-25T00:01:00.000Z",
-      type: "input.requested",
-      requestId: "input_rail_transition",
-      title: "Choose an option",
-    }]);
-    expect(await repository.get(owner, created.chat.id)).toMatchObject({
-      chat: { attention: "input_required", revision: 4 },
-      activeRun: { status: "waiting_for_input" },
-    });
-
-    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
-      id: "activity_rail_transition_input_resolved",
-      chatId: created.chat.id,
-      runId: acceptedRun.id,
-      occurredAt: "2026-08-25T00:01:10.000Z",
-      type: "input.resolved",
-      requestId: "input_rail_transition",
-    }]);
-    const afterInput = await repository.get(owner, created.chat.id);
-    expect(afterInput).toMatchObject({
-      chat: { attention: "none", revision: 5 },
-      activeRun: { status: "running" },
-    });
+    const transitions: Array<[ActivityInput, string, string, number]> = [
+      [{ id: "activity_rail_transition_approval_resolved", occurredAt: "2026-08-25T00:00:50.000Z", type: "approval.resolved", approvalId: "approval_rail_transition", decision: "approve" }, "none", "running", 3],
+      [{ id: "activity_rail_transition_input_requested", occurredAt: "2026-08-25T00:01:00.000Z", type: "input.requested", requestId: "input_rail_transition", title: "Choose an option" }, "input_required", "waiting_for_input", 4],
+      [{ id: "activity_rail_transition_input_resolved", occurredAt: "2026-08-25T00:01:10.000Z", type: "input.resolved", requestId: "input_rail_transition" }, "none", "running", 5],
+    ];
+    for (const [activity, attention, status, revision] of transitions) {
+      await appendActivity(repository, admitted, activity);
+      expect(await repository.get(owner, admitted.chatId)).toMatchObject({
+        chat: { attention, revision }, activeRun: { status },
+      });
+    }
+    const afterInput = await repository.get(owner, admitted.chatId);
+    expect(afterInput).toMatchObject({ chat: { attention: "none", revision: 5 } });
     const transitionEvents = (await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 }))
       .filter((event) => event.eventType === "run.activity");
     expect(transitionEvents).toHaveLength(4);
@@ -611,86 +520,21 @@ describe("ChatRepository", () => {
   });
 
   it("projects failed and exact successful completion state without treating aborted or idle as complete", async () => {
-    const admit = async (suffix: string) => {
-      const created = await repository.create(owner, {
-        id: `chat_rail_terminal_${suffix}`,
-        clientRequestId: `req_rail_terminal_${suffix}`,
-        title: `Rail terminal ${suffix}`,
-      });
-      const input = message(created.chat.id);
-      const acceptedTurn = turn(created.chat.id, input, `req_turn_rail_terminal_${suffix}`);
-      const acceptedRun = run(created.chat.id, acceptedTurn);
-      await repository.admitTurn(owner, {
-        chatId: created.chat.id,
-        baseRevision: created.chat.revision,
-        message: input,
-        turn: acceptedTurn,
-        run: acceptedRun,
-      });
-      return { chatId: created.chat.id, runId: acceptedRun.id, turn: acceptedTurn };
-    };
-    const failed = await admit("failed");
-    const unseen = await admit("unseen");
-    const acknowledged = await admit("acknowledged");
-    const aborted = await admit("aborted");
-    const idle = await repository.create(owner, {
-      id: "chat_rail_terminal_idle",
-      clientRequestId: "req_rail_terminal_idle",
-      title: "Rail terminal idle",
-    });
+    const failed = await admitChat(repository, "rail_terminal_failed");
+    const unseen = await admitChat(repository, "rail_terminal_unseen");
+    const acknowledged = await admitChat(repository, "rail_terminal_acknowledged");
+    const aborted = await admitChat(repository, "rail_terminal_aborted");
+    const idle = await createChat(repository, "rail_terminal_idle");
     const completedAt = "2026-08-25T00:01:00.000Z";
 
-    await repository.finishRun(owner, {
-      chatId: failed.chatId,
-      runId: failed.runId,
-      outcome: "failed",
-      completedAt,
-    });
-    await repository.finishRun(owner, {
-      chatId: unseen.chatId,
-      runId: unseen.runId,
-      outcome: "completed",
-      completedAt,
-    });
-    const afterFirstSuccess = await repository.get(owner, unseen.chatId);
-    expect(afterFirstSuccess).not.toBeNull();
-    const latestUnseenRun = run(unseen.chatId, unseen.turn, 2);
-    await repository.admitRetry(owner, {
-      chatId: unseen.chatId,
-      turnId: unseen.turn.id,
-      clientRequestId: "req_rail_terminal_unseen_retry",
-      baseRevision: afterFirstSuccess!.chat.revision,
-      run: latestUnseenRun,
-    });
+    await finishChat(repository, failed, "failed", completedAt);
+    await finishChat(repository, unseen, "completed", completedAt);
+    await repository.acknowledgeCompletion(owner, unseen.chatId, unseen.runId);
     const latestCompletedAt = "2026-08-25T00:02:00.000Z";
-    await repository.finishRun(owner, {
-      chatId: unseen.chatId,
-      runId: latestUnseenRun.id,
-      outcome: "completed",
-      completedAt: latestCompletedAt,
-    });
-    await repository.finishRun(owner, {
-      chatId: acknowledged.chatId,
-      runId: acknowledged.runId,
-      outcome: "completed",
-      completedAt,
-    });
-    await repository.finishRun(owner, {
-      chatId: aborted.chatId,
-      runId: aborted.runId,
-      outcome: "aborted",
-      completedAt,
-    });
-    await sql`
-      UPDATE chat_user_state
-      SET attention_acknowledged_at = ${"2026-08-25T00:01:30.000Z"}
-      WHERE chat_id = ${unseen.chatId} AND principal_id = ${owner.ownerId}
-    `.execute(repository.kysely);
-    await sql`
-      UPDATE chat_user_state
-      SET attention_acknowledged_at = ${completedAt}
-      WHERE chat_id = ${acknowledged.chatId} AND principal_id = ${owner.ownerId}
-    `.execute(repository.kysely);
+    const latestUnseenRun = await retryAndFinish(repository, unseen, "rail_terminal_unseen", latestCompletedAt);
+    await finishChat(repository, acknowledged, "completed", completedAt);
+    await repository.acknowledgeCompletion(owner, acknowledged.chatId, acknowledged.runId);
+    await finishChat(repository, aborted, "aborted", completedAt);
 
     const list = await repository.list(owner, { limit: 100 });
     const byId = new Map(list.items.map((record) => [record.chat.id, record]));
@@ -721,48 +565,26 @@ describe("ChatRepository", () => {
   });
 
   it("acknowledges only an owned exact successful completed Run and rejects every other Run state", async () => {
-    const admit = async (suffix: string) => {
-      const created = await repository.create(owner, {
-        id: `chat_ack_validation_${suffix}`,
-        clientRequestId: `req_ack_validation_${suffix}`,
-        title: `Ack validation ${suffix}`,
-      });
-      const input = message(created.chat.id);
-      const acceptedTurn = turn(created.chat.id, input, `req_turn_ack_validation_${suffix}`);
-      const acceptedRun = run(created.chat.id, acceptedTurn);
-      await repository.admitTurn(owner, {
-        chatId: created.chat.id,
-        baseRevision: created.chat.revision,
-        message: input,
-        turn: acceptedTurn,
-        run: acceptedRun,
-      });
-      return { chatId: created.chat.id, runId: acceptedRun.id };
-    };
-    const completed = await admit("completed");
-    const wrongChat = await repository.create(owner, {
-      id: "chat_ack_validation_wrong_chat",
-      clientRequestId: "req_ack_validation_wrong_chat",
-      title: "Ack validation wrong Chat",
-    });
-    const active = await admit("active");
-    const failed = await admit("failed");
-    const aborted = await admit("aborted");
+    const completed = await admitChat(repository, "ack_validation_completed");
+    const wrongChat = await createChat(repository, "ack_validation_wrong_chat");
+    const active = await admitChat(repository, "ack_validation_active");
+    const failed = await admitChat(repository, "ack_validation_failed");
+    const aborted = await admitChat(repository, "ack_validation_aborted");
     const completedAt = "2026-08-25T00:03:00.000Z";
-    await repository.finishRun(owner, { ...completed, outcome: "completed", completedAt });
-    await repository.finishRun(owner, { ...failed, outcome: "failed", completedAt });
-    await repository.finishRun(owner, { ...aborted, outcome: "aborted", completedAt });
+    await finishChat(repository, completed, "completed", completedAt);
+    await finishChat(repository, failed, "failed", completedAt);
+    await finishChat(repository, aborted, "aborted", completedAt);
 
-    await expect(acknowledgeCompletion(repository, otherOwner, completed.chatId, completed.runId))
+    await expect(repository.acknowledgeCompletion(otherOwner, completed.chatId, completed.runId))
       .rejects.toBeInstanceOf(ChatNotFoundError);
-    await expect(acknowledgeCompletion(repository, owner, wrongChat.chat.id, completed.runId))
+    await expect(repository.acknowledgeCompletion(owner, wrongChat.chat.id, completed.runId))
       .rejects.toBeInstanceOf(ChatNotFoundError);
     for (const candidate of [active, failed, aborted]) {
-      await expect(acknowledgeCompletion(repository, owner, candidate.chatId, candidate.runId))
+      await expect(repository.acknowledgeCompletion(owner, candidate.chatId, candidate.runId))
         .rejects.toThrow();
     }
 
-    await expect(acknowledgeCompletion(repository, owner, completed.chatId, completed.runId))
+    await expect(repository.acknowledgeCompletion(owner, completed.chatId, completed.runId))
       .resolves.toMatchObject({
         latestSuccessfulCompletion: {
           runId: completed.runId,
@@ -773,64 +595,31 @@ describe("ChatRepository", () => {
   });
 
   it("stores exact completion time monotonically and emits one refresh only when acknowledgement advances", async () => {
-    const created = await repository.create(owner, {
-      id: "chat_ack_monotonic",
-      clientRequestId: "req_ack_monotonic",
-      title: "Ack monotonic",
-    });
-    const input = message(created.chat.id);
-    const acceptedTurn = turn(created.chat.id, input, "req_turn_ack_monotonic");
-    const firstRun = run(created.chat.id, acceptedTurn);
-    await repository.admitTurn(owner, {
-      chatId: created.chat.id,
-      baseRevision: created.chat.revision,
-      message: input,
-      turn: acceptedTurn,
-      run: firstRun,
-    });
+    const admitted = await admitChat(repository, "ack_monotonic");
+    const { chatId, run: firstRun } = admitted;
     const firstCompletedAt = "2026-08-25T00:01:00.000Z";
-    await repository.finishRun(owner, {
-      chatId: created.chat.id,
-      runId: firstRun.id,
-      outcome: "completed",
-      completedAt: firstCompletedAt,
-    });
+    await finishChat(repository, admitted, "completed", firstCompletedAt);
 
-    await acknowledgeCompletion(repository, owner, created.chat.id, firstRun.id);
+    await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
     const afterFirstAck = await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 });
-    await acknowledgeCompletion(repository, owner, created.chat.id, firstRun.id);
+    await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
     expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 })).toEqual(afterFirstAck);
 
-    const afterFirstRun = await repository.get(owner, created.chat.id);
-    expect(afterFirstRun).not.toBeNull();
-    const secondRun = run(created.chat.id, acceptedTurn, 2);
-    await repository.admitRetry(owner, {
-      chatId: created.chat.id,
-      turnId: acceptedTurn.id,
-      clientRequestId: "req_ack_monotonic_retry",
-      baseRevision: afterFirstRun!.chat.revision,
-      run: secondRun,
-    });
     const secondCompletedAt = "2026-08-25T00:02:00.000Z";
-    await repository.finishRun(owner, {
-      chatId: created.chat.id,
-      runId: secondRun.id,
-      outcome: "completed",
-      completedAt: secondCompletedAt,
-    });
-    await acknowledgeCompletion(repository, owner, created.chat.id, secondRun.id);
+    const secondRun = await retryAndFinish(repository, admitted, "ack_monotonic", secondCompletedAt);
+    await repository.acknowledgeCompletion(owner, chatId, secondRun.id);
     const afterSecondAck = await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 });
-    await acknowledgeCompletion(repository, owner, created.chat.id, firstRun.id);
+    await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
     expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 })).toEqual(afterSecondAck);
 
     const userState = await repository.kysely.selectFrom("chat_user_state")
       .select("attention_acknowledged_at")
-      .where("chat_id", "=", created.chat.id)
+      .where("chat_id", "=", chatId)
       .where("principal_id", "=", owner.ownerId)
       .executeTakeFirstOrThrow();
     expect(new Date(userState.attention_acknowledged_at!).toISOString()).toBe(secondCompletedAt);
     expect(afterSecondAck.filter((event) => (
-      event.chatId === created.chat.id && event.eventType === "chat.user_state_updated"
+      event.chatId === chatId && event.eventType === "chat.user_state_updated"
     ))).toEqual([
       expect.objectContaining({ payload: { runId: firstRun.id, completedAt: firstCompletedAt } }),
       expect.objectContaining({ payload: { runId: secondRun.id, completedAt: secondCompletedAt } }),
@@ -839,51 +628,18 @@ describe("ChatRepository", () => {
 
   it("keeps a newer successful completion unacknowledged across both old-ack interleavings", async () => {
     const exercise = async (suffix: string, acknowledgeOldBeforeNewCompletion: boolean) => {
-      const created = await repository.create(owner, {
-        id: `chat_ack_race_${suffix}`,
-        clientRequestId: `req_ack_race_${suffix}`,
-        title: `Ack race ${suffix}`,
-      });
-      const input = message(created.chat.id);
-      const acceptedTurn = turn(created.chat.id, input, `req_turn_ack_race_${suffix}`);
-      const firstRun = run(created.chat.id, acceptedTurn);
-      await repository.admitTurn(owner, {
-        chatId: created.chat.id,
-        baseRevision: created.chat.revision,
-        message: input,
-        turn: acceptedTurn,
-        run: firstRun,
-      });
-      await repository.finishRun(owner, {
-        chatId: created.chat.id,
-        runId: firstRun.id,
-        outcome: "completed",
-        completedAt: "2026-08-25T00:01:00.000Z",
-      });
+      const admitted = await admitChat(repository, `ack_race_${suffix}`);
+      const { chatId, run: firstRun } = admitted;
+      await finishChat(repository, admitted, "completed", "2026-08-25T00:01:00.000Z");
       if (acknowledgeOldBeforeNewCompletion) {
-        await acknowledgeCompletion(repository, owner, created.chat.id, firstRun.id);
+        await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
       }
-      const afterFirst = await repository.get(owner, created.chat.id);
-      expect(afterFirst).not.toBeNull();
-      const secondRun = run(created.chat.id, acceptedTurn, 2);
-      await repository.admitRetry(owner, {
-        chatId: created.chat.id,
-        turnId: acceptedTurn.id,
-        clientRequestId: `req_ack_race_retry_${suffix}`,
-        baseRevision: afterFirst!.chat.revision,
-        run: secondRun,
-      });
       const latestCompletedAt = "2026-08-25T00:02:00.000Z";
-      await repository.finishRun(owner, {
-        chatId: created.chat.id,
-        runId: secondRun.id,
-        outcome: "completed",
-        completedAt: latestCompletedAt,
-      });
+      const secondRun = await retryAndFinish(repository, admitted, `ack_race_${suffix}`, latestCompletedAt);
       if (!acknowledgeOldBeforeNewCompletion) {
-        await acknowledgeCompletion(repository, owner, created.chat.id, firstRun.id);
+        await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
       }
-      expect(await repository.get(owner, created.chat.id)).toMatchObject({
+      expect(await repository.get(owner, chatId)).toMatchObject({
         latestSuccessfulCompletion: {
           runId: secondRun.id,
           completedAt: latestCompletedAt,

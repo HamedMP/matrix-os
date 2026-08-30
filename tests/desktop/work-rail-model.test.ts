@@ -1,9 +1,10 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
-import * as workRailModel from "@desktop/renderer/src/features/work/work-rail-model";
+import {
+  buildWorkRailModel,
+  resolveWorkRailAgentState,
+} from "@desktop/renderer/src/features/work/work-rail-model";
 import type { Project } from "@desktop/renderer/src/stores/board";
-
-const { buildWorkRailModel } = workRailModel;
 
 function chat(
   id: string,
@@ -66,47 +67,20 @@ const projects: Project[] = [
 
 describe("buildWorkRailModel", () => {
   it("resolves rail state with attention ahead of running, failed, and unseen completion", () => {
-    const resolve = (workRailModel as {
-      resolveWorkRailAgentState?: (record: CanonicalChatRecord) => string;
-    }).resolveWorkRailAgentState;
-    expect(resolve).toBeTypeOf("function");
-    if (!resolve) return;
-
-    expect([
-      resolve(statusRecord({
-        attention: "approval_required",
-        activeRunStatus: "running",
-        unacknowledged: true,
-      })),
-      resolve(statusRecord({
-        attention: "input_required",
-        activeRunStatus: "running",
-        unacknowledged: true,
-      })),
-      resolve(statusRecord({ activeRunStatus: "waiting_for_approval", unacknowledged: true })),
-      resolve(statusRecord({ activeRunStatus: "waiting_for_input", unacknowledged: true })),
-      resolve(statusRecord({ activeRunStatus: "accepted", unacknowledged: true })),
-      resolve(statusRecord({
-        attention: "failed",
-        activeRunStatus: "running",
-        unacknowledged: true,
-      })),
-      resolve(statusRecord({ attention: "failed", unacknowledged: true })),
-      resolve(statusRecord({ unacknowledged: true })),
-      resolve(statusRecord({ unacknowledged: false })),
-      resolve(statusRecord({})),
-    ]).toEqual([
-      "approval_required",
-      "input_required",
-      "approval_required",
-      "input_required",
-      "running",
-      "running",
-      "failed",
-      "unseen_completion",
-      "idle",
-      "idle",
-    ]);
+    const cases: Array<[Parameters<typeof statusRecord>[0], string]> = [
+      [{ attention: "approval_required", activeRunStatus: "running", unacknowledged: true }, "approval_required"],
+      [{ attention: "input_required", activeRunStatus: "running", unacknowledged: true }, "input_required"],
+      [{ activeRunStatus: "waiting_for_approval", unacknowledged: true }, "approval_required"],
+      [{ activeRunStatus: "waiting_for_input", unacknowledged: true }, "input_required"],
+      [{ activeRunStatus: "accepted", unacknowledged: true }, "running"],
+      [{ attention: "failed", activeRunStatus: "running", unacknowledged: true }, "running"],
+      [{ attention: "failed", unacknowledged: true }, "failed"],
+      [{ unacknowledged: true }, "unseen_completion"],
+      [{ unacknowledged: false }, "idle"],
+      [{}, "idle"],
+    ];
+    expect(cases.map(([input]) => resolveWorkRailAgentState(statusRecord(input))))
+      .toEqual(cases.map(([, expected]) => expected));
   });
 
   it("places every chat once across Pinned, Projects, and Recents", () => {
