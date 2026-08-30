@@ -15,7 +15,7 @@ import { useEffect, useState } from "react";
 import AccountSection from "./sections/AccountSection";
 import AppearanceSection from "./sections/AppearanceSection";
 import RuntimeSection from "./sections/RuntimeSection";
-import AgentSection from "./sections/AgentSection";
+import AgentsProvidersAdapter from "./AgentsProvidersAdapter";
 import IdentityPersonalitySection from "./sections/IdentityPersonalitySection";
 import BillingSection from "./sections/BillingSection";
 import IntegrationsSettingsSection from "../integrations/IntegrationsSettingsSection";
@@ -23,7 +23,6 @@ import CliSection from "../plugins/CliSection";
 import McpServersSection from "../plugins/McpServersSection";
 import SkillsSection from "../plugins/SkillsSection";
 import CronSection from "./sections/CronSection";
-import ProvidersSection from "./sections/ProvidersSection";
 import SystemSection from "./sections/SystemSection";
 import { useUi } from "../../stores/ui";
 
@@ -69,15 +68,6 @@ export function isSettingsSectionId(value: string): value is SettingsSectionId {
 export function resolveSettingsSectionId(value: string): SettingsSectionId | null {
   if (value === "agent" || value === "providers") return "agents-providers";
   return isSettingsSectionId(value) ? value : null;
-}
-
-function AgentsProvidersAdapter() {
-  return (
-    <div data-settings-adapter="agents-providers-legacy">
-      <AgentSection />
-      <ProvidersSection />
-    </div>
-  );
 }
 
 export function SettingsSidebar({
