@@ -44,8 +44,7 @@ describe("ProviderSettingsStore", () => {
       })),
       reassignDependencies: vi.fn(async () => undefined),
     };
-    lifecycle = {
-      logout: vi.fn(async ({ accountId }) => {
+    const disconnect = async (accountId: string) => {
         canonical = AiProviderSnapshotV3Schema.parse({
           ...canonical,
           revision: canonical.revision + 1,
@@ -76,21 +75,13 @@ describe("ProviderSettingsStore", () => {
             defaultModelId: null,
           } : instance),
         });
-      }),
-      remove: vi.fn(async ({ accountId }) => {
-        canonical = AiProviderSnapshotV3Schema.parse({
-          ...canonical,
-          revision: canonical.revision + 1,
-          accounts: canonical.accounts.filter((account) => account.id !== accountId),
-          accessSources: canonical.accessSources.filter((source) => source.id !== "owner_anthropic_profile"),
-          instances: canonical.instances.filter((instance) => instance.accountId !== accountId),
-          models: canonical.models.map((model) => ({
-            ...model,
-            eligibleAccessSourceIds: model.eligibleAccessSourceIds.filter((id) => id !== "owner_anthropic_profile"),
-            dataPolicies: model.dataPolicies.filter((policy) => policy.accessSourceId !== "owner_anthropic_profile"),
-          })),
-        });
-      }),
+    };
+    lifecycle = {
+      supportedActions: vi.fn((account) => account.authenticated
+        ? ["logout_account", "remove_account"]
+        : ["remove_account"]),
+      logout: vi.fn(async ({ account }) => await disconnect(account.id)),
+      remove: vi.fn(async ({ account }) => await disconnect(account.id)),
     };
     login = {
       supportedMethods: vi.fn(() => ["terminal", "oauth", "api_key"]),
@@ -523,7 +514,7 @@ describe("ProviderSettingsStore", () => {
     });
     expect(response.snapshot.accounts).toEqual([]);
     expect(lifecycle.remove).toHaveBeenCalledWith({
-      accountId: "owner_anthropic",
+      account: expect.objectContaining({ id: "owner_anthropic", authenticated: false }),
       idempotencyKey: "remove_owner_2",
     });
     expect(dependencies.reassignDependencies).toHaveBeenCalledWith(expect.objectContaining({
@@ -547,17 +538,19 @@ describe("ProviderSettingsStore", () => {
       confirmation: "remove_account" as const,
     };
     await expect(store.mutate(mutation)).rejects.toMatchObject({ code: "configuration_unavailable" });
-    expect(canonical.accounts).toEqual([]);
+    expect(canonical.accounts).toEqual([
+      expect.objectContaining({ id: "owner_anthropic", authMethod: null, state: "setup_required" }),
+    ]);
     await unlink(tempPath);
 
     const response = await store.mutate(mutation);
     expect(response.snapshot.accounts).toEqual([]);
     expect(lifecycle.remove).toHaveBeenNthCalledWith(1, {
-      accountId: "owner_anthropic",
+      account: expect.objectContaining({ id: "owner_anthropic" }),
       idempotencyKey: "remove_recovery_1",
     });
     expect(lifecycle.remove).toHaveBeenNthCalledWith(2, {
-      accountId: "owner_anthropic",
+      account: expect.objectContaining({ id: "owner_anthropic" }),
       idempotencyKey: "remove_recovery_1",
     });
   });

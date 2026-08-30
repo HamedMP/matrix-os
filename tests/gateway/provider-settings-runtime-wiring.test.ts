@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema } from "@matrix-os/contracts";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { initialProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
+import { coordinatorLifecycleAccounts } from "../../packages/gateway/src/ai-providers/provider-settings-capability-policy.js";
 import {
   PROVIDER_SETTINGS_NOW,
   providerSettingsCanonicalFixture,
@@ -11,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("provider settings runtime capability wiring", () => {
-  it("wires the server-owned shell registry and canonical driver probes without lifecycle or route fiction", async () => {
+  it("wires canonical driver probes and exact CLI lifecycle without dependency or route fiction", async () => {
     const source = await readFile(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
     expect(source).toContain("createProviderDriverInventoryReader({");
     expect(source).toContain("detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations");
@@ -19,7 +20,10 @@ describe("provider settings runtime capability wiring", () => {
     expect(source).toContain("createProviderTerminalLoginCoordinator({");
     expect(source).toContain("registry: zellijShellRegistry");
     expect(source).toContain("loginCoordinator: providerLoginCoordinator");
-    expect(source).not.toContain("accountLifecycle: provider");
+    expect(source).toContain("createDefaultProviderCliAccountLifecycleCoordinator({");
+    expect(source).not.toContain("codingAgentWorkspaceAgents.flatMap((agent)");
+    expect(source).toContain("accountLifecycle: providerAccountLifecycle");
+    expect(source).not.toContain("dependencyCoordinator: provider");
     expect(source).not.toContain("runtimeCoordinator: provider");
   });
 
@@ -156,5 +160,110 @@ describe("provider settings runtime capability wiring", () => {
     } finally {
       await rm(homePath, { recursive: true, force: true });
     }
+  });
+
+  it("advertises logout only for one exact authenticated CLI account and refreshes canonical readiness", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "provider-lifecycle-capabilities-"));
+    try {
+      let canonical = providerSettingsCanonicalFixture();
+      const getSnapshot = vi.fn(async () => structuredClone(canonical));
+      const lifecycle = {
+        supportedActions: vi.fn((account: { authenticated: boolean; driverId: string }) =>
+          account.authenticated && account.driverId === "claude_code"
+            ? ["logout_account" as const, "remove_account" as const]
+            : []),
+        logout: vi.fn(async () => {
+          canonical = AiProviderSnapshotV3Schema.parse({
+            ...canonical,
+            revision: canonical.revision + 1,
+            accounts: canonical.accounts.map((account) => ({
+              ...account,
+              authMethod: null,
+              state: "setup_required",
+              checkedAt: null,
+              staleAfter: null,
+              action: "connect",
+            })),
+            accessSources: canonical.accessSources.map((source) =>
+              source.id === "owner_anthropic_profile" ? {
+                ...source,
+                state: "setup_required",
+                checkedAt: null,
+                staleAfter: null,
+                action: "connect",
+              } : source),
+            instances: canonical.instances.map((instance) =>
+              instance.accountId === "owner_anthropic" ? {
+                ...instance,
+                readiness: {
+                  state: "setup_required",
+                  checkedAt: null,
+                  staleAfter: null,
+                  action: "connect",
+                  safeReason: null,
+                },
+                defaultModelId: null,
+              } : instance),
+          });
+        }),
+        remove: vi.fn(),
+      };
+      const store = new ProviderSettingsStore({
+        homePath,
+        providerSnapshotReader: { getSnapshot },
+        accountLifecycle: lifecycle,
+        now: () => PROVIDER_SETTINGS_NOW,
+      });
+      expect((await store.getSnapshot()).supportedActions).toEqual(["logout_account"]);
+      const response = await store.mutate({
+        type: "logout_account",
+        expectedRevision: 0,
+        idempotencyKey: "logout_exact_claude_1",
+        accountId: "owner_anthropic",
+      });
+      expect(lifecycle.logout).toHaveBeenCalledWith({
+        account: expect.objectContaining({
+          id: "owner_anthropic",
+          providerId: "anthropic",
+          authMethod: "terminal",
+          driverId: "claude_code",
+          harness: "claude",
+          installState: "installed",
+          authenticated: true,
+          driverAccountCount: 1,
+        }),
+        idempotencyKey: "logout_exact_claude_1",
+      });
+      expect(getSnapshot).toHaveBeenCalledWith({ refresh: true });
+      expect(response.snapshot.accounts[0]).toMatchObject({ authState: "unauthenticated" });
+      expect(response.snapshot.supportedActions).toEqual([]);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("marks concurrent account rows on one CLI driver as ambiguous", () => {
+    const canonical = providerSettingsCanonicalFixture();
+    canonical.accounts.push({
+      ...canonical.accounts[0]!,
+      id: "owner_anthropic_second",
+      accountLabel: "Second",
+    });
+    canonical.instances.push({
+      ...canonical.instances.find((instance) => instance.id === "kernel_owner")!,
+      id: "kernel_owner_second",
+      accountId: "owner_anthropic_second",
+      accessSourceId: "owner_anthropic_second_profile",
+    });
+    const config = initialProviderSettingsConfiguration(canonical);
+    config.accountProfiles.push({
+      ...config.accountProfiles[0]!,
+      id: "owner_anthropic_second",
+      accessSourceId: "owner_anthropic_second_profile",
+    });
+    expect(coordinatorLifecycleAccounts({ config, canonical })).toEqual([
+      expect.objectContaining({ id: "owner_anthropic", driverAccountCount: 2 }),
+      expect.objectContaining({ id: "owner_anthropic_second", driverAccountCount: 2 }),
+    ]);
   });
 });
