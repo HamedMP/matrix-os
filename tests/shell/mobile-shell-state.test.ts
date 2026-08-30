@@ -18,14 +18,14 @@ describe("browser mobile shell state", () => {
       surface: "browser-shell",
       mode: "terminal",
       lastActiveAppSlug: "task-manager",
-      lastActiveTerminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
+      lastActiveTerminalRef: "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
       canvasEnteredAt: "2026-05-12T00:00:00.000Z",
       updatedAt: "2026-05-12T00:01:00.000Z",
     })).toMatchObject({
       surface: "browser-shell",
       mode: "terminal",
       lastActiveAppSlug: "task-manager",
-      lastActiveTerminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
+      lastActiveTerminalRef: "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
       canvasEnteredAt: "2026-05-12T00:00:00.000Z",
       updatedAt: "2026-05-12T00:01:00.000Z",
     });
@@ -36,14 +36,14 @@ describe("browser mobile shell state", () => {
       surface: "native-mobile",
       mode: "desktop",
       lastActiveAppSlug: "../../secrets",
-      lastActiveTerminalSessionId: "/var/run/socket",
+      lastActiveTerminalRef: "/var/run/socket",
       canvasEnteredAt: "invalid",
       updatedAt: "invalid",
     })).toMatchObject({
       surface: "browser-shell",
       mode: "launcher",
       lastActiveAppSlug: null,
-      lastActiveTerminalSessionId: null,
+      lastActiveTerminalRef: null,
       canvasEnteredAt: null,
     });
   });
@@ -91,7 +91,7 @@ describe("browser mobile shell state", () => {
       surface: "browser-shell",
       mode: "app",
       lastActiveAppSlug: "../secrets",
-      lastActiveTerminalSessionId: "terminal_123",
+      lastActiveTerminalRef: "terminal_123",
       canvasEnteredAt: null,
       updatedAt: "invalid",
     });
@@ -101,7 +101,7 @@ describe("browser mobile shell state", () => {
       surface: "browser-shell",
       mode: "app",
       lastActiveAppSlug: null,
-      lastActiveTerminalSessionId: null,
+      lastActiveTerminalRef: null,
     });
     expect(Date.parse(saved.updatedAt)).not.toBeNaN();
   });

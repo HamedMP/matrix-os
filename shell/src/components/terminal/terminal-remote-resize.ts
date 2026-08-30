@@ -14,6 +14,7 @@ export function sendTerminalResize(
   ws: TerminalResizeSocket | null,
   term: TerminalResizeTarget,
   allowRemoteResize: boolean,
+  terminalKey?: string | null,
 ): boolean {
   if (!allowRemoteResize || !ws || ws.readyState !== WEBSOCKET_OPEN) {
     return false;
@@ -21,7 +22,15 @@ export function sendTerminalResize(
   if (!Number.isFinite(term.cols) || !Number.isFinite(term.rows) || term.cols <= 0 || term.rows <= 0) {
     return false;
   }
+  const terminalRef = parseTerminalRefKey(terminalKey);
+  if (!terminalRef) return false;
 
-  ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+  ws.send(JSON.stringify({
+    type: "resize",
+    terminalRef,
+    mode: "soft",
+    size: { cols: term.cols, rows: term.rows },
+  }));
   return true;
 }
+import { parseTerminalRefKey } from "./terminal-session-id";

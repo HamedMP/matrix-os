@@ -302,19 +302,19 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   }, [activeSlug, loadProjectDetail]);
 
   const attachSession = async (sessionId: string) => {
-    const data = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/observe`, {
+    const data = await fetchJson<{ terminalRef?: { workspaceId: string; tabId: string } }>(`/api/sessions/${encodeURIComponent(sessionId)}/observe`, {
       method: "POST",
       body: JSON.stringify({}),
     });
-    setAttachMessage(data.terminalSessionId ? `Attached ${data.terminalSessionId}` : "Attached");
+    setAttachMessage(data.terminalRef ? `Attached ${data.terminalRef.workspaceId}:${data.terminalRef.tabId}` : "Attached");
   };
 
   const takeoverSession = async (sessionId: string) => {
-    const data = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/takeover`, {
+    const data = await fetchJson<{ terminalRef?: { workspaceId: string; tabId: string } }>(`/api/sessions/${encodeURIComponent(sessionId)}/takeover`, {
       method: "POST",
       body: JSON.stringify({}),
     });
-    setAttachMessage(data.terminalSessionId ? `Attached ${data.terminalSessionId}` : "Attached");
+    setAttachMessage(data.terminalRef ? `Attached ${data.terminalRef.workspaceId}:${data.terminalRef.tabId}` : "Attached");
   };
 
   const duplicateSession = async (session: WorkspaceSession) => {
@@ -820,8 +820,8 @@ function CodingAgentThreadRow({ thread }: { thread: WorkspaceCodingAgentThread }
         <div className="min-w-0">
           <div className="truncate font-medium">{thread.title}</div>
           <div className="text-muted-foreground">{thread.status.replace(/_/g, " ")} · {thread.providerId}</div>
-          {thread.terminalSessionId && (
-            <div className="text-muted-foreground">Terminal {thread.terminalSessionId}</div>
+          {thread.terminalRef && (
+            <div className="text-muted-foreground">Terminal {thread.terminalRef.workspaceId}/{thread.terminalRef.tabId}</div>
           )}
         </div>
         {label && (

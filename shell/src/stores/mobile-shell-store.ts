@@ -2,7 +2,7 @@
 
 import { SAFE_APP_SLUG } from "../lib/app-launch";
 
-export const BROWSER_MOBILE_SHELL_STATE_STORAGE_KEY = "matrix.mobileShellState.v1";
+export const BROWSER_MOBILE_SHELL_STATE_STORAGE_KEY = "matrix.mobileShellState.v2";
 
 export type BrowserMobileShellSurface = "browser-shell" | "native-mobile";
 export type BrowserMobileShellMode = "launcher" | "app" | "terminal" | "canvas";
@@ -11,21 +11,20 @@ export interface BrowserMobileShellState {
   surface: BrowserMobileShellSurface;
   mode: BrowserMobileShellMode;
   lastActiveAppSlug: string | null;
-  lastActiveTerminalSessionId: string | null;
+  lastActiveTerminalRef: string | null;
   canvasEnteredAt: string | null;
   updatedAt: string;
 }
 
 const MOBILE_SHELL_MODES = new Set<BrowserMobileShellMode>(["launcher", "app", "terminal", "canvas"]);
-const SAFE_TERMINAL_SESSION_ID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_TERMINAL_REF = /^tws_[0-9a-f]{32}:tt_[0-9a-f]{32}$/;
 
 export function createDefaultBrowserMobileShellState(): BrowserMobileShellState {
   return {
     surface: "browser-shell",
     mode: "launcher",
     lastActiveAppSlug: null,
-    lastActiveTerminalSessionId: null,
+    lastActiveTerminalRef: null,
     canvasEnteredAt: null,
     updatedAt: new Date().toISOString(),
   };
@@ -46,7 +45,7 @@ export function parseBrowserMobileShellState(value: unknown): BrowserMobileShell
     surface: "browser-shell",
     mode,
     lastActiveAppSlug: safeAppSlug(record.lastActiveAppSlug),
-    lastActiveTerminalSessionId: safeTerminalSessionId(record.lastActiveTerminalSessionId),
+    lastActiveTerminalRef: safeTerminalRef(record.lastActiveTerminalRef),
     canvasEnteredAt: safeIsoTimestamp(record.canvasEnteredAt),
     updatedAt: safeIsoTimestamp(record.updatedAt) ?? fallback.updatedAt,
   };
@@ -84,10 +83,10 @@ function safeAppSlug(value: unknown): string | null {
   return SAFE_APP_SLUG.test(slug) ? slug : null;
 }
 
-function safeTerminalSessionId(value: unknown): string | null {
+function safeTerminalRef(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const sessionId = value.trim();
-  return SAFE_TERMINAL_SESSION_ID.test(sessionId) ? sessionId : null;
+  const ref = value.trim();
+  return SAFE_TERMINAL_REF.test(ref) ? ref : null;
 }
 
 function safeIsoTimestamp(value: unknown): string | null {
