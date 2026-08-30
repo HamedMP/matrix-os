@@ -237,6 +237,9 @@ describe("WorkRail", () => {
     expect(title.getAttribute("title")).toBe("Recent global");
     expect(actions?.className).toContain("absolute");
     expect(actions?.className).toContain("group-focus-within/chat:opacity-100");
+    expect(actions?.getAttribute("style")).toContain(
+      "background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg-surface)",
+    );
   });
 
   it("scrolls only an overflowing Chat title while hover actions are visible", async () => {
@@ -323,7 +326,9 @@ describe("WorkRail", () => {
     expect(chat.getAttribute("aria-current")).toBe("page");
     expect(viewport.dataset.overflowing).toBe("true");
     expect(actions.className).toContain("absolute");
-    expect(actions.style.background).toBe("var(--bg-selected)");
+    expect(actions.getAttribute("style")).toContain(
+      "background: linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)",
+    );
   });
 
   it("opens an autofocused Chat search dialog from the top of the rail", async () => {

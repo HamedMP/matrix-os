@@ -513,7 +513,11 @@ function ChatRow({
         </button>
         <div
           className="absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100"
-          style={{ background: active ? "var(--bg-selected)" : "var(--bg-hover)" }}
+          style={{
+            background: active
+              ? "linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)"
+              : "linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg-surface)",
+          }}
         >
           <button
             type="button"
