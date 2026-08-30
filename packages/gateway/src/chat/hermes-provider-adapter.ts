@@ -129,7 +129,8 @@ function outputChunks(text: string): string[] {
 
 function remainingHermesInterimText(streamed: string, interim: string): string | undefined {
   const publishedPrefix = streamed.replace(/\s+$/, "");
-  if (!publishedPrefix || !interim.startsWith(publishedPrefix)) return undefined;
+  if (!publishedPrefix) return interim;
+  if (!interim.startsWith(publishedPrefix)) return undefined;
   return interim.slice(publishedPrefix.length);
 }
 
