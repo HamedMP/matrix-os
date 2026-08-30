@@ -368,7 +368,13 @@ export const ProviderSettingsMutationSchema = z.discriminatedUnion("type", [
 
 export const ProviderConnectionAttemptActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("open_terminal"), terminalSessionId: ReferenceIdSchema }).strict(),
-  z.object({ kind: z.literal("open_browser"), authorizationUrl: z.url().max(2_048).refine((value) => value.startsWith("https://"), "HTTPS required") }).strict(),
+  z.object({
+    kind: z.literal("open_browser"),
+    authorizationPath: z.string().regex(
+      /^\/api\/ai\/providers\/login-attempts\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\/authorize$/,
+      "Invalid owner-gateway authorization path",
+    ),
+  }).strict(),
   z.object({ kind: z.literal("enter_api_key") }).strict(),
   z.object({ kind: z.literal("wait") }).strict(),
   z.object({ kind: z.literal("retry") }).strict(),
