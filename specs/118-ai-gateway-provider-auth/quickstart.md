@@ -30,6 +30,21 @@ Claude Sonnet 5: selectable through Matrix AI
 
 Chat and Settings must render the same truth. A platform fallback must never produce “Anthropic connected.”
 
+Use the approved vocabulary in fixtures and copy: harness, model provider,
+account, and access source. `AiProviderSnapshotV3` is the sole truth; legacy
+Settings/Chat payloads are projections only.
+
+## 3A. Land the shared Settings foundation
+
+Build **Agents & providers** as a shared V3 feature for Canvas, Web Desktop, and
+Electron. Keep Matrix identity and `soul.md` under **Identity & personality**,
+and reserve **Custom agents** for future `~/agents/custom/` definitions.
+
+At this stage the UI may show read-only harness/account/route state plus explicit
+missing-install, signed-out, stale, unavailable, offline, and read-only states.
+Do not enable account mutations, funded balances, or add-ons until their server
+authorities land.
+
 ## 4. Build the funded relay behind a disabled flag
 
 Use dedicated development/staging values; never production credentials in tests.
@@ -47,6 +62,10 @@ CLOUDFLARE_AI_GATEWAY_TOKEN=<central relay only>
 ```
 
 Incomplete funded configuration must fail before listen. The transport checkpoint uses a distinct `sk-matrix-funded-*` HMAC audience; activation replaces it with the planned owner/runtime/expiry/revocation-scoped credential. Customer VPSes receive only relay URL and that scoped runtime token.
+
+Matrix AI becomes selectable only when explicit current owner/runtime policy
+allows at least one model **and** fresh bounded relay health is ready. A legacy
+key, configured URL, or previous successful request does not satisfy readiness.
 
 ## 5. Exercise the full fake-upstream path
 
@@ -72,7 +91,13 @@ Repeat for disconnect, timeout, oversized/malformed stream, rejected model, disa
 
 For OpenRouter, create an owner-bound PKCE attempt, consume the callback once, atomically store the owner credential, probe with a 10-second timeout and redirects rejected, then restore the draft.
 
-For Anthropic, use only the spike-proven official profile/login method. Prefer a supported machine-readable flow; otherwise open a visible canonical `__terminal__` login session, poll bounded status, and return to the draft. Never infer readiness solely from `.claude.json` presence.
+For Anthropic, use only the spike-proven official profile/login method. Prefer a supported machine-readable flow; otherwise open a visible canonical `__terminal__` login session, poll bounded status, and return to the draft. Electron opens its visible terminal surface through the same owner-bound connection-attempt orchestration. Never infer readiness solely from `.claude.json` presence.
+
+Support distinct stable account records. Adding an account never overwrites an
+existing one. Test logout (disconnect credential, retain re-auth entry), remove
+(delete credential/profile after active-Chat reassignment or confirmation), and
+disable harness (block new runs while preserving accounts/config/history) as
+separate server-confirmed transitions.
 
 ## 8. Run review gates
 
@@ -93,15 +118,21 @@ Use applicable subsets for spike/docs PRs. Every implementation PR needs targete
 2. Deploy it to a disposable test VM through a scoped platform rollout.
 3. Verify bundle/release metadata, gateway, shell, and local health.
 4. In Canvas, send a first Chat with no owner credentials and confirm `Matrix AI — Included` is selected.
-5. Connect/disconnect Anthropic and OpenRouter; confirm Chat/Settings parity and draft preservation.
-6. Disable funded AI and confirm owner-funded paths still work within 60 seconds.
-7. Ask whether to delete the disposable VPS after validation.
+5. In Canvas, validate Agents & providers state, account lifecycle, model route, and draft preservation.
+6. Repeat the same fixture/actions in Web Desktop, then Electron; capture current evidence for all three.
+7. Connect/logout/remove Anthropic and OpenRouter accounts and disable/re-enable a harness; confirm guarded Chat reassignment and parity.
+8. Disable funded AI and confirm owner-funded paths still work within 60 seconds.
+9. Ask whether to delete the disposable VPS after validation.
 
 Docker is only for local compatibility around legacy proxy packaging. It is not the production runtime or rollout mechanism.
 
 ## 10. General availability gate
 
-Do not widen eligibility until the canary has stable spend/error/TTFT metrics, the spend fuse and kill switch have been exercised, leakage/auth suites pass, all PRs reach Greptile 5/5, public docs are merged, and rollback to owner-funded-only behavior is rehearsed.
+Do not widen eligibility until the canary has stable spend/error/TTFT metrics,
+explicit policy and relay-health gating is proven, the spend fuse and kill switch
+have been exercised, leakage/auth suites pass, Canvas/Web Desktop/Electron parity
+is evidenced, all PRs reach Greptile 5/5, public docs are merged, and rollback to
+owner-funded-only behavior is rehearsed.
 
 ## 11. Phase 2 implementation record
 
@@ -131,3 +162,9 @@ Visual verification uses the real Settings truth cards and Chat provider setup s
 - [Mobile Settings and Chat provider state](./assets/phase2-provider-state-mobile.jpg)
 
 Provider login mutations, funded relay activation, metering/add-ons, and broader harnesses remain deferred to their delivery-plan phases. Phase 2 does not change database state or silently infer that an owner account is connected from Matrix-funded access.
+
+The complete **Agents & providers** redesign, multiple-account mutation,
+logout/remove/disable actions, policy-plus-relay funded readiness, exact
+remaining credit, purchases, and expanded harness catalog are not part of this
+Phase 2 record. Exact credit must wait for the Matrix-owned Postgres/Kysely
+ledger and reconciliation; Cloudflare limits remain a coarse operator fuse.

@@ -1,7 +1,11 @@
-# Tasks: Phase 2 — Canonical Provider and Account Truth
+# Tasks: Phase 2 — Canonical Truth and Provider Settings Foundation
 
 **Input**: Design documents from `specs/118-ai-gateway-provider-auth/`
-**Scope**: Delivery Plan Phase 2 only. Runtime spikes, funded relay transport, and the Agent SDK/model upgrade are already merged. Provider login mutations, funded relay activation, metering/add-ons, and broader harnesses remain deferred.
+**Scope**: The checked tasks record Delivery Plan Phase 2 only. The unchecked
+successor tasks record the shared Settings/parity foundation and later Graphite
+boundaries. Runtime spikes, funded relay transport, and the Agent SDK/model
+upgrade are prerequisites. Provider login mutations, funded relay activation,
+metering/add-ons, and broader harnesses remain deferred until their own layers.
 **Tests**: Required by the Matrix OS constitution; every behavior task starts with a failing focused test.
 
 ## Phase 1: Setup and Baseline
@@ -97,6 +101,35 @@
 
 ---
 
+## Phase 6: Shared Settings and Parity Foundation (Next Graphite Layer)
+
+**Purpose**: Establish the complete read-only **Agents & providers** design and
+cross-shell contract without pretending that account mutations, funded credit,
+or add-ons already exist.
+
+- [ ] T037 Add failing shared derivation/component tests for the approved harness, model-provider, account, and access-source terminology
+- [ ] T038 Add failing parity fixtures proving Canvas, Web Desktop, and Electron show identical V3 state and available actions
+- [ ] T039 Build the shared Harness instances rail and configuration/models surface over V3; keep legacy Settings code as an adapter during migration
+- [ ] T040 Add **Identity & personality** for Matrix identity and `soul.md`; reserve **Custom agents** for future `~/agents/custom/` definitions
+- [ ] T041 Add explicit missing-install, signed-out, stale, unavailable, offline, and read-only states; do not enable serverless mutation controls
+- [ ] T042 Add shell adapters for visible canonical Terminal launch while keeping authentication orchestration shared
+- [ ] T043 Capture current Canvas, Web Desktop, and Electron visual evidence from one fixture and run shared parity/build/React Doctor gates
+
+**Checkpoint**: all three desktop shells expose the same read-only operational
+truth, use shared feature code where possible, and do not claim multi-account
+mutation or funded balances.
+
+---
+
+## Successor Graphite Layers (Deferred)
+
+- [ ] T044 Add multi-account connection attempts and server-confirmed login, logout, removal, disable, and active-Chat reassignment flows with auth/body-limit/idempotency/failure tests
+- [ ] T045 Activate Matrix-funded access only when explicit owner/runtime policy and fresh relay health are both ready; add scoped runtime identity and leakage/failure tests
+- [ ] T046 Add Matrix Postgres/Kysely entitlements, atomic spend reservations, reconciliation, add-ons, and truthful credit UI; retain Cloudflare limits as a coarse fuse
+- [ ] T047 Add generic/model-specific harness routing and additional model providers through V3 conformance tests, one adapter PR at a time
+
+---
+
 ## Dependencies and Execution Order
 
 ### Phase Dependencies
@@ -106,6 +139,11 @@
 - **Gateway truth (Phase 3)**: Depends on the V3 schemas and is independently testable through `GET /api/ai/providers`.
 - **Chat/Settings parity (Phase 4)**: Depends on the gateway truth and remains independently reviewable as an upstack PR.
 - **Polish (Phase 5)**: Depends on both Graphite layers.
+- **Shared Settings (Phase 6)**: Depends on the complete V3/Chat stack and must land before account-lifecycle UI.
+- **Account lifecycle (T044)**: Depends on shared Settings plus authenticated owner-bound mutation contracts.
+- **Funded activation (T045)**: Depends on explicit policy and relay-health authorities; the read-only V3 fallback is insufficient.
+- **Metering/add-ons (T046)**: Depends on active funded routing and the Matrix-owned atomic ledger, not Cloudflare per-user rules.
+- **Harness expansion (T047)**: Depends on V3 conformance and must not introduce renderer-specific state.
 
 ### User Story Dependencies
 
@@ -129,6 +167,17 @@
 
 Each layer stays below the Matrix OS review limits, carries the backend invariants section, reaches Greptile 5/5 on its exact head, and runs label-gated CI. The layers are not flattened.
 
+### Successor stack
+
+- **Stack 3 — `feat(settings): add shared agents and providers foundation`**: T037–T043. Read-only V3 UI, information architecture, and Canvas/Web Desktop/Electron parity.
+- **Stack 4 — `feat(chat): add multi-account provider authentication`**: T044 account lifecycle only.
+- **Stack 5 — `feat(proxy): activate policy-gated matrix-funded ai`**: T045 relay activation only.
+- **Stack 6 — accounting/billing/credit UI**: T046 split into migrations/reservations, billing/add-ons, then UI.
+- **Stack 7+ — catalog/model providers/harnesses**: T047, one bounded adapter or catalog concern per layer.
+
+The successor stack must preserve review boundaries and must not show exact
+remaining credit until Stack 6's ledger is authoritative.
+
 ---
 
 ## Implementation Strategy
@@ -146,3 +195,4 @@ Each layer stays below the Matrix OS review limits, carries the backend invarian
 - Per-user allowances, usage persistence, metering, purchases, refunds, and add-ons.
 - Remote signed catalogs, Baseten, generic ACP, Cursor, and Grok.
 - Public docs publication and production rollout, which remain required before general availability.
+- Exact credit/remaining values before the Matrix ledger and reconciliation ship.

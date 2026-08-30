@@ -7,6 +7,29 @@
 **Status**: Approved
 **Input**: User description: "Add AI gateway support so users can begin with free Matrix-funded AI, update the Claude Agent SDK and current Anthropic models, support smooth provider login in Chat, show accurate provider login state in Settings, and compare or adopt useful provider harnesses from t3code. Deliver in stages, starting with a shared Matrix-funded credential before pricing add-ons and metering."
 
+**Delivery status**: This is a staged specification. The canonical read-only V3
+provider projection and its compatibility adapters are the current foundation;
+the shared Settings redesign, account mutations, funded activation,
+allowances/add-ons, and broader harness catalog remain separate delivery
+layers. Requirements below describe the approved end state unless a phase is
+explicitly identified as implemented in `quickstart.md`.
+
+### Product vocabulary
+
+- A **harness** is the executable agent runtime, such as Hermes, OpenClaw, Pi,
+  OpenCode, Codex, or Claude.
+- A **model provider** serves inference, such as Matrix AI, Anthropic, OpenAI,
+  OpenRouter, or Baseten.
+- An **account** is an owner-scoped authenticated profile for a harness or model
+  provider. Multiple accounts may exist for one provider.
+- An **access source** is the exact credential and funding path selected for a
+  run, such as Matrix included credit, Matrix add-on credit, an owner API key,
+  or an owner subscription.
+
+Internal `ProviderDriver` and `ProviderInstance` contract names represent a
+harness definition and runnable harness configuration. New user-facing copy
+must not use “provider” for both harnesses and inference services.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Start chatting without bringing an AI account (Priority: P1)
@@ -90,6 +113,29 @@ A developer can add a compatible coding harness or model source behind the canon
 2. **Given** a harness does not support a requested capability, **When** the user opens its controls, **Then** unsupported controls are absent and the run cannot claim that capability.
 3. **Given** the harness's upstream project changes its model list, **When** Matrix refreshes the bounded catalog, **Then** current models can be reclassified without silently changing an existing Chat's bound provider instance.
 
+---
+
+### User Story 6 - Configure the same AI system in every desktop shell (Priority: P1)
+
+A user sees the same **Agents & providers** capabilities in Canvas, Web
+Desktop, and Electron: harness instances, accounts, login state, selected access
+source, routes, models, usage authority, and lifecycle actions.
+
+**Why this priority**: Settings parity is a correctness boundary. A login,
+funding, or route that exists in only one renderer creates false state and makes
+support depend on which shell the user happened to open.
+
+**Independent Test**: Render one bounded V3 fixture in Canvas, Web Desktop, and
+Electron; perform every supported account/harness action and verify identical
+availability, labels, guarded transitions, and resulting V3 refreshes.
+
+**Acceptance Scenarios**:
+
+1. **Given** the same owner runtime, **When** the user opens Agents & providers in any desktop shell, **Then** all shells show the same harnesses, accounts, access sources, models, and readiness states.
+2. **Given** a CLI-backed login is required, **When** the user starts it from Canvas, Web Desktop, or Electron, **Then** a visible Terminal flow opens through that shell's adapter while the same owner-bound connection attempt drives progress.
+3. **Given** an account is bound to active or resumable Chats, **When** the user removes it, **Then** every shell requires reassignment or explicit confirmation and preserves Chat history.
+4. **Given** a capability cannot be supported on one shell, **When** that shell renders the feature, **Then** it shows a documented explanatory state rather than silently omitting the control.
+
 ### Edge Cases
 
 - The Matrix-funded route is configured but the upstream gateway credential, stored provider key, or prepaid balance is unavailable.
@@ -104,6 +150,11 @@ A developer can add a compatible coding harness or model source behind the canon
 - A Matrix computer is offline; cached status must be shown as stale, not connected or disconnected with false certainty.
 - A user deletes a connected account or API key while a run is active.
 - Provider telemetry is enabled while prompt and response payload retention is disabled.
+- A user logs out of one of several accounts while another account remains ready.
+- A user removes an account that is selected by an active or resumable Chat.
+- A user disables a harness that still has installed binaries and connected accounts.
+- Matrix policy is ready while relay health is stale, or relay health is ready while the owner is ineligible.
+- A usage source cannot report a provider balance, or reports allowance data without a monetary balance.
 
 ## Requirements *(mandatory)*
 
@@ -146,12 +197,23 @@ A developer can add a compatible coding harness or model source behind the canon
 - **FR-035**: Cloudflare AI Gateway Unified Billing MUST be the initial Matrix-funded upstream, while Matrix remains the authoritative source for owner eligibility, enabled models, variable balances, and add-on credits.
 - **FR-036**: Cloudflare per-user or per-runtime spend limits MUST be treated as defense in depth only; their eventually consistent accounting and bounded rule count MUST NOT replace Matrix's atomic balance enforcement.
 - **FR-037**: Add-on purchases MUST credit a Matrix-owned ledger; users MUST NOT need a Cloudflare account or receive direct access to the Matrix Cloudflare credit pool.
+- **FR-038**: New product copy and APIs MUST distinguish harness, model provider, account, and access source; an execution harness MUST NOT be presented as an inference provider.
+- **FR-039**: Settings MUST organize harness/account/routing operations under **Agents & providers**, Matrix identity and `soul.md` under **Identity & personality**, and reserve **Custom agents** for owner agent definitions under `~/agents/custom/`.
+- **FR-040**: `AiProviderSnapshotV3` MUST be the sole provider-state source for Canvas, Web Desktop, Electron, Chat, and Settings; compatibility shapes MUST be projections and MUST NOT infer readiness independently.
+- **FR-041**: Canvas, Web Desktop, and Electron MUST expose the same supported provider-setting states and actions through shared schemas, derivations, clients, and feature components, with shell adapters limited to native chrome, navigation, and visible Terminal launch.
+- **FR-042**: Matrix MUST support multiple owner-scoped accounts for a provider without overwriting another account, and every runnable harness instance MUST identify its selected account or Matrix-funded access source explicitly.
+- **FR-043**: Logout, remove account, and disable harness MUST be separate guarded operations: logout disconnects the selected credential, removal deletes its credential/profile without deleting Chats, and disable prevents new harness execution while preserving configuration and readable history.
+- **FR-044**: Removing an account referenced by an active or resumable Chat MUST require explicit reassignment or confirmation and MUST NOT silently change the Chat's funding source.
+- **FR-045**: Matrix-funded readiness MUST require both explicit current owner/runtime policy eligibility for an allowed model and fresh bounded relay health; configuration or a legacy platform key alone MUST fail closed.
+- **FR-046**: Credit and usage UI MUST identify its authority and freshness; Matrix MUST NOT show an exact remaining balance before the Matrix ledger exists, infer a provider dollar balance from local usage, or convert a subscription allowance into invented currency.
+- **FR-047**: CLI-backed account setup MUST open a visible canonical Terminal surface in every supported desktop shell and MUST expose bounded pending, success, denial, expiry, failure, and retry states through one owner-bound connection attempt.
 
 ### Key Entities
 
 - **AI Access Source**: The funding and credential source for a run, such as Matrix-funded, owner interactive login, owner API key, or owner OpenRouter account; includes precedence, readiness, and allowed model policy without exposing the credential.
 - **Provider Account**: An owner-scoped connection to a model provider, including provider kind, safe account label, authentication method, verification state, last check, and disconnect lifecycle.
 - **Provider Instance**: A concrete execution-harness configuration advertised through canonical Chat, including driver kind, capabilities, model catalog, setup actions, and readiness.
+- **Execution Harness**: The user-facing name for the executable agent runtime represented internally by a provider driver and one or more provider instances; installation and enablement are independent from account authentication.
 - **Model Descriptor**: A bounded model record with stable ID, display name, capabilities, effort options, availability, access-source eligibility, and data-handling notes.
 - **AI Gateway Request Identity**: A platform-verified association among Matrix user, runtime, Chat run, access source, and upstream request; it is not supplied by the browser.
 - **Included AI Policy**: Operator-controlled availability and eligible-model policy for the initial unmetered experience, later extended by allowance and add-on entitlements.
@@ -186,3 +248,6 @@ A developer can add a compatible coding harness or model source behind the canon
 - **SC-010**: Provider setup failures never clear the active Chat, selected project, or unsent draft in end-to-end tests.
 - **SC-011**: Current model availability can be updated without an application release while a failed or invalid update leaves the last valid bounded catalog active.
 - **SC-012**: Public documentation and operator rollback instructions are merged before Matrix-funded AI is enabled for all eligible users.
+- **SC-013**: The same V3 fixture produces identical harness, account, access-source, model, and lifecycle availability in Canvas, Web Desktop, and Electron contract/component tests, with current visual evidence for all three surfaces.
+- **SC-014**: Logout, removal, disable, and active-Chat reassignment failure paths preserve prior visible state and Chat history in 100% of lifecycle integration tests.
+- **SC-015**: Matrix AI is never projected ready when either policy eligibility or fresh relay health is absent in the funded-readiness test matrix.
