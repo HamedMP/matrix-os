@@ -28,7 +28,6 @@ import {
   closePaneInTree,
   compatModeForShellSession,
   destroyTerminalSessions,
-  getCanonicalShellSessionIds,
   getFirstPaneId,
   getPaneIdsForSession,
   getPaneSessionId,
@@ -112,48 +111,6 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
       shellSessionsListInflight = null;
     }
   });
-}
-
-async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
-  const requestedNames = Array.from(new Set(
-    sessionNames.filter((name) => isCanonicalShellSessionId(name)),
-  ));
-  if (requestedNames.length === 0) {
-    return true;
-  }
-
-  try {
-    const sessions = await listShellSessions();
-    const existingNames = new Set<string>();
-    if (sessions) {
-      for (const session of sessions) {
-        if (typeof session.name === "string") {
-          existingNames.add(session.name);
-        }
-      }
-    }
-
-    for (const name of requestedNames) {
-      if (existingNames.has(name)) {
-        continue;
-      }
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- ordered repair: each missing saved zellij session is recreated once before layout restore; these are user-visible session names, not a fan-out workload.
-      const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cwd: DEFAULT_CWD }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!createRes.ok && createRes.status !== 409) {
-        return false;
-      }
-    }
-
-    return true;
-  } catch (err: unknown) {
-    console.warn("Failed to ensure terminal sessions:", err instanceof Error ? err.message : err);
-    return false;
-  }
 }
 
 async function getFirstOrderedShellSessionName(): Promise<string | null> {
@@ -571,17 +528,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessionReady = await ensureShellSessions(getCanonicalShellSessionIds(data));
-              if (!cancelled && sessionReady) {
-                const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
-                const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-                setTabs(applyCompatModeToTabs(data.tabs));
-                setActiveTabId(nextActiveTabId);
-                setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
-                requestPaneFocus(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
-                setInitialized(true);
-                return;
-              }
+              const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
+              const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
+              setTabs(applyCompatModeToTabs(data.tabs));
+              setActiveTabId(nextActiveTabId);
+              setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
+              requestPaneFocus(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+              setInitialized(true);
+              return;
             }
 
             const sessionName = await getFirstOrderedShellSessionName();

@@ -3469,7 +3469,7 @@ describe("TerminalApp", () => {
     expect(props.paneTree.sessionId).toBe("main");
   });
 
-  it("recreates saved canonical shell sessions before restoring a layout", async () => {
+  it("restores a saved canonical layout without recreating a missing shell session", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
@@ -3504,13 +3504,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions"),
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ name: "bench", cwd: "projects" }),
-      }),
-    );
+    expect(terminalSessionPostBodies()).toHaveLength(0);
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string };
     };

@@ -458,6 +458,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       }
       return stdout
         .split(/\r?\n/)
+        .filter((line) => !/\bEXITED\b/i.test(line))
         .map((line) => line.trim().split(/\s+/)[0])
         .filter(Boolean);
     },
