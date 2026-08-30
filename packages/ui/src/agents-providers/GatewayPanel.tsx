@@ -23,11 +23,20 @@ export function GatewayPanel({
   canSetAllowlist: boolean;
   canAddCredit: boolean;
   onMutate: (intent: ProviderSettingsMutationIntent) => void;
-  onAddCredit: (sourceId: string) => void;
+  onAddCredit: (
+    sourceId: string,
+    packageId: "usd_5" | "usd_10" | "usd_25",
+    requestId: string,
+  ) => Promise<void> | void;
   onRefresh: () => void;
 }) {
   const budget = policy?.monthlyBudgetMicrousd ?? null;
   const [budgetUsd, setBudgetUsd] = useState(budget === null ? "" : String(budget / 1_000_000));
+  const [creditDialogOpen, setCreditDialogOpen] = useState(false);
+  const [creditPackage, setCreditPackage] = useState<"usd_5" | "usd_10" | "usd_25">("usd_5");
+  const [creditBusy, setCreditBusy] = useState(false);
+  const [creditError, setCreditError] = useState(false);
+  const [creditRequestId, setCreditRequestId] = useState("");
   useEffect(() => {
     setBudgetUsd(budget === null ? "" : String(budget / 1_000_000));
   }, [budget]);
@@ -44,6 +53,20 @@ export function GatewayPanel({
     const parsed = Number(trimmed);
     if (!Number.isFinite(parsed) || parsed < 0) return;
     onMutate({ type: "set_gateway_budget", monthlyBudgetMicrousd: Math.round(parsed * 1_000_000) });
+  };
+
+  const submitCredit = async () => {
+    if (creditBusy) return;
+    setCreditBusy(true);
+    setCreditError(false);
+    try {
+      await onAddCredit(source.id, creditPackage, creditRequestId);
+      setCreditDialogOpen(false);
+    } catch {
+      setCreditError(true);
+    } finally {
+      setCreditBusy(false);
+    }
   };
 
   return (
@@ -72,7 +95,11 @@ export function GatewayPanel({
             <button
               type="button"
               className="matrix-ap-button matrix-ap-button-primary"
-              onClick={() => onAddCredit(source.id)}
+              onClick={() => {
+                setCreditError(false);
+                setCreditRequestId(crypto.randomUUID());
+                setCreditDialogOpen(true);
+              }}
               disabled={disabled || !canAddCredit}
               title={canAddCredit ? undefined : "Adding credit is not available yet"}
             >
@@ -143,6 +170,63 @@ export function GatewayPanel({
       ) : (
         <p className="matrix-ap-help">Budget and model controls will appear when Matrix gateway policy is available.</p>
       )}
+
+      {creditDialogOpen ? (
+        <div className="matrix-ap-dialog-backdrop" role="presentation">
+          <section className="matrix-ap-dialog" role="dialog" aria-modal="true" aria-labelledby="matrix-ap-credit-title">
+            <div className="matrix-ap-dialog-head">
+              <div>
+                <span className="matrix-ap-eyebrow">Matrix gateway</span>
+                <h3 id="matrix-ap-credit-title">Add Matrix AI credit</h3>
+                <p className="matrix-ap-dialog-copy">
+                  Credit is added to this computer after Stripe confirms payment. It does not expire.
+                </p>
+              </div>
+            </div>
+            <fieldset className="matrix-ap-credit-packages" disabled={creditBusy}>
+              <legend>Choose an amount</legend>
+              {([5, 10, 25] as const).map((amount) => {
+                const id = `usd_${amount}` as const;
+                return (
+                  <label key={id} data-selected={creditPackage === id ? "true" : undefined}>
+                    <input
+                      type="radio"
+                      name="matrix-ai-credit-package"
+                      value={id}
+                      checked={creditPackage === id}
+                      onChange={() => setCreditPackage(id)}
+                      aria-label={`$${amount} credit`}
+                    />
+                    <strong>${amount}</strong>
+                    <span>AI credit</span>
+                  </label>
+                );
+              })}
+            </fieldset>
+            {creditError ? (
+              <p className="matrix-ap-credit-error" role="alert">Checkout could not be opened. Try again.</p>
+            ) : null}
+            <div className="matrix-ap-dialog-actions">
+              <button
+                type="button"
+                className="matrix-ap-button"
+                disabled={creditBusy}
+                onClick={() => setCreditDialogOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="matrix-ap-button matrix-ap-button-primary"
+                disabled={creditBusy}
+                onClick={() => { void submitCredit(); }}
+              >
+                {creditBusy ? "Opening checkout…" : "Continue to checkout"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

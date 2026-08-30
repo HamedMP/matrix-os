@@ -5,6 +5,7 @@ import {
   createDesktopProviderSettingsTransport,
   desktopProviderIdentityKey,
   openExistingProviderTerminalSession,
+  openAiCreditCheckout,
   openProviderAuthorizationPath,
 } from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
@@ -148,6 +149,36 @@ describe("desktop provider settings transport", () => {
 });
 
 describe("desktop provider connection actions", () => {
+  it("opens server-created AI credit checkout externally for the selected runtime", async () => {
+    const post = vi.fn().mockResolvedValue({ url: "https://checkout.stripe.com/c/pay/cs_ai_25" });
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    await expect(openAiCreditCheckout({
+      api: api({ post }),
+      runtimeSlot: "studio",
+      packageId: "usd_25",
+      requestId: "77f105df-6e24-4e13-a881-af9ce20d6a63",
+      openExternal,
+    })).resolves.toBe(true);
+    expect(post).toHaveBeenCalledWith("/billing/ai-credit/checkout", {
+      packageId: "usd_25",
+      runtimeSlot: "studio",
+      requestId: "77f105df-6e24-4e13-a881-af9ce20d6a63",
+    }, { maxBytes: 8 * 1024 });
+    expect(openExternal).toHaveBeenCalledWith("https://checkout.stripe.com/c/pay/cs_ai_25");
+  });
+
+  it("rejects invalid AI checkout redirects without opening the browser", async () => {
+    const openExternal = vi.fn();
+    await expect(openAiCreditCheckout({
+      api: api({ post: vi.fn().mockResolvedValue({ url: "https://evil.example/steal" }) }),
+      runtimeSlot: "primary",
+      packageId: "usd_5",
+      requestId: crypto.randomUUID(),
+      openExternal,
+    })).resolves.toBe(false);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
   it("scopes provider state to owner, runtime slot, host, and credential generation", () => {
     expect(desktopProviderIdentityKey({
       status: "signed-in",

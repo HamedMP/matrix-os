@@ -9,6 +9,7 @@ import { useConnection } from "../../stores/connection";
 import {
   createDesktopProviderSettingsTransport,
   desktopProviderIdentityKey,
+  openAiCreditCheckout,
   openExistingProviderTerminalSession,
   openProviderAuthorizationPath,
 } from "./provider-settings-desktop-adapter";
@@ -108,6 +109,19 @@ function ConnectedAgentsProvidersAdapter({
       });
   }, [isIdentityCurrent, platformHost, runtimeSlot]);
 
+  const addCredit = useCallback(async (
+    _accessSourceId: string,
+    packageId: "usd_5" | "usd_10" | "usd_25",
+    requestId: string,
+  ) => {
+    setActionError(null);
+    const opened = await openAiCreditCheckout({ api, runtimeSlot, packageId, requestId });
+    if (!opened) {
+      if (isIdentityCurrent()) setActionError(ACTION_ERROR);
+      throw new Error("Checkout unavailable");
+    }
+  }, [api, isIdentityCurrent, runtimeSlot]);
+
   if (controller.snapshot === null) {
     return (
       <ProviderSettingsUnavailable
@@ -136,7 +150,7 @@ function ConnectedAgentsProvidersAdapter({
       }}
       onOpenTerminal={openTerminal}
       onOpenBrowser={openBrowser}
-      onAddCredit={() => setActionError(ACTION_ERROR)}
+      onAddCredit={addCredit}
     />
   );
 }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   ProviderConnectionAttempt,
@@ -441,24 +441,51 @@ describe("AgentsProvidersView", () => {
     expect(onOpenBrowser).toHaveBeenCalledWith("/api/ai/providers/login-attempts/attempt_browser/authorize");
   });
 
-  it("controls gateway budget, model allowlist, refresh, and add-on credit", () => {
+  it("controls gateway budget and offers one shared, server-backed add-on package flow", async () => {
     const onRefresh = vi.fn();
-    const onAddCredit = vi.fn();
+    let finishCheckout!: () => void;
+    const onAddCredit = vi.fn(() => new Promise<void>((resolve) => { finishCheckout = resolve; }));
     const { onMutate } = setup({ onRefresh, onAddCredit });
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh provider status" }));
     fireEvent.click(screen.getByRole("button", { name: "Add credit" }));
+    expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
+    expect(screen.getByRole("radio", { name: "$5 credit" })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: "$10 credit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to checkout" }));
+    expect(screen.getByRole("button", { name: "Opening checkout…" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Monthly budget in USD"), { target: { value: "2.5" } });
     fireEvent.click(screen.getByRole("button", { name: "Save budget" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Allow Claude Sonnet 5" }));
 
     expect(onRefresh).toHaveBeenCalledOnce();
-    expect(onAddCredit).toHaveBeenCalledWith("source_matrix");
+    expect(onAddCredit).toHaveBeenCalledWith(
+      "source_matrix",
+      "usd_10",
+      expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+    );
     expect(onMutate).toHaveBeenCalledWith({ type: "set_gateway_budget", monthlyBudgetMicrousd: 2_500_000 });
     expect(onMutate).toHaveBeenCalledWith({
       type: "set_gateway_allowlist",
       allowedModelIds: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
     });
+    finishCheckout();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull());
+  });
+
+  it("keeps checkout failures safe and retryable inside the shared dialog", async () => {
+    const onAddCredit = vi.fn().mockRejectedValue(new Error("postgresql://secret@db.internal"));
+    setup({ onAddCredit });
+    fireEvent.click(screen.getByRole("button", { name: "Add credit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to checkout" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Checkout could not be opened. Try again.");
+    expect(screen.queryByText(/postgresql|secret|internal/i)).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeEnabled();
+    const firstRequestId = onAddCredit.mock.calls[0]?.[2];
+    fireEvent.click(screen.getByRole("button", { name: "Continue to checkout" }));
+    await waitFor(() => expect(onAddCredit).toHaveBeenCalledTimes(2));
+    expect(onAddCredit.mock.calls[1]?.[2]).toBe(firstRequestId);
   });
 
   it("shows install, offline, busy, and read-only states without inventing an install capability", () => {

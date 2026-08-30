@@ -5,6 +5,7 @@ import { AgentsProvidersView, useProviderSettingsController } from "@matrix-os/u
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { createProviderSettingsTransport } from "@/lib/provider-settings-transport";
+import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
 
 export function AgentSection({
   onOpenTerminal,
@@ -42,7 +43,9 @@ export function AgentSection({
         onMutate={(intent) => { void controller.mutate(intent); }}
         onOpenTerminal={(sessionId) => { onOpenTerminal?.(sessionId); }}
         onOpenBrowser={openProviderAuthorizationPath}
-        onAddCredit={() => undefined}
+        onAddCredit={async (_sourceId, packageId, requestId) => {
+          await openWebAiCreditCheckout({ packageId, requestId, runtimeSlot: currentAiCreditRuntimeSlot() });
+        }}
       />
     </div>
   );
