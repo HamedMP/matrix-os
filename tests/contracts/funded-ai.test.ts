@@ -18,8 +18,23 @@ const policy = {
   globalRevision: 4,
   runtimeRevision: 2,
   allowedModelIds: ["anthropic/claude-sonnet-5"],
+  monthlyBudgetMicrousd: 1_000_000,
   checkedAt: now,
   staleAfter,
+} as const;
+
+const funding = {
+  asOf: now,
+  periodStart: "2026-08-01T00:00:00.000Z",
+  monthlyBudgetMicrousd: 1_000_000,
+  settledThisMonthMicrousd: 100_000,
+  reservedMicrousd: 200_000,
+  reservedThisMonthMicrousd: 200_000,
+  promotionalBalanceMicrousd: 600_000,
+  addonBalanceMicrousd: 400_000,
+  creditBalanceMicrousd: 1_000_000,
+  remainingBalanceMicrousd: 800_000,
+  remainingBudgetMicrousd: 700_000,
 } as const;
 
 describe("funded AI control-plane contracts", () => {
@@ -76,6 +91,7 @@ describe("funded AI control-plane contracts", () => {
       credential,
       requestId: "request_123",
       modelId: "anthropic/claude-sonnet-5",
+      maxCostMicrousd: 200_000,
     } as const;
     expect(FundedAiAuthorizationRequestSchema.parse(request)).toEqual(request);
     expect(FundedAiAuthorizationRequestSchema.safeParse({
@@ -97,6 +113,18 @@ describe("funded AI control-plane contracts", () => {
         expiresAt,
       },
       policy,
+      funding,
+      reservation: {
+        reservationId: "reservation_123",
+        requestId: request.requestId,
+        modelId: request.modelId,
+        reservedMicrousd: request.maxCostMicrousd,
+        remainingBalanceMicrousd: funding.remainingBalanceMicrousd,
+        remainingBudgetMicrousd: funding.remainingBudgetMicrousd,
+        periodStart: funding.periodStart,
+        expiresAt,
+        status: "reserved",
+      },
     } as const;
     expect(FundedAiAuthorizationResponseSchema.parse(response)).toEqual(response);
     expect(FundedAiAuthorizationResponseSchema.safeParse({ ...response, token: credential }).success).toBe(false);
