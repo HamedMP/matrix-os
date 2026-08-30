@@ -41,9 +41,15 @@ afterEach(() => vi.restoreAllMocks());
 describe("shared shell canonical Provider setup", () => {
   it("creates a visible canonical Terminal session and emits only its validated id", async () => {
     const provider = instance();
+    const workspaceId = "tws_0123456789abcdef0123456789abcdef";
+    const tabId = "tt_0123456789abcdef0123456789abcdef";
     const terminalEvents: Event[] = [];
     window.addEventListener(OPEN_PROVIDER_TERMINAL_EVENT, (event) => terminalEvents.push(event), { once: true });
-    const fetcher = vi.fn(async () => Response.json({ name: "matrix-setup-opencode" }, { status: 201 }));
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => (
+      String(request).endsWith("/workspaces/ensure")
+        ? Response.json({ workspace: { id: workspaceId } })
+        : Response.json({ tab: { id: tabId } }, { status: 201 })
+    ));
 
     await expect(executeCanonicalProviderSetupAction({
       instance: provider,
@@ -51,12 +57,16 @@ describe("shared shell canonical Provider setup", () => {
       fetcher,
     })).resolves.toBe(true);
 
-    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/terminal/sessions"), expect.objectContaining({
+    expect(fetcher).toHaveBeenNthCalledWith(1, expect.stringContaining("/api/terminal/workspaces/ensure"), expect.objectContaining({
       method: "POST",
-      body: expect.stringContaining("sh -lc 'opencode'"),
       signal: expect.any(AbortSignal),
     }));
-    expect(providerTerminalSessionFromEvent(terminalEvents[0]!)).toBe("matrix-setup-opencode");
+    expect(fetcher).toHaveBeenNthCalledWith(2, expect.stringContaining(`/api/terminal/workspaces/${workspaceId}/tabs`), expect.objectContaining({
+      method: "POST",
+      body: expect.stringContaining(`"command":["sh","-lc","sh -lc 'opencode'"]`),
+      signal: expect.any(AbortSignal),
+    }));
+    expect(providerTerminalSessionFromEvent(terminalEvents[0]!)).toBe(`${workspaceId}:${tabId}`);
   });
 
   it("opens Agents & providers without accepting an action outside the catalog instance", async () => {

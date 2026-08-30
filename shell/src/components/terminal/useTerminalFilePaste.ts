@@ -9,6 +9,7 @@ import {
   terminalPasteMimeType,
   terminalPasteUploadTimeout,
 } from "./terminal-file-paste";
+import { parseTerminalRefKey } from "./terminal-session-id";
 
 type CurrentRef<T> = { current: T };
 
@@ -26,7 +27,6 @@ interface TerminalFilePasteOptions {
 
 export function useTerminalFilePaste({
   containerRef,
-  cwd,
   feedbackSequenceRef,
   operationGenerationRef,
   reportPasteFailure,
@@ -40,12 +40,15 @@ export function useTerminalFilePaste({
     const container = containerRef.current;
     if (!container) return;
 
-    const sendBracketedPaste = (terminalPaths: string[], ws: WebSocket | null): boolean => {
+    const sendBracketedPaste = (terminalPaths: string[], ws: WebSocket | null, sessionId: string): boolean => {
+      const terminalRef = parseTerminalRefKey(sessionId);
+      if (!terminalRef) return false;
       if (ws && ws.readyState === WebSocket.OPEN) {
         try {
           for (const chunk of splitBracketedPastePayload(terminalPaths)) {
             ws.send(JSON.stringify({
               type: "input",
+              terminalRef,
               data: `${BRACKETED_PASTE_OPEN}${chunk}${BRACKETED_PASTE_CLOSE}`,
             }));
           }
@@ -73,6 +76,11 @@ export function useTerminalFilePaste({
         if (canCommit()) reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
         return;
       }
+      const terminalRef = parseTerminalRefKey(sessionId);
+      if (!terminalRef) {
+        if (canCommit()) reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
+        return;
+      }
       const terminalPaths: string[] = [];
       let failed = false;
       let authToken: string | null = null;
@@ -93,30 +101,37 @@ export function useTerminalFilePaste({
         // react-doctor-disable-next-line react-doctor/react-compiler-unsupported-syntax, react-hooks-js/todo -- try/finally guarantees each paste upload timeout is cleaned up after this user-triggered event handler finishes.
         try {
           const headers: Record<string, string> = {
-            "Content-Type": mimeType,
+            "Content-Type": "application/json",
             "X-Matrix-Filename": file.name,
           };
           if (authToken) {
             headers.Authorization = `Bearer ${authToken}`;
           }
-          const url = new URL(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/paste-assets`);
-          url.searchParams.set("cwd", cwd || "projects");
+          const url = new URL(`${getGatewayUrl()}/api/terminal/workspaces/${encodeURIComponent(terminalRef.workspaceId)}/tabs/${encodeURIComponent(terminalRef.tabId)}/paste-assets`);
+          const fileBytes = new Uint8Array(await file.arrayBuffer());
+          let binary = "";
+          for (let offset = 0; offset < fileBytes.length; offset += 32_768) {
+            binary += String.fromCharCode(...fileBytes.subarray(offset, offset + 32_768));
+          }
           // react-doctor-disable-next-line react-doctor/async-await-in-loop -- paste uploads are intentionally sequential to preserve terminal insertion order and avoid multiple simultaneous file bodies.
           const res = await fetch(url.toString(), {
             method: "POST",
             credentials: "same-origin",
             headers,
             signal: uploadTimeout.signal,
-            body: file,
+            body: JSON.stringify({
+              assets: [{ name: file.name, mimeType, dataBase64: btoa(binary) }],
+            }),
           });
           if (!res.ok) {
             console.warn("[terminal] image paste upload failed", { category: "upload-error" });
             failed = true;
             continue;
           }
-          const payload = await res.json() as { terminalPath?: unknown };
-          if (typeof payload.terminalPath === "string") {
-            terminalPaths.push(payload.terminalPath);
+          const payload = await res.json() as { assets?: Array<{ terminalPath?: unknown }> };
+          const terminalPath = payload.assets?.[0]?.terminalPath;
+          if (typeof terminalPath === "string") {
+            terminalPaths.push(terminalPath);
           } else {
             failed = true;
           }
@@ -134,7 +149,7 @@ export function useTerminalFilePaste({
         reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
         return;
       }
-      if (sendBracketedPaste(terminalPaths, initiatingSocket)) {
+      if (sendBracketedPaste(terminalPaths, initiatingSocket, sessionId)) {
         reportPasteSuccess(feedbackSequence);
       } else {
         reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
@@ -182,7 +197,6 @@ export function useTerminalFilePaste({
     };
   }, [
     containerRef,
-    cwd,
     feedbackSequenceRef,
     operationGenerationRef,
     reportPasteFailure,

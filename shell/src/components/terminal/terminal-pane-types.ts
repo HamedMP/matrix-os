@@ -15,7 +15,7 @@ export interface TerminalPaneProps {
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   isClosing?: boolean;
   shouldCacheOnUnmount?: (paneId: string) => boolean;
-  shouldDestroyOnUnmount?: (paneId: string) => boolean;
+  shouldDestroyOnUnmount?: (paneId: string) => boolean | string;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
   /**

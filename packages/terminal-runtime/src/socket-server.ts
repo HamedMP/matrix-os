@@ -24,6 +24,7 @@ export interface TerminalRuntimeControlApi {
   listWorkspaces(): Promise<TerminalWorkspace[]>;
   ensureWorkspace(input?: { projectId?: string }): Promise<TerminalWorkspace>;
   createTab(workspaceId: string, input: {
+    tabId?: string;
     name: string;
     cwd: string;
     accessScope?: TerminalTab["accessScope"];
