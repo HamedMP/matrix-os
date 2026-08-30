@@ -6,6 +6,7 @@ import {
   type KernelCredentialSources,
 } from "../kernel-credentials.js";
 import { normalizeKernelModel, type KernelModel } from "../kernel-settings.js";
+import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 
 const SavedKernelConfigSchema = z.object({
   kernel: z.object({
@@ -21,15 +22,25 @@ export interface AiProviderCredentialSnapshot {
 export class ProviderCredentialStore {
   readonly #homePath: string;
   readonly #env: NodeJS.ProcessEnv;
+  readonly #fundedCredentialProvider?: MatrixFundedCredentialProvider;
 
-  constructor(options: { homePath: string; env?: NodeJS.ProcessEnv }) {
+  constructor(options: {
+    homePath: string;
+    env?: NodeJS.ProcessEnv;
+    fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  }) {
     if (!options.homePath) throw new Error("AI provider home path is required");
     this.#homePath = options.homePath;
     this.#env = options.env ?? process.env;
+    this.#fundedCredentialProvider = options.fundedCredentialProvider;
   }
 
   async read(): Promise<AiProviderCredentialSnapshot> {
-    const credentials = await resolveKernelCredentialSources(this.#homePath, this.#env);
+    const credentials = await resolveKernelCredentialSources(
+      this.#homePath,
+      this.#env,
+      this.#fundedCredentialProvider,
+    );
     let savedModel: KernelModel | null = null;
     try {
       const parsed = SavedKernelConfigSchema.safeParse(JSON.parse(

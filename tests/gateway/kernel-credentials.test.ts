@@ -3,10 +3,28 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildKernelCredentialLaunch,
   buildKernelEnv,
   resolveKernelCredentialMode,
   resolveKernelCredentialSources,
 } from "../../packages/gateway/src/kernel-credentials.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+
+function fundedProvider(): MatrixFundedCredentialProvider {
+  return {
+    enabled: true,
+    maxRunMs: 600_000,
+    getCredential: async () => ({
+      token: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
+      tokenId: "credential_123",
+      expiresAt: "2026-08-30T10:15:00.000Z",
+      relayBaseUrl: "https://relay.matrix-os.com",
+      maxRunMs: 600_000,
+    }),
+    invalidate: () => {},
+    close: () => {},
+  };
+}
 
 describe("kernel credential resolution", () => {
   let homePath: string;
@@ -71,10 +89,50 @@ describe("kernel credential resolution", () => {
         MATRIX_FUNDED_AI_ENABLED: "1",
       },
       "matrix_included",
+      fundedProvider(),
     )).resolves.toMatchObject({
-      ANTHROPIC_API_KEY: "platform-key",
-      ANTHROPIC_BASE_URL: "https://relay.example.com",
+      ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
+      ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
     });
+  });
+
+  it("never treats a static platform key as Matrix-funded access", async () => {
+    const env = {
+      ANTHROPIC_API_KEY: "legacy-platform-key",
+      ANTHROPIC_BASE_URL: "https://legacy.example",
+      MATRIX_FUNDED_AI_ENABLED: "1",
+    };
+    await expect(buildKernelEnv(homePath, env, "matrix_included"))
+      .rejects.toThrow("Selected AI access is unavailable");
+    await expect(resolveKernelCredentialSources(homePath, env)).resolves.toMatchObject({
+      matrixIncluded: { state: "disabled" },
+    });
+  });
+
+  it("returns a bounded funded launch without exposing token metadata in source snapshots", async () => {
+    const provider = fundedProvider();
+    const launch = await buildKernelCredentialLaunch(homePath, {
+      MATRIX_AUTH_TOKEN: "platform-auth-secret",
+      UPGRADE_TOKEN: "upgrade-secret",
+      MATRIX_CODE_PROXY_TOKEN: "code-proxy-secret",
+      AI_RELAY_CONTROL_TOKEN: "relay-control-secret",
+      CF_AIG_AUTHORIZATION: "cloudflare-secret",
+    }, "matrix_included", provider);
+    expect(launch).toMatchObject({
+      fundedRunTimeoutMs: 600_000,
+      env: {
+        ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
+        ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
+      },
+    });
+    expect(launch.env).not.toHaveProperty("MATRIX_AUTH_TOKEN");
+    expect(launch.env).not.toHaveProperty("UPGRADE_TOKEN");
+    expect(launch.env).not.toHaveProperty("MATRIX_CODE_PROXY_TOKEN");
+    expect(launch.env).not.toHaveProperty("AI_RELAY_CONTROL_TOKEN");
+    expect(launch.env).not.toHaveProperty("CF_AIG_AUTHORIZATION");
+    const sources = await resolveKernelCredentialSources(homePath, {}, provider);
+    expect(sources.matrixIncluded.state).toBe("ready");
+    expect(JSON.stringify(sources)).not.toContain("credential_123");
   });
 
   it("honors an explicit owner source and fails closed when it is unavailable", async () => {
@@ -105,7 +163,7 @@ describe("kernel credential resolution", () => {
     const sources = await resolveKernelCredentialSources(homePath, {
       ANTHROPIC_API_KEY: "platform-key",
       MATRIX_FUNDED_AI_ENABLED: "1",
-    });
+    }, fundedProvider());
 
     expect(sources).toEqual({
       selectedMode: "api_key",

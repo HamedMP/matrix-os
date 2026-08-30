@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeSource } from "../../packages/gateway/src/agent-config/service.js";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 import {
   ProviderCatalogUnavailableError,
   createChatProviderCatalogService,
@@ -101,6 +102,16 @@ function codingRegistry(
   };
 }
 
+function fundedProvider(): MatrixFundedCredentialProvider {
+  return {
+    enabled: true,
+    maxRunMs: 600_000,
+    getCredential: async () => { throw new Error("catalog must not acquire a credential"); },
+    invalidate: () => {},
+    close: () => {},
+  };
+}
+
 describe("canonical Chat Provider catalog", () => {
   it("projects runnable Agent SDK instances from the canonical funding and account snapshot", async () => {
     const homePath = mkdtempSync(join(tmpdir(), "chat-provider-kernel-"));
@@ -112,6 +123,7 @@ describe("canonical Chat Provider catalog", () => {
         ANTHROPIC_API_KEY: "platform-secret",
         MATRIX_FUNDED_AI_ENABLED: "1",
       },
+      fundedCredentialProvider: fundedProvider(),
     });
     try {
       const service = createChatProviderCatalogService({

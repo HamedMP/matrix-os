@@ -16,6 +16,7 @@ import {
   buildBundledModelCatalog,
   eligibleModelsForSource,
 } from "./model-catalog.js";
+import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 
 const HEALTH_TIMEOUT_MS = 2_000;
 const KERNEL_CAPABILITIES = [
@@ -43,6 +44,7 @@ interface AiProviderServiceOptions {
   healthCache?: ProviderHealthCache<AiProviderReadiness>;
   healthTimeoutMs?: number;
   driverInventory?: (signal: AbortSignal) => Promise<AiProviderSnapshotV3["drivers"]>;
+  fundedCredentialProvider?: MatrixFundedCredentialProvider;
 }
 
 function readinessForObservation(
@@ -120,6 +122,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     this.#credentials = new ProviderCredentialStore({
       homePath: options.homePath,
       env: options.env,
+      fundedCredentialProvider: options.fundedCredentialProvider,
     });
     this.#now = options.now ?? (() => new Date());
     this.#healthProbe = options.healthProbe;
