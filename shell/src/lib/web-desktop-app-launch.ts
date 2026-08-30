@@ -65,7 +65,7 @@ export function buildWebDesktopLauncherApps(
   currentMode: DesktopMode = "desktop",
 ): AppEntry[] {
   const viewDestination: AppEntry = currentMode === "canvas"
-    ? { name: "Desktop", path: "__os-view-desktop__", iconUrl: iconUrlForSlug("desktop") }
-    : { name: "Canvas", path: "__os-view-canvas__", iconUrl: iconUrlForSlug("canvas") };
+    ? { name: "Web Desktop", path: "__os-view-desktop__", iconUrl: iconUrlForSlug("desktop") }
+    : { name: "Web Canvas", path: "__os-view-canvas__", iconUrl: iconUrlForSlug("canvas") };
   return [viewDestination, ...buildWebDesktopIconApps(apps)];
 }

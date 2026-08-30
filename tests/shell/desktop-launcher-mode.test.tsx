@@ -247,14 +247,14 @@ describe("Desktop launcher dock button by mode", () => {
     expect(chatWindow).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Canvas" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Web Canvas" }));
     expect(desktopModeStore.getState().mode).toBe("canvas");
     expect(windowManagerStore.getState().windows.find(
       (windowRecord) => windowRecord.path === "__chat__",
     )).toEqual(chatWindow);
 
     fireEvent.click(screen.getByTestId("dock-tasks"));
-    fireEvent.click(await screen.findByRole("button", { name: "Desktop" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Web Desktop" }));
     expect(desktopModeStore.getState().mode).toBe("desktop");
     expect(windowManagerStore.getState().windows.find(
       (windowRecord) => windowRecord.path === "__chat__",

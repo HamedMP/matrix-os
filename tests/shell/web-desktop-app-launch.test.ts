@@ -54,12 +54,12 @@ describe("web Desktop built-in app launch routing", () => {
 
   it("exposes the other OS view in the launcher without turning it into a desktop icon", () => {
     expect(buildWebDesktopLauncherApps([], "desktop")[0]).toEqual({
-      name: "Canvas",
+      name: "Web Canvas",
       path: "__os-view-canvas__",
       iconUrl: "/icons/canvas.svg",
     });
     expect(buildWebDesktopLauncherApps([], "canvas")[0]).toEqual({
-      name: "Desktop",
+      name: "Web Desktop",
       path: "__os-view-desktop__",
       iconUrl: "/icons/desktop.svg",
     });

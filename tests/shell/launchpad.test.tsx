@@ -181,12 +181,12 @@ describe("Launchpad (macos-glass launcher)", () => {
   it("keeps OS-view destinations launcher-only", async () => {
     setDesign("macos-glass");
     const { handlers } = await renderLauncher({
-      apps: [{ name: "Canvas", path: "__os-view-canvas__", iconUrl: "/icons/canvas.svg" }],
+      apps: [{ name: "Web Canvas", path: "__os-view-canvas__", iconUrl: "/icons/canvas.svg" }],
     });
 
-    fireEvent.contextMenu(screen.getByRole("button", { name: "Canvas" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Web Canvas" }));
 
-    expect(screen.queryByRole("menuitem", { name: "Add Canvas to Desktop" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Add Web Canvas to Desktop" })).toBeNull();
     expect(handlers.onAddToDesktop).not.toHaveBeenCalled();
   });
 
