@@ -51,6 +51,7 @@ import {
   TERMINAL_SETUP_WINDOW_PATH,
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
+import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
 import {
   loadShellSnapshot,
   saveShellSnapshot,
@@ -426,7 +427,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
   }, [apps, focusOrOpen]);
 
-  const openSetupTerminal = (action: TerminalLaunchAction) => {
+  const focusTerminalForHandoff = (handoff: (targetId?: string) => void) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
     const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
@@ -459,7 +460,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           );
         }
       }
-      enqueueTerminalLaunch(action, win?.id);
+      handoff(win?.id);
+    });
+  };
+
+  const openSetupTerminal = (action: TerminalLaunchAction) => {
+    focusTerminalForHandoff((targetId) => enqueueTerminalLaunch(action, targetId));
+  };
+
+  const openExistingProviderTerminal = (sessionId: string) => {
+    focusTerminalForHandoff((targetId) => {
+      if (targetId) enqueueExistingTerminalSession(sessionId, targetId);
     });
   };
 
@@ -1665,6 +1676,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         onOpenAgentTerminal={(action) => {
           setSettingsOpen(false);
           openSetupTerminal(action);
+        }}
+        onOpenProviderTerminalSession={(sessionId) => {
+          setSettingsOpen(false);
+          openExistingProviderTerminal(sessionId);
         }}
       />
       {/* Single ChatPopover instance shared by desktop + mobile dock

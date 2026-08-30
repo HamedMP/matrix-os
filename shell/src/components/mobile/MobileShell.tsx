@@ -51,6 +51,7 @@ import { Settings } from "@/components/Settings";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
+import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
 
 interface MobileApp {
   id: string;
@@ -319,6 +320,20 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     enqueueTerminalLaunch(action, id);
   }, []);
 
+  const openExistingProviderTerminal = useCallback((sessionId: string) => {
+    const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
+    if (!terminal) return;
+    const terminals = stackRef.current.filter((entry) => entry.app.path === "__terminal__");
+    const reusable = terminals[terminals.length - 1];
+    const id = reusable?.id ?? `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    setOpenStack((previous) => reusable
+      ? [...previous.filter((entry) => entry.id !== reusable.id), reusable]
+      : [...previous, { id, app: terminal, openedAt: Date.now() }]);
+    setSettingsOpen(false);
+    setView("app");
+    enqueueExistingTerminalSession(sessionId, id);
+  }, []);
+
   useEffect(() => {
     if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
     const app = apps.find((candidate) => candidate.path === launchAppPath);
@@ -556,6 +571,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         onOpenAgentTerminal={openAgentSetupTerminal}
+        onOpenProviderTerminalSession={openExistingProviderTerminal}
       />
     </div>
     </MotionConfig>

@@ -70,6 +70,7 @@ import {
 import type { ShellSessionSummary } from "../../shell/src/components/terminal/terminal-session-state.js";
 import { getTerminalThemePreset } from "../../shell/src/components/terminal/terminal-themes.js";
 import { ChevronsLeftIcon, ChevronsRightIcon } from "../../shell/src/lib/hugeicons.js";
+import { enqueueExistingTerminalSession } from "../../shell/src/lib/provider-terminal-session.js";
 import { expectRenderedIcon } from "../helpers/rendered-icon";
 
 function normalizeCssColor(color: string) {
@@ -252,6 +253,33 @@ describe("TerminalApp", () => {
       sessionId: "canvas-session-123",
     });
     expect((props.paneTree as { compatMode?: string }).compatMode).toBeUndefined();
+  });
+
+  it("attaches an active provider login session without creating or executing a command", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) return Promise.resolve(mockJsonResponse(completeAgentStatusResponse()));
+      if (url.includes("/api/files/tree")) return Promise.resolve(mockJsonResponse([]));
+      if (url.includes("/api/terminal/layout")) return Promise.resolve(mockJsonResponse({}));
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve(Response.json({ sessions: [
+          { name: "main", status: "active" },
+          { name: "provider-login", status: "active" },
+        ] }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    });
+    enqueueExistingTerminalSession("provider-login");
+
+    render(<TerminalApp />);
+
+    await vi.waitFor(() => {
+      const props = paneGridSpy.mock.lastCall?.[0] as {
+        paneTree?: { type: "pane"; sessionId?: string };
+      };
+      expect(props.paneTree?.sessionId).toBe("provider-login");
+    });
+    expect(terminalSessionPostBodies()).toEqual([]);
   });
 
   it("marks canvas-provided Codex shell sessions for Codex TUI compatibility", async () => {
