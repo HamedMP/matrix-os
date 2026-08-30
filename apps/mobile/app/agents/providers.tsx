@@ -315,8 +315,8 @@ function ProviderSetupSection({
 
   // Runs a provider setup action through the sanctioned surfaces: settings
   // actions route to the in-app Settings tab; terminal actions create a bounded
-  // foreground shell session that runs the setup command server-side, then hand
-  // off to the terminal tab by session name. The command is never stored in
+  // foreground workspace tab that runs the setup command server-side, then hand
+  // off to the terminal surface by canonical ref. The command is never stored in
   // shell state or rendered in the UI.
   const runSetupAction = useCallback(async (action: SafeSetupAction, key: string) => {
     triggerSelectionHaptic();
@@ -331,8 +331,8 @@ function ProviderSetupSection({
       return;
     }
     setActionStatuses((prev) => ({ ...prev, [key]: "running" }));
-    const sessionName = await client.createProviderSetupSession(action.command);
-    if (!sessionName) {
+    const terminalRefKey = await client.createProviderSetupSession(action.command);
+    if (!terminalRefKey) {
       setActionStatuses((prev) => ({ ...prev, [key]: "error" }));
       return;
     }
@@ -341,8 +341,8 @@ function ProviderSetupSection({
       await saveMobileShellState({
         ...saved,
         mode: "terminal",
-        lastActiveTerminalSessionId: sessionName,
-        terminalHandoffSessionId: sessionName,
+        lastActiveTerminalRef: terminalRefKey,
+        terminalHandoffRef: terminalRefKey,
         updatedAt: new Date().toISOString(),
       });
     } catch {
