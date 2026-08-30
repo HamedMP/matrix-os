@@ -3,6 +3,7 @@ import { isCanonicalShellSessionId } from "../components/terminal/terminal-sessi
 
 const QUEUE_KEY = "matrix:provider-terminal-session-queue";
 const QUEUE_LIMIT = 8;
+const QUEUE_TTL_MS = 10 * 60_000;
 const RESPONSE_LIMIT_BYTES = 64 * 1024;
 const TARGET_ID_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/;
 export const PROVIDER_TERMINAL_SESSION_EVENT = "matrix:provider-terminal-session";
@@ -10,6 +11,7 @@ export const PROVIDER_TERMINAL_SESSION_EVENT = "matrix:provider-terminal-session
 interface QueuedSession {
   sessionId: string;
   targetId?: string;
+  expiresAt: number;
 }
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -19,14 +21,25 @@ function readQueue(): QueuedSession[] {
   try {
     const value = JSON.parse(window.sessionStorage.getItem(QUEUE_KEY) ?? "[]") as unknown;
     if (!Array.isArray(value)) return [];
-    return value.flatMap((entry): QueuedSession[] => {
+    const now = Date.now();
+    const queue = value.flatMap((entry): QueuedSession[] => {
       if (!entry || typeof entry !== "object") return [];
-      const item = entry as { sessionId?: unknown; targetId?: unknown };
+      const item = entry as { sessionId?: unknown; targetId?: unknown; expiresAt?: unknown };
       if (typeof item.sessionId !== "string" || !isCanonicalShellSessionId(item.sessionId)) return [];
       if (item.targetId !== undefined
         && (typeof item.targetId !== "string" || !TARGET_ID_PATTERN.test(item.targetId))) return [];
-      return [{ sessionId: item.sessionId, ...(item.targetId ? { targetId: item.targetId } : {}) }];
+      if (!Number.isSafeInteger(item.expiresAt) || (item.expiresAt as number) <= now
+        || (item.expiresAt as number) > now + QUEUE_TTL_MS) return [];
+      return [{
+        sessionId: item.sessionId,
+        ...(item.targetId ? { targetId: item.targetId } : {}),
+        expiresAt: item.expiresAt as number,
+      }];
     }).slice(-QUEUE_LIMIT);
+    if (queue.length !== value.length) {
+      window.sessionStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+    }
+    return queue;
   } catch (error) {
     console.warn("[provider-settings] Could not read terminal handoff queue:", error instanceof Error ? error.name : typeof error);
     return [];
@@ -46,7 +59,11 @@ export function enqueueExistingTerminalSession(sessionId: string, targetId?: str
   if (typeof window === "undefined") return false;
   if (!isCanonicalShellSessionId(sessionId)) return false;
   if (targetId !== undefined && !TARGET_ID_PATTERN.test(targetId)) return false;
-  writeQueue([...readQueue(), { sessionId, ...(targetId ? { targetId } : {}) }]);
+  writeQueue([...readQueue(), {
+    sessionId,
+    ...(targetId ? { targetId } : {}),
+    expiresAt: Date.now() + QUEUE_TTL_MS,
+  }]);
   window.dispatchEvent(new CustomEvent(PROVIDER_TERMINAL_SESSION_EVENT, { detail: { targetId } }));
   return true;
 }
@@ -119,7 +136,7 @@ export async function drainExistingTerminalSessionQueue(
   }
 }
 
-function hasQueuedSessionForTarget(targetId?: string): boolean {
+export function hasQueuedExistingTerminalSession(targetId?: string): boolean {
   return readQueue().some((entry) => !targetId || entry.targetId === targetId || !entry.targetId);
 }
 
@@ -144,7 +161,7 @@ export async function drainExistingTerminalSessionQueueWithRetry(
     })) {
       accepted.add(sessionId);
     }
-    if (!hasQueuedSessionForTarget(targetId) || attempt === maxAttempts - 1) break;
+    if (!hasQueuedExistingTerminalSession(targetId) || attempt === maxAttempts - 1) break;
     await wait(Math.min(250 * (2 ** attempt), 2_000));
   }
   return [...accepted];

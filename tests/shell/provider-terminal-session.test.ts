@@ -5,6 +5,7 @@ import {
   drainExistingTerminalSessionQueue,
   drainExistingTerminalSessionQueueWithRetry,
   enqueueExistingTerminalSession,
+  hasQueuedExistingTerminalSession,
 } from "../../shell/src/lib/provider-terminal-session.js";
 
 afterEach(() => {
@@ -109,5 +110,16 @@ describe("provider terminal session handoff", () => {
     expect(wait).toHaveBeenCalledTimes(3);
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue"))
       .toContain("provider-login");
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(true);
+  });
+
+  it("expires retained handoffs so background retries remain bounded", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    enqueueExistingTerminalSession("provider-login", "window-a");
+
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(true);
+    now.mockReturnValue(11 * 60_000);
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
   });
 });
