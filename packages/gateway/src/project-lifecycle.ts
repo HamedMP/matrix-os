@@ -8,6 +8,10 @@ export const ProjectLifecycleActionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("archive") }).strict(),
   z.object({ type: z.literal("restore") }).strict(),
   z.object({
+    type: z.literal("rename"),
+    name: z.string().trim().min(1).max(128),
+  }).strict(),
+  z.object({
     type: z.literal("delete"),
     confirmation: z.string().min(1).max(128),
   }).strict(),
@@ -22,12 +26,12 @@ export interface ProjectLifecycleBlocker {
 
 type ProjectManager = Pick<
   ReturnType<typeof createProjectManager>,
-  "getProjectForLifecycle" | "listDeletingProjects" | "setProjectLifecycleState" | "removeManagedProject"
+  "getProjectForLifecycle" | "listDeletingProjects" | "setProjectLifecycleState" | "renameProject" | "removeManagedProject"
 >;
 
 type Failure = { ok: false; status: number; error: WorkspaceError };
 type Success =
-  | { ok: true; action: "archive" | "restore"; project: ProjectConfig }
+  | { ok: true; action: "archive" | "restore" | "rename"; project: ProjectConfig }
   | { ok: true; action: "delete"; projectSlug: string };
 
 export type ProjectLifecycleResult = Success | Failure;
@@ -113,6 +117,16 @@ export function createProjectLifecycleService(options: {
             archivedAt: null,
           });
           return updated.ok ? { ok: true, action: "restore", project: updated.project } : updated;
+        }
+
+        if (action.type === "rename") {
+          if (action.name === project.name) return { ok: true, action: "rename", project };
+          const updated = await options.projectManager.renameProject({
+            slug: projectSlug,
+            ownerScope,
+            name: action.name,
+          });
+          return updated.ok ? { ok: true, action: "rename", project: updated.project } : updated;
         }
 
         if (action.type === "delete" && action.confirmation !== project.name) {

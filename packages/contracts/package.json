@@ -22,6 +22,7 @@
     "#legacy-contract-primitives": "./src/legacy-contract-primitives.ts",
     "#kernel-conversations": "./src/kernel-conversations.ts",
     "#safe-client-error": "./src/safe-client-error.ts",
+    "#system-desktop-apps": "./src/system-desktop-apps.ts",
     "#terminal-links": "./src/terminal-links.ts"
   },
   "main": "src/index.ts",

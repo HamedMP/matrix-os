@@ -26,6 +26,18 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useVoice } from "@/hooks/useVoice";
+import { useChatProjects } from "@/hooks/useChatProjects";
+import { buildWebChatRailModel, type WebChatProject } from "@/lib/chat-projects";
+import type { ConversationMeta } from "@/hooks/useConversation";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ConversationRailRow, WebChatProjectRow } from "@/components/chat/ChatNavigationRows";
 import {
   DEFAULT_HERMES_MODEL,
   DEFAULT_HERMES_CHANNELS,
@@ -49,13 +61,6 @@ import {
   MailIcon,
   Settings2Icon,
 } from "@/lib/hugeicons";
-
-interface ConversationMeta {
-  id: string;
-  preview: string;
-  messageCount: number;
-  updatedAt: number;
-}
 
 const HERMES_SETUP_STORAGE_KEY = "matrix:hermes-setup";
 
@@ -93,8 +98,9 @@ interface ChatAppProps {
   busy: boolean;
   connected: boolean;
   conversations: ConversationMeta[];
-  onNewChat: () => void;
+  onNewChat: (projectId?: string) => void;
   onSwitchConversation: (id: string) => void;
+  onDeleteConversation: (id: string) => Promise<boolean>;
   onSubmit: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -140,6 +146,7 @@ export function ChatApp({
   conversations,
   onNewChat,
   onSwitchConversation,
+  onDeleteConversation,
   onSubmit,
   composerDraftRequest,
   onComposerDraftConsumed,
@@ -149,6 +156,12 @@ export function ChatApp({
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  const [projectAction, setProjectAction] = useState<{ mode: "rename" | "delete"; project: WebChatProject } | null>(null);
+  const [projectActionInput, setProjectActionInput] = useState("");
+  const [deleteConversationTarget, setDeleteConversationTarget] = useState<ConversationMeta | null>(null);
+  const [deletingConversation, setDeletingConversation] = useState(false);
+  const { projects, error: projectError, pendingSlug, renameProject, deleteProject } = useChatProjects();
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
   const getInitialHermesSetup = () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower the `??=` logical-assignment operator (BuildHIR Todo); this lazy one-time ref cache is a deliberate first-render localStorage read and rewriting it would not change behavior.
@@ -182,11 +195,22 @@ export function ChatApp({
         c.preview?.toLowerCase().includes(searchQuery.toLowerCase()),
       );
 
-  const timeGroups = groupConversationsByTime(filteredConversations);
+  const railModel = useMemo(
+    () => buildWebChatRailModel(filteredConversations, projects),
+    [filteredConversations, projects],
+  );
+  const timeGroups = groupConversationsByTime(railModel.recents);
 
   const suggestions = getMessageSuggestions(messages);
 
   const isEmpty = messages.length === 0 && !busy;
+  const submitProjectAction = async () => {
+    if (!projectAction || pendingSlug) return;
+    const succeeded = projectAction.mode === "rename"
+      ? await renameProject(projectAction.project, projectActionInput.trim())
+      : await deleteProject(projectAction.project, projectActionInput);
+    if (succeeded) setProjectAction(null);
+  };
 
   return (
     <div className="relative flex h-full bg-background">
@@ -211,7 +235,7 @@ export function ChatApp({
             variant="ghost"
             size="icon"
             className={`${touchIcon} text-muted-foreground hover:text-foreground`}
-            onClick={onNewChat}
+            onClick={() => onNewChat()}
             title="New chat"
           >
             <PlusIcon className="size-4" />
@@ -236,28 +260,52 @@ export function ChatApp({
         {/* Conversation list */}
         <ScrollArea className="flex-1">
           <div className="px-2 pb-3">
+            <div className="px-2 pt-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              Projects
+            </div>
+            {railModel.projects.map(({ project, conversations: projectConversations }) => (
+              <WebChatProjectRow
+                key={project.id}
+                project={project}
+                conversations={projectConversations}
+                expanded={Boolean(expandedProjects[project.id])}
+                sessionId={sessionId}
+                mobile={mobile}
+                onToggle={() => setExpandedProjects((current) => ({
+                  ...current,
+                  [project.id]: !current[project.id],
+                }))}
+                onNewChat={() => onNewChat(project.id)}
+                onSwitchConversation={onSwitchConversation}
+                onDeleteConversation={setDeleteConversationTarget}
+                onRename={() => {
+                  setProjectActionInput(project.name);
+                  setProjectAction({ mode: "rename", project });
+                }}
+                onDelete={() => {
+                  setProjectActionInput("");
+                  setProjectAction({ mode: "delete", project });
+                }}
+              />
+            ))}
+            {projectError ? <p role="alert" className="px-2 py-2 text-xs text-destructive">{projectError}</p> : null}
+            <div className="px-2 pt-4 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              Recents
+            </div>
             {timeGroups.map((group) => (
               <div key={group.label}>
-                <div className="px-2 pt-4 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                <div className="px-2 pt-2 pb-1 text-[10px] font-medium text-muted-foreground/60">
                   {group.label}
                 </div>
                 {group.items.map((conv) => (
-                  <button
+                  <ConversationRailRow
                     key={conv.id}
-                    type="button"
-                    onClick={() => onSwitchConversation(conv.id)}
-                    className={`group flex w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors ${mobile ? "py-3" : "py-2"} ${
-                      conv.id === sessionId
-                        ? "bg-accent/50 text-foreground"
-                        : "text-foreground/70 hover:bg-accent/30 hover:text-foreground"
-                    }`}
-                  >
-                    <span className="flex-1 truncate">
-                      {conv.preview
-                        ? conv.preview.slice(0, 40) + (conv.preview.length > 40 ? "..." : "")
-                        : "New chat"}
-                    </span>
-                  </button>
+                    conversation={conv}
+                    active={conv.id === sessionId}
+                    mobile={mobile}
+                    onSelect={() => onSwitchConversation(conv.id)}
+                    onDelete={() => setDeleteConversationTarget(conv)}
+                  />
                 ))}
               </div>
             ))}
@@ -291,7 +339,7 @@ export function ChatApp({
                 variant="ghost"
                 size="icon"
                 className={`${touchIcon} text-muted-foreground hover:text-foreground`}
-                onClick={onNewChat}
+                onClick={() => onNewChat()}
                 title="New chat"
               >
                 <PlusIcon className="size-4" />
@@ -411,6 +459,71 @@ export function ChatApp({
           </div>
         )}
       </main>
+      <Dialog open={projectAction !== null} onOpenChange={(open) => { if (!open && !pendingSlug) setProjectAction(null); }}>
+        {projectAction ? (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{projectAction.mode === "rename" ? "Rename project" : "Delete project permanently?"}</DialogTitle>
+              <DialogDescription>
+                {projectAction.mode === "rename"
+                  ? "This changes only the display name; the project folder, slug, chats, and terminal paths stay the same."
+                  : `Type ${projectAction.project.name} to remove its Matrix OS project data.`}
+              </DialogDescription>
+            </DialogHeader>
+            <label className="text-sm font-medium">
+              {projectAction.mode === "rename" ? "Project name" : "Project name confirmation"}
+              <input
+                autoFocus
+                aria-label={projectAction.mode === "rename" ? "Project name" : `Type ${projectAction.project.name} to confirm`}
+                maxLength={128}
+                value={projectActionInput}
+                onChange={(event) => setProjectActionInput(event.target.value)}
+                className="mt-2 h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            {projectError ? <p role="alert" className="text-sm text-destructive">{projectError}</p> : null}
+            <DialogFooter>
+              <Button variant="outline" disabled={Boolean(pendingSlug)} onClick={() => setProjectAction(null)}>Cancel</Button>
+              <Button
+                variant={projectAction.mode === "delete" ? "destructive" : "default"}
+                disabled={Boolean(pendingSlug)
+                  || !projectActionInput.trim()
+                  || (projectAction.mode === "rename" && projectActionInput.trim() === projectAction.project.name)
+                  || (projectAction.mode === "delete" && projectActionInput !== projectAction.project.name)}
+                onClick={() => void submitProjectAction()}
+              >
+                {pendingSlug ? "Working…" : projectAction.mode === "rename" ? "Rename" : "Delete project"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+      <Dialog open={deleteConversationTarget !== null} onOpenChange={(open) => { if (!open && !deletingConversation) setDeleteConversationTarget(null); }}>
+        {deleteConversationTarget ? (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete chat?</DialogTitle>
+              <DialogDescription>This permanently removes this chat history.</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" disabled={deletingConversation} onClick={() => setDeleteConversationTarget(null)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                disabled={deletingConversation}
+                onClick={() => {
+                  const target = deleteConversationTarget;
+                  setDeletingConversation(true);
+                  void onDeleteConversation(target.id).then((succeeded) => {
+                    if (succeeded) setDeleteConversationTarget(null);
+                  }).finally(() => setDeletingConversation(false));
+                }}
+              >
+                {deletingConversation ? "Deleting…" : "Delete chat"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </div>
   );
 }

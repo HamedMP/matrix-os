@@ -55,4 +55,10 @@ describe("web Desktop built-in app launch routing", () => {
     expect(resolveWebDesktopBuiltInLaunch("apps/browser-clone/index.html")).toBeNull();
     expect(resolveWebDesktopBuiltInLaunch("__chat__")).toBeNull();
   });
+
+  it("uses all ten shared OS View destinations before installed apps", () => {
+    expect(buildWebDesktopLauncherApps([]).slice(0, 10).map((app) => app.name)).toEqual([
+      "Chat", "Terminal", "Files", "Editor", "VS Code", "Settings", "Plugins", "Browser", "Notes", "Whiteboard",
+    ]);
+  });
 });

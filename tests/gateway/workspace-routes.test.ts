@@ -156,6 +156,33 @@ describe("workspace API routes", () => {
     });
   });
 
+  it("wires owner-scoped project rename through the lifecycle action route", async () => {
+    const app = createWorkspaceRoutes({
+      homePath,
+      getOwnerScope: () => ({ type: "user", id: "user_123" }),
+    });
+    const created = await app.request(jsonRequest("/api/projects", {
+      mode: "scratch",
+      name: "Repository",
+      slug: "repository",
+    }));
+    expect(created.status).toBe(201);
+
+    const renamed = await app.request(jsonRequest("/api/projects/repository/actions", {
+      type: "rename",
+      name: "Renamed repository",
+    }));
+
+    expect(renamed.status).toBe(200);
+    await expect(renamed.json()).resolves.toMatchObject({
+      action: "rename",
+      project: { slug: "repository", name: "Renamed repository" },
+    });
+    await expect((await app.request("/api/workspace/projects")).json()).resolves.toMatchObject({
+      projects: [{ slug: "repository", name: "Renamed repository" }],
+    });
+  });
+
   it("requires typed confirmation on the compatibility project delete route", async () => {
     const applyProjectLifecycleAction = vi.fn(async () => ({
       ok: true as const,

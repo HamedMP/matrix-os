@@ -260,6 +260,16 @@ describe("WebDesktopSurface", () => {
       color: "var(--surface-brand-emphasis, #748E59)",
       iconColor: "white",
     });
+    expect(desktopAppearanceForApp(apps[2])).toMatchObject({
+      color: "var(--surface-error-emphasis, #BA5236)",
+      iconColor: "white",
+      iconKey: "message-square",
+    });
+    expect(desktopAppearanceForApp(apps[4])).toMatchObject({
+      color: "var(--surface-purple-emphasis)",
+      iconColor: "white",
+      iconKey: "notebook",
+    });
   });
 
   it("shows an app in the top bar only while that window is fullscreen", () => {

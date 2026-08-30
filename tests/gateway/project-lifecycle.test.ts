@@ -67,6 +67,46 @@ describe("project lifecycle", () => {
     expect(restored.projects[0]?.archivedAt).toBeUndefined();
   });
 
+  it("renames only the owner-visible project label while preserving its stable identity and files", async () => {
+    const projectManager = await createScratch();
+    await writeFile(join(homePath, "projects", "customer-app", "repo", "sentinel.txt"), "keep me");
+    const service = createProjectLifecycleService({
+      projectManager,
+      findBlockers: async () => [],
+      cleanupRelatedState: async () => undefined,
+      now: () => "2026-08-06T13:00:00.000Z",
+    });
+
+    await expect(service.applyProjectLifecycleAction(principal, "customer-app", {
+      type: "rename",
+      name: "Customer workspace",
+    })).resolves.toMatchObject({
+      ok: true,
+      action: "rename",
+      project: {
+        name: "Customer workspace",
+        slug: "customer-app",
+        updatedAt: "2026-08-06T12:00:00.000Z",
+      },
+    });
+    await expect(readFile(join(homePath, "projects", "customer-app", "repo", "sentinel.txt"), "utf-8"))
+      .resolves.toBe("keep me");
+  });
+
+  it("validates project rename labels at the lifecycle boundary", async () => {
+    const projectManager = await createScratch();
+    const service = createProjectLifecycleService({
+      projectManager,
+      findBlockers: async () => [],
+      cleanupRelatedState: async () => undefined,
+    });
+
+    await expect(service.applyProjectLifecycleAction(principal, "customer-app", {
+      type: "rename",
+      name: "   ",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_request" } });
+  });
+
   it("rejects archive and delete while project work is active without changing lifecycle state", async () => {
     const projectManager = await createScratch();
     const service = createProjectLifecycleService({

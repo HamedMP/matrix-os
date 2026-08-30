@@ -235,6 +235,26 @@ describe("project lifecycle store", () => {
     });
   });
 
+  it("renames a project without clearing its open project state", async () => {
+    const post = vi.fn(async () => ({
+      ok: true,
+      action: "rename",
+      project: project("repo", { name: "Renamed repository" }),
+    }));
+    const client = api({ post });
+
+    await expect(useProjectLifecycle.getState().renameProject(client, "repo", "Renamed repository"))
+      .resolves.toBe(true);
+
+    expect(post).toHaveBeenCalledWith("/api/projects/repo/actions", {
+      type: "rename",
+      name: "Renamed repository",
+    });
+    expect(useTabs.getState().tabs.some((tab) => tab.projectSlug === "repo")).toBe(true);
+    expect(useProjectWorkspaces.getState().entries.repo).toBeTruthy();
+    expect(useProjectView.getState().entries.repo).toBeTruthy();
+  });
+
   it("keeps a safe reconciliation error when the mutation succeeds but project refresh fails", async () => {
     const client = api({
       get: vi.fn(async () => { throw new AppError("offline"); }),
