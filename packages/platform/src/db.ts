@@ -111,6 +111,7 @@ export interface AiFundedRuntimePoliciesTable {
   runtime_slot: string;
   enabled: boolean;
   allowed_model_ids: string;
+  monthly_budget_microusd: number;
   expires_at: string | null;
   next_issue_at: string;
   revision: number;
@@ -129,6 +130,58 @@ export interface AiRuntimeCredentialsTable {
   issued_at: string;
   expires_at: string;
   revoked_at: string | null;
+}
+
+export interface AiFundedUsageReservationsTable {
+  reservation_id: string;
+  request_id: string;
+  payload_hash: string;
+  authorization_response: string;
+  settlement_response: string | null;
+  start_response: string | null;
+  release_response: string | null;
+  release_reason: string | null;
+  token_id: string;
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  model_id: string;
+  reserved_microusd: number;
+  actual_microusd: number | null;
+  period_start: string;
+  status: string;
+  created_at: string;
+  started_at: string | null;
+  expires_at: string;
+  settled_at: string | null;
+  released_at: string | null;
+}
+
+export interface AiFundedRuntimeBalancesTable {
+  machine_id: string;
+  owner_id: string;
+  runtime_slot: string;
+  credit_balance_microusd: number;
+  promotional_balance_microusd: number;
+  addon_balance_microusd: number;
+  reserved_microusd: number;
+  month_period_start: string;
+  month_spent_microusd: number;
+  month_reserved_microusd: number;
+  updated_at: string;
+}
+
+export interface AiFundedCreditLedgerTable {
+  entry_id: string;
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  kind: string;
+  amount_microusd: number;
+  source_reference: string;
+  reservation_id: string | null;
+  period_start: string | null;
+  created_at: string;
 }
 
 export interface ProvisioningJobsTable {
@@ -613,6 +666,9 @@ export interface PlatformDatabase {
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
+  ai_funded_usage_reservations: AiFundedUsageReservationsTable;
+  ai_funded_credit_ledger: AiFundedCreditLedgerTable;
+  ai_funded_runtime_balances: AiFundedRuntimeBalancesTable;
   provisioning_jobs: ProvisioningJobsTable;
   billing_checkout_attempts: BillingCheckoutAttemptsTable;
   prebilling_provisioning_intents: PrebillingProvisioningIntentsTable;
@@ -1223,6 +1279,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       runtime_slot TEXT NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT FALSE,
       allowed_model_ids TEXT NOT NULL DEFAULT '[]',
+      monthly_budget_microusd BIGINT NOT NULL DEFAULT 0 CHECK (monthly_budget_microusd >= 0),
       expires_at TEXT,
       next_issue_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',
       revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
@@ -1231,6 +1288,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`ALTER TABLE ai_funded_runtime_policies ADD COLUMN IF NOT EXISTS next_issue_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'`.execute(db);
+  await sql`ALTER TABLE ai_funded_runtime_policies ADD COLUMN IF NOT EXISTS monthly_budget_microusd BIGINT NOT NULL DEFAULT 0 CHECK (monthly_budget_microusd >= 0)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_runtime_owner ON ai_funded_runtime_policies(owner_id, runtime_slot)`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_runtime_credentials (
@@ -1247,6 +1305,90 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_runtime_credentials_machine_issued ON ai_runtime_credentials(machine_id, issued_at DESC)`.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_runtime_balances (
+      machine_id TEXT PRIMARY KEY REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      credit_balance_microusd BIGINT NOT NULL DEFAULT 0 CHECK (credit_balance_microusd >= 0),
+      promotional_balance_microusd BIGINT NOT NULL DEFAULT 0 CHECK (promotional_balance_microusd >= 0),
+      addon_balance_microusd BIGINT NOT NULL DEFAULT 0 CHECK (addon_balance_microusd >= 0),
+      reserved_microusd BIGINT NOT NULL DEFAULT 0 CHECK (reserved_microusd >= 0),
+      month_period_start TEXT NOT NULL,
+      month_spent_microusd BIGINT NOT NULL DEFAULT 0 CHECK (month_spent_microusd >= 0),
+      month_reserved_microusd BIGINT NOT NULL DEFAULT 0 CHECK (month_reserved_microusd >= 0),
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  const fundedAiMigrationTime = new Date();
+  const fundedAiMigrationAt = fundedAiMigrationTime.toISOString();
+  const fundedAiMigrationPeriodStart = new Date(Date.UTC(
+    fundedAiMigrationTime.getUTCFullYear(), fundedAiMigrationTime.getUTCMonth(), 1,
+  )).toISOString();
+  await sql`
+    INSERT INTO ai_funded_runtime_balances (
+      machine_id, owner_id, runtime_slot, credit_balance_microusd,
+      promotional_balance_microusd, addon_balance_microusd, reserved_microusd,
+      month_period_start, month_spent_microusd, month_reserved_microusd, updated_at
+    )
+    SELECT
+      machine_id, owner_id, runtime_slot, 0,
+      0, 0, 0,
+      ${fundedAiMigrationPeriodStart}, 0, 0, ${fundedAiMigrationAt}
+    FROM ai_funded_runtime_policies
+    ON CONFLICT (machine_id) DO NOTHING
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_usage_reservations (
+      reservation_id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL CHECK (length(payload_hash) = 64),
+      authorization_response TEXT NOT NULL,
+      settlement_response TEXT,
+      start_response TEXT,
+      release_response TEXT,
+      release_reason TEXT,
+      token_id TEXT NOT NULL REFERENCES ai_runtime_credentials(token_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      runtime_slot TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      reserved_microusd BIGINT NOT NULL CHECK (reserved_microusd > 0),
+      actual_microusd BIGINT CHECK (actual_microusd >= 0),
+      period_start TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('reserved', 'starting', 'in_flight', 'settling', 'releasing', 'settled', 'released', 'expired')),
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      expires_at TEXT NOT NULL,
+      settled_at TEXT,
+      released_at TEXT,
+      UNIQUE (token_id, request_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ai_funded_reservations_runtime_status
+    ON ai_funded_usage_reservations(machine_id, runtime_slot, status, expires_at)
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_credit_ledger (
+      entry_id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      runtime_slot TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit')),
+      amount_microusd BIGINT NOT NULL,
+      source_reference TEXT NOT NULL,
+      reservation_id TEXT REFERENCES ai_funded_usage_reservations(reservation_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      period_start TEXT,
+      created_at TEXT NOT NULL,
+      CHECK (
+        (kind IN ('promotional_grant', 'addon_grant') AND amount_microusd > 0 AND reservation_id IS NULL AND period_start IS NULL)
+        OR (kind IN ('promotional_debit', 'addon_debit') AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL)
+      )
+    )
+  `.execute(db);
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_funded_ledger_reservation_kind ON ai_funded_credit_ledger(reservation_id, kind) WHERE reservation_id IS NOT NULL`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_ledger_runtime ON ai_funded_credit_ledger(machine_id, runtime_slot, created_at)`.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS provisioning_jobs (

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FundedAiRuntimeCredentialIssueResponseSchema } from "@matrix-os/contracts";
+import {
+  FundedAiAuthorizationResponseSchema,
+  FundedAiRuntimeCredentialIssueResponseSchema,
+  FundedAiSettlementResponseSchema,
+  FundedAiStartResponseSchema,
+} from "@matrix-os/contracts";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import {
   createAiFundedRelayRoutes,
@@ -61,6 +66,11 @@ describe("funded AI policy routes", () => {
     await repository.setRuntimePolicy({
       identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
       expectedRevision: 0, enabled: true, allowedModelIds: [modelId], expiresAt: null,
+      monthlyBudgetMicrousd: 1_000,
+    });
+    await repository.grantCredit({
+      entryId: "grant_routes", identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      kind: "promotional_grant", amountMicrousd: 1_000, sourceReference: "route-fixture",
     });
     return {
       repository,
@@ -88,6 +98,10 @@ describe("funded AI policy routes", () => {
       AI_RELAY_CONTROL_TOKEN: relayControlToken,
       AI_FUNDED_CREDENTIAL_HASH_SECRET: hashSecret,
     })).toMatchObject({ enabled: true, credentialTtlMs: 900_000 });
+    expect(() => createAiFundedRelayRoutes({
+      relayControlToken,
+      repository: undefined as never,
+    })).toThrow(/dependencies/i);
   });
 
   it("issues a scoped credential from the authenticated running machine record", async () => {
@@ -193,7 +207,9 @@ describe("funded AI policy routes", () => {
       body: "{}",
     });
     const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await issuedResponse.json());
-    const body = JSON.stringify({ credential: issued.credential.token, requestId: "request_123", modelId });
+    const body = JSON.stringify({
+      credential: issued.credential.token, requestId: "request_123", modelId, maxCostMicrousd: 100,
+    });
 
     const unauthenticated = await app.request("/internal/ai/funded/authorize", {
       method: "POST", headers: { "content-type": "application/json" }, body,
@@ -205,6 +221,32 @@ describe("funded AI policy routes", () => {
       body,
     });
     expect(authorized.status).toBe(200);
-    expect(await authorized.json()).toMatchObject({ authorized: true, identity: { ownerId: "user_alice" } });
+    const authorization = FundedAiAuthorizationResponseSchema.parse(await authorized.json());
+    expect(authorization).toMatchObject({ authorized: true, identity: { ownerId: "user_alice" } });
+
+    const lifecycleBody = {
+      reservationId: authorization.reservation.reservationId,
+      tokenId: issued.credential.tokenId,
+    };
+    const start = await app.request("/internal/ai/funded/start", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify(lifecycleBody),
+    });
+    expect(FundedAiStartResponseSchema.parse(await start.json())).toMatchObject({ status: "in_flight" });
+    const settle = await app.request("/internal/ai/funded/settle", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ ...lifecycleBody, actualCostMicrousd: 60 }),
+    });
+    expect(FundedAiSettlementResponseSchema.parse(await settle.json()))
+      .toMatchObject({ status: "settled", actualCostMicrousd: 60 });
+
+    const invalidRelease = await app.request("/internal/ai/funded/release", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ ...lifecycleBody, reason: "ambiguous_upstream_failure" }),
+    });
+    expect(invalidRelease.status).toBe(400);
   });
 });
