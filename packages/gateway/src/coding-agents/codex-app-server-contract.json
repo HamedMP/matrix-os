@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.150.1",
+  "latestVerifiedVersion": "0.151.0",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -32,6 +32,9 @@
     },
     "0.150.1": {
       "schemaSha256": "e9bad0a20736e7d3aba18c0f04bef59856fb212ae21049fe17d786682203cfae"
+    },
+    "0.151.0": {
+      "schemaSha256": "31ae67beb2c94cc9509f6a71968600062dc8c6d7fe45437ed3a9129838f4d2d9"
     }
   },
   "requiredServerMethods": [
