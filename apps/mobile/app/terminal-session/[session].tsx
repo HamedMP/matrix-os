@@ -20,7 +20,7 @@ import {
   type MobileTerminalConnection,
   type TerminalServerFrame,
 } from "@/lib/terminal-client";
-import { isSafeShellSessionName } from "@/lib/terminal-state";
+import { isSafeSessionId } from "@/lib/terminal-state";
 import { colors } from "@/lib/theme";
 
 type LiveStatus = "connecting" | "attached" | "detached" | "ended" | "error";
@@ -29,11 +29,10 @@ const TERMINAL_HANDSHAKE_TIMEOUT_MS = 15_000;
 export default function TerminalSessionScreen() {
   const params = useLocalSearchParams<{ session?: string | string[] }>();
   const rawSession = Array.isArray(params.session) ? params.session[0] : params.session;
-  const session = rawSession && isSafeShellSessionName(rawSession) ? rawSession : null;
+  const session = rawSession && isSafeSessionId(rawSession) ? rawSession : null;
   const { client } = useGateway();
   const [status, setStatus] = useState<LiveStatus>("connecting");
   const [error, setError] = useState<string | null>(null);
-  const [leaseRevoked, setLeaseRevoked] = useState(false);
   const [fontScale, setFontScale] = useState(1);
   const surfaceRef = useRef<TerminalSurfaceHandle | null>(null);
   const connectionRef = useRef<MobileTerminalConnection | null>(null);
@@ -55,35 +54,20 @@ export default function TerminalSessionScreen() {
   const handleFrame = useCallback((frame: TerminalServerFrame) => {
     if (frame.type === "attached") {
       clearHandshakeTimeout();
-      setLeaseRevoked(false);
       setStatus("attached");
       setError(null);
       surfaceRef.current?.clear();
-      if (frame.canonicalSize) {
-        surfaceRef.current?.resize(frame.canonicalSize.cols, frame.canonicalSize.rows);
-      }
-      if (frame.replay) surfaceRef.current?.write(frame.replay);
+      surfaceRef.current?.resize(frame.canonicalSize.cols, frame.canonicalSize.rows);
       surfaceRef.current?.focus();
       return;
     }
-    if (frame.type === "canonical-size") {
-      surfaceRef.current?.resize(frame.cols, frame.rows);
-      return;
-    }
-    if (frame.type === "presentation-reset") {
-      surfaceRef.current?.reset();
+    if (frame.type === "snapshot") {
+      surfaceRef.current?.clear();
+      surfaceRef.current?.write(frame.ansi);
       return;
     }
     if (frame.type === "output") {
       surfaceRef.current?.write(frame.data);
-      return;
-    }
-    if (frame.type === "lease-revoked") {
-      clearHandshakeTimeout();
-      setLeaseRevoked(true);
-      setStatus("detached");
-      connectionRef.current?.close();
-      connectionRef.current = null;
       return;
     }
     if (frame.type === "exit") {
@@ -184,12 +168,12 @@ export default function TerminalSessionScreen() {
   }, [clearHandshakeTimeout, connect, session, terminalClient]);
 
   const sendData = useCallback((data: string) => {
-    if (!data || leaseRevoked) return;
+    if (!data) return;
     if (!connectionRef.current?.sendInput(data)) {
       setStatus("error");
       setError("Terminal unavailable. Try again.");
     }
-  }, [leaseRevoked]);
+  }, []);
 
   const handleResize = useCallback((cols: number, rows: number) => {
     gridRef.current = { cols, rows };
@@ -233,24 +217,7 @@ export default function TerminalSessionScreen() {
           </View>
         ) : null}
 
-        {leaseRevoked ? (
-          <View style={styles.overlay}>
-            <Text style={styles.overlayTitle}>Live on another device.</Text>
-            <Spacer size="lg" />
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setLeaseRevoked(false);
-                void connect();
-              }}
-              style={styles.retryButton}
-            >
-              <Text style={styles.retryText}>Resume here</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        {status === "detached" && !leaseRevoked ? (
+        {status === "detached" ? (
           <View style={styles.overlay}>
             <Text style={styles.overlayTitle}>Terminal connection closed.</Text>
             <Spacer size="lg" />
@@ -291,7 +258,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
