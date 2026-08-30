@@ -35,6 +35,8 @@ Matrix OS gives you a hosted cloud computer: browser desktop, files, terminal se
 
 It is not a chat box beside your software. The AI is the kernel. The shell, gateway, files, apps, terminal, channels, and agents are one operating environment.
 
+> This is the future.
+
 <p align="center">
   <img src="https://matrix-os.com/images/app-screenshot.jpg" alt="Matrix OS browser desktop with generated apps" width="900">
 </p>
