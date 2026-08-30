@@ -45,6 +45,124 @@ async function sendControl(path: string, payload: unknown): Promise<unknown> {
 }
 
 describe("Codex app-server control runtime", () => {
+  it("reuses a session approval for the next command approval request", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-session-appr-"));
+    const fakeCodexPath = join(homePath, "fake-codex-session-approval.mjs");
+    const responsesPath = join(homePath, "responses.jsonl");
+    const eventPath = codexProviderEventPath(homePath, "sess_appr_session_1");
+    const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { appendFile } from 'node:fs/promises';",
+      "import { createInterface } from 'node:readline';",
+      `const responsesPath = ${JSON.stringify(responsesPath)};`,
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-session-approval' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-session-approval' } } }));",
+      "    console.log(JSON.stringify({ id: 41, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-1', availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'] } }));",
+      "  } else if (message.id === 41) {",
+      "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
+      "    console.log(JSON.stringify({ id: 42, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-2', availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'] } }));",
+      "  } else if (message.id === 42) {",
+      "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-session-approval', status: 'completed', items: [] } } }));",
+      "    process.exit(0);",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "Run two commands.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      const requested = await waitForTranscript(eventPath, /matrix\.codex\.approval\.requested/);
+      const approval = requested.trim().split("\n").map((line) => JSON.parse(line))
+        .find((event) => event.type === "matrix.codex.approval.requested");
+      await expect(sendControl(controlPath, {
+        type: "approval",
+        approvalId: approval.approvalId,
+        decision: "approve_for_session",
+        clientRequestId: "req_session_approval_1",
+      })).resolves.toEqual({ ok: true });
+      await expect(waitForExit(child)).resolves.toBe(0);
+
+      const responses = (await readFile(responsesPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      expect(responses).toEqual([
+        { id: 41, result: { decision: "acceptForSession" } },
+        { id: 42, result: { decision: "acceptForSession" } },
+      ]);
+      const transcript = await readFile(eventPath, "utf8");
+      expect(transcript.match(/matrix\.codex\.approval\.requested/g)).toHaveLength(1);
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a persisted native thread instead of starting an empty one", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-thread-resume-"));
+    const fakeCodexPath = join(homePath, "fake-codex-thread-resume.mjs");
+    const requestsPath = join(homePath, "requests.jsonl");
+    const eventPath = codexProviderEventPath(homePath, "sess_thread_resume_1");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { appendFile } from 'node:fs/promises';",
+      "import { createInterface } from 'node:readline';",
+      `const requestsPath = ${JSON.stringify(requestsPath)};`,
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start' || message.method === 'thread/resume') {",
+      "    await appendFile(requestsPath, JSON.stringify({ method: message.method, params: message.params }) + '\\n');",
+      "    console.log(JSON.stringify({ id: message.id, result: { thread: { id: message.params.threadId ?? 'unexpected-new-thread' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  } else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-resumed' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-resumed', itemId: 'native-message-resumed', delta: 'Context preserved.' } }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-resumed', status: 'completed', items: [] } } }));",
+      "    process.exit(0);",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "Continue the task.",
+      providerThreadId: "native-thread-persisted",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await expect(waitForExit(child)).resolves.toBe(0);
+      const requests = (await readFile(requestsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      expect(requests).toEqual([expect.objectContaining({
+        method: "thread/resume",
+        params: expect.objectContaining({ threadId: "native-thread-persisted" }),
+      })]);
+      expect(await readFile(eventPath, "utf8")).toContain("Context preserved.");
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("durably publishes a safe approval before accepting one idempotent decision", async () => {
     const homePath = await mkdtemp(join("/tmp", "codex-appr-"));
     const fakeCodexPath = join(homePath, "fake-codex-app-server.mjs");

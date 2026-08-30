@@ -331,6 +331,9 @@ export function createWorkspaceCodingAgentProvider(
             ownerScope: { type: "user", id: principal.userId },
             request: {
               sessionId,
+              ...(resumeState.providerThreadId
+                ? { providerThreadId: resumeState.providerThreadId }
+                : {}),
               kind: "agent",
               agent,
               prompt,

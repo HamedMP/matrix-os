@@ -211,7 +211,7 @@ describe("Codex app-server runner reliability", () => {
     }
   });
 
-  it("settles an in-flight tool as cancelled before a failed turn is replayed", async () => {
+  it("settles an in-flight tool as cancelled before an interrupted turn is replayed", async () => {
     const runtime = await startFakeRuntime("tool_cleanup", [
       initialize,
       startThread,
@@ -223,11 +223,11 @@ describe("Codex app-server runner reliability", () => {
     ], { stubControlServer: true });
 
     try {
-      const transcript = await waitForTranscript(runtime.eventPath, /"type":"turn\.failed"/);
+      const transcript = await waitForTranscript(runtime.eventPath, /"type":"turn\.aborted"/);
       expect(runtime.child.exitCode).toBeNull();
       runtime.child.kill("SIGTERM");
       const exitCode = await waitForExit(runtime.child);
-      expect(exitCode, transcript).toBe(1);
+      expect(exitCode, transcript).toBe(0);
       const events = await replayTranscript(runtime.eventPath);
       const toolStarted = events.find((event) => event.type === "tool.started");
       expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command" });

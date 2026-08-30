@@ -670,19 +670,26 @@ exec /bin/sh "$@"
         approvalPolicy: "never",
         sandboxMode: "full_access",
       },
-      resumeState: { conversationId: "sess_workspace_dead_1" },
+      resumeState: {
+        conversationId: "sess_workspace_dead_1",
+        providerThreadId: "native_thread_dead_1",
+      },
       signal: AbortSignal.timeout(1_000),
       now: () => baseNow,
       nextEventId: () => "evt_workspace_recovered_1",
     } as never)).resolves.toMatchObject({
       outcome: "delivered",
-      resumeState: { conversationId: "sess_workspace_dead_1" },
+      resumeState: {
+        conversationId: "sess_workspace_dead_1",
+        providerThreadId: "native_thread_dead_1",
+      },
     });
 
     expect(startSession).toHaveBeenCalledWith({
       ownerScope: { type: "user", id: "owner_user" },
       request: expect.objectContaining({
         sessionId: "sess_workspace_dead_1",
+        providerThreadId: "native_thread_dead_1",
         agent: "codex",
         prompt: "Continue after cancellation.",
         projectSlug: "repo-main",

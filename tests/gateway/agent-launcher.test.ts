@@ -17,6 +17,10 @@ describe("agent-launcher", () => {
     return JSON.parse(args[settingsIndex + 1]!) as Record<string, unknown>;
   }
 
+  function codexAppServerSettings(args: string[]): Record<string, unknown> {
+    return JSON.parse(Buffer.from(args.at(-1)!, "base64").toString("utf8")) as Record<string, unknown>;
+  }
+
   it("starts all four installation probes before any finishes and keeps stable order", async () => {
     const started: string[] = [];
     let release!: () => void;
@@ -449,6 +453,21 @@ describe("agent-launcher", () => {
       "--",
       "review only",
     ]);
+  });
+
+  it("passes the persisted native Codex thread to the app-server runner", () => {
+    const launch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "continue the task",
+      providerThreadId: "native_thread_persisted_1",
+      providerEventPath: "/tmp/codex-events.jsonl",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [] },
+    });
+
+    expect(codexAppServerSettings(launch.args)).toMatchObject({
+      providerThreadId: "native_thread_persisted_1",
+    });
   });
 
   it("maps Codex review and plan modes into launch controls", () => {

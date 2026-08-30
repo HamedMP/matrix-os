@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
+import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -75,6 +76,7 @@ const ProviderModelReferenceSchema = z.string()
   .refine((value) => !value.includes(".."));
 const RunnerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
+  providerThreadId: NativeReferenceSchema.optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
@@ -318,6 +320,7 @@ let stopTimer;
 let nextRpcId = 1;
 const pendingRpc = new Map();
 const pendingApprovals = new Map();
+const sessionApprovalGrants = createCodexSessionApprovalGrants();
 const pendingInputs = new Map();
 const completedControls = new Map();
 const assistantItemsWithDelta = new Set();
@@ -551,6 +554,14 @@ async function handleApproval(raw) {
   }
   const identity = approvalIdentity(parsed.data);
   const decisions = decisionMapping(parsed.data);
+  const sessionDecision = sessionApprovalGrants.decisionFor(
+    parsed.data.method,
+    decisions.nativeDecisionByMatrixDecision,
+  );
+  if (sessionDecision !== undefined) {
+    sendProvider({ id: parsed.data.id, result: { decision: sessionDecision } });
+    return true;
+  }
   if (decisions.allowedDecisions.length === 0) {
     sendProvider({ id: parsed.data.id, result: { decision: "cancel" } });
     return true;
@@ -568,6 +579,7 @@ async function handleApproval(raw) {
   });
   pendingApprovals.set(identity.approvalId, {
     nativeRequestId: parsed.data.id,
+    method: parsed.data.method,
     allowedDecisions: decisions.allowedDecisions,
     nativeDecisionByMatrixDecision: decisions.nativeDecisionByMatrixDecision,
     expiresAt: Date.now() + REQUEST_TIMEOUT_MS,
@@ -797,10 +809,14 @@ async function applyControl(control) {
   } else if (control.type === "approval") {
     const pending = pendingApprovals.get(control.approvalId);
     if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
+    const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
     sendProvider({
       id: pending.nativeRequestId,
-      result: { decision: pending.nativeDecisionByMatrixDecision[control.decision] },
+      result: { decision: nativeDecision },
     });
+    if (control.decision === "approve_for_session") {
+      sessionApprovalGrants.grant(pending.method, nativeDecision);
+    }
     pendingApprovals.delete(control.approvalId);
   } else {
     const pending = pendingInputs.get(control.requestId);
@@ -1071,7 +1087,9 @@ try {
     capabilities: { experimentalApi: true },
   });
   sendProvider({ method: "initialized", params: {} });
-  const started = await request("thread/start", {
+  const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
+  const started = await request(threadMethod, {
+    ...(config.providerThreadId ? { threadId: config.providerThreadId } : {}),
     model: config.model,
     serviceTier: config.serviceTier,
     cwd: process.cwd(),
