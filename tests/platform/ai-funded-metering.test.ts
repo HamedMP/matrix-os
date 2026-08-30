@@ -290,7 +290,7 @@ describe("funded AI metering", () => {
       .selectAll().where("entry_id", "=", "addon_1").execute()).toHaveLength(1);
   });
 
-  it("persists promotional expiry idempotently and fails closed after remaining credit expires", async () => {
+  it("atomically retires only expired promotional remainder and keeps add-on credit usable", async () => {
     await repo.updateGlobalPolicy({
       expectedRevision: 0,
       enabled: true,
@@ -310,7 +310,7 @@ describe("funded AI metering", () => {
       kind: "promotional_grant" as const,
       amountMicrousd: 500,
       sourceReference: "launch-2026",
-      expiresAt: "2026-08-30T20:05:00.000Z",
+      expiresAt: "2026-08-30T20:04:00.000Z",
     };
     const [first, concurrentReplay] = await Promise.all([
       repo.grantCredit(grant),
@@ -323,22 +323,218 @@ describe("funded AI metering", () => {
       promotionalBalanceMicrousd: 500,
       creditBalanceMicrousd: 500,
     });
+    await repo.grantCredit({
+      entryId: "expiry_addon",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 300,
+      sourceReference: "invoice_expiry_addon",
+    });
     await expect(repo.grantCredit({ ...grant, expiresAt: "2026-08-30T20:06:00.000Z" }))
       .rejects.toMatchObject({ code: "idempotency_conflict" });
     await expect(repo.grantCredit({ ...grant, entryId: "bad_addon_expiry", kind: "addon_grant" }))
       .rejects.toThrow();
     const issued = await repo.issueRuntimeCredential(identity);
 
-    clock = new Date("2026-08-30T20:05:00.000Z");
-    await expect(repo.getFundingSummary(identity)).rejects.toMatchObject({ code: "access_disabled" });
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    const summaries = await Promise.all([
+      repo.getFundingSummary(identity),
+      repo.getFundingSummary(identity),
+    ]);
+    expect(summaries[0]).toMatchObject({
+      promotionalBalanceMicrousd: 0,
+      addonBalanceMicrousd: 300,
+      creditBalanceMicrousd: 300,
+      remainingBalanceMicrousd: 300,
+    });
+    expect(summaries[1]).toEqual(summaries[0]);
     await expect(repo.authorize({
       credential: issued.credential.token,
       requestId: "expired_promotion",
       modelId,
-      maxCostMicrousd: 1,
-    })).rejects.toMatchObject({ code: "access_disabled" });
-    await expect(repo.issueRuntimeCredential(identity)).rejects.toMatchObject({ code: "access_disabled" });
-    expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute()).toHaveLength(0);
+      maxCostMicrousd: 100,
+    })).resolves.toMatchObject({
+      funding: { promotionalBalanceMicrousd: 0, addonBalanceMicrousd: 300 },
+      reservation: { remainingBalanceMicrousd: 200 },
+    });
+    await expect(repo.issueRuntimeCredential(identity)).resolves.toMatchObject({
+      policy: { enabled: true },
+    });
+    const ledger = await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select(["kind", "amount_microusd", "source_reference"])
+      .where("machine_id", "=", identity.machineId)
+      .orderBy("created_at").orderBy("entry_id").execute();
+    expect(ledger.filter((row) => row.kind === "promotional_expiry")).toEqual([{
+      kind: "promotional_expiry",
+      amount_microusd: -500,
+      source_reference: grant.entryId,
+    }]);
+    expect(ledger.filter((row) => row.kind === "promotional_grant")).toHaveLength(1);
+  });
+
+  it("protects reserved promotional credit at expiry then retires only the released remainder", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    await repo.setRuntimePolicy({
+      identity,
+      expectedRevision: 0,
+      enabled: true,
+      allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000,
+      expiresAt: null,
+    });
+    await repo.grantCredit({
+      entryId: "reserved_expiring_promo",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 100,
+      sourceReference: "reserved-expiry-campaign",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await repo.grantCredit({
+      entryId: "reserved_expiry_addon",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 100,
+      sourceReference: "reserved-expiry-invoice",
+    });
+    const credential = (await repo.issueRuntimeCredential(identity)).credential;
+    const reserved = await repo.authorize({
+      credential: credential.token,
+      requestId: "reserved_across_expiry",
+      modelId,
+      maxCostMicrousd: 80,
+    });
+
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      promotionalBalanceMicrousd: 80,
+      addonBalanceMicrousd: 100,
+      creditBalanceMicrousd: 180,
+      reservedMicrousd: 80,
+      remainingBalanceMicrousd: 100,
+    });
+    await repo.releaseReservation({
+      reservationId: reserved.reservation.reservationId,
+      tokenId: credential.tokenId,
+      reason: "pre_upstream_failure",
+    });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      promotionalBalanceMicrousd: 0,
+      addonBalanceMicrousd: 100,
+      creditBalanceMicrousd: 100,
+      reservedMicrousd: 0,
+      remainingBalanceMicrousd: 100,
+    });
+    const expiryDebits = await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select("amount_microusd").where("kind", "=", "promotional_expiry")
+      .orderBy("created_at").orderBy("entry_id").execute();
+    expect(expiryDebits.map((row) => Number(row.amount_microusd)).sort((a, b) => a - b))
+      .toEqual([-80, -20]);
+  });
+
+  it("charges an in-flight reservation before retiring its expired promotional backing", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    await repo.setRuntimePolicy({
+      identity,
+      expectedRevision: 0,
+      enabled: true,
+      allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000,
+      expiresAt: null,
+    });
+    await repo.grantCredit({
+      entryId: "inflight_expiring_promo",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 100,
+      sourceReference: "inflight-expiry-campaign",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await repo.grantCredit({
+      entryId: "inflight_expiry_addon",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 100,
+      sourceReference: "inflight-expiry-invoice",
+    });
+    const credential = (await repo.issueRuntimeCredential(identity)).credential;
+    const authorization = await repo.authorize({
+      credential: credential.token,
+      requestId: "inflight_across_expiry",
+      modelId,
+      maxCostMicrousd: 80,
+    });
+    await repo.startReservation({
+      reservationId: authorization.reservation.reservationId,
+      tokenId: credential.tokenId,
+    });
+
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      promotionalBalanceMicrousd: 80,
+      addonBalanceMicrousd: 100,
+      reservedMicrousd: 80,
+    });
+    await expect(repo.settleReservation({
+      reservationId: authorization.reservation.reservationId,
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 30,
+    })).resolves.toMatchObject({
+      funding: {
+        promotionalBalanceMicrousd: 0,
+        addonBalanceMicrousd: 100,
+        creditBalanceMicrousd: 100,
+        reservedMicrousd: 0,
+      },
+    });
+    const ledger = await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select(["kind", "amount_microusd"])
+      .where("machine_id", "=", identity.machineId).execute();
+    expect(ledger.filter((row) => row.kind === "promotional_debit")
+      .map((row) => Number(row.amount_microusd))).toEqual([-30]);
+    expect(ledger.filter((row) => row.kind === "promotional_expiry")
+      .map((row) => Number(row.amount_microusd)).sort((a, b) => a - b)).toEqual([-50, -20]);
+  });
+
+  it("leaves unexpired promotional grants intact when an older campaign expires", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    await repo.setRuntimePolicy({
+      identity,
+      expectedRevision: 0,
+      enabled: true,
+      allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000,
+      expiresAt: null,
+    });
+    await repo.grantCredit({
+      entryId: "older_expired_campaign",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 100,
+      sourceReference: "older-campaign",
+      expiresAt: "2026-08-30T20:05:00.000Z",
+    });
+    await repo.grantCredit({
+      entryId: "newer_active_campaign",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 70,
+      sourceReference: "newer-campaign",
+      expiresAt: "2026-09-30T20:00:00.000Z",
+    });
+    clock = new Date("2026-08-30T20:05:00.000Z");
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      promotionalBalanceMicrousd: 70,
+      addonBalanceMicrousd: 0,
+      creditBalanceMicrousd: 70,
+    });
+    const balances = await db.executor.selectFrom("ai_funded_promotional_grant_balances")
+      .select(["grant_entry_id", "remaining_microusd"])
+      .orderBy("grant_entry_id").execute();
+    expect(balances.map((row) => [row.grant_entry_id, Number(row.remaining_microusd)])).toEqual([
+      ["newer_active_campaign", 70],
+      ["older_expired_campaign", 0],
+    ]);
   });
 
   it("tracks promotional and add-on balances without exposing ledger internals", async () => {

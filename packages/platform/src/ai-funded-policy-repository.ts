@@ -275,21 +275,6 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           AND runtime.enabled = TRUE
           AND global_policy.enabled = TRUE
           AND (runtime.expires_at IS NULL OR runtime.expires_at > ${checkedAt})
-          AND NOT EXISTS (
-            SELECT 1
-            FROM ai_funded_credit_ledger ledger
-            JOIN ai_funded_runtime_balances balance
-              ON balance.machine_id = ledger.machine_id
-              AND balance.owner_id = ledger.owner_id
-              AND balance.runtime_slot = ledger.runtime_slot
-            WHERE ledger.owner_id = runtime.owner_id
-              AND ledger.machine_id = runtime.machine_id
-              AND ledger.runtime_slot = runtime.runtime_slot
-              AND ledger.kind = 'promotional_grant'
-              AND ledger.expires_at IS NOT NULL
-              AND ledger.expires_at <= ${checkedAt}
-              AND balance.promotional_balance_microusd > 0
-          )
           AND EXISTS (
             SELECT 1
             FROM jsonb_array_elements_text(global_policy.allowed_model_ids::jsonb) global_model(value)
