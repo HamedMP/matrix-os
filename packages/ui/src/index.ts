@@ -27,3 +27,16 @@ export type {
   AgentsProvidersViewProps,
   ProviderSettingsMutationIntent,
 } from "./agents-providers/AgentsProvidersView.js";
+
+export {
+  ProviderSettingsController,
+  ProviderSettingsTransportError,
+  useProviderSettingsController,
+} from "./agents-providers/provider-settings-controller.js";
+export type {
+  ProviderSettingsControllerState,
+  ProviderSettingsControllerOptions,
+  ProviderSettingsTransport,
+  ProviderSettingsTransportErrorCode,
+  UseProviderSettingsControllerResult,
+} from "./agents-providers/provider-settings-controller.js";
