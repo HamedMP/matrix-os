@@ -64,6 +64,21 @@ function compareSyncAgentVersions(candidate: string, current: string): string {
   return result.stdout.trim();
 }
 
+function extractSyncAgentFunction(name: string): string {
+  const root = process.cwd();
+  const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+  const functionSource = syncAgent.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
+  expect(functionSource).toBeDefined();
+  return functionSource!;
+}
+
+function runSyncAgentFunction(source: string, invocation: string, setup: string) {
+  return spawnSync('bash', ['-c', `${setup}\n${source}\n${invocation}`], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+}
+
 describe('customer VPS host bundle', () => {
   it('build script packages the systemd entrypoint binaries', () => {
     const root = process.cwd();
@@ -844,7 +859,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('classify_recovery_phase');
     expect(workflow).toContain('diagnose_recovery_state');
     expect(workflow).toContain('phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)');
-    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_rollback_failed|post_install_service_start_failed|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
+    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_rollback_failed|post_install_runtime_version_mismatch|post_install_service_start_failed|pre_install_service_stop_failed|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
     expect(workflow).toContain('recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
     expect(workflow).toContain('initial_recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
     expect(workflow).toContain('/usr/bin/python3 - "$error_path"');
@@ -1371,9 +1386,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('write_update_error "bundle_extract_failed"');
     expect(syncAgent).toContain('write_update_error "bundle_layout_invalid"');
     expect(syncAgent).toContain('write_update_error "terminal_runtime_install_failed"');
+    expect(syncAgent).toContain('write_update_error "pre_install_service_stop_failed"');
     expect(syncAgent).toContain('write_update_error "post_install_service_start_failed"');
     expect(syncAgent).toContain('write_update_error "post_install_host_bin_failed"');
-    expect(syncAgent).toContain('write_update_error "post_install_health_failed"');
+    expect(syncAgent).toContain('verification_error_code="post_install_health_failed"');
+    expect(syncAgent).toContain('verification_error_code="post_install_runtime_version_mismatch"');
     expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
     expect(syncAgent).toContain('write_update_error "apply_failed"');
     expect(syncAgent).toContain('write_update_error "apply_interrupted"');
@@ -1400,10 +1417,80 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     const healthFailure = syncAgent.indexOf('log "ERROR: health check failed — rolling back"');
     const healthRollback = syncAgent.indexOf('if do_rollback false; then', healthFailure);
-    const durableHealthError = syncAgent.indexOf('write_update_error "post_install_health_failed"', healthFailure);
+    const durableHealthError = syncAgent.indexOf(
+      'write_update_error "$verification_error_code" "$verification_error_message"',
+      healthFailure,
+    );
     expect(healthFailure).toBeGreaterThan(-1);
     expect(healthRollback).toBeGreaterThan(healthFailure);
     expect(durableHealthError).toBeGreaterThan(healthRollback);
+  });
+
+  it('sync agent refuses to replace the app until runtime services are confirmed stopped', () => {
+    const source = extractSyncAgentFunction('stop_runtime_services');
+    const setup = `
+log() { :; }
+sudo() { "$@"; }
+systemctl() {
+  if [ "$1" = stop ]; then return "${'$'}{STOP_STATUS:-0}"; fi
+  if [ "$1" = show ]; then printf '%s\\n' "${'$'}{SERVICE_STATE:-inactive}"; return 0; fi
+  return 1
+}`;
+
+    const stopped = runSyncAgentFunction(source, 'stop_runtime_services', setup);
+    expect(stopped.status, stopped.stderr || stopped.stdout).toBe(0);
+
+    const stopFailed = runSyncAgentFunction(
+      source,
+      'STOP_STATUS=1 stop_runtime_services',
+      setup,
+    );
+    expect(stopFailed.status).not.toBe(0);
+
+    const stillActive = runSyncAgentFunction(
+      source,
+      'SERVICE_STATE=active stop_runtime_services',
+      setup,
+    );
+    expect(stillActive.status).not.toBe(0);
+  });
+
+  it('sync agent requires the new gateway process to report the expected running version', () => {
+    const source = extractSyncAgentFunction('running_gateway_version');
+    const setup = `
+readonly HEALTH_URL="http://127.0.0.1:4000/health"
+curl() { printf '%s\\n' "${'$'}{HEALTH_RESPONSE}"; }
+json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }`;
+
+    const matching = runSyncAgentFunction(
+      source,
+      'HEALTH_RESPONSE=\'{"status":"ok","runningVersion":"v2026.08.19-1002"}\' running_gateway_version',
+      setup,
+    );
+    expect(matching.status, matching.stderr || matching.stdout).toBe(0);
+    expect(matching.stdout.trim()).toBe('v2026.08.19-1002');
+
+    const legacy = runSyncAgentFunction(
+      source,
+      'HEALTH_RESPONSE=\'{"status":"ok"}\' running_gateway_version',
+      setup,
+    );
+    expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
+    expect(legacy.stdout.trim()).toBe('');
+  });
+
+  it('verifies running identity before committing installed release metadata', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const stopCall = syncAgent.indexOf('if ! stop_runtime_services; then');
+    const appBackup = syncAgent.indexOf('sudo rm -rf "$APP_DIR.rollback"');
+    const versionProbe = syncAgent.indexOf('observed_running_version="$(running_gateway_version)"');
+    const metadataCommit = syncAgent.indexOf('if commit_release_metadata; then');
+
+    expect(stopCall).toBeGreaterThan(-1);
+    expect(stopCall).toBeLessThan(appBackup);
+    expect(versionProbe).toBeGreaterThan(appBackup);
+    expect(versionProbe).toBeLessThan(metadataCommit);
   });
 
   it('keeps explicit update triggers durable until the apply phase is recorded', () => {

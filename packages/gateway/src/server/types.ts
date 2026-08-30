@@ -6,6 +6,7 @@ export interface GatewayConfig {
   model?: string;
   maxTurns?: number;
   spawnFn?: SpawnFn;
+  runningVersion?: string;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
 
