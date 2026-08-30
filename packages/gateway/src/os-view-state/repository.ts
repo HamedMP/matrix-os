@@ -174,6 +174,12 @@ export class OsViewStateRepository {
     const currentDocument = OsViewDocumentSchema.parse(parseJson(current.document, createDefaultOsViewDocument()));
     const document: OsViewDocument = mergeOsViewStatePatch(currentDocument, request.patch);
     const nextMutationIds = [...recentIds, request.mutationId].slice(-RECENT_MUTATION_LIMIT);
+    // The owner document is deliberately one aggregate with one revision:
+    // apps and presentation geometry have cross-field invariants and must be
+    // observed atomically. Concurrent writers re-read the latest aggregate and
+    // reapply the same idempotent partial patch after a revision conflict. A
+    // targeted jsonb_set under this same aggregate revision would still
+    // contend, while making the atomic validation boundary less explicit.
     const updated = await this.kysely
       .updateTable("os_view_states")
       .set({

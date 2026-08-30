@@ -87,4 +87,33 @@ describe("OS-view state repository", () => {
     expect(canvas.document.desktop.windows[0]?.x).toBe(30);
     expect(canvas.document.canvas.transform).toEqual({ panX: -200, panY: 80, zoom: 0.8 });
   });
+
+  it("serializes independent patches and preserves both after the conflicted writer rebases", async () => {
+    await repository.getOrCreate("alice");
+    const desktop = await repository.patch("alice", {
+      baseRevision: 1,
+      mutationId: `osvm_${"1".repeat(32)}`,
+      patch: { desktop: { icons: [{ path: "__chat__", x: 24, y: 32 }] } },
+    });
+
+    const canvasRequest = {
+      baseRevision: 1,
+      mutationId: `osvm_${"2".repeat(32)}`,
+      patch: { canvas: { transform: { panX: -120, panY: 48, zoom: 0.75 } } },
+    } as const;
+    await expect(repository.patch("alice", canvasRequest)).rejects.toBeInstanceOf(
+      OsViewStateConflictError,
+    );
+
+    const latest = await repository.getOrCreate("alice");
+    const rebased = await repository.patch("alice", {
+      ...canvasRequest,
+      baseRevision: latest.revision,
+    });
+
+    expect(desktop.revision).toBe(2);
+    expect(rebased.revision).toBe(3);
+    expect(rebased.document.desktop.icons).toEqual([{ path: "__chat__", x: 24, y: 32 }]);
+    expect(rebased.document.canvas.transform).toEqual({ panX: -120, panY: 48, zoom: 0.75 });
+  });
 });

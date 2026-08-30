@@ -202,7 +202,11 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
           void patchWebOsViewState(gatewayUrl, {
             pinnedApps: cfg.pinnedApps,
             desktop: { icons: cfg.desktopIcons ?? [] },
-          }).catch(() => undefined);
+          }).catch((error: unknown) => {
+            if (!controller.signal.aborted) {
+              console.warn("[desktop-config] Initial durable migration failed:", error instanceof Error ? error.name : "UnknownError");
+            }
+          });
           return;
         }
         const durableConfig: DesktopConfig = {
@@ -214,7 +218,11 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
         setPinnedApps(durableConfig.pinnedApps);
         setDesktopIcons(durableConfig.desktopIcons, durableHydrationRevision);
         saveShellSnapshot(cacheScope, { desktopConfig: durableConfig });
-      }).catch(() => undefined);
+      }).catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          console.warn("[desktop-config] Durable hydration failed:", error instanceof Error ? error.name : "UnknownError");
+        }
+      });
     });
 
     return () => controller.abort();

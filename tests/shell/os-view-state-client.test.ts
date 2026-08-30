@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultOsViewDocument } from "@matrix-os/contracts";
 import {
+  layoutWindowsFromOsViewState,
   patchWebOsViewState,
   resetWebOsViewStateClientForTests,
 } from "../../shell/src/lib/os-view-state-client";
@@ -13,6 +14,23 @@ const latest = {
 
 describe("Web OS-view state client", () => {
   beforeEach(() => resetWebOsViewStateClientForTests());
+
+  it("restores shared open apps from the other presentation when selected geometry is empty", () => {
+    const document = createDefaultOsViewDocument();
+    document.apps = [
+      { path: "__chat__", title: "Chat", state: "open" },
+      { path: "__terminal__", title: "Terminal", state: "minimized" },
+    ];
+    document.desktop.windows = [
+      { path: "__chat__", x: 40, y: 60, width: 900, height: 640 },
+      { path: "__terminal__", x: 80, y: 100, width: 840, height: 560 },
+    ];
+
+    expect(layoutWindowsFromOsViewState({ ...latest, document }, "canvas")).toEqual([
+      { path: "__chat__", title: "Chat", state: "open", x: 40, y: 60, width: 900, height: 640 },
+      { path: "__terminal__", title: "Terminal", state: "minimized", x: 80, y: 100, width: 840, height: 560 },
+    ]);
+  });
 
   it("reloads and retries the same mutation after a revision conflict", async () => {
     const afterRetry = { ...latest, revision: 8 };

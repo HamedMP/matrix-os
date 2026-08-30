@@ -60,6 +60,8 @@ Web Canvas keeps its own spatial positions plus pan and zoom. Switching between 
 
 Durable writes that update multiple related records use one transaction. Revision checks are enforced in the write statement. Retried requests are idempotent. REST mutations that affect live OS-view documents notify subscribers after commit.
 
+The OS-view document is intentionally a coarse owner aggregate with one revision. App state and presentation geometry have cross-field invariants and are read atomically, so a validated partial PATCH is merged into the latest complete document and committed as one JSONB value. Concurrent writers that started from the same revision serialize: the loser receives a conflict, reloads the latest aggregate, and reapplies the same idempotent partial patch. This preserves independent Desktop and Canvas changes without lost updates. Targeting individual JSONB paths while retaining one aggregate revision would not reduce contention; moving to path-level writes requires a separately reviewed per-entity or per-namespace revision model.
+
 ## Workspace Canvas retirement
 
 Workspace Canvas is retired from navigation, built-in registration, product copy, and new creation flows. The retirement must not delete existing owner data. Existing records remain exportable and recoverable until a separately reviewed data-lifecycle migration defines user-visible export, deletion, and cleanup behavior.

@@ -98,12 +98,19 @@ export function layoutWindowsFromOsViewState(
   state: OsViewStateResponse,
   mode: OsViewMode,
 ): LayoutWindow[] {
-  const geometry = mode === "canvas"
+  const selectedGeometry = mode === "canvas"
     ? state.document.canvas.windows
     : state.document.desktop.windows;
-  const geometryByPath = new Map(geometry.map((window) => [window.path, window]));
+  const counterpartGeometry = mode === "canvas"
+    ? state.document.desktop.windows
+    : state.document.canvas.windows;
+  const selectedByPath = new Map(selectedGeometry.map((window) => [window.path, window]));
+  const counterpartByPath = new Map(counterpartGeometry.map((window) => [window.path, window]));
   return state.document.apps.flatMap((app) => {
-    const bounds = geometryByPath.get(app.path);
+    // App state is shared, while geometry is presentation-specific. A newly
+    // selected presentation may not have written geometry yet, so seed it from
+    // the other presentation instead of hiding an app that is durably open.
+    const bounds = selectedByPath.get(app.path) ?? counterpartByPath.get(app.path);
     if (!bounds) return [];
     return [{ ...bounds, title: app.title, state: app.state }];
   });
