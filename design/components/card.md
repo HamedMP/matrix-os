@@ -42,17 +42,17 @@ Cards group related content and actions into a single surface.
 
 | Variant   | Background                    | Border | Shadow | Use For                      |
 |-----------|-------------------------------|--------|--------|------------------------------|
-| Default   | `--card` (white)              | 1px    | `sm`   | Standard content containers  |
-| Muted     | `--muted`                     | none   | none   | Nested/secondary content     |
-| Glass     | `rgba(255,255,255,0.80)` blur | 1px    | `lg`   | Floating/overlay cards       |
-| Elevated  | `--card` (white)              | 1px    | `md`   | Feature cards, highlights    |
-| Accent    | `--secondary` (cream)         | 1px    | `sm`   | Callouts, tips, warm fills   |
+| Default   | Paper `#FCFCF8`               | 1px    | `sm`   | Standard content containers  |
+| Muted     | Green 50 or Blue 50           | none   | none   | Nested/secondary content     |
+| Glass     | Paper at 80% with blur        | 1px    | `lg`   | Floating/overlay cards       |
+| Elevated  | Paper `#FCFCF8`               | 1px    | `md`   | Feature cards, highlights    |
+| Accent    | Green 100 or Blue 100         | 1px    | `sm`   | Callouts and helpful context |
 
 ## Properties
 
 | Property    | Value                   |
 |-------------|-------------------------|
-| Radius      | `xl` (20px)             |
+| Radius      | 16px                     |
 | Padding     | `lg` (24px)             |
 | Border      | 1px solid `--border`    |
 | Shadow rest | `sm`                    |
@@ -78,7 +78,7 @@ Minimum card width: 240px (prevents content from becoming illegible).
 
 When nesting cards (e.g., a card inside a card), the inner card should use:
 - Variant: `muted` (to differentiate from parent)
-- Radius: `lg` (14px — one step smaller than parent's `xl`)
+- Radius: 12px — one step smaller than the parent's radius
 - Shadow: none (the parent provides elevation)
 
 ## Code Example
@@ -101,7 +101,7 @@ When nesting cards (e.g., a card inside a card), the inner card should use:
 
 Glass variant:
 ```tsx
-<Card className="bg-white/80 backdrop-blur-md shadow-lg">
+<Card className="bg-[rgba(252,252,248,0.80)] backdrop-blur-md shadow-lg">
   ...
 </Card>
 ```

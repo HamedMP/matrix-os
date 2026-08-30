@@ -43,12 +43,12 @@ Dialogs interrupt the user to request information or confirmation.
 
 | Property    | Value                        |
 |-------------|------------------------------|
-| Radius      | `xl` (20px)                  |
+| Radius      | 16px                         |
 | Shadow      | `xl`                         |
 | Padding     | `lg` (24px)                  |
-| Background  | `--card` (white)             |
+| Background  | Paper `#FCFCF8`              |
 | Border      | 1px solid `--border`         |
-| Backdrop    | `rgba(50, 53, 46, 0.40)` blur 8px |
+| Backdrop    | `rgba(31, 45, 29, 0.40)` blur 8px |
 
 ## Behavior (from UX Guide)
 

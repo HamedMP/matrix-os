@@ -23,7 +23,7 @@ The dock is the primary launcher and task indicator.
 |-------------|------------------------------------------|
 | Position    | Left side (desktop), bottom (mobile)     |
 | Width       | 56px (desktop), full width (mobile)      |
-| Background  | `--card` @ 40% with backdrop blur        |
+| Background  | Paper at 40% with backdrop blur          |
 | Border      | 1px `--border` @ 40% on the right edge   |
 | Icon size   | 40×40px with `xl` radius                 |
 | Gap         | `sm` (8px) between icons                 |
@@ -34,8 +34,8 @@ The dock is the primary launcher and task indicator.
 |----------|-------------------------------------------------|
 | Default  | `--card` background, `--border` border, `shadow-sm` |
 | Hover    | `shadow-md`, scale 1.05                          |
-| Active   | Running indicator dot below (6px, `--primary`)   |
-| Selected | `--primary` background, white icon               |
+| Active   | Running indicator dot below (6px, Green 300)      |
+| Selected | Teal 800 background, Paper icon                   |
 
 ### Behavior
 

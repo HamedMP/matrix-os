@@ -37,9 +37,9 @@ Form inputs for collecting user data.
 | Property    | Value                     |
 |-------------|---------------------------|
 | Height      | 40px (md), 32px (sm)      |
-| Radius      | `lg` (14px)               |
+| Radius      | 12px                       |
 | Padding     | 8px vertical, 16px horiz  |
-| Font        | Inter, body-small (0.875rem) |
+| Font        | Geist, body-small (0.875rem) |
 | Placeholder | `--muted-foreground`      |
 | Border      | 1px solid `--input`       |
 
@@ -49,7 +49,7 @@ Form inputs for collecting user data.
 |----------|-------------------------------------------------|
 | Default  | 1px border `--input`                             |
 | Hover    | Border darkens slightly                          |
-| Focus    | 2px ring in `--ring`, border becomes `--ring`    |
+| Focus    | 2px Gold 300 ring; border becomes Gold 500       |
 | Error    | Border and ring become `--destructive`           |
 | Disabled | 50% opacity, `--muted` background                |
 
@@ -59,7 +59,7 @@ The main command input uses the glass variant — centered at viewport bottom,
 full-width within constraints:
 
 ```tsx
-<div className="flex items-center gap-2 rounded-xl border bg-white/90
+<div className="flex items-center gap-2 rounded-xl border bg-[rgba(252,252,248,0.90)]
                 backdrop-blur-md px-4 py-2 shadow-lg">
   <Input className="border-0 bg-transparent shadow-none
                     focus-visible:ring-0" />

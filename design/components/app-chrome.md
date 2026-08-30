@@ -32,7 +32,7 @@ The window frame surrounding every app in the Matrix OS desktop.
 | Property     | Value                        |
 |--------------|------------------------------|
 | Height       | 32px                         |
-| Background   | `--card`                     |
+| Background   | Paper `#FCFCF8`              |
 | Border       | 1px bottom `--border`        |
 | Title font   | Body small (0.875rem), 500   |
 | Title align  | Center                       |
@@ -40,13 +40,14 @@ The window frame surrounding every app in the Matrix OS desktop.
 
 ## Traffic Lights
 
-macOS-style window controls at top-left of the title bar.
+Matrix-owned window controls at the top-left of the title bar use the brand
+palette. Native macOS or Windows chrome remains platform-native.
 
-| Button   | Color     | Hex       |
-|----------|-----------|-----------|
-| Close    | Red       | `#FF5F57` |
-| Minimize | Yellow    | `#FEBC2E` |
-| Maximize | Green     | `#28C840` |
+| Button   | Color        | Hex       |
+|----------|--------------|-----------|
+| Close    | Coral 500    | `#BA5236` |
+| Minimize | Gold 300     | `#F1C379` |
+| Maximize | Green 300    | `#BED77B` |
 
 - Size: 12×12px (`rounded-full`)
 - Gap: 8px between dots
@@ -58,7 +59,7 @@ macOS-style window controls at top-left of the title bar.
 
 | Property    | Value                   |
 |-------------|-------------------------|
-| Radius      | `xl` (20px)             |
+| Radius      | 16px                     |
 | Shadow      | `xl`                    |
 | Border      | 1px solid `--border`    |
 | Background  | `--card`                |
