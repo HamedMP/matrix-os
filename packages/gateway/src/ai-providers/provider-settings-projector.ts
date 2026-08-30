@@ -1,0 +1,249 @@
+import {
+  ProviderSettingsSnapshotSchema,
+  type AiProviderReadiness,
+  type AiProviderSnapshotV3,
+  type ProviderAccount,
+  type ProviderDependencyCounts,
+  type ProviderHarnessInstance,
+  type ProviderHarnessKind,
+  type ProviderSettingsSupportedAction,
+  type ProviderSettingsSnapshot,
+} from "@matrix-os/contracts";
+import type { HarnessConfiguration, ProviderSettingsConfiguration } from "./provider-settings-persistence.js";
+
+export interface ProviderSettingsDependencyReader {
+  getAccountDependencies(input: {
+    accountId: string;
+    harnessInstanceIds: string[];
+  }): Promise<ProviderDependencyCounts>;
+}
+
+function authState(readiness: AiProviderReadiness): ProviderHarnessInstance["authState"] {
+  if (readiness.state === "ready") return "authenticated";
+  if (readiness.state === "expired") return "expired";
+  if (readiness.state === "invalid") return "failed";
+  if (["setup_required", "auth_required", "disabled"].includes(readiness.state)) return "unauthenticated";
+  return "unknown";
+}
+
+function connectivity(readiness: AiProviderReadiness): ProviderHarnessInstance["connectivity"] {
+  if (readiness.state === "ready") return "online";
+  if (readiness.state === "stale") return "degraded";
+  if (readiness.state === "unavailable" || readiness.state === "disabled") return "offline";
+  return "unknown";
+}
+
+function loginMethods(kind: ProviderHarnessKind) {
+  return kind === "codex"
+    ? ["terminal", "oauth", "api_key"] as const
+    : ["terminal", "api_key"] as const;
+}
+
+function selectedCanonicalSources(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+) {
+  const sourceByAccount = new Map<string, string>();
+  for (const account of canonical.accounts) {
+    const stored = config.accountProfiles.find((profile) => profile.id === account.id);
+    const instance = canonical.instances.find((candidate) => {
+      if (candidate.accountId !== account.id) return false;
+      const source = canonical.accessSources.find((value) => value.id === candidate.accessSourceId);
+      return account.authMethod === "api_key" || stored?.authMethod === "api_key"
+        ? source?.fundingKind === "owner_api_key"
+        : source?.fundingKind === "owner_account";
+    });
+    const accessSourceId = instance?.accessSourceId ?? stored?.accessSourceId;
+    if (accessSourceId) sourceByAccount.set(account.id, accessSourceId);
+  }
+  const sourceIds = new Set([
+    ...canonical.accessSources
+      .filter((source) => source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon")
+      .map((source) => source.id),
+    ...sourceByAccount.values(),
+  ]);
+  return { sourceByAccount, sourceIds };
+}
+
+function projectAccessSources(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+) {
+  const { sourceByAccount, sourceIds } = selectedCanonicalSources(canonical, config);
+  const accountBySource = new Map([...sourceByAccount].map(([accountId, sourceId]) => [sourceId, accountId]));
+  const sources = canonical.accessSources.filter((source) => sourceIds.has(source.id)).map((source) => {
+    const matrix = source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon";
+    return {
+      id: source.id,
+      kind: matrix ? "matrix_gateway" as const : "provider_account" as const,
+      fundingKind: source.fundingKind,
+      providerId: source.vendor,
+      accountId: accountBySource.get(source.id) ?? null,
+      displayName: source.displayName,
+      readiness: {
+        state: source.state,
+        checkedAt: source.checkedAt,
+        staleAfter: source.staleAfter,
+        action: source.action,
+        safeReason: source.safeReason,
+      },
+      eligibleModelIds: [...source.eligibleModelIds],
+      usage: {
+        kind: "unavailable" as const,
+        authority: "unavailable" as const,
+        state: "unavailable" as const,
+        scope: matrix ? "owner_entitlement" as const : "account" as const,
+        reason: matrix ? "ledger_not_available" as const
+          : source.state === "ready" ? "provider_does_not_report" as const : "not_authenticated" as const,
+        asOf: null,
+      },
+    };
+  });
+  return { sources, sourceByAccount };
+}
+
+async function projectAccounts(input: {
+  canonical: AiProviderSnapshotV3;
+  config: ProviderSettingsConfiguration;
+  sourceByAccount: Map<string, string>;
+  sourceIds: Set<string>;
+  dependencies?: ProviderSettingsDependencyReader;
+}): Promise<ProviderAccount[]> {
+  const accounts = await Promise.all(input.canonical.accounts.map(async (account): Promise<ProviderAccount | null> => {
+    const accessSourceId = input.sourceByAccount.get(account.id);
+    const stored = input.config.accountProfiles.find((profile) => profile.id === account.id);
+    if (!accessSourceId || !input.sourceIds.has(accessSourceId) || (account.authMethod === null && !stored)) return null;
+    const selectedHarnesses = input.config.harnesses.filter((harness) => harness.selectedAccountId === account.id);
+    const dependencies = input.dependencies
+      ? await input.dependencies.getAccountDependencies({
+          accountId: account.id,
+          harnessInstanceIds: selectedHarnesses.map((harness) => harness.id),
+        })
+      : { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: selectedHarnesses.length };
+    return {
+      id: account.id,
+      providerId: account.vendor,
+      displayName: account.accountLabel ?? stored?.displayName ?? `${account.vendor} account`,
+      authMethod: account.authMethod === "provider_profile" ? "terminal"
+        : account.authMethod === "oauth_pkce" ? "oauth"
+          : account.authMethod === "api_key" ? "api_key" : stored!.authMethod,
+      authState: authState(account),
+      lastCheckedAt: account.checkedAt,
+      accessSourceId,
+      dependencies,
+    };
+  }));
+  return accounts.filter((account): account is ProviderAccount => account !== null);
+}
+
+function projectHarness(input: {
+  stored: HarnessConfiguration;
+  canonical: AiProviderSnapshotV3;
+  accounts: ProviderAccount[];
+  sources: ReturnType<typeof projectAccessSources>["sources"];
+  allowedGatewayModels: ReadonlySet<string>;
+}): ProviderHarnessInstance | null {
+  const model = input.canonical.models.find((candidate) => candidate.id === input.stored.route.modelId);
+  if (!model || model.vendor !== input.stored.route.providerId) return null;
+  const driver = input.canonical.drivers.find((candidate) => candidate.id === input.stored.driverId);
+  const source = input.stored.accessSourceId === null
+    ? undefined
+    : input.sources.find((candidate) => candidate.id === input.stored.accessSourceId);
+  const sourceEligible = source?.providerId === input.stored.route.providerId
+    && source.eligibleModelIds.includes(input.stored.route.modelId)
+    && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
+  const selectedAccountId = sourceEligible && source?.kind === "provider_account"
+    && source.accountId && input.accounts.some((account) => account.id === source.accountId)
+    ? source.accountId : null;
+  const readiness = sourceEligible ? source.readiness : {
+    state: "unknown" as const,
+    checkedAt: null,
+    staleAfter: null,
+    action: "retry" as const,
+    safeReason: "unknown" as const,
+  };
+  const accounts = input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
+  return {
+    id: input.stored.id,
+    harness: input.stored.harness,
+    displayName: input.stored.displayName,
+    accentColor: input.stored.accentColor,
+    enabled: Boolean(input.stored.enabled && driver?.installState === "installed"),
+    version: null,
+    installState: driver?.installState ?? "missing",
+    authState: authState(readiness),
+    loginMethods: [...loginMethods(input.stored.harness)],
+    recommendedLoginMethod: "terminal",
+    connectivity: connectivity(readiness),
+    accountIds: accounts.map((account) => account.id),
+    selectedAccountId,
+    accessSourceId: sourceEligible ? source!.id : null,
+    route: input.stored.route,
+    activeChatCount: selectedAccountId
+      ? accounts.find((account) => account.id === selectedAccountId)!.dependencies.activeChatCount
+      : 0,
+  };
+}
+
+export async function projectProviderSettings(input: {
+  canonical: AiProviderSnapshotV3;
+  config: ProviderSettingsConfiguration;
+  now: Date;
+  dependencies?: ProviderSettingsDependencyReader;
+  supportedActions: ProviderSettingsSupportedAction[];
+}): Promise<ProviderSettingsSnapshot> {
+  const { sources, sourceByAccount } = projectAccessSources(input.canonical, input.config);
+  const accounts = await projectAccounts({
+    canonical: input.canonical,
+    config: input.config,
+    sourceByAccount,
+    sourceIds: new Set(sources.map((source) => source.id)),
+    dependencies: input.dependencies,
+  });
+  const modelsByVendor = new Map<string, typeof input.canonical.models>();
+  for (const model of input.canonical.models) {
+    modelsByVendor.set(model.vendor, [...(modelsByVendor.get(model.vendor) ?? []), model]);
+  }
+  const modelProviders = [...modelsByVendor].map(([id, models]) => ({
+    id,
+    displayName: id[0]!.toUpperCase() + id.slice(1),
+    models: models.map((model) => ({
+      id: model.id,
+      displayName: model.displayName,
+      enabled: model.status !== "retired" && model.status !== "unavailable",
+    })),
+  }));
+  const gatewayPolicy = input.config.gatewayPolicy
+    && sources.some((source) => source.id === input.config.gatewayPolicy?.accessSourceId && source.kind === "matrix_gateway")
+    ? input.config.gatewayPolicy : null;
+  const allowedGatewayModels = new Set(gatewayPolicy?.allowedModelIds ?? []);
+  const harnesses = input.config.harnesses.flatMap((stored) => {
+    const harness = projectHarness({
+      stored,
+      canonical: input.canonical,
+      accounts,
+      sources,
+      allowedGatewayModels,
+    });
+    return harness ? [harness] : [];
+  });
+  return ProviderSettingsSnapshotSchema.parse({
+    contractVersion: 1,
+    projectionOf: {
+      contract: "AiProviderSnapshotV3",
+      contractVersion: 3,
+      revision: input.canonical.revision,
+    },
+    revision: input.config.revision,
+    refreshedAt: input.now.toISOString(),
+    access: input.supportedActions.length > 0
+      ? { mode: "writable" }
+      : { mode: "read_only", reason: "runtime_unavailable" },
+    supportedActions: input.supportedActions,
+    modelProviders,
+    accessSources: sources,
+    accounts,
+    harnesses,
+    gatewayPolicy,
+  });
+}

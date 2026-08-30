@@ -235,6 +235,8 @@ import {
 import { createSettingsRoutes } from "./routes/settings.js";
 import { AiProviderService } from "./ai-providers/service.js";
 import { createAiProviderRoutes } from "./ai-providers/routes.js";
+import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
+import { createProviderSettingsRoutes } from "./ai-providers/provider-settings-routes.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
@@ -4153,6 +4155,10 @@ export async function createGateway(config: GatewayConfig) {
   });
   await agentRuntimeServices.controller.reconcile();
   const aiProviderService = new AiProviderService({ homePath });
+  const providerSettingsStore = new ProviderSettingsStore({
+    homePath,
+    providerSnapshotReader: aiProviderService,
+  });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,
     "hermes" as const,
@@ -4231,6 +4237,10 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.route("/api/ai", createAiProviderRoutes({
     service: aiProviderService,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
+  app.route("/api/ai", createProviderSettingsRoutes({
+    store: providerSettingsStore,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
 
