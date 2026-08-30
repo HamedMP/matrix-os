@@ -58,5 +58,9 @@ export interface AgentsProvidersViewProps {
   onMutate: (intent: ProviderSettingsMutationIntent) => void;
   onOpenTerminal: (terminalSessionId: string) => void;
   onOpenBrowser: (authorizationPath: string) => void;
-  onAddCredit: (accessSourceId: string) => void;
+  onAddCredit: (
+    accessSourceId: string,
+    packageId: "usd_5" | "usd_10" | "usd_25",
+    requestId: string,
+  ) => Promise<void> | void;
 }
