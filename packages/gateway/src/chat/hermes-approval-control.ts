@@ -32,6 +32,10 @@ interface ResolvedApproval {
   decision: CanonicalChatApprovalDecision;
 }
 
+interface InFlightApproval extends ResolvedApproval {
+  completion: Promise<void>;
+}
+
 interface ActiveHermesRun {
   owner: CanonicalOwnerScope;
   chatId: string;
@@ -39,6 +43,7 @@ interface ActiveHermesRun {
   liveSessionId: string;
   emit(event: ApprovalEvent): void;
   pending: Map<string, PendingApproval>;
+  inFlight: Map<string, InFlightApproval>;
   resolved: Map<string, ResolvedApproval>;
 }
 
@@ -105,7 +110,12 @@ export function createHermesApprovalController() {
       if (!active.has(input.runId) && active.size >= MAX_ACTIVE_RUNS) {
         throw new Error("Hermes active Run limit exceeded");
       }
-      const run: ActiveHermesRun = { ...input, pending: new Map(), resolved: new Map() };
+      const run: ActiveHermesRun = {
+        ...input,
+        pending: new Map(),
+        inFlight: new Map(),
+        resolved: new Map(),
+      };
       active.set(input.runId, run);
       return () => {
         if (active.get(input.runId) === run) active.delete(input.runId);
@@ -150,26 +160,45 @@ export function createHermesApprovalController() {
         if (resolved.clientRequestId === input.clientRequestId && resolved.decision === input.decision) return;
         throw new Error("Hermes approval already resolved");
       }
+      const inFlight = run.inFlight.get(input.approvalId);
+      if (inFlight) {
+        if (inFlight.clientRequestId === input.clientRequestId && inFlight.decision === input.decision) {
+          return inFlight.completion;
+        }
+        throw new Error("Hermes approval already resolving");
+      }
       const pending = run.pending.get(input.approvalId);
       const choice = nativeChoice(input.decision);
       if (!pending || !choice || !pending.allowedDecisions.includes(input.decision)) {
         throw new Error("Hermes approval decision unavailable");
       }
-      HermesApprovalResponseSchema.parse(await run.client.request("approval.respond", {
-        session_id: run.liveSessionId,
-        ...(pending.requestId ? { request_id: pending.requestId } : {}),
-        choice,
-      }));
-      run.pending.delete(input.approvalId);
-      setBounded(run.resolved, input.approvalId, {
+      const receipt = {
         clientRequestId: input.clientRequestId,
         decision: input.decision,
-      }, MAX_RESOLVED_APPROVALS_PER_RUN);
-      run.emit(CanonicalProviderRunEventSchema.parse({
-        type: "approval.resolved",
-        approvalId: input.approvalId,
-        decision: input.decision,
-      }) as ApprovalEvent);
+      };
+      const completion = (async () => {
+        HermesApprovalResponseSchema.parse(await run.client.request("approval.respond", {
+          session_id: run.liveSessionId,
+          ...(pending.requestId ? { request_id: pending.requestId } : {}),
+          choice,
+        }));
+        run.pending.delete(input.approvalId);
+        setBounded(run.resolved, input.approvalId, receipt, MAX_RESOLVED_APPROVALS_PER_RUN);
+        run.emit(CanonicalProviderRunEventSchema.parse({
+          type: "approval.resolved",
+          approvalId: input.approvalId,
+          decision: input.decision,
+        }) as ApprovalEvent);
+      })();
+      const activeSubmission = { ...receipt, completion };
+      run.inFlight.set(input.approvalId, activeSubmission);
+      try {
+        await completion;
+      } finally {
+        if (run.inFlight.get(input.approvalId) === activeSubmission) {
+          run.inFlight.delete(input.approvalId);
+        }
+      }
     },
   };
 }

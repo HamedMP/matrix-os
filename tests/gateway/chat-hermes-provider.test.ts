@@ -69,6 +69,7 @@ function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly st
   return {
     process,
     requests,
+    respond,
     spawnFn,
     sendRaw(value: string) {
       stdout.emit("data", Buffer.from(value));
@@ -357,7 +358,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
   });
 
   it("submits one idempotent approval response to the owning live Hermes session", async () => {
-    const gateway = fakeGateway();
+    const gateway = fakeGateway({ ignoreMethods: ["approval.respond"] });
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
     const iterator = adapter.start(baseInput)[Symbol.asyncIterator]();
     const approvalEvent = iterator.next();
@@ -389,10 +390,12 @@ describe("Hermes canonical Chat Provider adapter", () => {
       clientRequestId: "request_approval_session",
       state: { sessionId: "durable_session" },
     };
-    await adapter.submitApproval?.(submission);
-    await adapter.submitApproval?.(submission);
+    const firstSubmission = adapter.submitApproval?.(submission);
+    const duplicateSubmission = adapter.submitApproval?.(submission);
+    await vi.waitFor(() => expect(gateway.requests.filter(({ method }) => method === "approval.respond")).toHaveLength(1));
 
-    expect(gateway.requests.filter(({ method }) => method === "approval.respond")).toEqual([
+    const approvalRequests = gateway.requests.filter(({ method }) => method === "approval.respond");
+    expect(approvalRequests).toEqual([
       expect.objectContaining({
         method: "approval.respond",
         params: {
@@ -402,6 +405,8 @@ describe("Hermes canonical Chat Provider adapter", () => {
         },
       }),
     ]);
+    gateway.respond(approvalRequests[0]!, { resolved: true });
+    await expect(Promise.all([firstSubmission, duplicateSubmission])).resolves.toEqual([undefined, undefined]);
     await expect(iterator.next()).resolves.toEqual({
       done: false,
       value: {

@@ -80,6 +80,16 @@ function providerKind(agent: SupportedAgent): AgentProviderSummary["kind"] {
   return "custom";
 }
 
+function safeRecoveryErrorName(error: unknown): string {
+  const name = error instanceof Error ? error.name : "UnknownError";
+  if (name === "Error" || name === "AbortError" || name === "TimeoutError"
+    || name === "CodexControlUnavailableError" || name === "CodexControlTransportError"
+    || name === "CodexControlRejectedError") {
+    return name;
+  }
+  return "UnknownError";
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -326,7 +336,11 @@ export function createWorkspaceCodingAgentProvider(
             ...(turn.model ? { model: turn.model } : {}),
             modelOptions: turn.modelOptions ?? [],
           });
-        } catch (_error) {
+        } catch (error: unknown) {
+          console.warn(
+            "[coding-agents] Codex turn control failed; restarting session",
+            { errorName: safeRecoveryErrorName(error) },
+          );
           const restarted = await options.runtime.startSession({
             ownerScope: { type: "user", id: principal.userId },
             request: {

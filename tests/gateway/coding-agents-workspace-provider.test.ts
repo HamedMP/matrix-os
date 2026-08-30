@@ -627,8 +627,11 @@ exec /bin/sh "$@"
   it("rebuilds a dead Codex runner before accepting the next same-thread Turn", async () => {
     const startSession = vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() }));
     const submitTurn = vi.fn(async () => {
-      throw new Error("dead control socket");
+      const error = new Error("private socket path");
+      error.name = "CodexControlUnavailableError";
+      throw error;
     });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const provider = createWorkspaceCodingAgentProvider({
       providerId: "codex",
       agent: "codex",
@@ -700,6 +703,11 @@ exec /bin/sh "$@"
         runtimePreference: "zellij",
       }),
     });
+    expect(warn).toHaveBeenCalledWith(
+      "[coding-agents] Codex turn control failed; restarting session",
+      { errorName: "CodexControlUnavailableError" },
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private socket path");
   });
 
   it("restores Codex event ingestion before resuming a persisted workspace thread", async () => {
