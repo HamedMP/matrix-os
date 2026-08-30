@@ -127,39 +127,10 @@ function outputChunks(text: string): string[] {
   return chunks;
 }
 
-function normalizedHermesInterimText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
 function remainingHermesInterimText(streamed: string, interim: string): string | undefined {
-  const normalizedStreamed = normalizedHermesInterimText(streamed);
-  const normalizedInterim = normalizedHermesInterimText(interim);
-  if (!normalizedStreamed || !normalizedInterim.startsWith(normalizedStreamed)) return undefined;
-
-  let interimIndex = 0;
-  let normalizedIndex = 0;
-  while (interimIndex < interim.length && /\s/.test(interim[interimIndex] ?? "")) interimIndex += 1;
-  while (interimIndex < interim.length && normalizedIndex < normalizedStreamed.length) {
-    const character = interim[interimIndex] ?? "";
-    if (/\s/.test(character)) {
-      if (normalizedStreamed[normalizedIndex] !== " ") return undefined;
-      normalizedIndex += 1;
-      while (interimIndex < interim.length && /\s/.test(interim[interimIndex] ?? "")) interimIndex += 1;
-      continue;
-    }
-    if (normalizedStreamed[normalizedIndex] !== character) return undefined;
-    normalizedIndex += 1;
-    interimIndex += 1;
-  }
-  if (normalizedIndex !== normalizedStreamed.length) return undefined;
-  let alreadyStreamedBoundaryLength = streamed.match(/\s+$/)?.[0].length ?? 0;
-  while (alreadyStreamedBoundaryLength > 0
-    && interimIndex < interim.length
-    && /\s/.test(interim[interimIndex] ?? "")) {
-    interimIndex += 1;
-    alreadyStreamedBoundaryLength -= 1;
-  }
-  return interim.slice(interimIndex);
+  const publishedPrefix = streamed.replace(/\s+$/, "");
+  if (!publishedPrefix || !interim.startsWith(publishedPrefix)) return undefined;
+  return interim.slice(publishedPrefix.length);
 }
 
 function hermesToolActivity(name: string): Pick<HermesActivity, "kind" | "label"> {
