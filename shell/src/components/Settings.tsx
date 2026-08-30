@@ -151,6 +151,7 @@ interface SettingsProps {
     collectAcquisitionSource?: boolean;
   };
   onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
+  onOpenProviderTerminalSession?: (sessionId: string) => void;
 }
 
 export function Settings({
@@ -189,7 +190,7 @@ function SettingsFrame({
   billingCheckoutReturnPath,
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
-  onOpenAgentTerminal,
+  onOpenProviderTerminalSession,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
@@ -400,7 +401,9 @@ function SettingsFrame({
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
-              {activeSection === "agents-providers" && <AgentSection onOpenTerminal={onOpenAgentTerminal} />}
+              {activeSection === "agents-providers" && (
+                <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
+              )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}

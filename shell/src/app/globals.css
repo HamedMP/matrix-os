@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@clerk/ui/themes/shadcn.css";
+@import "@matrix-os/ui/agents-providers.css";
 
 /* Opt-in command-list motion: immediate entry, delayed fade on exit. */
 [data-instant-list-hover] {

@@ -11,6 +11,7 @@ import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.
 let fileChangeHandler: ((path: string, event: "add" | "change" | "unlink") => void) | null = null;
 const settingsMock = vi.hoisted(() => ({
   onOpenAgentTerminal: undefined as undefined | ((action: "openclaw-install") => void),
+  onOpenProviderTerminalSession: undefined as undefined | ((sessionId: string) => void),
 }));
 
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
@@ -36,9 +37,21 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/Settings.js", () => ({
-  Settings: ({ onOpenAgentTerminal }: { onOpenAgentTerminal?: (action: "openclaw-install") => void }) => {
+  Settings: ({
+    onOpenAgentTerminal,
+    onOpenProviderTerminalSession,
+  }: {
+    onOpenAgentTerminal?: (action: "openclaw-install") => void;
+    onOpenProviderTerminalSession?: (sessionId: string) => void;
+  }) => {
     settingsMock.onOpenAgentTerminal = onOpenAgentTerminal;
-    return <button onClick={() => onOpenAgentTerminal?.("openclaw-install")}>Install OpenClaw from Settings</button>;
+    settingsMock.onOpenProviderTerminalSession = onOpenProviderTerminalSession;
+    return (
+      <>
+        <button onClick={() => onOpenAgentTerminal?.("openclaw-install")}>Install OpenClaw from Settings</button>
+        <button onClick={() => onOpenProviderTerminalSession?.("provider-login")}>Continue provider login</button>
+      </>
+    );
   },
 }));
 
@@ -118,6 +131,7 @@ describe("mobile shell", () => {
     });
     setDesktopViewport();
     settingsMock.onOpenAgentTerminal = undefined;
+    settingsMock.onOpenProviderTerminalSession = undefined;
     window.sessionStorage.clear();
   });
 
@@ -200,6 +214,21 @@ describe("mobile shell", () => {
 
     expect(await screen.findByTestId("terminal-app")).toBeTruthy();
     expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toContain("openclaw-install");
+  });
+
+  it("focuses a visible terminal for an existing provider session without queuing a command", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue provider login" }));
+
+    expect(await screen.findByTestId("terminal-app")).toBeTruthy();
+    expect(window.sessionStorage.getItem("matrix:provider-terminal-session-queue")).toContain("provider-login");
+    expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toBeNull();
   });
 
   it("hides the bottom dock while the terminal command composer is focused", async () => {

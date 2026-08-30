@@ -1,15 +1,49 @@
-import { AgentRuntimePanel } from "./AgentRuntimePanel";
-import type { TerminalLaunchAction } from "@/lib/terminal-launch";
+"use client";
+
+import { useMemo } from "react";
+import { AgentsProvidersView, useProviderSettingsController } from "@matrix-os/ui";
+import { getGatewayUrl } from "@/lib/gateway";
+import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
+import { createProviderSettingsTransport } from "@/lib/provider-settings-transport";
 
 export function AgentSection({
   onOpenTerminal,
 }: {
-  onOpenTerminal?: (action: TerminalLaunchAction) => void;
+  onOpenTerminal?: (terminalSessionId: string) => void;
 }) {
+  const transport = useMemo(() => createProviderSettingsTransport(), []);
+  const controller = useProviderSettingsController({
+    identityKey: getGatewayUrl(),
+    transport,
+  });
+
+  if (controller.snapshot === null) {
+    const unavailable = controller.error !== null;
+    return (
+      <div className="matrix-agents-providers" aria-busy={unavailable ? undefined : "true"} data-provider-settings-adapter="shared">
+        <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"}>
+          <strong>{unavailable ? "Provider settings are unavailable" : "Loading agents & providers"}</strong>
+          <span>{unavailable ? "Refresh Settings to try again." : "Checking this computer’s provider state…"}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6" data-provider-settings-adapter="legacy">
-      <h2 className="text-lg font-semibold">Agents &amp; providers</h2>
-      <AgentRuntimePanel onOpenTerminal={onOpenTerminal} />
+    <div data-provider-settings-adapter="shared">
+      <AgentsProvidersView
+        snapshot={controller.snapshot}
+        selectedHarnessId={controller.selectedHarnessId}
+        connectionAttempt={controller.connectionAttempt}
+        busy={controller.busy}
+        error={controller.error}
+        onSelectHarness={controller.onSelectHarness}
+        onRefresh={() => { void controller.refresh(); }}
+        onMutate={(intent) => { void controller.mutate(intent); }}
+        onOpenTerminal={(sessionId) => { onOpenTerminal?.(sessionId); }}
+        onOpenBrowser={openProviderAuthorizationPath}
+        onAddCredit={() => undefined}
+      />
     </div>
   );
 }

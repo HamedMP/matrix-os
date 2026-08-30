@@ -10,6 +10,10 @@ import { TerminalDesignTabStrip } from "./TerminalDesignTabStrip";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
+import {
+  drainExistingTerminalSessionQueue,
+  PROVIDER_TERMINAL_SESSION_EVENT,
+} from "@/lib/provider-terminal-session";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { isShellThemeId } from "@/stores/terminal-defaults";
 import { getTerminalThemePreset } from "./terminal-themes";
@@ -643,6 +647,32 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     drainLaunches();
     window.addEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
     return () => window.removeEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
+  }, [initialized, launchTargetId]);
+
+  const drainProviderSessions = useEffectEvent(async (event?: Event) => {
+    const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
+    if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return;
+    const sessionIds = await drainExistingTerminalSessionQueue(launchTargetId);
+    if (!mountedRef.current) return;
+    for (const sessionId of sessionIds) {
+      const existingTab = tabsRef.current.find((tab) => getSessionIds(tab.paneTree).includes(sessionId));
+      if (existingTab) {
+        setActiveTabId(existingTab.id);
+        requestPaneFocus(getPaneIdsForSession(existingTab.paneTree, sessionId)[0] ?? getFirstPaneId(existingTab.paneTree));
+      } else {
+        addSessionTab(formatShellDisplayName(sessionId), sessionId);
+      }
+    }
+  });
+
+  useEffect(() => {
+    if (!initialized) return;
+    const handleProviderSession = (event: Event) => {
+      void drainProviderSessions(event);
+    };
+    void drainProviderSessions();
+    window.addEventListener(PROVIDER_TERMINAL_SESSION_EVENT, handleProviderSession);
+    return () => window.removeEventListener(PROVIDER_TERMINAL_SESSION_EVENT, handleProviderSession);
   }, [initialized, launchTargetId]);
 
   const flushLayout = useEffectEvent(() => {
