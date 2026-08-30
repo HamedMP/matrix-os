@@ -382,10 +382,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       signal: generationSignal,
     };
     try {
-      await platform.start(
+      const started = await platform.start(
         { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
         state.lifetimeSignal,
       );
+      if (started.reservationId !== reservation.reservationId
+        || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId) {
+        throw new Error("Funded AI start response did not match its reservation");
+      }
       const upstream = await fetchImpl(generationUrl, generationInit);
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
@@ -430,6 +434,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
     } catch (error) {
       clearTimeout(firstResponseTimer);
+      if (error instanceof FundedControlPlaneError) {
+        await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+        resourceLease.release();
+        state.resourceLease = null;
+        return controlPlaneError(c, error);
+      }
       enqueueFinalization({ mode: "conservative" });
       resourceLease.release();
       state.resourceLease = null;

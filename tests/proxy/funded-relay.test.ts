@@ -470,6 +470,44 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
+  it("releases a reservation when the control plane definitively rejects start", async () => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+      if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
+      if (url.endsWith("/start")) {
+        events.push("start_denied");
+        return json({ error: { code: "rate_limited", message: "Try again" } }, 429);
+      }
+      if (url.endsWith("/release")) {
+        events.push("release");
+        return json({
+          contractVersion: 1,
+          reservationId: "reservation_123",
+          requestId: "request_123",
+          tokenId: "credential_123",
+          releasedMicrousd: RESERVED_MICROUSD,
+          releasedAt: NOW.toISOString(),
+          reason: "pre_upstream_failure",
+          status: "released",
+          funding: authorizationResponse("request_123").funding,
+        });
+      }
+      if (url.endsWith("/finalize")) events.push("finalize");
+      else events.push("generate");
+      return json({});
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    expect(events).toEqual(["start_denied", "release"]);
+    await relay.close();
+  });
+
   it("never releases an in-flight reservation after generation fetch fails", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
