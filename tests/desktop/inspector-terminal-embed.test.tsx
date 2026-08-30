@@ -4,7 +4,7 @@ import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import type { RuntimeSummary, TerminalTab } from "@matrix-os/contracts";
 import { AgentConversationInspector } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationInspector";
 import { InspectorTerminalPanel } from "../../desktop/src/renderer/src/features/panels/InspectorTerminalPanel";
 
@@ -33,17 +33,20 @@ afterEach(cleanup);
 
 const NOW = "2026-07-12T12:00:00.000Z";
 
-function session(partial: Partial<TerminalSessionSummary> & { id: string; name: string }): TerminalSessionSummary {
+function session(partial: Partial<TerminalTab> & { id: string; name: string }): TerminalTab {
   return {
+    workspaceId: "tws_00000000000000000000000000000001",
+    cwd: "projects/matrix-os",
     status: "running",
-    attachable: true,
+    revision: 1,
+    order: 0,
     createdAt: NOW,
     updatedAt: NOW,
     ...partial,
   };
 }
 
-function summaryWith(sessions: TerminalSessionSummary[]): RuntimeSummary {
+function summaryWith(sessions: TerminalTab[]): RuntimeSummary {
   return {
     runtime: { id: "rt_primary", label: "Primary", status: "available" },
     capabilities: [],
@@ -51,7 +54,7 @@ function summaryWith(sessions: TerminalSessionSummary[]): RuntimeSummary {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: sessions, hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [{ id: "tws_00000000000000000000000000000001", scope: "project", projectId: "matrix-os", canonicalSize: { cols: 120, rows: 36 }, status: "running", revision: 1, createdAt: NOW, updatedAt: NOW, tabs: sessions }], hasMore: false, limit: 20 },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
@@ -69,7 +72,7 @@ describe("InspectorTerminalPanel", () => {
       <InspectorTerminalPanel
         summary={summaryWith([
           session({ id: "ts_1", name: "build-shell" }),
-          session({ id: "ts_2", name: "old-shell", attachable: false, status: "exited" }),
+          session({ id: "ts_2", name: "old-shell", status: "exited" }),
         ])}
         active
       />,
@@ -114,9 +117,9 @@ describe("InspectorTerminalPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open terminal deploy-shell" }));
 
     const embedded = screen.getByTestId("embedded-terminal");
-    expect(embedded.getAttribute("data-session")).toBe("deploy-shell");
+    expect(embedded.getAttribute("data-session")).toBe("tws_00000000000000000000000000000001:ts_2");
     expect(embedded.getAttribute("data-active")).toBe("true");
-    expect(terminalViewMock.lastProps?.sessionName).toBe("deploy-shell");
+    expect(terminalViewMock.lastProps?.sessionName).toBe("tws_00000000000000000000000000000001:ts_2");
     expect(terminalViewMock.lastProps?.chatId).toBe("chat_selected");
     // Exactly one session embeds at a time; the list is replaced, not stacked.
     expect(screen.queryByRole("button", { name: "Open terminal build-shell" })).toBeNull();
@@ -153,7 +156,7 @@ describe("InspectorTerminalPanel", () => {
     view.rerender(
       <Tooltip.Provider>
         <InspectorTerminalPanel
-          summary={summaryWith([session({ id: "ts_1", name: "build-shell", attachable: false, status: "exited" })])}
+          summary={summaryWith([session({ id: "ts_1", name: "build-shell", status: "exited" })])}
           active
         />
       </Tooltip.Provider>,
