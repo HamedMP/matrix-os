@@ -669,6 +669,61 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("keeps a recovered Hermes Run alive when an already-streamed interim normalizes whitespace", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_failed_build",
+      name: "terminal",
+      args: { command: "pnpm build" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_failed_build",
+      name: "terminal",
+      result: { exit_code: 1, output: "build failed" },
+    });
+    gateway.event("message.delta", { text: "Checking the preview.\n" });
+    gateway.event("message.interim", { text: "Checking the preview.", already_streamed: true });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 0, output: "ready" },
+    });
+    gateway.event("message.complete", { text: "The preview is ready.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_failed_build",
+        status: "failed",
+      }),
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_preview",
+        status: "completed",
+      }),
+      { type: "run.completed", outcome: "completed" },
+    ]));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "run.completed",
+      outcome: "failed",
+    }));
+    expect(events.filter((event) => (event as { type?: string }).type === "assistant.delta")).toEqual([
+      { type: "assistant.delta", delta: "Checking the preview." },
+      { type: "assistant.delta", delta: "\n\nThe preview is ready." },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
   it("interrupts the live Hermes session before closing an aborted Run", async () => {
     const gateway = fakeGateway();
     const abortController = new AbortController();
