@@ -3,16 +3,35 @@ import { priceActualUsageMicrousd, type FundedTokenUsage } from "./funded-relay-
 
 const DEFAULT_CAPTURE_LIMIT = 1024 * 1024;
 const TokenSchema = z.number().int().nonnegative().max(10_000_000);
+const CacheCreationSchema = z.object({
+  ephemeral_5m_input_tokens: TokenSchema,
+  ephemeral_1h_input_tokens: TokenSchema,
+}).strict();
 const UsageSchema = z.object({
   input_tokens: TokenSchema,
   output_tokens: TokenSchema.optional(),
   cache_read_input_tokens: TokenSchema.optional(),
   cache_creation_input_tokens: TokenSchema.optional(),
+  cache_creation: CacheCreationSchema.optional(),
+}).superRefine((usage, ctx) => {
+  const total = usage.cache_creation_input_tokens ?? 0;
+  if (total === 0 && usage.cache_creation === undefined) return;
+  if (usage.cache_creation === undefined) {
+    ctx.addIssue({ code: "custom", message: "Cache creation TTL breakdown is required" });
+    return;
+  }
+  if (
+    usage.cache_creation.ephemeral_5m_input_tokens
+      + usage.cache_creation.ephemeral_1h_input_tokens
+    !== total
+  ) {
+    ctx.addIssue({ code: "custom", message: "Cache creation usage is inconsistent" });
+  }
 });
 const JsonResponseSchema = z.object({
   type: z.literal("message"),
   model: z.string(),
-  usage: UsageSchema.extend({ output_tokens: TokenSchema }),
+  usage: UsageSchema.safeExtend({ output_tokens: TokenSchema }),
 });
 
 export type FundedFinalization =
@@ -29,7 +48,8 @@ function toUsage(input: z.infer<typeof UsageSchema>, outputTokens: number): Fund
     inputTokens: input.input_tokens,
     outputTokens,
     cacheReadTokens: input.cache_read_input_tokens ?? 0,
-    cacheWriteTokens: input.cache_creation_input_tokens ?? 0,
+    cacheWrite5mTokens: input.cache_creation?.ephemeral_5m_input_tokens ?? 0,
+    cacheWrite1hTokens: input.cache_creation?.ephemeral_1h_input_tokens ?? 0,
   };
 }
 
