@@ -16,8 +16,9 @@ explicitly identified as implemented in `quickstart.md`.
 
 - A **harness** is the executable agent runtime, such as Hermes, OpenClaw, Pi,
   OpenCode, Codex, or Claude.
-- A **model provider** serves inference, such as Matrix AI, Anthropic, OpenAI,
-  OpenRouter, or Baseten.
+- A **model provider** serves inference, such as Anthropic, OpenAI, OpenRouter,
+  or Baseten. Matrix AI is a managed gateway/access source, not a model
+  provider or provider account.
 - An **account** is an owner-scoped authenticated profile for a harness or model
   provider. Multiple accounts may exist for one provider.
 - An **access source** is the exact credential and funding path selected for a
