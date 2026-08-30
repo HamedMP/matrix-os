@@ -33,6 +33,10 @@ export interface ShellSessionSummary {
 }
 
 export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
+export interface ShellSessionCreateOptions {
+  cmd?: string;
+  agent?: NonNullable<ShellSessionSummary["agent"]>;
+}
 
 interface ShellSessionsState {
   sessions: ShellSessionSummary[];
@@ -42,7 +46,7 @@ interface ShellSessionsState {
   loadSequence: number;
   authoritativeRevision: number;
   load(api: ApiClient): Promise<ShellSessionSummary[] | null>;
-  create(api: ApiClient): Promise<ShellSessionSummary | null>;
+  create(api: ApiClient, options?: ShellSessionCreateOptions): Promise<ShellSessionSummary | null>;
   adoptCreatedSession(name: string): void;
   deleteSession(api: ApiClient, name: string): Promise<boolean>;
   rename(api: ApiClient, name: string, nextName: string): Promise<boolean>;
@@ -259,7 +263,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     }
   },
 
-  create: async (api) => {
+  create: async (api, options = {}) => {
     if (get().creating) return null;
     // A computer switch advances the runtime generation and clears this store;
     // a create that settles afterwards belongs to the previous computer and
@@ -272,6 +276,8 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
           name,
           cwd: DEFAULT_CWD,
+          ...(options.cmd ? { cmd: options.cmd } : {}),
+          ...(options.agent ? { agent: options.agent } : {}),
         });
         if (!isCurrentRuntimeGeneration(generation)) return null;
         const createdName = typeof response.name === "string" && isValidShellSessionName(response.name) ? response.name : name;
@@ -280,6 +286,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
           status: "active",
           placement: "active",
           attachCommand: shellConnectCommand(createdName),
+          ...(options.agent ? { agent: options.agent } : {}),
         };
         const refreshSequence = get().loadSequence + 1;
         set({ loadSequence: refreshSequence });

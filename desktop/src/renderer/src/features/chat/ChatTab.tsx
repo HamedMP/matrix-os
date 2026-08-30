@@ -2,6 +2,7 @@ import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import type { CanonicalChatEventSource } from "../../lib/canonical-chat-client";
+import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
@@ -303,7 +304,7 @@ export function HermesPane() {
         </div>
       ) : (
         <>
-          <ConversationTranscript turns={turns} callbacks={{ copyText }} />
+          <ConversationTranscript turns={turns} callbacks={{ copyText, openFile: openFileInDesktopEditor }} />
           <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
             {renderComposer("Reply to Hermes…")}
           </div>

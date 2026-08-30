@@ -10,6 +10,7 @@ import {
 } from "../../packages/gateway/src/coding-agents/codex-control-client.js";
 
 const cleanup: Array<() => Promise<void>> = [];
+const socketTempRoot = process.platform === "darwin" ? "/tmp" : tmpdir();
 
 afterEach(async () => {
   await Promise.allSettled(cleanup.splice(0).map((remove) => remove()));
@@ -47,7 +48,7 @@ async function listen(homePath: string, sessionId: string, reply?: string) {
 
 describe("Codex control client", () => {
   it("submits bounded Turn, approval, and structured input frames", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "mx-control-"));
+    const homePath = await mkdtemp(join(socketTempRoot, "mx-control-"));
     const sessionId = "sess_thread_control_1";
     const frames = await listen(homePath, sessionId, '{"ok":true}\n');
     const client = createCodexControlClient({ homePath, timeoutMs: 1_000 });
@@ -56,7 +57,7 @@ describe("Codex control client", () => {
       sessionId,
       turnId: "turn_control_1",
       prompt: "Continue with the focused tests.",
-      model: "gpt-5.6-sol",
+      model: "openai/gpt-5.6-sol",
       modelOptions: [{ id: "effort", value: "high" }],
     });
     await client.submitApproval({
@@ -78,7 +79,7 @@ describe("Codex control client", () => {
       {
         type: "turn",
         prompt: "Continue with the focused tests.",
-        model: "gpt-5.6-sol",
+        model: "openai/gpt-5.6-sol",
         modelOptions: [{ id: "effort", value: "high" }],
         clientRequestId: "req_control_1",
       },
@@ -100,7 +101,7 @@ describe("Codex control client", () => {
   });
 
   it("fails closed for absent sockets, malformed replies, and stalled peers", async () => {
-    const absentHome = await mkdtemp(join(tmpdir(), "mx-control-absent-"));
+    const absentHome = await mkdtemp(join(socketTempRoot, "mx-control-absent-"));
     cleanup.push(() => rm(absentHome, { recursive: true, force: true }));
     const absent = createCodexControlClient({ homePath: absentHome, timeoutMs: 100 });
     await expect(absent.submitApproval({
@@ -110,7 +111,7 @@ describe("Codex control client", () => {
       clientRequestId: "req_absent_1",
     })).rejects.toThrow("Codex control request failed");
 
-    const malformedHome = await mkdtemp(join(tmpdir(), "mx-control-malformed-"));
+    const malformedHome = await mkdtemp(join(socketTempRoot, "mx-control-malformed-"));
     await listen(malformedHome, "sess_malformed", '{"providerError":"/private/path"}\n');
     const malformed = createCodexControlClient({ homePath: malformedHome, timeoutMs: 100 });
     await expect(malformed.submitApproval({
@@ -120,7 +121,7 @@ describe("Codex control client", () => {
       clientRequestId: "req_malformed_1",
     })).rejects.toThrow("Codex control request failed");
 
-    const stalledHome = await mkdtemp(join(tmpdir(), "mx-control-stalled-"));
+    const stalledHome = await mkdtemp(join(socketTempRoot, "mx-control-stalled-"));
     await listen(stalledHome, "sess_stalled");
     const stalled = createCodexControlClient({ homePath: stalledHome, timeoutMs: 25 });
     await expect(stalled.submitApproval({

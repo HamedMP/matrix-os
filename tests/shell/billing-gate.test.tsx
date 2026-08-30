@@ -622,15 +622,18 @@ describe("BillingGate", () => {
       expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
     }
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/provision-runtime")).toBe(false);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Pi" }));
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      fireEvent.click(screen.getByRole("checkbox", { name: label }));
+    }
+    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
     timeoutSpy.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    fireEvent.keyDown(window, { key: "Enter" });
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/auth/provision-runtime",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ developerTools: ["codex", "claude-code", "opencode"] }),
+          body: JSON.stringify({ developerTools: [] }),
         }),
       ),
     );

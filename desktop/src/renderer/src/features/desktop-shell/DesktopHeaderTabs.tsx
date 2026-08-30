@@ -58,7 +58,7 @@ export default function DesktopHeaderTabs() {
     const wasActive = useTabs.getState().activeTabId === tab.id;
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
-    if (tab.kind === "home") requestBackgroundRefresh();
+    if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
     if (wasActive) focusFallback(tab.id);
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
 
@@ -66,7 +66,7 @@ export default function DesktopHeaderTabs() {
     const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
     restoreAsWindow(tabId);
     focusTab(tabId);
-    if (tab?.kind === "home") requestBackgroundRefresh();
+    if (tab?.kind === "home" || tab?.kind === "browser") requestBackgroundRefresh();
   }, [focusTab, requestBackgroundRefresh, restoreAsWindow]);
 
   return (

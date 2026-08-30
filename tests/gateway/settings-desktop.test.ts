@@ -488,8 +488,9 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(data.kernel).toEqual({ model: null, effort: null });
       expect(data.availableModels.map((model: { id: string }) => model.id))
         .toEqual([
-          "claude-opus-4-6",
-          "claude-sonnet-4-5",
+          "claude-fable-5",
+          "claude-opus-5",
+          "claude-sonnet-5",
           "claude-haiku-4-5",
         ]);
       expect(AgentSettingsViewSchema.safeParse(data).success).toBe(true);
@@ -644,9 +645,9 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.kernel).toEqual({ model: null, effort: null });
-      expect(data.availableModels.map((m: { id: string }) => m.id)).toContain("claude-opus-4-6");
-      expect(data.availableEfforts).toEqual(["low", "medium", "high", "max"]);
-      expect(data.defaults).toEqual({ model: "claude-opus-4-6", effort: "high" });
+      expect(data.availableModels.map((m: { id: string }) => m.id)).toContain("claude-opus-5");
+      expect(data.availableEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      expect(data.defaults).toEqual({ model: "claude-opus-5", effort: "high" });
     });
 
     it("reflects persisted kernel config", async () => {

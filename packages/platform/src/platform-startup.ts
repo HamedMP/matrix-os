@@ -422,6 +422,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
       db,
       r2,
       platformSecret,
+      r2PrefixRoot: process.env.R2_PREFIX_ROOT ?? 'matrixos-sync',
     });
     customerVpsObjectStore = r2;
     hostBundleObjectStore = r2;

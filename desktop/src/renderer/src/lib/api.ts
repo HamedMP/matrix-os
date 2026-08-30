@@ -46,6 +46,8 @@ export interface ApiClient {
   putBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
   delete<T>(path: string): Promise<T>;
   putText<T>(path: string, body: string): Promise<T>;
+  /** Returns a client whose requests remain bound to one runtime slot. */
+  forRuntime(runtimeSlot: string): ApiClient;
   baseUrl: string;
 }
 
@@ -149,6 +151,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   return {
     baseUrl: options.baseUrl,
+    forRuntime: (runtimeSlot) => createApiClient({
+      ...options,
+      getRuntimeSlot: () => runtimeSlot,
+    }),
     get: (path) => request(path, { method: "GET" }),
     getText: (path, boundedOptions) => requestText(path, { method: "GET" }, boundedOptions),
     getBlob: (path, boundedOptions) => requestBlob(path, { method: "GET" }, boundedOptions),

@@ -17,7 +17,7 @@ Key principles:
 ## Tech Stack
 
 - **Runtime**: Node.js 24+, TypeScript 5.5+ strict, ES modules
-- **AI**: Claude Agent SDK V1 `query()` + `resume`, Opus 4.6
+- **AI**: Claude Agent SDK V1 `query()` + `resume`, Opus 5
 - **Frontend**: Next.js 16 (`proxy.ts` replaces middleware, Turbopack, React Compiler, `cacheComponents`), React 19
 - **Backend**: Hono (HTTP/WS gateway + channel adapters)
 - **Database**: PostgreSQL via Kysely for platform, kernel durable state, social, app, and user data. Do not add alternative embedded databases or ORMs for new persistence.
@@ -451,6 +451,8 @@ Read these on demand, not every session:
 - Owner-controlled filesystem under Matrix home for paste assets; no new database persistence (106-terminal-rich-paste)
 - TypeScript 5.5+ strict ES modules on Node.js 24+; POSIX shell/cloud-init for host sanitation and activation; GitHub Actions YAML + Hono, Kysely, PostgreSQL, Zod 4 via `zod/v4`, native `fetch`, Vitest, existing host-bundle and customer-VPS services, Hetzner Cloud API v1 (109-golden-vps-snapshots)
 - Platform PostgreSQL via Kysely for authoritative lifecycle, jobs, leases, evidence, and exact-resource cleanup; Hetzner snapshot storage for disk images; R2 remains the immutable host-bundle object store (109-golden-vps-snapshots)
+- Node.js 24+, TypeScript 5.5+ strict, ES modules + Claude Agent SDK V1 `query()`/`resume`, Hono, Zod 4 (`zod/v4`), Kysely, PostgreSQL, Next.js 16, React 19, Cloudflare AI Gateway, OpenRouter OAuth/API (118-ai-gateway-provider-auth)
+- owner configuration/secret files for provider credentials; owner Postgres only if provider account orchestration needs durable multi-instance state; platform PostgreSQL/Kysely for later entitlements, reservations, and content-free usage records (118-ai-gateway-provider-auth)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -507,5 +509,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/116-prebilling-provisioning/plan.md`.
+Current Spec Kit plan: `specs/118-ai-gateway-provider-auth/plan.md`.
 <!-- SPECKIT END -->

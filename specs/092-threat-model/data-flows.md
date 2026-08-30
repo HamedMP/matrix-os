@@ -35,7 +35,7 @@ Owner ─▶ shell ─▶ Gateway ─▶ per-app Postgres / KV
                   │
 External msg ─▶ Kernel (bypassPermissions, F5) ─▶ tools ─▶ paid APIs / cron / files
                   │
-VPS ─▶ R2 (presign prefix-scoped ✓, but shared standing full-bucket key, F4)
+VPS ─▶ platform storage broker ─▶ R2 (server-derived tenant prefix, exact key allowlist)
         ▲
         └─ sync engine; .env* / credentials.json not excluded from defaults (F7)
 ```
@@ -46,7 +46,7 @@ VPS ─▶ R2 (presign prefix-scoped ✓, but shared standing full-bucket key, F
 |---|---|---|---|---|---|
 | `ANTHROPIC_API_KEY` / proxy key | Platform (per-handle HMAC) | VPS env | env `0640` | per-user | ok |
 | Postgres tenant password | Platform (HMAC) | VPS env + `credentials.json` | env `0640`; **`credentials.json` `0644`** | per-user | **F7** |
-| R2 access key / secret | Platform | every VPS | env `0640` | **full bucket, shared** | **F4** |
+| R2 access key / secret | Platform | Platform only | Secret Manager | bucket-scoped broker | F4 rollout/revocation pending |
 | Platform verification token | Platform (HMAC handle) | VPS env | env `0640` | per-user | ok |
 | Registration token | Platform | VPS (ephemeral) | env `0640` | per-VPS, one-time, machine-bound, ≤60 min bootstrap TTL | F11 ↓ |
 | Stripe secret / webhook secret | Platform | Platform only | GCP Secret Mgr | platform | ok |
@@ -63,9 +63,9 @@ and the `0644` `credentials.json` written separately by `postgres-manager.ts`.
 Matrix OS's pitch is "data belongs to its owner." The flows that undercut that,
 ranked by how sharply they violate it:
 
-- **Cross-tenant exposure (sharpest)** — the shared R2 key (**F4**) means one user's
-  compromised box can read another user's backups. The only finding that breaks
-  ownership *across users*.
+- **Cross-tenant exposure (operational migration)** — brokered source paths no longer
+  place R2 keys on customer boxes, but **F4** remains live until all legacy VPS files
+  are removed and the old provider token is revoked.
 - **Linkability / unauthorized read across apps** — one installed app reading every
   other app's data on the box (**F3**) breaks per-app ownership within a single user.
   Now the top live finding after the platform refactor.

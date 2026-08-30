@@ -304,15 +304,33 @@ export const INVOKE_CHANNELS = {
     response: Ok,
   },
   "embed:open": {
-    request: z.strictObject({
-      kind: z.enum(["hosted-shell", "app"]),
-      slug: z.string().min(1).max(128).optional(),
-      appIdentity: z.string().min(1).max(256)
-        .regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/)
-        .optional(),
-      bounds: BoundsSchema,
-      active: z.boolean().optional(),
-    }),
+    request: z.discriminatedUnion("kind", [
+      z.strictObject({
+        kind: z.literal("hosted-shell"),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
+        kind: z.literal("code-editor"),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
+        kind: z.literal("app"),
+        slug: z.string().min(1).max(128),
+        appIdentity: z.string().min(1).max(256)
+          .regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/)
+          .optional(),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
+        kind: z.literal("browser"),
+        url: z.string().min(1).max(2_048),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+    ]),
     response: z.object({ embedId: z.string().min(1).max(64), state: EmbedStateSchema }).strict(),
   },
   "embed:set-bounds": {

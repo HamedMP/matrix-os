@@ -324,6 +324,9 @@ importers:
       '@dnd-kit/sortable':
         specifier: ^10.0.0
         version: 10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react@19.2.6)
+      '@finnaai/matrix':
+        specifier: workspace:*
+        version: link:../packages/sync-client
       '@fontsource/instrument-sans':
         specifier: ^5.2.5
         version: 5.2.8
@@ -375,6 +378,18 @@ importers:
       '@radix-ui/react-tooltip':
         specifier: ^1.2.8
         version: 1.2.8(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@tiptap/extension-list':
+        specifier: 3.22.4
+        version: 3.22.4(@tiptap/core@3.22.4(@tiptap/pm@3.22.4))(@tiptap/pm@3.22.4)
+      '@tiptap/markdown':
+        specifier: 3.22.4
+        version: 3.22.4(@tiptap/core@3.22.4(@tiptap/pm@3.22.4))(@tiptap/pm@3.22.4)
+      '@tiptap/react':
+        specifier: 3.22.4
+        version: 3.22.4(@floating-ui/dom@1.8.0)(@tiptap/core@3.22.4(@tiptap/pm@3.22.4))(@tiptap/pm@3.22.4)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@tiptap/starter-kit':
+        specifier: 3.22.4
+        version: 3.22.4
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -451,9 +466,15 @@ importers:
       '@expo-google-fonts/bricolage-grotesque':
         specifier: ^0.4.1
         version: 0.4.1
+      '@expo-google-fonts/geist':
+        specifier: ^0.4.2
+        version: 0.4.2
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
+      '@resvg/resvg-js':
+        specifier: ^2.6.2
+        version: 2.6.2
       '@tailwindcss/vite':
         specifier: ^4.1.18
         version: 4.3.0(vite@7.3.5(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.51.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.2))
@@ -644,8 +665,8 @@ importers:
         specifier: workspace:*
         version: link:../kernel
       '@modelcontextprotocol/sdk':
-        specifier: ^1.27.1
-        version: 1.27.1(zod@4.4.3)
+        specifier: ^1.29.0
+        version: 1.30.0(zod@4.4.3)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -660,8 +681,8 @@ importers:
   packages/kernel:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.2.74
-        version: 0.2.79(zod@4.4.3)
+        specifier: 0.3.240
+        version: 0.3.240(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
       '@matrix-os/gateway':
         specifier: workspace:*
         version: link:../gateway
@@ -712,8 +733,8 @@ importers:
   packages/mcp-browser:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.2.39
-        version: 0.2.79(zod@4.4.3)
+        specifier: 0.3.240
+        version: 0.3.240(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
       '@matrix-os/kernel':
         specifier: workspace:*
         version: link:../kernel
@@ -865,6 +886,9 @@ importers:
       prom-client:
         specifier: ^15.1.3
         version: 15.1.3
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -1212,11 +1236,66 @@ packages:
     resolution: {integrity: sha512-9q/yCljni37pkMr4sPrI3G4jqdIk074+iukc5aFJl7kmDCCsiJrbZ6zKxnES1Gwg+i9RcDZwvktl23puGslmvA==}
     hasBin: true
 
-  '@anthropic-ai/claude-agent-sdk@0.2.79':
-    resolution: {integrity: sha512-4HmjT2pzjcYSXGxe18L0D1+5GEak3bk25C2H9GlKFnOeCkYAHG4cla4U/rn+v+S2Ecv5m/hsNQ1hDbzg4Ns7rA==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.240':
+    resolution: {integrity: sha512-iCGku/IOMvvwSfdFQXnkX2Txzo6nNzz/JoJ2tvmPSnA2NvEEKbSL2P7/WCGSo8asKe1m/6S6EDhYbiagyhc5VQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.240':
+    resolution: {integrity: sha512-rA5uZtNGbpxe2+ghzBCZvB30Q4tcFduxkP1qMjI4jOFNq5M4b0O173MaQj+g8D9o0clKbAIEx3tq8pSrtEXotA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.240':
+    resolution: {integrity: sha512-EsshHPGUtkuw4SAIFnj0zUDfb3Kvp/wPPtVyF0i+rjvekY99ZiQmLZeAmNWf1qTdktYlNiQZE2D77qUW+kaOYA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.240':
+    resolution: {integrity: sha512-cvfxos8HdvVlHO9vKpt8i5cC87a5EuLFBtzjtr+ycczipp4+af+A15J3y2+PEHIvEoLWXxbGKEsX4c81rALn1w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.240':
+    resolution: {integrity: sha512-wcuLoslY5vepqOALUKhQ/7mTaMqqPD/iCqZ74BwSRjgaylMoNKIkrdKMIcJwewgrcPuiAdJOYEdYGUaWYX9a2Q==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.240':
+    resolution: {integrity: sha512-pp3VLi/AuZhYn4SY0cMXRHdJam3B7US423OhrV90qlJzNdJ389urxgfQSbuc38wh4nRpbo3xD1uz83qFD/MSag==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.240':
+    resolution: {integrity: sha512-HbXGvQFCB7DTdlTq/JRlpgQBtTjTnMirg28LdLvvXaZL492cZPAvk8CjhzgvRlwQaHv4qpUvkR33R2xlyiBGkg==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.240':
+    resolution: {integrity: sha512-XSM+BTBmYi6a06h/ERReyn+oLRrF2JvkbB/BLC1H0GcRwdsiv4r3bzwy0rLcR2OXNzPL8aZ5C5hOG6mqUFiazg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk@0.3.240':
+    resolution: {integrity: sha512-rt/n4rr/Iqem0JtDdL7DdzDnMEei652sS00wVwZ3/0btFt9ah5/iKPKZi8udJ2fjiBwJk6spz9vUQrm6LeyXsA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
+      '@anthropic-ai/sdk': '>=0.93.0'
+      '@modelcontextprotocol/sdk': ^1.29.0
       zod: ^4.0.0
+
+  '@anthropic-ai/sdk@0.120.0':
+    resolution: {integrity: sha512-ZlvmNFT/iIF6JD13rxbbMWD8nvGR0RaUp6yMQnoc+4Af0YjVVe/bIdW1XSQQsoxXAtg1NaT6Vak0LKFlJ4d37Q==}
+    hasBin: true
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
 
   '@asamuzakjp/css-color@5.0.1':
     resolution: {integrity: sha512-2SZFvqMyvboVV1d15lMf7XiI3m7SDqXUuKaTymJYLN6dSGadqp+fVojqJlVoMlbZnlTmu3S0TLwLTJpvBMO1Aw==}
@@ -2999,6 +3078,9 @@ packages:
   '@expo-google-fonts/bricolage-grotesque@0.4.1':
     resolution: {integrity: sha512-uijLLg+thOrFgw+gXtYA3dQJTBqqqleabcNFpamaYXqUUcbFe0J18C+4nfL0CyGzSJUicxUBLY4Zv7jdHmTGMA==}
 
+  '@expo-google-fonts/geist@0.4.2':
+    resolution: {integrity: sha512-cTsqJRQrvK5EniTVwH7UDK18RFf9Bc6yxciAuM936aViQ+eR6j3mLEI2rQkJXz5JP9kwtn8tHJviDyZ0ulH6oA==}
+
   '@expo-google-fonts/inter@0.2.3':
     resolution: {integrity: sha512-iHK9FI+dnE45X5c2Z5hSFwNH4zUWethizpbv3XUn0FIGw5jwvzriENz0a6wCdkI4/d+1QkurnHo5XHti7TbNJA==}
 
@@ -3266,14 +3348,8 @@ packages:
     resolution: {integrity: sha512-4aQzz9vgxcNXFfo/iyNgDDYfsU5XGKKxWxZopw0cVotHiW+U8IJbIxMaxsINs6bHhtkG3StKNPcOrn3eBuxKPw==}
     hasBin: true
 
-  '@floating-ui/core@1.7.5':
-    resolution: {integrity: sha512-1Ih4WTWyw0+lKyFMcBHGbb5U5FtuHJuujoyyr5zTaWS5EYMeT6Jb2AuDeftsCsEuchO+mM2ij5+q9crhydzLhQ==}
-
   '@floating-ui/core@1.8.0':
     resolution: {integrity: sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ==}
-
-  '@floating-ui/dom@1.7.6':
-    resolution: {integrity: sha512-9gZSAI5XM36880PPMm//9dfiEngYoC6Am2izES1FF406YFsjvyBMmeJ2g4SAju3xWwtuynNRFL2s9hgxpLI5SQ==}
 
   '@floating-ui/dom@1.8.0':
     resolution: {integrity: sha512-yXSrzeHZBTZadLOlfyhCkJHNeLJnHRnRInwdZ40L7ZiaAtrBwoYlsDrX3v5zB1Utk7CLfzcOVnVVWoXEky7Ceg==}
@@ -3301,9 +3377,6 @@ packages:
     peerDependencies:
       react: '>=17.0.0'
       react-dom: '>=17.0.0'
-
-  '@floating-ui/utils@0.2.11':
-    resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
@@ -3806,8 +3879,8 @@ packages:
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
 
-  '@modelcontextprotocol/sdk@1.27.1':
-    resolution: {integrity: sha512-sr6GbP+4edBwFndLbM60gf07z0FQ79gaExpnsjMGePXqFcSSb7t6iscpjk9DhFhwd+mTEQrzNafGP8/iGGFYaA==}
+  '@modelcontextprotocol/sdk@1.30.0':
+    resolution: {integrity: sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==}
     engines: {node: '>=18'}
     peerDependencies:
       '@cfworker/json-schema': ^4.1.1
@@ -5334,6 +5407,86 @@ packages:
   '@repeaterjs/repeater@3.0.6':
     resolution: {integrity: sha512-Javneu5lsuhwNCryN+pXH93VPQ8g0dBX7wItHFgYiwQmzE1sVdg5tWHiOgHywzL2W21XQopa7IwIEnNbmeUJYA==}
 
+  '@resvg/resvg-js-android-arm-eabi@2.6.2':
+    resolution: {integrity: sha512-FrJibrAk6v29eabIPgcTUMPXiEz8ssrAk7TXxsiZzww9UTQ1Z5KAbFJs+Z0Ez+VZTYgnE5IQJqBcoSiMebtPHA==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [android]
+
+  '@resvg/resvg-js-android-arm64@2.6.2':
+    resolution: {integrity: sha512-VcOKezEhm2VqzXpcIJoITuvUS/fcjIw5NA/w3tjzWyzmvoCdd+QXIqy3FBGulWdClvp4g+IfUemigrkLThSjAQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [android]
+
+  '@resvg/resvg-js-darwin-arm64@2.6.2':
+    resolution: {integrity: sha512-nmok2LnAd6nLUKI16aEB9ydMC6Lidiiq2m1nEBDR1LaaP7FGs4AJ90qDraxX+CWlVuRlvNjyYJTNv8qFjtL9+A==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@resvg/resvg-js-darwin-x64@2.6.2':
+    resolution: {integrity: sha512-GInyZLjgWDfsVT6+SHxQVRwNzV0AuA1uqGsOAW+0th56J7Nh6bHHKXHBWzUrihxMetcFDmQMAX1tZ1fZDYSRsw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@resvg/resvg-js-linux-arm-gnueabihf@2.6.2':
+    resolution: {integrity: sha512-YIV3u/R9zJbpqTTNwTZM5/ocWetDKGsro0SWp70eGEM9eV2MerWyBRZnQIgzU3YBnSBQ1RcxRZvY/UxwESfZIw==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [linux]
+
+  '@resvg/resvg-js-linux-arm64-gnu@2.6.2':
+    resolution: {integrity: sha512-zc2BlJSim7YR4FZDQ8OUoJg5holYzdiYMeobb9pJuGDidGL9KZUv7SbiD4E8oZogtYY42UZEap7dqkkYuA91pg==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@resvg/resvg-js-linux-arm64-musl@2.6.2':
+    resolution: {integrity: sha512-3h3dLPWNgSsD4lQBJPb4f+kvdOSJHa5PjTYVsWHxLUzH4IFTJUAnmuWpw4KqyQ3NA5QCyhw4TWgxk3jRkQxEKg==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@resvg/resvg-js-linux-x64-gnu@2.6.2':
+    resolution: {integrity: sha512-IVUe+ckIerA7xMZ50duAZzwf1U7khQe2E0QpUxu5MBJNao5RqC0zwV/Zm965vw6D3gGFUl7j4m+oJjubBVoftw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@resvg/resvg-js-linux-x64-musl@2.6.2':
+    resolution: {integrity: sha512-UOf83vqTzoYQO9SZ0fPl2ZIFtNIz/Rr/y+7X8XRX1ZnBYsQ/tTb+cj9TE+KHOdmlTFBxhYzVkP2lRByCzqi4jQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@resvg/resvg-js-win32-arm64-msvc@2.6.2':
+    resolution: {integrity: sha512-7C/RSgCa+7vqZ7qAbItfiaAWhyRSoD4l4BQAbVDqRRsRgY+S+hgS3in0Rxr7IorKUpGE69X48q6/nOAuTJQxeQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@resvg/resvg-js-win32-ia32-msvc@2.6.2':
+    resolution: {integrity: sha512-har4aPAlvjnLcil40AC77YDIk6loMawuJwFINEM7n0pZviwMkMvjb2W5ZirsNOZY4aDbo5tLx0wNMREp5Brk+w==}
+    engines: {node: '>= 10'}
+    cpu: [ia32]
+    os: [win32]
+
+  '@resvg/resvg-js-win32-x64-msvc@2.6.2':
+    resolution: {integrity: sha512-ZXtYhtUr5SSaBrUDq7DiyjOFJqBVL/dOBN7N/qmi/pO0IgiWW/f/ue3nbvu9joWE5aAKDoIzy/CxsY0suwGosQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@resvg/resvg-js@2.6.2':
+    resolution: {integrity: sha512-xBaJish5OeGmniDj9cW5PRa/PtmuVU3ziqrbr5xJj901ZDN4TosrVaNZpEiLZAxdfnhAe7uQ7QFWfjPe9d9K2Q==}
+    engines: {node: '>= 10'}
+
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
 
@@ -6286,6 +6439,12 @@ packages:
 
   '@tiptap/extensions@3.22.4':
     resolution: {integrity: sha512-fOe8VptJvLPs32bNdUYo8SRyljwqKNQVXWW056VoXIc5en/59OdJlJQVeHI0jRRciH3MtrqODi/gfJR0VHNZ8A==}
+    peerDependencies:
+      '@tiptap/core': 3.22.4
+      '@tiptap/pm': 3.22.4
+
+  '@tiptap/markdown@3.22.4':
+    resolution: {integrity: sha512-gcoLOq5TBntw13QdeWMy7yc2X+b9yTplcFb5kpMQNgNoxlu0+jlX4LiBR+E6lOV+m+AtkprHHltTYyKG23bdOw==}
     peerDependencies:
       '@tiptap/core': 3.22.4
       '@tiptap/pm': 3.22.4
@@ -10709,6 +10868,10 @@ packages:
   json-parse-even-better-errors@2.3.1:
     resolution: {integrity: sha512-xyFwyhro/JEof6Ghe2iz2NcXoj2sloNsWr/XsERDK/oiPCfaNhl5ONfp+jQdAZRQQ0IJWNzH9zIZF7li91kh2w==}
 
+  json-schema-to-ts@3.1.1:
+    resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
+    engines: {node: '>=16'}
+
   json-schema-traverse@0.4.1:
     resolution: {integrity: sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg==}
 
@@ -13788,6 +13951,9 @@ packages:
   truncate-utf8-bytes@1.0.2:
     resolution: {integrity: sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ==}
 
+  ts-algebra@2.0.0:
+    resolution: {integrity: sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==}
+
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
     engines: {node: '>=18.12'}
@@ -14770,19 +14936,51 @@ snapshots:
       package-manager-detector: 1.6.0
       tinyexec: 1.1.2
 
-  '@anthropic-ai/claude-agent-sdk@0.2.79(zod@4.4.3)':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.240':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.240':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.240':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.240':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.240':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.240':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.240':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.240':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk@0.3.240(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)':
     dependencies:
+      '@anthropic-ai/sdk': 0.120.0(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.30.0(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
-      '@img/sharp-darwin-arm64': 0.34.5
-      '@img/sharp-darwin-x64': 0.34.5
-      '@img/sharp-linux-arm': 0.34.5
-      '@img/sharp-linux-arm64': 0.34.5
-      '@img/sharp-linux-x64': 0.34.5
-      '@img/sharp-linuxmusl-arm64': 0.34.5
-      '@img/sharp-linuxmusl-x64': 0.34.5
-      '@img/sharp-win32-arm64': 0.34.5
-      '@img/sharp-win32-x64': 0.34.5
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.240
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.240
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.240
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.240
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.240
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.240
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.240
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.240
+
+  '@anthropic-ai/sdk@0.120.0(zod@4.4.3)':
+    dependencies:
+      json-schema-to-ts: 3.1.1
+      standardwebhooks: 1.0.0
+    optionalDependencies:
+      zod: 4.4.3
 
   '@asamuzakjp/css-color@5.0.1':
     dependencies:
@@ -16990,6 +17188,8 @@ snapshots:
 
   '@expo-google-fonts/bricolage-grotesque@0.4.1': {}
 
+  '@expo-google-fonts/geist@0.4.2': {}
+
   '@expo-google-fonts/inter@0.2.3': {}
 
   '@expo-google-fonts/jetbrains-mono@0.2.3': {}
@@ -17720,18 +17920,9 @@ snapshots:
       chalk: 4.1.2
       js-yaml: 4.1.1
 
-  '@floating-ui/core@1.7.5':
-    dependencies:
-      '@floating-ui/utils': 0.2.11
-
   '@floating-ui/core@1.8.0':
     dependencies:
       '@floating-ui/utils': 0.2.12
-
-  '@floating-ui/dom@1.7.6':
-    dependencies:
-      '@floating-ui/core': 1.7.5
-      '@floating-ui/utils': 0.2.11
 
   '@floating-ui/dom@1.8.0':
     dependencies:
@@ -17740,13 +17931,13 @@ snapshots:
 
   '@floating-ui/react-dom@2.1.8(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@floating-ui/dom': 1.7.6
+      '@floating-ui/dom': 1.8.0
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
   '@floating-ui/react-dom@2.1.8(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@floating-ui/dom': 1.7.6
+      '@floating-ui/dom': 1.8.0
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
 
@@ -17759,7 +17950,7 @@ snapshots:
   '@floating-ui/react@0.27.12(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@floating-ui/react-dom': 2.1.8(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@floating-ui/utils': 0.2.11
+      '@floating-ui/utils': 0.2.12
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       tabbable: 6.4.0
@@ -17767,7 +17958,7 @@ snapshots:
   '@floating-ui/react@0.27.12(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@floating-ui/react-dom': 2.1.8(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@floating-ui/utils': 0.2.11
+      '@floating-ui/utils': 0.2.12
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
       tabbable: 6.4.0
@@ -17779,8 +17970,6 @@ snapshots:
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
       tabbable: 6.4.0
-
-  '@floating-ui/utils@0.2.11': {}
 
   '@floating-ui/utils@0.2.12': {}
 
@@ -18451,7 +18640,7 @@ snapshots:
 
   '@mixmark-io/domino@2.2.0': {}
 
-  '@modelcontextprotocol/sdk@1.27.1(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.30.0(zod@3.25.76)':
     dependencies:
       '@hono/node-server': 1.19.11(hono@4.12.8)
       ajv: 8.18.0
@@ -18473,7 +18662,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@modelcontextprotocol/sdk@1.27.1(zod@4.4.3)':
+  '@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)':
     dependencies:
       '@hono/node-server': 1.19.11(hono@4.12.8)
       ajv: 8.18.0
@@ -20395,6 +20584,57 @@ snapshots:
 
   '@repeaterjs/repeater@3.0.6': {}
 
+  '@resvg/resvg-js-android-arm-eabi@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-android-arm64@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-darwin-arm64@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-darwin-x64@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-arm-gnueabihf@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-arm64-gnu@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-arm64-musl@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-x64-gnu@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-x64-musl@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-win32-arm64-msvc@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-win32-ia32-msvc@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-win32-x64-msvc@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js@2.6.2':
+    optionalDependencies:
+      '@resvg/resvg-js-android-arm-eabi': 2.6.2
+      '@resvg/resvg-js-android-arm64': 2.6.2
+      '@resvg/resvg-js-darwin-arm64': 2.6.2
+      '@resvg/resvg-js-darwin-x64': 2.6.2
+      '@resvg/resvg-js-linux-arm-gnueabihf': 2.6.2
+      '@resvg/resvg-js-linux-arm64-gnu': 2.6.2
+      '@resvg/resvg-js-linux-arm64-musl': 2.6.2
+      '@resvg/resvg-js-linux-x64-gnu': 2.6.2
+      '@resvg/resvg-js-linux-x64-musl': 2.6.2
+      '@resvg/resvg-js-win32-arm64-msvc': 2.6.2
+      '@resvg/resvg-js-win32-ia32-msvc': 2.6.2
+      '@resvg/resvg-js-win32-x64-msvc': 2.6.2
+
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
   '@rolldown/pluginutils@1.0.0-rc.3': {}
@@ -21536,7 +21776,7 @@ snapshots:
 
   '@tiptap/extension-bubble-menu@3.22.4(@tiptap/core@3.22.4(@tiptap/pm@3.22.4))(@tiptap/pm@3.22.4)':
     dependencies:
-      '@floating-ui/dom': 1.7.6
+      '@floating-ui/dom': 1.8.0
       '@tiptap/core': 3.22.4(@tiptap/pm@3.22.4)
       '@tiptap/pm': 3.22.4
     optional: true
@@ -21637,6 +21877,12 @@ snapshots:
     dependencies:
       '@tiptap/core': 3.22.4(@tiptap/pm@3.22.4)
       '@tiptap/pm': 3.22.4
+
+  '@tiptap/markdown@3.22.4(@tiptap/core@3.22.4(@tiptap/pm@3.22.4))(@tiptap/pm@3.22.4)':
+    dependencies:
+      '@tiptap/core': 3.22.4(@tiptap/pm@3.22.4)
+      '@tiptap/pm': 3.22.4
+      marked: 17.0.4
 
   '@tiptap/pm@3.22.4':
     dependencies:
@@ -23132,7 +23378,7 @@ snapshots:
       react-refresh: 0.14.2
     optionalDependencies:
       '@babel/runtime': 7.29.2
-      expo: 57.0.2(aa31acfaf63bacba6b5460ed4feea2d1)
+      expo: 57.0.2(c8814aec5e369b9c7be7f09c8d465912)
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color
@@ -24716,7 +24962,7 @@ snapshots:
       eslint: 9.39.4(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
       eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1)))(eslint@9.39.4(jiti@2.6.1))
-      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1)))(eslint@9.39.4(jiti@2.6.1)))(eslint@9.39.4(jiti@2.6.1))
+      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.6.1))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.39.4(jiti@2.6.1))
       eslint-plugin-react: 7.37.5(eslint@9.39.4(jiti@2.6.1))
       eslint-plugin-react-hooks: 7.0.1(eslint@9.39.4(jiti@2.6.1))
@@ -24749,7 +24995,7 @@ snapshots:
       tinyglobby: 0.2.16
       unrs-resolver: 1.11.1
     optionalDependencies:
-      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1)))(eslint@9.39.4(jiti@2.6.1)))(eslint@9.39.4(jiti@2.6.1))
+      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.6.1))
     transitivePeerDependencies:
       - supports-color
 
@@ -24799,7 +25045,7 @@ snapshots:
       - supports-color
       - typescript
 
-  eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1)))(eslint@9.39.4(jiti@2.6.1)))(eslint@9.39.4(jiti@2.6.1)):
+  eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.6.1)):
     dependencies:
       '@rtsao/scc': 1.1.0
       array-includes: 3.1.9
@@ -27337,6 +27583,11 @@ snapshots:
   json-buffer@3.0.1: {}
 
   json-parse-even-better-errors@2.3.1: {}
+
+  json-schema-to-ts@3.1.1:
+    dependencies:
+      '@babel/runtime': 7.29.2
+      ts-algebra: 2.0.0
 
   json-schema-traverse@0.4.1: {}
 
@@ -30597,7 +30848,7 @@ snapshots:
       '@babel/plugin-transform-typescript': 7.28.6(@babel/core@7.29.0)
       '@babel/preset-typescript': 7.28.5(@babel/core@7.29.0)
       '@dotenvx/dotenvx': 1.55.1
-      '@modelcontextprotocol/sdk': 1.27.1(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
       '@types/validate-npm-package-name': 4.0.2
       browserslist: 4.28.1
       commander: 14.0.3
@@ -31359,6 +31610,8 @@ snapshots:
   truncate-utf8-bytes@1.0.2:
     dependencies:
       utf8-byte-length: 1.0.5
+
+  ts-algebra@2.0.0: {}
 
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:

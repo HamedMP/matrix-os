@@ -508,16 +508,39 @@ describe("BillingSection", () => {
     // Region options live in their own dropdown (opening it closes the computer one).
     fireEvent.click(screen.getByRole("button", { name: "Change region" }));
     expect(screen.getAllByText("Region").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Closest location is selected automatically")).toBeTruthy();
+    expect(screen.getByText("Falkenstein is selected by default")).toBeTruthy();
     expect(screen.getAllByText("🇩🇪").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText("🇺🇸").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("ash")).toBeTruthy();
+    expect(screen.getAllByText("Falkenstein, Germany").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Nuremberg, Germany")).toBeTruthy();
+    expect(screen.queryByText("🇺🇸")).toBeNull();
+    expect(screen.queryByText("US East")).toBeNull();
+    expect(screen.queryByText("US West")).toBeNull();
+    expect(screen.queryByText("Americas")).toBeNull();
+    expect(screen.queryByText("ash")).toBeNull();
+    expect(screen.queryByText("hil")).toBeNull();
     expect(screen.queryByText("sin")).toBeNull();
     expect(screen.getByText("Start checkout & provision")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("defaults an American browser timezone to Falkenstein", async () => {
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+      locale: "en-US",
+      calendar: "gregory",
+      numberingSystem: "latn",
+      timeZone: "America/New_York",
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Change region" }).textContent).toContain(
+      "Falkenstein, Germany",
+    );
   });
 
   it("aligns the provisioning intro and checkout summary in the same layout row", async () => {

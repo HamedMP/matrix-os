@@ -165,7 +165,19 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("assistant.text.delta"), messageId: referenceId(128), delta: AssistantTextDeltaSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("assistant.text.completed"), messageId: referenceId(128) }).strict(),
-  BaseThreadEventSchema.extend({ type: z.literal("tool.started"), toolCallId: referenceId(128), displayName: SafeDisplayStringSchema, kind: SafeDisplayStringSchema }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("tool.started"),
+    toolCallId: referenceId(128),
+    displayName: SafeDisplayStringSchema,
+    kind: SafeDisplayStringSchema,
+    preview: boundedDisplayText(1_000, 4_000).optional(),
+    previewKind: z.enum(["command", "path", "text"]).optional(),
+    detail: boundedDisplayText(2_000, 8_000).optional(),
+  }).strict().superRefine((activity, context) => {
+    if ((activity.preview === undefined) !== (activity.previewKind === undefined)) {
+      context.addIssue({ code: "custom", message: "Tool preview and kind must be provided together" });
+    }
+  }),
   BaseThreadEventSchema.extend({ type: z.literal("tool.output"), toolCallId: referenceId(128), text: boundedText(4_000, 16 * 1024), truncated: z.boolean().optional() }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("tool.completed"), toolCallId: referenceId(128), outcome: z.enum(["success", "failed", "cancelled"]) }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("approval.requested"), approval: AgentApprovalRequestSchema }).strict(),

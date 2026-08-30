@@ -7,6 +7,7 @@ import { clearDraftChats } from "./draft-chat";
 import { advanceRuntimeGeneration } from "./runtime-generation";
 import { reconcileDesktopRuntimeChange } from "./runtime-transition";
 import { resetAppsRuntime } from "./apps";
+import { flushActiveNotesBeforeIdentityChange } from "../features/notes/notes-controller";
 
 export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 
@@ -98,7 +99,13 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     // API would become observable before reconciliation, letting surfaces load
     // the new computer under the old runtime generation only to be wiped.
     runtimeSwitchesInFlight += 1;
+    let selectionStarted = false;
     try {
+      // Finish note persistence before the trusted core replaces the credential
+      // used by the currently selected runtime. A failed save leaves the user on
+      // the current computer with their dirty editor state still mounted.
+      await flushActiveNotesBeforeIdentityChange();
+      selectionStarted = true;
       await invoke("runtime:select", { slot });
       // Clear previous-computer state only after the trusted core confirms the
       // switch, and before the new slot becomes observable to the UI.
@@ -111,7 +118,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     } catch (err: unknown) {
       // The switch never happened: keep every surface on the still-selected
       // computer and refresh the auth snapshot so the API client stays valid.
-      await get().refresh();
+      if (selectionStarted) await get().refresh();
       throw err;
     } finally {
       runtimeSwitchesInFlight -= 1;
@@ -122,6 +129,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   signOut: async () => {
+    await flushActiveNotesBeforeIdentityChange();
     await invoke("auth:sign-out", {});
     // Signing out is a runtime identity boundary just like switching
     // computers. Advance the shared generation and synchronously remove every

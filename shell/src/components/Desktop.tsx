@@ -18,7 +18,7 @@ import {
 } from "@/lib/desktop-first-run";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
-import { Settings } from "./Settings";
+import { Settings, type SettingsSectionId } from "./Settings";
 import { CanvasRenderer } from "./canvas/CanvasRenderer";
 import {
   Tooltip,
@@ -79,6 +79,10 @@ import {
 import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
 import { DesktopWindow, hasActiveWindowInteraction } from "./desktop/DesktopWindow";
 import { WebDesktopSurface } from "./desktop/WebDesktopSurface";
+import {
+  WebDesktopControls,
+  type WebDesktopSettingsSection,
+} from "./desktop/WebDesktopControls";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -131,6 +135,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsDefaultSection, setSettingsDefaultSection] = useState<SettingsSectionId>("appearance");
   // Chat popup is now fully controlled here so the dock button can toggle
   // it on click (open if closed, close if open). ChatPopover used to wrap
   // the button in Radix Dialog.Trigger, which only opened — clicking the
@@ -1571,7 +1576,18 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 setSettingsOpen(false);
                 setChatOpen(false);
               }}
-              onOpenSettings={() => {
+              headerActions={(
+                <WebDesktopControls
+                  onOpenSettings={(section) => {
+                    setSettingsDefaultSection(section);
+                    setSettingsOpen(true);
+                    setTaskBoardOpen(false);
+                    setChatOpen(false);
+                  }}
+                />
+              )}
+              onOpenSettings={(section: WebDesktopSettingsSection) => {
+                setSettingsDefaultSection(section);
                 setSettingsOpen(true);
                 setTaskBoardOpen(false);
                 setChatOpen(false);
@@ -1701,6 +1717,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       <Settings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+        defaultSection={settingsDefaultSection}
         onOpenAgentTerminal={(action) => {
           setSettingsOpen(false);
           openSetupTerminal(action);

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Desktop } from "../../shell/src/components/Desktop.js";
@@ -144,7 +144,7 @@ function createMemoryStorage(): Storage {
   };
 }
 
-function resetShellMode(mode: "canvas" | "dev", hydrated: boolean) {
+function resetShellMode(mode: "canvas" | "desktop" | "dev", hydrated: boolean) {
   desktopModeStore.setState({
     mode,
     previousMode: null,
@@ -207,6 +207,25 @@ describe("Desktop launcher dock button by mode", () => {
       expect(screen.getByTestId("dock-tasks")).toBeTruthy();
       expect(screen.getByTestId("dock-settings")).toBeTruthy();
     });
+  });
+
+  it("shows and launches Chat as the first canonical app in Desktop mode", async () => {
+    resetShellMode("desktop", true);
+
+    render(<DesktopComponent />);
+
+    const desktopApps = await screen.findByRole("navigation", { name: "Desktop apps" });
+    await waitFor(() => {
+      expect(Array.from(desktopApps.querySelectorAll("button")).map(
+        (button) => button.getAttribute("aria-label"),
+      ).slice(0, 4)).toEqual(["Chat", "Terminal", "Files", "Settings"]);
+    });
+    expect(windowManagerStore.getState().apps.find((app) => app.path === "__chat__"))
+      .toMatchObject({ name: "Hermes", path: "__chat__" });
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
+    expect(windowManagerStore.getState().windows.find((windowRecord) => windowRecord.path === "__chat__"))
+      .toMatchObject({ title: "Chat", path: "__chat__" });
   });
 
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {

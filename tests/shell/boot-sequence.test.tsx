@@ -164,7 +164,10 @@ describe("BootSequence", () => {
     for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
       expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
     }
-    fireEvent.click(screen.getByRole("checkbox", { name: "OpenCode" }));
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      fireEvent.click(screen.getByRole("checkbox", { name: label }));
+    }
+    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
     timeoutSpy.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
@@ -173,7 +176,7 @@ describe("BootSequence", () => {
         "/api/auth/provision-runtime",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ developerTools: ["codex", "claude-code", "pi"] }),
+          body: JSON.stringify({ developerTools: [] }),
         }),
       ),
     );

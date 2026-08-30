@@ -1420,6 +1420,62 @@ describe("ChatRepository", () => {
     ]);
   });
 
+  it("updates a typed activity in place without changing its first receive sequence", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_activity_lifecycle",
+      clientRequestId: "req_create_activity_lifecycle",
+      title: "Activity lifecycle",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    const running: CanonicalChatRunActivity = {
+      id: "activity_command",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: now,
+      type: "agent.activity",
+      activityId: "tool_command",
+      kind: "command",
+      label: "Run command",
+      status: "running",
+    };
+    const failed: CanonicalChatRunActivity = {
+      ...running,
+      occurredAt: "2026-08-25T00:00:05.000Z",
+      status: "failed",
+      summary: "Command failed.",
+    };
+
+    await expect(repository.appendRunActivities(
+      owner,
+      created.chat.id,
+      acceptedRun.id,
+      [running],
+    )).resolves.toBe(1);
+    await expect(repository.appendRunActivities(
+      owner,
+      created.chat.id,
+      acceptedRun.id,
+      [failed],
+    )).resolves.toBe(1);
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      { ...activity(created.chat.id, acceptedRun.id, 2), id: "activity_after_command" },
+    ]);
+
+    expect((await repository.exportChat(owner, created.chat.id))?.activities).toEqual([
+      { ...failed, occurredAt: now, sequence: 1 },
+      expect.objectContaining({ id: "activity_after_command", sequence: 2 }),
+    ]);
+  });
+
   it("commits assistant output with the terminal transition and rejects late Provider events", async () => {
     const created = await repository.create(owner, {
       id: "chat_terminal_output",

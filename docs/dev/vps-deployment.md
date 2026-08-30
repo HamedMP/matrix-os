@@ -248,10 +248,10 @@ EOF
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | host bundle | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
 | `GEMINI_API_KEY` | platform/gateway when configured | runtime | Google Gemini API key for image/icon generation |
 | `POSTGRES_PASSWORD` | postgres + platform | runtime | PostgreSQL password (default: `matrixos`) |
-| `S3_ENDPOINT` / `R2_ENDPOINT` | customer VPS gateway/sync | runtime | Cloudflare R2 S3-API endpoint (see Sync Storage below) |
-| `S3_ACCESS_KEY_ID` / `R2_ACCESS_KEY_ID` | customer VPS gateway/sync | runtime | R2 API token access key |
-| `S3_SECRET_ACCESS_KEY` / `R2_SECRET_ACCESS_KEY` | customer VPS gateway/sync | runtime | R2 API token secret key |
-| `S3_BUCKET` / `R2_BUCKET` | customer VPS gateway/sync | runtime | R2 bucket name, default `matrixos-sync` |
+| `S3_ENDPOINT` / `R2_ENDPOINT` | platform storage broker | runtime | Cloudflare R2 S3-API endpoint (see Sync Storage below) |
+| `S3_ACCESS_KEY_ID` / `R2_ACCESS_KEY_ID` | platform storage broker | runtime | Platform-only R2 API token access key; never copy to customer VPSes |
+| `S3_SECRET_ACCESS_KEY` / `R2_SECRET_ACCESS_KEY` | platform storage broker | runtime | Platform-only R2 API token secret key; never copy to customer VPSes |
+| `S3_BUCKET` / `R2_BUCKET` | platform storage broker | runtime | R2 bucket name, default `matrixos-sync` |
 | `MATRIX_HOME_MIRROR` | customer VPS gateway/sync | runtime | `true` enables three-way sync (VPS home ↔ R2 ↔ peer) |
 | `PLATFORM_INTERNAL_URL` | customer VPS gateway | runtime | Base URL for platform-owned internal APIs; customer VPSes use it with their per-host token for sync and integrations |
 
@@ -265,7 +265,7 @@ PLATFORM_SECRET=$(openssl rand -hex 32)
 GOLDEN_SNAPSHOT_OPERATOR_SECRET=$(openssl rand -hex 32)
 ```
 
-**Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available when building the customer host bundle. Runtime vars for customer VPSes live in `/opt/matrix/env/host.env`, `/opt/matrix/env/r2.env`, and host systemd environment files.
+**Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available when building the customer host bundle. Runtime vars for customer VPSes live in `/opt/matrix/env/host.env` and host systemd environment files. Customer VPSes must not have an R2 provider credential file.
 
 ### Platform-Owned Integrations
 
@@ -293,7 +293,7 @@ The second check should return `[]` for a user with no connected services, not `
 
 ### Sync Storage (Cloudflare R2)
 
-The file-sync subsystem (spec 066) uses S3-compatible object storage. In prod the target is Cloudflare R2, one shared bucket, prefix-isolated per user at the gateway level.
+The file-sync subsystem (spec 066) uses S3-compatible object storage. In prod the target is Cloudflare R2, one shared bucket with tenant prefixes enforced by the authenticated platform storage broker. Customer VPSes receive short-lived presigned capabilities for an exact allowlist of their own sync and backup objects; they never receive the bucket credential.
 
 #### One-time: provision R2
 
@@ -326,9 +326,9 @@ EOF
 
 Replace the placeholders with the real values. `S3_ENDPOINT` and `S3_PUBLIC_ENDPOINT` are the same URL in prod — the split exists for dev where gateway reaches MinIO at `minio:9000` internally but presigned URLs need `localhost:9100` (see `docs/dev/sync-testing.md`).
 
-#### How env vars reach customer VPSes
+#### Customer VPS storage boundary
 
-Customer VPSes get machine-specific env through cloud-init and `/opt/matrix/env/host.env` plus `/opt/matrix/env/r2.env`. The host env includes `PLATFORM_INTERNAL_URL`, `UPGRADE_TOKEN`, `MATRIX_HANDLE`, `DATABASE_URL`, and R2 prefix metadata. It must not include platform-only secrets like `PIPEDREAM_CLIENT_SECRET`. Platform-owned integration routes stay on the platform and are reached from the customer VPS gateway through `PLATFORM_INTERNAL_URL`.
+Customer VPSes get machine-specific env through cloud-init and `/opt/matrix/env/host.env`. The host env includes `PLATFORM_INTERNAL_URL`, `UPGRADE_TOKEN`, `MATRIX_HANDLE`, and `DATABASE_URL`. It must not include R2/S3 credentials, a bucket-wide storage prefix, or platform-only secrets such as `PIPEDREAM_CLIENT_SECRET`. Storage and integration routes stay on the platform and are reached through `PLATFORM_INTERNAL_URL` using the per-host token.
 
 After editing platform `.env`, restart platform services on the platform VPS. After editing a customer VPS env file, restart that VPS's host services:
 
@@ -341,7 +341,8 @@ Verify the target customer VPS has the expected env:
 ```bash
 sudo systemctl show matrix-gateway.service --property=Environment
 sudo grep -E '^(PLATFORM_INTERNAL_URL|UPGRADE_TOKEN|MATRIX_HANDLE|DATABASE_URL)=' /opt/matrix/env/host.env
-sudo grep -E '^(S3_|R2_)' /opt/matrix/env/r2.env
+sudo test ! -e /opt/matrix/env/r2.env
+sudo -u matrix /opt/matrix/bin/matrixctl r2 broker-ready
 ```
 
 #### Verify R2 upload round-trip
@@ -360,14 +361,15 @@ wget -qO- http://127.0.0.1:4000/api/sync/manifest \
 # Open dashboard → R2 → matrixos-sync → Objects → search "r2-smoke"
 ```
 
-If manifest shows the file but R2 dashboard doesn't, check gateway logs for `SignatureDoesNotMatch` (bad key) or `NoSuchBucket` (wrong bucket name / typo in `S3_BUCKET`).
+If the manifest shows the file but the R2 dashboard does not, check platform broker logs and the customer gateway logs. Client-facing errors remain generic; provider signature and bucket details stay platform-side.
 
 #### Rotating R2 credentials
 
-1. Cloudflare → R2 → API Tokens → create a new token.
-2. Update `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` or `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` in `/opt/matrix/env/r2.env` on each affected customer VPS.
-3. Restart the affected VPS host services with `sudo systemctl restart matrix-gateway.service matrix-sync-agent.service matrix-db-backup.timer`.
-4. Revoke the old token in the Cloudflare dashboard.
+1. Deploy and verify a host bundle that uses the platform storage broker on every customer VPS. Confirm `matrixctl r2 broker-ready` succeeds and `/opt/matrix/env/r2.env` is absent everywhere.
+2. Cloudflare → R2 → API Tokens → create a new bucket-scoped token.
+3. Update the platform service's `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` (or R2 aliases) in Secret Manager and restart `matrix-platform.service`.
+4. Exercise one backup upload and restore probe through the broker.
+5. Revoke the old token in the Cloudflare dashboard. This revocation is mandatory after the broker migration because a previously deployed key may have been copied from an old VPS or cloud-init history.
 
 ## Step 4: Start the Platform
 

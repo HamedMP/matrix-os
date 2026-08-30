@@ -6,6 +6,7 @@ import {
   DEFAULT_DEVELOPER_TOOLS,
   DeveloperToolsSchema,
   parseDeveloperToolsJson,
+  resolveProvisioningDeveloperTools,
   serializeDeveloperTools,
 } from '../../packages/platform/src/developer-tools.js';
 
@@ -26,6 +27,18 @@ describe('developer tool selection schema', () => {
   it('defaults omitted or malformed persisted values to all tools', () => {
     expect(parseDeveloperToolsJson(null)).toEqual(DEFAULT_DEVELOPER_TOOLS);
     expect(parseDeveloperToolsJson('not-json')).toEqual(DEFAULT_DEVELOPER_TOOLS);
+  });
+
+  it('round-trips an explicit empty selection without restoring defaults', () => {
+    expect(DeveloperToolsSchema.parse([])).toEqual([]);
+    expect(serializeDeveloperTools([])).toBe('[]');
+    expect(parseDeveloperToolsJson('[]')).toEqual([]);
+  });
+
+  it('resolves explicit, checkout, and default provisioning selections distinctly', () => {
+    expect(resolveProvisioningDeveloperTools([], ['codex'])).toEqual([]);
+    expect(resolveProvisioningDeveloperTools(undefined, ['pi'])).toEqual(['pi']);
+    expect(resolveProvisioningDeveloperTools(undefined, undefined)).toEqual(DEFAULT_DEVELOPER_TOOLS);
   });
 
   it('deduplicates and serializes selected tools in canonical order', () => {

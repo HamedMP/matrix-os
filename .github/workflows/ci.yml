@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, "stack/**"]
+    branches: [main, "stack/**", "codex/**"]
     types: [labeled, ready_for_review]
 
 concurrency:
@@ -362,6 +362,43 @@ jobs:
         run: pnpm --filter @finnaai/matrix exec node ./scripts/check-publish.mjs
 
   # ── Gate 2: Tests ──
+  agent-sdk-compatibility:
+    name: Agent SDK 0.3.251 Compatibility
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Skip expensive CI for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No CI-relevant source changes detected; skipping Agent SDK compatibility."
+
+      - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
+
+      - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.should_run == 'true'
+
+      - uses: actions/setup-node@v6
+        if: needs.changes.outputs.should_run == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.should_run == 'true'
+
+      - name: Install exact Agent SDK
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          mkdir -p "${{ runner.temp }}/matrix-agent-sdk-03251"
+          pnpm add --ignore-scripts --save-exact --dir "${{ runner.temp }}/matrix-agent-sdk-03251" @anthropic-ai/claude-agent-sdk@0.3.251
+
+      - name: Run real Agent SDK compatibility spike
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_AGENT_SDK_PACKAGE_DIR: ${{ runner.temp }}/matrix-agent-sdk-03251/node_modules/@anthropic-ai/claude-agent-sdk
+        run: pnpm exec vitest run tests/scripts/agent-sdk-real-runtime-spike.test.ts
+
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
@@ -490,7 +527,7 @@ jobs:
 
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, docs-contract, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -504,6 +541,7 @@ jobs:
           PATTERNS_RESULT: ${{ needs.patterns.result }}
           REACT_DOCTOR_RESULT: ${{ needs.react-doctor.result }}
           SYNC_CLIENT_RESULT: ${{ needs.sync-client.result }}
+          AGENT_SDK_COMPATIBILITY_RESULT: ${{ needs.agent-sdk-compatibility.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -525,13 +563,14 @@ jobs:
             echo "| Pattern Scan | $PATTERNS_RESULT |"
             echo "| React Doctor | $REACT_DOCTOR_RESULT |"
             echo "| Sync Client Package (Node 20) | $SYNC_CLIENT_RESULT |"
+            echo "| Agent SDK 0.3.251 Compatibility | $AGENT_SDK_COMPATIBILITY_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;

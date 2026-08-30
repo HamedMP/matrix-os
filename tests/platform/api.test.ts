@@ -174,7 +174,12 @@ describe('platform/api', () => {
     const res = await vpsApp.request('/containers/provision', {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...adminHeaders },
-      body: JSON.stringify({ handle: 'alice', clerkUserId: 'clerk_1', displayName: 'Alice' }),
+      body: JSON.stringify({
+        handle: 'alice',
+        clerkUserId: 'clerk_1',
+        displayName: 'Alice',
+        developerTools: [],
+      }),
     });
 
     expect(res.status).toBe(202);
@@ -187,7 +192,12 @@ describe('platform/api', () => {
       status: 'provisioning',
       etaSeconds: 90,
     });
-    expect(customerVpsService.provision).toHaveBeenCalledWith({ handle: 'alice', clerkUserId: 'clerk_1', runtimeSlot: 'primary' });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: 'alice',
+      clerkUserId: 'clerk_1',
+      runtimeSlot: 'primary',
+      developerTools: [],
+    });
     expect(provisionSpy).not.toHaveBeenCalled();
     await expect(getPlatformUserByClerkId(db, 'clerk_1')).resolves.toMatchObject({
       clerkId: 'clerk_1',

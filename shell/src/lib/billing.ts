@@ -15,11 +15,7 @@ export type MatrixServerProfileSlug =
   | "server_cpx22"
   | "server_cpx32"
   | "server_cpx52";
-export type MatrixRegionSlug =
-  | "region_fsn1"
-  | "region_nbg1"
-  | "region_ash"
-  | "region_hil";
+export type MatrixRegionSlug = "region_fsn1" | "region_nbg1";
 
 export type MatrixServerProfile = {
   featureSlug: MatrixServerProfileSlug;
@@ -103,20 +99,6 @@ export const MATRIX_BILLING_REGIONS: MatrixRegion[] = [
     flag: "🇩🇪",
     label: "Nuremberg, Germany",
     networkZone: "eu-central",
-  },
-  {
-    featureSlug: "region_ash",
-    location: "ash",
-    flag: "🇺🇸",
-    label: "US East",
-    networkZone: "us-east",
-  },
-  {
-    featureSlug: "region_hil",
-    location: "hil",
-    flag: "🇺🇸",
-    label: "US West",
-    networkZone: "us-west",
   },
 ];
 

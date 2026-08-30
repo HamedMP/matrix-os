@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../../lib/cn";
 import type { ConversationPresentationCallbacks } from "./presentation";
+import { normalizeDesktopEditorPath } from "../../features/editor/desktop-editor-store";
 
 function MessageGroup({ className, ...props }: React.ComponentProps<"div">) {
   return <div data-slot="message-group" className={cn("flex min-w-0 flex-col gap-2", className)} {...props} />;
@@ -192,8 +193,9 @@ function pathPresentation(value: string): { kind: "file" | "folder"; label: stri
     || BARE_FILE_PATTERN.test(normalized);
   if (!looksLikePath) return null;
   const withoutTrailingSlash = normalized.replace(/[\\/]+$/, "");
-  const label = withoutTrailingSlash.split(/[\\/]/).filter(Boolean).at(-1) ?? normalized;
-  return { kind: FILE_EXTENSION_PATTERN.test(withoutTrailingSlash) ? "file" : "folder", label };
+  const withoutLocation = withoutTrailingSlash.replace(/:\d+(?::\d+)?$/, "");
+  const label = withoutLocation.split(/[\\/]/).filter(Boolean).at(-1) ?? normalized;
+  return { kind: FILE_EXTENSION_PATTERN.test(withoutLocation) ? "file" : "folder", label };
 }
 
 function CodeBlock({
@@ -285,9 +287,11 @@ function MarkdownTable({
 export function MessageResponse({
   children,
   copyText,
+  openFile,
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
+  openFile?: ConversationPresentationCallbacks["openFile"];
 }) {
   return (
     <div
@@ -300,7 +304,11 @@ export function MessageResponse({
         components={{
           a: ({ node: _node, href, ...props }) => {
             const external = typeof href === "string" && /^https?:\/\//i.test(href);
-            return <a href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...props} />;
+            const editorPath = typeof href === "string" ? normalizeDesktopEditorPath(href) : null;
+            return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && openFile ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+              event.preventDefault();
+              openFile(editorPath);
+            } } : {})} />;
           },
           code: ({ node: _node, children: codeChildren, className, ...props }) => {
             const value = String(codeChildren).replace(/\n$/, "");
@@ -309,6 +317,21 @@ export function MessageResponse({
               return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copyText} />;
             }
             const path = className ? null : pathPresentation(value);
+            const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
+            if (path && editorPath && openFile) {
+              return (
+                <button
+                  type="button"
+                  aria-label={`Open ${path.label} in Editor`}
+                  title={value}
+                  onClick={() => openFile(editorPath)}
+                  className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
+                >
+                  <FileText size={13} aria-hidden className="shrink-0" />
+                  <span className="truncate">{path.label}</span>
+                </button>
+              );
+            }
             if (path) {
               const Icon = path.kind === "file" ? FileText : Folder;
               return (

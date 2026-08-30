@@ -14,6 +14,7 @@ import {
   KERNEL_MODELS,
   normalizeKernelEffort,
   normalizeKernelModel,
+  resolveKernelModelOption,
 } from "../kernel-settings.js";
 
 interface BuildAgentSettingsViewInput {
@@ -122,11 +123,15 @@ export function buildAgentSettingsView(
     && agentConfig.revision >= 0
     ? agentConfig.revision
     : 0;
+  const availableModels = savedModel !== null
+    && !KERNEL_MODELS.some((entry) => entry.id === savedModel)
+    ? [...KERNEL_MODELS, resolveKernelModelOption(savedModel)]
+    : KERNEL_MODELS;
 
   return AgentSettingsViewSchema.parse({
     identity: input.identity,
     kernel: { model: savedModel, effort: savedEffort },
-    availableModels: KERNEL_MODELS,
+    availableModels,
     availableEfforts: KERNEL_EFFORTS,
     defaults: KERNEL_DEFAULTS,
     contractVersion: 2,
@@ -169,7 +174,7 @@ export function buildAgentSettingsView(
       scopes: ["chat"],
       authKind,
       supportedAuthKinds: ["platform", "api_key", "oauth_login"],
-      models: KERNEL_MODELS.map((entry) => ({
+      models: availableModels.map((entry) => ({
         id: entry.id,
         displayName: entry.label,
         description: entry.tier,

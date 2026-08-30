@@ -1,9 +1,13 @@
 import {
   FileCode2,
+  FilePenLine,
+  Code2,
   FolderKanban,
   FolderTree,
+  Globe2,
   Home,
   LayoutGrid,
+  Notebook,
   Sparkles,
   Settings,
   SquareTerminal,
@@ -15,6 +19,7 @@ import { useTabs, type Tab, type TabKind } from "../../stores/tabs";
 
 const TAB_ICON: Record<TabKind, LucideIcon> = {
   home: Home,
+  browser: Globe2,
   work: FolderKanban,
   chat: Sparkles,
   projects: FolderKanban,
@@ -23,6 +28,9 @@ const TAB_ICON: Record<TabKind, LucideIcon> = {
   terminal: SquareTerminal,
   terminals: SquareTerminal,
   files: FolderTree,
+  editor: FilePenLine,
+  vscode: Code2,
+  notes: Notebook,
   apps: LayoutGrid,
   app: LayoutGrid,
   settings: Settings,

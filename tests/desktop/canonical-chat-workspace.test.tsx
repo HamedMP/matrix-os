@@ -896,4 +896,67 @@ describe("CanonicalChatWorkspace", () => {
     expect(routeClient.create).not.toHaveBeenCalled();
     expect(onActiveChatChanged).not.toHaveBeenCalled();
   });
+
+  it("submits uploaded screenshots as canonical image attachments with a safe owner reference", async () => {
+    const api = {
+      baseUrl: "https://matrix.test",
+      get: vi.fn(),
+      getText: vi.fn(),
+      getBlob: vi.fn(),
+      post: vi.fn(),
+      postBytes: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      putBytes: vi.fn(async (url: string, file: File) => ({
+        ok: true,
+        path: decodeURIComponent(url.split("path=")[1] ?? ""),
+        size: file.size,
+      })),
+      delete: vi.fn(),
+      putText: vi.fn(),
+    } as never;
+    const routeClient = client();
+    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+      record,
+      message: snapshot.messages[0]!,
+      turn: snapshot.turns[0]!,
+      run: snapshot.runs[0]!,
+      admission: "accepted",
+    });
+    render(
+      <CanonicalChatWorkspace
+        api={api}
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    await setSharedComposerText(editor, "Inspect this screenshot");
+    const file = new File(["png bytes"], "Screenshot.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalled());
+    const request = vi.mocked(routeClient.admitTurn).mock.calls[0]![1];
+    expect(request.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text", text: "Inspect this screenshot" }),
+      expect.objectContaining({
+        type: "attachment_reference",
+        attachmentId: expect.stringMatching(/^desktop_upload_/),
+        kind: "image",
+        label: "Screenshot.png",
+        mimeType: "image/png",
+        ownerReference: expect.stringMatching(/^temporary\/desktop-chat\/.+-Screenshot\.png$/),
+      }),
+    ]));
+    expect(request.parts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "resource_reference" }),
+    ]));
+  });
 });
