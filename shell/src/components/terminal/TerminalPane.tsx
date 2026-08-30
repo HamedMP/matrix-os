@@ -147,7 +147,8 @@ export function TerminalPane({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingReconnectBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsGenerationRef = useRef(0);
-  const clipboardOperationGenerationRef = useRef(0);
+  const copyOperationGenerationRef = useRef(0);
+  const pasteOperationGenerationRef = useRef(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
@@ -192,9 +193,9 @@ export function TerminalPane({
     (termRef.current as Terminal | null)?.focus();
   }, []);
   const copyTerminalSelection = useCallback((selection: string) => {
-    const operation = ++clipboardOperationGenerationRef.current;
+    const operation = ++copyOperationGenerationRef.current;
     const initiatingSession = sessionIdRef.current;
-    const canCommit = () => clipboardOperationGenerationRef.current === operation
+    const canCommit = () => copyOperationGenerationRef.current === operation
       && sessionIdRef.current === initiatingSession;
     void copyTerminalClipboardText({
       clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
@@ -211,11 +212,11 @@ export function TerminalPane({
     });
   }, []);
   const pasteTerminalClipboard = useCallback((submit = false) => {
-    const operation = ++clipboardOperationGenerationRef.current;
+    const operation = ++pasteOperationGenerationRef.current;
     const initiatingSession = sessionIdRef.current;
     const initiatingSocket = wsRef.current;
     const initiatingSocketGeneration = wsGenerationRef.current;
-    const canCommit = () => clipboardOperationGenerationRef.current === operation
+    const canCommit = () => pasteOperationGenerationRef.current === operation
       && sessionIdRef.current === initiatingSession
       && wsRef.current === initiatingSocket
       && wsGenerationRef.current === initiatingSocketGeneration;
@@ -375,7 +376,7 @@ export function TerminalPane({
   useTerminalFilePaste({
     containerRef,
     cwd,
-    operationGenerationRef: clipboardOperationGenerationRef,
+    operationGenerationRef: pasteOperationGenerationRef,
     sessionIdRef,
     setPasteError,
     socketGenerationRef: wsGenerationRef,
@@ -389,7 +390,8 @@ export function TerminalPane({
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- syncs the initialSessionId prop into a mutable ref consumed by the imperative WebSocket/PTY layer; this is prop->ref mirroring, not a DOM event handler, and has no parent handler to hoist into
     if (initialSessionId && initialSessionId !== sessionIdRef.current) {
-      clipboardOperationGenerationRef.current += 1;
+      copyOperationGenerationRef.current += 1;
+      pasteOperationGenerationRef.current += 1;
       sessionIdRef.current = initialSessionId;
       lastSeqRef.current = 0;
       hasReplayCursorRef.current = false;
@@ -397,7 +399,8 @@ export function TerminalPane({
   }, [initialSessionId]);
 
   useEffect(() => () => {
-    clipboardOperationGenerationRef.current += 1;
+    copyOperationGenerationRef.current += 1;
+    pasteOperationGenerationRef.current += 1;
   }, []);
 
   // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom

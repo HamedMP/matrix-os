@@ -86,7 +86,8 @@ export default function TerminalView({
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
-  const clipboardOperationGenerationRef = useRef(0);
+  const copyOperationGenerationRef = useRef(0);
+  const pasteOperationGenerationRef = useRef(0);
   const visualScaleRef = useRef(visualScale);
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
@@ -103,15 +104,16 @@ export default function TerminalView({
   }, []);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const copyTerminalTextWithFeedback = useCallback(async (text: string) => {
-    const operation = ++clipboardOperationGenerationRef.current;
+    const operation = ++copyOperationGenerationRef.current;
     const result = await copyDesktopTerminalText(text);
-    if (clipboardOperationGenerationRef.current !== operation) return result;
+    if (copyOperationGenerationRef.current !== operation) return result;
     setPasteError(result === "success" ? null : "Clipboard copy failed. Try again.");
     return result;
   }, []);
 
   useEffect(() => () => {
-    clipboardOperationGenerationRef.current += 1;
+    copyOperationGenerationRef.current += 1;
+    pasteOperationGenerationRef.current += 1;
   }, []);
 
   if (stateSessionName !== sessionName) {
@@ -375,13 +377,14 @@ export default function TerminalView({
     const host = hostRef.current;
     if (!host || !active) return;
     let cancelled = false;
-    clipboardOperationGenerationRef.current += 1;
+    copyOperationGenerationRef.current += 1;
+    pasteOperationGenerationRef.current += 1;
 
     const isCurrentOperation = (
       operation: number,
       attachment: ActiveAttachment | null,
     ) => !cancelled
-      && clipboardOperationGenerationRef.current === operation
+      && pasteOperationGenerationRef.current === operation
       && attachmentRef.current === attachment;
 
     const filesForEvent = (event: ClipboardEvent | DragEvent) => terminalPasteFiles(
@@ -399,7 +402,7 @@ export default function TerminalView({
 
     const uploadAndPaste = async (
       files: ReturnType<typeof terminalPasteFiles>,
-      operation = ++clipboardOperationGenerationRef.current,
+      operation = ++pasteOperationGenerationRef.current,
       initiatingAttachment = attachmentRef.current,
     ) => {
       if (files.some(({ file }) => file.size > MAX_TERMINAL_PASTE_FILE_BYTES)) {
@@ -450,7 +453,7 @@ export default function TerminalView({
     };
 
     const pasteFromClipboard = async () => {
-      const operation = ++clipboardOperationGenerationRef.current;
+      const operation = ++pasteOperationGenerationRef.current;
       const initiatingAttachment = attachmentRef.current;
       const clipboard = navigator.clipboard;
       if (!clipboard) {
@@ -518,7 +521,8 @@ export default function TerminalView({
     host.addEventListener("drop", onDrop, { capture: true });
     return () => {
       cancelled = true;
-      clipboardOperationGenerationRef.current += 1;
+      copyOperationGenerationRef.current += 1;
+      pasteOperationGenerationRef.current += 1;
       if (pasteClipboardRef.current === pasteFromClipboard) {
         pasteClipboardRef.current = async () => undefined;
       }

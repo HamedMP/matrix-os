@@ -773,6 +773,37 @@ describe("TerminalView session switching", () => {
     expect(attachmentWrite).not.toHaveBeenCalledWith("must not reach beta");
   });
 
+  it("does not cancel an in-flight paste when the user copies", async () => {
+    const pendingRead = deferred<string>();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText: vi.fn(() => pendingRead.promise), writeText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "copy while pasting";
+    const shortcut = (key: "c" | "v") => terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    shortcut("v");
+    shortcut("c");
+    pendingRead.resolve("paste survives copy");
+    await act(async () => pendingRead.promise);
+
+    expect(writeText).toHaveBeenCalledWith("copy while pasting");
+    expect(attachmentWrite).toHaveBeenCalledWith("paste survives copy");
+  });
+
   it("cancels delayed clipboard work on unmount and retries exactly once after denial", async () => {
     const unmountedRead = deferred<string>();
     const readText = vi.fn()

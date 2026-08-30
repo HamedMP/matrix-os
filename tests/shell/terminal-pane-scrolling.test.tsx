@@ -794,6 +794,53 @@ describe("TerminalPane scrolling", () => {
     expect(stubWs.send).not.toHaveBeenCalledWith(expect.stringContaining("must not write after unmount"));
   });
 
+  it("does not cancel an in-flight paste when the user copies", async () => {
+    const pendingRead = deferred<string>();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText: vi.fn(() => pendingRead.promise), writeText },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-copy-during-paste"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    terminal.selection = "copy while pasting";
+    const shortcut = (key: "c" | "v") => terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    shortcut("v");
+    shortcut("c");
+    pendingRead.resolve("paste survives copy");
+    await act(async () => pendingRead.promise);
+
+    expect(writeText).toHaveBeenCalledWith("copy while pasting");
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "input",
+      data: "\x1b[200~paste survives copy\x1b[201~",
+    }));
+  });
+
   it("shows generic paste feedback and retries exactly once after recovery", async () => {
     const readText = vi.fn()
       .mockRejectedValueOnce(new Error("OpenAI /Users/operator/private.txt session-main"))
