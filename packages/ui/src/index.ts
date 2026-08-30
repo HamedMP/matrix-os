@@ -21,3 +21,9 @@ export { Tooltip } from "./Tooltip.js";
 export type { TooltipProps } from "./Tooltip.js";
 
 export { cn } from "./cn.js";
+
+export { AgentsProvidersView } from "./agents-providers/AgentsProvidersView.js";
+export type {
+  AgentsProvidersViewProps,
+  ProviderSettingsMutationIntent,
+} from "./agents-providers/AgentsProvidersView.js";
