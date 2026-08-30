@@ -4,6 +4,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 
 const renameProject = vi.fn(async () => true);
 const deleteProject = vi.fn(async () => true);
@@ -61,6 +62,7 @@ describe("web Chat Desktop parity", () => {
     expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for Alpha project" }), { button: 0, ctrlKey: false });
+    expect((await screen.findByRole("menu") as HTMLElement).style.zIndex).toBe(String(SHELL_Z_INDEX.popover));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     expect(await screen.findByRole("dialog", { name: "Rename project" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));

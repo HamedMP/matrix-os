@@ -2,6 +2,7 @@
 
 import type { ConversationMeta } from "@/hooks/useConversation";
 import type { WebChatProject } from "@/lib/chat-projects";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -134,7 +135,12 @@ export function WebChatProjectRow({
                 </button>
               </DropdownMenuPrimitive.Trigger>
               <DropdownMenuPrimitive.Portal>
-                <DropdownMenuPrimitive.Content align="end" sideOffset={5} className="z-50 min-w-40 rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+                <DropdownMenuPrimitive.Content
+                  align="end"
+                  sideOffset={5}
+                  className="min-w-40 rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+                  style={{ zIndex: SHELL_Z_INDEX.popover }}
+                >
                   <DropdownMenuPrimitive.Item onSelect={onRename} className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent">
                     <Edit3 className="size-4" aria-hidden />
                     Rename

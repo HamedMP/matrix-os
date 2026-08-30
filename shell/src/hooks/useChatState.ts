@@ -53,6 +53,7 @@ export function useChatState(): ChatState {
   const { connected, connectionEpoch, subscribe, send } = useSocket();
   const { conversations, load, refresh, remove, setProjectContext } = useConversation();
   const sessionRef = useRef(sessionId);
+  const initialRestoreSettledRef = useRef(false);
   const lastReattachKeyRef = useRef<string | null>(null);
   const seenReplayEventIdsRef = useRef<Set<string>>(new Set());
   // Tracks the requestId of the in-flight run so abortCurrent() can target
@@ -62,7 +63,7 @@ export function useChatState(): ChatState {
   sessionRef.current = sessionId;
 
   useEffect(() => {
-    if (conversations.length === 0) return;
+    if (initialRestoreSettledRef.current || conversations.length === 0) return;
     let aborted = false;
 
     const sorted = conversations.toSorted(
@@ -70,10 +71,13 @@ export function useChatState(): ChatState {
     );
     const latest = sorted[0];
 
-    if (!sessionId && latest.messageCount > 0) {
+    if (sessionId || latest.messageCount === 0) {
+      initialRestoreSettledRef.current = true;
+    } else {
       load(latest.id)
         .then((conv) => {
-          if (!aborted && conv) {
+          if (!aborted && conv && !initialRestoreSettledRef.current) {
+            initialRestoreSettledRef.current = true;
             setSessionId(conv.id);
             setMessages(hydrateMessages(conv.messages));
           }
@@ -114,6 +118,7 @@ export function useChatState(): ChatState {
       }
 
       if (msg.type === "kernel:init") {
+        initialRestoreSettledRef.current = true;
         setSessionId(msg.sessionId);
         if (msg.requestId) {
           currentRequestIdRef.current = msg.requestId;
@@ -230,6 +235,7 @@ export function useChatState(): ChatState {
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const newChat = useCallback(async (projectId?: string) => {
+    initialRestoreSettledRef.current = true;
     setMessages([]);
     setQueue([]);
     try {
@@ -258,6 +264,7 @@ export function useChatState(): ChatState {
   const deleteConversation = useCallback(async (id: string): Promise<boolean> => {
     const removed = await remove(id);
     if (removed && sessionRef.current === id) {
+      initialRestoreSettledRef.current = true;
       setSessionId(undefined);
       setMessages([]);
       setQueue([]);
@@ -268,6 +275,7 @@ export function useChatState(): ChatState {
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const switchConversation = useCallback(
     (id: string) => {
+      initialRestoreSettledRef.current = true;
       load(id)
         .then((conv) => {
           if (conv) {

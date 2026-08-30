@@ -17,6 +17,7 @@ import {
 } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ContextMenu } from "../../design/primitives";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type {
   CanonicalChatClient,
   CanonicalChatEventSource,
@@ -330,8 +331,13 @@ export function WorkRail({
                           <DropdownMenu.Content
                             align="end"
                             sideOffset={5}
-                            className="fade-in z-[100] min-w-[180px] rounded-lg border p-1"
-                            style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
+                            className="fade-in min-w-[180px] rounded-lg border p-1"
+                            style={{
+                              zIndex: DESKTOP_Z_INDEX.popover,
+                              background: "var(--bg-overlay)",
+                              borderColor: "var(--border-default)",
+                              boxShadow: "var(--shadow-2)",
+                            }}
                           >
                             <DropdownMenu.Item
                               className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"

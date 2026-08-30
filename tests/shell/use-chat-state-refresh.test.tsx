@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const sendMock = vi.fn();
 const subscribeMock = vi.fn(() => () => {});
 const loadMock = vi.fn();
+const removeMock = vi.fn();
 let mockConnectionEpoch = 0;
 let mockConversations: Array<{
   id: string;
@@ -29,7 +30,9 @@ vi.mock("../../shell/src/hooks/useConversation.js", () => ({
   useConversation: () => ({
     conversations: mockConversations,
     load: loadMock,
+    remove: removeMock,
     refresh: vi.fn(),
+    setProjectContext: vi.fn(),
   }),
 }));
 
@@ -59,6 +62,7 @@ describe("useChatState refresh recovery", () => {
     subscribeMock.mockReset();
     subscribeMock.mockImplementation(() => () => {});
     loadMock.mockReset();
+    removeMock.mockReset();
     mockConnectionEpoch = 0;
     mockConversations = [];
   });
@@ -96,6 +100,49 @@ describe("useChatState refresh recovery", () => {
         sessionId: "conv-1",
       });
     });
+  });
+
+  it("leaves a blank draft after deleting the active restored conversation", async () => {
+    mockConversations = [
+      {
+        id: "conv-active",
+        preview: "active",
+        messageCount: 2,
+        createdAt: 2,
+        updatedAt: 3,
+      },
+      {
+        id: "conv-older",
+        preview: "older",
+        messageCount: 1,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+    loadMock.mockImplementation(async (id: string) => ({
+      id,
+      createdAt: 1,
+      updatedAt: id === "conv-active" ? 3 : 2,
+      messages: [{ role: "user", content: id, timestamp: 1 }],
+    }));
+    removeMock.mockImplementation(async (id: string) => {
+      mockConversations = mockConversations.filter((conversation) => conversation.id !== id);
+      return true;
+    });
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    const { rerender } = render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await waitFor(() => expect(latestState?.sessionId).toBe("conv-active"));
+
+    await act(async () => {
+      await latestState?.deleteConversation("conv-active");
+    });
+    rerender(<Probe onState={(state) => { latestState = state; }} />);
+
+    await waitFor(() => expect(latestState?.sessionId).toBeUndefined());
+    expect(latestState?.messages).toEqual([]);
+    expect(loadMock).toHaveBeenCalledTimes(1);
+    expect(loadMock).not.toHaveBeenCalledWith("conv-older");
   });
 
   it("sends configured prompt text while keeping the visible user message plain", async () => {
