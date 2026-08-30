@@ -121,6 +121,43 @@ describe("EmbedService", () => {
     service.closeAll();
   });
 
+  it("opens public websites directly without starting a runtime tunnel", async () => {
+    const startPortForward = vi.fn();
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+    const internals = service as unknown as {
+      manager: { open: (...args: unknown[]) => string };
+    };
+    const open = vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+
+    const result = await service.open({
+      kind: "browser",
+      url: "https://matrix-os.com/docs",
+      bounds: BOUNDS,
+    });
+
+    expect(result.state).toBe("loading");
+    expect(startPortForward).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(
+      "browser",
+      null,
+      BOUNDS,
+      "https://matrix-os.com/docs",
+      expect.objectContaining({
+        id: result.embedId,
+        allowedOrigins: ["https://matrix-os.com"],
+        allowPublicNavigation: true,
+      }),
+    );
+  });
+
   it("tunnels runtime loopback pages through Matrix and closes the tunnel with the embed", async () => {
     const closeForward = vi.fn(async () => {});
     const startPortForward = vi.fn(async () => ({

@@ -30,7 +30,7 @@ describe("add-project entry points", () => {
     useThreads.setState({ threads: [], activeThreadId: null });
     useCodingAgentWorkspace.setState({ summary: null, activeThreadId: null, reviews: null });
     useApps.setState({ apps: [], error: null });
-    useUi.setState({ sidebarCollapsed: false, createProjectOpen: false, paletteOpen: false });
+    useUi.setState({ createProjectOpen: false, paletteOpen: false });
   });
 
   afterEach(() => {

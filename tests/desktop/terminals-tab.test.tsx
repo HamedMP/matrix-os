@@ -412,8 +412,6 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
     act(() => useTabs.getState().requestTerminalSession("matrix-two"));
     act(() => useTabs.getState().requestTerminalSession("matrix-one"));
-
-    expect(useTabs.getState().recentViews).toEqual([]);
     expect(terminalMounts.get("matrix-one")).toBe(1);
     expect(terminalMounts.get("matrix-two")).toBe(1);
   });
@@ -556,15 +554,76 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("textbox", { name: "Search terminal sessions" })).toBeNull();
   });
 
-  it("keeps the OS View sidebar delete action accessible", () => {
+  it("keeps delete and connect actions in one non-overlapping overflow menu", async () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
     });
 
     renderTab();
 
-    expect(screen.getByRole("button", { name: "Delete matrix-main" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "More actions for matrix-main" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Delete matrix-main" })).toBeNull();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for matrix-main" }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole("menuitem", { name: "Copy connect command" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
+  });
+
+  it("opens the same session actions menu when a terminal row is right-clicked", async () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    renderTab();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Open matrix-main" }));
+
+    expect(await screen.findByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Copy connect command" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
+  });
+
+  it("pins and unpins sessions from the shared overflow menu and keeps pinned sessions first", async () => {
+    const patchUiState = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-later", status: "active" },
+        { name: "matrix-pinned", status: "active", pinned: true },
+      ],
+      patchUiState,
+    });
+
+    renderTab();
+
+    const rows = screen.getAllByRole("button", { name: /^Open matrix-/ });
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+      "Open matrix-pinned",
+      "Open matrix-later",
+    ]);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for matrix-later" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Pin" }));
+    await waitFor(() => expect(patchUiState).toHaveBeenCalledWith(
+      useConnection.getState().api,
+      "matrix-later",
+      { pinned: true },
+    ));
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Open matrix-pinned" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Unpin" }));
+    await waitFor(() => expect(patchUiState).toHaveBeenCalledWith(
+      useConnection.getState().api,
+      "matrix-pinned",
+      { pinned: false },
+    ));
+  });
+
+  it("enters rename mode when the terminal session title is double-clicked", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", subtitle: "Fix terminal actions" }],
+    });
+
+    renderTab();
+    fireEvent.doubleClick(screen.getByTestId("terminal-session-title-matrix-main"));
+
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Terminal session name" }).value).toBe("matrix-main");
   });
 
   it("creates Claude, Codex, OpenCode, and Pi sessions from the new-terminal menu", async () => {
@@ -581,12 +640,40 @@ describe("TerminalsTab", () => {
     expect(screen.getByRole("menuitem", { name: /Codex/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /OpenCode/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /Pi/ })).toBeTruthy();
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-claude").getAttribute("src")).toContain("/agent-logos/claude-code.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-codex").getAttribute("src")).toContain("/agent-logos/codex.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-opencode").getAttribute("src")).toContain("/agent-logos/opencode-white.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-pi").getAttribute("src")).toContain("/agent-logos/pi-coding-agent.png");
 
     fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api, {
       cmd: "codex",
       agent: "codex",
     }));
+  });
+
+  it("shows an agent session's task title and proper agent icon in its terminal tab", () => {
+    useShellSessions.setState({
+      sessions: [{
+        name: "matrix-codex-fix",
+        status: "active",
+        agent: "codex",
+        subtitle: "Fix terminal tabs",
+        model: "gpt-5.6",
+        cwd: "projects/matrix-os",
+      }],
+    });
+
+    renderTab();
+
+    expect(screen.getByText("Fix terminal tabs")).toBeTruthy();
+    const metadata = screen.getByTestId("terminal-session-agent-metadata-matrix-codex-fix");
+    expect(metadata.textContent).toContain("Codex · gpt-5.6");
+    expect(metadata.textContent).toContain("~/projects/matrix-os");
+    expect(screen.getByTestId("terminal-session-path-matrix-codex-fix").compareDocumentPosition(
+      screen.getByTestId("terminal-session-agent-matrix-codex-fix"),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(metadata.contains(screen.getByTestId("desktop-terminal-session-agent-logo-image-codex"))).toBe(true);
   });
 
   it("keeps agents disabled when installation inventory is unresolved", async () => {
@@ -703,6 +790,7 @@ describe("TerminalsTab", () => {
         agent: "codex",
         model: "gpt-5.4",
         strength: "high",
+        subtitle: "Improve terminal session rows",
         lastAction: "Editing terminal sidebar",
       }],
     });
@@ -713,7 +801,8 @@ describe("TerminalsTab", () => {
     expect(row.textContent).toContain("Codex");
     expect(row.textContent).toContain("gpt-5.4");
     expect(row.textContent).toContain("high");
-    expect(row.textContent).toContain("Editing terminal sidebar");
+    expect(row.textContent).toContain("Improve terminal session rows");
+    expect(row.textContent).not.toContain("Editing terminal sidebar");
     expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Editing terminal sidebar" })).toBeNull();
   });
@@ -745,7 +834,7 @@ describe("TerminalsTab", () => {
     ));
   });
 
-  it("renders canonical active, waiting, and closed lifecycle badges with relative activity", () => {
+  it("renders relative activity without lifecycle dots", () => {
     useShellSessions.setState({
       sessions: [
         { name: "matrix-active", status: "active", visualStatus: "running", updatedAt: new Date(Date.now() - 120_000).toISOString() },
@@ -758,8 +847,9 @@ describe("TerminalsTab", () => {
 
     expect(screen.getByRole("button", { name: "Open matrix-active" }).parentElement?.textContent)
       .toContain("2 minutes ago");
-    expect(document.querySelector('[data-terminal-session-status="active"]')).toBeTruthy();
-    expect(document.querySelectorAll('[data-terminal-session-status="inactive"]')).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Open matrix-waiting" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open matrix-closed" })).toBeTruthy();
+    expect(document.querySelector("[data-terminal-session-status]")).toBeNull();
   });
 
   it("bounds loading and load-error states in the list surface", () => {
@@ -801,11 +891,11 @@ describe("TerminalsTab", () => {
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
       deleteSession,
     });
-    useTabs.getState().recordRecentTerminal("matrix-main", "matrix-main");
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete matrix-main" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for matrix-main" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     expect(deleteSession).not.toHaveBeenCalled();
     expect(screen.getByText("Delete matrix-main?")).toBeTruthy();
     const dialog = screen.getByRole("dialog");
@@ -815,7 +905,6 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main"));
-    await waitFor(() => expect(useTabs.getState().recentViews).toEqual([]));
   });
 
   it("reconciles open terminal tabs after a successful desktop deletion", async () => {
@@ -837,29 +926,13 @@ describe("TerminalsTab", () => {
     useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-delete", title: "matrix-delete" });
 
     renderTab();
-    fireEvent.click(screen.getByRole("button", { name: "Delete matrix-delete" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for matrix-delete" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(deleteSession).toHaveBeenCalledOnce());
     await waitFor(() => expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([home]));
     expect(useTabs.getState().activeTabId).toBe(home);
-  });
-
-  it("removes stale terminal Recents after an authoritative session load", async () => {
-    useTabs.getState().recordRecentTerminal("matrix-live", "matrix-live");
-    useTabs.getState().recordRecentTerminal("matrix-deleted", "matrix-deleted");
-    useShellSessions.setState({
-      sessions: [{ name: "matrix-live", status: "active", placement: "active" }],
-      loading: false,
-      error: null,
-      loadSequence: 1,
-      authoritativeRevision: 1,
-    });
-
-    renderTab();
-
-    await waitFor(() => expect(useTabs.getState().recentViews.map((recent) => recent.id))
-      .toEqual(["matrix-live"]));
   });
 
   it("never renders workspace-only records as terminal rows", () => {

@@ -403,6 +403,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const tab: Tab = {
       id,
       label: label ?? basename,
+      ...(claude ? { agent: "claude" as const } : startupCommand === "codex" ? { agent: "codex" as const } : {}),
       paneTree: {
         type: "pane",
         id: paneId,
@@ -423,13 +424,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     label: string,
     sessionId: string,
     cwd = DEFAULT_CWD,
-    options: { compatMode?: TerminalCompatMode; legacyCompat?: boolean } = {},
+    options: { agent?: CreateShellSessionTabOptions["agent"]; compatMode?: TerminalCompatMode; legacyCompat?: boolean } = {},
   ) => {
     const id = genId();
     const paneId = genId();
     const tab: Tab = {
       id,
       label,
+      ...(options.agent ? { agent: options.agent } : {}),
       paneTree: {
         type: "pane",
         id: paneId,
@@ -485,7 +487,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         }
         const data = await res.json() as { name?: unknown };
         const sessionName = typeof data.name === "string" ? data.name : name;
-        addSessionTab(label, sessionName, requestedCwd, { compatMode: options.compatMode, legacyCompat: false });
+        addSessionTab(label, sessionName, requestedCwd, {
+          ...(options.agent ? { agent: options.agent } : {}),
+          ...(options.compatMode ? { compatMode: options.compatMode } : {}),
+          legacyCompat: false,
+        });
         return sessionName;
       } catch (err: unknown) {
         console.warn(

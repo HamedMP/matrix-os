@@ -3,6 +3,19 @@
 @import "shadcn/tailwind.css";
 @import "@clerk/ui/themes/shadcn.css";
 
+/* Opt-in command-list motion: immediate entry, delayed fade on exit. */
+[data-instant-list-hover] {
+  transition-delay: 75ms;
+  transition-duration: 180ms;
+  transition-property: background-color, color;
+  transition-timing-function: ease-out;
+}
+
+[data-instant-list-hover][data-selected="true"] {
+  transition-delay: 0ms;
+  transition-duration: 0ms;
+}
+
 @font-face {
   font-family: "MesloLGS NF";
   src: url("/fonts/meslo/MesloLGS%20NF%20Regular.ttf") format("truetype");
@@ -812,44 +825,7 @@ pre {
   box-shadow: 1px 0 0 var(--neu-shadow-light);
 }
 
-/* --- Menu Bar: Win98 raised taskbar --- */
-[data-theme-style="neumorphic"] [data-menu-bar] {
-  background: var(--card) !important;
-  backdrop-filter: none !important;
-  border: none !important;
-  border-bottom: 2px solid var(--neu-shadow-dark) !important;
-  box-shadow:
-    inset 0 1px 0 var(--neu-shadow-light) !important;
-}
-
-/* Menu bar buttons: Win98 raised feel on hover */
-[data-theme-style="neumorphic"] [data-menu-bar] button:hover {
-  background: var(--muted) !important;
-  border-top: 1px solid var(--neu-shadow-light);
-  border-left: 1px solid var(--neu-shadow-light);
-  border-bottom: 1px solid var(--neu-shadow-dark);
-  border-right: 1px solid var(--neu-shadow-dark);
-}
-
-/* Menu dropdowns: raised panel with bevel */
-[data-theme-style="neumorphic"] [data-menu-dropdown] {
-  background: var(--card) !important;
-  backdrop-filter: none !important;
-  border-radius: 2px !important;
-  border: none !important;
-  border-top: 2px solid var(--neu-shadow-light) !important;
-  border-left: 2px solid var(--neu-shadow-light) !important;
-  border-bottom: 2px solid var(--neu-shadow-dark) !important;
-  border-right: 2px solid var(--neu-shadow-dark) !important;
-  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2) !important;
-}
-
 /* Menu items: Win98 highlight style */
-[data-theme-style="neumorphic"] [data-menu-dropdown] button:hover {
-  background: var(--primary) !important;
-  color: var(--primary-foreground) !important;
-  border: none;
-}
 
 /* --- App tiles: square raised icons --- */
 [data-theme-style="neumorphic"] [data-app-tile] {
@@ -976,16 +952,6 @@ pre {
 
 [data-theme-style="neumorphic"] .active\:scale-95:active {
   transform: none !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  [data-onboarding-brand],
-  [data-onboarding-brand] * {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-    transition-duration: 1ms !important;
-  }
 }
 
 /* ═══════════════════════════════════════════════
@@ -1153,7 +1119,6 @@ pre {
 }
 
 /* --- Menu items: system-blue selection --- */
-[data-theme-style="macos-glass"] [data-menu-dropdown] button:hover,
 [data-theme-style="macos-glass"] [data-slot="context-menu-item"]:hover,
 [data-theme-style="macos-glass"] [data-slot="context-menu-item"][data-highlighted] {
   background: color-mix(in srgb, var(--primary) 85%, transparent) !important;
@@ -1191,30 +1156,6 @@ pre {
 
 [data-theme-style="macos-glass"] [data-dock] button img {
   border-radius: 10px !important;
-}
-
-/* --- Menu Bar: ultra-translucent white strip over the wallpaper --- */
-[data-theme-style="macos-glass"] [data-menu-bar] {
-  background: rgba(255, 255, 255, 0.45) !important;
-  backdrop-filter: var(--glass-blur) !important;
-  -webkit-backdrop-filter: var(--glass-blur) !important;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04) !important;
-}
-
-[data-theme-style="macos-glass"] [data-menu-bar] button:hover {
-  background: rgba(0, 0, 0, 0.07) !important;
-  border-radius: 5px;
-}
-
-/* --- Menu dropdowns: frosted panel --- */
-[data-theme-style="macos-glass"] [data-menu-dropdown] {
-  background: var(--glass-surface-strong) !important;
-  backdrop-filter: var(--glass-blur) !important;
-  -webkit-backdrop-filter: var(--glass-blur) !important;
-  border: 1px solid var(--glass-edge) !important;
-  border-radius: 12px !important;
-  box-shadow: var(--glass-specular), var(--glass-shadow) !important;
 }
 
 /* --- App tiles: rounded glass icons --- */
@@ -1346,8 +1287,7 @@ pre {
 [data-theme-style="winxp"] [data-slot="select-content"],
 [data-theme-style="winxp"] [data-slot="context-menu-content"],
 [data-theme-style="winxp"] [data-slot="dialog-content"],
-[data-theme-style="winxp"] [data-slot="popover-content"],
-[data-theme-style="winxp"] [data-menu-dropdown] {
+[data-theme-style="winxp"] [data-slot="popover-content"] {
   background: var(--xp-chrome) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -1368,7 +1308,6 @@ pre {
 }
 
 /* --- Menu items: XP selection blue --- */
-[data-theme-style="winxp"] [data-menu-dropdown] button:hover,
 [data-theme-style="winxp"] [data-slot="context-menu-item"]:hover,
 [data-theme-style="winxp"] [data-slot="context-menu-item"][data-highlighted] {
   background: var(--accent) !important;
@@ -1431,29 +1370,6 @@ pre {
 [data-theme-style="winxp"] [data-dock] .border-t {
   border-color: rgba(0, 0, 0, 0.35) !important;
   box-shadow: 1px 0 0 rgba(255, 255, 255, 0.25);
-}
-
-/* --- Menu Bar: Luna title-bar strip --- */
-[data-theme-style="winxp"] [data-menu-bar] {
-  background: var(--xp-titlebar) !important;
-  backdrop-filter: none !important;
-  border: none !important;
-  border-bottom: 1px solid #003c9e !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    0 1px 3px rgba(0, 0, 0, 0.35) !important;
-  color: #ffffff;
-}
-
-[data-theme-style="winxp"] [data-menu-bar] button,
-[data-theme-style="winxp"] [data-menu-bar] .text-foreground,
-[data-theme-style="winxp"] [data-menu-bar] .text-muted-foreground {
-  color: #ffffff !important;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
-}
-
-[data-theme-style="winxp"] [data-menu-bar] button:hover {
-  background: rgba(255, 255, 255, 0.18) !important;
 }
 
 /* --- App tiles: XP desktop icons --- */
@@ -1606,8 +1522,7 @@ pre {
 [data-theme-style="win11"] [data-slot="context-menu-content"],
 [data-theme-style="win11"] [data-slot="dialog-content"],
 [data-theme-style="win11"] [data-slot="popover-content"],
-[data-theme-style="win11"] [data-slot="tooltip-content"],
-[data-theme-style="win11"] [data-menu-dropdown] {
+[data-theme-style="win11"] [data-slot="tooltip-content"] {
   background: var(--win11-acrylic-strong) !important;
   backdrop-filter: var(--win11-blur) !important;
   -webkit-backdrop-filter: var(--win11-blur) !important;
@@ -1617,7 +1532,6 @@ pre {
 }
 
 /* --- Menu items: subtle gray pill hover --- */
-[data-theme-style="win11"] [data-menu-dropdown] button:hover,
 [data-theme-style="win11"] [data-slot="context-menu-item"]:hover,
 [data-theme-style="win11"] [data-slot="context-menu-item"][data-highlighted] {
   background: var(--win11-hover) !important;
@@ -1676,23 +1590,6 @@ pre {
   border-radius: 9999px !important;
   width: 12px !important;
   height: 3px !important;
-}
-
-/* --- Menu Bar: Mica strip --- */
-[data-theme-style="win11"] [data-menu-bar] {
-  background: var(--win11-acrylic) !important;
-  backdrop-filter: var(--win11-blur) !important;
-  -webkit-backdrop-filter: var(--win11-blur) !important;
-  border-bottom: 1px solid var(--win11-stroke) !important;
-  box-shadow: none !important;
-}
-
-[data-theme-style="win11"] [data-menu-bar] button {
-  border-radius: 6px;
-}
-
-[data-theme-style="win11"] [data-menu-bar] button:hover {
-  background: var(--win11-hover) !important;
 }
 
 /* --- App tiles: pill hover, Fluent icon rounding --- */

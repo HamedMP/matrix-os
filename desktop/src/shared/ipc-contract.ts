@@ -456,7 +456,6 @@ export const EVENT_CHANNELS = {
   "menu:action": z
     .object({
       action: z.enum([
-        "new-task",
         "new-thread",
         "new-context",
         "new-tab",

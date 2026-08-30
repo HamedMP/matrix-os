@@ -145,6 +145,7 @@ describe("zellij adapter", () => {
           tab_id: 1,
           pane_cwd: "/home/alice/project",
           pane_command: "codex",
+          pane_title: "Fix terminal session rows",
         }]), "");
       return childProcess();
     });
@@ -153,6 +154,7 @@ describe("zellij adapter", () => {
     await expect(adapter.focusedPaneRuntime("main")).resolves.toEqual({
       cwd: "/home/alice/project",
       command: "codex",
+      title: "Fix terminal session rows",
       observed: true,
     });
     expect(execFile).toHaveBeenCalledTimes(1);

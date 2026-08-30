@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const gatewayCallers = [
-  "shell/src/hooks/useAgentCredentialStatus.ts",
   "shell/src/hooks/useOnboarding.ts",
   "shell/src/hooks/useSetupChecklist.ts",
   "shell/src/components/onboarding/steps/AgentStep.tsx",

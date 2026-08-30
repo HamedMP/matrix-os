@@ -10,7 +10,6 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
-import { useTabs } from "../../stores/tabs";
 import { useHermesChat } from "../../stores/hermes-chat";
 import {
   DEFAULT_INSPECTOR_WIDTH_PCT,
@@ -61,7 +60,6 @@ function LegacyProjectChatsView({ projectId, active }: { projectId: string; acti
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const error = useCodingAgentWorkspace((s) => s.error);
   const refreshRuntimeSummary = useCodingAgentWorkspace((s) => s.refresh);
-  const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const threadSnapshotStatus = useCodingAgentWorkspace((s) => s.threadSnapshotStatus);
   const threadSnapshot = useCodingAgentWorkspace((s) => s.threadSnapshot);
@@ -447,9 +445,8 @@ function LegacyProjectChatsView({ projectId, active }: { projectId: string; acti
   // A created chat must always surface: select it, drop the draft seed, and
   // refresh the rail. Shared by the draft pane (project workspace path) and
   // the legacy inspector composer (no project-workspace capability).
-  const handleComposerCreated = (threadId: string, label: string) => {
+  const handleComposerCreated = (threadId: string) => {
     setSelectedThread(projectId, threadId);
-    useTabs.getState().recordRecentConversation(threadId, label);
     setComposerSeed(null);
     if (projectWorkspaceEnabled) void refreshWorkspace(projectId);
   };
@@ -457,10 +454,7 @@ function LegacyProjectChatsView({ projectId, active }: { projectId: string; acti
     const state = useCodingAgentWorkspace.getState();
     const threadId = state.activeThreadId;
     if (!threadId) return;
-    const label = state.threadSnapshot?.thread.id === threadId
-      ? state.threadSnapshot.thread.title
-      : "Agent conversation";
-    handleComposerCreated(threadId, label);
+    handleComposerCreated(threadId);
   };
 
   const conversationColumn = (

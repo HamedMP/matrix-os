@@ -9,6 +9,8 @@ import {
   LinkIcon,
   MoreHorizontalIcon,
   PencilIcon,
+  PinIcon,
+  PinOffIcon,
   PlusIcon,
   Rows2Icon,
   Trash2Icon,
@@ -320,42 +322,6 @@ const SESSION_RENAME_INPUT_STYLE: CSSProperties = {
   padding: "0 6px",
   pointerEvents: "auto",
 };
-
-export interface ProjectInfo {
-  name: string;
-  path: string;
-  isGit: boolean;
-  branch: string | null;
-  dirtyCount: number;
-  modified: string | null;
-}
-
-export interface WorkspaceSessionSummary {
-  id: string;
-  kind?: "shell" | "agent";
-  projectSlug?: string;
-  taskId?: string;
-  worktreeId?: string;
-  pr?: number;
-  agent?: "claude" | "codex" | "opencode" | "pi";
-  runtime?: {
-    status?: string;
-  };
-  status?: string;
-  nativeAttachCommand?: string[];
-  transcriptPath?: string;
-}
-
-export interface TreeNode {
-  name: string;
-  type: "file" | "directory";
-  size?: number;
-  gitStatus: string | null;
-  changedCount?: number;
-  path: string;
-  children?: TreeNode[];
-  expanded?: boolean;
-}
 
 export function getShellTabCount(shell: ShellSessionSummary): number | null {
   if (!Array.isArray(shell.tabs)) return null;
@@ -688,6 +654,7 @@ export function ShellSessionGroup({
   selectedShellName,
   onOpen,
   onToggle,
+  onPin,
   onRename,
   onDelete,
   draggingShellName,
@@ -708,6 +675,7 @@ export function ShellSessionGroup({
   selectedShellName: string | null;
   onOpen: (shell: ShellSessionSummary) => void;
   onToggle: (shell: ShellSessionSummary) => void;
+  onPin: (shell: ShellSessionSummary) => void;
   onRename: (shell: ShellSessionSummary, nextName: string) => Promise<boolean>;
   onDelete: (shell: ShellSessionSummary, anchorElement: HTMLElement, returnFocusElement: HTMLButtonElement) => void;
   draggingShellName: string | null;
@@ -780,6 +748,7 @@ export function ShellSessionGroup({
                 selected={shell.name === selectedShellName}
                 onOpen={() => onOpen(shell)}
                 onToggle={() => onToggle(shell)}
+                onPin={() => onPin(shell)}
                 onRename={(nextName) => onRename(shell, nextName)}
                 onDelete={(anchorElement, returnFocusElement) => onDelete(shell, anchorElement, returnFocusElement)}
                 dragging={shell.name === draggingShellName}
@@ -867,6 +836,7 @@ function ShellCard({
   selected,
   onOpen,
   onToggle,
+  onPin,
   onRename,
   onDelete,
   dragging,
@@ -883,6 +853,7 @@ function ShellCard({
   selected: boolean;
   onOpen: () => void;
   onToggle: () => void;
+  onPin: () => void;
   onRename: (nextName: string) => Promise<boolean>;
   onDelete: (anchorElement: HTMLElement, returnFocusElement: HTMLButtonElement) => void;
   dragging: boolean;
@@ -1423,6 +1394,15 @@ function ShellCard({
                     >
                       <Rows2Icon size={13} strokeWidth={2} />
                     </SessionContextMenuItem>
+                    <SessionContextMenuItem
+                      label={shell.pinned ? "Unpin" : "Pin"}
+                      onClick={() => {
+                        closeContextMenuWithFocusReturn();
+                        onPin();
+                      }}
+                    >
+                      {shell.pinned ? <PinOffIcon size={13} strokeWidth={2} /> : <PinIcon size={13} strokeWidth={2} />}
+                    </SessionContextMenuItem>
                     <hr style={SESSION_CONTEXT_MENU_SEPARATOR_STYLE} />
                     <SessionContextMenuItem
                       label={deleting ? "Deleting" : "Close"}
@@ -1535,31 +1515,4 @@ function SessionContextMenuItem({
       <span>{label}</span>
     </button>
   );
-}
-
-export function filterTreeNodes(nodes: TreeNode[], normalizedFilter: string): TreeNode[] {
-  return nodes.flatMap((node) => {
-    const children = node.children ? filterTreeNodes(node.children, normalizedFilter) : [];
-    const matches = [
-      node.name,
-      node.path,
-      node.gitStatus,
-    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter);
-
-    if (matches) {
-      return [{ ...node, expanded: node.type === "directory" ? true : node.expanded }];
-    }
-    if (children.length > 0) {
-      return [{ ...node, children, expanded: true }];
-    }
-    return [];
-  });
-}
-
-export function updateNode(nodes: TreeNode[], path: string, update: Partial<TreeNode>): TreeNode[] {
-  return nodes.map((node) => {
-    if (node.path === path) return { ...node, ...update };
-    if (node.children) return { ...node, children: updateNode(node.children, path, update) };
-    return node;
-  });
 }

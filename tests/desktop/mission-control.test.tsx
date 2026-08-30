@@ -12,18 +12,8 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
-
-vi.mock("../../desktop/src/renderer/src/features/mission-control/Sidebar", () => ({
-  default: () => <div data-testid="sidebar" />,
-}));
 vi.mock("../../desktop/src/renderer/src/features/desktop-shell/NativeDesktopShell", () => ({
   default: () => <div data-testid="native-desktop-shell" />,
-}));
-vi.mock("../../desktop/src/renderer/src/features/mission-control/Titlebar", () => ({
-  default: () => <div data-testid="titlebar" />,
-}));
-vi.mock("../../desktop/src/renderer/src/features/board/Board", () => ({
-  default: () => <div data-testid="board" />,
 }));
 vi.mock("../../desktop/src/renderer/src/features/embeds/EmbedHost", () => ({
   default: () => <div data-testid="embed-host" />,
@@ -31,17 +21,8 @@ vi.mock("../../desktop/src/renderer/src/features/embeds/EmbedHost", () => ({
 vi.mock("../../desktop/src/renderer/src/features/workspace/TaskWorkspace", () => ({
   default: () => <div data-testid="task-workspace" />,
 }));
-vi.mock("../../desktop/src/renderer/src/features/threads/ThreadView", () => ({
-  default: () => <div data-testid="thread-view" />,
-}));
-vi.mock("../../desktop/src/renderer/src/features/sessions/SessionsView", () => ({
-  default: () => <div data-testid="sessions-view" />,
-}));
 vi.mock("../../desktop/src/renderer/src/features/settings/SettingsView", () => ({
   default: () => <div data-testid="settings-view" />,
-}));
-vi.mock("../../desktop/src/renderer/src/features/sessions/StandaloneSession", () => ({
-  default: () => <div data-testid="standalone-session" />,
 }));
 vi.mock("../../desktop/src/renderer/src/features/threads/Composer", () => ({
   default: () => <div data-testid="composer" />,
@@ -97,7 +78,6 @@ describe("MissionControl", () => {
     });
     useUi.setState({
       view: { kind: "board" },
-      createTaskOpen: false,
       composerOpen: false,
       paletteOpen: false,
     });

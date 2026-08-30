@@ -6,252 +6,32 @@ beforeEach(() => {
 });
 
 describe("tabs store", () => {
-  it("traverses bounded view history without replacing mounted tab resources", () => {
+  it("clears pending terminal navigation when the runtime changes", () => {
     useTabs.getState().ensureNavigationScope("runtime-a");
-    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-    const terminal = useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
-    const project = useTabs.getState().openTab({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" });
-    const mountedTabs = useTabs.getState().tabs;
-
-    expect(useTabs.getState().canGoBack).toBe(true);
-    useTabs.getState().goBack();
-    expect(useTabs.getState().activeTabId).toBe(terminal);
-    expect(useTabs.getState().tabs).toBe(mountedTabs);
-
-    useTabs.getState().goBack();
-    expect(useTabs.getState().activeTabId).toBe(home);
-    useTabs.getState().goForward();
-    expect(useTabs.getState().activeTabId).toBe(terminal);
-    useTabs.getState().goForward();
-    expect(useTabs.getState().activeTabId).toBe(project);
-    expect(useTabs.getState().canGoForward).toBe(false);
-  });
-
-  it("does not duplicate consecutive history entries and drops forward history after a branch", () => {
-    useTabs.getState().ensureNavigationScope("runtime-a");
-    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-    const terminal = useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
-    useTabs.getState().focusTab(terminal);
-
-    expect(useTabs.getState().viewHistory).toEqual([home, terminal]);
-    useTabs.getState().goBack();
-    useTabs.getState().openTab({ kind: "files", title: "Files", slug: "files", closable: false });
-
-    expect(useTabs.getState().viewHistory).toHaveLength(2);
-    expect(useTabs.getState().canGoForward).toBe(false);
-  });
-
-  it("deduplicates a retained root and drops stale detail Forward history", () => {
-    useTabs.getState().ensureNavigationScope("runtime-a");
-    const home = useTabs.getState().openTab({
-      kind: "home",
-      title: "Home",
-      closable: false,
-    });
-    const projects = useTabs.getState().openTab({
-      kind: "projects",
-      title: "Projects",
-      closable: false,
-    });
-    useTabs.getState().openTab({
-      kind: "project",
-      projectSlug: "matrix-os",
-      title: "Matrix OS",
-    });
-    useTabs.getState().focusTab(projects);
-    const task = useTabs.getState().openTab({
-      kind: "task",
-      projectSlug: "matrix-os",
-      taskId: "MAT-466",
-      title: "Fix Desktop navigation",
-    });
-
-    useTabs.getState().openTabAtHistoryRoot({
-      kind: "projects",
-      title: "Projects",
-      closable: false,
-    }, ["project", "task"]);
-
-    expect(useTabs.getState()).toMatchObject({
-      activeTabId: projects,
-      viewHistory: [home, projects],
-      historyIndex: 1,
-    });
-    expect(useTabs.getState().canGoForward).toBe(false);
-    expect(useTabs.getState().tabs.some((tab) => tab.id === task)).toBe(true);
-  });
-
-  it("keeps unrelated destinations immediately behind a restored Projects root", () => {
-    useTabs.getState().ensureNavigationScope("runtime-a");
-    const home = useTabs.getState().openTab({
-      kind: "home",
-      title: "Home",
-      closable: false,
-    });
-    const projects = useTabs.getState().openTab({
-      kind: "projects",
-      title: "Projects",
-      closable: false,
-    });
-    useTabs.getState().openTab({
-      kind: "project",
-      projectSlug: "matrix-os",
-      title: "Matrix OS",
-    });
-    const terminal = useTabs.getState().openTab({
-      kind: "terminal",
-      sessionName: "canary",
-      title: "canary",
-    });
-    useTabs.getState().openTab({
-      kind: "task",
-      projectSlug: "matrix-os",
-      taskId: "MAT-466",
-      title: "Fix Desktop navigation",
-    });
-
-    useTabs.getState().openTabAtHistoryRoot({
-      kind: "projects",
-      title: "Projects",
-      closable: false,
-    }, ["project", "task"]);
-
-    expect(useTabs.getState()).toMatchObject({
-      activeTabId: projects,
-      viewHistory: [home, terminal, projects],
-      historyIndex: 2,
-    });
-    useTabs.getState().goBack();
-    expect(useTabs.getState().activeTabId).toBe(terminal);
-  });
-
-  it("caps view history during long navigation sessions", () => {
-    useTabs.getState().ensureNavigationScope("runtime-a");
-    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-    const files = useTabs.getState().openTab({ kind: "files", title: "Files", slug: "files", closable: false });
-
-    for (let index = 0; index < 100; index += 1) {
-      useTabs.getState().focusTab(index % 2 === 0 ? home : files);
-    }
-
-    expect(useTabs.getState().viewHistory.length).toBeLessThanOrEqual(40);
-    expect(useTabs.getState().historyIndex).toBe(useTabs.getState().viewHistory.length - 1);
-  });
-
-  it("keeps Recents bounded, serializable, filterable, and scoped to one runtime", () => {
-    useTabs.getState().ensureNavigationScope("runtime-a");
-    for (let index = 0; index < 20; index += 1) {
-      useTabs.getState().recordRecentProject(`project-${index}`, `Project ${index}`);
-    }
-    useTabs.getState().recordRecentTerminal("dev", "dev");
-    useTabs.getState().recordRecentConversation("thread-1", "Fix navigation");
-    useTabs.getState().recordRecentCanonicalChat("chat-1", "Canonical chat", "matrix-os");
-
-    const state = useTabs.getState();
-    expect(state.recentViews.length).toBeLessThanOrEqual(12);
-    expect(() => JSON.stringify(state.recentViews)).not.toThrow();
-    expect(state.recentViews[0]).toMatchObject({
-      kind: "conversation",
-      id: "chat-1",
-      conversationType: "canonical",
-      projectId: "matrix-os",
-    });
-
-    state.setRecentFilter("terminal");
-    expect(useTabs.getState().recentFilter).toBe("terminal");
+    useTabs.getState().requestTerminalSession("old-runtime-session");
     useTabs.getState().ensureNavigationScope("runtime-b");
     expect(useTabs.getState()).toMatchObject({
-      navigationScope: "runtime-b",
-      recentViews: [],
-      viewHistory: [],
-      historyIndex: -1,
-      recentFilter: "all",
+      navigationScope: "runtime-b", terminalSessionRequest: null, terminalSessionRequestSequence: 0,
     });
-  });
-
-  it("keeps navigation separate from meaningful Recent activity", () => {
-    useTabs.getState().ensureNavigationScope("runtime-a");
-    const terminal = useTabs.getState().openTab({
-      kind: "terminal",
-      sessionName: "vivid-otter",
-      title: "vivid-otter",
-    });
-    const project = useTabs.getState().openTab({
-      kind: "project",
-      projectSlug: "matrix-os",
-      title: "Matrix OS",
-    });
-
-    useTabs.getState().focusTab(terminal);
-    useTabs.getState().focusTab(project);
-
-    expect(useTabs.getState().recentViews).toEqual([]);
-
-    useTabs.getState().recordRecentTerminal("vivid-otter", "vivid-otter");
-    useTabs.getState().recordRecentProject("matrix-os", "Matrix OS");
-    expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual([
-      "matrix-os",
-      "vivid-otter",
-    ]);
-  });
-
-  it("removes deleted resources and reconciles authoritative Hermes and terminal lists", () => {
-    useTabs.getState().recordRecentHermesConversation("hermes-live", "Live chat");
-    useTabs.getState().recordRecentHermesConversation("hermes-deleted", "Deleted chat");
-    useTabs.getState().recordRecentConversation("thread-live", "Coding agent run");
-    useTabs.getState().recordRecentTerminal("terminal-live", "terminal-live");
-    useTabs.getState().recordRecentTerminal("terminal-deleted", "terminal-deleted");
-
-    useTabs.getState().reconcileRecentHermesConversations(["hermes-live"]);
-    useTabs.getState().reconcileRecentTerminals(["terminal-live"]);
-
-    expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual([
-      "terminal-live",
-      "thread-live",
-      "hermes-live",
-    ]);
-
-    useTabs.getState().removeRecentView("conversation", "hermes-live");
-    useTabs.getState().removeRecentView("terminal", "terminal-live");
-    expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual(["thread-live"]);
   });
 
   it("atomically closes every missing terminal tab and focuses the nearest retained tab", () => {
     useTabs.getState().ensureNavigationScope("runtime-a");
     const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
     const live = useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-live", title: "matrix-live" });
-    const missing = useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-missing", title: "matrix-missing" });
-    const alsoMissing = useTabs.getState().openTab({
+    useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-missing", title: "matrix-missing" });
+    useTabs.getState().openTab({
       kind: "terminal",
       sessionName: "matrix-also-missing",
       title: "matrix-also-missing",
     });
-    useTabs.getState().recordRecentTerminal("matrix-live", "matrix-live");
-    useTabs.getState().recordRecentTerminal("matrix-missing", "matrix-missing");
     useTabs.getState().requestTerminalSession("matrix-missing");
 
     useTabs.getState().reconcileTerminalSessions(["matrix-live"]);
 
     expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([home, live]);
     expect(useTabs.getState().activeTabId).toBe(live);
-    expect(useTabs.getState().viewHistory).not.toContain(missing);
-    expect(useTabs.getState().viewHistory).not.toContain(alsoMissing);
-    expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual(["matrix-live"]);
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
-  });
-
-  it("seeds the safe Home root after a runtime transition changes navigation scope", () => {
-    const homeId = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-
-    useTabs.getState().ensureNavigationScope("runtime-b");
-
-    expect(useTabs.getState()).toMatchObject({
-      navigationScope: "runtime-b",
-      viewHistory: [homeId],
-      historyIndex: 0,
-      canGoBack: false,
-      canGoForward: false,
-    });
   });
 
   it("opens a tab and makes it active", () => {

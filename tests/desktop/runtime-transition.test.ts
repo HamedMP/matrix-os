@@ -16,6 +16,8 @@ import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useDesktopSurfaces } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
+import { useDesktopIcons } from "../../desktop/src/renderer/src/stores/desktop-icons";
+import { useCreateAppRequest } from "../../desktop/src/renderer/src/stores/create-app-request";
 
 describe("desktop runtime transition", () => {
   beforeEach(() => {
@@ -57,6 +59,8 @@ describe("desktop runtime transition", () => {
       workspaceView: "tabs",
       nextZIndex: 41,
     });
+    useDesktopIcons.setState({ icons: [{ path: "__chat__", x: 20, y: 20 }], loaded: true });
+    useCreateAppRequest.getState().requestDraft();
     useCodingAgentWorkspace.setState({ activeThreadId: "thread_old", selectedReviewId: "review_old" });
     useProjectWorkspaces.setState({
       entries: {
@@ -93,6 +97,8 @@ describe("desktop runtime transition", () => {
     expect(useProjectWorkspaces.getState().entries).toEqual({});
     expect(useProjectView.getState().entries).toEqual({});
     expect(useDesktopSurfaces.getState()).toMatchObject({ surfaces: {}, workspaceView: "desktop" });
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [], loaded: false });
+    expect(useCreateAppRequest.getState().request).toBeNull();
   });
 
   it("clears unsent chat drafts owned by the previous identity", () => {
@@ -133,18 +139,15 @@ describe("desktop runtime transition", () => {
   it("returns to the icon desktop without reopening the hosted web shell after a switch", () => {
     useTabs.getState().ensureNavigationScope("old-runtime");
     useTabs.getState().openTab({ kind: "terminal", sessionName: "old-shell", title: "old-shell" });
-    useTabs.getState().recordRecentConversation("thread-old", "Old private thread");
     useTabs.setState({
       terminalSessionRequest: { sessionName: "old-shell", requestId: 1 },
     });
 
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
 
-    const { tabs, activeTabId, recentViews, viewHistory } = useTabs.getState();
+    const { tabs, activeTabId } = useTabs.getState();
     expect(tabs).toEqual([]);
     expect(activeTabId).toBeNull();
-    expect(recentViews).toEqual([]);
-    expect(viewHistory).toEqual([]);
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 
@@ -290,35 +293,7 @@ describe("desktop runtime transition", () => {
     expect(useBoard.getState().projects).toEqual([]);
   });
 
-  it("discards an in-flight task create that settles after the computer changes", async () => {
-    let resolveCreate!: (value: unknown) => void;
-    const api = {
-      post: vi.fn(() => new Promise((resolve) => {
-        resolveCreate = resolve;
-      })),
-      get: vi.fn(async () => ({ tasks: [], nextCursor: null })),
-    } as never;
-    useBoard.setState({ cardsByProject: {}, error: null });
-
-    const pending = useBoard.getState().createTask(api, "old-project", { title: "Stale task" });
-    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
-    resolveCreate({
-      task: {
-        id: "task_stale",
-        projectSlug: "old-project",
-        title: "Stale task",
-        status: "todo",
-        priority: "normal",
-        order: 0,
-      },
-    });
-    const created = await pending;
-
-    expect(created).toBeNull();
-    expect(useBoard.getState().cardsByProject["old-project"]).toBeUndefined();
-  });
-
-  it("does not commit stale board mutation results after the computer changes", async () => {
+  it("does not commit stale task-session linkage after the computer changes", async () => {
     const card = {
       id: "task_old",
       projectSlug: "old-project",
@@ -336,20 +311,19 @@ describe("desktop runtime transition", () => {
       revision: null,
     };
     useBoard.setState({ cardsByProject: { "old-project": [card] }, error: null });
-    let rejectDelete: ((err: unknown) => void) | undefined;
+    let rejectLink: ((err: unknown) => void) | undefined;
     const api = {
-      delete: vi.fn(() => new Promise((_resolve, reject) => {
-        rejectDelete = reject;
+      patch: vi.fn(() => new Promise((_resolve, reject) => {
+        rejectLink = reject;
       })),
       get: vi.fn(async () => ({ tasks: [], nextCursor: null })),
-      patch: vi.fn(async () => ({ task: card })),
     } as never;
 
-    const pending = useBoard.getState().deleteTask(api, "old-project", "task_old");
+    const pending = useBoard.getState().linkSession(api, "old-project", "task_old", { linkedSessionId: "session-old" });
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
     // The per-task mutation queue starts the request on a microtask.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    rejectDelete?.(new Error("old runtime rejected"));
+    rejectLink?.(new Error("old runtime rejected"));
     await pending;
 
     // The failure belongs to the previous computer; the new board must not

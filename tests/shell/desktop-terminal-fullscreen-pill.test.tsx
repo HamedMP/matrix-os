@@ -38,10 +38,6 @@ vi.mock("../../shell/src/components/system-activity/ActivityMonitorApp.js", () =
   ActivityMonitorApp: () => null,
 }));
 
-vi.mock("../../shell/src/components/AIButton.js", () => ({
-  AIButton: () => null,
-}));
-
 vi.mock("../../shell/src/components/MissionControl.js", () => ({
   MissionControl: () => null,
 }));
@@ -74,14 +70,6 @@ vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
   ConnectionIndicator: () => null,
 }));
 
-vi.mock("../../shell/src/components/AmbientClock.js", () => ({
-  AmbientClock: () => null,
-}));
-
-vi.mock("../../shell/src/components/MenuBar.js", () => ({
-  MenuBar: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
-}));
-
 vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
 }));
@@ -90,20 +78,12 @@ vi.mock("../../shell/src/components/ChatPopover.js", () => ({
   ChatPopover: () => null,
 }));
 
-vi.mock("../../shell/src/components/onboarding/ManualSetupStickers.js", () => ({
-  ManualSetupStickers: () => null,
-}));
-
 vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => null,
 }));
 
 vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
   BillingTrialNotification: () => null,
-}));
-
-vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
-  DeveloperModeDashboard: () => null,
 }));
 
 const terminalWindow: AppWindow = {
@@ -156,7 +136,7 @@ let windowManagerStore: WindowManagerStore;
 
 function resetStores(win: AppWindow, fullscreenWindowId: string | null = win.id) {
   desktopModeStore.setState({
-    mode: "dev",
+    mode: "desktop",
     previousMode: null,
     _hydrated: true,
   });
@@ -198,7 +178,7 @@ describe("Desktop terminal fullscreen chrome", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows no exit pill for a fullscreen terminal in Developer mode (header stays instead)", async () => {
+  it("shows no exit pill for a fullscreen terminal in Canvas mode (header stays instead)", async () => {
     resetStores(terminalWindow);
 
     render(<DesktopComponent />);
@@ -209,31 +189,15 @@ describe("Desktop terminal fullscreen chrome", () => {
     });
   });
 
-  it("shows no exit pill for a fullscreen app window in Developer mode (header stays instead)", async () => {
+  it("shows no exit pill for a fullscreen app window in Canvas mode (header stays instead)", async () => {
     resetStores(appWindow);
 
     render(<DesktopComponent />);
 
     await screen.findByText("App content");
-    // Developer-mode windows keep their header (with traffic lights) when
-    // maximized, so the floating exit pill is gone.
+    // Canvas windows keep their header (with traffic lights) when maximized,
+    // so the floating exit pill is gone.
     expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
-  });
-
-  it("keeps a windowed Terminal on the main-branch terminal header chrome", async () => {
-    resetStores(terminalWindow, null);
-
-    const { container } = render(<DesktopComponent />);
-
-    await screen.findByText("Terminal content");
-    const terminalWindowEl = container.querySelector(".app-window") as HTMLElement | null;
-    const header = container.querySelector(".app-window .border-b-0") as HTMLElement | null;
-
-    expect(terminalWindowEl?.className).toContain("border-0");
-    expect(header).toBeTruthy();
-    expect(header?.className).not.toContain("border-border");
-    expect(header?.style.background).toBe("var(--terminal-drawer-bg)");
-    expect(header?.style.color).toBe("var(--terminal-drawer-fg)");
   });
 
   it("shows no global exit pill in Canvas mode (the window's own header handles exit)", async () => {

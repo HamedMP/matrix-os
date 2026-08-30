@@ -342,7 +342,6 @@ describe("CanonicalChatWorkspace", () => {
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
     const chatClient = client();
-    const onChatDeleted = vi.fn();
     vi.mocked(chatClient.delete).mockResolvedValue({
       chatId: record.chat.id,
       deletedAt: "2026-08-26T12:00:00.000Z",
@@ -353,7 +352,6 @@ describe("CanonicalChatWorkspace", () => {
         projectId={null}
         active
         catalog={providerCatalog}
-        onChatDeleted={onChatDeleted}
       />,
     );
 
@@ -366,7 +364,6 @@ describe("CanonicalChatWorkspace", () => {
       record.chat.id,
       expect.stringMatching(/^req_/),
     ));
-    expect(onChatDeleted).toHaveBeenCalledWith(record.chat.id);
     await waitFor(() => expect(screen.queryByRole("button", { name: snapshot.chat.title })).toBeNull());
   });
 

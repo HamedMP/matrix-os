@@ -19,7 +19,7 @@ const defaultInnerHeight = window.innerHeight;
 
 function resetStore() {
   resetWindowManagerLayoutPersistenceForTests();
-  useDesktopMode.setState({ mode: "dev", previousMode: null, _hydrated: true });
+  useDesktopMode.setState({ mode: "desktop", previousMode: null, _hydrated: true });
   useWindowManager.setState({
     windows: [],
     nextZ: 1,
@@ -72,7 +72,7 @@ describe("Window Manager Store", () => {
       expect(windows[0].minimized).toBe(false);
     });
 
-    it("centers every dev-mode window without asymmetric cascade margins", () => {
+    it("centers every Desktop window without asymmetric cascade margins", () => {
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
       openWindow("App2", "apps/app2.html", 80);
@@ -80,7 +80,7 @@ describe("Window Manager Store", () => {
       expect(w2.x).toBe(w1.x);
       expect(w2.y).toBe(w1.y);
       expect(w1.x).toBe(Math.round((window.innerWidth - w1.width) / 2));
-      expect(w1.y).toBe(Math.round((window.innerHeight - w1.height) / 2));
+      expect(w1.y).toBe(Math.max(24, Math.round((window.innerHeight - 38 - w1.height) / 2)));
     });
 
     it("places second canvas window to the right of the first", () => {

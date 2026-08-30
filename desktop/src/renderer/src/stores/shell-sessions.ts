@@ -9,6 +9,8 @@ export type ShellVisualStatus = "running" | "waiting" | "finished" | "idle";
 
 export interface ShellSessionSummary {
   name: string;
+  cwd?: string;
+  pinned?: boolean;
   status?: "active" | "exited" | "degraded";
   placement?: ShellSessionPlacement;
   createdAt?: string;
@@ -32,7 +34,7 @@ export interface ShellSessionSummary {
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
-export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
+export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "pinned">>;
 export interface ShellSessionCreateOptions {
   cmd?: string;
   agent?: NonNullable<ShellSessionSummary["agent"]>;
@@ -81,11 +83,20 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+function isSafeDisplayCwd(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4096 || value.includes("\0")) return false;
+  if (value === "~") return true;
+  if (value.startsWith("/") || value.startsWith("\\")) return false;
+  return !value.split(/[\\/]/).some((segment) => segment === "..");
+}
+
 function asShellSession(value: unknown): ShellSessionSummary | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   if (typeof record.name !== "string" || !isValidShellSessionName(record.name)) return null;
   const shell: ShellSessionSummary = { name: record.name };
+  if (isSafeDisplayCwd(record.cwd)) shell.cwd = record.cwd;
+  if (typeof record.pinned === "boolean") shell.pinned = record.pinned;
   if (record.status === "active" || record.status === "exited" || record.status === "degraded") shell.status = record.status;
   if (record.placement === "active" || record.placement === "background") shell.placement = record.placement;
   if (typeof record.createdAt === "string") shell.createdAt = record.createdAt;
@@ -340,6 +351,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         : {
             sessions: [{
               name,
+              cwd: DEFAULT_CWD,
               status: "active",
               placement: "active",
               attachCommand: shellConnectCommand(name),

@@ -47,10 +47,6 @@ vi.mock("../../shell/src/components/system-activity/ActivityMonitorApp.js", () =
   ActivityMonitorApp: () => null,
 }));
 
-vi.mock("../../shell/src/components/AIButton.js", () => ({
-  AIButton: () => null,
-}));
-
 vi.mock("../../shell/src/components/MissionControl.js", () => ({
   MissionControl: () => null,
 }));
@@ -91,14 +87,6 @@ vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
   ConnectionIndicator: () => <div data-testid="connection-indicator" data-variant="toast" />,
 }));
 
-vi.mock("../../shell/src/components/AmbientClock.js", () => ({
-  AmbientClock: () => null,
-}));
-
-vi.mock("../../shell/src/components/MenuBar.js", () => ({
-  MenuBar: ({ children }: { children?: React.ReactNode }) => <div data-menu-bar>{children}</div>,
-}));
-
 vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
 }));
@@ -107,20 +95,12 @@ vi.mock("../../shell/src/components/ChatPopover.js", () => ({
   ChatPopover: () => null,
 }));
 
-vi.mock("../../shell/src/components/onboarding/ManualSetupStickers.js", () => ({
-  ManualSetupStickers: () => null,
-}));
-
 vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => <div data-testid="runtime-identity-banner" />,
 }));
 
 vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
   BillingTrialNotification: () => <div data-testid="billing-trial-notification" />,
-}));
-
-vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
-  DeveloperModeDashboard: () => null,
 }));
 
 function jsonResponse(body: unknown) {
@@ -138,7 +118,7 @@ describe("Desktop shell notifications", () => {
     });
     act(() => {
       useDesktopMode.setState({
-        mode: "dev",
+        mode: "canvas",
         previousMode: null,
         _hydrated: true,
       });

@@ -438,67 +438,6 @@
   color: #ffffff;
 }
 
-/* ── macOS lock screen ───────────────────────────────────────── */
-
-.os-mac-lock {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  background: rgba(30, 30, 46, 0.3);
-  backdrop-filter: blur(48px) saturate(160%);
-  -webkit-backdrop-filter: blur(48px) saturate(160%);
-  color: #ffffff;
-  user-select: none;
-}
-
-.os-mac-lock-user {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  font-size: 24px;
-  font-weight: 600;
-  color: #ffffff;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
-}
-
-.os-mac-lock-form {
-  display: flex;
-  justify-content: center;
-}
-
-.os-mac-lock-input {
-  width: 200px;
-  padding: 8px 14px;
-  border: none;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.28);
-  color: #ffffff;
-  font-size: 14px;
-  text-align: center;
-  outline: none;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-.os-mac-lock-input::placeholder {
-  color: rgba(255, 255, 255, 0.75);
-}
-
-.os-mac-lock-input:focus-visible {
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.45);
-}
-
-.os-mac-lock-hint {
-  margin: 0;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.75);
-}
-
 /* ── Reduced motion: static flash, no animated progress ──────── */
 
 @media (prefers-reduced-motion: reduce) {

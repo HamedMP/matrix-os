@@ -413,6 +413,7 @@ describe("TerminalApp", () => {
 
     const menu = await openSessionContextMenu("calm-otter", "calm-otter");
     expect(within(menu).getByRole("menuitem", { name: "Copy Connect Command" })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: "Pin" })).toBeTruthy();
     expect(screen.queryByTestId("terminal-session-hover-card-calm-otter")).toBeNull();
 
     fireEvent.keyDown(within(menu).getByRole("menuitem", { name: "Move to Background" }), { key: "Escape" });
@@ -457,6 +458,7 @@ describe("TerminalApp", () => {
       selectedShellName: null,
       onOpen: vi.fn(),
       onToggle: vi.fn(),
+      onPin: vi.fn(),
       onRename: vi.fn(async () => true),
       onDelete: vi.fn(),
       draggingShellName: null,
@@ -600,6 +602,7 @@ describe("TerminalApp", () => {
         selectedShellName={null}
         onOpen={onOpen}
         onToggle={vi.fn()}
+        onPin={vi.fn()}
         onRename={vi.fn(async () => true)}
         onDelete={vi.fn()}
         draggingShellName={null}
@@ -2803,8 +2806,9 @@ describe("TerminalApp", () => {
     expect(menu.style.padding).toBe("5px");
     const moveItem = within(menu).getByRole("menuitem", { name: "Move to Background" });
     const copyItem = within(menu).getByRole("menuitem", { name: "Copy Connect Command" });
+    const pinItem = within(menu).getByRole("menuitem", { name: "Pin" });
     const closeItem = within(menu).getByRole("menuitem", { name: "Close" });
-    expect(within(menu).getAllByRole("menuitem")).toEqual([copyItem, moveItem, closeItem]);
+    expect(within(menu).getAllByRole("menuitem")).toEqual([copyItem, moveItem, pinItem, closeItem]);
     expect(within(menu).getByRole("separator").nextElementSibling).toBe(closeItem);
     expect(closeItem.dataset.tone).toBe("destructive");
     expect(closeItem.style.color).toBe("var(--terminal-drawer-destructive-fg)");

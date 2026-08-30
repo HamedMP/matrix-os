@@ -58,6 +58,8 @@ describe("useShellSessions", () => {
           sessions: [
             {
               name: "matrix-main",
+              cwd: "projects/matrix-os",
+              pinned: true,
               status: "active",
               placement: "active",
               createdAt: "2026-06-23T11:00:00.000Z",
@@ -97,6 +99,8 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions[0]?.tabs).toEqual([{ idx: 0, name: "main", focused: true }]);
     expect(useShellSessions.getState().sessions[0]).toMatchObject({
       createdAt: "2026-06-23T11:00:00.000Z",
+      cwd: "projects/matrix-os",
+      pinned: true,
       agent: "codex",
       subtitle: "Implement agent-aware terminal sessions",
       lastAction: "Edited registry.ts",

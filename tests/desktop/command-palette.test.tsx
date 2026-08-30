@@ -90,6 +90,14 @@ describe("CommandPalette", () => {
       value: ResizeObserverStub,
     });
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    window.HTMLDialogElement.prototype.showModal = function showModal() {
+      this.setAttribute("open", "");
+      this.tabIndex = -1;
+      this.focus();
+    };
+    window.HTMLDialogElement.prototype.close = function close() {
+      this.removeAttribute("open");
+    };
     useUi.setState({ paletteOpen: true, createTaskOpen: false, createProjectOpen: false, composerOpen: false });
     useBoard.setState({ activeProjectSlug: null, projects: [], cardsByProject: {} });
     useSessions.setState({ sessions: [] });
@@ -129,6 +137,47 @@ describe("CommandPalette", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("focuses the search input after the native dialog opens", async () => {
+    render(<CommandPalette />);
+
+    const input = screen.getByPlaceholderText("Type a command or search…");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(input.className).toContain("focus-visible:shadow-none");
+  });
+
+  it("provides the categorized command-center design without losing command behavior", async () => {
+    useBoard.setState({
+      activeProjectSlug: null,
+      projects: [{ slug: "matrix-os", name: "Matrix OS" }],
+      cardsByProject: {},
+    });
+
+    render(<CommandPalette />);
+
+    expect(screen.getByText("⌘K")).not.toBeNull();
+    const input = screen.getByPlaceholderText("Type a command or search…");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "All",
+      "Projects",
+      "Actions",
+      "Settings",
+    ]);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
+    expect(screen.getByText("Matrix OS")).not.toBeNull();
+    expect(screen.queryByText("Open Terminal")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
+    const terminalItem = screen.getByText("Open Terminal").closest("[cmdk-item]");
+    expect(terminalItem?.hasAttribute("data-instant-list-hover")).toBe(true);
+    expect(screen.queryByText("Matrix OS")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByText("Open settings")).not.toBeNull();
+    expect(screen.queryByText("Open Terminal")).toBeNull();
   });
 
   it("forces an app catalog retry after a previous palette load failed", async () => {
@@ -339,6 +388,69 @@ describe("CommandPalette", () => {
       title: "matrix-os",
     });
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha"));
+  });
+
+  it("uses linked agent-session titles instead of repeating the generic thread title", () => {
+    useShellSessions.setState({
+      sessions: [
+        {
+          name: "support-chat-fix",
+          status: "active",
+          agent: "codex",
+          subtitle: "Fix support chat",
+          cwd: "projects/matrix-os",
+        },
+        {
+          name: "browser-tabs",
+          status: "active",
+          agent: "claude",
+          subtitle: "Improve Browser tabs",
+          cwd: "projects/matrix-os",
+        },
+        {
+          name: "bright-tide",
+          status: "active",
+          agent: "pi",
+          cwd: "projects/matrix-os",
+        },
+      ],
+    });
+    useCodingAgentWorkspace.setState({
+      summary: runtimeSummaryWithThreads({
+        activeThreads: [
+          threadSummary("thread_support", {
+            title: "Coding agent run",
+            terminalSessionId: "term_support",
+          }),
+          threadSummary("thread_browser", {
+            title: "Coding agent run",
+            terminalSessionId: "term_browser",
+          }),
+          threadSummary("thread_untitled", {
+            title: "Coding agent run",
+            terminalSessionId: "term_untitled",
+          }),
+          threadSummary("thread_stale_terminal", {
+            title: "Coding agent run",
+            terminalSessionId: "term_no_longer_live",
+            projectId: "matrix-os",
+          }),
+        ],
+        terminalSessions: [
+          terminalSessionSummary("term_support", { name: "support-chat-fix" }),
+          terminalSessionSummary("term_browser", { name: "browser-tabs" }),
+          terminalSessionSummary("term_untitled", { name: "bright-tide" }),
+        ],
+      }),
+    });
+
+    render(<CommandPalette />);
+
+    expect(screen.getByText("Open thread Fix support chat")).toBeTruthy();
+    expect(screen.getByText("Open thread Improve Browser tabs")).toBeTruthy();
+    expect(screen.getByText("Open thread bright-tide")).toBeTruthy();
+    expect(screen.getByText("Open thread matrix-os agent run")).toBeTruthy();
+    expect(screen.queryByText("Open thread Coding agent run")).toBeNull();
   });
 
   it("opens attachable coding-agent terminal sessions from the command palette", async () => {

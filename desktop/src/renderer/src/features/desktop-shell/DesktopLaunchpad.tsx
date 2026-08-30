@@ -1,15 +1,22 @@
 import { useEffect, useEffectEvent } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import AppLauncher from "../embeds/AppLauncher";
+import type { DesktopAppConfig } from "./desktop-apps";
 
 export default function DesktopLaunchpad({
   open,
   onClose,
   onLaunchTab,
+  onCreateApp,
+  onOpenDesktopApp,
+  onAddToDesktop,
 }: {
   open: boolean;
   onClose: () => void;
   onLaunchTab?: (tabId: string) => void;
+  onCreateApp?: () => void;
+  onOpenDesktopApp?: (app: DesktopAppConfig) => void;
+  onAddToDesktop?: (path: string) => void;
 }) {
   const closeLauncher = useEffectEvent(onClose);
 
@@ -43,6 +50,9 @@ export default function DesktopLaunchpad({
       <AppLauncher
         presentation="launchpad"
         launcherActive={open}
+        onCreateApp={onCreateApp}
+        onOpenDesktopApp={onOpenDesktopApp}
+        onAddToDesktop={onAddToDesktop}
         onLaunch={(tabId) => {
           onLaunchTab?.(tabId);
           onClose();

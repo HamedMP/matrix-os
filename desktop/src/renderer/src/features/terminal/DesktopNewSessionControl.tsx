@@ -10,6 +10,7 @@ import {
   type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
+import { DesktopTerminalAgentLogo } from "./DesktopTerminalAgentLogo";
 
 export function DesktopNewSessionControl({
   disabled,
@@ -81,7 +82,7 @@ export function DesktopNewSessionControl({
                 <SessionMenuItem
                   key={option.id}
                   label={option.label}
-                  badge={option.shortLabel.slice(0, 2)}
+                  icon={<DesktopTerminalAgentLogo agent={option.id} />}
                   status={status}
                   disabled={action === null}
                   onSelect={() => action && onCreateAgent(option, action)}
@@ -98,14 +99,12 @@ export function DesktopNewSessionControl({
 function SessionMenuItem({
   label,
   icon,
-  badge,
   status,
   disabled = false,
   onSelect,
 }: {
   label: string;
   icon?: React.ReactNode;
-  badge?: string;
   status?: string | null;
   disabled?: boolean;
   onSelect: () => void;
@@ -116,9 +115,9 @@ function SessionMenuItem({
       onSelect={onSelect}
       className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-[var(--bg-hover)]"
     >
-      <span className="flex size-5 shrink-0 items-center justify-center rounded text-[9px] font-bold" style={{ background: "var(--bg-selected)", color: "var(--text-secondary)" }}>
-        {icon ?? badge}
-      </span>
+      {icon ? icon : (
+        <span className="flex size-5 shrink-0 items-center justify-center rounded text-[9px] font-bold" style={{ background: "var(--bg-selected)", color: "var(--text-secondary)" }} />
+      )}
       <span className="min-w-0 flex-1">{label}</span>
       {status ? <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{status}</span> : null}
     </DropdownMenu.Item>

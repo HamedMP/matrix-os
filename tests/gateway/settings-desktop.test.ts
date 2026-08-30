@@ -178,6 +178,29 @@ describe("Settings: desktop + theme + wallpapers", () => {
       });
     });
 
+    it("accepts a bounded owner-controlled Desktop icon layout", async () => {
+      const desktopIcons = [
+        { path: "__chat__", x: 20, y: 20 },
+        { path: "apps/notes/index.html", x: 108, y: 20 },
+      ];
+      const response = await app.request("/api/settings/desktop", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ desktopIcons }),
+      });
+
+      expect(response.status).toBe(200);
+      const saved = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      expect(saved.desktopIcons).toEqual(desktopIcons);
+
+      const invalid = await app.request("/api/settings/desktop", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ desktopIcons: [{ path: "__chat__", x: -1, y: 20 }] }),
+      });
+      expect(invalid.status).toBe(400);
+    });
+
     it("rejects invalid and oversized patch bodies", async () => {
       const invalid = await app.request("/api/settings/desktop", {
         method: "PATCH",

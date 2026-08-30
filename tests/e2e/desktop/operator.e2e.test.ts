@@ -16,7 +16,6 @@ const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/packag
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../desktop/screenshots");
 const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
-const MAT_327_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-327");
 const MAT_348_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-348");
 const MAT_476_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-476");
 const hasBuild = existsSync(DESKTOP_MAIN);
@@ -86,7 +85,6 @@ suite("operator desktop e2e", () => {
   beforeAll(async () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_322_SCREENSHOT_DIR, { recursive: true });
-    mkdirSync(MAT_327_SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_348_SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_476_SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
@@ -507,74 +505,6 @@ suite("operator desktop e2e", () => {
     await page.waitForFunction(() => document.documentElement.getAttribute("data-theme-id") === "operator");
     await page.screenshot({ path: join(SCREENSHOT_DIR, "16-theme-operator-default.png") });
   }, 40_000);
-
-  it("captures sidebar and computer-menu parity in light and dark at both widths", async () => {
-    const sidebar = page.getByRole("complementary", { name: "Matrix OS navigation" });
-
-    for (const mode of ["Light", "Dark"] as const) {
-      await openSettings(page);
-      await page.getByRole("button", { name: "Appearance" }).click();
-      await page.getByRole("button", { name: mode, exact: true }).click();
-      await page.waitForFunction(
-        (expected) => document.documentElement.getAttribute("data-theme") === expected,
-        mode.toLowerCase(),
-      );
-      await page.locator("aside button", { hasText: "Chat" }).first().click();
-
-      if (await sidebar.getAttribute("data-sidebar-state") === "collapsed") {
-        await page.getByRole("button", { name: /^Expand sidebar/ }).click();
-      }
-      await page.screenshot({
-        path: join(MAT_327_SCREENSHOT_DIR, `${mode.toLowerCase()}-expanded.png`),
-      });
-      await page.getByRole("button", { name: /Change computer, currently/ }).click();
-      await page.getByRole("menu", { name: "Choose computer" }).waitFor({ timeout: 10_000 });
-      await page.screenshot({
-        path: join(MAT_327_SCREENSHOT_DIR, `${mode.toLowerCase()}-expanded-menu.png`),
-      });
-      await page.keyboard.press("Escape");
-
-      await page.getByRole("button", { name: /^Collapse sidebar/ }).click();
-      await page.screenshot({
-        path: join(MAT_327_SCREENSHOT_DIR, `${mode.toLowerCase()}-collapsed.png`),
-      });
-      await page.getByRole("button", { name: /Change computer, currently/ }).click();
-      await page.getByRole("menu", { name: "Choose computer" }).waitFor({ timeout: 10_000 });
-      await page.screenshot({
-        path: join(MAT_327_SCREENSHOT_DIR, `${mode.toLowerCase()}-collapsed-menu.png`),
-      });
-      await page.keyboard.press("Escape");
-      await page.getByRole("button", { name: /^Expand sidebar/ }).click();
-    }
-
-    await openSettings(page);
-    await page.getByRole("button", { name: "Appearance" }).click();
-    await page.getByRole("button", { name: "System", exact: true }).last().click();
-  }, 40_000);
-
-  it("keeps coding-agent navigation in global Recents instead of a Chat rail", async () => {
-    // The earlier computer switch cleared the workspace summary. Create a
-    // project chat through the fixture-supported path so the successful run
-    // is promoted into the shared Recents section.
-    await openMatrixProjectOverview(page);
-    await page.getByRole("button", { name: "Chats" }).click();
-    await page.getByLabel("Message new chat").waitFor({ timeout: 10_000 });
-    await page.getByLabel("Message new chat").fill("verify global Recents navigation");
-    await page.getByRole("button", { name: "Send" }).focus();
-    await page.keyboard.press("Enter");
-    const recent = page.getByRole("button", { name: "Open recent verify global Recents navigation" });
-    await recent.waitFor({ timeout: 10_000 });
-
-    await page.locator("aside button", { hasText: "Chat" }).first().click();
-    await page.getByRole("heading", { name: "Chats" }).waitFor({ timeout: 10_000 });
-    await expect.poll(() => page.getByText("Agent runs").count()).toBe(0);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "17-chat-without-internal-rail.png") });
-
-    // Global Recents owns the route back to the project conversation.
-    await recent.click();
-    await page.getByRole("region", { name: "Conversation verify global Recents navigation" }).waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "18-global-recent-routes-to-project.png") });
-  }, 30_000);
 
   it("archives, restores, and permanently deletes a project through Desktop lifecycle controls", async () => {
     await page.locator("aside button", { hasText: "Home" }).first().click();

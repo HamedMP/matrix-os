@@ -530,6 +530,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
               onNewChat={chatState.newChat}
               onSwitchConversation={chatState.switchConversation}
               onSubmit={chatState.submitMessage}
+              composerDraftRequest={chatState.composerDraftRequest}
+              onComposerDraftConsumed={chatState.consumeComposerDraft}
               mobile={isMobile}
             />
           )}

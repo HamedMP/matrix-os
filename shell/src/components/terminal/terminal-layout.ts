@@ -8,6 +8,7 @@ export const DEFAULT_CWD = "projects";
 export interface Tab {
   id: string;
   label: string;
+  agent?: "claude" | "codex" | "opencode" | "pi";
   paneTree: PaneNode;
 }
 

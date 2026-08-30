@@ -1,4 +1,4 @@
-// Tab workspace: terminals, tasks, boards, and agent threads open as tabs that
+// Tab workspace: terminals, tasks, projects, and agent threads open as tabs that
 // stay mounted (cached) while inactive, so switching never tears down a running
 // terminal or loses editor state. Identity-keyed openTab() focuses an existing
 // tab; openTabInstance() is the explicit user gesture for a separate top-level
@@ -49,19 +49,6 @@ export function isWorkRoute(tab: Tab | undefined, route: WorkRoute): boolean {
   return tab.kind === route;
 }
 
-export type RecentViewKind = "conversation" | "terminal" | "project";
-export type RecentViewFilter = "all" | RecentViewKind;
-export type RecentConversationType = "hermes" | "coding-agent" | "canonical";
-
-export interface RecentView {
-  kind: RecentViewKind;
-  id: string;
-  label: string;
-  visitedAt: number;
-  conversationType?: RecentConversationType;
-  projectId?: string | null;
-}
-
 export interface TerminalSessionRequest {
   sessionName: string | null;
   requestId: number;
@@ -75,8 +62,6 @@ export const FILES_WORKSPACE_TAB_SPEC = {
 };
 
 const MAX_TABS = 24;
-const MAX_VIEW_HISTORY = 40;
-const MAX_RECENT_VIEWS = 12;
 
 function identityKey(
   spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "slug">,
@@ -141,62 +126,14 @@ function normalizeRestoredTabs(tabs: Tab[], activeTabId: string | null) {
   return { nextTabs, retainedId: retained.id, removedIds };
 }
 
-function historyPatch(viewHistory: string[], historyIndex: number) {
-  return {
-    viewHistory,
-    historyIndex,
-    canGoBack: historyIndex > 0,
-    canGoForward: historyIndex >= 0 && historyIndex < viewHistory.length - 1,
-  };
-}
-
-function recordHistory(viewHistory: string[], historyIndex: number, tabId: string) {
-  if (viewHistory[historyIndex] === tabId) return historyPatch(viewHistory, historyIndex);
-  const branched = viewHistory.slice(0, historyIndex + 1);
-  branched.push(tabId);
-  const bounded = branched.slice(-MAX_VIEW_HISTORY);
-  return historyPatch(bounded, bounded.length - 1);
-}
-
-function pruneHistory(
-  viewHistory: string[],
-  historyIndex: number,
-  removedIds: Readonly<Record<string, true>>,
-) {
-  const removedBeforeOrAt = viewHistory
-    .slice(0, historyIndex + 1)
-    .filter((id) => removedIds[id]).length;
-  const next = viewHistory.filter((id) => !removedIds[id]);
-  const nextIndex = Math.min(next.length - 1, Math.max(-1, historyIndex - removedBeforeOrAt));
-  return historyPatch(next, nextIndex);
-}
-
-function recordRecent(recentViews: RecentView[], recent: RecentView | null): RecentView[] {
-  if (!recent) return recentViews;
-  return [
-    recent,
-    ...recentViews.filter((item) => item.kind !== recent.kind || item.id !== recent.id),
-  ].slice(0, MAX_RECENT_VIEWS);
-}
-
 interface TabsState {
   tabs: Tab[];
   activeTabId: string | null;
   navigationScope: string | null;
-  viewHistory: string[];
-  historyIndex: number;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  recentViews: RecentView[];
-  recentFilter: RecentViewFilter;
   terminalSessionRequest: TerminalSessionRequest | null;
   terminalSessionRequestSequence: number;
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
   openTabInstance(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
-  openTabAtHistoryRoot(
-    spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
-    detailKinds: readonly TabKind[],
-  ): string;
   normalizeLegacyTabs(): void;
   updateChatRoute(
     id: string,
@@ -206,24 +143,12 @@ interface TabsState {
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
   focusTab(id: string): void;
-  goBack(): void;
-  goForward(): void;
   ensureNavigationScope(scope: string): void;
-  recordRecentProject(id: string, label: string): void;
-  recordRecentConversation(id: string, label: string): void;
-  recordRecentCanonicalChat(id: string, label: string, projectId: string | null): void;
-  recordRecentHermesConversation(id: string, label: string): void;
-  recordRecentTerminal(id: string, label: string): void;
-  removeRecentView(kind: RecentViewKind, id: string): void;
-  reconcileRecentHermesConversations(ids: string[]): void;
-  reconcileRecentTerminals(ids: string[]): void;
   reconcileTerminalSessions(liveSessionNames: string[]): void;
   requestTerminalSession(sessionName: string): void;
   requestTerminalOverview(): void;
   consumeTerminalSessionRequest(requestId: number): void;
-  setRecentFilter(filter: RecentViewFilter): void;
   renameTab(id: string, title: string): void;
-  renameTerminalSession(fromName: string, toName: string): void;
 }
 
 function appendNewTab(state: TabsState, tab: Tab): Partial<TabsState> {
@@ -234,18 +159,9 @@ function appendNewTab(state: TabsState, tab: Tab): Partial<TabsState> {
     ));
     if (victim) tabs = tabs.filter((candidate) => candidate.id !== victim.id);
   }
-  const retainedTabIds = Object.fromEntries(tabs.map((candidate) => [candidate.id, true]));
-  const victimIds: Record<string, true> = {};
-  for (const existingTab of state.tabs) {
-    if (!retainedTabIds[existingTab.id]) victimIds[existingTab.id] = true;
-  }
-  const pruned = Object.keys(victimIds).length > 0
-    ? pruneHistory(state.viewHistory, state.historyIndex, victimIds)
-    : historyPatch(state.viewHistory, state.historyIndex);
   return {
     tabs,
     activeTabId: tab.id,
-    ...recordHistory(pruned.viewHistory, pruned.historyIndex, tab.id),
   };
 }
 
@@ -255,12 +171,6 @@ export const useTabs = create<TabsState>()((set, get) => ({
   tabs: [],
   activeTabId: null,
   navigationScope: null,
-  viewHistory: [],
-  historyIndex: -1,
-  canGoBack: false,
-  canGoForward: false,
-  recentViews: [],
-  recentFilter: "all",
   terminalSessionRequest: null,
   terminalSessionRequestSequence: 0,
 
@@ -304,7 +214,6 @@ export const useTabs = create<TabsState>()((set, get) => ({
         return {
           tabs,
           activeTabId: existing.id,
-          ...recordHistory(state.viewHistory, state.historyIndex, existing.id),
         };
       });
       return existing.id;
@@ -324,46 +233,15 @@ export const useTabs = create<TabsState>()((set, get) => ({
     return id;
   },
 
-  openTabAtHistoryRoot: (spec, detailKinds) => {
-    get().normalizeLegacyTabs();
-    const previousState = get();
-    const id = previousState.openTab(spec);
-    set((state) => {
-      const retainedTabIds = new Set(state.tabs.map((tab) => tab.id));
-      const priorHistory = previousState.viewHistory
-        .slice(0, previousState.historyIndex + 1)
-        .filter((tabId) => retainedTabIds.has(tabId));
-      const isDetailTab = (tabId: string) => {
-        const tabKind = state.tabs.find((tab) => tab.id === tabId)?.kind;
-        return tabKind !== undefined && detailKinds.includes(tabKind);
-      };
-      const nextHistory = [
-        ...priorHistory.filter((tabId) => tabId !== id && !isDetailTab(tabId)),
-        id,
-      ].slice(-MAX_VIEW_HISTORY);
-      return {
-        activeTabId: id,
-        ...historyPatch(nextHistory, nextHistory.length - 1),
-      };
-    });
-    return id;
-  },
-
   normalizeLegacyTabs: () => set((state) => {
     const normalized = normalizeRestoredTabs(state.tabs, state.activeTabId);
     if (!normalized) return state;
-    const retainedIds = new Set(normalized.nextTabs.map((tab) => tab.id));
-    const viewHistory = state.viewHistory
-      .map((id) => normalized.removedIds.has(id) ? normalized.retainedId : id)
-      .filter((id, index, values) => retainedIds.has(id) && (index === 0 || values[index - 1] !== id));
     const activeTabId = normalized.removedIds.has(state.activeTabId ?? "")
       ? normalized.retainedId
       : state.activeTabId;
-    const historyIndex = activeTabId ? viewHistory.lastIndexOf(activeTabId) : -1;
     return {
       tabs: normalized.nextTabs,
       activeTabId,
-      ...historyPatch(viewHistory, historyIndex),
     };
   }),
 
@@ -394,11 +272,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
         const next = tabs[idx - 1] ?? tabs[idx] ?? tabs[tabs.length - 1] ?? null;
         activeTabId = next?.id ?? null;
       }
-      const pruned = pruneHistory(state.viewHistory, state.historyIndex, { [id]: true });
-      const navigation = activeTabId
-        ? recordHistory(pruned.viewHistory, pruned.historyIndex, activeTabId)
-        : pruned;
-      return { tabs, activeTabId, ...navigation };
+      return { tabs, activeTabId };
     }),
 
   closeProjectTabs: (projectSlug) =>
@@ -424,17 +298,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
       const activeTabId = state.activeTabId === retainedWorkId
         ? retainedWorkId
         : home?.id ?? tabs[0]?.id ?? null;
-      const removedIds: Record<string, true> = {};
-      for (const tab of state.tabs) {
-        if (tab.projectSlug === projectSlug && tab.id !== retainedWorkId) {
-          removedIds[tab.id] = true;
-        }
-      }
-      const pruned = pruneHistory(state.viewHistory, state.historyIndex, removedIds);
-      const navigation = activeTabId
-        ? recordHistory(pruned.viewHistory, pruned.historyIndex, activeTabId)
-        : pruned;
-      return { tabs, activeTabId, ...navigation };
+      return { tabs, activeTabId };
     }),
 
   focusTab: (id) => set((state) => {
@@ -442,121 +306,15 @@ export const useTabs = create<TabsState>()((set, get) => ({
     if (!tab) return state;
     return {
       activeTabId: id,
-      ...recordHistory(state.viewHistory, state.historyIndex, id),
-    };
-  }),
-
-  goBack: () => set((state) => {
-    if (state.historyIndex <= 0) return state;
-    const historyIndex = state.historyIndex - 1;
-    return {
-      activeTabId: state.viewHistory[historyIndex] ?? state.activeTabId,
-      ...historyPatch(state.viewHistory, historyIndex),
-    };
-  }),
-
-  goForward: () => set((state) => {
-    if (state.historyIndex < 0 || state.historyIndex >= state.viewHistory.length - 1) return state;
-    const historyIndex = state.historyIndex + 1;
-    return {
-      activeTabId: state.viewHistory[historyIndex] ?? state.activeTabId,
-      ...historyPatch(state.viewHistory, historyIndex),
     };
   }),
 
   ensureNavigationScope: (scope) => set((state) => {
     if (state.navigationScope === scope) return state;
-    // Runtime transitions replace the workspace with a single Home tab before
-    // the new connection identity arrives. Seed that safe root, but never carry
-    // resource tabs from a previous auth/runtime scope into navigation history.
-    const soleHome = state.tabs.length === 1 && state.tabs[0]?.kind === "home"
-      ? state.tabs[0]
-      : null;
     return {
       navigationScope: scope,
-      ...historyPatch(soleHome ? [soleHome.id] : [], soleHome ? 0 : -1),
-      recentViews: [],
-      recentFilter: "all",
       terminalSessionRequest: null,
       terminalSessionRequestSequence: 0,
-    };
-  }),
-
-  recordRecentProject: (id, label) => set((state) => ({
-    recentViews: recordRecent(state.recentViews, {
-      kind: "project",
-      id,
-      label,
-      visitedAt: Date.now(),
-    }),
-  })),
-
-  recordRecentConversation: (id, label) => set((state) => ({
-    recentViews: recordRecent(state.recentViews, {
-      kind: "conversation",
-      id,
-      label,
-      visitedAt: Date.now(),
-      conversationType: "coding-agent",
-    }),
-  })),
-
-  recordRecentCanonicalChat: (id, label, projectId) => set((state) => ({
-    recentViews: recordRecent(state.recentViews, {
-      kind: "conversation",
-      id,
-      label,
-      visitedAt: Date.now(),
-      conversationType: "canonical",
-      projectId,
-    }),
-  })),
-
-  recordRecentHermesConversation: (id, label) => set((state) => ({
-    recentViews: recordRecent(state.recentViews, {
-      kind: "conversation",
-      id,
-      label,
-      visitedAt: Date.now(),
-      conversationType: "hermes",
-    }),
-  })),
-
-  recordRecentTerminal: (id, label) => set((state) => ({
-    recentViews: recordRecent(state.recentViews, {
-      kind: "terminal",
-      id,
-      label,
-      visitedAt: Date.now(),
-    }),
-  })),
-
-  removeRecentView: (kind, id) => set((state) => ({
-    recentViews: state.recentViews.filter((recent) => recent.kind !== kind || recent.id !== id),
-  })),
-
-  reconcileRecentHermesConversations: (ids) => set((state) => {
-    const authoritativeIds = new Set(ids);
-    return {
-      recentViews: state.recentViews.filter((recent) =>
-        recent.kind !== "conversation"
-        || recent.conversationType === "coding-agent"
-        || recent.conversationType === "canonical"
-        || authoritativeIds.has(recent.id),
-      ),
-    };
-  }),
-
-  reconcileRecentTerminals: (ids) => set((state) => {
-    const authoritativeIds = new Set(ids);
-    const hasStaleRecent = state.recentViews.some((recent) =>
-      recent.kind === "terminal" && !authoritativeIds.has(recent.id),
-    );
-    if (!hasStaleRecent) return state;
-    return {
-      recentViews: state.recentViews.filter((recent) =>
-        recent.kind !== "terminal" || authoritativeIds.has(recent.id),
-      ),
     };
   }),
 
@@ -586,33 +344,18 @@ export const useTabs = create<TabsState>()((set, get) => ({
       activeTabId = left?.id ?? right?.id ?? null;
     }
 
-    const hasStaleRecent = state.recentViews.some((recent) =>
-      recent.kind === "terminal" && !liveNames.has(recent.id),
-    );
-    const recentViews = hasStaleRecent
-      ? state.recentViews.filter((recent) => recent.kind !== "terminal" || liveNames.has(recent.id))
-      : state.recentViews;
     const terminalSessionRequest = state.terminalSessionRequest
       && state.terminalSessionRequest.sessionName !== null
       && !liveNames.has(state.terminalSessionRequest.sessionName)
       ? null
       : state.terminalSessionRequest;
-    if (!hasRemovedTabs && !hasStaleRecent && terminalSessionRequest === state.terminalSessionRequest) {
+    if (!hasRemovedTabs && terminalSessionRequest === state.terminalSessionRequest) {
       return state;
     }
-
-    const pruned = hasRemovedTabs
-      ? pruneHistory(state.viewHistory, state.historyIndex, removedIds)
-      : historyPatch(state.viewHistory, state.historyIndex);
-    const navigation = activeTabId
-      ? recordHistory(pruned.viewHistory, pruned.historyIndex, activeTabId)
-      : pruned;
 
     return {
       tabs,
       activeTabId,
-      ...navigation,
-      recentViews,
       terminalSessionRequest,
     };
   }),
@@ -639,25 +382,6 @@ export const useTabs = create<TabsState>()((set, get) => ({
       : state
   )),
 
-  setRecentFilter: (recentFilter) => set({ recentFilter }),
-
   renameTab: (id, title) =>
     set((state) => ({ tabs: state.tabs.map((t) => (t.id === id ? { ...t, title } : t)) })),
-
-  renameTerminalSession: (fromName, toName) =>
-    set((state) => ({
-      tabs: state.tabs.map((tab) =>
-        tab.kind === "terminal" && tab.sessionName === fromName
-          ? { ...tab, sessionName: toName, title: toName }
-          : tab,
-      ),
-      recentViews: state.recentViews.map((recent) =>
-        recent.kind === "terminal" && recent.id === fromName
-          ? { ...recent, id: toName, label: toName }
-          : recent,
-      ),
-      terminalSessionRequest: state.terminalSessionRequest?.sessionName === fromName
-        ? { ...state.terminalSessionRequest, sessionName: toName }
-        : state.terminalSessionRequest,
-    })),
 }));

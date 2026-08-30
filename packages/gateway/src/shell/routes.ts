@@ -165,6 +165,7 @@ const PasteAssetQuerySchema = z.object({
 const SessionUiStateBodySchema = z.object({
   placement: z.enum(["active", "background"]).optional(),
   lastSeenSeq: z.number().int().nonnegative().nullable().optional(),
+  pinned: z.boolean().optional(),
   visualStatus: z.enum(["running", "finished", "idle", "waiting"]).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0);
 const SessionRenameBodySchema = z.object({

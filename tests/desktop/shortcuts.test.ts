@@ -262,10 +262,9 @@ describe("handleNewContextShortcut", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useHermesChat.setState(useHermesChat.getInitialState(), true);
     useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
-    useUi.setState({ createTaskOpen: false });
   });
 
-  it("starts a new chat when Chat is selected and keeps New Task elsewhere", () => {
+  it("starts a new chat when Chat is selected and is inert elsewhere", () => {
     const newChat = vi.fn();
     useHermesChat.setState({ newChat });
     const chatId = useTabs.getState().openTab({ kind: "chat", title: "Existing chat", chatId: "chat-1", closable: false });
@@ -291,14 +290,14 @@ describe("handleNewContextShortcut", () => {
       closable: true,
     });
     expect(useTabs.getState().tabs[1]?.chatId).toBeUndefined();
-    expect(useUi.getState().createTaskOpen).toBe(false);
 
     const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
     useDesktopSurfaces.getState().reconcileTabs([chatId, filesId], { width: 1280, height: 720 });
     useDesktopSurfaces.getState().activateSurface(filesId);
+    const tabCount = useTabs.getState().tabs.length;
     handleNewContextShortcut({ preventDefault: vi.fn() });
     expect(newChat).not.toHaveBeenCalled();
-    expect(useUi.getState().createTaskOpen).toBe(true);
+    expect(useTabs.getState().tabs).toHaveLength(tabCount);
   });
 
   it("does not create a chat for a hidden Chat surface", () => {
@@ -311,7 +310,6 @@ describe("handleNewContextShortcut", () => {
     handleNewContextShortcut({ preventDefault: vi.fn() });
 
     expect(newChat).not.toHaveBeenCalled();
-    expect(useUi.getState().createTaskOpen).toBe(false);
   });
 });
 

@@ -2,8 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import {
-  BOARD_COLUMNS,
-  groupCardsByColumn,
   useBoard,
   type Card,
 } from "@desktop/renderer/src/stores/board";
@@ -68,29 +66,6 @@ function card(overrides: Partial<Card> = {}): Card {
 
 beforeEach(() => {
   useBoard.setState(useBoard.getInitialState(), true);
-});
-
-describe("groupCardsByColumn", () => {
-  it("groups by status, excludes archived, sorts by order then id", () => {
-    const cards: Card[] = [
-      card({ id: "task_b", status: "todo", order: 2 }),
-      card({ id: "task_c", status: "todo", order: 1 }),
-      card({ id: "task_a", status: "todo", order: 1 }),
-      card({ id: "task_d", status: "running", order: 0 }),
-      card({ id: "task_e", status: "archived", order: 0 }),
-    ];
-    const grouped = groupCardsByColumn(cards);
-    expect(grouped.todo.map((c) => c.id)).toEqual(["task_a", "task_c", "task_b"]);
-    expect(grouped.running.map((c) => c.id)).toEqual(["task_d"]);
-    expect(grouped.archived).toEqual([]);
-    expect(grouped.waiting).toEqual([]);
-    expect(grouped.blocked).toEqual([]);
-    expect(grouped.complete).toEqual([]);
-  });
-
-  it("defines the five visible board columns in order", () => {
-    expect(BOARD_COLUMNS).toEqual(["todo", "running", "waiting", "blocked", "complete"]);
-  });
 });
 
 describe("createProject", () => {
@@ -373,14 +348,14 @@ describe("selectProject (stale-while-revalidate)", () => {
   });
 });
 
-describe("refreshTasks", () => {
+describe("task catalog refresh", () => {
   it("follows nextCursor pagination", async () => {
     const get = vi
       .fn()
       .mockResolvedValueOnce({ tasks: [wireTask({ id: "task_a" })], nextCursor: "task_a" })
       .mockResolvedValueOnce({ tasks: [wireTask({ id: "task_b" })], nextCursor: null });
     const api = makeApi({ get });
-    await useBoard.getState().refreshTasks(api, "proj");
+    await useBoard.getState().selectProject(api, "proj");
     expect(get).toHaveBeenCalledTimes(2);
     expect(String(get.mock.calls[1]![0])).toContain("cursor=task_a");
     expect(useBoard.getState().cardsByProject["proj"]!.map((c) => c.id)).toEqual([
@@ -396,207 +371,7 @@ describe("refreshTasks", () => {
     await useBoard.getState().selectProject(ok, "proj");
 
     const bad = makeApi({ get: vi.fn().mockRejectedValue(new AppError("server")) });
-    await useBoard.getState().refreshTasks(bad, "proj");
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
-    expect(useBoard.getState().error).toBe("server");
-  });
-});
-
-describe("createTask", () => {
-  it("posts the input and appends the returned card", async () => {
-    const api = makeApi({
-      post: vi.fn().mockResolvedValue({ task: wireTask({ id: "task_new", title: "New" }) }),
-    });
-    const result = await useBoard.getState().createTask(api, "proj", { title: "New" });
-    expect(api.post).toHaveBeenCalledWith("/api/projects/proj/tasks", { title: "New" });
-    expect(result).toEqual(card({ id: "task_new", title: "New" }));
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([
-      card({ id: "task_new", title: "New" }),
-    ]);
-  });
-
-  it("dedupes when a task:created event arrives before the POST response", async () => {
-    const response = deferred<unknown>();
-    const api = makeApi({
-      post: vi.fn().mockReturnValue(response.promise),
-    });
-
-    const pending = useBoard.getState().createTask(api, "proj", { title: "New" });
-    useBoard.getState().applyTaskEvent({
-      type: "task:created",
-      task: wireTask({ id: "task_new", title: "New" }),
-    });
-    response.resolve({ task: wireTask({ id: "task_new", title: "New" }) });
-    const result = await pending;
-
-    expect(result).toEqual(card({ id: "task_new", title: "New" }));
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([
-      card({ id: "task_new", title: "New" }),
-    ]);
-  });
-
-  it("returns null and records the error category on failure", async () => {
-    const api = makeApi({ post: vi.fn().mockRejectedValue(new AppError("unauthorized")) });
-    const result = await useBoard.getState().createTask(api, "proj", { title: "New" });
-    expect(result).toBeNull();
-    expect(useBoard.getState().error).toBe("unauthorized");
-  });
-});
-
-describe("updateTask", () => {
-  async function seed(): Promise<void> {
-    const api = makeApi({
-      get: vi.fn().mockResolvedValue({ tasks: [wireTask()], nextCursor: null }),
-    });
-    await useBoard.getState().selectProject(api, "proj");
-  }
-
-  it("applies optimistically then reconciles with the server response", async () => {
-    await seed();
-    const d = deferred<unknown>();
-    const api = makeApi({ patch: vi.fn().mockReturnValue(d.promise) });
-    const pending = useBoard.getState().updateTask(api, "proj", "task_a", { title: "Edited" });
-
-    expect(useBoard.getState().cardsByProject["proj"]![0]!.title).toBe("Edited");
-
-    d.resolve({ task: wireTask({ title: "Edited", updatedAt: "2026-06-13T01:00:00.000Z" }) });
-    await pending;
-    expect(api.patch).toHaveBeenCalledWith("/api/projects/proj/tasks/task_a", {
-      title: "Edited",
-    });
-    expect(useBoard.getState().cardsByProject["proj"]![0]).toEqual(
-      card({ title: "Edited", updatedAt: "2026-06-13T01:00:00.000Z" }),
-    );
-  });
-
-  it("rolls back and refetches on failure instead of silently overwriting", async () => {
-    await seed();
-    const get = vi.fn().mockResolvedValue({ tasks: [wireTask()], nextCursor: null });
-    const api = makeApi({
-      patch: vi.fn().mockRejectedValue(new AppError("server")),
-      get,
-    });
-    await useBoard.getState().updateTask(api, "proj", "task_a", { title: "Edited" });
-
-    expect(useBoard.getState().cardsByProject["proj"]![0]!.title).toBe("Task A");
-    expect(useBoard.getState().error).toBe("server");
-    expect(get).toHaveBeenCalled();
-  });
-
-  it("serializes two rapid mutations to the same task", async () => {
-    await seed();
-    const d1 = deferred<unknown>();
-    const order: string[] = [];
-    const patch = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        order.push("first-sent");
-        return d1.promise;
-      })
-      .mockImplementationOnce(() => {
-        order.push("second-sent");
-        return Promise.resolve({ task: wireTask({ title: "Second" }) });
-      });
-    const api = makeApi({ patch });
-
-    const p1 = useBoard.getState().updateTask(api, "proj", "task_a", { title: "First" });
-    const p2 = useBoard.getState().updateTask(api, "proj", "task_a", { title: "Second" });
-
-    await vi.waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
-    order.push("first-resolved");
-    d1.resolve({ task: wireTask({ title: "First" }) });
-    await Promise.all([p1, p2]);
-
-    expect(patch).toHaveBeenCalledTimes(2);
-    expect(order).toEqual(["first-sent", "first-resolved", "second-sent"]);
-    expect(useBoard.getState().cardsByProject["proj"]![0]!.title).toBe("Second");
-  });
-});
-
-describe("moveTask and archiveTask", () => {
-  async function seed(): Promise<void> {
-    const api = makeApi({
-      get: vi.fn().mockResolvedValue({ tasks: [wireTask()], nextCursor: null }),
-    });
-    await useBoard.getState().selectProject(api, "proj");
-  }
-
-  it("moveTask patches status and order optimistically", async () => {
-    await seed();
-    const api = makeApi({
-      patch: vi
-        .fn()
-        .mockResolvedValue({ task: wireTask({ status: "running", order: 3 }) }),
-    });
-    await useBoard.getState().moveTask(api, "proj", "task_a", "running", 3);
-    expect(api.patch).toHaveBeenCalledWith("/api/projects/proj/tasks/task_a", {
-      status: "running",
-      order: 3,
-    });
-    expect(useBoard.getState().cardsByProject["proj"]![0]).toMatchObject({
-      status: "running",
-      order: 3,
-    });
-  });
-
-  it("archiveTask keeps the card visible until the server confirms archive", async () => {
-    await seed();
-    const d = deferred<unknown>();
-    const api = makeApi({
-      patch: vi.fn().mockReturnValue(d.promise),
-    });
-    const pending = useBoard.getState().archiveTask(api, "proj", "task_a");
-
-    expect(groupCardsByColumn(useBoard.getState().cardsByProject["proj"]!).todo).toEqual([
-      card(),
-    ]);
-
-    d.resolve({ task: wireTask({ status: "archived" }) });
-    await pending;
-    expect(api.patch).toHaveBeenCalledWith("/api/projects/proj/tasks/task_a", {
-      status: "archived",
-    });
-    const grouped = groupCardsByColumn(useBoard.getState().cardsByProject["proj"]!);
-    expect(grouped.todo).toEqual([]);
-  });
-
-  it("archiveTask keeps the card visible and records the error when the server rejects", async () => {
-    await seed();
-    const api = makeApi({ patch: vi.fn().mockRejectedValue(new AppError("server")) });
-    await useBoard.getState().archiveTask(api, "proj", "task_a");
-    expect(groupCardsByColumn(useBoard.getState().cardsByProject["proj"]!).todo).toEqual([
-      card(),
-    ]);
-    expect(useBoard.getState().error).toBe("server");
-  });
-});
-
-describe("deleteTask", () => {
-  async function seed(): Promise<void> {
-    const api = makeApi({
-      get: vi.fn().mockResolvedValue({ tasks: [wireTask()], nextCursor: null }),
-    });
-    await useBoard.getState().selectProject(api, "proj");
-  }
-
-  it("keeps the card visible until the server confirms deletion", async () => {
-    await seed();
-    const d = deferred<unknown>();
-    const api = makeApi({ delete: vi.fn().mockReturnValue(d.promise) });
-    const pending = useBoard.getState().deleteTask(api, "proj", "task_a");
-
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
-    d.resolve({ ok: true });
-    await pending;
-
-    expect(api.delete).toHaveBeenCalledWith("/api/projects/proj/tasks/task_a");
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([]);
-  });
-
-  it("keeps the card visible and records the error when the server rejects", async () => {
-    await seed();
-    const api = makeApi({ delete: vi.fn().mockRejectedValue(new AppError("server")) });
-    await useBoard.getState().deleteTask(api, "proj", "task_a");
+    await useBoard.getState().selectProject(bad, "proj");
     expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
     expect(useBoard.getState().error).toBe("server");
   });
