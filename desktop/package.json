@@ -28,6 +28,7 @@
     "@fontsource/instrument-serif": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.2.5",
     "@finnaai/matrix": "workspace:*",
+    "@matrix-os/ui": "workspace:*",
     "@hugeicons/core-free-icons": "^4.3.0",
     "@hugeicons/react": "^1.1.9",
     "@lexical/react": "^0.41.0",
