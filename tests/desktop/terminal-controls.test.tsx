@@ -30,7 +30,6 @@ function setup() {
     sessionName: "session-one",
     active: true,
     socketState: "attached" as const,
-    leaseRevoked: false,
     isMac: true,
     attachmentRef: attachment,
     termRef: terminal,
@@ -128,7 +127,6 @@ describe("Electron Desktop shared terminal controls", () => {
     { active: false },
     { socketState: "reconnecting" as const },
     { socketState: "connecting" as const },
-    { leaseRevoked: true },
     { api: null },
   ])(
     "disables controls when the input lease is unavailable: %j",

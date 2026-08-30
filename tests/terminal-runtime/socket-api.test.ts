@@ -161,6 +161,100 @@ describe("terminal runtime Unix socket API", () => {
     await server.close();
   });
 
+  it("translates the live-tail sentinel before assigning output sequences", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-live-tail-"));
+    directories.push(directory);
+    const socketPath = join(directory, "terminal-runtime.sock");
+    const terminalRef = {
+      workspaceId: "tws_0123456789abcdef0123456789abcdef",
+      tabId: "tt_0123456789abcdef0123456789abcdef",
+    };
+    const tab = {
+      id: terminalRef.tabId,
+      workspaceId: terminalRef.workspaceId,
+      name: "main",
+      cwd: "",
+      status: "running" as const,
+      revision: 1,
+      order: 0,
+      createdAt: "2026-08-11T12:00:00.000Z",
+      updatedAt: "2026-08-11T12:00:00.000Z",
+    };
+    const workspace = {
+      id: terminalRef.workspaceId,
+      scope: "main" as const,
+      canonicalSize: { cols: 120, rows: 36 },
+      status: "running" as const,
+      revision: 1,
+      createdAt: tab.createdAt,
+      updatedAt: tab.updatedAt,
+      tabs: [tab],
+    };
+    const snapshot = {
+      schemaVersion: 1 as const,
+      terminalRef,
+      revision: 1,
+      presentationRevision: 0,
+      seq: 41,
+      ansi: "checkpoint",
+      viewport: [],
+      scrollback: [],
+      updatedAt: tab.updatedAt,
+    };
+    let emitOutput: ((data: Uint8Array) => void | Promise<void>) | undefined;
+    const attachmentReady = Promise.withResolvers<void>();
+    const server = new TerminalRuntimeSocketServer({
+      socketPath,
+      runtime: {
+        listWorkspaces: async () => [workspace],
+        ensureWorkspace: async () => workspace,
+        createTab: async () => tab,
+        getSnapshot: async () => snapshot,
+        resize: async () => workspace,
+        attach: async (_ref, input) => {
+          emitOutput = input.send;
+          attachmentReady.resolve();
+          return {
+            write: async () => undefined,
+            touch: () => undefined,
+            detach: async () => undefined,
+          };
+        },
+        updateTabUiState: async () => tab,
+      },
+    });
+    await server.start();
+    const client = new TerminalRuntimeSocketClient({ socketPath });
+    const frames: Array<{ type: string; seq?: number; nextSeq?: number }> = [];
+    const outputsReady = Promise.withResolvers<void>();
+    const stream = client.attach({
+      ref: terminalRef,
+      viewerId: "desktop-live-tail-test",
+      fromSeq: Number.MAX_SAFE_INTEGER,
+      mode: "soft",
+      size: { cols: 120, rows: 36 },
+      onFrame: (frame) => {
+        frames.push(frame);
+        if (frames.filter((candidate) => candidate.type === "output").length === 2) {
+          outputsReady.resolve();
+        }
+      },
+      onClose: () => undefined,
+      onError: outputsReady.reject,
+    });
+    await attachmentReady.promise;
+
+    await emitOutput?.(new TextEncoder().encode("first"));
+    await emitOutput?.(new TextEncoder().encode("second"));
+    await outputsReady.promise;
+
+    expect(frames.find((frame) => frame.type === "attached")?.nextSeq).toBe(42);
+    expect(frames.filter((frame) => frame.type === "output").map((frame) => frame.seq))
+      .toEqual([42, 43]);
+    stream.close();
+    await server.close();
+  });
+
   it("preserves typed domain failures across the socket boundary", async () => {
     const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-errors-"));
     directories.push(directory);

@@ -181,14 +181,23 @@ suite("Desktop terminal session handoff", () => {
       await page.getByRole("button", { name: `Open ${name}` }).waitFor();
     }
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-list.png") });
+    await page.getByRole("button", { name: "Open matrix-task-1" }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Open matrix-review" }).click();
+    await page.getByRole("heading", { name: "matrix-review" }).waitFor({ timeout: 5_000 });
+    await page.getByText("Waiting", { exact: true }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Open matrix-closed" }).click();
+    await page.getByRole("heading", { name: "matrix-closed" }).waitFor({ timeout: 5_000 });
+    await page.getByText("Closed", { exact: true }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Open matrix-task-1" }).click();
+    await page.getByText("Active", { exact: true }).waitFor({ timeout: 5_000 });
 
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
-    await page.getByRole("heading", { name: "matrix-task-1" }).waitFor();
+    await page.getByRole("heading", { name: "matrix-task-1" }).waitFor({ timeout: 5_000 });
     expect(await page.getByRole("navigation", { name: "Terminal breadcrumb" }).count()).toBe(0);
     await page.getByText(/Started at .*main computer/).waitFor();
     const viewport = page.getByTestId("desktop-terminal-app").locator('[data-retained-pane][data-active="true"] [data-terminal-surface]');
     await viewport.evaluate((element) => { element.setAttribute("data-mat-300-identity", "preserved"); });
-    const initialGeometry = await expectTerminalViewportToFill(viewport);
+    await expectTerminalViewportToFill(viewport);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-detail.png") });
 
     const header = page.locator(".matrix-terminal-app-header");
@@ -228,7 +237,7 @@ suite("Desktop terminal session handoff", () => {
     const newSessionViewport = page.getByTestId("desktop-terminal-app").locator(
       '[data-retained-pane][data-active="true"] [data-terminal-surface]',
     );
-    await newSessionViewport.waitFor();
+    await newSessionViewport.waitFor({ timeout: 5_000 });
     await expectTerminalViewportToFill(newSessionViewport);
   }, 30_000);
 });

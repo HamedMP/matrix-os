@@ -299,9 +299,11 @@ describe("TerminalsTab", () => {
   });
 
   it("opens the Figma-aligned session detail without a Terminal-local back control", () => {
+    const stableRef = `tws_${"a".repeat(32)}:tt_${"1".repeat(32)}`;
     useShellSessions.setState({
       sessions: [{
-        name: "matrix-main",
+        name: stableRef,
+        subtitle: "matrix-main",
         status: "active",
         placement: "active",
         createdAt: "2026-08-12T09:30:00.000Z",
@@ -317,9 +319,10 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Back to terminal sessions" })).toBeNull();
     expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
+    expect(screen.queryByText(stableRef)).toBeNull();
     expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
-    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
-    expect(terminalMounts.get("matrix-main")).toBe(1);
+    expect(screen.getByTestId(`terminal-view-${stableRef}`).getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get(stableRef)).toBe(1);
   });
 
   it("uses the Figma session frame without a secondary session rail", () => {
@@ -720,7 +723,7 @@ describe("TerminalsTab", () => {
     renderTab();
     fireEvent.doubleClick(screen.getByTestId("terminal-session-title-matrix-main"));
 
-    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Terminal session name" }).value).toBe("matrix-main");
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Terminal session name" }).value).toBe("Fix terminal actions");
   });
 
   it("creates Claude, Codex, OpenCode, and Pi sessions from the new-terminal menu", async () => {
@@ -763,7 +766,7 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    expect(screen.getByText("Fix terminal tabs")).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-title-matrix-codex-fix").textContent).toBe("Fix terminal tabs");
     const metadata = screen.getByTestId("terminal-session-agent-metadata-matrix-codex-fix");
     expect(metadata.textContent).toContain("Codex · gpt-5.6");
     expect(metadata.textContent).toContain("~/projects/matrix-os");
@@ -894,13 +897,13 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    const row = screen.getByRole("button", { name: "Open matrix-main" });
+    const row = screen.getByRole("button", { name: "Open Improve terminal session rows" });
     expect(row.textContent).toContain("Codex");
     expect(row.textContent).toContain("gpt-5.4");
     expect(row.textContent).toContain("high");
     expect(row.textContent).toContain("Improve terminal session rows");
     expect(row.textContent).not.toContain("Editing terminal sidebar");
-    expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Improve terminal session rows" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Editing terminal sidebar" })).toBeNull();
   });
 

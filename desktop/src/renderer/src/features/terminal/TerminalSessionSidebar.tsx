@@ -17,6 +17,10 @@ import {
 } from "./terminal-agent-options";
 import { DesktopTerminalAgentLogo } from "./DesktopTerminalAgentLogo";
 
+function displayName(shell: ShellSessionSummary): string {
+  return shell.subtitle?.trim() || shell.tabId || shell.name;
+}
+
 function agentMetadata(shell: ShellSessionSummary): string | null {
   if (!shell.agent) return null;
   return [terminalAgentLabel(shell.agent), shell.model, shell.strength]
@@ -94,6 +98,7 @@ export function TerminalSessionSidebar({
         </div>}
         <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {[...sessions].sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))).map((session) => {
+            const label = displayName(session);
             const selected = selectedName === session.name;
             const metadata = agentMetadata(session);
             const title = sessionTitle(session);
@@ -129,7 +134,7 @@ export function TerminalSessionSidebar({
                   <>
                     <button
                       type="button"
-                      aria-label={`Open ${session.name}`}
+                      aria-label={`Open ${label}`}
                       aria-current={selected || undefined}
                       className="flex min-h-16 w-full min-w-0 items-start px-4 py-3 pr-10 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
                       style={{ background: selected ? "var(--bg-hover)" : "transparent" }}
@@ -224,7 +229,7 @@ function SessionActions({ session, disabled, open, onOpenChange, onRename, onCop
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          aria-label={`More actions for ${session.name}`}
+          aria-label={`More actions for ${displayName(session)}`}
           disabled={disabled}
           className="absolute right-2 top-3 z-10 flex size-7 items-center justify-center rounded-md bg-[var(--bg-surface)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-active)] focus-visible:opacity-100 group-hover/session:opacity-100"
         >
@@ -233,7 +238,7 @@ function SessionActions({ session, disabled, open, onOpenChange, onRename, onCop
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          aria-label={`Actions for ${session.name}`}
+          aria-label={`Actions for ${displayName(session)}`}
           align="end"
           sideOffset={5}
           className="fade-in min-w-[200px] rounded-lg border p-1"
