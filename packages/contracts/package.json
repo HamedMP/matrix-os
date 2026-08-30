@@ -25,6 +25,7 @@
     "#kernel-conversations": "./src/kernel-conversations.ts",
     "#os-view": "./src/os-view.ts",
     "#provider-settings": "./src/provider-settings.ts",
+    "#funded-ai": "./src/funded-ai.ts",
     "#safe-client-error": "./src/safe-client-error.ts",
     "#terminal-clipboard": "./src/terminal-clipboard.ts",
     "#terminal-links": "./src/terminal-links.ts"

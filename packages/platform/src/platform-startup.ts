@@ -42,6 +42,12 @@ import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { dispatchBillingRuntimeActions } from './billing-runtime-actions.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
+import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
+import {
+  createAiFundedRelayRoutes,
+  createAiFundedRuntimeRoutes,
+  loadAiFundedControlPlaneConfig,
+} from './ai-funded-policy-routes.js';
 import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
@@ -156,6 +162,8 @@ type CreatePlatformApp = (deps: {
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
+  internalFundedAiRuntimeRoutes?: Hono<any>;
+  internalFundedAiRelayRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -246,6 +254,31 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   const atsDatabaseUrl = resolveAtsDatabaseUrl(process.env);
   const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
   await db.ready;
+  const fundedAiConfig = loadAiFundedControlPlaneConfig({
+    ...process.env,
+    PLATFORM_SECRET: platformSecret,
+  });
+  let internalFundedAiRuntimeRoutes: Hono | undefined;
+  let internalFundedAiRelayRoutes: Hono | undefined;
+  if (fundedAiConfig.enabled) {
+    const fundedAiRepository = createAiFundedPolicyRepository({
+      db,
+      credentialHashSecret: fundedAiConfig.credentialHashSecret,
+      credentialTtlMs: fundedAiConfig.credentialTtlMs,
+      issueCooldownMs: fundedAiConfig.issueCooldownMs,
+      policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
+    });
+    internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
+      db,
+      platformSecret: fundedAiConfig.platformSecret,
+      repository: fundedAiRepository,
+    });
+    internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
+      relayControlToken: fundedAiConfig.relayControlToken,
+      repository: fundedAiRepository,
+    });
+    console.log('[platform] Funded AI control plane enabled; relay activation remains disabled');
+  }
   const atsDb = atsDatabaseUrl ? createAtsDb(atsDatabaseUrl) : undefined;
   await atsDb?.ready;
 
@@ -735,6 +768,8 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     integrationRoutes,
     internalIntegrationRoutes,
     internalSyncRoutes,
+    internalFundedAiRuntimeRoutes,
+    internalFundedAiRelayRoutes,
     customerVpsService,
     goldenSnapshotService,
     goldenSnapshotConfig,
