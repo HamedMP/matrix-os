@@ -42,11 +42,11 @@
 
 **Rationale**: Checkout is the user action that authorizes preparation, so a second client mutation would reintroduce the missing-click problem. A stable checkout response avoids breaking mobile/device clients; the journey remains the server-owned resumption surface.
 
-## Decision 8: Use a feature flag, strict capacity controls, and continuation-safe rollback
+## Decision 8: Use strict count capacity and continuation-safe configuration semantics
 
-**Decision**: Add an off-by-default primary-onboarding feature flag, deterministic rollout percentage/allowlist, and one database-enforced global active-count ceiling across all offered machine sizes. Serialize admission with the existing PostgreSQL advisory lock and admit only while `activeCount < maxActive`. Apply per-account creation limits in Postgres and trusted network-origin limits at the edge rather than trusting forwarded headers in application code. Turning the flag off stops new intents but keeps workers reconciling, authorizing, or cleaning existing intents to terminal states.
+**Decision**: Add an off-by-default primary-onboarding feature flag, deterministic rollout percentage/allowlist, and one database-enforced global active-count ceiling across all offered machine sizes. Serialize admission with the existing PostgreSQL advisory lock and admit only while `activeCount < maxActive`. Apply per-account creation limits in Postgres and trusted network-origin limits at the edge rather than trusting forwarded headers in application code. The runtime retains continuation-safe disabled semantics for testing and any future reviewed transition, but the production deployment workflow keeps admission enabled and exposes no rollback-drain dispatch path.
 
-**Rationale**: Prebilling work has real cost before card authorization. A kill switch that also stops cleanup would leak resources, while application parsing of untrusted forwarding headers would violate the constitution.
+**Rationale**: Prebilling work has real cost before card authorization. Continuation workers must remain safe under any intentionally reviewed configuration transition, while application parsing of untrusted forwarding headers would violate the constitution. The maintained operational policy is count-only admission at full rollout; exceptional rollback requires a separate reviewed workflow/code change.
 
 ## Decision 9: Authorization repairs paid-without-machine state server-side
 

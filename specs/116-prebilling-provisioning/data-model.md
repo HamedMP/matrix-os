@@ -28,7 +28,7 @@ Durable source of truth for the reversible work Matrix performs while one primar
 | `machine_id` | `text nullable` | Unique foreign key to `user_machines` once allocated |
 | `stripe_session_expires_at` | `timestamptz nullable` | Exact server-returned Checkout expiry |
 | `lease_expires_at` | `timestamptz nullable` | Never later than the Stripe expiry for V1 |
-| `reserved_hourly_cost_micros` | `bigint` | Legacy rollback field; retained without migration and written as 0; not part of the provisioning domain or admission decision |
+| `reserved_hourly_cost_micros` | `bigint` | Legacy compatibility field; retained without migration and written as 0; not part of the provisioning domain or admission decision |
 | `ready_at` | `timestamptz nullable` | Physical readiness timestamp; does not grant access |
 | `authorized_at` | `timestamptz nullable` | Signed subscription-projection promotion timestamp |
 | `cleaned_at` | `timestamptz nullable` | Set only after provider absence and local secret cleanup are confirmed |

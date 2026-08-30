@@ -147,7 +147,7 @@ Non-negotiable implementation invariants:
 5. **Cleanup lock scope**: lock intent, cleanup action, machine, current entitlement projection, and newer owner/slot intents in one documented order before the irreversible phase transition.
 6. **Acceptable orphan states**: an open checkout with no preparation is safe and falls back after authorization; an unauthorized prepared machine is temporarily acceptable only under an active lease/cleanup action; an authorized slot with no live machine is acceptable only with one durable normal provisioning job.
 7. **Provider ambiguity**: deterministic provider identity/labels are reconciled before create/delete retry; terminal cleanup means confirmed provider absence.
-8. **Rollback**: count-only prebilling remains enabled in the production deployment workflow, with no prebuilt rollback-drain dispatch path. The legacy reservation column remains present and is written as zero so schema compatibility is preserved without affecting the provisioning domain or admission decisions. Any exceptional restoration of cost-based behavior requires a separate reviewed workflow/code PR with an explicit transition plan; ordinary automatic deployments and manual promotions keep admission enabled.
+8. **Rollback**: count-only prebilling remains enabled in the production deployment workflow, with no prebuilt rollback-drain dispatch path. The legacy reservation column remains present and is written as zero so schema compatibility is preserved without affecting the provisioning domain or admission decisions. A direct revert to cost-based admission is unsupported while zero-valued count-only rows can remain active. Any exceptional restoration of cost-based behavior requires a separate reviewed workflow/code PR that defines and validates the state and deployment transition; ordinary automatic deployments and manual promotions keep admission enabled.
 
 ## Implementation Sequence
 
@@ -187,7 +187,7 @@ Write failing journey/UI/telemetry tests, then:
 - Move developer-tool selection before checkout for the eligible new-primary cohort. The explicit button opens checkout and preparation in one mutation; no separate browser provisioning request exists.
 - Render preparing, ready-waiting-for-billing, payment-settling, authorized-provisioning, safe failure, and ready states using `@matrix-os/brand` primitives. Keep all provider/internal details out of UI state.
 - Guard active-document/account changes and multi-tab retries by always refreshing authoritative journey state after ambiguous client outcomes.
-- Add the event/metric contract, dashboards, baseline cohort comparison, active-count/cleanup alerts, and an operator admission kill switch that leaves continuation workers running.
+- Add the event/metric contract, dashboards, baseline cohort comparison, and active-count/cleanup alerts. Keep disabled-state continuation behavior covered for a future reviewed operational transition, without exposing a production workflow-dispatch kill switch.
 - Validate Canvas first, then Desktop; ensure mobile or older clients using the stable checkout response continue to function.
 
 Exit gate: shell build/React checks, UI contracts, coarse-error checks, metric cardinality tests, and the complete existing onboarding/billing suite pass with admission still disabled by default.
@@ -222,18 +222,18 @@ The detailed matrix is in [quickstart.md](./quickstart.md). Implementation follo
 
 ## Rollout and Operations
 
-1. Deploy additive schema, activation gates, and continuation workers with admission disabled.
-2. Prove startup ownership, cleanup draining, metrics, and repair reconciliation in the worker-enabled revision.
+1. Validate the exact-head candidate with prebilling enabled, rollout at `100`, maximum active count `4`, and both legacy cost variables absent.
+2. Prove startup ownership, cleanup reconciliation, metrics, repair behavior, and the deployed candidate contract before promotion.
 3. Soak fake/synthetic traffic, then—only with explicit operator authorization—use Stripe test mode and one disposable VPS for exact-head full-path validation.
-4. Enable deterministic internal allowlist, then `1%`, `10%`, `50%`, and `100%`, holding at least one cleanup window and checking the success/stop metrics at every stage.
-5. Compare against a stable postbilling control cohort for authorization-to-ready latency, conversion, provider failure, cleanup lag, and paid-without-machine incidence.
-6. Set admission to zero immediately on an invariant, active-count, duplicate, cleanup, or latency stop condition. Existing intents continue to authorize or clean up.
+4. Promote the production-role revision to `100%` traffic and verify no stale revision receives traffic.
+5. Compare against a stable postbilling control cohort for authorization-to-ready latency, conversion, provider failure, cleanup lag, and paid-without-machine incidence; monitor the first real admission and cleanup events without creating paid production test VPSs.
+6. Treat any exceptional rollback as a new reviewed workflow/code change with an explicit state transition. The maintained production workflow does not provide a disabled-admission or cost-aware rollback mode.
 
 The platform/app-shell deployment path is used for this change. Production customer runtimes remain VPS-native; no Docker Compose deployment or fleet host-bundle rollout is implied by this plan.
 
 ## Delivery Shape
 
-- One implementation PR with three reviewable phase commits, each safe with admission disabled. Stop and split before publication if the aggregate diff exceeds 3,000 additions or 50 files.
+- One implementation PR with three reviewable phase commits, each independently testable without production exposure. Stop and split before publication if the aggregate diff exceeds 3,000 additions or 50 files.
 - Conventional Commit titles and bodies containing source of truth, transaction/lock scope, acceptable orphan states, auth source of truth, and deferred scope.
 - Current-head CI and trusted Greptile `5/5` on every PR; all material findings fixed or explicitly deferred with a linked issue before merge.
 - Separate `matrix-os-site` documentation PR, also reviewed to the repository's required gate.
