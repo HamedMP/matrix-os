@@ -7,9 +7,13 @@ export interface SystemVersionIdentity {
 
 export function readSystemVersionIdentity(value: unknown): SystemVersionIdentity {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const info = value as { version?: unknown; runningVersion?: unknown };
+  const info = value as {
+    version?: unknown;
+    runningVersion?: unknown;
+    release?: { version?: unknown };
+  };
   return {
-    installedVersion: safeSystemVersion(info.version),
+    installedVersion: safeSystemVersion(info.release?.version) ?? safeSystemVersion(info.version),
     runningVersion: safeSystemVersion(info.runningVersion),
   };
 }
