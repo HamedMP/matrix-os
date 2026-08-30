@@ -38,9 +38,9 @@ import type {
 } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
-import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsStep";
 import {
   defaultDeveloperTools,
+  developerToolOptions,
   nextDeveloperToolsSelection,
   type DeveloperToolId,
 } from "@/components/onboarding/developer-tools";
@@ -62,26 +62,14 @@ export type ComputerSetupSelection = {
 };
 type BillingInterval = "monthly" | "annual";
 
-const profileLabels = ["Starter", "Recommended", "Scale"] as const;
-const profileBlurbs: Record<string, string> = {
-  server_starter: "Light agents, testing, and small projects",
-  server_builder: "Everyday building with headroom to grow",
-  server_max: "Heavy workloads and many parallel agents",
-};
 const regionGroupLabels: Record<string, string> = {
   "eu-central": "Germany",
   "us-east": "United States",
   "us-west": "United States",
 };
-const includedHighlights = [
-  "Dedicated VPS prepared before checkout",
-  "Your files and data persist across restarts",
-  "Change tier or cancel anytime in the billing portal",
-] as const;
 const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
 const BILLING_PREPARATION_TIMEOUT_MS = 370_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const acceptedPaymentMarks = ["Visa", "Mastercard"] as const;
 const billingPlanNames: Record<string, string> = {
   matrix_starter: "Starter",
   matrix_builder: "Builder",
@@ -281,80 +269,41 @@ function CheckoutPanel({
   }
 
   return (
-    <aside className="rounded-3xl bg-forest p-4 text-cream/80 sm:p-5 lg:sticky lg:top-2">
-      {mode !== "settings" && (
-        <div className="mb-4">
-          <p className="text-sm font-semibold text-[#FAFAF5]">
-            {checkoutBypassed
-              ? "Provision this computer"
-              : trialDurationDays !== null
-              ? `Start your ${trialDurationDays}-day free trial`
-              : mode === "device-setup"
-              ? "Billing settings"
-              : "Start checkout & provision"}
-          </p>
-          <p className="mt-0.5 text-xs leading-5 text-cream/55">
-            {checkoutBypassed
-              ? "Your internal Matrix account covers this computer."
-              : trialDurationDays !== null
-              ? "Add your card in Stripe Checkout. You will not be charged today."
-              : mode === "device-setup"
-              ? "Review your plan and region here. Stripe opens only after you choose Continue to pay."
-              : "Matrix prepares this computer before secure checkout opens."}
-          </p>
-        </div>
-      )}
-
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cream/45">
-        Order summary
+    <aside className="rounded-2xl bg-[#0E3422] p-5 text-[#FCFCF8] shadow-[0_12px_36px_rgba(31,45,29,0.12)] lg:sticky lg:top-2">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#C9E8D9]/65">
+        {checkoutBypassed
+          ? "Included"
+          : mode === "device-setup"
+          ? "Billing settings"
+          : mode === "add-computer"
+          ? "Monthly plan"
+          : trialDurationDays !== null
+          ? `Start your ${trialDurationDays}-day free trial`
+          : "Monthly plan"}
       </p>
-      <div className="mt-3 flex items-baseline justify-between gap-3">
-        <span className="text-xl font-semibold tracking-tight text-[#FAFAF5]">
+      <div className="mt-3 flex items-end justify-between gap-4">
+        <span className="text-2xl font-semibold tracking-tight">
           {selectedProfile.label}
         </span>
-        <span className="font-mono text-xs text-ember">{selectedProfile.hetznerType}</span>
+        {!checkoutBypassed && trialDurationDays === null ? (
+          <span className="flex items-baseline gap-1">
+            <span className="text-3xl font-semibold tracking-tight">${price}</span>
+            <span className="text-xs text-[#C9E8D9]/65">/month</span>
+          </span>
+        ) : null}
       </div>
-      <p className="mt-1 font-mono text-[11px] text-cream/55">{profileSpec(selectedProfile)}</p>
-
-      <dl className="mt-4 space-y-2 border-t border-cream/12 pt-4 text-sm">
-        <div className="flex items-center justify-between gap-3">
-          <dt className="text-cream/55">Region</dt>
-          <dd className="min-w-0 truncate text-[#FAFAF5]">
-            <span aria-hidden="true">{selectedRegion.flag}</span> {selectedRegion.label}
-          </dd>
-        </div>
-        {!checkoutBypassed && <div className="flex items-center justify-between gap-3">
-          <dt className="text-cream/55">Billing</dt>
-          <dd className="text-[#FAFAF5]">{billingInterval === "annual" ? "Annual" : "Monthly"}</dd>
-        </div>}
-      </dl>
-
-      {!checkoutBypassed && <div className="mt-4 flex items-end justify-between gap-3 border-t border-cream/12 pt-4">
-        <div>
-          <span className="text-sm text-cream/55">
-            {trialDurationDays === null ? "Total" : "Today"}
-          </span>
-          {trialDurationDays !== null ? (
-            <span className="mt-0.5 block text-[11px] font-medium text-ember">Card required</span>
-          ) : null}
-        </div>
-        <span className="flex items-baseline gap-1">
-          <span className="text-3xl font-semibold tracking-tight text-cream">
-            {trialDurationDays === null ? `$${price}` : "$0 today"}
-          </span>
-          {trialDurationDays === null && (
-            <span className="text-sm text-cream/55">/mo</span>
-          )}
-        </span>
-      </div>}
+      <p className="mt-1 text-sm text-[#C9E8D9]/70">
+        <span aria-hidden="true">{selectedRegion.flag}</span> {selectedRegion.label}
+      </p>
 
       {trialDurationDays !== null && trialEnd && (
-        <div className="mt-3 rounded-xl border border-cream/12 bg-black/15 p-3 text-xs leading-5">
-          <p className="font-semibold text-cream">
-            ${price}/month after your trial
-          </p>
-          <p className="mt-1 text-cream/65">First charge {trialEnd}</p>
-          <p className="text-cream/55">Cancel before {trialEnd} to avoid being charged.</p>
+        <div className="mt-5 border-t border-[#C9E8D9]/15 pt-5">
+          <p className="text-3xl font-semibold tracking-tight text-cream">$0 today</p>
+          <p className="mt-1 text-sm text-[#FCFCF8]">Then ${price}/month on {trialEnd}</p>
+          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#C9E8D9]/65">
+            <span>Card required</span>
+            <span>Cancel before {trialEnd}</span>
+          </div>
         </div>
       )}
 
@@ -362,7 +311,7 @@ function CheckoutPanel({
         type="button"
         onClick={startCheckout}
         disabled={checkoutLoading}
-        className="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-ember px-4 text-sm font-semibold text-ember-foreground transition-colors hover:bg-ember/90 disabled:cursor-wait disabled:opacity-70"
+        className="mt-5 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#BED77B] px-4 text-sm font-semibold text-[#0E3422] transition-colors hover:bg-[#CEE0AE] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0E3422] disabled:cursor-wait disabled:opacity-70"
       >
         {checkoutLoading ? (
           <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
@@ -378,25 +327,12 @@ function CheckoutPanel({
           : "Continue to pay"}
       </button>
 
-      {!checkoutBypassed && <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-cream/55">
+      {!checkoutBypassed && <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] font-medium text-[#C9E8D9]/65">
         <span className="inline-flex items-center gap-1">
           <ShieldCheckIcon className="size-3.5" aria-hidden="true" />
-          Secure checkout
+          Secure Stripe checkout
         </span>
-        <span className="text-cream/25" aria-hidden="true">|</span>
-        <span className="sr-only">Accepted cards:</span>
-        {acceptedPaymentMarks.map((mark) => (
-          <span
-            key={mark}
-            className="inline-flex h-5 items-center rounded border border-cream/20 bg-cream/10 px-2 text-[10px] font-bold uppercase tracking-normal text-cream/85"
-          >
-            {mark}
-          </span>
-        ))}
       </div>}
-      {!checkoutBypassed && trialDurationDays === null && <p className="mt-3 text-center text-[11px] leading-5 text-cream/45">
-        Payment starts today. Plan changes and coupons are handled in the billing portal.
-      </p>}
       {checkoutError && (
         <p className="mt-2 text-center text-xs text-red-300">{checkoutError}</p>
       )}
@@ -731,7 +667,7 @@ function ProfileOptionRows({
   onSelect: (featureSlug: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="grid gap-2 sm:grid-cols-3">
       {profiles.map((profile) => {
         const resolvedProfile = resolveMatrixServerProfile(profile, region);
         const selected = profile.featureSlug === selectedFeature;
@@ -741,56 +677,103 @@ function ProfileOptionRows({
             key={profile.featureSlug}
             aria-pressed={selected}
             onClick={() => onSelect(profile.featureSlug)}
-            className={`flex items-start gap-3 rounded-2xl border p-3 text-left transition-colors ${
+            className={`flex min-w-0 flex-col rounded-xl border p-3 text-left transition-all duration-200 ${
               selected
-                ? "border-ember/55 bg-[#fff7ec]"
-                : "border-transparent hover:bg-forest/[0.04]"
+                ? "border-[#0E3422] bg-[#F4F7ED] shadow-[0_2px_8px_rgba(31,45,29,0.07)]"
+                : "border-[#E0E1CA] bg-[#FCFCF8] hover:border-[#97D8B9]"
             }`}
           >
-            <span
-              className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border ${
-                selected
-                  ? "border-ember bg-ember text-ember-foreground"
-                  : "border-forest/25 text-transparent"
-              }`}
-            >
-              <CheckIcon className="size-3" aria-hidden="true" />
+            <span className="flex w-full items-start justify-between gap-2">
+              <span className="text-sm font-semibold text-[#1F2D1D]">{profile.label}</span>
+              <span
+                className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${
+                  selected
+                    ? "border-[#0E3422] bg-[#0E3422] text-[#FCFCF8]"
+                    : "border-[#C8C6C6] text-transparent"
+                }`}
+              >
+                <CheckIcon className="size-3" aria-hidden="true" />
+              </span>
             </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="text-sm font-semibold text-deep">{profile.label}</span>
-                <span className="font-mono text-[11px] text-forest/45">{resolvedProfile.hetznerType}</span>
-                {profile.planSlug === "matrix_builder" && (
-                  <span className="rounded-full bg-ember/12 px-1.5 py-0.5 text-[10px] font-semibold text-ember">
-                    {profileLabels[1]}
+            <span className="mt-2 flex items-baseline gap-1">
+              {showPrice ? (
+                <>
+                  <span className="text-xl font-semibold tracking-tight text-[#1F2D1D]">
+                    ${profilePrice(resolvedProfile, billingInterval)}
                   </span>
-                )}
-              </span>
-              <span className="mt-0.5 block text-xs text-forest/55">
-                {profileBlurbs[profile.featureSlug] ?? ""}
-              </span>
-              <span className="mt-1.5 flex items-center gap-1.5 font-mono text-[11px] text-forest/55">
-                <span>{resolvedProfile.vcpus} vCPU</span>
-                <span className="text-forest/25" aria-hidden="true">·</span>
-                <span>{resolvedProfile.memoryGb} GB RAM</span>
-                <span className="text-forest/25" aria-hidden="true">·</span>
-                <span>{resolvedProfile.diskGb} GB SSD</span>
-              </span>
+                  <span className="text-[10px] text-[#635F5F]">/mo</span>
+                </>
+              ) : (
+                <span className="font-mono text-xs text-[#635F5F]">{resolvedProfile.hetznerType}</span>
+              )}
             </span>
-            {showPrice ? (
-              <span className="shrink-0 text-right">
-                <span className="text-base font-semibold tracking-tight text-deep">
-                  ${profilePrice(resolvedProfile, billingInterval)}
-                </span>
-                <span className="block text-[10px] text-forest/45">
-                  /mo
-                </span>
+            <span className="mt-2 font-mono text-[10px] leading-4 text-[#635F5F]">
+              {resolvedProfile.hetznerType} · {resolvedProfile.vcpus} CPU · {resolvedProfile.memoryGb} GB · {resolvedProfile.diskGb} GB
+            </span>
+            {profile.planSlug === "matrix_builder" && (
+              <span className="mt-2 w-fit rounded-full bg-[#FAEAD1] px-2 py-0.5 text-[10px] font-semibold text-[#4D3919]">
+                Recommended
               </span>
-            ) : null}
+            )}
           </button>
         );
       })}
     </div>
+  );
+}
+
+function BillingDeveloperToolsSelector({
+  selectedTools,
+  onToggle,
+}: {
+  selectedTools: DeveloperToolId[];
+  onToggle: (tool: DeveloperToolId) => void;
+}) {
+  const selectedToolIds = new Set(selectedTools);
+
+  return (
+    <section aria-labelledby="billing-coding-agents-heading">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h4 id="billing-coding-agents-heading" className="text-sm font-semibold text-[#1F2D1D]">
+          Install coding agents?
+        </h4>
+        <span className="text-xs text-[#635F5F]">{selectedTools.length} selected</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {developerToolOptions.map((tool) => {
+          const checked = selectedToolIds.has(tool.id);
+          return (
+            <label
+              key={tool.id}
+              className={`flex min-h-10 cursor-pointer items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
+                checked
+                  ? "border-[#0E3422] bg-[#EEF7F2] text-[#0E3422]"
+                  : "border-[#E0E1CA] bg-[#FCFCF8] text-[#635F5F] hover:border-[#97D8B9]"
+              }`}
+            >
+              <span className="truncate">{tool.label}</span>
+              <input
+                type="checkbox"
+                aria-label={tool.label}
+                checked={checked}
+                onChange={() => onToggle(tool.id)}
+                className="sr-only"
+              />
+              <span
+                className={`flex size-4 shrink-0 items-center justify-center rounded-full border ${
+                  checked
+                    ? "border-[#0E3422] bg-[#0E3422] text-[#FCFCF8]"
+                    : "border-[#C8C6C6]"
+                }`}
+                aria-hidden="true"
+              >
+                {checked ? <CheckIcon className="size-2.5" /> : null}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -818,7 +801,7 @@ function RegionOptionRows({
     <div className="flex flex-col gap-1">
       {groupRegions().map(({ group, regions }) => (
         <div key={group}>
-          <p className="px-1.5 pb-0.5 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-forest/40">
+          <p className="px-1.5 pb-0.5 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#635F5F]/65">
             {group}
           </p>
           {regions.map((region) => {
@@ -831,26 +814,26 @@ function RegionOptionRows({
                 onClick={() => onSelect(region.featureSlug)}
                 className={`flex w-full items-center justify-between gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors ${
                   selected
-                    ? "border-ember/55 bg-[#fff7ec]"
-                    : "border-transparent hover:bg-forest/[0.04]"
+                    ? "border-[#D06E53] bg-[#FAEEEB]"
+                    : "border-transparent hover:bg-[#EEF7F2]"
                 }`}
               >
                 <span className="flex min-w-0 items-center gap-2.5">
                   <span className="text-base leading-none" aria-hidden="true">
                     {region.flag}
                   </span>
-                  <span className="truncate text-sm font-medium text-deep">{region.label}</span>
-                  <span className="font-mono text-[11px] text-forest/40">{region.location}</span>
+                  <span className="truncate text-sm font-medium text-[#1F2D1D]">{region.label}</span>
+                  <span className="font-mono text-[11px] text-[#827D7D]">{region.location}</span>
                   {region.featureSlug === defaultFeature && (
-                    <span className="shrink-0 rounded-full bg-forest/8 px-1.5 py-0.5 text-[10px] font-semibold text-forest/55">
+                    <span className="shrink-0 rounded-full bg-[#E4EDD4] px-1.5 py-0.5 text-[10px] font-semibold text-[#475926]">
                       Closest
                     </span>
                   )}
                 </span>
                 {selected ? (
-                  <CheckIcon className="size-4 shrink-0 text-ember" aria-hidden="true" />
+                  <CheckIcon className="size-4 shrink-0 text-[#D06E53]" aria-hidden="true" />
                 ) : (
-                  <MapPinIcon className="size-4 shrink-0 text-forest/25" aria-hidden="true" />
+                  <MapPinIcon className="size-4 shrink-0 text-[#A8A4A4]" aria-hidden="true" />
                 )}
               </button>
             );
@@ -864,12 +847,12 @@ function RegionOptionRows({
 type PickerKey = "computer" | "region" | null;
 
 const pickerFieldBase =
-  "flex w-full items-center justify-between gap-3 rounded-2xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/40";
+  "flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379]";
 
 function pickerFieldState(open: boolean): string {
   return open
-    ? "border-ember/60 bg-white shadow-[0_10px_30px_rgba(83,68,48,0.10)]"
-    : "border-forest/15 bg-white hover:border-forest/30";
+    ? "border-[#0E3422] bg-white shadow-[0_4px_24px_rgba(31,45,29,0.08)]"
+    : "border-[#E0E1CA] bg-[#FCFCF8] hover:border-[#97D8B9]";
 }
 
 function PickerDropdown({
@@ -882,10 +865,10 @@ function PickerDropdown({
   children: ReactNode;
 }) {
   return (
-    <div className="absolute left-0 right-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-2.5rem)] origin-top overflow-hidden rounded-2xl border border-forest/12 bg-white p-2 shadow-[0_24px_70px_rgba(50,53,46,0.22)]">
-      <div className="flex items-baseline justify-between gap-3 border-b border-forest/8 px-1.5 pb-2">
-        <p className="text-xs font-semibold text-deep">{title}</p>
-        <p className="truncate text-[11px] text-forest/45">{hint}</p>
+    <div className="absolute left-0 right-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-2.5rem)] origin-top overflow-hidden rounded-xl border border-[#E0E1CA] bg-white p-2 shadow-[0_12px_36px_rgba(31,45,29,0.12)]">
+      <div className="flex items-baseline justify-between gap-3 border-b border-[#E0E1CA] px-1.5 pb-2">
+        <p className="text-xs font-semibold text-[#1F2D1D]">{title}</p>
+        <p className="truncate text-[11px] text-[#635F5F]">{hint}</p>
       </div>
       <div className="max-h-[clamp(160px,42vh,340px)] overflow-y-auto overflow-x-hidden pt-1.5">
         {children}
@@ -952,7 +935,7 @@ function SelectionTriggerCards({
   }, [openPicker]);
 
   return (
-    <div ref={containerRef} className="space-y-3">
+    <div ref={containerRef} className="space-y-4">
       <div className="relative">
         <button
           type="button"
@@ -963,22 +946,22 @@ function SelectionTriggerCards({
           className={`${pickerFieldBase} ${pickerFieldState(computerOpen)}`}
         >
           <span className="flex min-w-0 items-center gap-3">
-            <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#f4efe3] text-ember">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#E4EDD4] text-[#0E3422]">
               <CpuIcon className="size-5" aria-hidden="true" />
             </span>
             <span className="flex min-w-0 flex-col">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-forest/45">
-                Computer
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#635F5F]">
+                Computer power
               </span>
               <span className="flex items-center gap-2">
-                <span className="truncate text-sm font-semibold text-deep">
+                <span className="truncate text-sm font-semibold text-[#1F2D1D]">
                   {selectedProfile.label}
                 </span>
-                <span className="font-mono text-[11px] text-forest/45">
+                <span className="font-mono text-[11px] text-[#635F5F]">
                   {selectedProfile.hetznerType}
                 </span>
               </span>
-              <span className="truncate font-mono text-[11px] text-forest/45">
+              <span className="truncate font-mono text-[11px] text-[#635F5F]">
                 {profileSpec(selectedProfile)}
               </span>
             </span>
@@ -986,16 +969,16 @@ function SelectionTriggerCards({
           <span className="flex shrink-0 items-center gap-2.5">
             {showPrice ? (
               <span className="text-right">
-                <span className="text-sm font-semibold text-deep">
+                <span className="text-sm font-semibold text-[#1F2D1D]">
                   ${profilePrice(selectedProfile, billingInterval)}
                 </span>
-                <span className="block text-[10px] text-forest/45">
+                <span className="block text-[10px] text-[#635F5F]">
                   /mo
                 </span>
               </span>
             ) : null}
             <ChevronDownIcon
-              className={`size-4 text-forest/40 transition-transform ${computerOpen ? "rotate-180" : ""}`}
+              className={`size-4 text-[#635F5F] transition-transform ${computerOpen ? "rotate-180" : ""}`}
               aria-hidden="true"
             />
           </span>
@@ -1017,37 +1000,37 @@ function SelectionTriggerCards({
         )}
       </div>
 
-      <div className="border-t border-forest/8 pt-3">
-        <DeveloperToolsSelector
+      <div className="border-t border-[#E0E1CA] pt-4">
+        <BillingDeveloperToolsSelector
           selectedTools={developerTools}
           onToggle={onToggleDeveloperTool}
         />
       </div>
 
-      <div className="relative border-t border-forest/8 pt-3">
+      <div className="relative border-t border-[#E0E1CA] pt-3">
         <button
           type="button"
           aria-label="Change server location"
           aria-haspopup="true"
           aria-expanded={regionOpen}
           onClick={() => onToggle("region")}
-          className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/40 ${pickerFieldState(regionOpen)}`}
+          className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379] ${pickerFieldState(regionOpen)}`}
         >
           <span className="flex min-w-0 items-center gap-3">
-            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#f4efe3] text-base leading-none">
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#EDF3F7] text-base leading-none">
               <span aria-hidden="true">{selectedRegion.flag}</span>
             </span>
             <span className="flex min-w-0 flex-col">
-              <span className="text-xs font-semibold text-deep">
-                Server location · {selectedRegion.label}
+              <span className="text-xs font-semibold text-[#1F2D1D]">
+                <span>Region</span> · {selectedRegion.label}
               </span>
-              <span className="text-[11px] text-forest/45">
-                Closest available · change only if needed
+              <span className="text-[11px] text-[#635F5F]">
+                Closest available
               </span>
             </span>
           </span>
           <ChevronDownIcon
-            className={`size-4 shrink-0 text-forest/40 transition-transform ${regionOpen ? "rotate-180" : ""}`}
+            className={`size-4 shrink-0 text-[#635F5F] transition-transform ${regionOpen ? "rotate-180" : ""}`}
             aria-hidden="true"
           />
         </button>
@@ -1295,32 +1278,29 @@ function BillingPanelInner({
 
   return (
     <div
-      className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start"
+      className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start"
       data-testid="billing-configurator-layout"
     >
       <div className="space-y-4" data-testid="billing-configurator-main">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-forest/55">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0E3422]/60">
             {mode === "provisioning"
               ? "Provisioning"
               : mode === "add-computer"
               ? "New computer"
               : "Billing"}
           </p>
-          <h3 className="mt-1.5 text-xl font-semibold tracking-tight text-deep sm:text-2xl">
+          <h3 className="mt-1.5 font-[family-name:var(--font-bricolage)] text-2xl font-semibold tracking-tight text-[#1F2D1D] sm:text-[28px]">
             {mode === "device-setup"
-              ? "Finish billing to approve CLI login"
-              : mode === "provisioning" || mode === "add-computer"
-              ? "Pick the cloud computer Matrix boots on"
-              : "Manage your hosted Matrix computer"}
+              ? "Finish billing"
+              : "Choose your Matrix computer"}
           </h3>
-          <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
-            Choose your computer and developer tools once. Matrix starts preparing it while
-            you complete secure billing in Stripe.
+          <p className="mt-1 max-w-xl text-sm text-[#635F5F]">
+            Power, agents, checkout. Your closest region is already selected.
           </p>
         </div>
 
-        <div className="rounded-3xl border border-forest/12 bg-white p-4 sm:p-5">
+        <div className="rounded-2xl border border-[#E0E1CA] bg-[#FCFCF8] p-4 shadow-[0_2px_8px_rgba(31,45,29,0.07)] sm:p-5">
           <SelectionTriggerCards
             profiles={allowedProfiles}
             selectedProfile={selectedProfile}
@@ -1338,17 +1318,6 @@ function BillingPanelInner({
               (current) => nextDeveloperToolsSelection(current, tool),
             )}
           />
-          <ul className="mt-4 space-y-2 border-t border-forest/8 pt-4">
-            {includedHighlights.map((item) => (
-              <li
-                key={item}
-                className="flex items-start gap-2 text-xs leading-5 text-forest/65"
-              >
-                <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-ember" aria-hidden="true" />
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
         </div>
       </div>
       <CheckoutPanel

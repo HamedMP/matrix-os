@@ -54,6 +54,17 @@ describe("BillingSection", () => {
     vi.useRealTimers();
   });
 
+  it("uses the three-day offer in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+
+    expect(screen.getByText("Start your 3-day free trial")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    vi.unstubAllEnvs();
+  });
+
   it("waits for Clerk before rendering a subscription state", async () => {
     clerkState.isLoaded = false;
     clerkState.activePlan = "matrix_starter";
@@ -77,14 +88,16 @@ describe("BillingSection", () => {
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
-    expect(screen.getByText("Manage your hosted Matrix computer")).toBeTruthy();
+    expect(screen.getByText("Choose your Matrix computer")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
-    expect(screen.getByText("Secure checkout")).toBeTruthy();
-    expect(screen.getByText("Visa")).toBeTruthy();
-    expect(screen.getByText("Mastercard")).toBeTruthy();
-    expect(screen.getAllByText("Monthly").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Secure Stripe checkout")).toBeTruthy();
+    expect(screen.queryByText("Visa")).toBeNull();
+    expect(screen.queryByText("Mastercard")).toBeNull();
+    expect(screen.getByText("Monthly plan")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Annual" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Install coding agents?" })).toBeTruthy();
+    expect(screen.queryByText("Dedicated VPS prepared before checkout")).toBeNull();
+    expect(screen.queryByText("Your files and data persist across restarts")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
@@ -111,9 +124,8 @@ describe("BillingSection", () => {
     await waitFor(() => expect(screen.getByText(`Start your ${durationDays}-day free trial`)).toBeTruthy());
     expect(screen.getByText("Card required")).toBeTruthy();
     expect(screen.getByText("$0 today").classList.contains("text-cream")).toBe(true);
-    expect(screen.getByText(`First charge ${formattedTrialEnd}`)).toBeTruthy();
-    expect(screen.getByText(`Cancel before ${formattedTrialEnd} to avoid being charged.`)).toBeTruthy();
-    expect(screen.getByText("$100/month after your trial")).toBeTruthy();
+    expect(screen.getByText(`Then $100/month on ${formattedTrialEnd}`)).toBeTruthy();
+    expect(screen.getByText(`Cancel before ${formattedTrialEnd}`)).toBeTruthy();
     expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy();
   });
 
@@ -491,16 +503,16 @@ describe("BillingSection", () => {
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
-    expect(screen.getByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
-    expect(screen.getAllByText("Computer").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Choose your Matrix computer")).toBeTruthy();
+    expect(screen.getByText("Computer power")).toBeTruthy();
 
     // Computer options live in a click-to-open dropdown now.
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.getByText("CPX22")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Starter.*CPX22/i })).toBeTruthy();
     expect(screen.getByText("$20")).toBeTruthy();
-    expect(screen.getAllByText("CPX42").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("button", { name: /Builder.*CPX42/i })).toBeTruthy();
     expect(screen.getAllByText("$100").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("CPX52")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Max.*CPX52/i })).toBeTruthy();
     expect(screen.getByText("$200")).toBeTruthy();
 
     // Region options live in their own dropdown (opening it closes the computer one).
@@ -516,8 +528,7 @@ describe("BillingSection", () => {
     expect(screen.getByText("ash")).toBeTruthy();
     expect(screen.getByText("hil")).toBeTruthy();
     expect(screen.queryByText("sin")).toBeNull();
-    expect(screen.getByText("Start checkout & provision")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Install coding agents?" })).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
@@ -546,7 +557,7 @@ describe("BillingSection", () => {
 
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
     const computer = screen.getByRole("button", { name: "Change computer" });
-    const agents = screen.getByRole("heading", { name: "Developer tools" });
+    const agents = screen.getByRole("heading", { name: "Install coding agents?" });
     const location = screen.getByRole("button", { name: "Change server location" });
     const follows = Node.DOCUMENT_POSITION_FOLLOWING;
 
@@ -568,14 +579,14 @@ describe("BillingSection", () => {
     const layout = screen.getByTestId("billing-configurator-layout");
     const mainColumn = screen.getByTestId("billing-configurator-main");
     const heading = screen.getByRole("heading", {
-      name: "Pick the cloud computer Matrix boots on",
+      name: "Choose your Matrix computer",
     });
     const summary = screen.getByRole("complementary");
 
     expect(layout.children).toHaveLength(2);
     expect(layout.children[0]).toBe(mainColumn);
     expect(layout.children[1]).toBe(summary);
-    expect(layout.className).toContain("lg:grid-cols-[minmax(0,1fr)_360px]");
+    expect(layout.className).toContain("lg:grid-cols-[minmax(0,1fr)_340px]");
     expect(layout.className).toContain("lg:items-start");
     expect(mainColumn.contains(heading)).toBe(true);
   });
@@ -595,14 +606,10 @@ describe("BillingSection", () => {
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
-    expect(
-      screen.getByText("Choose billing in Settings, then Matrix returns to CLI device approval."),
-    ).toBeTruthy();
-    expect(screen.getByText("Finish billing to approve CLI login")).toBeTruthy();
+    expect(screen.queryByText(/returns to CLI device approval/)).toBeNull();
+    expect(screen.getByText("Finish billing")).toBeTruthy();
     expect(screen.getByText("Billing settings")).toBeTruthy();
-    expect(
-      screen.getByText("Review your plan and region here. Stripe opens only after you choose Continue to pay."),
-    ).toBeTruthy();
+    expect(screen.queryByText(/Review your plan and region here/)).toBeNull();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
 

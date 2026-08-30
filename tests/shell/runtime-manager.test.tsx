@@ -320,7 +320,7 @@ describe("RuntimeManager", () => {
     fireEvent.change(input, { target: { value: "New Design Studio" } });
     expect(screen.getByText("new-design-studio")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose your Matrix computer" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Change computer" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Change server location" })).toBeTruthy();
   });
@@ -335,7 +335,7 @@ describe("RuntimeManager", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose your Matrix computer" })).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     expect(screen.getByText("New subscription")).toBeTruthy();
@@ -409,7 +409,7 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(screen.getByRole("alert").textContent).toMatch(/already uses/i);
-    expect(screen.queryByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Choose your Matrix computer" })).toBeNull();
   });
 
   it("recovers when the dedicated onboarding surface cannot load inventory", async () => {
@@ -728,7 +728,7 @@ describe("RuntimeManager", () => {
 
     await renderOnboarding({}, "/?billing=canceled&handoff=add-computer");
 
-    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose your Matrix computer" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Activating your computer subscription" })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("runtimeSlot=research-lab"));
   });
