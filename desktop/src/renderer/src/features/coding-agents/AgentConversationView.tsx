@@ -666,6 +666,7 @@ function ConversationComposer({
   attachments,
   readiness,
   summary,
+  active,
 }: {
   threadId: string;
   projectId?: string;
@@ -675,6 +676,7 @@ function ConversationComposer({
   attachments: ReturnType<typeof useConversationAttachments>;
   readiness?: ProviderReadinessPresentation;
   summary?: RuntimeSummary;
+  active: boolean;
 }) {
   const [message, setMessage] = useState("");
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
@@ -690,7 +692,7 @@ function ConversationComposer({
   const fallbackCatalog = useMemo(() => summary
     ? createLegacyProjectProviderCatalog(summary)
     : { revision: "legacy_empty", drivers: [], instances: [] }, [summary]);
-  const loadedCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const loadedCatalog = useChatProviderCatalog(fallbackCatalog, { active }).catalog;
   const projectCatalog = useMemo(() => summary
     ? filterCatalogForLegacyProject(loadedCatalog, summary)
     : fallbackCatalog, [fallbackCatalog, loadedCatalog, summary]);
@@ -840,6 +842,7 @@ export function AgentConversationView({
   error,
   canSendTurns,
   summary,
+  active = true,
 }: {
   status: ConversationStatus;
   snapshot: AgentThreadSnapshot | null;
@@ -848,6 +851,7 @@ export function AgentConversationView({
   // When provided, the composer bar shows the thread's provider as a
   // display-only picker (turns cannot change provider or mode).
   summary?: RuntimeSummary;
+  active?: boolean;
 }) {
   const threadRunning = snapshot?.thread.status === "running"
     || snapshot?.thread.status === "starting"
@@ -999,6 +1003,7 @@ export function AgentConversationView({
           attachments={attachments}
           readiness={providerReadiness}
           summary={summary}
+          active={active}
         />
       ) : (
         <p

@@ -119,7 +119,7 @@ export function CanonicalChatWorkspace({
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const liveCatalog = useChatProviderCatalog(fallbackCatalog, api ?? null, active);
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog, { api: api ?? null, active });
   const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
   const providerCatalog = catalog ?? (
     liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog

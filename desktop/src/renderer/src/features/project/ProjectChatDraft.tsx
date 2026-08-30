@@ -172,7 +172,7 @@ export function ProjectChatDraft({
     () => createLegacyProjectProviderCatalog(summary),
     [summary],
   );
-  const liveCatalog = useChatProviderCatalog(fallbackCatalog);
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog, { active });
   const unavailableCatalog = useMemo(
     () => failClosedProviderCatalog(fallbackCatalog),
     [fallbackCatalog],

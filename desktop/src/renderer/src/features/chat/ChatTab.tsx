@@ -54,7 +54,7 @@ export function canSubmitChatDraft(
     && !contextBlocksSend;
 }
 
-export function HermesPane() {
+export function HermesPane({ active = true }: { active?: boolean } = {}) {
   const api = useConnection((state) => state.api);
   const messages = useHermesChat((state) => state.messages);
   const sessionId = useHermesChat((state) => state.sessionId);
@@ -82,7 +82,7 @@ export function HermesPane() {
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const canonicalProviderCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const canonicalProviderCatalog = useChatProviderCatalog(fallbackCatalog, { active }).catalog;
   const providerCatalog = useMemo(
     () => filterCatalogForLegacyGlobal(canonicalProviderCatalog),
     [canonicalProviderCatalog],
@@ -303,7 +303,7 @@ export function HermesPane() {
   );
 }
 
-function LegacyChatTab() {
+function LegacyChatTab({ active }: { active: boolean }) {
   const api = useConnection((state) => state.api);
   const conversationView = useHermesChat((state) => state.view);
   const indexStatus = useHermesChat((state) => state.indexStatus);
@@ -336,7 +336,7 @@ function LegacyChatTab() {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-      {conversationView === "index" ? <HermesConversationIndex api={api} /> : <HermesPane />}
+      {conversationView === "index" ? <HermesConversationIndex api={api} /> : <HermesPane active={active} />}
     </div>
   );
 }
@@ -397,7 +397,7 @@ export default function ChatTab({
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}
       fallback={allowLegacyFallback
-        ? <LegacyChatTab />
+        ? <LegacyChatTab active={active} />
         : <ChatUnavailableState onRetry={() => setRouteAttempt((attempt) => attempt + 1)} />}
     />
   );

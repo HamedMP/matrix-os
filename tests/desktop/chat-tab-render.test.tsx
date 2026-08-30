@@ -588,7 +588,7 @@ describe("ChatTab", () => {
     useConnection.setState({
       api: {
         get: vi.fn(async (path: string) => {
-          if (path === "/api/chat-providers") return availableCatalog;
+          if (path.startsWith("/api/chat-providers")) return availableCatalog;
           if (path.startsWith("/api/files/list")) return { entries: [] };
           throw new Error(`unexpected GET ${path}`);
         }),
@@ -626,7 +626,7 @@ describe("ChatTab", () => {
     useConnection.setState({
       api: {
         get: vi.fn(async (path: string) => {
-          if (path === "/api/chat-providers") return availableCatalog;
+          if (path.startsWith("/api/chat-providers")) return availableCatalog;
           throw new Error(`unexpected GET ${path}`);
         }),
       } as never,
@@ -695,7 +695,7 @@ describe("ChatTab", () => {
     useConnection.setState({
       api: {
         get: vi.fn(async (path: string) => {
-          if (path === "/api/chat-providers") return catalog;
+          if (path.startsWith("/api/chat-providers")) return catalog;
           throw new Error(`unexpected GET ${path}`);
         }),
         post,
@@ -734,7 +734,7 @@ describe("ChatTab", () => {
     useConnection.setState({
       api: {
         get: vi.fn(async (path: string) => {
-          if (path === "/api/chat-providers") return availableCatalog;
+          if (path.startsWith("/api/chat-providers")) return availableCatalog;
           throw new Error(`unexpected GET ${path}`);
         }),
       } as never,
