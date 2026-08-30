@@ -931,6 +931,30 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).not.toHaveBeenCalled();
   });
 
+  it("fails closed when an interim rewrites already-published internal Hermes whitespace", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Hello  world" });
+    gateway.event("message.interim", {
+      text: "Hello world again",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Hello world again",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Hello  world" },
+      expect.objectContaining({ type: "run.completed", outcome: "failed" }),
+    ]);
+    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("does not publish excess Hermes stream whitespace before the authoritative seal", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
