@@ -88,15 +88,27 @@ function summaryFixture({
       limit: 20,
     },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: {
+    terminalWorkspaces: {
       items: [
         {
-          id: "matrix-abc1234",
-          name: "matrix-abc1234",
+          id: "tws_00000000000000000000000000000001",
+          scope: "main",
+          canonicalSize: { cols: 120, rows: 36 },
           status: "running",
-          attachable: true,
+          revision: 1,
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:01:00.000Z",
+          tabs: [{
+            id: "tt_00000000000000000000000000000001",
+            workspaceId: "tws_00000000000000000000000000000001",
+            name: "matrix-abc1234",
+            cwd: "",
+            status: "running",
+            revision: 1,
+            order: 0,
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:01:00.000Z",
+          }],
         },
       ],
       hasMore: false,
@@ -235,18 +247,18 @@ function recentWorkSummaryFixture() {
       hasMore: false,
       limit: 20,
     },
-    terminalSessions: {
-      ...summary.terminalSessions,
-      items: [
-        {
-          ...summary.terminalSessions.items[0],
-          id: "matrix-newer",
+    terminalWorkspaces: {
+      ...summary.terminalWorkspaces,
+      items: [{
+        ...summary.terminalWorkspaces.items[0],
+        updatedAt: "2026-07-06T00:11:00.000Z",
+        tabs: [{
+          ...summary.terminalWorkspaces.items[0]!.tabs[0],
+          id: "tt_00000000000000000000000000000002",
           name: "matrix-newer",
-          status: "running",
-          attachable: true,
           updatedAt: "2026-07-06T00:11:00.000Z",
-        },
-      ],
+        }],
+      }],
     },
   };
 }
