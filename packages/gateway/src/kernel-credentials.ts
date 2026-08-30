@@ -47,12 +47,18 @@ function observationForReadFailure(err: unknown): KernelCredentialObservationSta
   return err instanceof SyntaxError ? "invalid" : "unavailable";
 }
 
+function isFundedAccessEnabled(env: NodeJS.ProcessEnv): boolean {
+  const value = env.MATRIX_FUNDED_AI_ENABLED?.trim().toLowerCase();
+  return value === "1" || value === "true";
+}
+
 async function resolveKernelCredentials(
   homePath: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): Promise<KernelCredentialResolution> {
   const env = { ...baseEnv };
-  const matrixState = typeof baseEnv.ANTHROPIC_API_KEY === "string"
+  const matrixState = isFundedAccessEnabled(baseEnv)
+    && typeof baseEnv.ANTHROPIC_API_KEY === "string"
     && baseEnv.ANTHROPIC_API_KEY.trim().length > 0
     ? "ready" as const
     : "disabled" as const;

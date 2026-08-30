@@ -275,7 +275,10 @@ describe("current and legacy Anthropic models", () => {
     writeFileSync(join(providerHome, "system/config.json"), "{}");
     const providerService = new AiProviderService({
       homePath: providerHome,
-      env: { ANTHROPIC_API_KEY: "platform-secret" },
+      env: {
+        ANTHROPIC_API_KEY: "platform-secret",
+        MATRIX_FUNDED_AI_ENABLED: "1",
+      },
     });
     try {
       const providerSnapshot = await providerService.getSnapshot();

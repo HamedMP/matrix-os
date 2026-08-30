@@ -24,12 +24,16 @@ describe("AiProviderService", () => {
 
   function createService(options: {
     platformKey?: string;
+    fundedEnabled?: boolean;
     healthProbe?: AiProviderHealthProbe;
     healthTimeoutMs?: number;
   } = {}) {
     return new AiProviderService({
       homePath,
-      env: options.platformKey ? { ANTHROPIC_API_KEY: options.platformKey } : {},
+      env: options.platformKey ? {
+        ANTHROPIC_API_KEY: options.platformKey,
+        MATRIX_FUNDED_AI_ENABLED: options.fundedEnabled === false ? "0" : "1",
+      } : {},
       now: () => NOW,
       healthProbe: options.healthProbe,
       healthTimeoutMs: options.healthTimeoutMs,
@@ -62,6 +66,25 @@ describe("AiProviderService", () => {
       modelId: "claude-sonnet-5",
     });
     expect(JSON.stringify(snapshot)).not.toContain("platform-secret");
+  });
+
+  it("does not label a legacy platform key as Matrix-funded access", async () => {
+    const snapshot = await createService({
+      platformKey: "legacy-platform-secret",
+      fundedEnabled: false,
+    }).getSnapshot();
+
+    expect(snapshot.accessSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "matrix_included", state: "disabled" }),
+    ]));
+    expect(snapshot.instances).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "kernel_matrix_included", readiness: { state: "ready" } }),
+    ]));
+    expect(snapshot.active).toEqual({
+      providerInstanceId: null,
+      accessSourceId: null,
+      modelId: null,
+    });
   });
 
   it("does not silently fall back to Matrix funding when an owner source is explicitly selected", async () => {
