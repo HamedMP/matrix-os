@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
 import DesktopSupportWidget from "@desktop/renderer/src/features/support/DesktopSupportWidget";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
+import { useTabs } from "@desktop/renderer/src/stores/tabs";
+import { useUi } from "@desktop/renderer/src/stores/ui";
 
 const posthogClient = vi.hoisted(() => ({
   conversations: {
@@ -13,6 +16,7 @@ const posthogClient = vi.hoisted(() => ({
     isAvailable: vi.fn(() => true),
     show: vi.fn(),
   },
+  capture: vi.fn(),
   identify: vi.fn(),
   init: vi.fn(),
   reset: vi.fn(),
@@ -77,6 +81,9 @@ describe("Desktop support widget", () => {
       platformHost: "https://app.matrix-os.com",
       authGeneration: 1,
     });
+    useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
+    useTabs.setState(useTabs.getInitialState(), true);
+    useUi.setState(useUi.getInitialState(), true);
   });
 
   afterEach(() => {
@@ -101,6 +108,18 @@ describe("Desktop support widget", () => {
       "[desktop-support] PostHog initialization failed:",
       "Error",
     );
+  });
+
+  it("keeps Support visible without redirecting an unconfigured chat button to docs", async () => {
+    vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
+
+    render(<DesktopModeControls />);
+    expect(screen.getByRole("button", { name: "Support" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+
+    await act(async () => Promise.resolve());
+    expect(useTabs.getState().tabs).toEqual([]);
+    expect(useBrowserNavigation.getState().pending).toBeNull();
   });
 
   it("loads PostHog Conversations through the first-party relay without broad Desktop capture", async () => {
@@ -170,11 +189,15 @@ describe("Desktop support widget", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
-      .toEqual(["Main computer", "Support", "Open account menu"]);
+      .toEqual(["Search", "Support", "Main computer", "Open account menu"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(useUi.getState().paletteOpen).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Support" }));
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
     expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
@@ -188,11 +211,13 @@ describe("Desktop support widget", () => {
     fireEvent.click(replacementClose);
 
     await waitFor(() => expect(document.getElementById("ph-conversations-widget-container")).toBeNull());
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Support" }));
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(2));
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
     expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
   });
@@ -215,6 +240,20 @@ describe("Desktop support widget", () => {
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
     expect(posthogClient.identify).toHaveBeenLastCalledWith("neo", {
       $name: "Neo",
+      matrix_client: "desktop",
+    });
+  });
+
+  it("captures bounded Desktop lifecycle events after identifying the account", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    window.dispatchEvent(new CustomEvent("matrix:desktop-analytics", {
+      detail: { name: "desktop_app_opened", appKind: "browser" },
+    }));
+
+    expect(posthogClient.capture).toHaveBeenCalledWith("desktop_app_opened", {
+      app_kind: "browser",
       matrix_client: "desktop",
     });
   });

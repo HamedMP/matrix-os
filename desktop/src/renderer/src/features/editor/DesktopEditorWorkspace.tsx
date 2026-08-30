@@ -86,7 +86,7 @@ export default function DesktopEditorWorkspace() {
           ) : paths.map((path) => {
             const active = path === activePath;
             return (
-              <RetainedPane key={path} active={active} visible={active}>
+              <RetainedPane key={path} active={active} visible={active} className="absolute inset-0 min-h-0 min-w-0">
                 <MonacoEditorHost
                   path={path}
                   active={active}

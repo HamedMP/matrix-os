@@ -11,6 +11,9 @@ export const ProviderModelReferenceSchema = z.string()
   )
   .refine((value) => !value.includes(".."), {
     message: "Model reference cannot contain traversal",
+  })
+  .refine((value) => !/^[A-Za-z]:\//.test(value), {
+    message: "Model reference cannot be an absolute path",
   });
 
 const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;

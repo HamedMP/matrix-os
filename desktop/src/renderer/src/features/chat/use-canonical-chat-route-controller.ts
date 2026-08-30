@@ -283,6 +283,43 @@ export function useCanonicalChatRouteController({
     }
   }, [client, detail, loadDetail]);
 
+  const retryTurn = useCallback(async (turnId: string) => {
+    const current = detailRef.current;
+    if (!current || current.record.activeRun) return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const admitted = await client.retryTurn(current.record.chat.id, turnId, {
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+      });
+      if (!isCurrentScope()) return null;
+      const existing = detailRef.current;
+      if (!existing || existing.record.chat.id !== admitted.record.chat.id) return null;
+      const next = {
+        ...existing,
+        record: admitted.record,
+        runs: [
+          ...existing.runs.filter((run) => run.id !== admitted.run.id),
+          admitted.run,
+        ],
+      };
+      detailRef.current = next;
+      setDetail(next);
+      setItems((existing) => existing.map((item) => (
+        item.chat.id === admitted.record.chat.id ? admitted.record : item
+      )));
+      setError(null);
+      return admitted;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] retry failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      setError("The Run could not be retried. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return null;
+    }
+  }, [client, loadDetail]);
+
   const deleteChat = useCallback(async (chatId: string) => {
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
@@ -313,6 +350,7 @@ export function useCanonicalChatRouteController({
     moveProject,
     submitTurn,
     cancelActiveRun,
+    retryTurn,
     deleteChat,
     startNewChat: () => selectChat(null),
   };

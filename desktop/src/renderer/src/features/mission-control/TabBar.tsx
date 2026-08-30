@@ -38,7 +38,7 @@ const TAB_ICON: Record<TabKind, LucideIcon> = {
 
 function TabIcon({ tab, active }: { tab: Tab; active: boolean }) {
   const Icon = TAB_ICON[tab.kind];
-  const iconUrl = tab.icon && /^https?:\/\//.test(tab.icon) ? tab.icon : null;
+  const iconUrl = tab.icon && /^(?:https?:\/\/|\/|data:image\/)/.test(tab.icon) ? tab.icon : null;
   const [failed, setFailed] = useState(false);
   const prev = useRef<string | null>(null);
   if (prev.current !== iconUrl) {

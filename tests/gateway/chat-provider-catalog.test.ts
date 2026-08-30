@@ -476,6 +476,41 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.defaultSelection?.model).toBe("openai:gpt-5");
   });
 
+  it("preserves a bounded provider-owned model path in the canonical catalog", async () => {
+    const providerModel = "anthropic/claude-opus-4.6";
+    const source: AgentRuntimeSource = async () => {
+      const snapshot = await runtimeSource()(AbortSignal.timeout(1_000));
+      return {
+        ...snapshot,
+        providers: [{
+          ...snapshot.providers[0]!,
+          id: "openai-codex",
+          models: [{
+            ...snapshot.providers[0]!.models[0]!,
+            id: providerModel,
+          }],
+        }],
+        messaging: {
+          runtime: "hermes",
+          provider: "openai-codex",
+          model: providerModel,
+          configured: true,
+        },
+      };
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([]),
+      agentRuntimeSource: source,
+    });
+
+    const hermes = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "hermes_default")!;
+
+    expect(hermes.models.map((model) => model.id))
+      .toEqual([`openai-codex:${providerModel}`]);
+    expect(hermes.defaultSelection?.model).toBe(`openai-codex:${providerModel}`);
+  });
+
   it("keeps the active system runtime when coding inventory fails", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: {

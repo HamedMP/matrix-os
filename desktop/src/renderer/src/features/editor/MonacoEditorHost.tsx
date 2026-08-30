@@ -76,6 +76,7 @@ export default function MonacoEditorHost({
   const [saving, setSaving] = useState(false);
   const [documentRevision, setDocumentRevision] = useState(0);
   const [fallbackContent, setFallbackContent] = useState("");
+  const [monacoState, setMonacoState] = useState<"pending" | "ready" | "failed">("pending");
   const supportsMonaco = typeof Worker === "function"
     && typeof navigator !== "undefined"
     && !navigator.userAgent.includes("jsdom");
@@ -89,6 +90,7 @@ export default function MonacoEditorHost({
     setLoadError(null);
     setSaveError(null);
     setConflict(false);
+    setMonacoState("pending");
     fileRef.current = null;
     filesRef.current = files;
     contentRef.current = "";
@@ -119,6 +121,7 @@ export default function MonacoEditorHost({
     if (!host || !supportsMonaco || loadState !== "ready") return;
     let current = true;
     let model: MonacoEditor.ITextModel | null = null;
+    setMonacoState("pending");
     void import("monaco-editor").then((monaco) => {
       if (!current) return;
       model = monaco.editor.createModel(contentRef.current, languageForPath(path));
@@ -144,6 +147,16 @@ export default function MonacoEditorHost({
         dirtyChangeRef.current(contentRef.current !== fileRef.current?.content);
       });
       editorRef.current = editor;
+      setMonacoState("ready");
+    }).catch((error: unknown) => {
+      model?.dispose();
+      model = null;
+      if (!current) return;
+      console.warn(
+        "[desktop-editor] Monaco initialization failed:",
+        error instanceof Error ? error.name : typeof error,
+      );
+      setMonacoState("failed");
     });
     return () => {
       current = false;
@@ -247,22 +260,31 @@ export default function MonacoEditorHost({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {supportsMonaco ? (
-        <div ref={hostRef} className="min-h-0 flex-1" data-monaco-editor data-path={path} />
-      ) : (
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        {supportsMonaco ? (
+          <div
+            ref={hostRef}
+            className="absolute inset-0 min-h-0"
+            data-monaco-editor
+            data-monaco-state={monacoState}
+            data-path={path}
+            style={monacoState === "ready" ? undefined : { opacity: 0, pointerEvents: "none" }}
+          />
+        ) : null}
         <textarea
           aria-label={`Edit ${path}`}
           value={fallbackContent}
+          hidden={supportsMonaco && monacoState === "ready"}
           onChange={(event) => {
             const content = event.target.value;
             contentRef.current = content;
             setFallbackContent(content);
             dirtyChangeRef.current(content !== fileRef.current?.content);
           }}
-          className="min-h-0 flex-1 resize-none border-0 p-4 font-mono text-[13px] leading-5 outline-none"
+          className="absolute inset-0 size-full resize-none border-0 p-4 font-mono text-[13px] leading-5 outline-none"
           style={{ background: "var(--bg-sunken)", color: "var(--text-primary)" }}
         />
-      )}
+      </div>
       {saveError ? (
         <div role="alert" className="flex items-center justify-between gap-3 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
           <span>{saveError}</span><Button variant="ghost" onClick={() => setSaveError(null)}>Dismiss</Button>

@@ -348,7 +348,7 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
     evidence: [
       testEvidence(
         "tests/desktop/terminals-tab.test.tsx",
-        "renders canonical active, waiting, and closed lifecycle badges with relative activity",
+        "renders relative activity without lifecycle dots",
       ),
       testEvidence(
         "tests/desktop/terminals-tab.test.tsx",
@@ -364,7 +364,7 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
       "completed",
       "stopped",
     ],
-    assertion: "Session list and detail cover running, waiting, idle, ended, failure, and retry states.",
+    assertion: "Session rows cover running, waiting, and ended states without redundant lifecycle dots, while loading and failures remain bounded and retryable.",
   },
   {
     id: "terminal-search-empty",
@@ -385,7 +385,7 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
     evidence: [
       testEvidence(
         "tests/desktop/terminals-tab.test.tsx",
-        "keeps the OS View sidebar delete action accessible",
+        "keeps delete and connect actions in one non-overlapping overflow menu",
       ),
       testEvidence(
         "tests/desktop/terminals-tab.test.tsx",

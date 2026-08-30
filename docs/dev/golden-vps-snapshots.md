@@ -14,7 +14,7 @@ The approved product invariants and policy are defined by [spec 109](../../specs
 - Do not mark an image selectable until an independent clone proves the exact bundle, runtime health, fresh identity, and sanitation invariants.
 - Customer data and owner backups never enter a golden snapshot. Recovery restores an owner-scoped backup only after base activation.
 
-The feature ships disabled. `GOLDEN_SNAPSHOT_BUILDS_ENABLED` controls candidate production. `GOLDEN_SNAPSHOTS_ENABLED` and `GOLDEN_SNAPSHOT_ROLLOUT_PERCENT` only bootstrap a missing compatibility-scoped Postgres rollout row; the durable row is authoritative thereafter. Builds and selection are deliberately separate.
+Configuration parsing remains fail-closed by default. Production Cloud Run explicitly deploys with `GOLDEN_SNAPSHOTS_ENABLED=true` and `GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=100`. Those values bootstrap a missing compatibility-scoped Postgres rollout row; the durable row is authoritative thereafter. `GOLDEN_SNAPSHOT_BUILDS_ENABLED` independently controls candidate production, so builds and selection remain separate failure domains.
 
 ## Architecture and Source of Truth
 
@@ -42,9 +42,9 @@ Related state changes use Postgres transactions. Provider requests are always ou
 
 ## Build and Validation
 
-The release publisher registers immutable metadata after upload. When that same operation promotes the bundle to `stable`, the platform transaction records eligibility and enqueues the exact bundle build. The release workflow has no separate enqueue job, and platform startup performs no historical lookback. `GOLDEN_SNAPSHOT_BUILDS_ENABLED` gates worker claims, not durable stable-promotion enqueue. The platform deployment workflow defaults workers to `false` and keeps snapshot selection disabled with rollout `0%`.
+The release publisher registers immutable metadata after upload. When that same operation promotes the bundle to `stable`, the platform transaction records eligibility and enqueues the exact bundle build. The release workflow has no separate enqueue job, and platform startup performs no historical lookback. `GOLDEN_SNAPSHOT_BUILDS_ENABLED` gates worker claims, not durable stable-promotion enqueue. Candidate revisions keep background workers off, while production-role revisions enable them; both deploy the same snapshot-selection bootstrap policy of enabled at `100%`.
 
-The worker uses bounded batches and leases and claims production capacity only for the current eligible stable release. Ephemeral builders and validation clones carry exact labels for build ID, snapshot ID, and role. Those labels are also the only allowed basis for adopting a resource after an ambiguous create result. Zero matches means wait; multiple exact matches quarantine the build. Cleanup verifies the recorded resource ID and labels before deletion.
+The worker uses bounded batches and leases and claims production capacity only for the current eligible stable release. Ephemeral builders and validation clones carry exact labels for build ID, snapshot ID, and role. Those labels are also the only allowed basis for adopting a resource after an ambiguous create result. Zero matches means wait; multiple exact matches quarantine the build. Cleanup verifies the recorded resource ID and labels before deletion. The production platform deployment seeds new compatibility keys with selection enabled at 100%; operators can still change the durable compatibility-scoped rollout row independently.
 
 The sanitizer must remove or reset all of the following before shutdown:
 
@@ -85,13 +85,13 @@ Recovery uses the same image decision and lease rules, but a golden snapshot is 
 
 ## Configuration
 
-All values are bounded during configuration parsing. Defaults keep building and selection off.
+All values are bounded during configuration parsing. Application defaults keep building and selection off, while the production Cloud Run workflow explicitly sets selection to `true` and `100`.
 
 | Variable | Default | Purpose |
 |---|---:|---|
 | `GOLDEN_SNAPSHOT_BUILDS_ENABLED` | `false` | Allow candidate build workers |
-| `GOLDEN_SNAPSHOTS_ENABLED` | `false` | Allow provisioning/recovery selection |
-| `GOLDEN_SNAPSHOT_ROLLOUT_PERCENT` | `0` | Deterministic customer rollout percentage |
+| `GOLDEN_SNAPSHOTS_ENABLED` | `false` (`true` in production) | Allow provisioning/recovery selection |
+| `GOLDEN_SNAPSHOT_ROLLOUT_PERCENT` | `0` (`100` in production) | Deterministic customer rollout percentage |
 | `GOLDEN_SNAPSHOT_ARCHITECTURE` | `x86` | Provider architecture compatibility |
 | `GOLDEN_SNAPSHOT_REGION` | `eu-central` | Region compatibility policy |
 | `GOLDEN_SNAPSHOT_BASE_IMAGE` | `HETZNER_IMAGE` | Clean builder base image |

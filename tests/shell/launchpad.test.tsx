@@ -40,6 +40,8 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
     onRegenerateIcon: vi.fn(),
     onRenameApp: vi.fn(),
     onRemoveFromCanvas: vi.fn(),
+    onCreateApp: vi.fn(),
+    onAddToDesktop: vi.fn(),
   };
   const props = {
     apps: opts.apps ?? defaultApps,
@@ -115,7 +117,7 @@ describe("Launchpad (macos-glass launcher)", () => {
         tile.textContent?.trim(),
       );
 
-      expect(names).toEqual(["Terminal", "Notes", "Calculator", "Chess", "2048"]);
+      expect(names).toEqual(["Create app", "Terminal", "Notes", "Calculator", "Chess", "2048"]);
     },
   );
 
@@ -144,13 +146,36 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(document.activeElement).toBe(search);
 
     expect(screen.getByRole("button", { name: "Terminal" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create app" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Chess" })).toBeTruthy();
     expect(
       (container.querySelector("[data-launchpad-grid]") as HTMLElement).style.gridTemplateColumns,
-    ).toContain("repeat(3,");
+    ).toContain("repeat(4,");
     // One page of apps: no page dots.
     expect(screen.queryByRole("button", { name: /go to page/i })).toBeNull();
+  });
+
+  it("launches Create app through the dedicated first tile", async () => {
+    setDesign("macos-glass");
+    const { handlers, container } = await renderLauncher();
+
+    const firstTile = container.querySelector<HTMLElement>("[data-launchpad-tile]");
+    expect(firstTile?.getAttribute("aria-label")).toBe("Create app");
+    fireEvent.click(screen.getByRole("button", { name: "Create app" }));
+
+    expect(handlers.onCreateApp).toHaveBeenCalledOnce();
+    expect(handlers.onOpenApp).not.toHaveBeenCalledWith("Create app", expect.anything());
+  });
+
+  it("adds a launcher app to the Desktop from its context menu", async () => {
+    setDesign("macos-glass");
+    const { handlers } = await renderLauncher();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
+
+    expect(handlers.onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html");
   });
 
   it("reserves the grid padding and gaps so launchpad stays centered in the viewport", () => {
@@ -225,8 +250,8 @@ describe("Launchpad (macos-glass launcher)", () => {
     }));
     await renderLauncher({ apps });
 
-    expect(screen.queryByRole("button", { name: "App 8" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "App 9" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "App 7" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "App 8" })).toBeNull();
 
     const dots = screen.getAllByRole("button", { name: /go to page/i });
     expect(dots).toHaveLength(2);
@@ -235,6 +260,7 @@ describe("Launchpad (macos-glass launcher)", () => {
 
     fireEvent.click(dots[1]);
     expect(screen.queryByRole("button", { name: "App 1" })).toBeNull();
+    expect(screen.getByRole("button", { name: "App 8" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "App 9" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "App 10" })).toBeTruthy();
     expect(dots[1].getAttribute("aria-current")).toBe("page");

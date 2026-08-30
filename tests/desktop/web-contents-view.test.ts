@@ -189,6 +189,28 @@ describe("createWebContentsView", () => {
     expect(electronMock.shell.openExternal).not.toHaveBeenCalled();
   });
 
+  it("keeps safe cross-origin navigation inside a public Browser view", () => {
+    createWebContentsView({
+      window: {
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:browser",
+      allowedOrigins: ["https://matrix-os.com"],
+      allowPublicNavigation: true,
+      onState: vi.fn(),
+    });
+    const preventDefault = vi.fn();
+    const navigate = electronMock.handlers.get("will-navigate");
+
+    navigate?.({ preventDefault }, "https://developer.mozilla.org/en-US/");
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(electronMock.webContents.loadURL).toHaveBeenCalledWith(
+      "https://developer.mozilla.org/en-US/",
+    );
+    expect(electronMock.shell.openExternal).not.toHaveBeenCalled();
+  });
+
   it("opens HTTPS links requested by the hosted Shell in the system browser", () => {
     createWebContentsView({
       window: {

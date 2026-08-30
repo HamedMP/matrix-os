@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SearchIcon } from "@/lib/hugeicons";
+import { PlusIcon, SearchIcon } from "@/lib/hugeicons";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { groupLauncherApps } from "@/lib/dock-sections";
@@ -27,11 +27,13 @@ export function Launchpad({
   visible,
   onOpenApp,
   onClose,
+  onAddToDesktop,
 }: {
   apps: AppEntry[];
   visible: boolean;
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
+  onAddToDesktop?: (path: string) => void;
 }) {
   // Keep the registry's stable order, flattened from the classic sections.
   const groups = groupLauncherApps(apps);
@@ -39,6 +41,7 @@ export function Launchpad({
 
   const [query, setQuery] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
+  const [contextApp, setContextApp] = useState<AppEntry | null>(null);
   const filteredApps = filterLaunchpadApps(orderedApps, query);
 
   // Viewport-derived page size. window is only read inside this effect
@@ -141,7 +144,7 @@ export function Launchpad({
               }}
             >
               {pageApps.map((app) => (
-                <LaunchpadTile key={app.path} app={app} onLaunch={() => launch(app)} />
+                <LaunchpadTile key={app.path} app={app} onLaunch={() => launch(app)} onContextMenu={() => setContextApp(app)} />
               ))}
             </div>
           ) : (
@@ -163,17 +166,34 @@ export function Launchpad({
               />
             ))}
         </div>
+        {contextApp && contextApp.path !== "__create-app__" && onAddToDesktop ? (
+          <div role="menu" className="fixed left-1/2 top-1/2 z-50 min-w-48 -translate-x-1/2 rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg">
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                onAddToDesktop(contextApp.path);
+                setContextApp(null);
+              }}
+            >
+              Add {contextApp.name} to Desktop
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function LaunchpadTile({ app, onLaunch }: { app: AppEntry; onLaunch: () => void }) {
+function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu: () => void }) {
   const { showImage, onError } = useIconWithFallback(app.iconUrl);
   return (
-    <button type="button" data-launchpad-tile className="launchpad-tile" onClick={onLaunch}>
+    <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={(event) => { event.preventDefault(); onContextMenu(); }}>
       <span className="launchpad-icon">
-        {showImage && app.iconUrl ? (
+        {app.path === "__create-app__" ? (
+          <PlusIcon className="size-12" aria-hidden="true" />
+        ) : showImage && app.iconUrl ? (
           // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
           <img src={app.iconUrl} alt="" draggable={false} onError={onError} />
         ) : (

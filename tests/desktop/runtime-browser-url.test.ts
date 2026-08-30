@@ -20,20 +20,20 @@ describe("desktop browser address routing", () => {
     });
   });
 
-  it("opens public web addresses in local Chromium", () => {
+  it("opens public web addresses inside the Desktop Browser", () => {
     expect(resolveBrowserAddress("docs.matrix-os.com")).toEqual({
-      disposition: "external",
+      disposition: "public",
       url: "https://docs.matrix-os.com/",
     });
     expect(resolveBrowserAddress("https://developer.mozilla.org/en-US/")).toEqual({
-      disposition: "external",
+      disposition: "public",
       url: "https://developer.mozilla.org/en-US/",
     });
   });
 
-  it("turns free text into a local-browser web search", () => {
+  it("turns free text into an in-app web search", () => {
     expect(resolveBrowserAddress("Matrix OS docs")).toEqual({
-      disposition: "external",
+      disposition: "public",
       url: "https://www.google.com/search?q=Matrix+OS+docs",
     });
   });
@@ -57,7 +57,7 @@ describe("desktop browser address routing", () => {
 
   it("blocks all runtime-controlled off-tunnel navigation before DNS resolution", () => {
     expect(resolveBrowserAddress("https://matrix-os.com/docs")).toEqual({
-      disposition: "external",
+      disposition: "public",
       url: "https://matrix-os.com/docs",
     });
     expect(resolveRuntimeBrowserNavigation(

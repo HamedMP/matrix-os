@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
@@ -36,6 +36,7 @@ const SHUTDOWN_REPLAY_GRACE_MS = 250;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
+const CREDENTIAL_DISPLAY_TEXT = /(?:api[_-]?key|authorization|cookie|credential|password|secret|token)\s*(?:=|:|\s)/i;
 const NativeRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
 const NativeReferenceSchema = z.string().min(1).max(512);
 const ApprovalMethodSchema = z.enum([
@@ -158,6 +159,7 @@ const ToolLifecycleTypeSchema = z.enum([
   "collabAgentToolCall",
   "webSearch",
   "plan",
+  "reasoning",
 ]);
 const AgentMessageLifecycleItemSchema = z.object({
   id: NativeReferenceSchema,
@@ -168,7 +170,14 @@ const AgentMessageLifecycleItemSchema = z.object({
 const ToolLifecycleItemSchema = z.object({
   id: NativeReferenceSchema,
   type: ToolLifecycleTypeSchema,
+  server: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
+  tool: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
   status: z.string().max(80).optional(),
+  command: z.string().max(MAX_PROVIDER_LINE_BYTES).optional(),
+  cwd: z.string().max(4_096).optional(),
+  changes: z.array(z.object({
+    path: z.string().min(1).max(4_096),
+  }).passthrough()).max(200).optional(),
   aggregatedOutput: z.string().max(MAX_PROVIDER_LINE_BYTES).nullable().optional(),
   result: z.unknown().nullable().optional(),
   error: z.unknown().nullable().optional(),
@@ -319,13 +328,61 @@ function assertTrackedItemCapacity(collection, value) {
   }
 }
 
-function toolPresentation(type) {
-  if (type === "commandExecution") return { displayName: "Run command", kind: "command" };
-  if (type === "fileChange") return { displayName: "Update files", kind: "file_change" };
-  if (type === "webSearch") return { displayName: "Search web", kind: "search" };
-  if (type === "plan") return { displayName: "Update plan", kind: "plan" };
-  if (type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
+function toolPresentation(item) {
+  if (item.type === "commandExecution") return { displayName: "Run command", kind: "command" };
+  if (item.type === "fileChange") return { displayName: "Update files", kind: "file_change" };
+  if (item.type === "webSearch") return { displayName: "Search web", kind: "search" };
+  if (item.type === "plan") return { displayName: "Update plan", kind: "plan" };
+  if (item.type === "reasoning") return { displayName: "Thinking", kind: "reasoning" };
+  if (item.type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
+  if (item.type === "mcpToolCall" && item.server && item.tool) {
+    return { displayName: `Use ${item.server}.${item.tool}`, kind: "tool" };
+  }
   return { displayName: "Use tool", kind: "tool" };
+}
+
+function safeDisplayPath(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4_096 || value.includes("\0")) {
+    return undefined;
+  }
+  const normalized = value.replaceAll("\\", "/");
+  if (!isAbsolute(normalized)) {
+    if (normalized.split("/").includes("..")) return undefined;
+    return normalized;
+  }
+  const ownerHome = "/home/matrix/home";
+  if (normalized === ownerHome) return "~/";
+  if (normalized.startsWith(`${ownerHome}/`)) return `~/${normalized.slice(ownerHome.length + 1)}`;
+  for (const writableRoot of config.writableRoots) {
+    const root = writableRoot.replaceAll("\\", "/").replace(/\/$/, "");
+    if (normalized !== root && !normalized.startsWith(`${root}/`)) continue;
+    const ownerRelative = relative(root, normalized).replaceAll("\\", "/");
+    return ownerRelative || ".";
+  }
+  return undefined;
+}
+
+function safeToolDetails(item) {
+  if (item.type === "commandExecution") {
+    const command = typeof item.command === "string" ? item.command.trim() : "";
+    const safeCommand = command.length > 0
+      && command.length <= 1_000
+      && !UNSAFE_DISPLAY_TEXT.test(command)
+      && !CREDENTIAL_DISPLAY_TEXT.test(command)
+      && !/[\r\n\u0000]/.test(command)
+      ? command
+      : undefined;
+    const cwd = safeDisplayPath(item.cwd);
+    return {
+      ...(safeCommand ? { preview: safeCommand, previewKind: "command" } : {}),
+      ...(cwd ? { detail: `Working directory: ${cwd}` } : {}),
+    };
+  }
+  if (item.type === "fileChange") {
+    const path = safeDisplayPath(item.changes?.[0]?.path);
+    return path ? { preview: path, previewKind: "path" } : {};
+  }
+  return {};
 }
 
 function toolOutcome(status) {
@@ -587,13 +644,15 @@ async function handleItemLifecycle(raw) {
     return true;
   }
 
-  const presentation = toolPresentation(item.type);
+  const presentation = toolPresentation(item);
+  const details = safeToolDetails(item);
   if (parsed.data.method === "item/started") {
     assertTrackedItemCapacity(startedToolItems, matrixItemId);
     await persist({
       type: "matrix.codex.tool.started",
       toolCallId: matrixItemId,
       ...presentation,
+      ...details,
     });
     startedToolItems.add(matrixItemId);
     return true;
@@ -605,6 +664,7 @@ async function handleItemLifecycle(raw) {
       type: "matrix.codex.tool.started",
       toolCallId: matrixItemId,
       ...presentation,
+      ...details,
     });
     startedToolItems.add(matrixItemId);
   }

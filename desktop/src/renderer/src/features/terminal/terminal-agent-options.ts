@@ -8,6 +8,8 @@ export interface TerminalAgentOption {
   id: TerminalAgentId;
   label: string;
   shortLabel: string;
+  color: string;
+  logoSrc: string;
   launchCommand: string;
   installPackage: string;
   installFlags?: string[];
@@ -18,6 +20,8 @@ export const TERMINAL_AGENT_OPTIONS: readonly TerminalAgentOption[] = [
     id: "claude",
     label: "Claude Code",
     shortLabel: "Claude",
+    color: "#D8792C",
+    logoSrc: "/agent-logos/claude-code.png",
     launchCommand: "claude",
     installPackage: "@anthropic-ai/claude-code@latest",
   },
@@ -25,6 +29,8 @@ export const TERMINAL_AGENT_OPTIONS: readonly TerminalAgentOption[] = [
     id: "codex",
     label: "Codex",
     shortLabel: "Codex",
+    color: "#465243",
+    logoSrc: "/agent-logos/codex.png",
     launchCommand: "codex",
     installPackage: CODEX_VERIFIED_NPM_PACKAGE,
   },
@@ -32,6 +38,8 @@ export const TERMINAL_AGENT_OPTIONS: readonly TerminalAgentOption[] = [
     id: "opencode",
     label: "OpenCode",
     shortLabel: "OpenCode",
+    color: "#111111",
+    logoSrc: "/agent-logos/opencode-white.png",
     launchCommand: "opencode",
     installPackage: "opencode-ai@latest",
   },
@@ -39,6 +47,8 @@ export const TERMINAL_AGENT_OPTIONS: readonly TerminalAgentOption[] = [
     id: "pi",
     label: "Pi",
     shortLabel: "Pi",
+    color: "#1E2F5C",
+    logoSrc: "/agent-logos/pi-coding-agent.png",
     launchCommand: "pi",
     installPackage: "@earendil-works/pi-coding-agent@latest",
     installFlags: ["--ignore-scripts"],

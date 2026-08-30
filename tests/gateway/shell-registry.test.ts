@@ -96,7 +96,7 @@ describe("shell registry", () => {
     expect(adapter.focusedPaneRuntime).toHaveBeenCalledTimes(sessionNames.length);
   });
 
-  it("adds gateway-owned project and Git context while preserving the session cwd", async () => {
+  it("adds gateway-owned project, Git context, and a home-relative active cwd", async () => {
     const root = await tempRoot();
     const cwd = join(root, "projects", "matrix-os");
     await mkdir(cwd, { recursive: true });
@@ -122,15 +122,31 @@ describe("shell registry", () => {
     const listed = await registry.list();
     expect(listed).toMatchObject([{
       name: "calm-otter",
+      cwd: "projects/matrix-os",
       project: "Matrix OS",
       repository: "HamedMP/matrix-os",
       branch: "codex/session-context",
       pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
     }]);
-    expect(listed[0]).not.toHaveProperty("cwd");
     const persisted = JSON.parse(await readFile(join(root, "system", "shell-sessions.json"), "utf8"));
     expect(persisted.sessions["calm-otter"].cwd).toBe(resolvedCwd);
     expect(gitContextResolver.resolve).toHaveBeenCalledWith({ sessionName: "calm-otter", cwd: resolvedCwd });
+  });
+
+  it("does not expose an active cwd outside the Matrix home", async () => {
+    const root = await tempRoot();
+    const outside = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["calm-otter"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: outside, command: "zsh", observed: true })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    const listed = await registry.list();
+
+    expect(listed[0]).not.toHaveProperty("cwd");
   });
 
   it("persists an explicitly launched agent and omits agent metadata from plain terminals", async () => {
@@ -289,13 +305,19 @@ describe("shell registry", () => {
       listSessions: vi.fn(async () => ["main"]),
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
-      focusedPaneRuntime: vi.fn(async () => ({ cwd: root, command: "claude", observed: true })),
+      focusedPaneRuntime: vi.fn(async () => ({
+        cwd: root,
+        command: "claude",
+        title: "Investigate production SSH",
+        observed: true,
+      })),
     };
     const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.list()).resolves.toMatchObject([{
       name: "main",
       agent: "claude",
+      subtitle: "Investigate production SSH",
       visualStatus: "running",
     }]);
   });
@@ -774,7 +796,7 @@ describe("shell registry", () => {
       scrollbackStore: scrollbackStore as never,
     });
 
-    await registry.updateUiState("main", { placement: "background", lastSeenSeq: 4 });
+    await registry.updateUiState("main", { placement: "background", lastSeenSeq: 4, pinned: true });
     vi.setSystemTime(new Date("2026-06-18T12:00:01.000Z"));
     await registry.updateUiState("review-done", { lastSeenSeq: 3, visualStatus: "finished" });
     vi.setSystemTime(new Date("2026-06-18T12:00:02.000Z"));
@@ -782,6 +804,7 @@ describe("shell registry", () => {
     await expect(registry.list()).resolves.toMatchObject([
       {
         name: "main",
+        pinned: true,
         placement: "background",
         latestSeq: 12,
         lastSeenSeq: 4,
@@ -806,6 +829,7 @@ describe("shell registry", () => {
 
     const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
     expect(JSON.parse(raw).sessions.main.placement).toBe("background");
+    expect(JSON.parse(raw).sessions.main.pinned).toBe(true);
   });
 
   it("derives status dots from OSC marks and unread output while ignoring legacy client state", async () => {

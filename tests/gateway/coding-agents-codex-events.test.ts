@@ -44,6 +44,9 @@ describe("Codex structured event normalization", () => {
         "0.150.1": {
           schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
+        "0.151.0": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
       },
     });
     expect(codexExecContractStatus("codex-cli 0.144.1")).toEqual({
@@ -86,6 +89,10 @@ describe("Codex structured event normalization", () => {
       status: "verified",
       version: "0.150.1",
     });
+    expect(codexExecContractStatus("codex-cli 0.151.0")).toEqual({
+      status: "verified",
+      version: "0.151.0",
+    });
     expect(codexExecContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",
       version: "0.143.9",
@@ -111,6 +118,33 @@ describe("Codex structured event normalization", () => {
       messageId: "item_17",
       delta: "I found the failing route and updated its test.",
     });
+  });
+
+  it("projects Codex reasoning as a neutral lifecycle without hidden reasoning text", () => {
+    const started = parseCodexExecJsonLine(JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "reasoning_1",
+        type: "reasoning",
+        text: "hidden chain of thought with API_TOKEN=secret-value",
+      },
+    }), context);
+    const completed = parseCodexExecJsonLine(JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "reasoning_1",
+        type: "reasoning",
+        text: "hidden chain of thought with API_TOKEN=secret-value",
+      },
+    }), context);
+
+    expect(started.events).toEqual([
+      expect.objectContaining({ type: "tool.started", toolCallId: "reasoning_1", displayName: "Thinking", kind: "reasoning" }),
+    ]);
+    expect(completed.events).toEqual([
+      expect.objectContaining({ type: "tool.completed", toolCallId: "reasoning_1", outcome: "success" }),
+    ]);
+    expect(JSON.stringify([...started.events, ...completed.events])).not.toMatch(/hidden chain|secret-value|API_TOKEN/);
   });
 
   it("normalizes command execution without exposing commands or raw output", () => {
@@ -163,6 +197,64 @@ describe("Codex structured event normalization", () => {
     );
   });
 
+  it("names the bounded Codex MCP tool without exposing its arguments", () => {
+    const started = parseCodexExecJsonLine(JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "item_mcp_tool",
+        type: "mcp_tool_call",
+        server: "linear",
+        tool: "get_issue",
+        arguments: { token: "secret-value", issue: "OM-134" },
+        status: "in_progress",
+      },
+    }), context);
+
+    expect(started.events).toEqual([
+      expect.objectContaining({
+        type: "tool.started",
+        toolCallId: "item_mcp_tool",
+        displayName: "Use linear.get_issue",
+        kind: "tool",
+      }),
+    ]);
+    expect(JSON.stringify(started.events)).not.toMatch(/secret-value|arguments|OM-134/);
+  });
+
+  it("keeps a bounded safe Codex command preview while rejecting sensitive command text", () => {
+    const safe = parseCodexExecJsonLine(JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "item_safe_command",
+        type: "command_execution",
+        command: "pnpm build",
+        aggregated_output: "",
+        exit_code: null,
+        status: "in_progress",
+      },
+    }), context);
+    const sensitive = parseCodexExecJsonLine(JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "item_sensitive_command",
+        type: "command_execution",
+        command: "deploy API_TOKEN=secret-value",
+        aggregated_output: "",
+        exit_code: null,
+        status: "in_progress",
+      },
+    }), context);
+
+    expect(safe.events[0]).toMatchObject({
+      type: "tool.started",
+      preview: "pnpm build",
+      previewKind: "command",
+    });
+    expect(sensitive.events[0]).toMatchObject({ type: "tool.started", displayName: "Run command" });
+    expect(sensitive.events[0]).not.toHaveProperty("preview");
+    expect(JSON.stringify(sensitive.events)).not.toMatch(/secret-value|API_TOKEN/);
+  });
+
   it("normalizes bounded file changes and drops unsafe paths", () => {
     const result = parseCodexExecJsonLine(JSON.stringify({
       type: "item.completed",
@@ -187,6 +279,11 @@ describe("Codex structured event normalization", () => {
       type: "file.changed",
       path: "packages/gateway/src/server.ts",
       changeKind: "updated",
+    });
+    expect(result.events[0]).toMatchObject({
+      type: "tool.started",
+      preview: "packages/gateway/src/server.ts",
+      previewKind: "path",
     });
     expect(JSON.stringify(result.events)).not.toMatch(/private\.txt|\/home\/matrix/);
   });

@@ -536,8 +536,8 @@ describe('CI workflows', () => {
     expect(production).not.toContain('MATRIX_PREBILLING_PROVISIONING_COSTS=${MATRIX_PREBILLING_PROVISIONING_COSTS}');
     expect(production).toContain('legacy_prebilling_env=(');
     expect(production).toContain('deployed prebilling contract still contains legacy setting');
-    expect(production).toContain('Verify deployed prebilling contract');
-    expect(production).toContain('prebilling deployment contract is missing');
+    expect(production).toContain('Verify deployed provisioning contract');
+    expect(production).toContain('provisioning deployment contract is missing');
   });
 
   it('keeps count-only prebilling enabled without a prebuilt rollback drain path', () => {

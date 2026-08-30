@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
+import vscodeIconUrl from "../../../../../../shell/public/vscode.png";
 
 export type DesktopAppId =
   | "work"
@@ -27,11 +28,13 @@ export type DesktopAppId =
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
+  path: string;
   kind: TabKind;
   icon: LucideIcon;
   name: string;
   color?: string;
   iconColor?: string;
+  iconUrl?: string;
   settingsSection?: "services";
   slug?: "whiteboard";
 }
@@ -39,6 +42,7 @@ export interface DesktopAppConfig {
 export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "work",
+    path: "__chat__",
     kind: "work",
     icon: MessageSquare,
     name: "Chat",
@@ -47,6 +51,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "terminal",
+    path: "__terminal__",
     kind: "terminals",
     icon: SquareTerminal,
     name: "Terminal",
@@ -55,6 +60,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "files",
+    path: "__file-browser__",
     kind: "files",
     icon: FolderTree,
     name: "Files",
@@ -63,6 +69,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "editor",
+    path: "__editor__",
     kind: "editor",
     icon: FilePenLine,
     name: "Editor",
@@ -71,14 +78,17 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "vscode",
+    path: "__vscode__",
     kind: "vscode",
     icon: Code2,
+    iconUrl: vscodeIconUrl,
     name: "VS Code",
-    color: "#007ACC",
-    iconColor: "white",
+    color: "#FFFEFC",
+    iconColor: "#007ACC",
   },
   {
     id: "settings",
+    path: "__settings__",
     kind: "settings",
     icon: Settings,
     name: "Settings",
@@ -87,6 +97,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "plugins",
+    path: "__plugins__",
     kind: "settings",
     icon: Blocks,
     name: "Plugins",
@@ -96,6 +107,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "browser",
+    path: "__browser__",
     kind: "browser",
     icon: Globe2,
     name: "Browser",
@@ -104,6 +116,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "notes",
+    path: "__notes__",
     kind: "notes",
     icon: Notebook,
     name: "Notes",
@@ -112,6 +125,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "whiteboard",
+    path: "apps/whiteboard/index.html",
     kind: "app",
     icon: BrushIcon,
     name: "Whiteboard",

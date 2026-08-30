@@ -92,6 +92,32 @@ describe("WebDesktopSurface", () => {
     expect(onActivateWindow).toHaveBeenCalledWith("terminal-window");
   });
 
+  it("removes a configured Desktop icon from its context menu", () => {
+    const onRemoveDesktopIcon = vi.fn();
+    render(
+      <WebDesktopSurface
+        apps={apps}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        desktopIcons={[{ path: "__chat__", x: 20, y: 58 }]}
+        onMoveDesktopIcon={vi.fn()}
+        onRemoveDesktopIcon={onRemoveDesktopIcon}
+        onOpenApp={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove Chat from Desktop" }));
+    expect(onRemoveDesktopIcon).toHaveBeenCalledWith("__chat__");
+  });
+
   it("ships the canonical Desktop destinations in parity order and deep-links Plugins to Services", () => {
     const onOpenSettings = vi.fn();
     const onOpenApp = vi.fn();
@@ -113,12 +139,44 @@ describe("WebDesktopSurface", () => {
 
     const desktop = screen.getByRole("navigation", { name: "Desktop apps" });
     expect(Array.from(desktop.querySelectorAll("button")).map((button) => button.getAttribute("aria-label")))
-      .toEqual(["Chat", "Terminal", "Files", "Settings", "Plugins", "Browser", "Notes", "Whiteboard"]);
+      .toEqual(["Chat", "Terminal", "Files", "Editor", "VS Code", "Settings", "Plugins", "Browser", "Notes", "Whiteboard"]);
+    const vscodeIcon = screen.getByRole("button", { name: "VS Code" }).querySelector<HTMLElement>("[data-desktop-app-icon]");
+    expect(vscodeIcon?.style.background).toBe("rgb(255, 254, 252)");
+    expect(vscodeIcon?.querySelector("img")?.getAttribute("src")).toBe("/vscode.png");
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
     expect(onOpenSettings).toHaveBeenCalledWith("integrations");
     fireEvent.doubleClick(screen.getByRole("button", { name: "Notes" }));
     expect(onOpenApp).toHaveBeenCalledWith("apps/notes/index.html", "Notes");
+  });
+
+  it("keeps the dedicated Browser desktop icon when a custom app is also named Browser", () => {
+    const onOpenApp = vi.fn();
+    const customBrowser = {
+      name: "Browser",
+      path: "apps/browser-clone/index.html",
+      iconUrl: "/icons/browser-clone.svg",
+    };
+    render(
+      <WebDesktopSurface
+        apps={[...apps.filter((app) => app.path !== "apps/browser/index.html"), customBrowser]}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        onOpenApp={onOpenApp}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
+
+    expect(onOpenApp).toHaveBeenCalledWith("__browser__", "Browser");
+    expect(onOpenApp).not.toHaveBeenCalledWith(customBrowser.path, customBrowser.name);
   });
 
   it("renders account, runtime, and support controls in the header action slot", () => {

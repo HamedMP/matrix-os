@@ -425,7 +425,7 @@ describe("EmbedManager", () => {
 
     expect(created).toEqual([{
       kind: "browser",
-      partition: expect.stringMatching(/^runtime-browser-/),
+      partition: "persist:browser",
       allowedOrigins: ["http://127.0.0.1:49152"],
     }]);
   });

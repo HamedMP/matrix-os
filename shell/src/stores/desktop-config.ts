@@ -14,13 +14,28 @@ export interface DockOrder {
   systemApps?: string[];
 }
 
+export interface DesktopIconPlacement {
+  path: string;
+  x: number;
+  y: number;
+}
+
+const MAX_DESKTOP_ICONS = 512;
+const MAX_DESKTOP_COORDINATE = 16_384;
+
 interface DesktopConfigStore {
   dock: DockConfig;
   pinnedApps: string[];
   dockOrder: DockOrder | undefined;
+  desktopIcons: DesktopIconPlacement[] | undefined;
   setDock: (dock: DockConfig) => void;
   setPinnedApps: (apps: string[]) => void;
   setDockOrder: (order: DockOrder | undefined) => void;
+  primeDesktopIcons: (icons: DesktopIconPlacement[]) => void;
+  setDesktopIcons: (icons: DesktopIconPlacement[] | undefined, expectedHydrationRevision?: number) => void;
+  moveDesktopIcon: (path: string, x: number, y: number) => void;
+  removeDesktopIcon: (path: string) => void;
+  addDesktopIcon: (path: string) => void;
   togglePin: (path: string) => void;
   /** Persist a new section ordering. Accepts a partial update so callers
       can reorder one section without touching the other. */
@@ -30,32 +45,187 @@ interface DesktopConfigStore {
   ) => void;
 }
 
-async function persistDesktopPatch(patch: Record<string, unknown>): Promise<void> {
+let desktopPersistQueue: Promise<void> = Promise.resolve();
+let desktopIconMutationSequence = 0;
+let desktopIconStateEpoch = 0;
+let desktopIconHydrationRevision = 0;
+let confirmedDesktopIcons: DesktopIconPlacement[] | undefined;
+let hasConfirmedDesktopIcons = false;
+let unconfirmedDesktopHydrationRevision: number | null = null;
+let unconfirmedDesktopRollbackIcons: DesktopIconPlacement[] | null = null;
+let deferredDesktopHydration: { icons: DesktopIconPlacement[] | undefined } | null = null;
+let replayableDesktopHydrationRange: { min: number; max: number } | null = null;
+
+export function captureWebDesktopIconsHydrationRevision(): number {
+  return desktopIconHydrationRevision;
+}
+
+export function resetWebDesktopIconsRuntime(): void {
+  desktopIconMutationSequence += 1;
+  desktopIconStateEpoch += 1;
+  desktopIconHydrationRevision += 1;
+  confirmedDesktopIcons = undefined;
+  hasConfirmedDesktopIcons = false;
+  unconfirmedDesktopHydrationRevision = null;
+  unconfirmedDesktopRollbackIcons = null;
+  deferredDesktopHydration = null;
+  replayableDesktopHydrationRange = null;
+  useDesktopConfigStore.setState({ desktopIcons: undefined });
+}
+
+function copyDesktopIcons(icons: readonly DesktopIconPlacement[] | undefined): DesktopIconPlacement[] | undefined {
+  return icons?.map((icon) => ({ ...icon }));
+}
+
+function persistDesktopPatch(patch: Record<string, unknown>): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const url = `${gatewayUrl}/api/settings/desktop`;
-  const getRes = await fetch(url, { signal: AbortSignal.timeout(5000) });
-  if (!getRes.ok) {
-    throw new Error(`GET /api/settings/desktop ${getRes.status}`);
-  }
-  const config = (await getRes.json()) as Record<string, unknown>;
-  const putRes = await fetch(url, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...config, ...patch }),
-    signal: AbortSignal.timeout(5000),
+  const snapshot = JSON.stringify(patch);
+  const write = async () => {
+    if (getGatewayUrl() !== gatewayUrl) return;
+    const putRes = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: snapshot,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!putRes.ok) throw new Error(`PATCH /api/settings/desktop ${putRes.status}`);
+  };
+  const pending = desktopPersistQueue.then(write, write);
+  desktopPersistQueue = pending.catch((error: unknown) => {
+    console.warn("[desktop-config] persist queue recovered:", error instanceof Error ? error.name : typeof error);
   });
-  if (!putRes.ok) {
-    throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
+  return pending;
+}
+
+function applyDesktopIconMutation(
+  previousIcons: DesktopIconPlacement[],
+  icons: DesktopIconPlacement[],
+  set: (partial: Partial<DesktopConfigStore>) => void,
+): void {
+  const sequence = ++desktopIconMutationSequence;
+  const epoch = desktopIconStateEpoch;
+  const rollbackIcons = copyDesktopIcons(previousIcons) ?? [];
+  const snapshot = copyDesktopIcons(icons) ?? [];
+  if (!hasConfirmedDesktopIcons && unconfirmedDesktopHydrationRevision === null) {
+    unconfirmedDesktopHydrationRevision = desktopIconHydrationRevision;
+    unconfirmedDesktopRollbackIcons = copyDesktopIcons(previousIcons) ?? [];
+    replayableDesktopHydrationRange = null;
   }
+  desktopIconHydrationRevision += 1;
+  set({ desktopIcons: snapshot });
+  let restoredPendingHydration = false;
+  void persistDesktopPatch({ desktopIcons: snapshot }).then(() => {
+    if (epoch === desktopIconStateEpoch && sequence <= desktopIconMutationSequence) {
+      confirmedDesktopIcons = copyDesktopIcons(snapshot);
+      hasConfirmedDesktopIcons = true;
+      unconfirmedDesktopHydrationRevision = null;
+      unconfirmedDesktopRollbackIcons = null;
+      deferredDesktopHydration = null;
+      replayableDesktopHydrationRange = null;
+    }
+  }).catch((error: unknown) => {
+    console.warn("[desktop-config] desktopIcons persist failed:", error instanceof Error ? error.name : typeof error);
+    if (epoch === desktopIconStateEpoch && sequence === desktopIconMutationSequence) {
+      if (hasConfirmedDesktopIcons) {
+        set({ desktopIcons: copyDesktopIcons(confirmedDesktopIcons) });
+      } else if (deferredDesktopHydration !== null) {
+        const desktopIcons = copyDesktopIcons(deferredDesktopHydration.icons);
+        confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
+        hasConfirmedDesktopIcons = true;
+        unconfirmedDesktopHydrationRevision = null;
+        unconfirmedDesktopRollbackIcons = null;
+        deferredDesktopHydration = null;
+        replayableDesktopHydrationRange = null;
+        desktopIconHydrationRevision += 1;
+        set({ desktopIcons });
+        restoredPendingHydration = true;
+      } else {
+        set({ desktopIcons: copyDesktopIcons(unconfirmedDesktopRollbackIcons ?? rollbackIcons) });
+        if (unconfirmedDesktopHydrationRevision !== null) {
+          replayableDesktopHydrationRange = {
+            min: unconfirmedDesktopHydrationRevision,
+            max: desktopIconHydrationRevision,
+          };
+          desktopIconHydrationRevision = unconfirmedDesktopHydrationRevision;
+          unconfirmedDesktopHydrationRevision = null;
+          unconfirmedDesktopRollbackIcons = null;
+          restoredPendingHydration = true;
+        }
+      }
+    }
+  }).finally(() => {
+    if (epoch === desktopIconStateEpoch && !restoredPendingHydration) desktopIconHydrationRevision += 1;
+  });
 }
 
 export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   dock: { position: "left", size: 44, iconSize: 30, autoHide: false },
   pinnedApps: [...DEFAULT_PINNED_APPS],
   dockOrder: undefined,
+  desktopIcons: undefined,
   setDock: (dock) => set({ dock }),
   setPinnedApps: (pinnedApps) => set({ pinnedApps }),
   setDockOrder: (dockOrder) => set({ dockOrder }),
+  primeDesktopIcons: (icons) => {
+    if (get().desktopIcons !== undefined) return;
+    set({ desktopIcons: copyDesktopIcons(icons) });
+  },
+  setDesktopIcons: (desktopIcons, expectedHydrationRevision) => {
+    if (expectedHydrationRevision !== undefined) {
+      const replayable = replayableDesktopHydrationRange !== null
+        && expectedHydrationRevision >= replayableDesktopHydrationRange.min
+        && expectedHydrationRevision <= replayableDesktopHydrationRange.max;
+      if (!replayable
+        && !hasConfirmedDesktopIcons
+        && unconfirmedDesktopHydrationRevision !== null
+        && expectedHydrationRevision >= unconfirmedDesktopHydrationRevision
+        && expectedHydrationRevision <= desktopIconHydrationRevision) {
+        deferredDesktopHydration = { icons: copyDesktopIcons(desktopIcons) };
+        return;
+      }
+      if (!replayable && expectedHydrationRevision !== desktopIconHydrationRevision) return;
+    }
+    desktopIconMutationSequence += 1;
+    desktopIconStateEpoch += 1;
+    desktopIconHydrationRevision += 1;
+    confirmedDesktopIcons = copyDesktopIcons(desktopIcons);
+    hasConfirmedDesktopIcons = true;
+    unconfirmedDesktopHydrationRevision = null;
+    unconfirmedDesktopRollbackIcons = null;
+    deferredDesktopHydration = null;
+    replayableDesktopHydrationRange = null;
+    set({ desktopIcons: copyDesktopIcons(desktopIcons) });
+  },
+  moveDesktopIcon: (path, x, y) => {
+    const current = get().desktopIcons ?? [];
+    const next = current.map((icon) => icon.path === path ? {
+      ...icon,
+      x: Math.max(0, Math.min(MAX_DESKTOP_COORDINATE, Math.round(x))),
+      y: Math.max(0, Math.min(MAX_DESKTOP_COORDINATE, Math.round(y))),
+    } : icon);
+    applyDesktopIconMutation(current, next, set);
+  },
+  removeDesktopIcon: (path) => {
+    const current = get().desktopIcons ?? [];
+    const next = current.filter((icon) => icon.path !== path);
+    applyDesktopIconMutation(current, next, set);
+  },
+  addDesktopIcon: (path) => {
+    const current = get().desktopIcons ?? [];
+    if (!path || path.length > 2048 || current.length >= MAX_DESKTOP_ICONS || current.some((icon) => icon.path === path)) return;
+    const occupied = new Set(current.map((icon) => `${icon.x}:${icon.y}`));
+    let slot = { x: 20, y: 20 };
+    for (let index = 0; index < MAX_DESKTOP_ICONS; index += 1) {
+      const candidate = { x: 20 + (index % 2) * 88, y: 20 + Math.floor(index / 2) * 92 };
+      if (!occupied.has(`${candidate.x}:${candidate.y}`)) {
+        slot = candidate;
+        break;
+      }
+    }
+    const next = [...current, { path, ...slot }];
+    applyDesktopIconMutation(current, next, set);
+  },
   togglePin: (path) => {
     const current = get().pinnedApps ?? [];
     const next = current.includes(path)

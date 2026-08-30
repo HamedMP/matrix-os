@@ -33,8 +33,12 @@ describe("DesktopEditorWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Browse main.ts" }));
 
     expect(await screen.findByRole("tab", { name: "main.ts" })).toBeTruthy();
-    expect(screen.getByText("Editing projects/app/src/main.ts").getAttribute("data-active"))
-      .toBe("true");
+    const editor = screen.getByText("Editing projects/app/src/main.ts");
+    expect(editor.getAttribute("data-active")).toBe("true");
+    const retainedPane = editor.closest("[data-retained-pane]");
+    expect(retainedPane?.className).toContain("absolute");
+    expect(retainedPane?.className).toContain("inset-0");
+    expect(retainedPane?.className).toContain("min-w-0");
   });
 
   it("clears open documents when the selected runtime identity changes", async () => {

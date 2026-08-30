@@ -36,7 +36,7 @@ export interface TerminalAppContextType {
   windowControls?: TerminalWindowControls;
   terminalBackground: string;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
-  addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
+  addSessionTab: (label: string, sessionId: string, cwd?: string, options?: { agent?: CreateShellSessionTabOptions["agent"]; compatMode?: TerminalCompatMode; legacyCompat?: boolean }) => string;
   createShellSessionTab: (label: string, cwd?: string, options?: CreateShellSessionTabOptions) => Promise<string | null>;
   backgroundShellSession: (sessionId: string) => void;
   removeDeletedShellSessionFromLayout: (sessionId: string) => void;
