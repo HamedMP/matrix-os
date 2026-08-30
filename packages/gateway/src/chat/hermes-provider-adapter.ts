@@ -425,15 +425,24 @@ export function createHermesChatProviderAdapter(options: {
         completionSettled = true;
         completion.resolve({ ok: true, value: parsed });
       } else if (event.type === "status.update") {
-        const parsed = HermesStatusUpdateSchema.parse(event.payload);
-        const activity = hermesStatusActivity(parsed.kind);
+        const parsed = HermesStatusUpdateSchema.safeParse(event.payload);
+        if (!parsed.success) return;
+        const activity = hermesStatusActivity(parsed.data.kind);
         if (!activity) return;
-        const summary = safePublishedText(parsed.text, {
+        const normalizedKind = parsed.data.kind.trim().toLowerCase();
+        const publishesRawProcessNotification = ["process", "loop", "lifecycle"].includes(normalizedKind);
+        const summary = publishesRawProcessNotification ? undefined : safePublishedText(parsed.data.text, {
           homePath: options.homePath,
           executionRoot: input.executionRoot,
           maxChars: 1_000,
         });
-        const projected = { ...activity, ...(summary ? { summary } : {}) };
+        const candidate = { ...activity, ...(summary ? { summary } : {}) };
+        const canonical = CanonicalProviderRunEventSchema.safeParse({
+          type: "agent.activity",
+          ...candidate,
+          status: "running",
+        });
+        const projected = canonical.success ? candidate : activity;
         setBounded(statusActivities, activity.activityId, projected, MAX_ACTIVE_STATUS_ACTIVITIES);
         emitAgentActivity({ ...projected, status: "running" });
       } else if (event.type === "reasoning.available") {
