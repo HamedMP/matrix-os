@@ -376,7 +376,7 @@ describe("AgentsProvidersView", () => {
     expect(dialog).toHaveTextContent("2 active chats");
     expect(dialog).toHaveTextContent("1 resumable chat");
     expect(within(dialog).queryByRole("button", { name: "Remove account" })).toBeNull();
-    fireEvent.change(within(dialog).getByLabelText("Reassign to"), { target: { value: "source_matrix" } });
+    fireEvent.change(within(dialog).getByLabelText("Reassign to"), { target: { value: "source:source_matrix" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Reassign dependencies" }));
 
     expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({
@@ -385,6 +385,19 @@ describe("AgentsProvidersView", () => {
       target: { kind: "access_source", accessSourceId: "source_matrix" },
       scope: "all_dependencies",
     }));
+  });
+
+  it("offers only reassignment targets that serve every dependent harness route", () => {
+    setup();
+    fireEvent.click(within(screen.getByTestId("account-account_personal"))
+      .getByRole("button", { name: "Remove Personal" }));
+
+    const choices = within(screen.getByRole("dialog", { name: "Remove Personal" }))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(choices).toContain("Matrix AI included credit");
+    expect(choices).not.toContain("Work");
+    expect(choices).not.toContain("Work Anthropic key");
   });
 
   it("opens only opaque terminal session ids and owner-gateway authorization paths", () => {
@@ -496,6 +509,19 @@ describe("AgentsProvidersView", () => {
       accountId: null,
     }));
     expect(within(dialog).queryByLabelText(/API key/i)).toBeNull();
+  });
+
+  it("does not offer a Matrix gateway source for a model outside its allowlist", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "OpenCode" }));
+    fireEvent.change(within(dialog).getByLabelText("Model"), {
+      target: { value: "anthropic/claude-sonnet-5" },
+    });
+
+    expect(within(within(dialog).getByLabelText("Access source"))
+      .queryByRole("option", { name: "Matrix AI included credit" })).toBeNull();
   });
 });
 

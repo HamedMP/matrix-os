@@ -3,6 +3,7 @@ import type {
   ProviderAccount,
   ProviderAccessSource,
   ProviderConnectionAttempt,
+  ProviderGatewayPolicy,
   ProviderHarnessInstance,
 } from "@matrix-os/contracts";
 import { RemovalDialog } from "./RemovalDialog.js";
@@ -35,6 +36,8 @@ export function AccountsPanel({
   harness,
   accounts,
   sources,
+  allHarnesses,
+  gatewayPolicy,
   attempt,
   disabled,
   canLogin,
@@ -48,6 +51,8 @@ export function AccountsPanel({
   harness: ProviderHarnessInstance;
   accounts: ProviderAccount[];
   sources: ProviderAccessSource[];
+  allHarnesses: ProviderHarnessInstance[];
+  gatewayPolicy: ProviderGatewayPolicy | null;
   attempt: ProviderConnectionAttempt | null;
   disabled: boolean;
   canLogin: boolean;
@@ -169,6 +174,8 @@ export function AccountsPanel({
           account={removeAccount}
           accounts={accounts}
           sources={sources.filter((source) => source.providerId === removeAccount.providerId)}
+          harnesses={allHarnesses}
+          gatewayPolicy={gatewayPolicy}
           disabled={disabled}
           canRemove={canRemove}
           canReassign={canReassign}

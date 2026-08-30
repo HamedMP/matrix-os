@@ -17,6 +17,18 @@ const HARNESS_CATALOG: ReadonlyArray<{
   { id: "claude", label: "Claude", routeKind: "fixed", preferredProvider: "anthropic" },
 ];
 
+function sourceSupportsRoute(
+  snapshot: ProviderSettingsSnapshot,
+  source: ProviderSettingsSnapshot["accessSources"][number],
+  providerId: string,
+  modelId: string,
+): boolean {
+  if (source.providerId !== providerId || !source.eligibleModelIds.includes(modelId)) return false;
+  if (source.kind !== "matrix_gateway") return true;
+  return snapshot.gatewayPolicy?.accessSourceId === source.id
+    && snapshot.gatewayPolicy.allowedModelIds.includes(modelId);
+}
+
 export function AddHarnessDialog({
   snapshot,
   onMutate,
@@ -39,7 +51,7 @@ export function AddHarnessDialog({
   const firstModel = provider?.models.find((model) => model.enabled) ?? null;
   const [modelId, setModelId] = useState(firstModel?.id ?? "");
   const eligibleSources = useMemo(() => snapshot.accessSources.filter((source) =>
-    source.providerId === providerId && source.eligibleModelIds.includes(modelId)), [modelId, providerId, snapshot.accessSources]);
+    sourceSupportsRoute(snapshot, source, providerId, modelId)), [modelId, providerId, snapshot]);
   const [sourceId, setSourceId] = useState(eligibleSources[0]?.id ?? "");
   const selectedSource = eligibleSources.find((source) => source.id === sourceId) ?? eligibleSources[0] ?? null;
   const canAdd = displayName.trim() !== "" && provider !== null && modelId !== "" && selectedSource !== null;
@@ -50,8 +62,8 @@ export function AddHarnessDialog({
       ?? snapshot.modelProviders[0]
       ?? null;
     const nextModel = nextProvider?.models.find((model) => model.enabled) ?? null;
-    const nextSource = snapshot.accessSources.find((source) => source.providerId === nextProvider?.id
-      && nextModel !== null && source.eligibleModelIds.includes(nextModel.id));
+    const nextSource = nextModel === null ? undefined : snapshot.accessSources.find((source) =>
+      sourceSupportsRoute(snapshot, source, nextProvider?.id ?? "", nextModel.id));
     setKind(nextKind);
     setDisplayName(catalog.label);
     setProviderId(nextProvider?.id ?? "");
@@ -62,16 +74,16 @@ export function AddHarnessDialog({
   const selectProvider = (nextProviderId: string) => {
     const nextProvider = snapshot.modelProviders.find((candidate) => candidate.id === nextProviderId) ?? null;
     const nextModel = nextProvider?.models.find((model) => model.enabled) ?? null;
-    const nextSource = snapshot.accessSources.find((source) => source.providerId === nextProviderId
-      && nextModel !== null && source.eligibleModelIds.includes(nextModel.id));
+    const nextSource = nextModel === null ? undefined : snapshot.accessSources.find((source) =>
+      sourceSupportsRoute(snapshot, source, nextProviderId, nextModel.id));
     setProviderId(nextProviderId);
     setModelId(nextModel?.id ?? "");
     setSourceId(nextSource?.id ?? "");
   };
 
   const selectModel = (nextModelId: string) => {
-    const nextSource = snapshot.accessSources.find((source) => source.providerId === providerId
-      && source.eligibleModelIds.includes(nextModelId));
+    const nextSource = snapshot.accessSources.find((source) =>
+      sourceSupportsRoute(snapshot, source, providerId, nextModelId));
     setModelId(nextModelId);
     setSourceId(nextSource?.id ?? "");
   };

@@ -27,7 +27,8 @@ function readQueue(): QueuedSession[] {
         && (typeof item.targetId !== "string" || !TARGET_ID_PATTERN.test(item.targetId))) return [];
       return [{ sessionId: item.sessionId, ...(item.targetId ? { targetId: item.targetId } : {}) }];
     }).slice(-QUEUE_LIMIT);
-  } catch {
+  } catch (error) {
+    console.warn("[provider-settings] Could not read terminal handoff queue:", error instanceof Error ? error.name : typeof error);
     return [];
   }
 }
@@ -36,8 +37,8 @@ function writeQueue(queue: QueuedSession[]): void {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.setItem(QUEUE_KEY, JSON.stringify(queue.slice(-QUEUE_LIMIT)));
-  } catch {
-    // Session storage can be disabled; the handoff safely becomes a no-op.
+  } catch (error) {
+    console.warn("[provider-settings] Could not persist terminal handoff queue:", error instanceof Error ? error.name : typeof error);
   }
 }
 
@@ -79,7 +80,12 @@ async function listActiveSessions(fetcher: Fetcher): Promise<Set<string>> {
     offset += chunk.byteLength;
   }
   let value: unknown;
-  try { value = JSON.parse(new TextDecoder().decode(bytes)); } catch { return new Set(); }
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes));
+  } catch (error) {
+    console.warn("[provider-settings] Invalid terminal session response:", error instanceof Error ? error.name : typeof error);
+    return new Set();
+  }
   if (!value || typeof value !== "object" || !Array.isArray((value as { sessions?: unknown }).sessions)) return new Set();
   const sessions = (value as { sessions: unknown[] }).sessions;
   if (sessions.length > 256) return new Set();
@@ -98,18 +104,17 @@ export async function drainExistingTerminalSessionQueue(
   targetId?: string,
   options: { fetcher?: Fetcher } = {},
 ): Promise<string[]> {
-  const matched: QueuedSession[] = [];
-  const remaining: QueuedSession[] = [];
-  for (const entry of readQueue()) {
-    if (!targetId || entry.targetId === targetId || !entry.targetId) matched.push(entry);
-    else remaining.push(entry);
-  }
-  writeQueue(remaining);
+  const queued = readQueue();
+  const matchesTarget = (entry: QueuedSession) => !targetId || entry.targetId === targetId || !entry.targetId;
+  const matched = queued.filter(matchesTarget);
   if (matched.length === 0) return [];
   try {
     const active = await listActiveSessions(options.fetcher ?? fetch);
-    return [...new Set(matched.map((entry) => entry.sessionId).filter((id) => active.has(id)))];
-  } catch {
+    const accepted = new Set(matched.map((entry) => entry.sessionId).filter((id) => active.has(id)));
+    writeQueue(queued.filter((entry) => !(matchesTarget(entry) && accepted.has(entry.sessionId))));
+    return [...accepted];
+  } catch (error) {
+    console.warn("[provider-settings] Terminal session handoff failed:", error instanceof Error ? error.name : typeof error);
     return [];
   }
 }

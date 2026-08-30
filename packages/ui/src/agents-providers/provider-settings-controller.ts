@@ -162,7 +162,8 @@ export class ProviderSettingsController {
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
       return this.applySnapshot(parsed.data, { operationId });
-    } catch {
+    } catch (error) {
+      console.warn("[provider-settings] Provider settings refresh failed:", error instanceof Error ? error.name : typeof error);
       if (!this.disposed && operationId >= this.appliedOperationId) this.update({ error: LOAD_ERROR });
       return false;
     } finally {
@@ -183,7 +184,8 @@ export class ProviderSettingsController {
     let idempotencyKey: string;
     try {
       idempotencyKey = createIdempotencyKey();
-    } catch {
+    } catch (error) {
+      console.warn("[provider-settings] Could not create mutation idempotency key:", error instanceof Error ? error.name : typeof error);
       this.update({ error: MUTATION_ERROR });
       return;
     }

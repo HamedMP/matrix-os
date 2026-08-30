@@ -97,6 +97,8 @@ export function AgentsProvidersView({
                 harness={harness}
                 accounts={snapshot.accounts.filter((account) => harness.accountIds.includes(account.id))}
                 sources={snapshot.accessSources}
+                allHarnesses={snapshot.harnesses}
+                gatewayPolicy={snapshot.gatewayPolicy}
                 attempt={connectionAttempt?.harnessInstanceId === harness.id ? connectionAttempt : null}
                 disabled={mutationsDisabled}
                 canLogin={supports("start_login")}
