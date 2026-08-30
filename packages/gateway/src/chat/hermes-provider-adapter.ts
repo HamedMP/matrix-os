@@ -194,7 +194,7 @@ function hermesActivitySummary(kind: HermesActivity["kind"], failed: boolean): s
 
 function providerReference(prefix: string, value: string): string {
   const candidate = `${prefix}${value}`;
-  if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(candidate)) return candidate;
+  if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(candidate) && !candidate.includes("..")) return candidate;
   return `${prefix}${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
 }
 
@@ -335,7 +335,19 @@ export function createHermesChatProviderAdapter(options: {
     let activeDelegationId: string | undefined;
 
     const emitAgentActivity = (activity: Omit<HermesActivity, "type">) => {
-      queue.push(CanonicalProviderRunEventSchema.parse({ type: "agent.activity", ...activity }));
+      const canonical = CanonicalProviderRunEventSchema.safeParse({ type: "agent.activity", ...activity });
+      if (canonical.success) {
+        queue.push(canonical.data);
+        return;
+      }
+      const fallback = CanonicalProviderRunEventSchema.safeParse({
+        type: "agent.activity",
+        activityId: providerReference("", activity.activityId),
+        kind: activity.kind,
+        label: activity.label,
+        status: activity.status,
+      });
+      if (fallback.success) queue.push(fallback.data);
     };
 
     const completeStatusActivities = () => {
