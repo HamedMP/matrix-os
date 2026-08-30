@@ -14,6 +14,7 @@ import {
 } from "@desktop/renderer/src/features/terminal/terminal-rich-paste";
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const attachmentResize = vi.fn();
@@ -153,6 +154,10 @@ vi.mock("@desktop/renderer/src/features/terminal/terminal-runtime", () => ({
 
 describe("TerminalView session switching", () => {
   beforeEach(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
     createdFitAddons.length = 0;
     createdTerminals.length = 0;
     resizeObserverCallbacks.length = 0;
@@ -197,6 +202,11 @@ describe("TerminalView session switching", () => {
       Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
     } else {
       Reflect.deleteProperty(navigator, "clipboard");
+    }
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(navigator, "platform", originalPlatformDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "platform");
     }
   });
 
@@ -523,6 +533,60 @@ describe("TerminalView session switching", () => {
 
     expect(withoutSelection).toBe(true);
     expect(repeated).toBe(true);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("selects all terminal scrollback with Command+A", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "a",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(terminal.selectAll).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat Meta+C as a macOS shortcut on non-Mac platforms", () => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Linux x86_64",
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "leave this selection alone";
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(true);
+    expect(preventDefault).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
   });
 

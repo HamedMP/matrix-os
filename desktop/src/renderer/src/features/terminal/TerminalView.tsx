@@ -135,7 +135,7 @@ export default function TerminalView({
       const action = classifyTerminalClipboardShortcut({
         type: event.type as "keydown" | "keyup" | "keypress",
         key: event.key,
-        isMac: event.metaKey,
+        isMac: navigator.platform.startsWith("Mac"),
         metaKey: event.metaKey,
         ctrlKey: event.ctrlKey,
         shiftKey: event.shiftKey,
@@ -144,12 +144,14 @@ export default function TerminalView({
         isComposing: event.isComposing,
         hasSelection: terminal.hasSelection(),
       });
-      if (action !== "copy" && action !== "paste") return true;
+      if (!action) return true;
       event.preventDefault();
       if (action === "copy") {
         void copyDesktopTerminalText(terminal.getSelection());
-      } else {
+      } else if (action === "paste") {
         void pasteClipboardRef.current();
+      } else {
+        terminal.selectAll();
       }
       return false;
     });

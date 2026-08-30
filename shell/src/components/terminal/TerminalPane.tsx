@@ -1895,7 +1895,7 @@ export function TerminalPane({
         const clipboardAction = classifyTerminalClipboardShortcut({
           type: ev.type as "keydown" | "keyup" | "keypress",
           key: ev.key,
-          isMac: ev.metaKey,
+          isMac: navigator.platform.startsWith("Mac"),
           metaKey: ev.metaKey,
           ctrlKey: ev.ctrlKey,
           shiftKey: ev.shiftKey,
@@ -1931,6 +1931,11 @@ export function TerminalPane({
             });
             showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
           });
+          return false;
+        }
+        if (clipboardAction === "select-all") {
+          ev.preventDefault();
+          term.selectAll();
           return false;
         }
 

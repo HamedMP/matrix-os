@@ -4,6 +4,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
 
 const createdTerminals = vi.hoisted(() => [] as Array<{
   options: Record<string, unknown>;
@@ -21,6 +22,7 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   selection: string;
   customKeyEventHandler?: (event: KeyboardEvent) => boolean;
   clearSelection: ReturnType<typeof vi.fn>;
+  selectAll: ReturnType<typeof vi.fn>;
 }>);
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
@@ -189,6 +191,7 @@ vi.mock("@xterm/xterm", () => ({
       this.customKeyEventHandler = handler;
     });
     clearSelection = vi.fn();
+    selectAll = vi.fn();
     getSelection = vi.fn(() => this.selection);
     scrollToBottom = vi.fn();
     registerLinkProvider = vi.fn();
@@ -428,6 +431,10 @@ function createCachedTerminal() {
 
 describe("TerminalPane scrolling", () => {
   beforeEach(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
     createdTerminals.length = 0;
     createdFitAddons.length = 0;
     createdWebglAddons.length = 0;
@@ -478,6 +485,11 @@ describe("TerminalPane scrolling", () => {
       Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
     } else {
       Reflect.deleteProperty(navigator, "clipboard");
+    }
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(navigator, "platform", originalPlatformDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "platform");
     }
   });
 
@@ -627,6 +639,86 @@ describe("TerminalPane scrolling", () => {
     expect(withoutSelection).toBe(true);
     expect(repeatedPaste).toBe(true);
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("selects all terminal scrollback with Command+A", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-select-all"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "a",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(terminal.selectAll).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat Meta+C as a macOS shortcut on non-Mac platforms", async () => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Linux x86_64",
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-non-mac-meta"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    terminal.selection = "leave this selection alone";
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(true);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it("attaches desktop canonical sessions as hard clients with proposed dimensions", async () => {
