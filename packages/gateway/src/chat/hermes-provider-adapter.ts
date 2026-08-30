@@ -13,6 +13,7 @@ import {
 import { createCanonicalCliEventQueue } from "./cli-process.js";
 import {
   createHermesStdioClient,
+  HermesGatewayProtocolError,
   type HermesGatewayEvent,
   type HermesGatewaySpawn,
 } from "./hermes-stdio-client.js";
@@ -667,7 +668,12 @@ export function createHermesChatProviderAdapter(options: {
             console.warn("[chat/hermes] Interrupt acknowledgement unavailable:", interruptError instanceof Error ? interruptError.name : "UnknownError");
           }
         }
-        console.warn("[chat/hermes] Provider Run failed:", error instanceof Error ? error.name : "UnknownError");
+        console.warn(
+          "[chat/hermes] Provider Run failed:",
+          error instanceof HermesGatewayProtocolError
+            ? `${error.name}:${error.reason}`
+            : error instanceof Error ? error.name : "UnknownError",
+        );
         const safeFailure = error instanceof HermesRunFailure
           ? {
               code: "run_failed" as const,

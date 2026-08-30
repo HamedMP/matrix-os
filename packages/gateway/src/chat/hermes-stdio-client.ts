@@ -73,6 +73,31 @@ function safeError(message: string, cause?: unknown): Error {
   return new Error(message, cause === undefined ? undefined : { cause });
 }
 
+type HermesGatewayProtocolFailureReason =
+  | "event_invalid"
+  | "frame_too_large"
+  | "invalid_json"
+  | "unsupported_frame";
+
+export class HermesGatewayProtocolError extends Error {
+  constructor(
+    readonly reason: HermesGatewayProtocolFailureReason,
+    message: string,
+    cause?: unknown,
+  ) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "HermesGatewayProtocolError";
+  }
+}
+
+function protocolError(
+  reason: HermesGatewayProtocolFailureReason,
+  message: string,
+  cause?: unknown,
+): HermesGatewayProtocolError {
+  return new HermesGatewayProtocolError(reason, message, cause);
+}
+
 export function createHermesStdioClient(options: {
   command: string;
   args: string[];
@@ -140,14 +165,14 @@ export function createHermesStdioClient(options: {
 
   function handleFrame(line: string): void {
     if (Buffer.byteLength(line, "utf8") > MAX_FRAME_BYTES) {
-      fail(safeError("Hermes gateway frame exceeded limit"));
+      fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
       return;
     }
     let value: unknown;
     try {
       value = JSON.parse(line);
     } catch (error: unknown) {
-      fail(safeError("Hermes gateway returned invalid data", error));
+      fail(protocolError("invalid_json", "Hermes gateway returned invalid data", error));
       return;
     }
     const event = HermesGatewayEventSchema.safeParse(value);
@@ -156,13 +181,13 @@ export function createHermesStdioClient(options: {
       try {
         options.onEvent(event.data.params);
       } catch (error: unknown) {
-        fail(safeError("Hermes gateway event was invalid", error));
+        fail(protocolError("event_invalid", "Hermes gateway event was invalid", error));
       }
       return;
     }
     const response = JsonRpcResponseSchema.safeParse(value);
     if (!response.success) {
-      fail(safeError("Hermes gateway returned an unsupported frame"));
+      fail(protocolError("unsupported_frame", "Hermes gateway returned an unsupported frame"));
       return;
     }
     const request = pending.get(response.data.id);
@@ -177,7 +202,7 @@ export function createHermesStdioClient(options: {
     if (failed || closing) return;
     inputBuffer += decoder.write(chunk);
     if (Buffer.byteLength(inputBuffer, "utf8") > MAX_FRAME_BYTES && !inputBuffer.includes("\n")) {
-      fail(safeError("Hermes gateway frame exceeded limit"));
+      fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
       return;
     }
     while (!failed) {
@@ -188,7 +213,7 @@ export function createHermesStdioClient(options: {
       if (line) handleFrame(line);
     }
     if (!failed && Buffer.byteLength(inputBuffer, "utf8") > MAX_FRAME_BYTES) {
-      fail(safeError("Hermes gateway frame exceeded limit"));
+      fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
     }
   });
   let stderrBytes = 0;
