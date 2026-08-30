@@ -153,8 +153,12 @@ function remainingHermesInterimText(streamed: string, interim: string): string |
     interimIndex += 1;
   }
   if (normalizedIndex !== normalizedStreamed.length) return undefined;
-  if (/\s$/.test(streamed)) {
-    while (interimIndex < interim.length && /\s/.test(interim[interimIndex] ?? "")) interimIndex += 1;
+  let alreadyStreamedBoundaryLength = streamed.match(/\s+$/)?.[0].length ?? 0;
+  while (alreadyStreamedBoundaryLength > 0
+    && interimIndex < interim.length
+    && /\s/.test(interim[interimIndex] ?? "")) {
+    interimIndex += 1;
+    alreadyStreamedBoundaryLength -= 1;
   }
   return interim.slice(interimIndex);
 }
