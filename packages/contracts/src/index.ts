@@ -1153,7 +1153,7 @@ export {
   OsViewStateResponseSchema,
   OsViewWindowGeometrySchema,
   PatchOsViewStateRequestSchema,
-} from "./os-view.js";
+} from "#os-view";
 export type {
   OsViewAppState,
   OsViewCanvasTransform,
@@ -1164,4 +1164,4 @@ export type {
   OsViewStateResponse,
   OsViewWindowGeometry,
   PatchOsViewStateRequest,
-} from "./os-view.js";
+} from "#os-view";
