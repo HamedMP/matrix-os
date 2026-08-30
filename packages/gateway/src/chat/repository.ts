@@ -732,7 +732,7 @@ export class ChatRepository {
           label: part.label,
           mime_type: part.mimeType ?? null,
           size_bytes: part.sizeBytes ?? null,
-          owner_reference: null,
+          owner_reference: part.ownerReference ?? null,
         }).execute();
       }
       await trx.insertInto("chat_turns").values({

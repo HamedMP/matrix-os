@@ -200,7 +200,11 @@ describe("coding agent contracts", () => {
       mode: "default",
       approvalPolicy: "on_request",
       sandboxMode: "workspace_write",
-    }).providerId).toBe("codex");
+      model: "openai/gpt-5.6-sol",
+    })).toMatchObject({
+      providerId: "codex",
+      model: "openai/gpt-5.6-sol",
+    });
     expect(() =>
       CreateAgentThreadRequestSchema.parse({
         providerId: "codex",

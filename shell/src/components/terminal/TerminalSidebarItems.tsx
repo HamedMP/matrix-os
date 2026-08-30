@@ -9,6 +9,8 @@ import {
   LinkIcon,
   MoreHorizontalIcon,
   PencilIcon,
+  PinIcon,
+  PinOffIcon,
   PlusIcon,
   Rows2Icon,
   Trash2Icon,
@@ -652,6 +654,7 @@ export function ShellSessionGroup({
   selectedShellName,
   onOpen,
   onToggle,
+  onPin,
   onRename,
   onDelete,
   draggingShellName,
@@ -672,6 +675,7 @@ export function ShellSessionGroup({
   selectedShellName: string | null;
   onOpen: (shell: ShellSessionSummary) => void;
   onToggle: (shell: ShellSessionSummary) => void;
+  onPin: (shell: ShellSessionSummary) => void;
   onRename: (shell: ShellSessionSummary, nextName: string) => Promise<boolean>;
   onDelete: (shell: ShellSessionSummary, anchorElement: HTMLElement, returnFocusElement: HTMLButtonElement) => void;
   draggingShellName: string | null;
@@ -744,6 +748,7 @@ export function ShellSessionGroup({
                 selected={shell.name === selectedShellName}
                 onOpen={() => onOpen(shell)}
                 onToggle={() => onToggle(shell)}
+                onPin={() => onPin(shell)}
                 onRename={(nextName) => onRename(shell, nextName)}
                 onDelete={(anchorElement, returnFocusElement) => onDelete(shell, anchorElement, returnFocusElement)}
                 dragging={shell.name === draggingShellName}
@@ -831,6 +836,7 @@ function ShellCard({
   selected,
   onOpen,
   onToggle,
+  onPin,
   onRename,
   onDelete,
   dragging,
@@ -847,6 +853,7 @@ function ShellCard({
   selected: boolean;
   onOpen: () => void;
   onToggle: () => void;
+  onPin: () => void;
   onRename: (nextName: string) => Promise<boolean>;
   onDelete: (anchorElement: HTMLElement, returnFocusElement: HTMLButtonElement) => void;
   dragging: boolean;
@@ -1386,6 +1393,15 @@ function ShellCard({
                       }}
                     >
                       <Rows2Icon size={13} strokeWidth={2} />
+                    </SessionContextMenuItem>
+                    <SessionContextMenuItem
+                      label={shell.pinned ? "Unpin" : "Pin"}
+                      onClick={() => {
+                        closeContextMenuWithFocusReturn();
+                        onPin();
+                      }}
+                    >
+                      {shell.pinned ? <PinOffIcon size={13} strokeWidth={2} /> : <PinIcon size={13} strokeWidth={2} />}
                     </SessionContextMenuItem>
                     <hr style={SESSION_CONTEXT_MENU_SEPARATOR_STYLE} />
                     <SessionContextMenuItem

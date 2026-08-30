@@ -8,6 +8,7 @@ import type { ApiClient } from "../lib/api";
 export interface MatrixApp {
   slug: string;
   name: string;
+  path?: string;
   category?: string;
   appIdentity?: string;
 }
@@ -21,6 +22,12 @@ function appIdentityFromFile(value: unknown): string | undefined {
     .replace(/\/index\.html$/, "")
     .replace(/\.html$/, "");
   return identity.length <= 256 && SAFE_APP_IDENTITY.test(identity) ? identity : undefined;
+}
+
+function appPathFromFile(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 2048) return undefined;
+  const path = value.replace(/^\/+/, "");
+  return path.startsWith("apps/") && !path.split("/").includes("..") ? path : undefined;
 }
 
 const MAX_APP_ICON_PRELOADS = 20;
@@ -84,9 +91,11 @@ export function parseApps(value: unknown): MatrixApp[] {
     const category =
       typeof app.category === "string" && app.category.trim().length > 0 ? app.category.trim() : undefined;
     const appIdentity = appIdentityFromFile(app.file);
+    const path = appPathFromFile(app.file);
     apps.push({
       slug,
       name,
+      ...(path ? { path } : {}),
       ...(category ? { category } : {}),
       ...(appIdentity ? { appIdentity } : {}),
     });

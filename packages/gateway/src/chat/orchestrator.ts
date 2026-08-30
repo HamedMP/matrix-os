@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
@@ -69,6 +69,18 @@ interface ActiveRun {
 
 function id(prefix: "cturn_" | "run_" | "msg_" | "activity_"): string {
   return `${prefix}${randomUUID().replaceAll("-", "")}`;
+}
+
+function activityPersistenceId(runId: string, event: Record<string, unknown>): string {
+  if (event.type !== "agent.activity" || typeof event.activityId !== "string") return id("activity_");
+  const digest = createHash("sha256").update(`${runId}\0${event.activityId}`).digest("hex").slice(0, 32);
+  return `activity_${digest}`;
+}
+
+function assistantMessageId(runId: string, providerMessageId?: string): string {
+  if (!providerMessageId) return `msg_${runId.slice("run_".length)}_assistant`;
+  const digest = createHash("sha256").update(`${runId}\0${providerMessageId}`).digest("hex").slice(0, 32);
+  return `msg_${digest}`;
 }
 
 function safeError(
@@ -604,6 +616,8 @@ export class CanonicalChatOrchestrator {
         signal: controller.signal,
       };
       let text = "";
+      const assistantMessageSequences = new Map<string, number>();
+      let nextOutputSeq = outputSeq;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
@@ -629,11 +643,18 @@ export class CanonicalChatOrchestrator {
             throw new Error("Provider assistant output exceeded the canonical limit");
           }
           text += event.delta;
+          const messageId = assistantMessageId(run.id, event.messageId);
+          let messageSeq = assistantMessageSequences.get(messageId);
+          if (messageSeq === undefined) {
+            messageSeq = nextOutputSeq;
+            nextOutputSeq += 1;
+            assistantMessageSequences.set(messageId, messageSeq);
+          }
           await this.options.repository.appendAssistantDelta(owner, {
             chatId: run.chatId,
             runId: run.id,
-            messageId: `msg_${run.id.slice("run_".length)}_assistant`,
-            seq: outputSeq,
+            messageId,
+            seq: messageSeq,
             delta: event.delta,
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
@@ -703,7 +724,7 @@ export class CanonicalChatOrchestrator {
   ): Promise<void> {
     const activities = events.map((event) => CanonicalChatRunActivitySchema.parse({
       ...event,
-      id: id("activity_"),
+      id: activityPersistenceId(run.id, event),
       chatId: run.chatId,
       runId: run.id,
       occurredAt,

@@ -363,11 +363,11 @@ describe("gateway shell routes", () => {
     const res = await app.request("/api/terminal/sessions/calm-otter/ui-state", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ placement: "background", visualStatus: "waiting" }),
+      body: JSON.stringify({ placement: "background", pinned: true, visualStatus: "waiting" }),
     });
 
     expect(res.status).toBe(200);
-    expect(updateUiState).toHaveBeenCalledWith("calm-otter", { placement: "background" });
+    expect(updateUiState).toHaveBeenCalledWith("calm-otter", { placement: "background", pinned: true });
   });
 
   it("rate limits rapid shell session creation without imposing a live-session cap", async () => {

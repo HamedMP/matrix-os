@@ -4,6 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import nextConfig from "../../shell/next.config";
 
 const posthogMock = vi.hoisted(() => ({
+  conversations: {
+    isAvailable: vi.fn(() => true),
+    show: vi.fn(),
+  },
   init: vi.fn(),
   capture: vi.fn(),
   identify: vi.fn(),
@@ -14,6 +18,7 @@ const posthogMock = vi.hoisted(() => ({
 vi.mock("posthog-js", () => ({
   default: posthogMock,
 }));
+vi.mock("posthog-js/dist/conversations", () => ({}));
 
 type RewriteRule = { source: string; destination: string };
 
@@ -97,6 +102,21 @@ describe("shell PostHog same-origin proxy", () => {
     mock._isIdentified = () => true;
     resetPostHogIdentity(config);
     expect(posthogMock.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens PostHog Conversations from the shell navbar", async () => {
+    const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
+    const opened = await openShellSupport({
+      token: "phc_test",
+      apiHost: "/relay",
+      uiHost: "https://eu.posthog.com",
+    });
+
+    expect(opened).toBe(true);
+    expect(posthogMock.conversations.show).toHaveBeenCalledOnce();
+    expect(posthogMock.capture).toHaveBeenCalledWith("shell_support_chat_opened", {
+      matrix_client: "web",
+    });
   });
 
   it("defaults the shell api host to the /relay same-origin proxy", () => {

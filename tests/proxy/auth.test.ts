@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildFundedProxyApiKey,
   buildProxyApiKey,
   isAuthorizedProxyAdminRequest,
+  parseFundedProxyApiKey,
   parseProxyApiKey,
 } from "../../packages/proxy/src/auth.js";
 
@@ -33,5 +35,16 @@ describe("proxy auth", () => {
     expect(parseProxyApiKey(key, "proxy-shared-secret")).toEqual({ handle: "alice" });
     expect(parseProxyApiKey("sk-proxy-alice", "proxy-shared-secret")).toBeNull();
     expect(parseProxyApiKey(key, "wrong-secret")).toBeNull();
+  });
+
+  it("keeps funded relay credentials in a distinct HMAC audience", () => {
+    const sharedSecret = "proxy-shared-secret";
+    const legacyKey = buildProxyApiKey("alice", sharedSecret);
+    const fundedKey = buildFundedProxyApiKey("alice", sharedSecret);
+
+    expect(fundedKey).not.toBe(legacyKey);
+    expect(parseFundedProxyApiKey(fundedKey, sharedSecret)).toEqual({ handle: "alice" });
+    expect(parseFundedProxyApiKey(legacyKey, sharedSecret)).toBeNull();
+    expect(parseProxyApiKey(fundedKey, sharedSecret)).toBeNull();
   });
 });

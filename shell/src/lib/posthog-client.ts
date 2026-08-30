@@ -1,5 +1,6 @@
 "use client";
 
+import "posthog-js/dist/conversations";
 import posthog from "posthog-js";
 import {
   buildPostHogCookieConsentInitOptions,
@@ -22,6 +23,7 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay",
 });
 const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
+const SUPPORT_AVAILABILITY_TIMEOUT_MS = 10_000;
 // Replay kill switch. NEXT_PUBLIC_* is inlined at build time, so the build
 // flag alone cannot stop replay during an incident. The layout additionally
 // exposes the server's runtime POSTHOG_DISABLE_REPLAY env as a data
@@ -85,6 +87,26 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
     posthog.capture(event, sanitizeProperties(properties));
   } catch (err: unknown) {
     console.warn("[posthog] Failed to capture client event:", err instanceof Error ? err.name : typeof err);
+  }
+}
+
+export async function openShellSupport(currentConfig: typeof config = config): Promise<boolean> {
+  if (!currentConfig) return false;
+  try {
+    ensurePostHogInitialized(currentConfig);
+    const deadline = Date.now() + SUPPORT_AVAILABILITY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (posthog.conversations.isAvailable()) {
+        posthog.capture("shell_support_chat_opened", { matrix_client: "web" });
+        posthog.conversations.show();
+        return true;
+      }
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
+    }
+    return false;
+  } catch (err: unknown) {
+    console.warn("[posthog] Failed to open support chat:", err instanceof Error ? err.name : typeof err);
+    return false;
   }
 }
 

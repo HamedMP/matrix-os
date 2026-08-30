@@ -2,6 +2,7 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
+import { DESKTOP_DEV_RENDERER_HOST } from "./src/main/renderer-url";
 
 const desktopUpdateChannel =
   process.env.MATRIX_DESKTOP_UPDATE_CHANNEL || process.env.OPERATOR_UPDATE_CHANNEL || "";
@@ -13,7 +14,7 @@ export default defineConfig({
     // Workspace contracts export TypeScript source for package consumers.
     // Bundle the schemas and Zod so the built Electron main process never
     // depends on source-only `.js` specifiers at runtime.
-    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })],
+    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@finnaai/matrix"] })],
     define: {
       __MATRIX_DESKTOP_UPDATE_CHANNEL__: JSON.stringify(desktopUpdateChannel),
       __CODING_AGENTS_DESKTOP_WORKSPACE__: JSON.stringify(codingAgentsDesktopWorkspace),
@@ -44,10 +45,14 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react(), tailwindcss()],
+    // Reuse the web terminal's canonical agent logos so Desktop and web never
+    // drift to different provider artwork.
+    publicDir: resolve(__dirname, "../shell/public"),
     server: {
       host: "127.0.0.1",
       port: 5173,
       strictPort: true,
+      allowedHosts: [DESKTOP_DEV_RENDERER_HOST],
     },
     resolve: {
       alias: {

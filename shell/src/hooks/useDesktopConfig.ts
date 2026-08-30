@@ -3,7 +3,12 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
-import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
+import {
+  captureWebDesktopIconsHydrationRevision,
+  useDesktopConfigStore,
+  type DesktopIconPlacement,
+  type DockConfig,
+} from "@/stores/desktop-config";
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 import {
   loadShellSnapshot,
@@ -29,6 +34,7 @@ export interface DesktopConfig {
     userApps?: string[];
     systemApps?: string[];
   };
+  desktopIcons?: DesktopIconPlacement[];
 }
 
 export type DesktopConfigPatch = Omit<Partial<DesktopConfig>, "dock"> & {
@@ -146,12 +152,15 @@ function applyDesktopConfigSnapshot(
     setDock: (dock: DockConfig) => void;
     setPinnedApps: (apps: string[]) => void;
     setDockOrder: (order: DesktopConfig["dockOrder"]) => void;
+    setDesktopIcons: (icons: DesktopConfig["desktopIcons"], expectedHydrationRevision?: number) => void;
   },
+  desktopIconsHydrationRevision?: number,
 ) {
   rememberDesktopConfig(gatewayUrl, cfg);
   setters.setDock(cfg.dock);
   setters.setPinnedApps(cfg.pinnedApps);
   setters.setDockOrder(cfg.dockOrder);
+  setters.setDesktopIcons(cfg.desktopIcons, desktopIconsHydrationRevision);
   applyBackground(cfg.background, gatewayUrl);
 }
 
@@ -163,25 +172,32 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
   const setDock = useDesktopConfigStore((s) => s.setDock);
   const setPinnedApps = useDesktopConfigStore((s) => s.setPinnedApps);
   const setDockOrder = useDesktopConfigStore((s) => s.setDockOrder);
+  const setDesktopIcons = useDesktopConfigStore((s) => s.setDesktopIcons);
 
   useLayoutEffect(() => {
     const cachedConfig = loadShellSnapshot(cacheScope)?.desktopConfig;
     if (!cachedConfig) return;
-    applyDesktopConfigSnapshot(cachedConfig, gatewayUrl, { setDock, setPinnedApps, setDockOrder });
-  }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
+    applyDesktopConfigSnapshot(cachedConfig, gatewayUrl, { setDock, setPinnedApps, setDockOrder, setDesktopIcons });
+  }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder, setDesktopIcons]);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the mount-only gateway load resolves (guarded by AbortController), not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
   useEffect(() => {
     const controller = new AbortController();
+    const desktopIconsHydrationRevision = captureWebDesktopIconsHydrationRevision();
     fetchDesktopConfig(gatewayUrl, controller.signal).then((cfg) => {
       if (controller.signal.aborted) return;
       setConfig(cfg);
-      applyDesktopConfigSnapshot(cfg, gatewayUrl, { setDock, setPinnedApps, setDockOrder });
+      applyDesktopConfigSnapshot(
+        cfg,
+        gatewayUrl,
+        { setDock, setPinnedApps, setDockOrder, setDesktopIcons },
+        desktopIconsHydrationRevision,
+      );
       saveShellSnapshot(cacheScope, { desktopConfig: cfg });
     });
 
     return () => controller.abort();
-  }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
+  }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder, setDesktopIcons]);
 
   useEffect(() => {
     rememberDesktopConfig(gatewayUrl, config);
@@ -190,11 +206,13 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
 
   useFileWatcher((path, event) => {
     if (path === "system/desktop.json" && event !== "unlink") {
+      const desktopIconsHydrationRevision = captureWebDesktopIconsHydrationRevision();
       fetchDesktopConfig(gatewayUrl).then((cfg) => {
         setConfig(cfg);
         setDock(cfg.dock);
         setPinnedApps(cfg.pinnedApps);
         setDockOrder(cfg.dockOrder);
+        setDesktopIcons(cfg.desktopIcons, desktopIconsHydrationRevision);
         saveShellSnapshot(cacheScope, { desktopConfig: cfg });
       });
     }

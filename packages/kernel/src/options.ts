@@ -80,12 +80,41 @@ function loadBrowserConfig(homePath: string): {
   }
 }
 
-const KERNEL_EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
+const KERNEL_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 const SAFE_KERNEL_MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
 const KERNEL_CONFIG_MAX_BYTES = 256 * 1024;
 export type KernelEffort = (typeof KERNEL_EFFORT_VALUES)[number];
-export const DEFAULT_KERNEL_MODEL = "claude-opus-4-6";
+export const DEFAULT_KERNEL_MODEL = "claude-opus-5";
 export const DEFAULT_KERNEL_EFFORT: KernelEffort = "high";
+
+const ALL_ADAPTIVE_EFFORT_MODELS = new Set([
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-sonnet-5",
+]);
+const FOUR_LEVEL_ADAPTIVE_EFFORT_MODELS = new Set([
+  "claude-opus-4-6",
+  "claude-sonnet-4-5",
+]);
+
+export function resolveKernelSdkControls(
+  model: string,
+  effort: string,
+): { effort?: KernelEffort; thinking?: { type: "adaptive" } } {
+  const normalizedEffort = KERNEL_EFFORT_VALUES.includes(effort as KernelEffort)
+    ? effort as KernelEffort
+    : DEFAULT_KERNEL_EFFORT;
+  if (ALL_ADAPTIVE_EFFORT_MODELS.has(model)) {
+    return { effort: normalizedEffort, thinking: { type: "adaptive" } };
+  }
+  if (FOUR_LEVEL_ADAPTIVE_EFFORT_MODELS.has(model)) {
+    return {
+      effort: normalizedEffort === "xhigh" ? DEFAULT_KERNEL_EFFORT : normalizedEffort,
+      thinking: { type: "adaptive" },
+    };
+  }
+  return {};
+}
 
 function parseKernelConfigFile(raw: string): { model?: string; effort?: KernelEffort } {
   const config = JSON.parse(raw);
@@ -212,8 +241,8 @@ export async function kernelOptions(config: KernelConfig) {
   // Explicit per-call config wins; otherwise fall back to the persisted
   // ~/system/config.json kernel settings, then hardcoded defaults.
   const fileKernel = resolveKernelConfigFile(homePath);
-  const effort = (config.effort ?? fileKernel.effort) as KernelEffort;
-  const resolvedEffort = KERNEL_EFFORT_VALUES.includes(effort) ? effort : DEFAULT_KERNEL_EFFORT;
+  const model = config.model ?? fileKernel.model;
+  const controls = resolveKernelSdkControls(model, config.effort ?? fileKernel.effort);
 
   const ipcServer = await createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
@@ -238,8 +267,8 @@ export async function kernelOptions(config: KernelConfig) {
   }
 
   return {
-    model: config.model ?? fileKernel.model,
-    effort: resolvedEffort,
+    model,
+    ...controls,
     systemPrompt,
     cwd: config.workingDirectory ?? homePath,
     ...(config.env ? { env: config.env } : {}),
@@ -259,12 +288,11 @@ export async function kernelOptions(config: KernelConfig) {
       "TaskOutput",
       "WebSearch",
       "WebFetch",
-      "Skill",
       ...IPC_TOOL_NAMES,
       ...browserToolNames,
     ],
+    skills: "all" as const,
     maxTurns: config.maxTurns ?? 80,
-    thinking: { type: "adaptive" as const },
     hooks: {
       PreToolUse: [
         {

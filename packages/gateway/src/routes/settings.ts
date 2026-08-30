@@ -77,6 +77,12 @@ const DesktopDockPatchSchema = z.object({
   autoHide: z.boolean().optional(),
 }).strict();
 
+const DesktopIconSchema = z.object({
+  path: z.string().min(1).max(2048),
+  x: z.number().int().min(0).max(16_384),
+  y: z.number().int().min(0).max(16_384),
+}).strict();
+
 const DesktopPatchSchema = z.object({
   background: DesktopBackgroundSchema.optional(),
   dock: DesktopDockPatchSchema.optional(),
@@ -86,6 +92,7 @@ const DesktopPatchSchema = z.object({
     userApps: z.array(z.string().min(1).max(2048)).max(512).optional(),
     systemApps: z.array(z.string().min(1).max(2048)).max(512).optional(),
   }).strict().optional(),
+  desktopIcons: z.array(DesktopIconSchema).max(512).optional(),
 }).strict().refine((patch) => Object.keys(patch).length > 0, "Patch cannot be empty");
 
 const WALLPAPER_FILE_EXTENSIONS = new Set([

@@ -58,16 +58,19 @@ everyone; a **VPS** bug hits one owner unless it reaches shared R2.
   (`storage.tables` an app may touch) enforced at query time.
 
 ### F4 — Shared full-bucket R2 credentials on every VPS
-- **Status:** `PERSISTENT` · **Risk:** HIGH (L2×B3 = 6)
-- **Where:** `customer-vps-config.ts:51-52`; distribution `customer-vps-cloud-init.ts`; presign scoping `internal-sync-routes.ts` (`keyAllowedForUser`)
+- **Status:** `CHANGED` (source fixed; fleet rollout and old-token revocation pending) · **Risk:** HIGH until operational closure (L2×B3 = 6)
+- **Where:** broker policy `internal-sync-routes.ts`; host client `matrix-r2-broker.mjs`; migration `matrix-sync-agent`
 - **Who:** a single compromised VPS
-- **Attack:** every customer box gets the identical R2 access key + secret, full-bucket
-  scope. Platform presign is prefix-scoped (good — protects the normal path), but the
-  standing credential on a popped box reads/writes `matrixos-sync/<any-user>/...`
-  directly. One compromise → all users' synced files. Highest blast radius of any live
-  finding.
-- **Fix:** per-user scoped credentials, or remove the standing key and route all object
-  access through platform presign (the VPS already calls the platform anyway).
+- **Attack:** an older customer box may still hold the formerly shared full-bucket
+  credential until it receives the brokered host bundle; a copied credential remains
+  usable until provider revocation.
+- **Fix implemented:** new hosts receive no R2 key. Backup and restore ask the platform
+  for short-lived capabilities; the platform authenticates the handle, resolves its
+  active owner, derives the tenant prefix, and allowlists only VPS metadata and bounded
+  DB backup keys. Large dumps use brokered multipart URLs. OTA migration probes the
+  broker first and removes the exact non-symlink legacy credential file only after a
+  healthy release. Complete closure requires fleet verification followed by rotation
+  and revocation of the old provider token.
 
 ### F5 — Kernel runs all sources under `bypassPermissions`, no per-source gating
 - **Status:** `PERSISTENT` · **Risk:** HIGH (L3×B2 = 6)

@@ -338,35 +338,40 @@ describe('platform/customer-vps', () => {
     });
   });
 
-  it('persists a selected region and uses it for provisioning', async () => {
-    const { service, hetzner } = createService({
-      config: createTestConfig({ location: 'nbg1' }),
-      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
-    });
+  it.each(['ash', 'hil'] as const)(
+    'continues to provision an existing US machine in %s',
+    async (location) => {
+      const { service, hetzner } = createService({
+        config: createTestConfig({ location: 'nbg1' }),
+        resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
+      });
 
-    await service.provision({
-      clerkUserId: 'user_123',
-      handle: 'alice',
-      serverType: 'cpx22',
-      location: 'hil',
-    });
+      await service.provision({
+        clerkUserId: 'user_123',
+        handle: 'alice',
+        serverType: 'cpx22',
+        location,
+      });
 
-    expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
-      serverType: 'cpx22',
-      location: 'hil',
-    });
-    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
-      serverType: 'cpx22',
-      location: 'hil',
-    });
-  });
+      expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+        serverType: 'cpx22',
+        location,
+      });
+      await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+        serverType: 'cpx22',
+        location,
+      });
+    },
+  );
 
   it('accepts only supported Hetzner locations at the provisioning boundary', () => {
-    expect(ProvisionRequestSchema.safeParse({
-      clerkUserId: 'user_123',
-      handle: 'alice',
-      location: 'hil',
-    }).success).toBe(true);
+    for (const location of ['fsn1', 'nbg1', 'ash', 'hil']) {
+      expect(ProvisionRequestSchema.safeParse({
+        clerkUserId: 'user_123',
+        handle: 'alice',
+        location,
+      }).success).toBe(true);
+    }
     expect(ProvisionRequestSchema.safeParse({
       clerkUserId: 'user_123',
       handle: 'alice',
@@ -1429,15 +1434,16 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).not.toContain('PIPEDREAM_CLIENT_SECRET');
   });
 
-  it('templates R2 credentials into provisioned customer hosts for backups', async () => {
+  it('never templates platform R2 credentials into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 
     await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
-    expect(createInput?.userData).toContain("AWS_ACCESS_KEY_ID='r2-access-key'");
-    expect(createInput?.userData).toContain("AWS_SECRET_ACCESS_KEY='r2-secret-key'");
-    expect(createInput?.userData).toContain("R2_ENDPOINT='https://r2.example'");
+    expect(createInput?.userData).not.toContain('AWS_ACCESS_KEY_ID');
+    expect(createInput?.userData).not.toContain('AWS_SECRET_ACCESS_KEY');
+    expect(createInput?.userData).not.toContain('R2_ENDPOINT');
+    expect(createInput?.userData).not.toContain('/opt/matrix/env/r2.env');
   });
 
   it('templates public PostHog telemetry into provisioned customer hosts', async () => {

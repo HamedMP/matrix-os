@@ -16,6 +16,8 @@ import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useDesktopSurfaces } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
+import { useDesktopIcons } from "../../desktop/src/renderer/src/stores/desktop-icons";
+import { useCreateAppRequest } from "../../desktop/src/renderer/src/stores/create-app-request";
 
 describe("desktop runtime transition", () => {
   beforeEach(() => {
@@ -57,6 +59,8 @@ describe("desktop runtime transition", () => {
       workspaceView: "tabs",
       nextZIndex: 41,
     });
+    useDesktopIcons.setState({ icons: [{ path: "__chat__", x: 20, y: 20 }], loaded: true });
+    useCreateAppRequest.getState().requestDraft();
     useCodingAgentWorkspace.setState({ activeThreadId: "thread_old", selectedReviewId: "review_old" });
     useProjectWorkspaces.setState({
       entries: {
@@ -93,6 +97,8 @@ describe("desktop runtime transition", () => {
     expect(useProjectWorkspaces.getState().entries).toEqual({});
     expect(useProjectView.getState().entries).toEqual({});
     expect(useDesktopSurfaces.getState()).toMatchObject({ surfaces: {}, workspaceView: "desktop" });
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [], loaded: false });
+    expect(useCreateAppRequest.getState().request).toBeNull();
   });
 
   it("clears unsent chat drafts owned by the previous identity", () => {

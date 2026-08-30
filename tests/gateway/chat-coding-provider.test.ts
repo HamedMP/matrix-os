@@ -108,6 +108,65 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it("projects a typed Codex tool lifecycle through the provider-neutral activity seam", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+
+    queueMicrotask(() => fake.publish([
+      event({
+        type: "tool.started",
+        eventId: "evt_command_started",
+        toolCallId: "tool_command",
+        displayName: "Run focused tests",
+        kind: "command",
+        preview: "bun run test tests/desktop/canonical-chat-presentation.test.ts",
+        previewKind: "command",
+      }),
+      event({
+        type: "tool.output",
+        eventId: "evt_command_output",
+        toolCallId: "tool_command",
+        text: "failed at /Users/private/project with API_TOKEN=secret-value",
+        truncated: false,
+      }),
+      event({
+        type: "tool.completed",
+        eventId: "evt_command_failed",
+        toolCallId: "tool_command",
+        outcome: "failed",
+      }),
+      event({ type: "thread.completed", eventId: "evt_complete", outcome: "failed" }),
+    ]));
+
+    const events = [];
+    for await (const candidate of adapter.start(input())) events.push(candidate);
+
+    expect(events).toEqual([
+      { type: "state.updated", state: { conversationId: "thread_native" } },
+      {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run focused tests",
+        status: "running",
+        preview: "bun run test tests/desktop/canonical-chat-presentation.test.ts",
+        previewKind: "command",
+      },
+      {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run focused tests",
+        status: "failed",
+        summary: "Command failed.",
+        preview: "bun run test tests/desktop/canonical-chat-presentation.test.ts",
+        previewKind: "command",
+      },
+      { type: "run.completed", outcome: "failed" },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/secret-value|API_TOKEN|\/Users\/private|tool\.output/);
+  });
+
   it("streams normalized Codex events from the shared Gateway thread seam", async () => {
     const started = event({
       type: "terminal.bound",
@@ -130,11 +189,52 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(events).toEqual([
       { type: "state.updated", state: { conversationId: "thread_native" } },
       { type: "terminal.bound", terminalSessionId: "terminal_native", terminalSessionCreatedAt: occurredAt },
-      { type: "assistant.delta", delta: "done" },
+      { type: "assistant.delta", messageId: "msg_native", delta: "done" },
       expect.objectContaining({ type: "resource.changed", resourceKind: "file", changeKind: "updated" }),
       { type: "run.completed", outcome: "completed" },
     ]);
     expect(fake.createThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("separates distinct Codex assistant message items for Markdown rendering", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+
+    queueMicrotask(() => fake.publish([
+      event({
+        type: "assistant.text.delta",
+        eventId: "evt_commentary",
+        messageId: "msg_commentary",
+        delta: "I'll run the requested command.",
+      }),
+      event({
+        type: "assistant.text.completed",
+        eventId: "evt_commentary_complete",
+        messageId: "msg_commentary",
+      }),
+      event({
+        type: "assistant.text.delta",
+        eventId: "evt_final",
+        messageId: "msg_final",
+        delta: "# Verification\n\n- Complete",
+      }),
+      event({
+        type: "assistant.text.completed",
+        eventId: "evt_final_complete",
+        messageId: "msg_final",
+      }),
+      event({ type: "thread.completed", eventId: "evt_complete", outcome: "completed" }),
+    ]));
+
+    const events = [];
+    for await (const candidate of adapter.start(input())) events.push(candidate);
+
+    expect(events).toEqual([
+      { type: "state.updated", state: { conversationId: "thread_native" } },
+      { type: "assistant.delta", messageId: "msg_commentary", delta: "I'll run the requested command." },
+      { type: "assistant.delta", messageId: "msg_final", delta: "# Verification\n\n- Complete" },
+      { type: "run.completed", outcome: "completed" },
+    ]);
   });
 
   it("resumes and cancels only the same persisted coding thread", async () => {

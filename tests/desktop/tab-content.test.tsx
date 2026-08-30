@@ -11,11 +11,17 @@ const workTabMock = vi.hoisted(() => vi.fn(() => <div>Work</div>));
 const taskWorkspaceMock = vi.hoisted(() => vi.fn(() => <div>Task</div>));
 const terminalsTabMock = vi.hoisted(() => vi.fn(() => <div>Terminal</div>));
 const homeMock = vi.hoisted(() => vi.fn(() => <div>Browser</div>));
+const browserMock = vi.hoisted(() => vi.fn(() => <div>Web Browser</div>));
+const editorMock = vi.hoisted(() => vi.fn(() => <div>Editor</div>));
+const notesMock = vi.hoisted(() => vi.fn(() => <div>Notes</div>));
 
 vi.mock("@desktop/renderer/src/features/work/WorkTab", () => ({ default: workTabMock }));
 vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({ default: taskWorkspaceMock }));
 vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({ default: terminalsTabMock }));
 vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({ default: homeMock }));
+vi.mock("@desktop/renderer/src/features/browser/BrowserTab", () => ({ default: browserMock }));
+vi.mock("@desktop/renderer/src/features/editor/DesktopEditorWorkspace", () => ({ default: editorMock }));
+vi.mock("@desktop/renderer/src/features/notes/NotesWorkspace", () => ({ default: notesMock }));
 
 afterEach(() => {
   cleanup();
@@ -80,6 +86,15 @@ describe("current desktop tab panes", () => {
   it("renders apps through the current AppLauncher", () => {
     render(<TabPane tab={{ id: "apps", kind: "apps", title: "Apps", closable: true }} active />);
     expect(screen.getByRole("heading", { name: /^(Apps|Loading apps)$/ })).toBeTruthy();
+  });
+
+  it.each([
+    ["browser", browserMock],
+    ["editor", editorMock],
+    ["notes", notesMock],
+  ] as const)("renders the current %s workspace", (kind, workspaceMock) => {
+    render(<TabPane tab={{ id: kind, kind, title: kind, closable: true }} active />);
+    expect(workspaceMock).toHaveBeenCalled();
   });
 
   it("contains a task panel exception without exposing private errors", () => {

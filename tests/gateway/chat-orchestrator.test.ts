@@ -169,6 +169,112 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("persists one stable typed activity row across live lifecycle updates", async () => {
+    await repository.create(owner, {
+      id: "chat_activity_projection",
+      clientRequestId: "req_create_activity_projection",
+      title: "Activity projection",
+    });
+    const provider = adapter(async function* () {
+      yield {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "running",
+      };
+      yield {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "failed",
+        summary: "Command failed.",
+      };
+      yield { type: "run.completed", outcome: "failed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_activity_projection", {
+      clientRequestId: "req_activity_projection_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "run tests" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const activities = (await repository.exportChat(owner, "chat_activity_projection"))?.activities
+      .filter((activity) => activity.type === "agent.activity");
+    expect(activities).toEqual([expect.objectContaining({
+      type: "agent.activity",
+      activityId: "tool_command",
+      kind: "command",
+      label: "Run command",
+      status: "failed",
+      summary: "Command failed.",
+    })]);
+  });
+
+  it("persists provider message boundaries so process text and the final result reload identically", async () => {
+    await repository.create(owner, {
+      id: "chat_message_boundaries",
+      clientRequestId: "req_create_message_boundaries",
+      title: "Message boundaries",
+    });
+    const provider = adapter(async function* () {
+      yield { type: "assistant.delta", messageId: "process_1", delta: "I’ll inspect the project first." };
+      yield { type: "assistant.delta", messageId: "process_1", delta: " The manifest needs an update." };
+      yield { type: "assistant.delta", messageId: "result_1", delta: "The app is ready in ~/apps/flappy-bird." };
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_message_boundaries", {
+      clientRequestId: "req_message_boundaries_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "build the app" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const live = await repository.exportChat(owner, "chat_message_boundaries");
+    const reloaded = await repository.exportChat(owner, "chat_message_boundaries");
+    const assistantMessages = live?.messages.filter((message) => message.role === "assistant");
+    expect(assistantMessages).toHaveLength(2);
+    expect(assistantMessages?.map((message) => ({
+      id: message.id,
+      seq: message.seq,
+      state: message.state,
+      text: message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join(""),
+    }))).toEqual([
+      expect.objectContaining({
+        seq: 2,
+        state: "committed",
+        text: "I’ll inspect the project first. The manifest needs an update.",
+      }),
+      expect.objectContaining({
+        seq: 3,
+        state: "committed",
+        text: "The app is ready in ~/apps/flappy-bird.",
+      }),
+    ]);
+    expect(reloaded?.messages).toEqual(live?.messages);
+  });
+
   it("keeps one durable pending assistant message through 501 deltas and finalizes it in place", async () => {
     await repository.create(owner, {
       id: "chat_lossless_long_run",

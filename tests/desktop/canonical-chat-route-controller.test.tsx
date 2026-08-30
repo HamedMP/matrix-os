@@ -94,6 +94,74 @@ describe("canonical Chat route controller", () => {
     expect(result.current.detail?.record.projectId).toBe("project_1");
   });
 
+  it("retries a failed canonical turn and installs the admitted Run in the active detail", async () => {
+    const failedRecord = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, revision: 3 },
+    };
+    const failedRun = {
+      id: "run_failed",
+      chatId: globalRecord.chat.id,
+      turnId: "cturn_failed",
+      attempt: 1,
+      driverKind: "codex" as const,
+      instanceId: "codex_default",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      status: "failed" as const,
+      outcome: "failed" as const,
+      historyBoundarySeq: 1,
+      capabilitySnapshot: {
+        revision: "catalog_1",
+        rootChat: true,
+        attachments: ["file" as const],
+        resources: ["file" as const],
+        tools: [],
+        approvals: true,
+        userInput: true,
+        resume: true,
+        cancellation: true,
+        worktrees: "optional" as const,
+        interactionModes: ["default"],
+        permissionModes: ["supervised"],
+      },
+      createdAt: "2026-08-26T00:00:00.000Z",
+      updatedAt: "2026-08-26T00:01:00.000Z",
+      completedAt: "2026-08-26T00:01:00.000Z",
+    };
+    const admittedRun = { ...failedRun, id: "run_retry", attempt: 2, status: "accepted" as const, outcome: undefined, completedAt: undefined };
+    const admittedRecord = {
+      ...failedRecord,
+      chat: { ...failedRecord.chat, revision: 4 },
+      activeRun: { runId: admittedRun.id, turnId: admittedRun.turnId, status: "accepted" as const },
+    };
+    const retryTurn = vi.fn(async () => ({ admission: "accepted" as const, record: admittedRecord, run: admittedRun }));
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [failedRecord] })),
+      getDetail: vi.fn(async () => ({ ...detail, record: failedRecord, runs: [failedRun] })),
+      retryTurn,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.runs).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.retryTurn("cturn_failed");
+    });
+
+    expect(retryTurn).toHaveBeenCalledWith(globalRecord.chat.id, "cturn_failed", {
+      clientRequestId: expect.any(String),
+      baseRevision: 3,
+    });
+    expect(result.current.detail?.record.activeRun?.runId).toBe("run_retry");
+    expect(result.current.detail?.runs.map((run) => run.id)).toEqual(["run_failed", "run_retry"]);
+  });
+
   it("uses one scoped search identity instead of a second Project index", async () => {
     const search = vi.fn(async () => ({ items: [globalRecord] }));
     const sharedClient = client({ search });

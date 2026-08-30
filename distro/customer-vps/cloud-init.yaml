@@ -273,7 +273,6 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       EnvironmentFile=/opt/matrix/env/postgres.env
-      EnvironmentFile=-/opt/matrix/env/r2.env
       ExecStart=/opt/matrix/bin/matrix-db-backup.sh
       TimeoutStartSec=600
   - path: /etc/systemd/system/matrix-db-backup.timer
@@ -398,8 +397,6 @@ write_files:
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
-      MATRIX_R2_BUCKET={{r2Bucket}}
-      MATRIX_R2_PREFIX={{r2Prefix}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
       POSTHOG_TOKEN={{posthogToken}}
       POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}
@@ -416,14 +413,6 @@ write_files:
       MATRIX_HANDLE={{handle}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
-  - path: /opt/matrix/env/r2.env
-    owner: root:root
-    permissions: "0640"
-    content: |
-      AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'
-      AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'
-      R2_ENDPOINT='{{r2Endpoint}}'
-      R2_ACCOUNT_ID='{{r2AccountId}}'
   - path: /opt/matrix/env/postgres.env
     owner: root:root
     permissions: "0640"
@@ -631,7 +620,7 @@ runcmd:
     fi
     install -d -o root -g root -m 0755 /home/matrixos
     ln -sfn /home/matrix/home /home/matrixos/home
-    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/r2.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
+    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
     # The builder performs this recursive normalization before writing the
     # exact-bundle readiness proof. A certified immutable clone preserves that
@@ -675,7 +664,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
+    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
     for optional_bin in matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do

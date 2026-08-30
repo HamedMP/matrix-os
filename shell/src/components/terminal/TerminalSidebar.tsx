@@ -514,8 +514,15 @@ export function LocalTerminalSidebar({
   const renderedShells = filteredShells.length > 0
     ? filteredShells
     : shellsAuthoritative ? [] : syntheticFilteredShells;
-  const activeShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "active");
-  const backgroundShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "background");
+  const pinnedFirst = (left: ShellSessionSummary, right: ShellSessionSummary) => (
+    Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))
+  );
+  const activeShells = renderedShells
+    .filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "active")
+    .sort(pinnedFirst);
+  const backgroundShells = renderedShells
+    .filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "background")
+    .sort(pinnedFirst);
   const activeTerminalTab = ctx.tabs.find((terminalTab) => terminalTab.id === ctx.activeTabId) ?? ctx.tabs[0];
   const selectedPaneId = activeTerminalTab
     ? ctx.focusedPaneId && hasPaneId(activeTerminalTab.paneTree, ctx.focusedPaneId)
@@ -601,7 +608,10 @@ export function LocalTerminalSidebar({
     if (existingTab) {
       ctx.setActiveTab(existingTab.id);
     } else {
-      ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name);
+      ctx.addSessionTab(shell.subtitle?.trim() || formatShellDisplayName(shell.name), shell.name, DEFAULT_CWD, {
+        ...(shell.agent ? { agent: shell.agent } : {}),
+        legacyCompat: false,
+      });
     }
     if (markSeen && shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq) {
       void patchShellUiState(shell.name, { lastSeenSeq: shell.latestSeq });
@@ -1049,6 +1059,7 @@ export function LocalTerminalSidebar({
             selectedShellName={activeShellName}
             onOpen={openActiveShell}
             onToggle={moveShellToBackground}
+            onPin={(shell) => void patchShellUiState(shell.name, { pinned: !shell.pinned })}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell, anchorElement, returnFocusElement) => setCloseConfirmationRequest({ shell, anchorElement, returnFocusElement })}
             draggingShellName={draggingShellName}
@@ -1071,6 +1082,7 @@ export function LocalTerminalSidebar({
             selectedShellName={activeShellName}
             onOpen={makeShellActive}
             onToggle={makeShellActive}
+            onPin={(shell) => void patchShellUiState(shell.name, { pinned: !shell.pinned })}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell, anchorElement, returnFocusElement) => setCloseConfirmationRequest({ shell, anchorElement, returnFocusElement })}
             draggingShellName={draggingShellName}

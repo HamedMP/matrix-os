@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EmbedService } from "@desktop/main/embeds/embed-service";
 import type { Bounds } from "@desktop/main/embeds/embed-manager";
 import type { HandoffResult } from "@desktop/main/embeds/app-session";
+import type { PortForwardHandle } from "@finnaai/matrix/port-forward";
 
 vi.mock("electron", () => ({
   net: { request: vi.fn() },
@@ -32,6 +33,363 @@ describe("EmbedService", () => {
 
     await expect(service.reload("embed-shell")).resolves.toBe(true);
     expect(reload).toHaveBeenCalledWith("embed-shell");
+  });
+
+  it("opens VS Code only at the fixed authenticated Matrix code origin", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      runCodeEditorHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      manager: {
+        open: (
+          kind: string,
+          slug: string | null,
+          bounds: Bounds,
+          url: string,
+          options: unknown,
+        ) => string;
+      };
+    };
+    vi.spyOn(internals, "runCodeEditorHandoff").mockResolvedValue({ ok: true });
+    const open = vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+
+    const result = await service.open({ kind: "code-editor", bounds: BOUNDS });
+
+    expect(open).toHaveBeenCalledWith(
+      "code-editor",
+      null,
+      BOUNDS,
+      "https://code.matrix-os.com/",
+      expect.objectContaining({
+        id: result.embedId,
+        allowedOrigins: ["https://code.matrix-os.com"],
+      }),
+    );
+  });
+
+  it("does not attach a stale VS Code handoff after a runtime reset", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      runCodeEditorHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      manager: { open: (...args: unknown[]) => string };
+    };
+    let resolveHandoff!: (result: HandoffResult) => void;
+    vi.spyOn(internals, "runCodeEditorHandoff").mockImplementation(
+      () => new Promise((resolve) => { resolveHandoff = resolve; }),
+    );
+    const open = vi.spyOn(internals.manager, "open").mockReturnValue("code-1");
+
+    const opening = service.open({ kind: "code-editor", bounds: BOUNDS });
+    service.closeAll();
+    resolveHandoff({ ok: true });
+
+    await expect(opening).resolves.toMatchObject({ state: "failed" });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("caps pending VS Code handoffs", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      runCodeEditorHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+    };
+    vi.spyOn(internals, "runCodeEditorHandoff").mockImplementation(
+      () => new Promise(() => {}),
+    );
+
+    const openings = Array.from({ length: 13 }, () => (
+      service.open({ kind: "code-editor", bounds: BOUNDS })
+    ));
+
+    await expect(openings.at(-1)).resolves.toMatchObject({ state: "failed" });
+    expect(internals.runCodeEditorHandoff).toHaveBeenCalledTimes(12);
+    service.closeAll();
+  });
+
+  it("opens public websites directly without starting a runtime tunnel", async () => {
+    const startPortForward = vi.fn();
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+    const internals = service as unknown as {
+      manager: { open: (...args: unknown[]) => string };
+    };
+    const open = vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+
+    const result = await service.open({
+      kind: "browser",
+      url: "https://matrix-os.com/docs",
+      bounds: BOUNDS,
+    });
+
+    expect(result.state).toBe("loading");
+    expect(startPortForward).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(
+      "browser",
+      null,
+      BOUNDS,
+      "https://matrix-os.com/docs",
+      expect.objectContaining({
+        id: result.embedId,
+        allowedOrigins: ["https://matrix-os.com"],
+        allowPublicNavigation: true,
+      }),
+    );
+  });
+
+  it("tunnels runtime loopback pages through Matrix and closes the tunnel with the embed", async () => {
+    const closeForward = vi.fn(async () => {});
+    const startPortForward = vi.fn(async () => ({
+      localHost: "127.0.0.1" as const,
+      localPort: 49152,
+      remoteHost: "127.0.0.1" as const,
+      remotePort: 3000,
+      ready: Promise.resolve(),
+      closed: new Promise<void>(() => {}),
+      close: closeForward,
+    }));
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+    const internals = service as unknown as {
+      manager: {
+        open: (
+          kind: string,
+          slug: string | null,
+          bounds: Bounds,
+          url: string,
+          options: unknown,
+        ) => string;
+      };
+    };
+    let browserOptions!: {
+      id: string;
+      resolveNavigation: (url: string) => unknown;
+    };
+    const open = vi.spyOn(internals.manager, "open").mockImplementation((_kind, _slug, _bounds, _url, options) => {
+      expect(options).toEqual(expect.objectContaining({ id: expect.any(String) }));
+      browserOptions = options as typeof browserOptions;
+      return browserOptions.id;
+    });
+
+    const result = await service.open({
+      kind: "browser",
+      url: "http://127.0.0.1:3000/docs?q=matrix#api",
+      bounds: BOUNDS,
+    });
+
+    expect(startPortForward).toHaveBeenCalledWith(expect.objectContaining({
+      gatewayUrl: "https://gateway.test",
+      token: "token",
+      localHost: "127.0.0.1",
+      localPort: 0,
+      remoteHost: "127.0.0.1",
+      remotePort: 3000,
+    }));
+    expect(open).toHaveBeenCalledWith(
+      "browser",
+      null,
+      BOUNDS,
+      "http://127.0.0.1:49152/docs?q=matrix#api",
+      expect.objectContaining({
+        id: result.embedId,
+        allowedOrigins: ["http://127.0.0.1:49152"],
+        resolveNavigation: expect.any(Function),
+      }),
+    );
+    expect(browserOptions.resolveNavigation("http://localhost:3000/canonical?q=1")).toEqual({
+      disposition: "rewrite",
+      url: "http://127.0.0.1:49152/canonical?q=1",
+    });
+    expect(browserOptions.resolveNavigation("http://localhost:4000/other")).toEqual({
+      disposition: "block",
+    });
+
+    expect(service.close(result.embedId)).toBe(true);
+    await vi.waitFor(() => expect(closeForward).toHaveBeenCalledTimes(1));
+  });
+
+  it("cleans up a pending Browser tunnel when its embed closes before forwarding is ready", async () => {
+    let resolveForward!: (value: PortForwardHandle) => void;
+    const closeForward = vi.fn(async () => {});
+    const startPortForward = vi.fn(() => new Promise<PortForwardHandle>((resolve) => {
+      resolveForward = resolve;
+    }));
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+
+    const opening = service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+    await vi.waitFor(() => expect(startPortForward).toHaveBeenCalledOnce());
+    const pendingId = Array.from((service as unknown as { pendingBrowsers: Set<string> }).pendingBrowsers)[0]!;
+    expect(service.close(pendingId)).toBe(true);
+    resolveForward({
+      localHost: "127.0.0.1",
+      localPort: 49152,
+      remoteHost: "127.0.0.1",
+      remotePort: 3000,
+      ready: Promise.resolve(),
+      closed: new Promise<void>(() => {}),
+      close: closeForward,
+    });
+
+    await expect(opening).resolves.toMatchObject({ embedId: pendingId, state: "failed" });
+    await vi.waitFor(() => expect(closeForward).toHaveBeenCalledOnce());
+  });
+
+  it("caps pending Browser tunnels", async () => {
+    const startPortForward = vi.fn(() => new Promise<PortForwardHandle>(() => {}));
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+
+    const openings = Array.from({ length: 13 }, (_, index) => service.open({
+      kind: "browser" as const,
+      url: `127.0.0.1:${3000 + index}`,
+      bounds: BOUNDS,
+    }));
+
+    await expect(openings.at(-1)).resolves.toMatchObject({ state: "failed" });
+    expect(startPortForward).toHaveBeenCalledTimes(12);
+    service.closeAll();
+  });
+
+  it("invalidates a pending Browser tunnel when the selected runtime changes", async () => {
+    let resolveForward!: (value: PortForwardHandle) => void;
+    const closeForward = vi.fn(async () => {});
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward: () => new Promise<PortForwardHandle>((resolve) => {
+        resolveForward = resolve;
+      }),
+    });
+    const opening = service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+    await vi.waitFor(() => expect(
+      (service as unknown as { pendingBrowsers: Set<string> }).pendingBrowsers.size,
+    ).toBe(1));
+
+    service.closeAll();
+    resolveForward({
+      localHost: "127.0.0.1",
+      localPort: 49152,
+      remoteHost: "127.0.0.1",
+      remotePort: 3000,
+      ready: Promise.resolve(),
+      closed: new Promise<void>(() => {}),
+      close: closeForward,
+    });
+
+    await expect(opening).resolves.toMatchObject({ state: "failed" });
+    await vi.waitFor(() => expect(closeForward).toHaveBeenCalledOnce());
+  });
+
+  it("evicts the Browser embed when tunnel termination rejects", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let rejectClosed!: (error: Error) => void;
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward: async () => ({
+        localHost: "127.0.0.1",
+        localPort: 49152,
+        remoteHost: "127.0.0.1",
+        remotePort: 3000,
+        ready: Promise.resolve(),
+        closed: new Promise<void>((_resolve, reject) => { rejectClosed = reject; }),
+        close: vi.fn(async () => {}),
+      }),
+    });
+    const internals = service as unknown as {
+      browserForwards: Map<string, PortForwardHandle>;
+      manager: {
+        open: (...args: unknown[]) => string;
+        close: (embedId: string) => boolean;
+      };
+    };
+    vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+    const closeEmbed = vi.spyOn(internals.manager, "close").mockReturnValue(true);
+
+    const result = await service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+    rejectClosed(new Error("forward failed"));
+
+    await vi.waitFor(() => expect(closeEmbed).toHaveBeenCalledWith(result.embedId));
+    expect(internals.browserForwards.has(result.embedId)).toBe(false);
+  });
+
+  it("reports a recoverable failure when an established Browser tunnel closes normally", async () => {
+    let resolveClosed!: () => void;
+    const emitState = vi.fn();
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState,
+      startPortForward: async () => ({
+        localHost: "127.0.0.1",
+        localPort: 49152,
+        remoteHost: "127.0.0.1",
+        remotePort: 3000,
+        ready: Promise.resolve(),
+        closed: new Promise<void>((resolve) => { resolveClosed = resolve; }),
+        close: vi.fn(async () => {}),
+      }),
+    });
+    const internals = service as unknown as {
+      manager: {
+        open: (...args: unknown[]) => string;
+        close: (embedId: string) => boolean;
+      };
+    };
+    vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+    const closeEmbed = vi.spyOn(internals.manager, "close").mockReturnValue(true);
+    const result = await service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+
+    resolveClosed();
+
+    await vi.waitFor(() => expect(emitState).toHaveBeenCalledWith(result.embedId, "failed"));
+    expect(closeEmbed).toHaveBeenCalledWith(result.embedId);
   });
 
   it("refreshes hosted-shell cookies before navigating the retained embed", async () => {

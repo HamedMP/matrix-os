@@ -32,7 +32,11 @@ interface MissionControlProps {
   onRenameApp?: (slug: string, newName: string) => void;
   onRemoveFromCanvas?: (path: string) => void;
   nativePresentation?: boolean;
+  onCreateApp: () => void;
+  onAddToDesktop?: (path: string) => void;
 }
+
+const CREATE_APP: AppEntry = { name: "Create app", path: "__create-app__" };
 
 export function MissionControl({
   open,
@@ -46,6 +50,8 @@ export function MissionControl({
   onRenameApp,
   onRemoveFromCanvas,
   nativePresentation = false,
+  onCreateApp,
+  onAddToDesktop,
 }: MissionControlProps) {
   const { provision } = useTaskBoard();
   const themeStyle = useThemeStyle();
@@ -91,12 +97,20 @@ export function MissionControl({
 
   if (!mounted) return null;
 
+  const launcherApps = apps.some((app) => app.path === CREATE_APP.path)
+    ? apps
+    : [CREATE_APP, ...apps];
+  const openLauncherApp = (name: string, path: string) => {
+    if (path === CREATE_APP.path) onCreateApp();
+    else onOpenApp(name, path);
+  };
+
   // Native Desktop and macOS designs share the full-screen launchpad model.
   // The older dock-management panel remains available only to legacy shell
   // renderers; pinning and ordering belong to Settings, not the OS launcher.
   if (nativePresentation || themeStyle === "macos-glass") {
     return (
-      <Launchpad apps={apps} visible={visible} onOpenApp={onOpenApp} onClose={onClose} />
+      <Launchpad apps={launcherApps} visible={visible} onOpenApp={openLauncherApp} onClose={onClose} onAddToDesktop={onAddToDesktop} />
     );
   }
 
@@ -159,15 +173,16 @@ export function MissionControl({
         )}
 
         <LauncherGrid
-          apps={apps}
+          apps={launcherApps}
           openWindows={openWindows}
           pinnedApps={pinnedApps}
-          onOpenApp={onOpenApp}
+          onOpenApp={openLauncherApp}
           onClose={onClose}
           onTogglePin={onTogglePin}
           onRegenerateIcon={onRegenerateIcon}
           onRenameApp={onRenameApp}
           onRemoveFromCanvas={onRemoveFromCanvas}
+          onAddToDesktop={onAddToDesktop}
           visible={visible}
           closingRef={closingRef}
         />
@@ -193,6 +208,7 @@ function LauncherGrid({
   onRegenerateIcon,
   onRenameApp,
   onRemoveFromCanvas,
+  onAddToDesktop,
   visible,
   closingRef,
 }: {
@@ -205,6 +221,7 @@ function LauncherGrid({
   onRegenerateIcon: (slug: string) => void;
   onRenameApp?: (slug: string, newName: string) => void;
   onRemoveFromCanvas?: (path: string) => void;
+  onAddToDesktop?: (path: string) => void;
   visible: boolean;
   closingRef: React.RefObject<boolean>;
 }) {
@@ -228,6 +245,8 @@ function LauncherGrid({
       >
         <AppTile
           name={app.name}
+          createApp={app.path === CREATE_APP.path}
+          onAddToDesktop={app.path !== CREATE_APP.path && onAddToDesktop ? () => onAddToDesktop(app.path) : undefined}
           isOpen={openWindows.has(app.path)}
           onClick={() => {
             onOpenApp(app.name, app.path);

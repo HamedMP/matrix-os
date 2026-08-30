@@ -98,6 +98,52 @@ function codingRegistry(
 }
 
 describe("canonical Chat Provider catalog", () => {
+  it("preserves namespaced system model ids in the canonical catalog", async () => {
+    const source: AgentRuntimeSource = async () => {
+      const snapshot = await runtimeSource()();
+      return {
+        ...snapshot,
+        providers: [...snapshot.providers, {
+          id: "nous",
+          displayName: "Nous Portal",
+          runtime: "hermes",
+          scopes: ["messaging"],
+          authKind: "oauth_login",
+          supportedAuthKinds: ["oauth_login"],
+          models: [{
+            id: "anthropic/claude-opus-5",
+            displayName: "Claude Opus 5",
+            capabilities: ["tools", "reasoning"],
+            efforts: ["high"],
+            available: true,
+          }],
+          authStatus: { state: "ready", authenticated: true, action: "none" },
+        }],
+        messaging: {
+          runtime: "hermes",
+          provider: "nous",
+          model: "anthropic/claude-opus-5",
+          configured: true,
+        },
+      };
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: source,
+    });
+
+    const hermes = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "hermes_default")!;
+
+    expect(hermes.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "nous:anthropic/claude-opus-5" }),
+    ]));
+    expect(hermes.defaultSelection).toEqual({
+      instanceId: "hermes_default",
+      model: "nous:anthropic/claude-opus-5",
+    });
+  });
+
   it("projects system and coding runtimes through one bounded catalog", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry(),
@@ -428,6 +474,41 @@ describe("canonical Chat Provider catalog", () => {
 
     expect(hermes.models.map((model) => model.id)).toEqual(["openai:gpt-5"]);
     expect(hermes.defaultSelection?.model).toBe("openai:gpt-5");
+  });
+
+  it("preserves a bounded provider-owned model path in the canonical catalog", async () => {
+    const providerModel = "anthropic/claude-opus-4.6";
+    const source: AgentRuntimeSource = async () => {
+      const snapshot = await runtimeSource()(AbortSignal.timeout(1_000));
+      return {
+        ...snapshot,
+        providers: [{
+          ...snapshot.providers[0]!,
+          id: "openai-codex",
+          models: [{
+            ...snapshot.providers[0]!.models[0]!,
+            id: providerModel,
+          }],
+        }],
+        messaging: {
+          runtime: "hermes",
+          provider: "openai-codex",
+          model: providerModel,
+          configured: true,
+        },
+      };
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([]),
+      agentRuntimeSource: source,
+    });
+
+    const hermes = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "hermes_default")!;
+
+    expect(hermes.models.map((model) => model.id))
+      .toEqual([`openai-codex:${providerModel}`]);
+    expect(hermes.defaultSelection?.model).toBe(`openai-codex:${providerModel}`);
   });
 
   it("keeps the active system runtime when coding inventory fails", async () => {

@@ -168,6 +168,7 @@ export function CanonicalChatRoute({
           projectSlug: projectId,
           title: projectLabel ?? projectId,
           ...(chatId ? { chatId } : {}),
+          ...(chatId ? { chatTitle: title, chatView: "conversation" as const } : { chatView: "draft" as const }),
         });
       }}
       onProjectChanged={(chatId, targetProjectId, title) => {

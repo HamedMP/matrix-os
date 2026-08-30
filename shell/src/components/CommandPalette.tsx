@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCommandStore, type Command } from "@/stores/commands";
 import {
   CommandDialog,
@@ -31,22 +31,37 @@ export function CommandPalette({
   const commands = useCommandStore((s) => s.commands);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [category, setCategory] = useState<"all" | "apps" | "actions" | "settings">("all");
+  const [query, setQuery] = useState("");
   const handleInputChange = () => {
     requestAnimationFrame(() => {
       listRef.current?.scrollTo({ top: 0 });
     });
   };
 
-  const { apps, actions } = (() => {
+  useEffect(() => {
+    if (!open) return;
+    setCategory("all");
+    setQuery("");
+    inputRef.current?.focus();
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
+  const { apps, actions, settings } = (() => {
     const apps: Command[] = [];
     const actions: Command[] = [];
-    const grouped = { apps, actions };
+    const settings: Command[] = [];
+    const grouped = { apps, actions, settings };
     for (const cmd of commands.values()) {
       if (cmd.group === "Apps") apps.push(cmd);
+      else if (cmd.id.includes("settings") || cmd.keywords?.some((keyword) => keyword === "settings" || keyword === "preferences")) settings.push(cmd);
       else actions.push(cmd);
     }
     apps.sort((a, b) => a.label.localeCompare(b.label));
     actions.sort((a, b) => a.label.localeCompare(b.label));
+    settings.sort((a, b) => a.label.localeCompare(b.label));
     return grouped;
   })();
 
@@ -55,15 +70,52 @@ export function CommandPalette({
       open={open}
       onOpenChange={onOpenChange}
       showCloseButton={false}
-      className="top-[20%] translate-y-0 z-[60] max-w-[520px]"
+      className="top-[8%] translate-y-0 z-[60] max-w-[760px] rounded-2xl"
     >
-      <CommandInput placeholder="Search commands..." onValueChange={handleInputChange} />
-      <CommandList ref={listRef}>
+      <div className="relative">
+        <CommandInput
+          ref={inputRef}
+          value={query}
+          placeholder="Type a command or search…"
+          className="h-16 rounded-none pr-16 text-lg focus-visible:border-transparent focus-visible:ring-0 focus-visible:shadow-none"
+          onValueChange={(value: string) => {
+            setQuery(value);
+            handleInputChange();
+          }}
+        />
+        <kbd className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 rounded-full border px-2.5 py-1 text-xs text-muted-foreground">⌘K</kbd>
+      </div>
+      <div role="tablist" aria-label="Command categories" className="flex h-11 items-stretch gap-1 border-b px-4">
+        {([
+          ["all", "All"],
+          ["apps", "Apps"],
+          ["actions", "Actions"],
+          ["settings", "Settings"],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={category === id}
+            className="relative px-3 text-sm font-medium text-muted-foreground aria-selected:text-foreground"
+            onClick={() => {
+              setCategory(id);
+              setQuery("");
+              window.requestAnimationFrame(() => inputRef.current?.focus());
+            }}
+          >
+            {label}
+            {category === id ? <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" /> : null}
+          </button>
+        ))}
+      </div>
+      <CommandList ref={listRef} className="max-h-[min(560px,68vh)] p-2">
         <CommandEmpty>No commands found.</CommandEmpty>
-        {apps.length > 0 && (
+        {(category === "all" || category === "apps") && apps.length > 0 && (
           <CommandGroup heading="Apps">
             {apps.map((cmd) => (
               <CommandItem
+                data-instant-list-hover
                 key={cmd.id}
                 value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
                 onSelect={() => {
@@ -87,10 +139,11 @@ export function CommandPalette({
             ))}
           </CommandGroup>
         )}
-        {actions.length > 0 && (
+        {(category === "all" || category === "actions") && actions.length > 0 && (
           <CommandGroup heading="Actions">
             {actions.map((cmd) => (
               <CommandItem
+                data-instant-list-hover
                 key={cmd.id}
                 value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
                 onSelect={() => {
@@ -102,6 +155,24 @@ export function CommandPalette({
                 {cmd.shortcut && (
                   <CommandShortcut>{formatShortcut(cmd.shortcut)}</CommandShortcut>
                 )}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+        {(category === "all" || category === "settings") && settings.length > 0 && (
+          <CommandGroup heading="Settings">
+            {settings.map((cmd) => (
+              <CommandItem
+                data-instant-list-hover
+                key={cmd.id}
+                value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
+                onSelect={() => {
+                  cmd.execute();
+                  onOpenChange(false);
+                }}
+              >
+                <span>{cmd.label}</span>
+                {cmd.shortcut && <CommandShortcut>{formatShortcut(cmd.shortcut)}</CommandShortcut>}
               </CommandItem>
             ))}
           </CommandGroup>

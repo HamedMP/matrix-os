@@ -1,5 +1,5 @@
 "use client";
-import { PinIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "@/lib/hugeicons";
+import { PinIcon, PlusIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "@/lib/hugeicons";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import {
   ContextMenu,
@@ -19,15 +19,18 @@ interface AppTileProps {
   onRegenerateIcon?: () => void;
   onRename?: (newName: string) => void;
   onRemoveFromCanvas?: () => void;
+  createApp?: boolean;
+  onAddToDesktop?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas }: AppTileProps) {
+export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas, createApp = false, onAddToDesktop }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
   const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
 
   const tile = (
     <button
       type="button"
+      aria-label={name}
       onClick={onClick}
       data-app-tile
       className="relative flex flex-col items-center gap-1.5 p-1.5 rounded-xl hover:bg-accent/50 transition-colors group"
@@ -41,7 +44,9 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
               : "bg-card border border-border/60 text-foreground group-hover:shadow-md"
           }`}
         >
-          {showImage ? (
+          {createApp ? (
+            <PlusIcon className="size-12" aria-hidden="true" />
+          ) : showImage ? (
             // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
             <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
           ) : (
@@ -86,7 +91,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
     </button>
   );
 
-  const hasContextMenu = onTogglePin || onRegenerateIcon || onRename || onRemoveFromCanvas;
+  const hasContextMenu = onTogglePin || onRegenerateIcon || onRename || onRemoveFromCanvas || onAddToDesktop;
   if (!hasContextMenu) return tile;
 
   return (
@@ -95,6 +100,12 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
         {tile}
       </ContextMenuTrigger>
       <ContextMenuContent>
+        {onAddToDesktop && (
+          <ContextMenuItem onSelect={onAddToDesktop}>
+            <PlusIcon className="size-3.5 mr-2" />
+            Add to Desktop
+          </ContextMenuItem>
+        )}
         {onTogglePin && (
           <ContextMenuItem onSelect={onTogglePin}>
             <PinIcon className="size-3.5 mr-2" />

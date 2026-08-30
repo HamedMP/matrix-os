@@ -53,6 +53,18 @@ function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
       && ["completed", "failed", "aborted"].includes(activity.status));
 }
 
+function canTransitionAgentActivity(
+  current: Extract<CanonicalChatRunActivity, { type: "agent.activity" }>,
+  next: Extract<CanonicalChatRunActivity, { type: "agent.activity" }>,
+): boolean {
+  if (current.activityId !== next.activityId || current.kind !== next.kind || current.label !== next.label) return false;
+  if (current.status === "running") return true;
+  if (current.status === "partial") {
+    return ["partial", "completed", "failed", "cancelled"].includes(next.status);
+  }
+  return current.status === next.status;
+}
+
 async function selectOwnedChat(
   executor: Executor,
   owner: ChatOwner,
@@ -256,7 +268,7 @@ export class ChatRunLifecycleRepository {
       const count = await trx.selectFrom("chat_run_events").select(({ fn }) => fn.countAll().as("count"))
         .where("run_id", "=", runId).executeTakeFirstOrThrow();
       const activityIds = [...new Set(activities.map((activity) => activity.id))];
-      const existing = await trx.selectFrom("chat_run_events").select(["id", "chat_id", "run_id"])
+      const existing = await trx.selectFrom("chat_run_events").select(["id", "chat_id", "run_id", "run_seq", "event"])
         .where("id", "in", activityIds).execute();
       if (existing.some((row) => row.chat_id !== chatId || row.run_id !== runId)) {
         throw new ChatConflictError(chatId, Number(current.revision));
@@ -288,10 +300,32 @@ export class ChatRunLifecycleRepository {
         .where("run_id", "=", runId)
         .executeTakeFirst();
       const existingIds = new Set(existing.map((row) => row.id));
+      const existingById = new Map(existing.map((row) => [row.id, row]));
       let nextSequence = Number(latestSequence?.sequence ?? 0);
-      let inserted = 0;
+      let changed = 0;
       for (const activity of activities) {
-        if (existingIds.has(activity.id)) continue;
+        if (existingIds.has(activity.id)) {
+          const row = existingById.get(activity.id);
+          if (!row) throw new ChatConflictError(chatId, Number(current.revision));
+          const persisted = CanonicalChatRunActivitySchema.parse(row.event);
+          if (persisted.type !== "agent.activity" || activity.type !== "agent.activity") continue;
+          if (!canTransitionAgentActivity(persisted, activity)) {
+            throw new ChatConflictError(chatId, Number(current.revision));
+          }
+          const updated = CanonicalChatRunActivitySchema.parse({
+            ...activity,
+            sequence: Number(row.run_seq ?? persisted.sequence),
+            occurredAt: persisted.occurredAt,
+          });
+          if (JSON.stringify(updated) === JSON.stringify(persisted)) continue;
+          await trx.updateTable("chat_run_events").set({ event: jsonb(updated) })
+            .where("id", "=", activity.id)
+            .where("chat_id", "=", chatId)
+            .where("run_id", "=", runId)
+            .execute();
+          changed += 1;
+          continue;
+        }
         nextSequence += 1;
         const sequenced = CanonicalChatRunActivitySchema.parse({
           ...activity,
@@ -306,7 +340,7 @@ export class ChatRunLifecycleRepository {
           occurred_at: sequenced.occurredAt,
         }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
         if (row) {
-          inserted += 1;
+          changed += 1;
           if (sequenced.type === "terminal.bound") {
             await trx.insertInto("chat_terminal_bindings").values({
               chat_id: chatId,
@@ -321,12 +355,12 @@ export class ChatRunLifecycleRepository {
           }
         }
       }
-      if (inserted > 0) {
+      if (changed > 0) {
         const revision = Number(current.revision) + 1;
         await trx.updateTable("chats").set({ revision, updated_at: sql`now()` }).where("id", "=", chatId).execute();
         await insertOutbox(trx, owner, chatId, revision, "run.activity", { runId });
       }
-      return inserted;
+      return changed;
     });
   }
 
@@ -456,32 +490,38 @@ export class ChatRunLifecycleRepository {
         return { run: toRun(current), transitioned: false };
       }
       const expectedState = input.outcome === "completed" ? "committed" : "failed";
-      const pendingRow = await trx.selectFrom("chat_messages").selectAll()
+      const pendingRows = await trx.selectFrom("chat_messages").selectAll()
         .where("chat_id", "=", input.chatId)
         .where("run_id", "=", input.runId)
         .where("role", "=", "assistant")
+        .orderBy("seq")
         .forUpdate()
-        .executeTakeFirst();
+        .execute();
       let finalizedOutput: CanonicalChatMessage | undefined;
       let insertedOutput = false;
-      if (pendingRow) {
-        const pending = toMessage(pendingRow);
-        if (pending.state !== "pending") {
+      if (pendingRows.length > 0) {
+        const pendingMessages = pendingRows.map(toMessage);
+        if (pendingMessages.some((pending) => pending.state !== "pending")) {
           throw new ChatConflictError(input.chatId, Number(chat.revision));
         }
-        if (output !== undefined && (output.id !== pending.id || output.seq !== pending.seq)) {
+        if (output !== undefined && !pendingMessages.some((pending) => (
+          output.id === pending.id && output.seq === pending.seq
+        ))) {
           throw new ChatConflictError(input.chatId, Number(chat.revision));
         }
-        finalizedOutput = CanonicalChatMessageSchema.parse({
-          ...(output ?? pending),
-          state: expectedState,
-        });
-        await trx.updateTable("chat_messages").set({
-          state: expectedState,
-          parts: jsonb(finalizedOutput.parts),
-          byte_count: encoded.encode(JSON.stringify(finalizedOutput)).byteLength,
-          search_text: messageSearchText(finalizedOutput),
-        }).where("id", "=", pending.id).execute();
+        for (const pending of pendingMessages) {
+          const finalized = CanonicalChatMessageSchema.parse({
+            ...(output?.id === pending.id ? output : pending),
+            state: expectedState,
+          });
+          await trx.updateTable("chat_messages").set({
+            state: expectedState,
+            parts: jsonb(finalized.parts),
+            byte_count: encoded.encode(JSON.stringify(finalized)).byteLength,
+            search_text: messageSearchText(finalized),
+          }).where("id", "=", pending.id).execute();
+          finalizedOutput = finalized;
+        }
       } else if (output !== undefined) {
         if (output.chatId !== input.chatId || output.runId !== input.runId
           || output.turnId !== current.turn_id || output.role !== "assistant"

@@ -122,6 +122,24 @@ describe("useChatState refresh recovery", () => {
     });
   });
 
+  it("stages and consumes the Matrix app-builder draft without submitting it", async () => {
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await act(async () => {
+      latestState?.requestComposerDraft("/matrix-app-builder ");
+    });
+
+    const request = latestState?.composerDraftRequest;
+    expect(request?.text).toBe("/matrix-app-builder ");
+    expect(sendMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: "message" }));
+
+    await act(async () => {
+      if (request) latestState?.consumeComposerDraft(request.id);
+    });
+    expect(latestState?.composerDraftRequest).toBeNull();
+  });
+
   it("reattaches the active conversation after a socket reconnect epoch", async () => {
     mockConversations = [];
     let latestState: ReturnType<typeof useChatState> | null = null;

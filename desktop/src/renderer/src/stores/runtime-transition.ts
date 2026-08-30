@@ -21,6 +21,8 @@ import { useWorkspace } from "./workspace";
 import { advanceRuntimeGeneration } from "./runtime-generation";
 import { resetAppsRuntime } from "./apps";
 import { useDesktopSurfaces } from "./desktop-surfaces";
+import { resetDesktopIconsRuntime } from "./desktop-icons";
+import { useCreateAppRequest } from "./create-app-request";
 
 interface RuntimeChangeOptions {
   disposeRuntimeAttachments?: () => void;
@@ -58,6 +60,8 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     terminalSessionRequestSequence: 0,
   });
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+  resetDesktopIconsRuntime();
+  useCreateAppRequest.setState({ request: null });
   // The Hermes index, transcript, and kernel session follow the selected
   // computer; invalidate in-flight list/history requests before the new API is
   // published so prior-owner data cannot repopulate the next runtime.

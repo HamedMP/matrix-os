@@ -33,9 +33,6 @@ describe('platform/customer-vps-cloud-init', () => {
         'https://app.matrix-os.com/system-bundles/0.0.0-pr10000.abcdef012345/matrix-host-bundle.tar.gz',
       registrationToken: 'r'.repeat(64),
       platformVerificationToken: 'v'.repeat(64),
-      r2AccessKeyId: 'k'.repeat(32),
-      r2SecretAccessKey: 's'.repeat(64),
-      r2Prefix: 'matrixos-sync/user_2abcdefghijklmnopqrstuvwxyz012345/',
       postgresPassword: 'p'.repeat(48),
     };
     const template = await loadCustomerVpsCloudInitTemplate();
@@ -58,12 +55,6 @@ describe('platform/customer-vps-cloud-init', () => {
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
     registrationToken: 'registration-secret',
-    r2AccessKeyId: 'r2-access-key',
-    r2SecretAccessKey: 'r2-secret-key',
-    r2Endpoint: 'https://r2.example',
-    r2AccountId: 'account-id',
-    r2Bucket: 'matrixos-sync',
-    r2Prefix: 'matrixos-sync/user_123/',
     postgresPassword: 'postgres-secret',
     posthogToken: 'phc_public',
     posthogProjectToken: 'phc_project',
@@ -71,35 +62,6 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogPublicHost: 'https://eu.posthog.com',
     posthogApiHost: '/relay',
   };
-
-  function runMatrixctlExistsWithFakeAws(exitCode: number, stderr: string) {
-    const root = process.cwd();
-    const tempDir = mkdtempSync(join(tmpdir(), 'second-matrixctl-r2-'));
-    const fakeAwsPath = join(tempDir, 'aws');
-    writeFileSync(
-      fakeAwsPath,
-      `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(stderr)} >&2\nexit ${exitCode}\n`,
-    );
-    chmodSync(fakeAwsPath, 0o755);
-
-    try {
-      return spawnSync('bash', [join(root, 'distro/customer-vps/matrixctl'), 'r2', 'exists', 'system/db/latest'], {
-        cwd: root,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
-          R2_BUCKET: 'matrixos-sync',
-          R2_PREFIX: 'matrixos-sync/user_123/',
-          R2_ENDPOINT: 'https://r2.example',
-          AWS_ACCESS_KEY_ID: 'test-access-key',
-          AWS_SECRET_ACCESS_KEY: 'test-secret-key',
-        },
-      });
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  }
 
   function runRestoreWithFakeMatrixctl(
     existsStatus: number | { vpsMeta: number; latestPointer: number },
@@ -139,6 +101,10 @@ exit 99
     const restoreScript = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8')
       .split('/opt/matrix/bin/matrixctl')
       .join(fakeMatrixctlPath)
+      // BSD mv (used by local macOS test runs) has no GNU -T flag. The test
+      // marker lives in a private temp directory, so -f exercises the same
+      // atomic file replacement path here.
+      .replaceAll('mv -Tf --', 'mv -f --')
       .replace('restore_flag="/opt/matrix/restore-complete"', `restore_flag=${JSON.stringify(restoreFlag)}`)
       .replace('latest_file="/var/lib/matrix/db/latest"', `latest_file=${JSON.stringify(join(tempDir, 'latest'))}`)
       .replace('snapshot_path="/var/lib/matrix/db/latest.dump"', `snapshot_path=${JSON.stringify(join(tempDir, 'latest.dump'))}`)
@@ -170,7 +136,7 @@ exit 99
 
   it('renders required host variables into the cloud-init template', () => {
     const rendered = renderCloudInitTemplate(
-      'id={{machineId}}\nuser={{clerkUserId}}\nhandle={{handle}}\nurl={{platformRegisterUrl}}\nr2={{r2Prefix}}\n',
+      'id={{machineId}}\nuser={{clerkUserId}}\nhandle={{handle}}\nurl={{platformRegisterUrl}}\n',
       input,
     );
 
@@ -178,7 +144,6 @@ exit 99
     expect(rendered).toContain('user=user_123');
     expect(rendered).toContain('handle=alice');
     expect(rendered).toContain('url=https://platform.example/vps/register');
-    expect(rendered).toContain('r2=matrixos-sync/user_123/');
   });
 
   it('provisions swap before heavy setup so new machines never run swapless', () => {
@@ -258,16 +223,16 @@ exit 99
     expect(rendered).not.toContain('PLATFORM_INTERNAL_URL=\n');
   });
 
-  it('renders R2 credentials for customer host backups into customer cloud-init', () => {
+  it('never renders shared R2 credentials into customer cloud-init', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const rendered = renderCloudInitTemplate(cloudInit, input);
 
-    expect(rendered).toContain("AWS_ACCESS_KEY_ID='r2-access-key'");
-    expect(rendered).toContain("AWS_SECRET_ACCESS_KEY='r2-secret-key'");
-    expect(rendered).toContain("R2_ENDPOINT='https://r2.example'");
-    expect(rendered).not.toContain("AWS_ACCESS_KEY_ID=''\n");
-    expect(rendered).not.toContain("AWS_SECRET_ACCESS_KEY=''\n");
+    expect(rendered).not.toContain('r2-access-key');
+    expect(rendered).not.toContain('r2-secret-key');
+    expect(rendered).not.toContain('AWS_ACCESS_KEY_ID');
+    expect(rendered).not.toContain('AWS_SECRET_ACCESS_KEY');
+    expect(rendered).not.toContain('path: /opt/matrix/env/r2.env');
   });
 
   it('renders public PostHog project-key telemetry into customer host env', () => {
@@ -309,7 +274,7 @@ exit 99
     expect(cloudInit).toContain('primary_group: matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
     expect(cloudInit).toContain('chown root:matrix /opt/matrix/postgres-compose.yml');
-    expect(cloudInit).toContain('/opt/matrix/env/symphony.env /opt/matrix/env/r2.env /opt/matrix/env/postgres.env');
+    expect(cloudInit).not.toContain('/opt/matrix/env/r2.env');
   });
 
   it('uses cloud-init user schema fields accepted by Ubuntu 24.04', () => {
@@ -415,8 +380,9 @@ exit 99
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
     expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');
-    expect(cloudInit).toContain("AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'");
-    expect(cloudInit).toContain("AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'");
+    expect(cloudInit).not.toContain('AWS_ACCESS_KEY_ID');
+    expect(cloudInit).not.toContain('AWS_SECRET_ACCESS_KEY');
+    expect(cloudInit).not.toContain('/opt/matrix/env/r2.env');
   });
 
   it('keeps installed release metadata readable by the gateway after first boot', () => {
@@ -731,7 +697,7 @@ exit 99
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nr2={{r2SecretAccessKey}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\n',
       input,
     );
 
@@ -740,7 +706,6 @@ exit 99
     expect(redacted).not.toContain('registration-secret');
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).not.toContain('platform-verification-secret');
-    expect(redacted).not.toContain('r2-secret-key');
     expect(redacted).toContain('[redacted]');
   });
 
@@ -860,50 +825,6 @@ exit 99
     expect(reboot.matrixctlCalls).toBe('');
   });
 
-  it('fails customer-host R2 operations for unreadable config or a non-EU endpoint', () => {
-    const root = process.cwd();
-    const tempDir = mkdtempSync(join(tmpdir(), 'matrixctl-r2-config-'));
-    const r2Env = join(tempDir, 'r2.env');
-    const commonEnv = {
-      ...process.env,
-      MATRIX_MACHINE_ID: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
-      MATRIX_R2_ENV_FILE: r2Env,
-      MATRIX_HOST_ENV_FILE: join(tempDir, 'missing-host.env'),
-    };
-
-    try {
-      writeFileSync(r2Env, 'R2_BUCKET=matrixos-sync\n');
-      chmodSync(r2Env, 0o000);
-      const unreadable = spawnSync(
-        'bash',
-        [join(root, 'distro/customer-vps/matrixctl'), 'r2', 'exists', 'system/db/latest'],
-        { cwd: root, encoding: 'utf8', env: commonEnv },
-      );
-      expect(unreadable.status).toBe(2);
-      expect(unreadable.stderr).toContain('matrixctl: r2 configuration unreadable');
-
-      chmodSync(r2Env, 0o600);
-      writeFileSync(r2Env, [
-        'AWS_ACCESS_KEY_ID=test-access-key',
-        'AWS_SECRET_ACCESS_KEY=test-secret-key',
-        'R2_BUCKET=matrixos-sync',
-        'R2_PREFIX=matrixos-sync/user_123/',
-        'R2_ACCOUNT_ID=current-account',
-        'R2_ENDPOINT=https://current-account.r2.cloudflarestorage.com',
-      ].join('\n'));
-      const wrongEndpoint = spawnSync(
-        'bash',
-        [join(root, 'distro/customer-vps/matrixctl'), 'r2', 'exists', 'system/db/latest'],
-        { cwd: root, encoding: 'utf8', env: commonEnv },
-      );
-      expect(wrongEndpoint.status).toBe(1);
-      expect(wrongEndpoint.stderr).toContain('matrixctl: r2 endpoint invalid');
-    } finally {
-      chmodSync(r2Env, 0o600);
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
   it('runs DB backup on an hourly systemd timer', () => {
     const root = process.cwd();
     const service = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-db-backup.service'), 'utf8');
@@ -920,10 +841,10 @@ exit 99
 
     // matrixctl/restore/backup ship in the host bundle (32KiB user_data
     // limit); cloud-init validates and chmods them after bundle extraction.
-    for (const bin of ['matrixctl', 'matrix-db-backup.sh', 'matrix-restore.sh']) {
+    for (const bin of ['matrixctl', 'matrix-r2-broker.mjs', 'matrix-db-backup.sh', 'matrix-restore.sh']) {
       expect(existsSync(join(root, 'distro/customer-vps/host-bin', bin))).toBe(true);
     }
-    expect(cloudInit).toMatch(/for required_bin in matrixctl matrix-db-backup\.sh matrix-restore\.sh /);
+    expect(cloudInit).toMatch(/for required_bin in matrixctl matrix-r2-broker\.mjs matrix-db-backup\.sh matrix-restore\.sh /);
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
     expect(cloudInit).toContain('docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
@@ -947,7 +868,8 @@ exit 99
     expect(matrixctl).toContain('${MATRIX_PLATFORM_URL%/}/vps/recover');
     expect(matrixctl).toContain('curl --fail --silent --show-error --max-time 10');
     expect(matrixctl).toContain('set +u');
-    expect(matrixctl).toContain('export AWS_ACCESS_KEY_ID=');
+    expect(matrixctl).not.toContain('AWS_ACCESS_KEY_ID');
+    expect(matrixctl).toContain('MATRIX_R2_BROKER_HELPER');
     expect(matrixctl).toContain('rm -f "${tmp:-}"');
     expect(cloudInit).toContain('matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]');
     expect(cloudInit).toContain('runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"');
@@ -955,45 +877,25 @@ exit 99
     expect(cloudInit).toContain('{"clerkUserId":"%s","runtimeSlot":"%s","allowEmpty":%s}');
   });
 
-  it('bounds matrixctl R2 aws operations in host scripts and cloud-init', () => {
+  it('brokers customer storage without exposing provider credentials', () => {
     const root = process.cwd();
     const matrixctl = readFileSync(join(root, 'distro/customer-vps/matrixctl'), 'utf8');
-    // bundled copy replaces the former cloud-init write_files entry
-    const cloudInit = readFileSync(join(root, 'distro/customer-vps/host-bin/matrixctl'), 'utf8');
+    const bundled = readFileSync(join(root, 'distro/customer-vps/host-bin/matrixctl'), 'utf8');
+    const broker = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-r2-broker.mjs'), 'utf8');
 
-    for (const script of [matrixctl, cloudInit]) {
-      expect(script).toContain('MATRIX_R2_OPERATION_TIMEOUT_SECONDS="${MATRIX_R2_OPERATION_TIMEOUT_SECONDS:-300}"');
-      expect(script).toContain('MATRIX_R2_CONNECT_TIMEOUT_SECONDS="${MATRIX_R2_CONNECT_TIMEOUT_SECONDS:-10}"');
-      expect(script).toContain('MATRIX_R2_READ_TIMEOUT_SECONDS="${MATRIX_R2_READ_TIMEOUT_SECONDS:-60}"');
-      expect(script).toContain('timeout --preserve-status "$MATRIX_R2_OPERATION_TIMEOUT_SECONDS"');
-      expect(script).toContain('--cli-connect-timeout "$MATRIX_R2_CONNECT_TIMEOUT_SECONDS"');
-      expect(script).toContain('--cli-read-timeout "$MATRIX_R2_READ_TIMEOUT_SECONDS"');
-      expect(script).toContain('aws_s3 s3 cp "$src" "s3://${R2_BUCKET}/${key}"');
-      expect(script).toContain('aws_s3 s3 cp "s3://${R2_BUCKET}/${key}" "$dest"');
-      expect(script).toContain('aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key"');
+    for (const script of [matrixctl, bundled]) {
+      expect(script).not.toContain('AWS_ACCESS_KEY_ID');
+      expect(script).not.toContain('AWS_SECRET_ACCESS_KEY');
+      expect(script).not.toContain('/opt/matrix/env/r2.env');
+      expect(script).toContain('r2_broker exists "$1"');
     }
-  });
-
-  it('keeps matrixctl R2 exists timeouts distinct from not-found', () => {
-    const timeoutResult = runMatrixctlExistsWithFakeAws(124, 'timed out');
-    expect(timeoutResult.status).toBe(124);
-    expect(timeoutResult.stderr).toContain('matrixctl: r2 exists timed out');
-
-    const terminatedResult = runMatrixctlExistsWithFakeAws(143, 'terminated');
-    expect(terminatedResult.status).toBe(143);
-    expect(terminatedResult.stderr).toContain('matrixctl: r2 exists timed out');
-
-    const notFoundResult = runMatrixctlExistsWithFakeAws(
-      255,
-      'An error occurred (404) when calling the HeadObject operation: Not Found',
-    );
-    expect(notFoundResult.status).toBe(44);
-
-    const unrelatedNotFound = runMatrixctlExistsWithFakeAws(
-      1,
-      'configuration endpoint Not Found',
-    );
-    expect(unrelatedNotFound.status).toBe(2);
-    expect(unrelatedNotFound.stderr).toContain('matrixctl: r2 exists failed');
+    expect(broker).toContain('/internal/containers/${encodeURIComponent(handle)}/sync/system');
+    expect(broker).toContain('authorization: `Bearer ${token}`');
+    expect(broker).toContain('AbortSignal.timeout(API_TIMEOUT_MS)');
+    expect(broker).toContain('AbortSignal.timeout(TRANSFER_TIMEOUT_MS)');
+    expect(broker).toContain("return result.exists;");
+    expect(broker).toContain("return (await exists(args[1])) ? 0 : 44;");
+    expect(broker).toContain("await open(temp, 'wx', 0o600)");
+    expect(broker).toContain("await rename(temp, destination)");
   });
 });

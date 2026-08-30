@@ -4,6 +4,7 @@ import { Button, Dialog, EmptyState } from "../../design/primitives";
 import RetainedPane from "../../design/RetainedPane";
 import { categoryMessage } from "../../../../shared/app-error";
 import {
+  isValidShellSessionName,
   type ShellSessionSummary,
   useShellSessions,
 } from "../../stores/shell-sessions";
@@ -17,7 +18,15 @@ import TerminalView from "./TerminalView";
 import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
+import {
+  parseTerminalAgentStatuses,
+  terminalAgentVisibleInstallCommand,
+  UNKNOWN_TERMINAL_AGENT_STATUSES,
+  type TerminalAgentMenuAction,
+  type TerminalAgentOption,
+} from "./terminal-agent-options";
 
+const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
 const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -58,6 +67,10 @@ function normalizeBusyNames(names: string[]): string[] {
   return names.filter((name, index) => name.length > 0 && names.indexOf(name) === index);
 }
 
+function attachCommand(shell: ShellSessionSummary): string {
+  return shell.attachCommand ?? `matrix shell connect ${shell.name}`;
+}
+
 export default function TerminalsTab({
   active = true,
   visible = active,
@@ -75,6 +88,7 @@ export default function TerminalsTab({
   const authoritativeRevision = useShellSessions((s) => s.authoritativeRevision);
   const create = useShellSessions((s) => s.create);
   const deleteSession = useShellSessions((s) => s.deleteSession);
+  const rename = useShellSessions((s) => s.rename);
   const patchUiState = useShellSessions((s) => s.patchUiState);
   const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
   const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
@@ -86,6 +100,32 @@ export default function TerminalsTab({
   const [openedSessionNames, setOpenedSessionNames] = useState<string[]>([]);
   const [busyNames, setBusyNames] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<ShellSessionSummary | null>(null);
+  const [renamingName, setRenamingName] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [agentInventory, setAgentInventory] = useState(() => ({
+    api,
+    runtimeSlot,
+    statuses: { ...UNKNOWN_TERMINAL_AGENT_STATUSES },
+    checking: false,
+  }));
+  const agentStatusRequestRef = useRef(0);
+  const agentInventoryIsCurrent = agentInventory.api === api
+    && agentInventory.runtimeSlot === runtimeSlot;
+  const agentStatuses = agentInventoryIsCurrent
+    ? agentInventory.statuses
+    : UNKNOWN_TERMINAL_AGENT_STATUSES;
+  const checkingAgentStatuses = agentInventoryIsCurrent && agentInventory.checking;
+
+  useEffect(() => {
+    agentStatusRequestRef.current += 1;
+    setAgentInventory({
+      api,
+      runtimeSlot,
+      statuses: { ...UNKNOWN_TERMINAL_AGENT_STATUSES },
+      checking: false,
+    });
+  }, [api, runtimeSlot]);
 
   useEffect(() => {
     void loadTerminalAppearance(api);
@@ -118,6 +158,8 @@ export default function TerminalsTab({
 
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
+  const renamingNameRef = useRef<string | null>(null);
+  renamingNameRef.current = renamingName;
   const busyNamesRef = useRef<string[]>([]);
   busyNamesRef.current = busyNames;
 
@@ -147,6 +189,47 @@ export default function TerminalsTab({
     const created = await create(api);
     if (!created) return;
     showShellDetail(created);
+  };
+
+  const refreshAgentStatuses = useCallback(async () => {
+    if (!api || checkingAgentStatuses) return;
+    const requestId = agentStatusRequestRef.current + 1;
+    agentStatusRequestRef.current = requestId;
+    const requestApi = api;
+    const requestRuntimeSlot = runtimeSlot;
+    setAgentInventory((current) => ({
+      api: requestApi,
+      runtimeSlot: requestRuntimeSlot,
+      statuses: current.api === requestApi && current.runtimeSlot === requestRuntimeSlot
+        ? current.statuses
+        : { ...UNKNOWN_TERMINAL_AGENT_STATUSES },
+      checking: true,
+    }));
+    try {
+      const statuses = parseTerminalAgentStatuses(await requestApi.get("/api/agents"));
+      if (agentStatusRequestRef.current === requestId) {
+        setAgentInventory({ api: requestApi, runtimeSlot: requestRuntimeSlot, statuses, checking: true });
+      }
+    } catch (err: unknown) {
+      console.warn("[terminal] Failed to load agent status:", err instanceof Error ? err.message : String(err));
+    } finally {
+      if (agentStatusRequestRef.current === requestId) {
+        setAgentInventory((current) => (
+          current.api === requestApi && current.runtimeSlot === requestRuntimeSlot
+            ? { ...current, checking: false }
+            : current
+        ));
+      }
+    }
+  }, [api, checkingAgentStatuses, runtimeSlot]);
+
+  const createAgentSession = async (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
+    if (!api || creating) return;
+    const created = await create(api, {
+      cmd: action === "launch" ? option.launchCommand : terminalAgentVisibleInstallCommand(option),
+      ...(action === "launch" ? { agent: option.id } : {}),
+    });
+    if (created) showShellDetail(created);
   };
 
   const showShellDetail = useCallback((shell: ShellSessionSummary) => {
@@ -197,6 +280,45 @@ export default function TerminalsTab({
     terminalSessionRequest,
   ]);
 
+  const copyAttachCommand = async (shell: ShellSessionSummary) => {
+    try {
+      await navigator.clipboard.writeText(attachCommand(shell));
+    } catch (err: unknown) {
+      console.error("[terminal] Failed to copy shell attach command:", err);
+    }
+  };
+
+  const startRename = (shell: ShellSessionSummary) => {
+    setRenamingName(shell.name);
+    setRenameDraft(shell.name);
+    setRenameError(null);
+  };
+
+  const commitRename = async () => {
+    if (!api || !renamingName) return;
+    const originalName = renamingName;
+    const nextName = renameDraft.trim();
+    if (!isValidShellSessionName(nextName)) {
+      setRenameError(RENAME_HELP);
+      return;
+    }
+    const renameBusyNames = [originalName, nextName];
+    if (!markShellsBusy(renameBusyNames)) return;
+    const ok = await rename(api, originalName, nextName);
+    clearShellsBusy(renameBusyNames);
+    if (!ok) {
+      if (renamingNameRef.current === originalName) setRenameError("Could not rename shell");
+      return;
+    }
+    setOpenedSessionNames((current) => current.map((name) => name === originalName ? nextName : name));
+    setLiveSessionName((current) => current === originalName ? nextName : current);
+    if (selectedRef.current === originalName) setSelectedName(nextName);
+    if (renamingNameRef.current === originalName) {
+      setRenameError(null);
+      setRenamingName((current) => (current === originalName ? null : current));
+    }
+  };
+
   const confirmDelete = async () => {
     if (!api || !deleteTarget) return;
     const name = deleteTarget.name;
@@ -232,8 +354,29 @@ export default function TerminalsTab({
           selectedName={selectedName}
           creating={creating}
           disabled={!api}
+          agentStatuses={agentStatuses}
+          checkingAgentStatuses={checkingAgentStatuses}
+          renamingName={renamingName}
+          renameDraft={renameDraft}
+          renameError={renameError}
           onCreate={() => void createShell()}
+          onCreateAgent={(option, action) => void createAgentSession(option, action)}
+          onRefreshAgentStatuses={() => void refreshAgentStatuses()}
           onSelect={showShellDetail}
+          onRename={startRename}
+          onRenameDraft={(value) => {
+            setRenameDraft(value);
+            setRenameError(null);
+          }}
+          onCommitRename={() => void commitRename()}
+          onCancelRename={() => {
+            setRenamingName(null);
+            setRenameError(null);
+          }}
+          onCopyConnectCommand={(shell) => void copyAttachCommand(shell)}
+          onPin={(shell, pinned) => {
+            if (api) void useShellSessions.getState().patchUiState(api, shell.name, { pinned });
+          }}
           onDelete={setDeleteTarget}
         />
       </div>
@@ -300,7 +443,7 @@ export default function TerminalsTab({
               style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
             >
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-xs font-medium leading-[19.5px]" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</h1>
+                <h1 className="truncate text-xs font-medium leading-[19.5px]" style={{ color: "var(--text-primary)" }}>{shell.name}</h1>
                 <p className="mt-1 truncate text-xs leading-4 tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
                   Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
                 </p>

@@ -41,6 +41,16 @@ export function canonicalSafeErrorText(maxChars: number, maxBytes: number) {
   );
 }
 
+export function canonicalOwnerRelativePath(maxChars = 4_096, maxBytes = 16 * 1024) {
+  return canonicalBoundedText(maxChars, maxBytes)
+    .refine((value) => !value.startsWith("/") && !value.startsWith("~") && !value.includes("\\") && !value.includes("\0"), {
+      message: "Owner reference must be a relative POSIX path",
+    })
+    .refine((value) => !value.split("/").some((part) => part === "" || part === "." || part === ".."), {
+      message: "Owner reference cannot contain traversal",
+    });
+}
+
 export function canonicalEncodedByteLength(value: unknown): number {
   return textEncoder.encode(JSON.stringify(value)).byteLength;
 }

@@ -414,6 +414,21 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("656");
   });
 
+  it("stops resizing the Chat inspector when an extreme pointer drag is cancelled", async () => {
+    render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
+    await screen.findByRole("button", { name: "Global chat" });
+
+    const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
+    fireEvent.pointerDown(inspectorSeparator, { button: 0, clientX: 760, pointerId: 17 });
+    fireEvent.pointerMove(window, { clientX: 700, pointerId: 17 });
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
+
+    fireEvent.pointerCancel(window, { pointerId: 17 });
+    fireEvent.pointerMove(window, { clientX: -1_000, pointerId: 17 });
+
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
+  });
+
   it("collapses both sidebars when their dividers move past the minimum", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
     await screen.findByRole("button", { name: "Global chat" });

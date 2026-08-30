@@ -26,6 +26,7 @@ function scriptedDeps(
     init: Parameters<HandoffDeps["request"]>[1];
   }> = [];
   const ops: string[] = [];
+  const installedCookies: Array<ParsedCookie & { url: string }> = [];
   const deps: HandoffDeps = {
     gatewayOrigin: GATEWAY,
     request: async (url, init) => {
@@ -41,6 +42,7 @@ function scriptedDeps(
         return jarCookies;
       },
       set: async (cookie) => {
+        installedCookies.push(cookie);
         ops.push(`jar:set:${cookie.name}@${cookie.url}`);
       },
       remove: async (url, name) => {
@@ -48,7 +50,7 @@ function scriptedDeps(
       },
     },
   };
-  return { deps, requests, ops };
+  return { deps, requests, ops, installedCookies };
 }
 
 const BOTH_COOKIES: ScriptedResponse = {
@@ -278,6 +280,24 @@ describe("performAppSessionHandoff", () => {
       `jar:set:matrix_app_session@${GATEWAY}`,
       `jar:set:matrix_native_app_session@${GATEWAY}`,
     ]);
+  });
+
+  it("can install the native session pair for the fixed code editor origin", async () => {
+    const { deps, ops, installedCookies } = scriptedDeps([{
+      status: 200,
+      setCookieHeaders: [
+        "matrix_app_session=app-value; Domain=.matrix-os.com; Path=/; Secure",
+        "matrix_native_app_session=native-value; Domain=.matrix-os.com; Path=/; Secure",
+      ],
+    }]);
+    deps.cookieOrigin = "https://code.matrix-os.com";
+
+    expect(await performAppSessionHandoff(deps, "/")).toEqual({ ok: true });
+    expect(ops.filter((op) => op.startsWith("jar:set"))).toEqual([
+      "jar:set:matrix_app_session@https://code.matrix-os.com",
+      "jar:set:matrix_native_app_session@https://code.matrix-os.com",
+    ]);
+    expect(installedCookies.every((cookie) => cookie.domain === undefined)).toBe(true);
   });
 
   it("removes stale Clerk cookies before installing (L3)", async () => {

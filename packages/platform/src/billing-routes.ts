@@ -81,7 +81,11 @@ const BILLING_TRIAL_WILL_END_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_WILL_
 const BILLING_TRIAL_CONVERTED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_CONVERTED;
 const BILLING_TRIAL_PAYMENT_FAILED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_PAYMENT_FAILED;
 const TRIAL_PAYMENT_SUSPEND_DELAY_MS = 24 * 60 * 60 * 1000;
-const BillingRegionSlugSchema = z.enum([
+const CheckoutBillingRegionSlugSchema = z.enum([
+  'region_fsn1',
+  'region_nbg1',
+]);
+const HistoricalBillingRegionSlugSchema = z.enum([
   'region_fsn1',
   'region_nbg1',
   'region_ash',
@@ -91,7 +95,7 @@ const BillingRegionSlugSchema = z.enum([
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.enum(['monthly', 'annual']).default('monthly'),
-  regionSlug: BillingRegionSlugSchema.default('region_fsn1'),
+  regionSlug: CheckoutBillingRegionSlugSchema.default('region_fsn1'),
   serverType: HetznerServerTypeSchema.optional(),
   developerTools: DeveloperToolsWithDefaultSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
@@ -451,7 +455,7 @@ export function createBillingRoutes(options: {
             const recoveredPlan = session.priceId
               ? loadStripePriceCatalog(env).priceToPlan.get(session.priceId)
               : undefined;
-            const recoveredRegion = BillingRegionSlugSchema.safeParse(session.regionSlug);
+            const recoveredRegion = HistoricalBillingRegionSlugSchema.safeParse(session.regionSlug);
             if (!session.url || !recoveredPlan || !recoveredRegion.success) {
               throw new Error('checkout_session_selection_missing');
             }

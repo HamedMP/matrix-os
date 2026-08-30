@@ -7,6 +7,7 @@ import { create } from "zustand";
 
 export type TabKind =
   | "home"
+  | "browser"
   | "work"
   | "chat"
   | "projects"
@@ -15,6 +16,9 @@ export type TabKind =
   | "terminal"
   | "terminals"
   | "files"
+  | "editor"
+  | "vscode"
+  | "notes"
   | "apps"
   | "app"
   | "settings";

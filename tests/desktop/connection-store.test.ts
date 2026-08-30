@@ -9,6 +9,7 @@ import {
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { clearDraftChats, useDraftChat } from "@desktop/renderer/src/stores/draft-chat";
 import { useApps } from "@desktop/renderer/src/stores/apps";
+import { registerActiveNotesController } from "@desktop/renderer/src/features/notes/notes-controller";
 
 type Listener = (payload: unknown) => void;
 
@@ -30,6 +31,52 @@ afterEach(() => {
 });
 
 describe("connection event wiring", () => {
+  it("flushes dirty native Notes before replacing the selected runtime credential", async () => {
+    const order: string[] = [];
+    const unregister = registerActiveNotesController({
+      flush: async () => {
+        order.push("flush-notes");
+        return true;
+      },
+    });
+    window.operator = {
+      invoke: vi.fn(async (channel: string) => {
+        order.push(channel);
+        if (channel === "auth:status") {
+          return {
+            signedIn: true,
+            handle: "neo",
+            platformHost: "https://app.matrix-os.com",
+            runtimeSlot: "preview",
+            authGeneration: 2,
+          };
+        }
+        return {};
+      }),
+      on: vi.fn(),
+    };
+
+    try {
+      await useConnection.getState().selectRuntime("preview");
+      expect(order.slice(0, 2)).toEqual(["flush-notes", "runtime:select"]);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("keeps the authenticated session active when dirty native Notes cannot save", async () => {
+    const unregister = registerActiveNotesController({ flush: async () => false });
+    const invoke = vi.fn(async () => ({}));
+    window.operator = { invoke, on: vi.fn() };
+
+    try {
+      await expect(useConnection.getState().signOut()).rejects.toThrow("notes_save_failed");
+      expect(invoke).not.toHaveBeenCalledWith("auth:sign-out", {});
+    } finally {
+      unregister();
+    }
+  });
+
   it("clears unsent drafts when an auth event replaces the identity", async () => {
     const listeners = new Map<string, Listener>();
     useConnection.setState({

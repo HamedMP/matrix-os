@@ -60,7 +60,7 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
     });
   }
 
-  it('records an open checkout attempt with the Stripe session id', async () => {
+  it('records an open checkout attempt with an explicit empty developer tool selection', async () => {
     const app = createApp();
     const res = await app.request('/billing/checkout', {
       method: 'POST',
@@ -68,14 +68,14 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
       body: JSON.stringify({
         planSlug: 'matrix_builder',
         interval: 'monthly',
-        developerTools: ['codex', 'pi'],
+        developerTools: [],
       }),
     });
     expect(res.status).toBe(200);
     const attempt = await getLatestCheckoutAttempt(db, 'user_123');
     expect(attempt?.stripeSessionId).toBe('cs_live_1');
     expect(attempt?.status).toBe('open');
-    expect(attempt?.developerTools).toEqual(['codex', 'pi']);
+    expect(attempt?.developerTools).toEqual([]);
   });
 
   it('marks the attempt paid on checkout.session.completed', async () => {

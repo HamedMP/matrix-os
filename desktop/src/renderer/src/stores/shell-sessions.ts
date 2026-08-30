@@ -9,6 +9,8 @@ export type ShellVisualStatus = "running" | "waiting" | "finished" | "idle";
 
 export interface ShellSessionSummary {
   name: string;
+  cwd?: string;
+  pinned?: boolean;
   status?: "active" | "exited" | "degraded";
   placement?: ShellSessionPlacement;
   createdAt?: string;
@@ -32,7 +34,11 @@ export interface ShellSessionSummary {
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
-export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
+export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "pinned">>;
+export interface ShellSessionCreateOptions {
+  cmd?: string;
+  agent?: NonNullable<ShellSessionSummary["agent"]>;
+}
 
 interface ShellSessionsState {
   sessions: ShellSessionSummary[];
@@ -42,7 +48,7 @@ interface ShellSessionsState {
   loadSequence: number;
   authoritativeRevision: number;
   load(api: ApiClient): Promise<ShellSessionSummary[] | null>;
-  create(api: ApiClient): Promise<ShellSessionSummary | null>;
+  create(api: ApiClient, options?: ShellSessionCreateOptions): Promise<ShellSessionSummary | null>;
   adoptCreatedSession(name: string): void;
   deleteSession(api: ApiClient, name: string): Promise<boolean>;
   rename(api: ApiClient, name: string, nextName: string): Promise<boolean>;
@@ -77,11 +83,20 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+function isSafeDisplayCwd(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4096 || value.includes("\0")) return false;
+  if (value === "~") return true;
+  if (value.startsWith("/") || value.startsWith("\\")) return false;
+  return !value.split(/[\\/]/).some((segment) => segment === "..");
+}
+
 function asShellSession(value: unknown): ShellSessionSummary | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   if (typeof record.name !== "string" || !isValidShellSessionName(record.name)) return null;
   const shell: ShellSessionSummary = { name: record.name };
+  if (isSafeDisplayCwd(record.cwd)) shell.cwd = record.cwd;
+  if (typeof record.pinned === "boolean") shell.pinned = record.pinned;
   if (record.status === "active" || record.status === "exited" || record.status === "degraded") shell.status = record.status;
   if (record.placement === "active" || record.placement === "background") shell.placement = record.placement;
   if (typeof record.createdAt === "string") shell.createdAt = record.createdAt;
@@ -259,7 +274,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     }
   },
 
-  create: async (api) => {
+  create: async (api, options = {}) => {
     if (get().creating) return null;
     // A computer switch advances the runtime generation and clears this store;
     // a create that settles afterwards belongs to the previous computer and
@@ -272,6 +287,8 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
           name,
           cwd: DEFAULT_CWD,
+          ...(options.cmd ? { cmd: options.cmd } : {}),
+          ...(options.agent ? { agent: options.agent } : {}),
         });
         if (!isCurrentRuntimeGeneration(generation)) return null;
         const createdName = typeof response.name === "string" && isValidShellSessionName(response.name) ? response.name : name;
@@ -280,6 +297,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
           status: "active",
           placement: "active",
           attachCommand: shellConnectCommand(createdName),
+          ...(options.agent ? { agent: options.agent } : {}),
         };
         const refreshSequence = get().loadSequence + 1;
         set({ loadSequence: refreshSequence });
@@ -333,6 +351,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         : {
             sessions: [{
               name,
+              cwd: DEFAULT_CWD,
               status: "active",
               placement: "active",
               attachCommand: shellConnectCommand(name),

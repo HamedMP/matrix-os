@@ -11,6 +11,9 @@ import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";
 import WorkTab from "../work/WorkTab";
+import BrowserTab from "../browser/BrowserTab";
+import DesktopEditorWorkspace from "../editor/DesktopEditorWorkspace";
+import NotesWorkspace from "../notes/NotesWorkspace";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -62,6 +65,8 @@ export function TabPane({
   switch (tab.kind) {
     case "home":
       return <HomeTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
+    case "browser":
+      return <BrowserTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "work":
       return <WorkTab
         route={tab.workRoute ?? "chat"}
@@ -77,6 +82,12 @@ export function TabPane({
       return <TerminalsTab active={active} visible={visible} />;
     case "files":
       return <FilesWorkspace />;
+    case "editor":
+      return <DesktopEditorWorkspace />;
+    case "vscode":
+      return <EmbedHost kind="code-editor" active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
+    case "notes":
+      return <NotesWorkspace active={active} />;
     case "apps":
       return <AppLauncher />;
     case "projects":

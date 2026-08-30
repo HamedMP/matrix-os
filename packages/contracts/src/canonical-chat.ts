@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { IsoTimestampSchema } from "#contract-primitives";
+import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalProviderDriverKindSchema,
@@ -8,6 +8,7 @@ import {
   canonicalReferenceId,
   canonicalSafeErrorText,
   canonicalSafeLabel,
+  canonicalOwnerRelativePath,
 } from "#canonical-chat-primitives";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
@@ -30,6 +31,7 @@ export const CanonicalChatMessageIdSchema = prefixedId("msg_");
 export const CanonicalChatRequestIdSchema = prefixedId("req_");
 export const CanonicalProviderInstanceIdSchema = canonicalReferenceId(128);
 export const CanonicalChatAttachmentKindSchema = z.enum(["file", "image", "diff", "structured_ref"]);
+export const CanonicalChatModelReferenceSchema = ProviderModelReferenceSchema;
 const CanonicalChatRelativePathSchema = z.string()
   .min(1)
   .max(4096)
@@ -55,7 +57,7 @@ export const CanonicalChatAttentionSchema = z.enum([
 
 export const CanonicalChatModelSelectionSchema = z.object({
   instanceId: CanonicalProviderInstanceIdSchema,
-  model: canonicalReferenceId(160),
+  model: CanonicalChatModelReferenceSchema,
   options: z.array(z.object({
     id: canonicalReferenceId(80),
     value: z.union([canonicalReferenceId(160), z.boolean()]),
@@ -270,6 +272,7 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     label: canonicalSafeLabel(240, 960),
     mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
     sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
+    ownerReference: canonicalOwnerRelativePath().optional(),
   }).strict(),
   z.object({
     type: z.literal("approval_request"),
@@ -404,6 +407,46 @@ export const CanonicalChatSafeErrorSchema = z.object({
   }
 });
 
+export const CanonicalChatAgentActivityKindSchema = z.enum([
+  "phase",
+  "reasoning",
+  "plan",
+  "command",
+  "file_change",
+  "mcp_tool",
+  "dynamic_tool",
+  "delegation",
+  "web_search",
+  "image_inspection",
+]);
+
+export const CanonicalChatAgentActivityStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+  "partial",
+]);
+
+export const CanonicalChatAgentActivityPayloadSchema = z.object({
+  activityId: canonicalReferenceId(128),
+  kind: CanonicalChatAgentActivityKindSchema,
+  label: canonicalSafeLabel(240, 960),
+  status: CanonicalChatAgentActivityStatusSchema,
+  summary: canonicalSafeLabel(1_000, 4_000).optional(),
+  preview: canonicalSafeLabel(1_000, 4_000).optional(),
+  previewKind: z.enum(["command", "path", "text"]).optional(),
+  detail: canonicalSafeLabel(2_000, 8_000).optional(),
+}).strict().superRefine((activity, context) => {
+  if ((activity.preview === undefined) !== (activity.previewKind === undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: activity.preview === undefined ? ["preview"] : ["previewKind"],
+      message: "Activity preview and kind must be provided together",
+    });
+  }
+});
+
 export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("run.status"),
@@ -438,6 +481,10 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     toolCallId: canonicalReferenceId(128),
     label: canonicalSafeLabel(240, 960),
     status: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("agent.activity"),
+    ...CanonicalChatAgentActivityPayloadSchema.shape,
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("review.ready"),
@@ -508,3 +555,5 @@ export type CanonicalChatMessagePart = z.infer<typeof CanonicalChatMessagePartSc
 export type CanonicalChatMessage = z.infer<typeof CanonicalChatMessageSchema>;
 export type CanonicalChatRunActivity = z.infer<typeof CanonicalChatRunActivitySchema>;
 export type CanonicalChatSafeError = z.infer<typeof CanonicalChatSafeErrorSchema>;
+export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentActivityKindSchema>;
+export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;

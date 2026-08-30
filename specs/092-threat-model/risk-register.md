@@ -11,7 +11,7 @@ issue-ready. Scoring per [§7](./threat-model.md#7-how-risk-is-scored):
 | ID | L | B | Risk | Status | Finding | Where |
 |----|---|---|------|--------|---------|-------|
 | **F3** | 2 | 2 | **HIGH (4→pri)** | PERSISTENT | App forges `body.app`, reads every other app's data | `server.ts:3162`, `AppViewer.tsx:48-73,181` |
-| **F4** | 2 | 3 | **HIGH (6)** | PERSISTENT | Same full-bucket R2 key on every VPS → cross-tenant backups | `customer-vps-config.ts:51-52` |
+| **F4** | 2 | 3 | **HIGH (6)** | CHANGED ↓ (rollout pending) | Customer source is presign-only; old fleet key remains dangerous until rollout + revocation | `internal-sync-routes.ts`, `matrix-r2-broker.mjs` |
 | **F5** | 3 | 2 | **HIGH (6)** | PERSISTENT | Kernel runs all sources under `bypassPermissions`, scan is detect-only | `options.ts:131`, `external-content.ts` |
 | **F7** | 2 | 2 | **HIGH (4)** | PERSISTENT | `credentials.json` `0644` + `.env*` not sync-ignored → R2 exfil | `postgres-manager.ts:69`, `syncignore.ts:5-21` |
 | **F6** | 1 | 2 | MED (3, amp) | PERSISTENT | `Bash` bypasses file-protection hook; `tool-deny.ts` dead; approval-hook unwired | `evolution.ts:22`, `hooks.ts`, `tool-deny.ts` |
@@ -50,9 +50,12 @@ timing-safe compare + rate limiting; tracked for log-hygiene, not treated as liv
 - **F11 — downgraded.** Registration token is now checked with a timing-safe hash
   compare inside `service.register` (`customer-vps.ts:599-601`). Still belongs at
   the route boundary, but no longer "implicit/unguarded."
-- **F4 — confirmed cross-tenant.** Presign scoping protects the *normal* path
-  (`internal-sync-routes.ts` `keyAllowedForUser`), but the standing credential is
-  still global and full-bucket. Unchanged.
+- **F4 — source path closed, operational closure pending.** Customer cloud-init no
+  longer receives R2 credentials. Backup/restore now use an authenticated platform
+  broker that derives the tenant prefix server-side and allowlists exact system keys;
+  the updater removes the legacy credential file only after the broker and new release
+  are healthy. The finding remains live until the brokered bundle reaches every VPS
+  and the previously shared provider token is revoked.
 
 ## Fix sequencing
 
@@ -60,8 +63,8 @@ Sorted by score, deduped by shared fix:
 
 1. **F3** (relay overwrites `body.app` + gateway ownership check) — closes the
    sandbox data-theft path; de-fangs F8.
-2. **F4** (per-user R2 creds or presign-only) — closes the cross-tenant escape; F7
-   stops being an R2-exfil amplifier once this lands.
+2. **F4 rollout** (deploy brokered bundle, verify legacy credential removal, rotate and
+   revoke the old R2 token) — completes the source remediation already implemented.
 3. **F5 + F6 + F12 + F17** (per-source tool gating, wire approval hook, blocking
    injection scan, `Bash` arm on file hook, env allowlist on PTY) — one kernel
    hardening effort; overlaps `025-security`.

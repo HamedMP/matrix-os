@@ -1,12 +1,13 @@
 import { Command } from "cmdk";
+import { Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
-import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
+import type { AgentThreadSummary, ReviewSummary, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Search, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
-import { useShellSessions } from "../../stores/shell-sessions";
+import { useShellSessions, type ShellSessionSummary } from "../../stores/shell-sessions";
 import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
@@ -21,10 +22,18 @@ const EMPTY_REVIEWS: ReviewSummary[] = [];
 const MAX_PALETTE_REVIEWS = 10;
 const MAX_PALETTE_THREADS = 20;
 const MAX_PALETTE_TERMINALS = 20;
+const GENERIC_THREAD_TITLE = "Coding agent run";
 const TERMINAL_REVIEW_STATUSES: ReviewSummary["status"][] = ["approved", "converged", "stopped"];
 const SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
 const SETUP_DISCONNECTED_ERROR = "Connect to your Matrix computer before opening setup.";
 const SETUP_TERMINAL_ERROR = "Could not open setup terminal. Try again from Terminal.";
+type PaletteCategory = "all" | "projects" | "actions" | "settings";
+const PALETTE_CATEGORIES: Array<{ id: PaletteCategory; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "projects", label: "Projects" },
+  { id: "actions", label: "Actions" },
+  { id: "settings", label: "Settings" },
+];
 
 function isTerminalReviewStatus(status: ReviewSummary["status"]): boolean {
   return TERMINAL_REVIEW_STATUSES.includes(status);
@@ -49,14 +58,49 @@ function paletteReviewCommands(reviews: ReviewSummary[]): ReviewSummary[] {
     .slice(0, MAX_PALETTE_REVIEWS);
 }
 
-function paletteThreadCommands(summary: { activeThreads: { items: AgentThreadSummary[] }; attentionThreads: { items: AgentThreadSummary[] } } | null): AgentThreadSummary[] {
+interface PaletteThreadCommand {
+  thread: AgentThreadSummary;
+  title: string;
+}
+
+function contextualAgentRunTitle(thread: AgentThreadSummary): string {
+  const context = thread.projectId?.trim() || thread.taskId?.trim() || thread.providerId;
+  return `${context} agent run`;
+}
+
+function linkedThreadTitle(
+  thread: AgentThreadSummary,
+  summary: RuntimeSummary,
+  shellSessions: ShellSessionSummary[],
+): string {
+  const persistedTitle = thread.title.trim();
+  if (persistedTitle.toLocaleLowerCase() !== GENERIC_THREAD_TITLE.toLocaleLowerCase()) {
+    return persistedTitle;
+  }
+  if (!thread.terminalSessionId) return contextualAgentRunTitle(thread);
+  const terminalSession = summary.terminalSessions.items.find((session) => (
+    session.id === thread.terminalSessionId
+  ));
+  if (!terminalSession) return contextualAgentRunTitle(thread);
+  const shellSession = shellSessions.find((session) => session.name === terminalSession.name);
+  const agentTitle = shellSession?.subtitle?.trim();
+  if (agentTitle && agentTitle.toLocaleLowerCase() !== GENERIC_THREAD_TITLE.toLocaleLowerCase()) {
+    return agentTitle;
+  }
+  return terminalSession.name;
+}
+
+function paletteThreadCommands(
+  summary: RuntimeSummary | null,
+  shellSessions: ShellSessionSummary[],
+): PaletteThreadCommand[] {
   if (!summary) return [];
-  const commands: AgentThreadSummary[] = [];
+  const commands: PaletteThreadCommand[] = [];
   const seen = new Set<string>();
   for (const thread of [...summary.attentionThreads.items, ...summary.activeThreads.items]) {
     if (seen.has(thread.id)) continue;
     seen.add(thread.id);
-    commands.push(thread);
+    commands.push({ thread, title: linkedThreadTitle(thread, summary, shellSessions) });
     if (commands.length >= MAX_PALETTE_THREADS) break;
   }
   return commands;
@@ -86,7 +130,10 @@ function paletteTerminalCommands(
 
 export default function CommandPalette() {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [category, setCategory] = useState<PaletteCategory>("all");
+  const [query, setQuery] = useState("");
   const open = useUi((s) => s.paletteOpen);
   const setOpen = useUi((s) => s.setPaletteOpen);
   const openTab = useTabs((s) => s.openTab);
@@ -119,7 +166,11 @@ export default function CommandPalette() {
   }, [open, api, loadShellSessions]);
 
   useEffect(() => {
-    if (open) setActionError(null);
+    if (open) {
+      setActionError(null);
+      setCategory("all");
+      setQuery("");
+    }
   }, [open]);
 
   useEffect(() => {
@@ -128,7 +179,10 @@ export default function CommandPalette() {
     if (!dialog) return;
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
+    inputRef.current?.focus();
+    const focusFrame = window.requestAnimationFrame(() => inputRef.current?.focus());
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       if (typeof dialog.close === "function") dialog.close();
       else dialog.removeAttribute("open");
     };
@@ -139,9 +193,12 @@ export default function CommandPalette() {
   const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
   const otherTabs = tabs.filter((t) => t.id !== activeTabId);
   const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteReviewCommands(reviews?.items ?? EMPTY_REVIEWS) : EMPTY_REVIEWS;
-  const threadCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteThreadCommands(summary) : [];
+  const threadCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteThreadCommands(summary, shellSessions) : [];
   const terminalCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteTerminalCommands(summary, shellSessions) : [];
   const setupCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? providerSetupCommands(summary?.providers ?? []) : [];
+  const showActions = category === "all" || category === "actions";
+  const showProjects = category === "all" || category === "projects";
+  const showSettings = category === "all" || category === "settings";
 
   const run = (fn: () => void) => {
     setActionError(null);
@@ -167,7 +224,7 @@ export default function CommandPalette() {
     <dialog
       ref={dialogRef}
       aria-label="Command palette"
-      className="fixed inset-0 z-50 m-0 flex h-screen max-h-none w-screen max-w-none items-start justify-center border-0 bg-transparent p-0 pt-[16vh]"
+      className="fixed inset-0 z-50 m-0 flex h-screen max-h-none w-screen max-w-none items-start justify-center border-0 bg-transparent p-0 pt-[8vh]"
       onCancel={(e) => {
         e.preventDefault();
         setOpen(false);
@@ -183,7 +240,7 @@ export default function CommandPalette() {
       />
       <Command
         label="Search commands"
-        className="fade-in relative z-10 w-[560px] overflow-hidden rounded-xl border"
+        className="fade-in relative z-10 w-[min(760px,calc(100vw-32px))] overflow-hidden rounded-2xl border"
         style={{
           background: "var(--bg-overlay)",
           borderColor: "var(--border-default)",
@@ -193,18 +250,45 @@ export default function CommandPalette() {
           if (e.key === "Escape") setOpen(false);
         }}
       >
-        <Command.Input
-          autoFocus
-          placeholder="Search tasks, sessions, actions…"
-          className="w-full border-b bg-transparent px-4 py-3 text-md outline-none"
-          style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
-        />
+        <div className="flex h-16 items-center gap-3 border-b px-5" style={{ borderColor: "var(--border-subtle)" }}>
+          <Search size={24} aria-hidden="true" style={{ color: "var(--text-tertiary)" }} />
+          <Command.Input
+            ref={inputRef}
+            autoFocus
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Type a command or search…"
+            className="min-w-0 flex-1 rounded-none bg-transparent text-lg outline-none focus-visible:shadow-none"
+            style={{ color: "var(--text-primary)" }}
+          />
+          <kbd className="rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>⌘K</kbd>
+        </div>
+        <div role="tablist" aria-label="Command categories" className="flex h-11 items-stretch gap-1 border-b px-4" style={{ borderColor: "var(--border-subtle)" }}>
+          {PALETTE_CATEGORIES.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={category === item.id}
+              className="relative px-3 text-sm font-medium"
+              style={{ color: category === item.id ? "var(--text-primary)" : "var(--text-secondary)" }}
+              onClick={() => {
+                setCategory(item.id);
+                setQuery("");
+                window.requestAnimationFrame(() => inputRef.current?.focus());
+              }}
+            >
+              {item.label}
+              {category === item.id ? <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full" style={{ background: "var(--accent)" }} /> : null}
+            </button>
+          ))}
+        </div>
         {actionError ? (
           <div className="border-b px-4 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
             {actionError}
           </div>
         ) : null}
-        <Command.List className="max-h-[320px] overflow-y-auto p-1.5">
+        <Command.List className="max-h-[min(560px,68vh)] overflow-y-auto p-3">
           <Command.Empty
             className="px-3 py-6 text-center text-sm"
             style={{ color: "var(--text-tertiary)" }}
@@ -212,7 +296,7 @@ export default function CommandPalette() {
             No results.
           </Command.Empty>
 
-          <Command.Group
+          {showActions ? <Command.Group
             heading="Actions"
             className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide"
             style={{ color: "var(--text-tertiary)" }}
@@ -259,6 +343,7 @@ export default function CommandPalette() {
             ))}
             <PaletteItem icon={<Globe2 size={14} />} label="Open Browser" onSelect={() => run(() => openTab(HOSTED_SHELL_TAB_SPEC))} />
             <PaletteItem icon={<SquareTerminal size={14} />} label="Open Terminal" onSelect={() => run(() => openTab({ kind: "terminals", title: "Terminal" }))} />
+            <PaletteItem icon={<Notebook size={14} />} label="Open Notes" onSelect={() => run(() => openTab({ kind: "notes", title: "Notes" }))} />
             <PaletteItem
               icon={<LayoutGrid size={14} />}
               label="Open Apps"
@@ -266,11 +351,22 @@ export default function CommandPalette() {
                 useUi.getState().setAppLauncherOpen(true);
               })}
             />
-            <PaletteItem icon={<Settings size={14} />} label="Open settings" onSelect={() => run(() => openTab({ kind: "settings", title: "Settings" }))} />
-          </Command.Group>
+          </Command.Group> : null}
 
-          {projects.length > 0 ? (
-            <Command.Group heading="Projects" style={{ color: "var(--text-tertiary)" }}>
+          {showSettings ? (
+            <Command.Group heading="Settings" style={{ color: "var(--text-tertiary)" }}>
+              <PaletteItem
+                icon={<Settings size={14} />}
+                label="Open settings"
+                shortcut="⌘,"
+                keywords={["preferences", "services", "integrations", "account", "runtime"]}
+                onSelect={() => run(() => openTab({ kind: "settings", title: "Settings" }))}
+              />
+            </Command.Group>
+          ) : null}
+
+          {showProjects && projects.length > 0 ? (
+            <Command.Group heading="Recent projects" style={{ color: "var(--text-tertiary)" }}>
               {projects.slice(0, 20).map((p) => (
                 <PaletteItem
                   key={p.slug}
@@ -282,7 +378,7 @@ export default function CommandPalette() {
             </Command.Group>
           ) : null}
 
-          {cards.length > 0 ? (
+          {showProjects && cards.length > 0 ? (
             <Command.Group heading="Tasks" style={{ color: "var(--text-tertiary)" }}>
               {cards.slice(0, 30).map((card) => (
                 <PaletteItem
@@ -295,7 +391,7 @@ export default function CommandPalette() {
             </Command.Group>
           ) : null}
 
-          {reviewCommands.length > 0 ? (
+          {showProjects && reviewCommands.length > 0 ? (
             <Command.Group heading="Reviews" style={{ color: "var(--text-tertiary)" }}>
               {reviewCommands.map((review) => (
                 <PaletteItem
@@ -316,13 +412,14 @@ export default function CommandPalette() {
             </Command.Group>
           ) : null}
 
-          {threadCommands.length > 0 ? (
+          {showProjects && threadCommands.length > 0 ? (
             <Command.Group heading="Threads" style={{ color: "var(--text-tertiary)" }}>
-              {threadCommands.map((thread) => (
+              {threadCommands.map(({ thread, title }) => (
                 <PaletteItem
                   key={thread.id}
                   icon={<GitBranch size={14} />}
-                  label={`Open thread ${thread.title}`}
+                  label={`Open thread ${title}`}
+                  keywords={[thread.title, thread.providerId, title]}
                   onSelect={() =>
                     run(() => void openCodingAgentThread(thread.id))
                   }
@@ -331,7 +428,7 @@ export default function CommandPalette() {
             </Command.Group>
           ) : null}
 
-          {terminalCommands.length > 0 ? (
+          {showActions && terminalCommands.length > 0 ? (
             <Command.Group heading="Agent terminals" style={{ color: "var(--text-tertiary)" }}>
               {terminalCommands.map((session) => (
                 <PaletteItem
@@ -346,7 +443,7 @@ export default function CommandPalette() {
             </Command.Group>
           ) : null}
 
-          {shellSessions.length > 0 ? (
+          {showActions && shellSessions.length > 0 ? (
             <Command.Group heading="Sessions" style={{ color: "var(--text-tertiary)" }}>
               {shellSessions.slice(0, 20).map((session) => {
                 const label = session.name;
@@ -364,7 +461,7 @@ export default function CommandPalette() {
             </Command.Group>
           ) : null}
 
-          {apps.length > 0 ? (
+          {showActions && apps.length > 0 ? (
             <Command.Group heading="Apps" style={{ color: "var(--text-tertiary)" }}>
               {apps.slice(0, 30).map((app) => (
                 <PaletteItem
@@ -377,7 +474,7 @@ export default function CommandPalette() {
             </Command.Group>
           ) : null}
 
-          {otherTabs.length > 0 ? (
+          {showActions && otherTabs.length > 0 ? (
             <Command.Group heading="Open tabs" style={{ color: "var(--text-tertiary)" }}>
               {otherTabs.map((tab) => (
                 <PaletteItem
@@ -410,6 +507,7 @@ function PaletteItem({
 }) {
   return (
     <Command.Item
+      data-instant-list-hover
       onSelect={onSelect}
       keywords={keywords}
       className="flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-2 text-sm data-[selected=true]:bg-[var(--bg-selected)]"

@@ -312,6 +312,14 @@ describe("Codex app-server control runtime", () => {
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-commentary-item', type: 'agentMessage', text: '', phase: 'commentary' } } }));",
       "    for (const delta of ['I will ', 'inspect ', 'the repository.']) console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-commentary-item', delta } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-commentary-item', type: 'agentMessage', text: 'I will inspect the repository.', phase: 'commentary' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'reasoning-item', type: 'reasoning', summary: ['private hidden reasoning'], status: 'inProgress' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'reasoning-item', type: 'reasoning', summary: ['private hidden reasoning'], status: 'completed' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-command-item', type: 'commandExecution', command: 'pnpm build', cwd: '/home/matrix/home/apps/flappy-bird', aggregatedOutput: '', exitCode: null, status: 'inProgress', durationMs: null } } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-command-item', type: 'commandExecution', command: 'pnpm build', cwd: '/home/matrix/home/apps/flappy-bird', aggregatedOutput: '', exitCode: 0, status: 'completed', durationMs: 12 } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-file-item', type: 'fileChange', changes: [{ path: '/home/matrix/home/apps/flappy-bird/src/App.tsx', kind: 'update' }], status: 'inProgress' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-file-item', type: 'fileChange', changes: [{ path: '/home/matrix/home/apps/flappy-bird/src/App.tsx', kind: 'update' }], status: 'completed' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-mcp-item', type: 'mcpToolCall', server: 'linear', tool: 'get_issue', arguments: { token: 'secret-mcp-token' }, status: 'inProgress' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-mcp-item', type: 'mcpToolCall', server: 'linear', tool: 'get_issue', arguments: { token: 'secret-mcp-token' }, status: 'completed', result: { content: [{ type: 'text', text: 'private result' }] } } } }));",
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-command-item', type: 'commandExecution', command: 'cat /home/matrix/.codex/auth.json', cwd: '/private/project', aggregatedOutput: '', exitCode: null, status: 'inProgress', durationMs: null } } }));",
       "    console.log(JSON.stringify({ method: 'item/commandExecution/outputDelta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-command-item', delta: 'secret-token-output' } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-command-item', type: 'commandExecution', command: 'cat /home/matrix/.codex/auth.json', cwd: '/private/project', aggregatedOutput: 'secret-token-output', exitCode: 0, status: 'completed', durationMs: 12 } } }));",
@@ -340,7 +348,7 @@ describe("Codex app-server control runtime", () => {
     ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
     try {
       const transcript = await waitForTranscript(eventPath, /"type":"turn.completed"/);
-      expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output/);
+      expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output|secret-mcp-token|private result/);
 
       let sequence = 0;
       const events = transcript.trim().split("\n").flatMap((line) => parseCodexExecJsonLine(line, {
@@ -352,18 +360,75 @@ describe("Codex app-server control runtime", () => {
         "assistant.text.delta",
         "assistant.text.completed",
         "tool.started",
+        "tool.completed",
+        "tool.started",
+        "tool.completed",
+        "tool.started",
+        "tool.completed",
+        "tool.started",
+        "tool.output",
+        "tool.completed",
+        "tool.started",
         "tool.output",
         "tool.completed",
         "assistant.text.delta",
         "assistant.text.completed",
       ]);
-      const [commentaryDelta, commentaryCompleted, toolStarted, toolOutput, toolCompleted, finalDelta, finalCompleted] = events;
+      const [
+        commentaryDelta,
+        commentaryCompleted,
+        reasoningStarted,
+        reasoningCompleted,
+        safeCommandStarted,
+        safeCommandCompleted,
+        safeFileStarted,
+        safeFileCompleted,
+        safeMcpStarted,
+        safeMcpOutput,
+        safeMcpCompleted,
+        toolStarted,
+        toolOutput,
+        toolCompleted,
+        finalDelta,
+        finalCompleted,
+      ] = events;
       expect(commentaryDelta).toMatchObject({ type: "assistant.text.delta", delta: "I will inspect the repository." });
       expect(commentaryCompleted).toMatchObject({
         type: "assistant.text.completed",
         messageId: commentaryDelta && "messageId" in commentaryDelta ? commentaryDelta.messageId : undefined,
       });
+      expect(reasoningStarted).toMatchObject({
+        type: "tool.started",
+        displayName: "Thinking",
+        kind: "reasoning",
+      });
+      expect(reasoningCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
+      expect(safeCommandStarted).toMatchObject({
+        type: "tool.started",
+        displayName: "Run command",
+        kind: "command",
+        preview: "pnpm build",
+        previewKind: "command",
+        detail: "Working directory: ~/apps/flappy-bird",
+      });
+      expect(safeCommandCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
+      expect(safeFileStarted).toMatchObject({
+        type: "tool.started",
+        displayName: "Update files",
+        kind: "file_change",
+        preview: "~/apps/flappy-bird/src/App.tsx",
+        previewKind: "path",
+      });
+      expect(safeFileCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
+      expect(safeMcpStarted).toMatchObject({
+        type: "tool.started",
+        displayName: "Use linear.get_issue",
+        kind: "tool",
+      });
+      expect(safeMcpOutput).toMatchObject({ type: "tool.output", text: "Tool returned a result.", truncated: true });
+      expect(safeMcpCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
       expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command", kind: "command" });
+      expect(toolStarted).not.toHaveProperty("preview");
       expect(toolOutput).toMatchObject({ type: "tool.output", text: "Command produced output.", truncated: true });
       expect(toolCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
       expect(finalDelta).toMatchObject({ type: "assistant.text.delta", delta: "The repository is ready." });
@@ -414,7 +479,7 @@ describe("Codex app-server control runtime", () => {
       approvalPolicy: "on-request",
       sandbox: "workspace-write",
       writableRoots: [homePath],
-      model: "gpt-5.6-sol",
+      model: "openai/gpt-5.6-sol",
       effort: "low",
       serviceTier: "fast",
     }), "utf8").toString("base64");
@@ -428,7 +493,7 @@ describe("Codex app-server control runtime", () => {
     ], { cwd: homePath, stdio: ["pipe", "pipe", "pipe"] });
     const secondTurn = Buffer.from(JSON.stringify({
       prompt: "Second turn.",
-      model: "gpt-5.6-terra",
+      model: "openai/gpt-5.6-terra",
       modelOptions: [
         { id: "effort", value: "high" },
         { id: "service_tier", value: "standard" },
@@ -444,14 +509,14 @@ describe("Codex app-server control runtime", () => {
       expect(requests[0]).toMatchObject({
         threadId: "native-thread-turns",
         input: [{ type: "text", text: "First turn.", text_elements: [] }],
-        model: "gpt-5.6-sol",
+        model: "openai/gpt-5.6-sol",
         effort: "low",
         serviceTier: "fast",
       });
       expect(requests[1]).toMatchObject({
         threadId: "native-thread-turns",
         input: [{ type: "text", text: "Second turn.", text_elements: [] }],
-        model: "gpt-5.6-terra",
+        model: "openai/gpt-5.6-terra",
         effort: "high",
         serviceTier: "standard",
       });
