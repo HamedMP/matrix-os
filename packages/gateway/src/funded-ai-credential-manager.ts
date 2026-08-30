@@ -22,7 +22,7 @@ const AuthTokenSchema = z.string().min(32).max(512).regex(/^[A-Za-z0-9._~+/=-]+$
 export interface FundedAiRuntimeConfig {
   issueUrl: string;
   relayBaseUrl: string;
-  platformAuthToken: string;
+  runtimeAuthToken: string;
   identity: { ownerId: string; machineId: string; runtimeSlot: string };
   maxRunMs: number;
   requestTimeoutMs: number;
@@ -90,7 +90,7 @@ export function loadFundedAiRuntimeConfig(
     const platform = parseServiceUrl(env.PLATFORM_INTERNAL_URL, true);
     const relay = parseServiceUrl(env.MATRIX_FUNDED_AI_RELAY_URL, false);
     const handle = HandleSchema.parse(env.MATRIX_HANDLE);
-    const platformAuthToken = AuthTokenSchema.parse(env.MATRIX_AUTH_TOKEN);
+    const runtimeAuthToken = AuthTokenSchema.parse(env.MATRIX_FUNDED_AI_RUNTIME_TOKEN);
     const identity = {
       ownerId: IdentityValueSchema.parse(env.MATRIX_CLERK_USER_ID),
       machineId: IdentityValueSchema.parse(env.MATRIX_MACHINE_ID),
@@ -102,7 +102,7 @@ export function loadFundedAiRuntimeConfig(
         platform,
       ).toString(),
       relayBaseUrl: relay.toString().replace(/\/$/, ""),
-      platformAuthToken,
+      runtimeAuthToken,
       identity,
       maxRunMs: boundedInteger(
         env.MATRIX_FUNDED_AI_RUN_TIMEOUT_MS,
@@ -247,7 +247,7 @@ export function createFundedAiCredentialManager(
           redirect: "error",
           signal,
           headers: {
-            authorization: `Bearer ${config.platformAuthToken}`,
+            authorization: `Bearer ${config.runtimeAuthToken}`,
             "content-type": "application/json",
             accept: "application/json",
           },
