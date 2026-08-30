@@ -6,6 +6,7 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
 import { OSWindowSafeView } from "../desktop-shell/OSWindow";
 import { DesktopNewSessionControl } from "./DesktopNewSessionControl";
+import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
 import { relativeSessionActivity } from "./terminal-session-activity";
 import {
   terminalAgentLabel,
@@ -84,15 +85,18 @@ export function TerminalSessionSidebar({
             <SquareTerminal size={16} aria-hidden="true" />
             <h1 className="truncate text-base font-medium tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>Terminal</h1>
           </div>
-          <DesktopNewSessionControl
-            disabled={disabled}
-            creating={creating}
-            agentStatuses={agentStatuses}
-            checkingAgentStatuses={checkingAgentStatuses}
-            onRefreshAgentStatuses={onRefreshAgentStatuses}
-            onCreateShell={onCreate}
-            onCreateAgent={onCreateAgent}
-          />
+          <div data-terminal-sidebar-header-actions className="no-drag flex shrink-0 items-center gap-2">
+            <DesktopTerminalThemePicker />
+            <DesktopNewSessionControl
+              disabled={disabled}
+              creating={creating}
+              agentStatuses={agentStatuses}
+              checkingAgentStatuses={checkingAgentStatuses}
+              onRefreshAgentStatuses={onRefreshAgentStatuses}
+              onCreateShell={onCreate}
+              onCreateAgent={onCreateAgent}
+            />
+          </div>
         </div>
         <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {[...sessions].sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))).map((session) => {
