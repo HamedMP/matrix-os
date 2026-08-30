@@ -671,7 +671,7 @@ export function createHermesChatProviderAdapter(options: {
         console.warn(
           "[chat/hermes] Provider Run failed:",
           error instanceof HermesGatewayProtocolError
-            ? `${error.name}:${error.reason}`
+            ? `${error.name}:${error.reason}${error.eventType ? `:${error.eventType}` : ""}`
             : error instanceof Error ? error.name : "UnknownError",
         );
         const safeFailure = error instanceof HermesRunFailure

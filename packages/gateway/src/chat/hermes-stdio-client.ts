@@ -84,6 +84,7 @@ export class HermesGatewayProtocolError extends Error {
     readonly reason: HermesGatewayProtocolFailureReason,
     message: string,
     cause?: unknown,
+    readonly eventType?: string,
   ) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "HermesGatewayProtocolError";
@@ -181,7 +182,12 @@ export function createHermesStdioClient(options: {
       try {
         options.onEvent(event.data.params);
       } catch (error: unknown) {
-        fail(protocolError("event_invalid", "Hermes gateway event was invalid", error));
+        fail(new HermesGatewayProtocolError(
+          "event_invalid",
+          "Hermes gateway event was invalid",
+          error,
+          event.data.params.type,
+        ));
       }
       return;
     }
