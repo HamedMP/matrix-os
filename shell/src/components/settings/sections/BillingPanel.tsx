@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { ReactNode } from "react";
 import {
@@ -24,8 +25,11 @@ import {
 } from "@/lib/hugeicons";
 import { useUser } from "@clerk/nextjs";
 import {
+  getClosestMatrixRegionSlug,
+  MATRIX_BILLING_MACHINE_PROFILES,
   MATRIX_BILLING_REGIONS,
   MATRIX_BILLING_SERVER_PROFILES,
+  resolveMatrixServerProfile,
 } from "@/lib/billing";
 import type {
   BillingAccessIssue,
@@ -54,18 +58,20 @@ export type BillingPanelMode = "settings" | "provisioning" | "device-setup" | "a
 export type ComputerSetupSelection = {
   serverType: string;
   location: string;
+  developerTools: DeveloperToolId[];
 };
 type BillingInterval = "monthly" | "annual";
 
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
 const profileBlurbs: Record<string, string> = {
-  server_cpx22: "Light agents, testing, and small projects",
-  server_cpx32: "Everyday building with headroom to grow",
-  server_cpx52: "Heavy workloads and many parallel agents",
+  server_starter: "Light agents, testing, and small projects",
+  server_builder: "Everyday building with headroom to grow",
+  server_max: "Heavy workloads and many parallel agents",
 };
 const regionGroupLabels: Record<string, string> = {
-  "eu-central": "Europe",
-  "ap-southeast": "Asia Pacific",
+  "eu-central": "Germany",
+  "us-east": "United States",
+  "us-west": "United States",
 };
 const includedHighlights = [
   "Dedicated VPS prepared before checkout",
@@ -147,7 +153,6 @@ function CheckoutPanel({
   selectedRegion,
   billingInterval,
   developerTools,
-  onBillingIntervalChange,
   trialDurationDays,
 }: {
   mode: BillingPanelMode;
@@ -161,13 +166,11 @@ function CheckoutPanel({
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
   billingInterval: BillingInterval;
   developerTools: DeveloperToolId[];
-  onBillingIntervalChange: (interval: BillingInterval) => void;
   trialDurationDays: number | null;
 }) {
   const planSlug = selectedProfile.planSlug;
   const regionSlug = selectedRegion.featureSlug;
   const price = profilePrice(selectedProfile, billingInterval);
-  const annualSavings = annualSavingsPercent(selectedProfile);
   const trialEnd = trialDurationDays === null
     ? null
     : billingDateFormatter.format(new Date(Date.now() + trialDurationDays * DAY_MS));
@@ -198,6 +201,7 @@ function CheckoutPanel({
     const selection = {
       serverType: selectedProfile.hetznerType.toLowerCase(),
       location: selectedRegion.location,
+      developerTools: [...developerTools],
     };
     const checkoutAllowed = onCheckoutIntent?.(selection) !== false;
     if (!checkoutAllowed) return;
@@ -325,24 +329,6 @@ function CheckoutPanel({
         </div>}
       </dl>
 
-      {!checkoutBypassed && <div className="mt-4 grid grid-cols-2 rounded-xl bg-black/20 p-1">
-        {(["monthly", "annual"] as const).map((interval) => (
-          <button
-            key={interval}
-            type="button"
-            aria-pressed={billingInterval === interval}
-            onClick={() => onBillingIntervalChange(interval)}
-            className={`h-9 rounded-lg text-sm font-semibold transition-colors ${
-              billingInterval === interval
-                ? "bg-cream text-deep shadow-sm"
-                : "text-cream/55 hover:text-cream"
-            }`}
-          >
-            {interval === "monthly" ? "Monthly" : "Annual"}
-          </button>
-        ))}
-      </div>}
-
       {!checkoutBypassed && <div className="mt-4 flex items-end justify-between gap-3 border-t border-cream/12 pt-4">
         <div>
           <span className="text-sm text-cream/55">
@@ -350,10 +336,6 @@ function CheckoutPanel({
           </span>
           {trialDurationDays !== null ? (
             <span className="mt-0.5 block text-[11px] font-medium text-ember">Card required</span>
-          ) : billingInterval === "annual" && annualSavings ? (
-            <span className="mt-0.5 block text-[11px] font-medium text-ember">
-              Billed yearly · save {annualSavings}%
-            </span>
           ) : null}
         </div>
         <span className="flex items-baseline gap-1">
@@ -361,7 +343,7 @@ function CheckoutPanel({
             {trialDurationDays === null ? `$${price}` : "$0 today"}
           </span>
           {trialDurationDays === null && (
-            <span className="text-sm text-cream/55">{billingInterval === "annual" ? "/yr" : "/mo"}</span>
+            <span className="text-sm text-cream/55">/mo</span>
           )}
         </span>
       </div>}
@@ -369,7 +351,7 @@ function CheckoutPanel({
       {trialDurationDays !== null && trialEnd && (
         <div className="mt-3 rounded-xl border border-cream/12 bg-black/15 p-3 text-xs leading-5">
           <p className="font-semibold text-cream">
-            ${price}/{billingInterval === "annual" ? "year" : "month"} after your trial
+            ${price}/month after your trial
           </p>
           <p className="mt-1 text-cream/65">First charge {trialEnd}</p>
           <p className="text-cream/55">Cancel before {trialEnd} to avoid being charged.</p>
@@ -715,31 +697,34 @@ function profilePrice(
     : profile.monthlyPriceUsd ?? "";
 }
 
-function annualSavingsPercent(
-  profile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number],
-): number | null {
-  const monthly = Number(profile.monthlyPriceUsd);
-  const annual = Number(profile.annualPriceUsd);
-  if (!Number.isFinite(monthly) || !Number.isFinite(annual) || monthly <= 0 || annual <= 0) {
-    return null;
+function getDefaultRegionSlug(): string {
+  let timeZone: string | undefined;
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch (error: unknown) {
+    console.warn("[billing] unable to resolve browser timezone", error instanceof Error ? error.name : typeof error);
   }
-  const yearlyAtMonthly = monthly * 12;
-  if (annual >= yearlyAtMonthly) return null;
-  return Math.round((1 - annual / yearlyAtMonthly) * 100);
+  return getClosestMatrixRegionSlug(timeZone);
 }
 
-function getDefaultRegionSlug(): string {
-  return MATRIX_BILLING_REGIONS[0]?.featureSlug ?? "";
+function subscribeToBrowserTimeZone(): () => void {
+  return () => undefined;
+}
+
+function getServerRegionSlug(): string {
+  return "region_fsn1";
 }
 
 function ProfileOptionRows({
   profiles,
+  region,
   selectedFeature,
   billingInterval,
   showPrice,
   onSelect,
 }: {
   profiles: typeof MATRIX_BILLING_SERVER_PROFILES;
+  region: (typeof MATRIX_BILLING_REGIONS)[number];
   selectedFeature: string;
   billingInterval: BillingInterval;
   showPrice: boolean;
@@ -748,6 +733,7 @@ function ProfileOptionRows({
   return (
     <div className="flex flex-col gap-1">
       {profiles.map((profile) => {
+        const resolvedProfile = resolveMatrixServerProfile(profile, region);
         const selected = profile.featureSlug === selectedFeature;
         return (
           <button
@@ -773,8 +759,8 @@ function ProfileOptionRows({
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-sm font-semibold text-deep">{profile.label}</span>
-                <span className="font-mono text-[11px] text-forest/45">{profile.hetznerType}</span>
-                {profile.hetznerType.toLowerCase() === "cpx32" && (
+                <span className="font-mono text-[11px] text-forest/45">{resolvedProfile.hetznerType}</span>
+                {profile.planSlug === "matrix_builder" && (
                   <span className="rounded-full bg-ember/12 px-1.5 py-0.5 text-[10px] font-semibold text-ember">
                     {profileLabels[1]}
                   </span>
@@ -784,20 +770,20 @@ function ProfileOptionRows({
                 {profileBlurbs[profile.featureSlug] ?? ""}
               </span>
               <span className="mt-1.5 flex items-center gap-1.5 font-mono text-[11px] text-forest/55">
-                <span>{profile.vcpus} vCPU</span>
+                <span>{resolvedProfile.vcpus} vCPU</span>
                 <span className="text-forest/25" aria-hidden="true">·</span>
-                <span>{profile.memoryGb} GB RAM</span>
+                <span>{resolvedProfile.memoryGb} GB RAM</span>
                 <span className="text-forest/25" aria-hidden="true">·</span>
-                <span>{profile.diskGb} GB SSD</span>
+                <span>{resolvedProfile.diskGb} GB SSD</span>
               </span>
             </span>
             {showPrice ? (
               <span className="shrink-0 text-right">
                 <span className="text-base font-semibold tracking-tight text-deep">
-                  ${profilePrice(profile, billingInterval)}
+                  ${profilePrice(resolvedProfile, billingInterval)}
                 </span>
                 <span className="block text-[10px] text-forest/45">
-                  {billingInterval === "annual" ? "/yr" : "/mo"}
+                  /mo
                 </span>
               </span>
             ) : null}
@@ -857,7 +843,7 @@ function RegionOptionRows({
                   <span className="font-mono text-[11px] text-forest/40">{region.location}</span>
                   {region.featureSlug === defaultFeature && (
                     <span className="shrink-0 rounded-full bg-forest/8 px-1.5 py-0.5 text-[10px] font-semibold text-forest/55">
-                      Default
+                      Closest
                     </span>
                   )}
                 </span>
@@ -912,6 +898,7 @@ function SelectionTriggerCards({
   profiles,
   selectedProfile,
   selectedRegion,
+  developerTools,
   billingInterval,
   showPrice = true,
   openPicker,
@@ -919,10 +906,12 @@ function SelectionTriggerCards({
   onClose,
   onSelectProfile,
   onSelectRegion,
+  onToggleDeveloperTool,
 }: {
   profiles: typeof MATRIX_BILLING_SERVER_PROFILES;
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
+  developerTools: DeveloperToolId[];
   billingInterval: BillingInterval;
   showPrice?: boolean;
   openPicker: PickerKey;
@@ -930,6 +919,7 @@ function SelectionTriggerCards({
   onClose: () => void;
   onSelectProfile: (featureSlug: string) => void;
   onSelectRegion: (featureSlug: string) => void;
+  onToggleDeveloperTool: (tool: DeveloperToolId) => void;
 }) {
   const computerOpen = openPicker === "computer";
   const regionOpen = openPicker === "region";
@@ -1000,7 +990,7 @@ function SelectionTriggerCards({
                   ${profilePrice(selectedProfile, billingInterval)}
                 </span>
                 <span className="block text-[10px] text-forest/45">
-                  {billingInterval === "annual" ? "/yr" : "/mo"}
+                  /mo
                 </span>
               </span>
             ) : null}
@@ -1013,10 +1003,11 @@ function SelectionTriggerCards({
         {computerOpen && (
           <PickerDropdown
             title="Choose your computer"
-            hint={profiles.map((profile) => profile.hetznerType).join(" / ")}
+            hint={profiles.map((profile) => resolveMatrixServerProfile(profile, selectedRegion).hetznerType).join(" / ")}
           >
             <ProfileOptionRows
               profiles={profiles}
+              region={selectedRegion}
               selectedFeature={selectedProfile.featureSlug}
               billingInterval={billingInterval}
               showPrice={showPrice}
@@ -1026,28 +1017,32 @@ function SelectionTriggerCards({
         )}
       </div>
 
-      <div className="relative">
+      <div className="border-t border-forest/8 pt-3">
+        <DeveloperToolsSelector
+          selectedTools={developerTools}
+          onToggle={onToggleDeveloperTool}
+        />
+      </div>
+
+      <div className="relative border-t border-forest/8 pt-3">
         <button
           type="button"
-          aria-label="Change region"
+          aria-label="Change server location"
           aria-haspopup="true"
           aria-expanded={regionOpen}
           onClick={() => onToggle("region")}
-          className={`${pickerFieldBase} ${pickerFieldState(regionOpen)}`}
+          className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/40 ${pickerFieldState(regionOpen)}`}
         >
           <span className="flex min-w-0 items-center gap-3">
-            <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#f4efe3] text-xl leading-none">
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#f4efe3] text-base leading-none">
               <span aria-hidden="true">{selectedRegion.flag}</span>
             </span>
             <span className="flex min-w-0 flex-col">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-forest/45">
-                Region
+              <span className="text-xs font-semibold text-deep">
+                Server location · {selectedRegion.label}
               </span>
-              <span className="truncate text-sm font-semibold text-deep">
-                {selectedRegion.label}
-              </span>
-              <span className="font-mono text-[11px] text-forest/45">
-                {selectedRegion.location} · selected by default
+              <span className="text-[11px] text-forest/45">
+                Closest available · change only if needed
               </span>
             </span>
           </span>
@@ -1057,7 +1052,7 @@ function SelectionTriggerCards({
           />
         </button>
         {regionOpen && (
-          <PickerDropdown title="Choose a region" hint="Falkenstein is selected by default">
+          <PickerDropdown title="Choose a server location" hint="Closest available location is selected">
             <RegionOptionRows
               selectedFeature={selectedRegion.featureSlug}
               defaultFeature={defaultRegionSlug}
@@ -1159,8 +1154,14 @@ function BillingPanelInner({
       MATRIX_BILLING_SERVER_PROFILES[0]?.featureSlug ??
       "",
   );
-  const [selectedRegionSlug, setSelectedRegionSlug] = useState(getDefaultRegionSlug);
-  const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
+  const automaticRegionSlug = useSyncExternalStore(
+    subscribeToBrowserTimeZone,
+    getDefaultRegionSlug,
+    getServerRegionSlug,
+  );
+  const [selectedRegionOverride, setSelectedRegionOverride] = useState<string | null>(null);
+  const selectedRegionSlug = selectedRegionOverride ?? automaticRegionSlug;
+  const billingInterval: BillingInterval = "monthly";
   const [developerTools, setDeveloperTools] = useState<DeveloperToolId[]>(defaultDeveloperTools);
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
   const checkoutBypassed = mode === "add-computer" && entitlement?.source === "override";
@@ -1173,17 +1174,25 @@ function BillingPanelInner({
   const allowedProfiles = checkoutBypassed
     ? MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>
         entitlement.allowedServerTypes.some(
-          (serverType) => serverType.toLowerCase() === profile.hetznerType.toLowerCase(),
+          (serverType) => MATRIX_BILLING_MACHINE_PROFILES.some(
+            (machine) => machine.planSlug === profile.planSlug
+              && machine.serverType === serverType.toLowerCase(),
+          ),
         ),
       )
     : MATRIX_BILLING_SERVER_PROFILES;
-  const selectedProfile =
-    allowedProfiles.find(
-      (profile) => profile.featureSlug === selectedProfileSlug,
-    ) ?? allowedProfiles[0] ?? MATRIX_BILLING_SERVER_PROFILES[0]!;
   const selectedRegion =
     MATRIX_BILLING_REGIONS.find((region) => region.featureSlug === selectedRegionSlug) ??
     MATRIX_BILLING_REGIONS[0]!;
+  const selectedPlanProfile =
+    allowedProfiles.find(
+      (profile) => profile.featureSlug === selectedProfileSlug,
+    ) ?? allowedProfiles[0] ?? MATRIX_BILLING_SERVER_PROFILES[0]!;
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity keeps the downstream telemetry memo and ref-sync effect from changing on unrelated checkout state renders.
+  const selectedProfile = useMemo(
+    () => resolveMatrixServerProfile(selectedPlanProfile, selectedRegion),
+    [selectedPlanProfile, selectedRegion],
+  );
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by a useEffect dependency array below (the ref-sync effect keyed on telemetryProperties); removing useMemo would re-run that effect on every render.
   const telemetryProperties = useMemo<BillingTelemetryProperties>(
     () => ({
@@ -1218,9 +1227,10 @@ function BillingPanelInner({
   }, [active]);
 
   const handleProfileSelect = (featureSlug: string) => {
-    const nextProfile =
+    const nextPlanProfile =
       allowedProfiles.find((profile) => profile.featureSlug === featureSlug) ??
-      selectedProfile;
+      selectedPlanProfile;
+    const nextProfile = resolveMatrixServerProfile(nextPlanProfile, selectedRegion);
     setSelectedProfileSlug(featureSlug);
     setOpenPicker(null);
     captureBillingTelemetry("profile_select", {
@@ -1233,20 +1243,11 @@ function BillingPanelInner({
     });
   };
 
-  const handleBillingIntervalChange = (interval: BillingInterval) => {
-    setBillingInterval(interval);
-    captureBillingTelemetry("billing_interval_select", {
-      ...telemetryProperties,
-      selected_billing_interval: interval,
-      selected_price_usd: profilePrice(selectedProfile, interval) || undefined,
-    });
-  };
-
   const handleRegionSelect = (featureSlug: string) => {
     const nextRegion =
       MATRIX_BILLING_REGIONS.find((region) => region.featureSlug === featureSlug) ??
       selectedRegion;
-    setSelectedRegionSlug(featureSlug);
+    setSelectedRegionOverride(featureSlug);
     setOpenPicker(null);
     captureBillingTelemetry("region_select", {
       ...telemetryProperties,
@@ -1324,6 +1325,7 @@ function BillingPanelInner({
             profiles={allowedProfiles}
             selectedProfile={selectedProfile}
             selectedRegion={selectedRegion}
+            developerTools={developerTools}
             billingInterval={billingInterval}
             openPicker={openPicker}
             onToggle={(picker) =>
@@ -1332,13 +1334,10 @@ function BillingPanelInner({
             onClose={() => setOpenPicker(null)}
             onSelectProfile={handleProfileSelect}
             onSelectRegion={handleRegionSelect}
+            onToggleDeveloperTool={(tool) => setDeveloperTools(
+              (current) => nextDeveloperToolsSelection(current, tool),
+            )}
           />
-          <div className="mt-4 border-t border-forest/8 pt-4">
-            <DeveloperToolsSelector
-              selectedTools={developerTools}
-              onToggle={(tool) => setDeveloperTools((current) => nextDeveloperToolsSelection(current, tool))}
-            />
-          </div>
           <ul className="mt-4 space-y-2 border-t border-forest/8 pt-4">
             {includedHighlights.map((item) => (
               <li
@@ -1364,7 +1363,6 @@ function BillingPanelInner({
         selectedRegion={selectedRegion}
         billingInterval={billingInterval}
         developerTools={developerTools}
-        onBillingIntervalChange={handleBillingIntervalChange}
         trialDurationDays={trialDurationDays}
       />
     </div>

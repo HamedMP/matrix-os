@@ -82,8 +82,8 @@ function billingStatus(maxRuntimeSlots = 3, source: "stripe" | "override" = "str
       maxRuntimeSlots,
       includedRuntimeSlots: maxRuntimeSlots,
       addonRuntimeSlots: 0,
-      defaultServerType: "cpx32",
-      allowedServerTypes: ["cpx22", "cpx32"],
+      defaultServerType: "cpx42",
+      allowedServerTypes: ["cpx22", "cpx21", "cpx42", "cpx31"],
       stripeSubscriptionId: source === "stripe" ? "sub_123" : null,
       stripePriceId: source === "stripe" ? "price_builder_monthly" : null,
       gracePeriodEndsAt: null,
@@ -322,10 +322,10 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Change computer" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Change region" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change server location" })).toBeTruthy();
   });
 
-  it("reuses first-time strength, region, interval, and Checkout for another computer", async () => {
+  it("reuses first-time strength, region, agents, and Checkout for another computer", async () => {
     const navigate = vi.fn();
     const fetchMock = installFetchRouter({ billing: billingStatus(3) });
     await renderOnboarding({ onExternalNavigate: navigate });
@@ -343,9 +343,8 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     expect(screen.getByRole("button", { name: /Max.*CPX52/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Starter.*CPX22/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
-    fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany.*nbg1/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Annual" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+    fireEvent.click(screen.getByRole("button", { name: /Ashburn, Virginia.*ash/i }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() => {
@@ -355,9 +354,9 @@ describe("RuntimeManager", () => {
           method: "POST",
           body: JSON.stringify({
             planSlug: "matrix_starter",
-            interval: "annual",
-            regionSlug: "region_nbg1",
-            serverType: "cpx22",
+            interval: "monthly",
+            regionSlug: "region_ash",
+            serverType: "cpx21",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             runtimeSlot: "research-lab",
             returnPath: "/?billing=setup&handoff=add-computer",
@@ -463,7 +462,7 @@ describe("RuntimeManager", () => {
           body: JSON.stringify({
             runtime: "research-lab",
             developerTools: [],
-            serverType: "cpx32",
+            serverType: "cpx42",
             location: "fsn1",
           }),
         }),
@@ -639,7 +638,7 @@ describe("RuntimeManager", () => {
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
-      serverType: "cpx32",
+      serverType: "cpx42",
       location: "fsn1",
       createdAt: 1_000,
     }));
@@ -672,7 +671,7 @@ describe("RuntimeManager", () => {
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
-      serverType: "cpx32",
+      serverType: "cpx42",
       location: "fsn1",
       createdAt: Date.now(),
     }));
@@ -709,7 +708,7 @@ describe("RuntimeManager", () => {
         body: JSON.stringify({
           runtime: "research-lab",
           developerTools: ["codex", "claude-code", "opencode", "pi"],
-          serverType: "cpx32",
+          serverType: "cpx42",
           location: "fsn1",
         }),
       }),
@@ -721,7 +720,7 @@ describe("RuntimeManager", () => {
       name: "Research Lab",
       slot: "research-lab",
       developerTools: [],
-      serverType: "cpx32",
+      serverType: "cpx42",
       location: "fsn1",
       createdAt: Date.now(),
     }));

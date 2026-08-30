@@ -82,8 +82,8 @@ describe("BillingSection", () => {
     expect(screen.getByText("Secure checkout")).toBeTruthy();
     expect(screen.getByText("Visa")).toBeTruthy();
     expect(screen.getByText("Mastercard")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getAllByText("Monthly").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole("button", { name: "Annual" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
@@ -113,7 +113,7 @@ describe("BillingSection", () => {
     expect(screen.getByText("$0 today").classList.contains("text-cream")).toBe(true);
     expect(screen.getByText(`First charge ${formattedTrialEnd}`)).toBeTruthy();
     expect(screen.getByText(`Cancel before ${formattedTrialEnd} to avoid being charged.`)).toBeTruthy();
-    expect(screen.getByText("$19/month after your trial")).toBeTruthy();
+    expect(screen.getByText("$100/month after your trial")).toBeTruthy();
     expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy();
   });
 
@@ -172,7 +172,7 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     await waitFor(() => expect(screen.getByText("Free trial active")).toBeTruthy());
-    expect(screen.getByText("Your first $19 monthly charge is on Aug 26, 2026.")).toBeTruthy();
+    expect(screen.getByText("Your first $100 monthly charge is on Aug 26, 2026.")).toBeTruthy();
     expect(screen.getByText("Cancel before Aug 26, 2026 to avoid being charged.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Manage trial" })).toBeTruthy();
   });
@@ -308,7 +308,7 @@ describe("BillingSection", () => {
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
   });
 
-  it("lets users choose annual billing before checkout", async () => {
+  it("sends the selected US machine shape and preinstalled agents to monthly checkout", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -325,10 +325,8 @@ describe("BillingSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
-    fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Annual" }));
-    expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+    fireEvent.click(screen.getByRole("button", { name: /Ashburn, Virginia/ }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() =>
@@ -337,9 +335,9 @@ describe("BillingSection", () => {
         expect.objectContaining({
           body: JSON.stringify({
             planSlug: "matrix_builder",
-            interval: "annual",
-            regionSlug: "region_nbg1",
-            serverType: "cpx32",
+            interval: "monthly",
+            regionSlug: "region_ash",
+            serverType: "cpx31",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
           }),
         }),
@@ -432,7 +430,7 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
-            serverType: "cpx32",
+            serverType: "cpx42",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
           }),
@@ -499,25 +497,24 @@ describe("BillingSection", () => {
     // Computer options live in a click-to-open dropdown now.
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     expect(screen.getByText("CPX22")).toBeTruthy();
-    expect(screen.getByText("$14")).toBeTruthy();
-    expect(screen.getAllByText("CPX32").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("$19").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("$20")).toBeTruthy();
+    expect(screen.getAllByText("CPX42").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("$100").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("CPX52")).toBeTruthy();
-    expect(screen.getByText("$49")).toBeTruthy();
+    expect(screen.getByText("$200")).toBeTruthy();
 
     // Region options live in their own dropdown (opening it closes the computer one).
-    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
     expect(screen.getAllByText("Region").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Falkenstein is selected by default")).toBeTruthy();
+    expect(screen.getByText("Closest available location is selected")).toBeTruthy();
     expect(screen.getAllByText("🇩🇪").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("Falkenstein, Germany").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Nuremberg, Germany")).toBeTruthy();
-    expect(screen.queryByText("🇺🇸")).toBeNull();
-    expect(screen.queryByText("US East")).toBeNull();
-    expect(screen.queryByText("US West")).toBeNull();
-    expect(screen.queryByText("Americas")).toBeNull();
-    expect(screen.queryByText("ash")).toBeNull();
-    expect(screen.queryByText("hil")).toBeNull();
+    expect(screen.getAllByText("🇺🇸").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
+    expect(screen.getByText("Hillsboro, Oregon")).toBeTruthy();
+    expect(screen.getByText("ash")).toBeTruthy();
+    expect(screen.getByText("hil")).toBeTruthy();
     expect(screen.queryByText("sin")).toBeNull();
     expect(screen.getByText("Start checkout & provision")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
@@ -526,7 +523,7 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it("defaults an American browser timezone to Falkenstein", async () => {
+  it("prefills the closest server for an American browser timezone", async () => {
     vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
       locale: "en-US",
       calendar: "gregory",
@@ -538,9 +535,25 @@ describe("BillingSection", () => {
     render(<BillingSection mode="provisioning" />);
 
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
-    expect(screen.getByRole("button", { name: "Change region" }).textContent).toContain(
-      "Falkenstein, Germany",
+    expect(screen.getByRole("button", { name: "Change server location" }).textContent).toContain(
+      "Ashburn, Virginia",
     );
+  });
+
+  it("keeps server location collapsed below computer power and agent provisioning", async () => {
+    const { BillingSection } = await loadBillingSection();
+    render(<BillingSection mode="provisioning" />);
+
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    const computer = screen.getByRole("button", { name: "Change computer" });
+    const agents = screen.getByRole("heading", { name: "Developer tools" });
+    const location = screen.getByRole("button", { name: "Change server location" });
+    const follows = Node.DOCUMENT_POSITION_FOLLOWING;
+
+    expect(computer.compareDocumentPosition(agents) & follows).toBeTruthy();
+    expect(agents.compareDocumentPosition(location) & follows).toBeTruthy();
+    expect(location.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: /Ashburn, Virginia/ })).toBeNull();
   });
 
   it("aligns the provisioning intro and checkout summary in the same layout row", async () => {
@@ -653,7 +666,7 @@ describe("BillingSection", () => {
     expect(screen.getByText("Current plan")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("2 included, 1 add-on")).toBeTruthy();
-    expect(screen.getByText(/CPX32/)).toBeTruthy();
+    expect(screen.getByText("cpx32")).toBeTruthy();
     expect(screen.getByText("Receipts and payment")).toBeTruthy();
     expect(screen.getByText("Canceling")).toBeTruthy();
 

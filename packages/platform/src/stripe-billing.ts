@@ -1,11 +1,12 @@
 import Stripe from 'stripe';
+import { createHash } from 'node:crypto';
 import type {
   StripeBillingClient,
   StripeCheckoutSessionInput,
   StripeWebhookEvent,
 } from './billing-routes.js';
 
-export const MATRIX_STRIPE_API_VERSION = '2026-04-22.dahlia';
+export const MATRIX_STRIPE_API_VERSION = '2026-07-29.dahlia';
 export const MATRIX_STRIPE_API_TIMEOUT_MS = 10_000;
 
 export function createStripeBillingClient(options: {
@@ -24,6 +25,7 @@ export function createStripeBillingClient(options: {
     async createCheckoutSession(input: StripeCheckoutSessionInput) {
       const session = await stripe.checkout.sessions.create({
         mode: input.mode,
+        integration_identifier: `matrix_checkout_${stableLetterSuffix(input.idempotencyKey)}`,
         ...(input.customerId ? { customer: input.customerId } : {}),
         client_reference_id: input.clerkUserId,
         line_items: [{ price: input.priceId, quantity: 1 }],
@@ -34,7 +36,6 @@ export function createStripeBillingClient(options: {
         ...(input.expiresAt ? { expires_at: Math.floor(Date.parse(input.expiresAt) / 1_000) } : {}),
         ...(input.paymentMethodMode === 'card_required'
           ? {
-            payment_method_types: ['card'] as const,
             payment_method_collection: 'always' as const,
           }
           : {}),
@@ -115,6 +116,11 @@ export function createStripeBillingClient(options: {
       return stripe.webhooks.constructEvent(rawBody, signature, webhookSecret) as StripeWebhookEvent;
     },
   };
+}
+
+function stableLetterSuffix(idempotencyKey: string): string {
+  const bytes = createHash('sha256').update(idempotencyKey).digest().subarray(0, 8);
+  return Array.from(bytes, (value) => String.fromCharCode(97 + (value % 26))).join('');
 }
 
 export function createUnavailableStripeBillingClient(): StripeBillingClient {

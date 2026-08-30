@@ -12,7 +12,7 @@ import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "@/components/Settings";
 import type { ComputerSetupSelection } from "@/components/settings/sections/BillingPanel";
 import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
-import { MATRIX_BILLING_REGIONS, MATRIX_BILLING_SERVER_PROFILES } from "@/lib/billing";
+import { MATRIX_BILLING_MACHINE_PROFILES, MATRIX_BILLING_REGIONS } from "@/lib/billing";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import {
@@ -103,8 +103,8 @@ function isDeveloperToolId(value: unknown): value is DeveloperToolId {
 }
 
 function isKnownServerType(value: unknown): value is string {
-  return typeof value === "string" && MATRIX_BILLING_SERVER_PROFILES.some(
-    (profile) => profile.hetznerType.toLowerCase() === value.toLowerCase(),
+  return typeof value === "string" && MATRIX_BILLING_MACHINE_PROFILES.some(
+    (profile) => profile.serverType === value.toLowerCase(),
   );
 }
 
@@ -526,12 +526,13 @@ export function RuntimeManager({
     if (
       !draft ||
       !isKnownLocation(selection.location) ||
-      !MATRIX_BILLING_SERVER_PROFILES.some(
-        (profile) => profile.hetznerType.toLowerCase() === selection.serverType.toLowerCase(),
+      !MATRIX_BILLING_MACHINE_PROFILES.some(
+        (profile) => profile.serverType === selection.serverType.toLowerCase(),
       )
     ) return false;
     const nextDraft = {
       ...draft,
+      developerTools: [...selection.developerTools],
       serverType: selection.serverType.toLowerCase(),
       location: selection.location,
       createdAt: Date.now(),

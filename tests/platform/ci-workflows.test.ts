@@ -119,6 +119,7 @@ describe('CI workflows', () => {
     ['STRIPE_PRICE_MATRIX_BUILDER_ANNUAL', 'stripe-price-matrix-builder-annual'],
     ['STRIPE_PRICE_MATRIX_MAX_MONTHLY', 'stripe-price-matrix-max-monthly'],
     ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
+    ['STRIPE_LEGACY_PRICE_CATALOG_JSON', 'stripe-legacy-price-catalog-json'],
   ] as const;
 
   it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
