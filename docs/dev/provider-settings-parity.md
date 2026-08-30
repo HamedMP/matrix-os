@@ -14,7 +14,7 @@ copy:
 | Term | Meaning | Examples |
 |---|---|---|
 | **Harness** | The executable agent runtime that plans and performs a turn. A harness can be installed, enabled, disabled, healthy, or unavailable. | Hermes, OpenClaw, Pi, OpenCode, Codex, Claude |
-| **Model provider** | The inference service that serves a model. A model provider is not an agent runtime. | Matrix AI, Anthropic, OpenAI, OpenRouter, Baseten |
+| **Model provider** | The inference service that serves a model. A model provider is not an agent runtime or managed gateway. | Anthropic, OpenAI, OpenRouter, Baseten |
 | **Account** | An owner-scoped authenticated identity or API-key profile for a harness or model provider. More than one account may exist for the same provider. | Personal Anthropic, Work OpenRouter, Codex subscription |
 | **Access source** | The exact credential and funding path selected for one run. It answers who supplies access and who is charged. | Matrix included credit, Matrix add-on credit, owner API key, owner subscription |
 
