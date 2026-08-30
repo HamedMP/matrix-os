@@ -10,7 +10,6 @@ import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
-import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { useChatContext } from "@/stores/chat-context";
@@ -512,8 +511,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
             },
           }}
         />
-      ) : win.path === "__workspace__" ? (
-        <WorkspaceApp />
       ) : win.path === "__file-browser__" ? (
         <FileBrowser windowId={win.id} mobile={isMobile} />
       ) : win.path === "__preview-window__" ? (

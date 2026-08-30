@@ -8,7 +8,6 @@ import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { parseDesktopFirstRunStatus, type DesktopFirstRunStatus } from "@/lib/desktop-first-run";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
@@ -58,6 +57,8 @@ import {
 } from "@/lib/shell-snapshot-cache";
 import {
   isBuiltInAppPath,
+  isRestorableBuiltInAppPath,
+  isRetiredBuiltInAppPath,
   normalizeBuiltInAppPath,
   normalizeBuiltInLayoutWindow,
 } from "@/lib/builtin-apps";
@@ -338,6 +339,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds loadModules' deps, and loadModules is a useEffect dependency (L~1070); a fresh function each render would re-fire the module-load effect every render
   const addApp = useCallback((name: string, path: string, iconSlug?: string, iconUrlOverride?: string) => {
+    if (isRetiredBuiltInAppPath(path)) return;
     const iconUrl = iconUrlOverride ?? iconUrlForSlug(iconSlug);
     wmSetApps((prev) => {
       const existing = prev.find((a) => a.path === path);
@@ -355,6 +357,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435) and feeds loadModules' deps (also a useEffect dependency); a fresh function each render would re-fire both effects every render
   const openWindow = useCallback((name: string, path: string) => {
+    if (isRetiredBuiltInAppPath(path)) return;
     // Open without minimizing other windows — allow multiple apps visible.
     // Terminal is a singleton app now; individual shell sessions live inside
     // its Paper drawer rather than separate OS windows.
@@ -530,7 +533,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (!HERMES_CHAT_HIDDEN) {
         addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
       }
-      const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
+      const savedBuiltIns = savedWindows.filter((w) => isRestorableBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
       }
@@ -811,8 +814,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     })();
     return () => { cancelled = true; };
   }, [themeStyle, wmSetApps]);
-  const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
-
   // Cascade windows back to the viewport when leaving canvas. Canvas
   // positions use a wide grid that extends off-screen in other modes.
   useEffect(() => {
@@ -820,17 +821,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       wmCascadeWindows(dockXOffset, 20, 30);
     }
   }, [desktopMode, previousMode, dockXOffset, wmCascadeWindows]);
-
-  useEffect(() => {
-    const onOpenPrCanvas = (event: Event) => {
-      const detail = (event as CustomEvent<{ scopeRef?: Record<string, unknown>; title?: string }>).detail;
-      if (!detail?.scopeRef) return;
-      setDesktopMode("canvas");
-      void openPrCanvas(detail.scopeRef, detail.title);
-    };
-    window.addEventListener("matrix:open-pr-canvas", onOpenPrCanvas);
-    return () => window.removeEventListener("matrix:open-pr-canvas", onOpenPrCanvas);
-  }, [openPrCanvas, setDesktopMode]);
 
   // Aoede is orthogonal to mode now — a pointer-events-none overlay that
   // can ride on top of any mode. The dock button toggles it.

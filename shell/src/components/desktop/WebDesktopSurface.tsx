@@ -11,7 +11,6 @@ import {
   Code2,
   FilePenLine,
   FileText,
-  FolderKanban,
   FolderTree,
   Globe2,
   LayoutGrid,
@@ -85,9 +84,6 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   }
   if (name === "whiteboard") {
     return { color: "#D46A92", iconColor: "white", icon: BrushIcon };
-  }
-  if (app.path === "__workspace__" || name === "projects") {
-    return { color: "var(--surface-error-emphasis, #BA5236)", iconColor: "white", icon: FolderKanban };
   }
   return DEFAULT_APPEARANCE;
 }

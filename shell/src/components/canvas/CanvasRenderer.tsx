@@ -9,7 +9,6 @@ import { useCanvasGroups } from "@/stores/canvas-groups";
 import { useCanvasLabels } from "@/stores/canvas-labels";
 import { CanvasTransform } from "./CanvasTransform";
 import { CanvasWindow } from "./CanvasWindow";
-import { WorkspaceCanvas } from "./WorkspaceCanvas";
 import { CanvasGroupRect } from "./CanvasGroup";
 import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
@@ -178,7 +177,6 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
           );
         })}
       </CanvasTransform>
-      <WorkspaceCanvas />
       <CanvasMinimap />
     </div>
   );

@@ -1,12 +1,13 @@
 import type { LayoutWindow } from "@/hooks/useWindowManager";
 
 const BUILT_IN_APP_VALUES = [
-  "__workspace__",
   "__terminal__",
   "__file-browser__",
   "__chat__",
   "__activity-monitor__",
 ] as const;
+
+const RETIRED_BUILT_IN_APP_PATHS = new Set(["__workspace__"]);
 
 export const DEFAULT_PINNED_APPS = Object.freeze([] as string[]);
 export const TERMINAL_MIN_WINDOW_WIDTH = 1040;
@@ -50,7 +51,15 @@ const BUILT_IN_PATHS = new Set<string>(BUILT_IN_APP_VALUES);
 
 export function isBuiltInAppPath(path: string): boolean {
   const normalized = normalizeBuiltInAppPath(path);
-  return normalized.startsWith("__terminal__") || BUILT_IN_PATHS.has(normalized);
+  return normalized.startsWith("__terminal__") || BUILT_IN_PATHS.has(normalized) || RETIRED_BUILT_IN_APP_PATHS.has(normalized);
+}
+
+export function isRetiredBuiltInAppPath(path: string): boolean {
+  return RETIRED_BUILT_IN_APP_PATHS.has(normalizeBuiltInAppPath(path));
+}
+
+export function isRestorableBuiltInAppPath(path: string): boolean {
+  return isBuiltInAppPath(path) && !isRetiredBuiltInAppPath(path);
 }
 
 export function normalizeBuiltInLayoutWindow(window: LayoutWindow): LayoutWindow {

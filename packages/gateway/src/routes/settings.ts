@@ -38,11 +38,12 @@ import type { AgentRuntimeController } from "../agent-config/runtime-controller.
 const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
-  pinnedApps: ["__workspace__", "__terminal__", "__file-browser__", "__chat__"] as string[],
+  pinnedApps: ["__terminal__", "__file-browser__", "__chat__"] as string[],
   iconStyle: DEFAULT_ICON_STYLE,
 };
 
 const THEME_DEFAULTS = {};
+const RETIRED_DESKTOP_APP_PATHS = new Set(["__workspace__"]);
 const SETTINGS_BODY_LIMIT = 256 * 1024;
 const AGENT_SETTINGS_BODY_LIMIT = 16 * 1024;
 
@@ -211,10 +212,14 @@ async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
 
 function mergeDesktopDefaults(config: Record<string, unknown>): Record<string, unknown> {
   const dock = typeof config.dock === "object" && config.dock !== null ? config.dock : {};
+  const pinnedApps = Array.isArray(config.pinnedApps)
+    ? config.pinnedApps.filter((path): path is string => typeof path === "string" && !RETIRED_DESKTOP_APP_PATHS.has(path))
+    : DESKTOP_DEFAULTS.pinnedApps;
   return {
     ...DESKTOP_DEFAULTS,
     ...config,
     dock: { ...DESKTOP_DEFAULTS.dock, ...dock },
+    pinnedApps,
   };
 }
 

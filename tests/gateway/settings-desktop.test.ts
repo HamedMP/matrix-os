@@ -62,13 +62,14 @@ describe("Settings: desktop + theme + wallpapers", () => {
         iconSize: 40,
         autoHide: false,
       });
-      expect(data.pinnedApps).toEqual(["__workspace__", "__terminal__", "__file-browser__", "__chat__"]);
+      expect(data.pinnedApps).toEqual(["__terminal__", "__file-browser__", "__chat__"]);
     });
 
     it("returns saved config merged with defaults when desktop.json exists", async () => {
       const config = {
         background: { type: "solid", color: "#ff0000" },
         dock: { position: "bottom", size: 64, iconSize: 48, autoHide: true },
+        pinnedApps: ["__workspace__", "__terminal__", "apps/notes/index.html"],
       };
       writeFileSync(
         join(homePath, "system/desktop.json"),
@@ -79,7 +80,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const data = await res.json();
       expect(data.background.type).toBe("solid");
       expect(data.dock.position).toBe("bottom");
-      expect(data.pinnedApps).toEqual(["__workspace__", "__terminal__", "__file-browser__", "__chat__"]);
+      expect(data.pinnedApps).toEqual(["__terminal__", "apps/notes/index.html"]);
     });
   });
 

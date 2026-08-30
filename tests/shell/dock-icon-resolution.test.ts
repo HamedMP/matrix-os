@@ -33,7 +33,8 @@ describe("dock icon resolution", () => {
     ]);
 
     expect(desktopSource).toContain("addApp(\"Terminal\", \"__terminal__\", \"terminal\", iconForSlug(\"terminal\"))");
-    expect(builtInSource).toContain("[\"__workspace__\", \"Workspace\"]");
+    expect(builtInSource).toContain('new Set(["__workspace__"])');
+    expect(builtInSource).not.toContain('"__workspace__",\n  "__terminal__"');
     expect(desktopSource).toContain("addApp(\"Files\", \"__file-browser__\", \"files\", iconForSlug(\"files\"))");
     expect(desktopSource).toContain("addApp(\"Hermes\", \"__chat__\", \"chat\", iconForSlug(\"chat\"))");
   });

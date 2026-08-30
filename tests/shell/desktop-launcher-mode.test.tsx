@@ -21,10 +21,6 @@ vi.mock("../../shell/src/components/AppViewer.js", () => ({
   AppViewer: () => null,
 }));
 
-vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
-  WorkspaceApp: () => null,
-}));
-
 vi.mock("../../shell/src/components/file-browser/FileBrowser.js", () => ({
   FileBrowser: () => null,
 }));

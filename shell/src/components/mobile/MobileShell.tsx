@@ -48,7 +48,6 @@ import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { ChatApp } from "@/components/ChatApp";
 import { AppViewer } from "@/components/AppViewer";
 import { Settings } from "@/components/Settings";
-import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
 
@@ -576,9 +575,6 @@ function MobileAppFrame({
   }
   if (app.path === "__file-browser__") {
     return <FileBrowser windowId={openId} mobile />;
-  }
-  if (app.path === "__workspace__") {
-    return <WorkspaceApp />;
   }
   if (app.path === "__preview-window__") {
     return <PreviewWindow />;

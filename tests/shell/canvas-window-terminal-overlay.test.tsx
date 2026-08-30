@@ -51,10 +51,6 @@ vi.mock("../../shell/src/components/preview-window/PreviewWindow.js", () => ({
   PreviewWindow: () => null,
 }));
 
-vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
-  WorkspaceApp: () => null,
-}));
-
 vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
 }));
