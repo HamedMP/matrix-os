@@ -5,8 +5,10 @@
 **Target**: `@anthropic-ai/claude-agent-sdk@0.3.251`
 
 **Production version after Phase 1**: `0.3.240`, the newest release old enough
-to satisfy the workspace's seven-day `minimumReleaseAge` policy. The exact
-`0.3.251` compatibility job remains the forward-compatibility gate.
+to satisfy the workspace's seven-day `minimumReleaseAge` policy as of
+2026-08-30. Upstream `0.3.251` was published on 2026-08-28, so the exact target
+remains quarantined until normal policy resolution accepts it. Do not bypass
+the workspace policy or add a package exception to install it.
 
 ## Reproduce
 
@@ -87,10 +89,16 @@ times.
 
 - Production dependencies are pinned to `0.3.240`; the lockfile resolves the
   matching platform packages and MCP SDK peer range.
+- `0.3.251` remains the verified upstream target, not the installed production
+  version, until pnpm accepts it under the unchanged seven-day release-age
+  policy.
 - V1 `query()` plus `resume` remains the kernel path.
 - Skills use `skills: "all"`; the deprecated `Skill` allowlist entry is gone.
 - Claude Fable 5, Opus 5, Sonnet 5, and Haiku 4.5 are the current catalog.
-  Existing 4.x model IDs remain valid legacy choices and are never rewritten.
+  Fable's documented limits are a 1M-token context window and up to 128K output
+  tokens, with $10/$50 per million input/output tokens. Existing 4.x model IDs
+  remain valid legacy choices and are never rewritten; invitation-only Mythos
+  is not exposed.
 - Effort and adaptive thinking are emitted only for models whose current API
   contract supports them. Claude 5 exposes `xhigh`; Haiku and unknown/custom
   models receive neither field.

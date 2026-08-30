@@ -16,6 +16,10 @@ import {
   normalizeKernelModel,
   resolveKernelModelOption,
 } from "../../packages/gateway/src/kernel-settings.js";
+import {
+  buildBundledModelCatalog,
+  OWNER_ANTHROPIC_MODEL_IDS,
+} from "../../packages/gateway/src/ai-providers/model-catalog.js";
 import { calculateCost } from "../../packages/proxy/src/cost.js";
 
 describe("production Agent SDK upgrade", () => {
@@ -45,6 +49,13 @@ describe("production Agent SDK upgrade", () => {
       "claude-haiku-4-5",
     ]);
     expect(KERNEL_EFFORTS).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(KERNEL_MODEL_IDS).not.toContain("claude-mythos-5");
+    expect(OWNER_ANTHROPIC_MODEL_IDS).toContain("claude-fable-5");
+    expect(buildBundledModelCatalog().find((model) => model.id === "claude-fable-5"))
+      .toMatchObject({
+        status: "current",
+        eligibleAccessSourceIds: ["owner_anthropic_key", "owner_anthropic_profile"],
+      });
     expect(normalizeKernelModel("claude-sonnet-4-5")).toBe("claude-sonnet-4-5");
     expect(resolveKernelModelOption("claude-sonnet-4-5")).toMatchObject({
       id: "claude-sonnet-4-5",
@@ -71,6 +82,10 @@ describe("production Agent SDK upgrade", () => {
   });
 
   it("only sends effort and adaptive thinking to models that support them", () => {
+    expect(resolveKernelSdkControls("claude-fable-5", "max")).toEqual({
+      effort: "max",
+      thinking: { type: "adaptive" },
+    });
     expect(resolveKernelSdkControls("claude-sonnet-5", "xhigh")).toEqual({
       effort: "xhigh",
       thinking: { type: "adaptive" },
