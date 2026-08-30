@@ -520,7 +520,7 @@ jobs:
     name: E2E Tests
     needs: [changes, sync-client, unit]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Skip expensive CI for docs-only changes
         if: needs.changes.outputs.should_run != 'true'
@@ -563,6 +563,12 @@ jobs:
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts
+
+      - name: Run required Desktop terminal clipboard regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-clipboard.e2e.test.ts
 
       - name: Upload test results on failure
         if: failure()
