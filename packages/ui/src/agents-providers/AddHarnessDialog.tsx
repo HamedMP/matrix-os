@@ -38,10 +38,9 @@ export function AddHarnessDialog({
   onMutate: (intent: ProviderSettingsMutationIntent) => void;
   onClose: () => void;
 }) {
-  const existing = new Set(snapshot.harnesses.map((harness) => harness.harness));
-  const firstAvailable = HARNESS_CATALOG.find((entry) => !existing.has(entry.id)) ?? HARNESS_CATALOG[0]!;
-  const [kind, setKind] = useState<ProviderHarnessKind>(firstAvailable.id);
-  const selectedCatalog = HARNESS_CATALOG.find((entry) => entry.id === kind) ?? firstAvailable;
+  const firstCatalog = HARNESS_CATALOG[0]!;
+  const [kind, setKind] = useState<ProviderHarnessKind>(firstCatalog.id);
+  const selectedCatalog = HARNESS_CATALOG.find((entry) => entry.id === kind) ?? firstCatalog;
   const defaultProvider = snapshot.modelProviders.find((provider) => provider.id === selectedCatalog.preferredProvider)
     ?? snapshot.modelProviders[0]
     ?? null;
@@ -109,17 +108,15 @@ export function AddHarnessDialog({
     <FeatureDialog title="Add harness" onClose={onClose}>
       <div className="matrix-ap-driver-grid">
         {HARNESS_CATALOG.map((entry) => (
-          <label key={entry.id} data-selected={entry.id === kind ? "true" : undefined} data-installed={existing.has(entry.id) ? "true" : undefined}>
+          <label key={entry.id} data-selected={entry.id === kind ? "true" : undefined}>
             <input
               type="radio"
               name="harness-kind"
               value={entry.id}
               checked={entry.id === kind}
-              disabled={existing.has(entry.id)}
               onChange={() => selectKind(entry.id)}
             />
             <span>{entry.label}</span>
-            {existing.has(entry.id) ? <small>Added</small> : null}
           </label>
         ))}
       </div>

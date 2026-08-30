@@ -450,9 +450,17 @@ interface PiRunInput {
   prompt: string;
   cwd: string;
   sessionId: string;
+  model?: string;
   signal?: AbortSignal;
   now: () => Date;
   nextEventId: () => string;
+}
+
+function piModelArguments(reference: string | undefined): string[] {
+  if (reference === undefined) return [];
+  const separator = reference.indexOf(":");
+  if (separator < 1 || separator === reference.length - 1) return ["--model", reference];
+  return ["--provider", reference.slice(0, separator), "--model", reference.slice(separator + 1)];
 }
 
 interface PiRunResult {
@@ -562,6 +570,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       // context files from cloned repositories. This is NOT a tool-approval
       // bypass -- dropping it would make Pi trust untrusted repo config.
       "--no-approve",
+      ...piModelArguments(input.model),
       "--session-id", input.sessionId,
       promptArg(input.prompt),
     ];
@@ -905,6 +914,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         prompt,
         cwd,
         sessionId,
+        model: request.model,
         now,
         nextEventId,
       });
@@ -950,6 +960,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         prompt,
         cwd,
         sessionId: parsed.sessionId,
+        model: turn.model,
         signal,
         now,
         nextEventId,

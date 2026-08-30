@@ -28,6 +28,9 @@ describe("provider settings runtime capability wiring", () => {
     expect(source).toContain("runtimeController: agentRuntimeServices.controller");
     expect(source).toContain("runtimeSource: agentRuntimeServices.source");
     expect(source).toContain("runtimeCoordinator: providerGenericHarnessCoordinator");
+    expect(source).toContain("harnessSettingsSource: providerSettingsStore");
+    expect(source).toContain('provider.providerId === "pi"');
+    expect(source).toContain('providerId: "pi"');
   });
 
   it("advertises terminal login when one projected harness is supported and rejects another harness", async () => {

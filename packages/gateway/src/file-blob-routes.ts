@@ -9,8 +9,10 @@ import { z } from "zod/v4";
 import { getMimeType } from "./file-utils.js";
 import {
   resolveExistingFileApiPath,
+  resolveWithinHome,
   resolveWritableFileApiPath,
 } from "./path-security.js";
+import { isDirectChatAttachmentPath } from "./chat/attachment-cleanup.js";
 
 const FILE_BLOB_BODY_LIMIT = 10 * 1024 * 1024;
 
@@ -83,6 +85,10 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
   const app = new Hono();
   const putBodyLimit = bodyLimit({
     maxSize: FILE_BLOB_BODY_LIMIT,
+    onError: (c) => c.json({ error: "payload_too_large" }, 413),
+  });
+  const deleteBodyLimit = bodyLimit({
+    maxSize: 1_024,
     onError: (c) => c.json({ error: "payload_too_large" }, 413),
   });
 
@@ -220,5 +226,36 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
     }
   });
 
+  app.delete("/blob", deleteBodyLimit, async (c) => {
+    await c.req.arrayBuffer();
+    const parsed = parseQuery(c);
+    if (!parsed || parsed.filename || parsed.force || parsed.secret || !isDirectChatAttachmentPath(parsed.path)) {
+      return invalidPath(c);
+    }
+    const lexicalPath = resolveWithinHome(deps.homePath, parsed.path);
+    if (!lexicalPath) return invalidPath(c);
+
+    try {
+      const info = await lstat(lexicalPath);
+      if (!info.isFile() || info.isSymbolicLink()) return invalidPath(c);
+      const resolved = resolveExistingFileApiPath(deps.homePath, parsed.path);
+      if (!resolved) return invalidPath(c);
+      await unlink(resolved);
+      return c.json({ ok: true, path: parsed.path, deleted: true });
+    } catch (err: unknown) {
+      if (isMissingFileError(err)) {
+        return c.json({ ok: true, path: parsed.path, deleted: false });
+      }
+      console.error("[file-blob] temporary attachment deletion failed");
+      return c.json({ error: "delete_failed" }, 500);
+    }
+  });
+
   return app;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error
+    && "code" in error
+    && (error as NodeJS.ErrnoException).code === "ENOENT";
 }

@@ -4,88 +4,206 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
-import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
+
+function providerCatalog(available = true, secondModel = false) {
+  return CanonicalProviderCatalogSchema.parse({
+    revision: "catalog_shell",
+    drivers: [
+      { kind: "pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+      { kind: "opencode", displayName: "OpenCode", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+    ],
+    instances: [{
+      id: "pi_default", driverKind: "pi", displayName: "Pi",
+      availability: available ? "available" : "unavailable",
+      ...(available ? {} : { unavailabilityReason: "disabled_in_settings" }),
+      workspaceRequirement: "project_optional",
+      models: available ? [{
+        id: "anthropic:claude-sonnet-5", displayName: "Claude Sonnet 5", availability: "available",
+        capabilities: ["reasoning", "tools"], supportsVision: false, supportsToolUse: true,
+      }, ...(secondModel ? [{
+        id: "anthropic:claude-opus-5", displayName: "Claude Opus 5", availability: "available" as const,
+        capabilities: ["reasoning" as const, "tools" as const], supportsVision: false, supportsToolUse: true,
+      }] : [])] : [],
+      options: available ? [{
+        id: "effort", label: "Reasoning", kind: "enum", placement: "composer",
+        values: [{ value: "low", label: "Low" }, { value: "high", label: "High" }], defaultValue: "low",
+      }, { id: "thinking", label: "Thinking", kind: "boolean", placement: "advanced", defaultValue: false }] : [],
+      skills: [], commands: [], setupActions: [],
+      supports: {
+        rootChat: true, resume: true, cancellation: true, attachments: ["structured_ref"], tools: [],
+        approvals: false, userInput: false, worktrees: "optional", resources: ["project"],
+        interactionModes: ["default", "plan"], permissionModes: ["supervised", "full_access"],
+      },
+      ...(available ? { defaultSelection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" } } : {}),
+      catalogRevision: "catalog_shell",
+    }, {
+      id: "opencode_default", driverKind: "opencode", displayName: "OpenCode",
+      availability: "unavailable", unavailabilityReason: "runtime_not_runnable",
+      workspaceRequirement: "project_optional", models: [], options: [], skills: [], commands: [], setupActions: [],
+      supports: {
+        rootChat: true, resume: true, cancellation: true, attachments: [], tools: [], approvals: false,
+        userInput: false, worktrees: "optional", resources: [], interactionModes: [], permissionModes: [],
+      },
+      catalogRevision: "catalog_shell",
+    }],
+  });
+}
+
+function openClawCatalog() {
+  const source = providerCatalog();
+  const instance = source.instances[0]!;
+  return CanonicalProviderCatalogSchema.parse({
+    ...source,
+    drivers: [{ kind: "openclaw", displayName: "OpenClaw", adapterVersion: "1.0.0", capabilityClass: "system_agent" }],
+    instances: [{
+      ...instance,
+      id: "openclaw_default",
+      driverKind: "openclaw",
+      displayName: "OpenClaw",
+      defaultSelection: { instanceId: "openclaw_default", model: "anthropic:claude-sonnet-5" },
+    }],
+  });
+}
 
 beforeEach(() => {
   window.localStorage.clear();
   vi.restoreAllMocks();
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
 });
 
 describe("Chat canonical provider state", () => {
-  it("shows only runnable models, preserves the draft, and submits an explicit model", async () => {
-    const snapshot = makeAiProviderSnapshot();
-    snapshot.models.push({
-      ...snapshot.models[0],
-      id: "claude-opus-5",
-      displayName: "Claude Opus 5",
-      eligibleAccessSourceIds: [],
-      dataPolicies: [],
-    });
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json(snapshot)));
+  it("uses the canonical catalog, preserves the draft, and submits the exact harness route", async () => {
+    const fetchMock = vi.fn(async () => Response.json(providerCatalog()));
+    vi.stubGlobal("fetch", fetchMock);
     const onSubmit = vi.fn();
     render(<ChatApp
-      messages={[]}
-      sessionId={undefined}
-      busy={false}
-      connected
-      conversations={[]}
-      onNewChat={vi.fn()}
-      onSwitchConversation={vi.fn()}
-      onSubmit={onSubmit}
+      messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    expect(await screen.findByText("Matrix Agent")).toBeVisible();
+    expect(await screen.findByText("Pi")).toBeVisible();
     const draft = screen.getByPlaceholderText("Ask anything...");
     fireEvent.change(draft, { target: { value: "Keep this draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Setup" }));
 
-    expect(await screen.findByRole("button", { name: /Claude Sonnet 5/ })).toBeVisible();
-    expect(screen.queryByText("Claude Opus 5")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Claude Sonnet 5 via Pi" })).toBeVisible();
+    expect(screen.getByText("OpenCode — Not supported in this runtime")).toBeVisible();
+    expect(screen.queryByText("Channels")).toBeNull();
     expect(draft).toHaveValue("Keep this draft");
-    expect(screen.getAllByText("Matrix AI").some((element) => element.offsetParent !== null || element.isConnected)).toBe(true);
-    expect(screen.getByText("Included")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/chat-providers?refresh=true"), expect.any(Object));
+
+    fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
+    fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });
+    fireEvent.change(screen.getByLabelText("Reasoning"), { target: { value: "high" } });
+    fireEvent.click(screen.getByLabelText("Thinking"));
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
-      "Keep this draft",
-      undefined,
-      {
+      "Keep this draft", undefined, {
         displayText: "Keep this draft",
-        model: "claude-sonnet-5",
-        accessSourceId: "matrix_included",
+        instanceId: "pi_default",
+        model: "anthropic:claude-sonnet-5",
+        interactionMode: "plan",
+        permissionMode: "full_access",
+        modelOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: true }],
       },
     ));
   });
 
-  it("disables submission when no provider instance is runnable", async () => {
-    const snapshot = makeAiProviderSnapshot();
-    snapshot.instances[0] = {
-      ...snapshot.instances[0],
-      readiness: { ...snapshot.instances[0].readiness, state: "disabled", action: "contact_owner" },
-      defaultModelId: null,
-    };
-    snapshot.accessSources[0] = {
-      ...snapshot.accessSources[0],
-      state: "disabled",
-      action: "contact_owner",
-      safeReason: "policy",
-    };
-    snapshot.active = { providerInstanceId: null, accessSourceId: null, modelId: null };
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json(snapshot)));
-
+  it("disables submission and explains settings-disabled harnesses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog(false))));
     render(<ChatApp
-      messages={[]}
-      sessionId={undefined}
-      busy={false}
-      connected
-      conversations={[]}
-      onNewChat={vi.fn()}
-      onSwitchConversation={vi.fn()}
-      onSubmit={vi.fn()}
+      messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     />);
 
-    expect(await screen.findByText("Connect a provider in Settings to start chatting.")).toBeVisible();
-    expect(screen.getByPlaceholderText("AI provider unavailable")).toBeDisabled();
+    expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    expect(await screen.findByText("Pi — Disabled in Settings")).toBeVisible();
+    expect(screen.getByPlaceholderText("AI harness unavailable")).toBeDisabled();
+  });
+
+  it("fails closed when an existing chat's bound harness route is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    render(<ChatApp
+      messages={[]} sessionId="chat_bound" busy={false} connected conversations={[]}
+      providerSelection={{ instanceId: "opencode_default", model: "openai:gpt-5" }}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    />);
+
+    expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
+    expect(screen.getByPlaceholderText("AI harness unavailable")).toBeDisabled();
+  });
+
+  it("locks an existing chat to its instance while allowing its model and run controls to change", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog(true, true))));
+    const onSubmit = vi.fn();
+    render(<ChatApp
+      messages={[]} sessionId="chat_bound" busy={false} connected conversations={[]}
+      providerSelection={{
+        instanceId: "pi_default", model: "anthropic:claude-sonnet-5",
+        options: [{ id: "effort", value: "high" }],
+      }}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
+    />);
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Continue" } });
+    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Claude Opus 5 via Pi" }));
+    fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
+    fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Continue", undefined, expect.objectContaining({
+      instanceId: "pi_default",
+      model: "anthropic:claude-opus-5",
+      interactionMode: "plan",
+      permissionMode: "full_access",
+      modelOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: false }],
+    })));
+  });
+
+  it("renders and submits canonical approval actions", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const onSubmitApproval = vi.fn(async () => true);
+    render(<ChatApp
+      messages={[{
+        id: "msg_approval", role: "system", content: "Run command: Allow this command?", timestamp: Date.now(),
+        metadata: { canonicalApproval: {
+          approvalId: "approval_1", title: "Run command", description: "Allow this command?",
+          risk: "medium", allowedDecisions: ["approve", "decline"], pending: true,
+        } },
+      }]}
+      sessionId="chat_approval" busy connected conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+      onSubmitApproval={onSubmitApproval}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(onSubmitApproval).toHaveBeenCalledWith("approval_1", "approve"));
+    expect(screen.getByRole("button", { name: "Decline" })).toBeVisible();
+  });
+
+  it("keeps Hermes channel controls and prompt instructions out of OpenClaw turns", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(openClawCatalog())));
+    const onSubmit = vi.fn();
+    render(<ChatApp
+      messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
+    />);
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    expect(screen.queryByText("Channels")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Hello", undefined, expect.not.objectContaining({
+      promptText: expect.anything(),
+    })));
   });
 });

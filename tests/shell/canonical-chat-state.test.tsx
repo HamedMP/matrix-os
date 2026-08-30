@@ -1,0 +1,202 @@
+// @vitest-environment jsdom
+
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
+
+vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
+
+function record(id: string, title: string) {
+  return {
+    chat: {
+      id, ownerScope: { type: "personal" as const, ownerId: "owner_shell" }, title,
+      lifecycle: "active" as const, attention: "none" as const, revision: 0, messageCount: 1,
+      currentSelection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" },
+      createdAt: "2026-08-31T00:00:00.000Z", updatedAt: "2026-08-31T00:00:00.000Z",
+    },
+  };
+}
+
+function detail(id: string, title: string) {
+  return {
+    record: record(id, title),
+    messages: [{
+      id: `msg_${id}`, chatId: id, seq: 1, role: "assistant", state: "committed",
+      parts: [{ type: "text", text: title }], createdAt: "2026-08-31T00:00:00.000Z",
+    }],
+    turns: [], runs: [], activities: [],
+  };
+}
+
+beforeEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("canonical shell Chat state", () => {
+  it("ignores an out-of-order detail response after switching chats", async () => {
+    let resolveA: ((response: Response) => void) | undefined;
+    const detailA = new Promise<Response>((resolve) => { resolveA = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A"), record("chat_b", "B")] });
+      if (url.includes("/api/chats/chat_a?")) return detailA;
+      if (url.includes("/api/chats/chat_b?")) return Response.json(detail("chat_b", "B"));
+      throw new Error("Unexpected request");
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.sessionId).toBe("chat_a"));
+    act(() => result.current.switchConversation("chat_b"));
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("B"));
+    resolveA!(Response.json(detail("chat_a", "A")));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.sessionId).toBe("chat_b");
+    expect(result.current.messages[0]?.content).toBe("B");
+  });
+
+  it("deletes uploaded attachment files when canonical turn admission fails", async () => {
+    const existingRecord = record("chat_a", "A");
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [existingRecord] });
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
+        return Response.json(detail("chat_a", "A"));
+      }
+      if (url.includes("/api/files/blob?") && init?.method === "PUT") {
+        const parsed = new URL(url);
+        const path = parsed.searchParams.get("path")!;
+        return Response.json({ ok: true, path, size: 5 });
+      }
+      if (url.endsWith("/api/chats/chat_a/turns")) {
+        return Response.json({ error: "conflict" }, { status: 409 });
+      }
+      if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
+        const parsed = new URL(url);
+        return Response.json({ ok: true, path: parsed.searchParams.get("path"), deleted: true });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    vi.stubGlobal("crypto", { randomUUID: () => "stable-id" });
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.sessionId).toBe("chat_a"));
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
+
+    act(() => result.current.submitMessage("Review this", [{
+      name: "notes.txt",
+      type: "text/plain",
+      data: "data:text/plain;base64,aGVsbG8=",
+    }], {
+      instanceId: "pi_default",
+      model: "anthropic:claude-sonnet-5",
+      interactionMode: "supervised",
+      permissionMode: "default",
+    }));
+
+    await waitFor(() => expect(fetchFn.mock.calls.some(([url, init]) =>
+      String(url).includes("/api/files/blob?") && (init as RequestInit | undefined)?.method === "DELETE"))
+      .toBe(true));
+    expect(result.current.messages.at(-1)?.content).toBe("Message could not be sent. Try again.");
+  });
+
+  it("waits for parallel uploads to settle before deleting partial successes", async () => {
+    const existingRecord = record("chat_a", "A");
+    let uploadCount = 0;
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [existingRecord] });
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
+        return Response.json(detail("chat_a", "A"));
+      }
+      if (url.includes("/api/files/blob?") && init?.method === "PUT") {
+        uploadCount += 1;
+        if (uploadCount === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          const path = new URL(url).searchParams.get("path")!;
+          return Response.json({ ok: true, path, size: 5 });
+        }
+        return Response.json({ error: "payload_too_large" }, { status: 413 });
+      }
+      if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
+        const path = new URL(url).searchParams.get("path")!;
+        return Response.json({ ok: true, path, deleted: true });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    vi.stubGlobal("crypto", { randomUUID: vi.fn()
+      .mockReturnValueOnce("first-id")
+      .mockReturnValueOnce("second-id") });
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
+
+    act(() => result.current.submitMessage("Review these", [{
+      name: "first.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
+    }, {
+      name: "second.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
+    }], {
+      instanceId: "pi_default", model: "anthropic:claude-sonnet-5",
+      interactionMode: "supervised", permissionMode: "default",
+    }));
+
+    await waitFor(() => expect(fetchFn.mock.calls.filter(([, init]) =>
+      (init as RequestInit | undefined)?.method === "DELETE")).toHaveLength(1));
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns"))).toBe(false);
+  });
+
+  it("keeps uploaded files when admission outcome is ambiguous", async () => {
+    const existingRecord = record("chat_a", "A");
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [existingRecord] });
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
+        return Response.json(detail("chat_a", "A"));
+      }
+      if (url.includes("/api/files/blob?") && init?.method === "PUT") {
+        const path = new URL(url).searchParams.get("path")!;
+        return Response.json({ ok: true, path, size: 5 });
+      }
+      if (url.endsWith("/api/chats/chat_a/turns")) {
+        return Response.json({ error: "unavailable" }, { status: 503 });
+      }
+      if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
+        throw new Error("ambiguous admission must not delete the upload");
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    vi.stubGlobal("crypto", { randomUUID: () => "stable-id" });
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
+
+    act(() => result.current.submitMessage("Review this", [{
+      name: "notes.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
+    }], {
+      instanceId: "pi_default", model: "anthropic:claude-sonnet-5",
+      interactionMode: "supervised", permissionMode: "default",
+    }));
+
+    await waitFor(() => expect(result.current.messages.at(-1)?.content)
+      .toBe("Message could not be sent. Try again."));
+    expect(fetchFn.mock.calls.some(([, init]) =>
+      (init as RequestInit | undefined)?.method === "DELETE")).toBe(false);
+  });
+
+  it("refreshes canonical list and active detail when the shell regains focus", async () => {
+    let detailCalls = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A")] });
+      if (url.includes("/api/chats/chat_a?")) {
+        detailCalls += 1;
+        return Response.json(detail("chat_a", detailCalls === 1 ? "Before" : "After"));
+      }
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("Before"));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("After"));
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chats?"))).toHaveLength(2);
+  });
+});
