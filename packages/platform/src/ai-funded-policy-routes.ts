@@ -5,6 +5,7 @@ import {
   FundedAiOperatorRuntimePolicyResponseSchema,
   FundedAiOperatorRuntimePolicyUpdateRequestSchema,
   FundedAiPromotionalGrantResponseSchema,
+  FundedAiPolicyCheckRequestSchema,
   FundedAiSafeErrorSchema,
   FundedAiReleaseRequestSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
@@ -399,6 +400,15 @@ export function createAiFundedRelayRoutes(options: {
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
       return c.json(await options.repository.authorize(request.data), 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
+  app.post("/check", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const request = FundedAiPolicyCheckRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      return c.json(await options.repository.checkPolicy(request.data), 200);
     } catch (error) {
       return policyErrorResponse(c, error);
     }

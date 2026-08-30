@@ -5,6 +5,8 @@ import {
   FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
   FundedAiFundingSummarySchema,
+  FundedAiPolicyCheckRequestSchema,
+  FundedAiPolicyCheckResponseSchema,
   FundedAiReleaseRequestSchema,
   FundedAiReleaseResponseSchema,
   FundedAiSettlementRequestSchema,
@@ -14,6 +16,7 @@ import {
   IsoTimestampSchema,
   type FundedAiAuthorizationResponse,
   type FundedAiFundingSummary,
+  type FundedAiPolicyCheckResponse,
   type FundedAiReleaseResponse,
   type FundedAiSettlementResponse,
   type FundedAiStartResponse,
@@ -371,6 +374,73 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         if (!balance) throw new Error("Funded AI credit balance exceeds supported bounds");
       }
       return { ...grant, createdAt: stored.created_at };
+    });
+  }
+
+  async function checkPolicy(
+    input: z.input<typeof FundedAiPolicyCheckRequestSchema>,
+  ): Promise<FundedAiPolicyCheckResponse> {
+    const request = FundedAiPolicyCheckRequestSchema.parse(input);
+    const tokenMatch = TOKEN_PATTERN.exec(request.credential);
+    if (!tokenMatch) throw new AiFundedPolicyError("unauthorized");
+    const checked = options.now();
+    const checkedAt = checked.toISOString();
+    await options.db.ready;
+    const row = await options.db.executor.selectFrom("ai_runtime_credentials as credential")
+      .innerJoin("ai_funded_runtime_policies as runtime", "runtime.machine_id", "credential.machine_id")
+      .innerJoin("user_machines as machine", "machine.machine_id", "credential.machine_id")
+      .innerJoin("ai_funded_global_policy as global_policy", (join) => (
+        join.on("global_policy.policy_id", "=", "default")
+      ))
+      .select([
+        "credential.token_id", "credential.token_hash", "credential.owner_id", "credential.machine_id",
+        "credential.runtime_slot", "credential.audience", "credential.scope", "credential.expires_at",
+        "credential.revoked_at", "runtime.owner_id as runtime_owner_id",
+        "runtime.runtime_slot as policy_runtime_slot", "runtime.enabled as runtime_enabled",
+        "runtime.expires_at as runtime_expires_at", "runtime.revision as runtime_revision",
+        "runtime.allowed_model_ids as runtime_models", "runtime.monthly_budget_microusd",
+        "machine.clerk_user_id", "machine.runtime_slot as machine_runtime_slot", "machine.status",
+        "machine.activation_state", "machine.deleted_at", "global_policy.enabled as global_enabled",
+        "global_policy.revision as global_revision", "global_policy.allowed_model_ids as global_models",
+      ])
+      .where("credential.token_id", "=", tokenMatch[1])
+      .where("global_policy.policy_id", "=", "default")
+      .executeTakeFirst();
+    if (!row || !hashesEqual(row.token_hash, hashCredential(request.credential))
+      || row.revoked_at !== null || Date.parse(row.expires_at) <= checked.getTime()
+      || row.audience !== FUNDED_AI_AUDIENCE || row.scope !== FUNDED_AI_SCOPE
+      || row.clerk_user_id !== row.owner_id || row.machine_runtime_slot !== row.runtime_slot
+      || row.status !== "running" || row.activation_state !== "authorized" || row.deleted_at !== null
+      || row.runtime_owner_id !== row.owner_id || row.policy_runtime_slot !== row.runtime_slot) {
+      throw new AiFundedPolicyError("unauthorized");
+    }
+    if (!row.global_enabled || !row.runtime_enabled
+      || (row.runtime_expires_at !== null && Date.parse(row.runtime_expires_at) <= checked.getTime())) {
+      throw new AiFundedPolicyError("access_disabled");
+    }
+    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models));
+    if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
+    return FundedAiPolicyCheckResponseSchema.parse({
+      contractVersion: 1,
+      authorized: true,
+      identity: {
+        tokenId: row.token_id,
+        ownerId: row.owner_id,
+        machineId: row.machine_id,
+        runtimeSlot: row.runtime_slot,
+        audience: FUNDED_AI_AUDIENCE,
+        scope: FUNDED_AI_SCOPE,
+        expiresAt: row.expires_at,
+      },
+      policy: {
+        enabled: true,
+        globalRevision: row.global_revision,
+        runtimeRevision: row.runtime_revision,
+        allowedModelIds,
+        monthlyBudgetMicrousd: exactInteger(row.monthly_budget_microusd),
+        checkedAt,
+        staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
+      },
     });
   }
 
@@ -971,6 +1041,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   return {
     getFundingSummary,
     getRuntimeFundingSummary,
+    checkPolicy,
     authorize,
     startReservation,
     settleReservation,

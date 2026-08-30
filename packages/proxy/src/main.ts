@@ -14,10 +14,7 @@ const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const PROXY_FETCH_TIMEOUT_MS = 30_000;
 const PROXY_ADMIN_TOKEN = process.env.PROXY_ADMIN_TOKEN ?? process.env.PROXY_AUTH_TOKEN ?? process.env.PLATFORM_SECRET;
 const PROXY_SHARED_SECRET = process.env.PROXY_SHARED_SECRET ?? process.env.PLATFORM_SECRET;
-const fundedRelayConfig = resolveFundedRelayConfig({
-  ...process.env,
-  PROXY_SHARED_SECRET,
-});
+const fundedRelayConfig = resolveFundedRelayConfig(process.env);
 
 const app = new Hono();
 const posthogErrorTracker = installPostHogHonoErrorTracking(app, {

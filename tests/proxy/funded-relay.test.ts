@@ -1,609 +1,510 @@
+import { createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { buildFundedProxyApiKey, buildProxyApiKey } from "../../packages/proxy/src/auth.js";
-import {
-  createFundedRelay,
-  resolveFundedRelayConfig,
-} from "../../packages/proxy/src/funded-relay.js";
+import { buildProxyApiKey } from "../../packages/proxy/src/auth.js";
+import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/proxy/src/funded-relay.js";
+import { estimateWorstCaseMicrousd, mapFundedModel } from "../../packages/proxy/src/funded-relay-model.js";
 import { boundedBody } from "../../packages/proxy/src/funded-relay-stream.js";
 
-const SHARED_SECRET = "shared-secret-with-enough-entropy";
-const GATEWAY_TOKEN = "cloudflare-gateway-token";
+const GATEWAY_TOKEN = "cloudflare-unified-billing-token-123456789";
+const RELAY_TOKEN = "platform-relay-control-token-123456789";
+const METADATA_SECRET = "metadata-hmac-secret-123456789012345";
 const GATEWAY_URL =
   "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/matrix/anthropic";
+const PLATFORM_URL = "https://platform.internal.example";
+const NATIVE_MODEL = "claude-sonnet-5";
+const CANONICAL_MODEL = "anthropic/claude-sonnet-5";
+const CREDENTIAL = `sk-matrix-funded-credential_123.${"s".repeat(43)}`;
+const NOW = new Date("2026-08-30T20:00:00.000Z");
 
 function enabledEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     MATRIX_FUNDED_AI_ENABLED: "1",
-    MATRIX_FUNDED_AI_MODELS: "claude-sonnet-5,claude-haiku-4-5",
     MATRIX_FUNDED_AI_BETAS: "context-1m-2025-08-07",
     CLOUDFLARE_AI_GATEWAY_URL: GATEWAY_URL,
     CLOUDFLARE_AI_GATEWAY_TOKEN: GATEWAY_TOKEN,
-    PROXY_SHARED_SECRET: SHARED_SECRET,
+    PLATFORM_INTERNAL_URL: PLATFORM_URL,
+    AI_RELAY_CONTROL_TOKEN: RELAY_TOKEN,
+    AI_RELAY_METADATA_SECRET: METADATA_SECRET,
     ...overrides,
   };
 }
 
-function requestBody(model = "claude-sonnet-5", stream = false): string {
+function requestBody(input: { maxTokens?: number; model?: string; stream?: boolean } = {}): string {
   return JSON.stringify({
-    model,
-    max_tokens: 1024,
-    stream,
+    model: input.model ?? NATIVE_MODEL,
+    max_tokens: input.maxTokens ?? 100,
+    stream: input.stream ?? false,
     messages: [{ role: "user", content: "hello" }],
   });
 }
 
-describe("funded relay configuration", () => {
-  it("stays disabled unless explicitly enabled", () => {
+function policy() {
+  return {
+    enabled: true, globalRevision: 2, runtimeRevision: 3,
+    allowedModelIds: [CANONICAL_MODEL], monthlyBudgetMicrousd: 100_000,
+    checkedAt: NOW.toISOString(), staleAfter: "2026-08-30T20:01:00.000Z",
+  };
+}
+
+function identity() {
+  return {
+    tokenId: "credential_123", ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary",
+    audience: "matrix-funded-relay", scope: "ai:invoke", expiresAt: "2026-08-30T20:15:00.000Z",
+  };
+}
+
+function checkResponse() {
+  return { contractVersion: 1, authorized: true, identity: identity(), policy: policy() };
+}
+
+function authorizationResponse(requestId: string, reservationId = "reservation_123") {
+  return {
+    contractVersion: 1, authorized: true, identity: identity(), policy: policy(),
+    funding: {
+      asOf: NOW.toISOString(), periodStart: "2026-08-01T00:00:00.000Z", monthlyBudgetMicrousd: 100_000,
+      settledThisMonthMicrousd: 0, reservedMicrousd: 3_600, reservedThisMonthMicrousd: 3_600,
+      promotionalBalanceMicrousd: 100_000, addonBalanceMicrousd: 0, creditBalanceMicrousd: 100_000,
+      remainingBalanceMicrousd: 96_400, remainingBudgetMicrousd: 96_400,
+    },
+    reservation: {
+      reservationId, requestId, modelId: CANONICAL_MODEL, reservedMicrousd: 3_600,
+      remainingBalanceMicrousd: 96_400, remainingBudgetMicrousd: 96_400,
+      periodStart: "2026-08-01T00:00:00.000Z", expiresAt: "2026-08-30T20:05:00.000Z", status: "reserved",
+    },
+  };
+}
+
+function startResponse(requestId: string, reservationId = "reservation_123") {
+  return {
+    contractVersion: 1, reservationId, requestId, tokenId: "credential_123",
+    startedAt: NOW.toISOString(), expiresAt: "2026-08-30T20:30:00.000Z", status: "in_flight",
+  };
+}
+
+function json(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+}
+
+function configuredRelay(fetchImpl: typeof fetch, overrides: Record<string, unknown> = {}) {
+  const config = resolveFundedRelayConfig(enabledEnv());
+  expect(config).not.toBeNull();
+  return createFundedRelay({
+    ...config!, fetch: fetchImpl, now: () => NOW, requestIdFactory: () => "request_123", ...overrides,
+  });
+}
+
+function fundedRequest(body = requestBody(), headers: Record<string, string> = {}): RequestInit {
+  return {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": CREDENTIAL, ...headers },
+    body,
+  };
+}
+
+describe("funded relay configuration and pricing", () => {
+  it("stays disabled by default and fails closed without distinct dedicated authority", () => {
     expect(resolveFundedRelayConfig({})).toBeNull();
     expect(resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: "0" })).toBeNull();
-  });
-
-  it("fails closed when enabled configuration is incomplete", () => {
     expect(() => resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: "1" }))
       .toThrow("CLOUDFLARE_AI_GATEWAY_URL");
+    expect(() => resolveFundedRelayConfig(enabledEnv({ AI_RELAY_METADATA_SECRET: RELAY_TOKEN })))
+      .toThrow(/distinct/i);
+    expect(resolveFundedRelayConfig(enabledEnv())).toMatchObject({
+      gatewayBaseUrl: GATEWAY_URL, platformBaseUrl: PLATFORM_URL,
+      gatewayToken: GATEWAY_TOKEN, relayControlToken: RELAY_TOKEN, metadataSecret: METADATA_SECRET,
+    });
   });
 
-  it("accepts only the fixed Cloudflare Anthropic gateway shape", () => {
-    expect(resolveFundedRelayConfig(enabledEnv())).toMatchObject({
-      gatewayBaseUrl: GATEWAY_URL,
-      allowedModels: new Set(["claude-sonnet-5", "claude-haiku-4-5"]),
-      gatewayToken: GATEWAY_TOKEN,
-      sharedSecret: SHARED_SECRET,
-      allowedBetas: new Set(["context-1m-2025-08-07"]),
-      firstResponseTimeoutMs: 10_000,
+  it("maps exactly Sonnet 5 and prices only a current version with integer safety margin", () => {
+    expect(mapFundedModel(NATIVE_MODEL)).toEqual({
+      nativeModelId: NATIVE_MODEL, canonicalModelId: CANONICAL_MODEL,
     });
-
-    expect(() => resolveFundedRelayConfig(enabledEnv({
-      CLOUDFLARE_AI_GATEWAY_URL: "https://api.anthropic.com",
-    }))).toThrow("CLOUDFLARE_AI_GATEWAY_URL");
+    for (const model of [CANONICAL_MODEL, "claude-sonnet-5-20260829", "claude-opus-5", "sonnet"]) {
+      expect(() => mapFundedModel(model)).toThrow(/model/i);
+    }
+    expect(estimateWorstCaseMicrousd({
+      canonicalModelId: CANONICAL_MODEL, inputTokens: 1_000, maxOutputTokens: 100, now: NOW,
+    })).toMatchObject({ amountMicrousd: 3_600, pricingVersion: "anthropic-2026-08-29" });
+    expect(() => estimateWorstCaseMicrousd({
+      canonicalModelId: CANONICAL_MODEL, inputTokens: 1, maxOutputTokens: 1,
+      now: new Date("2026-09-01T00:00:00.000Z"),
+    })).toThrow(/expired/i);
+    expect(() => estimateWorstCaseMicrousd({
+      canonicalModelId: "anthropic/unknown", inputTokens: 1, maxOutputTokens: 1, now: NOW,
+    })).toThrow(/pricing/i);
   });
 });
 
-describe("Cloudflare funded relay", () => {
-  it("cancels an upstream body when its lifetime already expired", async () => {
-    const cancel = vi.fn();
-    const source = new ReadableStream<Uint8Array>({ cancel });
-    const lifetime = AbortSignal.abort(new DOMException("expired", "TimeoutError"));
-    const release = vi.fn();
-
-    const body = boundedBody(source, 1_024, { release }, vi.fn(), lifetime);
-    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
-    expect(release).toHaveBeenCalledOnce();
-    await body.cancel();
-  });
-
-  it("derives opaque metadata from runtime auth and strips caller credentials", async () => {
-    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+describe("Cloudflare funded relay control-plane ordering", () => {
+  it("checks policy, counts, reserves, acquires, starts, then generates with five opaque metadata fields", async () => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
       const headers = new Headers(init?.headers);
+      expect(init?.redirect).toBe("error");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      if (url.startsWith(PLATFORM_URL)) {
+        expect(headers.get("authorization")).toBe(`Bearer ${RELAY_TOKEN}`);
+        const action = url.slice(`${PLATFORM_URL}/internal/ai/funded/`.length);
+        events.push(action);
+        const body = JSON.parse(String(init?.body));
+        if (action === "check") {
+          expect(body).toEqual({ credential: CREDENTIAL, modelId: CANONICAL_MODEL });
+          return json(checkResponse());
+        }
+        if (action === "authorize") {
+          expect(body).toEqual({
+            credential: CREDENTIAL, requestId: "request_123",
+            modelId: CANONICAL_MODEL, maxCostMicrousd: 3_600,
+          });
+          return json(authorizationResponse("request_123"));
+        }
+        if (action === "start") {
+          expect(body).toEqual({ reservationId: "reservation_123", tokenId: "credential_123" });
+          return json(startResponse("request_123"));
+        }
+        throw new Error(`unexpected platform action ${action}`);
+      }
+
       expect(headers.get("x-api-key")).toBeNull();
       expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("cf-aig-api-token")).toBeNull();
       expect(headers.get("cf-aig-authorization")).toBe(`Bearer ${GATEWAY_TOKEN}`);
       expect(headers.get("cf-aig-collect-log-payload")).toBe("false");
       expect(headers.get("cf-aig-zdr")).toBe("true");
-      expect(JSON.parse(headers.get("cf-aig-metadata") ?? "{}")).toEqual({
-        runtime_id: expect.not.stringContaining("alice"),
-        access_source: "matrix_included",
-      });
-      expect(init?.redirect).toBe("error");
-      expect(init?.signal).toBeInstanceOf(AbortSignal);
-      return new Response(JSON.stringify({ id: "msg_1", model: "claude-sonnet-5" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-    const config = resolveFundedRelayConfig(enabledEnv());
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({ ...config!, fetch: upstreamFetch as typeof fetch });
-    const app = new Hono();
-    relay.register(app);
-
-    const response = await app.request("/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-        "x-matrix-user": "mallory",
-        authorization: "Bearer attacker-controlled",
-      },
-      body: requestBody(),
-    });
-
-    expect(response.status).toBe(200);
-    expect(upstreamFetch).toHaveBeenCalledOnce();
-    expect(String(upstreamFetch.mock.calls[0]?.[0])).toBe(`${GATEWAY_URL}/v1/messages`);
-    relay.close();
-  });
-
-  it("does not fund raw provider keys, unsupported paths, models, or oversized bodies", async () => {
-    const upstreamFetch = vi.fn();
-    const config = resolveFundedRelayConfig(enabledEnv({
-      MATRIX_FUNDED_AI_MAX_BODY_BYTES: "256",
-    }));
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({ ...config!, fetch: upstreamFetch as typeof fetch });
-    const app = new Hono();
-    relay.register(app);
-    const proxyKey = buildFundedProxyApiKey("alice", SHARED_SECRET);
-
-    const rawKey = await app.request("/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": "sk-ant-secret" },
-      body: requestBody(),
-    });
-    expect(rawKey.status).toBe(404);
-
-    const wrongPath = await app.request("/v1/complete", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": proxyKey },
-      body: requestBody(),
-    });
-    expect(wrongPath.status).toBe(404);
-
-    const queryString = await app.request("/v1/messages?target=attacker-controlled", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": proxyKey },
-      body: requestBody(),
-    });
-    expect(queryString.status).toBe(404);
-
-    const wrongModel = await app.request("/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": proxyKey },
-      body: requestBody("claude-fable-5"),
-    });
-    expect(wrongModel.status).toBe(403);
-
-    const oversizedBody = JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: "x".repeat(512) }],
-    });
-    const oversized = await app.request("/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "content-length": String(oversizedBody.length),
-        "x-api-key": proxyKey,
-      },
-      body: oversizedBody,
-    });
-    expect(oversized.status).toBe(413);
-    expect(upstreamFetch).not.toHaveBeenCalled();
-    relay.close();
-  });
-
-  it("aborts active upstream streams when the relay closes", async () => {
-    let upstreamSignal: AbortSignal | undefined;
-    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      upstreamSignal = init?.signal ?? undefined;
-      return new Response(new ReadableStream<Uint8Array>({
-        start() {
-          // Intentionally remains open until relay shutdown aborts the request.
-        },
-      }), {
-        headers: { "content-type": "text/event-stream" },
-      });
-    });
-    const config = resolveFundedRelayConfig(enabledEnv());
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({ ...config!, fetch: upstreamFetch as typeof fetch });
-    const app = new Hono();
-    relay.register(app);
-
-    const response = await app.request("/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-      },
-      body: requestBody("claude-sonnet-5", true),
-    });
-
-    expect(response.status).toBe(200);
-    expect(upstreamSignal?.aborted).toBe(false);
-    relay.close();
-    expect(upstreamSignal?.aborted).toBe(true);
-    await response.body?.cancel();
-  });
-
-  it("releases admission when the total timeout fires after response headers", async () => {
-    const upstreamFetch = vi.fn(async () => {
-      if (upstreamFetch.mock.calls.length === 1) {
-        return new Response(new ReadableStream<Uint8Array>({
-          start() {
-            // Simulate an upstream body that never produces bytes or closes.
-          },
-        }), {
-          headers: { "content-type": "text/event-stream" },
-        });
+      const metadata = JSON.parse(headers.get("cf-aig-metadata") ?? "{}");
+      expect(Object.keys(metadata).sort()).toEqual([
+        "access_source", "matrix_user_ref", "model_ref", "run_ref", "runtime_ref",
+      ]);
+      expect(Object.values(metadata).every((value) => ["string", "number", "boolean"].includes(typeof value)))
+        .toBe(true);
+      expect(JSON.stringify(metadata)).not.toContain("user_alice");
+      expect(JSON.stringify(metadata)).not.toContain("machine_123");
+      const forwarded = JSON.parse(String(init?.body));
+      expect(forwarded).not.toHaveProperty("metadata");
+      if (url.endsWith("/v1/messages/count_tokens")) {
+        expect(forwarded).not.toHaveProperty("max_tokens");
+        expect(forwarded).not.toHaveProperty("stream");
+        events.push("cloudflare_count");
+        return json({ input_tokens: 1_000 });
       }
-      return new Response(JSON.stringify({ id: "msg_after_timeout" }), {
-        headers: { "content-type": "application/json" },
-      });
+      expect(forwarded.max_tokens).toBe(100);
+      events.push("cloudflare_generate");
+      return json({ id: "msg_1", model: NATIVE_MODEL });
     });
-    const config = resolveFundedRelayConfig(enabledEnv({
-      MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY: "1",
-    }));
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({
-      ...config!,
-      fetch: upstreamFetch as typeof fetch,
-      timeoutMs: 20,
-    });
+    const relay = configuredRelay(fetchMock as typeof fetch);
     const app = new Hono();
     relay.register(app);
-    const headers = {
-      "content-type": "application/json",
-      "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-    };
-
-    const stalled = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody("claude-sonnet-5", true),
+    const bodyWithCallerMetadata = JSON.stringify({
+      ...JSON.parse(requestBody()),
+      metadata: { user_id: "raw-caller-id" },
     });
-    expect(stalled.status).toBe(200);
-
-    const blocked = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(blocked.status).toBe(429);
-
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    const admitted = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(admitted.status).toBe(200);
-    await admitted.text();
-
-    await stalled.body?.cancel();
+    const response = await app.request("/v1/messages", fundedRequest(bodyWithCallerMetadata, {
+      authorization: "Bearer caller-secret",
+      "cf-aig-authorization": "Bearer caller-cloudflare",
+      "cf-aig-api-token": "caller-token",
+      "cf-aig-metadata": JSON.stringify({ prompt: "secret" }),
+      "x-matrix-user": "mallory",
+    }));
+    expect(response.status).toBe(200);
+    expect(events).toEqual(["check", "cloudflare_count", "authorize", "start", "cloudflare_generate"]);
+    expect(events).not.toContain("settle");
     relay.close();
   });
 
-  it("enforces per-runtime admission limits and maps upstream failures safely", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    let releaseFirst: (() => void) | undefined;
-    const firstPending = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const upstreamFetch = vi.fn(async () => {
-      if (upstreamFetch.mock.calls.length === 1) {
-        await firstPending;
-        return new Response(JSON.stringify({ id: "msg_1" }), {
-          headers: { "content-type": "application/json" },
-        });
+  it("uses a zero-cost policy check for count_tokens without reserving or starting", async () => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/check")) { events.push("check"); return json(checkResponse()); }
+      if (url.endsWith("/v1/messages/count_tokens")) {
+        events.push("cloudflare_count");
+        return json({ input_tokens: 42 });
       }
-      throw new Error("secret upstream detail");
+      throw new Error(`unexpected fetch ${url}`);
     });
-    const config = resolveFundedRelayConfig(enabledEnv({
-      MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY: "1",
-      MATRIX_FUNDED_AI_RATE_LIMIT: "2",
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+    const response = await app.request(
+      "/v1/messages/count_tokens",
+      fundedRequest(JSON.stringify({ model: NATIVE_MODEL, messages: [{ role: "user", content: "hello" }] })),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ input_tokens: 42 });
+    expect(events).toEqual(["check", "cloudflare_count"]);
+    relay.close();
+  });
+
+  it("never reaches Cloudflare when platform policy denies an opaque or legacy credential", async () => {
+    const cloudflareFetch = vi.fn();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith(PLATFORM_URL)) {
+        return json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
+      }
+      cloudflareFetch();
+      return json({ id: "must_not_happen" });
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(401);
+    const legacySignature = createHmac("sha256", "old-shared-secret")
+      .update("funded-proxy:alice").digest("base64url");
+    const legacy = await app.request("/v1/messages", fundedRequest(requestBody(), {
+      "x-api-key": `sk-matrix-funded-alice.${legacySignature}`,
     }));
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({ ...config!, fetch: upstreamFetch as typeof fetch });
-    const app = new Hono();
-    relay.register(app);
-    const headers = {
-      "content-type": "application/json",
-      "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-    };
-
-    const first = app.request("/v1/messages", { method: "POST", headers, body: requestBody() });
-    await vi.waitFor(() => expect(upstreamFetch).toHaveBeenCalledTimes(1));
-    const concurrent = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(concurrent.status).toBe(429);
-
-    releaseFirst?.();
-    await (await first).text();
-
-    const failure = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(failure.status).toBe(502);
-    expect(await failure.text()).not.toContain("secret upstream detail");
-
-    const rateLimited = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(rateLimited.status).toBe(429);
-    expect(upstreamFetch).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(warn.mock.calls)).not.toContain("secret upstream detail");
-    warn.mockRestore();
+    expect(legacy.status).toBe(401);
+    expect(cloudflareFetch).not.toHaveBeenCalled();
     relay.close();
   });
 
-  it("enforces a global minute budget across distinct runtimes", async () => {
-    const upstreamFetch = vi.fn(async () => new Response(JSON.stringify({ id: "msg_1" }), {
-      headers: { "content-type": "application/json" },
-    }));
-    const config = resolveFundedRelayConfig(enabledEnv({
-      MATRIX_FUNDED_AI_GLOBAL_RATE_LIMIT: "2",
-      MATRIX_FUNDED_AI_RATE_LIMIT: "10",
-    }));
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({ ...config!, fetch: upstreamFetch as typeof fetch, now: () => 0 });
-    const app = new Hono();
-    relay.register(app);
-
-    for (const handle of ["alice", "bobbb"]) {
-      const response = await app.request("/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": buildFundedProxyApiKey(handle, SHARED_SECRET),
-        },
-        body: requestBody(),
-      });
-      expect(response.status).toBe(200);
-      await response.text();
-    }
-
-    const limited = await app.request("/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": buildFundedProxyApiKey("carol", SHARED_SECRET),
-      },
-      body: requestBody(),
-    });
-    expect(limited.status).toBe(429);
-    expect(upstreamFetch).toHaveBeenCalledTimes(2);
-    relay.close();
-  });
-
-  it("rejects funded credentials while disabled without falling through to legacy routing", async () => {
-    const app = new Hono();
-    const relay = createFundedRelay(null);
-    relay.register(app);
-    app.all("/v1/*", (c) => c.json({ route: "legacy" }));
-
-    const funded = await app.request("/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-      },
-      body: requestBody(),
-    });
-    expect(funded.status).toBe(403);
-    expect(await funded.text()).not.toContain("legacy");
-
-    const legacy = await app.request("/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": buildProxyApiKey("alice", SHARED_SECRET),
-      },
-      body: requestBody(),
-    });
-    expect(legacy.status).toBe(200);
-    expect(await legacy.json()).toEqual({ route: "legacy" });
-    relay.close();
-  });
-
-  it("forwards only bounded allowlisted request fields and beta values", async () => {
-    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      expect(JSON.parse(String(init?.body))).toEqual({
-        model: "claude-sonnet-5",
-        max_tokens: 1024,
-        stream: false,
-        messages: [{ role: "user", content: "hello" }],
-        tools: [{ name: "lookup", description: "Lookup", input_schema: { type: "object" } }],
-      });
-      expect(new Headers(init?.headers).get("anthropic-beta"))
-        .toBe("context-1m-2025-08-07");
-      return new Response(JSON.stringify({ id: "msg_1" }), {
-        headers: { "content-type": "application/json" },
-      });
-    });
-    const config = resolveFundedRelayConfig(enabledEnv());
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({ ...config!, fetch: upstreamFetch as typeof fetch });
-    const app = new Hono();
-    relay.register(app);
-    const headers = {
-      "content-type": "application/json",
-      "anthropic-beta": "context-1m-2025-08-07",
-      "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-    };
-
-    const accepted = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: "claude-sonnet-5",
-        max_tokens: 1024,
-        stream: false,
-        messages: [{ role: "user", content: "hello" }],
-        tools: [{ name: "lookup", description: "Lookup", input_schema: { type: "object" } }],
-      }),
-    });
-    expect(accepted.status).toBe(200);
-    await accepted.text();
-
-    for (const body of [
-      { ...JSON.parse(requestBody()), service_tier: "priority_only" },
-      {
-        ...JSON.parse(requestBody()),
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-      },
-    ]) {
-      const rejected = await app.request("/v1/messages", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
-      expect(rejected.status).toBe(400);
-    }
-    const rejectedBeta = await app.request("/v1/messages", {
-      method: "POST",
-      headers: { ...headers, "anthropic-beta": "unapproved-beta-2026-01-01" },
-      body: requestBody(),
-    });
-    expect(rejectedBeta.status).toBe(400);
-    expect(upstreamFetch).toHaveBeenCalledOnce();
-    relay.close();
-  });
-
-  it("admits authenticated requests before parsing their bodies", async () => {
-    const upstreamFetch = vi.fn(async () => new Response(JSON.stringify({ id: "unexpected" })));
-    const config = resolveFundedRelayConfig(enabledEnv({ MATRIX_FUNDED_AI_RATE_LIMIT: "1" }));
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({ ...config!, fetch: upstreamFetch as typeof fetch });
-    const app = new Hono();
-    relay.register(app);
-    const headers = {
-      "content-type": "application/json",
-      "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-    };
-
-    const malformed = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: "{not-json",
-    });
-    expect(malformed.status).toBe(400);
-
-    const limited = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(limited.status).toBe(429);
-    expect(upstreamFetch).not.toHaveBeenCalled();
-    relay.close();
-  });
-
-  it("uses a short first-response deadline without shortening valid streams", async () => {
-    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      if (upstreamFetch.mock.calls.length === 1) {
+  it("times out platform checks without contacting Cloudflare", async () => {
+    const cloudflareFetch = vi.fn();
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).startsWith(PLATFORM_URL)) {
         return await new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
         });
       }
-      return new Response(JSON.stringify({ id: "msg_after_timeout" }), {
-        headers: { "content-type": "application/json" },
+      cloudflareFetch();
+      return json({});
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch, { platformTimeoutMs: 20 });
+    const app = new Hono();
+    relay.register(app);
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(503);
+    expect(cloudflareFetch).not.toHaveBeenCalled();
+    relay.close();
+  });
+
+  it("does not start or generate when reservation authorization denies after counting", async () => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/check")) { events.push("check"); return json(checkResponse()); }
+      if (url.endsWith("/v1/messages/count_tokens")) {
+        events.push("cloudflare_count");
+        return json({ input_tokens: 1_000 });
+      }
+      if (url.endsWith("/authorize")) {
+        events.push("authorize_denied");
+        return json({ error: { code: "budget_exceeded", message: "Monthly AI budget reached" } }, 403);
+      }
+      events.push("unexpected_upstream");
+      return json({});
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(403);
+    expect(events).toEqual(["check", "cloudflare_count", "authorize_denied"]);
+    relay.close();
+  });
+
+  it("rejects unsupported models before platform or Cloudflare calls", async () => {
+    const fetchMock = vi.fn();
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+    const response = await app.request("/v1/messages", fundedRequest(requestBody({ model: "claude-opus-5" })));
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+    relay.close();
+  });
+
+  it("times out bounded token counting and does not reserve or generate", async () => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/check")) { events.push("check"); return json(checkResponse()); }
+      events.push("cloudflare_count");
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
       });
     });
-    const config = resolveFundedRelayConfig(enabledEnv({
-      MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY: "1",
-    }));
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({
-      ...config!,
-      fetch: upstreamFetch as typeof fetch,
-      firstResponseTimeoutMs: 20,
-      timeoutMs: 1_000,
-    });
+    const relay = configuredRelay(fetchMock as typeof fetch, { countTokensTimeoutMs: 20 });
     const app = new Hono();
     relay.register(app);
-    const headers = {
-      "content-type": "application/json",
-      "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-    };
-
-    const timedOut = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(timedOut.status).toBe(504);
-
-    const admitted = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(admitted.status).toBe(200);
-    await admitted.text();
+    const response = await app.request("/v1/messages", fundedRequest());
+    expect(response.status).toBe(504);
+    expect(events).toEqual(["check", "cloudflare_count"]);
     relay.close();
   });
 
-  it("caps count_tokens bodies independently from message bodies", async () => {
-    const upstreamFetch = vi.fn();
-    const config = resolveFundedRelayConfig(enabledEnv({
-      MATRIX_FUNDED_AI_MAX_BODY_BYTES: String(2 * 1024 * 1024),
-    }));
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({ ...config!, fetch: upstreamFetch as typeof fetch });
+  it("fails closed on expired pricing after count and before reserve or generation", async () => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/check")) { events.push("check"); return json(checkResponse()); }
+      if (url.endsWith("/v1/messages/count_tokens")) {
+        events.push("cloudflare_count");
+        return json({ input_tokens: 10 });
+      }
+      events.push("unexpected");
+      return json({});
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch, {
+      now: () => new Date("2026-09-01T00:00:00.000Z"),
+    });
     const app = new Hono();
     relay.register(app);
-    const body = JSON.stringify({
-      model: "claude-sonnet-5",
-      messages: [{ role: "user", content: "x".repeat(300 * 1024) }],
-    });
-
-    const response = await app.request("/v1/messages/count_tokens", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "content-length": String(body.length),
-        "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-      },
-      body,
-    });
-    expect(response.status).toBe(413);
-    expect(upstreamFetch).not.toHaveBeenCalled();
+    const response = await app.request("/v1/messages", fundedRequest());
+    expect(response.status).toBe(503);
+    expect(events).toEqual(["check", "cloudflare_count"]);
     relay.close();
   });
 
-  it("aborts oversized upstream responses and releases admission", async () => {
-    let firstSignal: AbortSignal | undefined;
-    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      if (upstreamFetch.mock.calls.length === 1) {
-        firstSignal = init?.signal ?? undefined;
-        return new Response(new Uint8Array(2_048), {
-          headers: { "content-type": "application/json" },
+  it("releases only a definitive resource denial before start", async () => {
+    let releaseFirst: (() => void) | undefined;
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let reservation = 0;
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+      if (url.endsWith("/authorize")) {
+        reservation += 1;
+        const requestId = JSON.parse(String(init?.body)).requestId as string;
+        return json(authorizationResponse(requestId, `reservation_${reservation}`));
+      }
+      if (url.endsWith("/start")) {
+        const body = JSON.parse(String(init?.body));
+        events.push(`start:${body.reservationId}`);
+        return json(startResponse("request_1", body.reservationId));
+      }
+      if (url.endsWith("/release")) {
+        const body = JSON.parse(String(init?.body));
+        events.push(`release:${body.reservationId}:${body.reason}`);
+        return json({
+          contractVersion: 1,
+          reservationId: body.reservationId,
+          requestId: "request_2",
+          tokenId: "credential_123",
+          releasedMicrousd: 3_600,
+          releasedAt: NOW.toISOString(),
+          reason: "pre_upstream_failure",
+          status: "released",
+          funding: authorizationResponse("request_2").funding,
         });
       }
-      return new Response(JSON.stringify({ id: "msg_after_limit" }), {
-        headers: { "content-type": "application/json" },
-      });
+      events.push("generate");
+      if (events.filter((event) => event === "generate").length === 1) await firstPending;
+      return json({ id: "msg" });
     });
-    const config = resolveFundedRelayConfig(enabledEnv({
-      MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY: "1",
-    }));
-    expect(config).not.toBeNull();
-    const relay = createFundedRelay({
-      ...config!,
-      fetch: upstreamFetch as typeof fetch,
-      maxResponseBytes: 1_024,
+    let requestId = 0;
+    const relay = configuredRelay(fetchMock as typeof fetch, {
+      requestIdFactory: () => `request_${++requestId}`,
+      runtimeConcurrency: 1,
+      rateLimitPerMinute: 10,
     });
     const app = new Hono();
     relay.register(app);
-    const headers = {
-      "content-type": "application/json",
-      "x-api-key": buildFundedProxyApiKey("alice", SHARED_SECRET),
-    };
+    const first = app.request("/v1/messages", fundedRequest());
+    await vi.waitFor(() => expect(events).toContain("generate"));
+    const denied = await app.request("/v1/messages", fundedRequest());
+    expect(denied.status).toBe(429);
+    expect(events).toContain("release:reservation_2:pre_upstream_failure");
+    expect(events).not.toContain("start:reservation_2");
+    releaseFirst?.();
+    await (await first).text();
+    relay.close();
+  });
 
-    const oversized = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
+  it("never releases an in-flight reservation after generation fetch fails", async () => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+      if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
+      if (url.endsWith("/start")) { events.push("start"); return json(startResponse("request_123")); }
+      if (url.endsWith("/release")) events.push("release");
+      events.push("generation_failure");
+      throw new Error(`private upstream failure ${String(init?.body).slice(0, 10)}`);
     });
-    await expect(oversized.text()).rejects.toThrow("configured limit");
-    expect(firstSignal?.aborted).toBe(true);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+    const response = await app.request("/v1/messages", fundedRequest());
+    expect(response.status).toBe(502);
+    expect(events).toEqual(["start", "generation_failure"]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private upstream failure");
+    relay.close();
+  });
 
-    const admitted = await app.request("/v1/messages", {
-      method: "POST",
-      headers,
-      body: requestBody(),
-    });
-    expect(admitted.status).toBe(200);
-    await admitted.text();
+  it("applies global admission before parsing", async () => {
+    const fetchMock = vi.fn();
+    const relay = configuredRelay(fetchMock as typeof fetch, { globalRateLimitPerMinute: 1 });
+    const app = new Hono();
+    relay.register(app);
+    expect((await app.request("/v1/messages", fundedRequest("{not-json"))).status).toBe(400);
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    expect(fetchMock).not.toHaveBeenCalled();
+    relay.close();
+  });
+
+  it("holds global concurrency across policy checks and denies without another fetch", async () => {
+    let finishCheck: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(async () => await new Promise<Response>((resolve) => {
+      finishCheck = resolve;
+    }));
+    const relay = configuredRelay(fetchMock as typeof fetch, { globalConcurrency: 1 });
+    const app = new Hono();
+    relay.register(app);
+    const first = app.request("/v1/messages", fundedRequest());
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    finishCheck?.(json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401));
+    expect((await first).status).toBe(401);
+    relay.close();
+  });
+
+  it("rejects invalid routes, queries, content types, and oversized bodies before fetch", async () => {
+    const fetchMock = vi.fn();
+    const relay = configuredRelay(fetchMock as typeof fetch, { maxBodyBytes: 128 });
+    const app = new Hono();
+    relay.register(app);
+    expect((await app.request("/v1/complete", fundedRequest())).status).toBe(404);
+    expect((await app.request("/v1/messages?debug=1", fundedRequest())).status).toBe(404);
+    expect((await app.request("/v1/messages", {
+      ...fundedRequest(), headers: { "content-type": "text/plain", "x-api-key": CREDENTIAL },
+    })).status).toBe(415);
+    expect((await app.request("/v1/messages", fundedRequest(requestBody({ maxTokens: 100 }) + " ".repeat(256)))).status)
+      .toBe(413);
+    expect(fetchMock).not.toHaveBeenCalled();
+    relay.close();
+  });
+});
+
+describe("funded relay bounded resources", () => {
+  it("cancels an upstream body when its lifetime already expired", async () => {
+    const cancel = vi.fn();
+    const body = boundedBody(
+      new ReadableStream<Uint8Array>({ cancel }), 1_024,
+      { release: vi.fn() }, vi.fn(),
+      AbortSignal.abort(new DOMException("expired", "TimeoutError")),
+    );
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+    await body.cancel();
+  });
+
+  it("does not confuse legacy owner-funded proxy credentials with funded access", async () => {
+    const app = new Hono();
+    const relay = createFundedRelay(null);
+    relay.register(app);
+    app.all("/v1/*", (c) => c.json({ route: "legacy" }));
+    const legacy = await app.request("/v1/messages", fundedRequest(requestBody(), {
+      "x-api-key": buildProxyApiKey("alice", "shared-secret-with-enough-entropy"),
+    }));
+    expect(legacy.status).toBe(200);
+    expect(await legacy.json()).toEqual({ route: "legacy" });
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(403);
     relay.close();
   });
 });
