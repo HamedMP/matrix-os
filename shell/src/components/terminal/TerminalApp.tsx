@@ -443,9 +443,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         clearTimeout(layoutSaveTimerRef.current);
         layoutSaveTimerRef.current = null;
       }
-      void persistLayoutNow();
+      const changeVersion = terminalLayoutChangeVersionRef.current;
+      void persistLayoutNow().then((saved) => settleLayoutSave(saved, changeVersion));
     };
-    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- persistence is a mount-time window policy; persistLayoutNow reads the latest layout exclusively through refs, and re-subscribing this cleanup would flush during ordinary renders
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- persistence is a mount-time window policy; persistLayoutNow and settleLayoutSave read the latest layout exclusively through refs, and re-subscribing this cleanup would flush during ordinary renders. The retry continuation intentionally survives this component's unmount so a transient final-save failure cannot discard the window layout.
   }, [persistence]);
 
   useEffect(() => {
