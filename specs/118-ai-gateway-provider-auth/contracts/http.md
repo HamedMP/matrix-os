@@ -18,6 +18,8 @@ All route schemas use `zod/v4`. Every mutating route uses Hono `bodyLimit` befor
 | `POST` | `/v1/messages/count_tokens` | central relay | Same relay service credential | 256 KiB | Optional funded token-count endpoint |
 | `GET` | `/health/ready` | central relay | Platform/internal health auth; never public detail | n/a | Coarse readiness |
 | `POST` | `/internal/containers/:handle/ai/funding-summary` | platform internal | Exact per-handle platform HMAC; owner/machine/runtime derived from the running machine record | 1 KiB | Identity-free authoritative Matrix credit and monthly-budget summary |
+| `POST` | `/billing/ai-credit/checkout` | platform | Authenticated Clerk owner; active machine/runtime derived server-side | 16 KiB | Create hosted Stripe Checkout for one server-owned add-on package |
+| `POST` | `/billing/webhooks/stripe` | platform | Stripe signature over the exact raw body | 1 MiB | Verify paid add-on completion and atomically record receipt + ledger grant |
 
 The exact prefix can be adapted to existing `/api/settings` compatibility routes. Compatibility routes must call the same service and return the canonical state; they cannot maintain a second provider truth.
 
@@ -28,6 +30,24 @@ entries, source references, or database/provider errors. The owner gateway uses
 the provisioned per-handle platform HMAC, a bounded response reader, an explicit
 timeout, and `redirect: "error"`; failure projects usage as unavailable instead
 of falling back to local estimates.
+
+## Funded AI add-on Checkout
+
+The checkout request is a strict object containing only `packageId`
+(`usd_5`, `usd_10`, or `usd_25`), a bounded runtime slot, and a UUID
+`requestId`. The platform maps the package to configured Stripe Price and exact
+USD/microusd amounts. The strict schema rejects extra fields: any client-supplied owner,
+machine, Price, currency, or amount makes the request invalid. The Checkout
+create uses a fixed-length idempotency key derived from owner, machine, and
+request UUID. Browser retries reuse the same UUID.
+
+Only a signed `checkout.session.completed` event can grant credit. Validation
+requires `mode=payment`, `status=complete`, `payment_status=paid`, `currency=usd`,
+the exact configured `amount_total`, and exact server-written kind, owner,
+machine, runtime, package, Price, request, and microusd metadata. The platform
+inserts the Stripe event receipt and `addon:<checkout-session-id>` ledger entry
+in one Kysely transaction. Mismatch, expiry, or unpaid state rolls back and
+returns non-2xx so Stripe can retry; duplicate valid delivery is a 2xx no-op.
 
 ## `GET /api/ai/providers`
 
