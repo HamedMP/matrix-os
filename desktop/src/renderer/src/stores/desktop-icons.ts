@@ -156,10 +156,7 @@ async function applyOptimisticMutation(
   } catch (error: unknown) {
     console.warn("[desktop-icons] persist failed:", error instanceof Error ? error.name : typeof error);
     if (epoch === stateEpoch && sequence === mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
-      if (hasConfirmedIcons) {
-        deferredHydrationIcons = null;
-        set({ icons: copyIcons(confirmedIcons), loaded: true });
-      } else if (deferredHydrationIcons !== null) {
+      if (deferredHydrationIcons !== null) {
         const icons = copyIcons(deferredHydrationIcons);
         confirmedIcons = copyIcons(icons);
         hasConfirmedIcons = true;
@@ -170,6 +167,8 @@ async function applyOptimisticMutation(
         hydrationRevision += 1;
         set({ icons, loaded: true });
         restoredPendingHydration = true;
+      } else if (hasConfirmedIcons) {
+        set({ icons: copyIcons(confirmedIcons), loaded: true });
       } else {
         set({ icons: copyIcons(unconfirmedRollbackIcons ?? rollbackIcons), loaded: false });
         if (unconfirmedHydrationRevision !== null) {

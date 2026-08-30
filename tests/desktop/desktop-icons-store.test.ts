@@ -207,4 +207,33 @@ describe("native Desktop icon layout", () => {
 
     expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
   });
+
+  it("restores newer deferred hydration when an in-flight icon write fails", async () => {
+    let rejectPatch: ((error: Error) => void) | undefined;
+    const newerOwnerLayout = [{ path: "__file-browser__", x: 196, y: 112 }];
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(() => new Promise<never>((_resolve, reject) => {
+        rejectPatch = reject;
+      })),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const overlappingHydrationRevision = captureDesktopIconsHydrationRevision();
+    useDesktopIcons.getState().hydrate(
+      newerOwnerLayout,
+      [CHAT, FILES],
+      overlappingHydrationRevision,
+    );
+
+    rejectPatch?.(new Error("offline"));
+    await move;
+
+    expect(useDesktopIcons.getState()).toMatchObject({
+      icons: newerOwnerLayout,
+      loaded: true,
+    });
+  });
 });
