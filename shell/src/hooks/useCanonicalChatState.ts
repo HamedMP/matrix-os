@@ -41,6 +41,7 @@ export function useCanonicalChatState(): ChatState {
   const [safeError, setSafeError] = useState<string | null>(null);
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
   const composerDraftSequence = useRef(0);
+  const detailRequestGeneration = useRef(0);
   const detailRef = useRef(detail);
   const activeChatIdRef = useRef(activeChatId);
   detailRef.current = detail;
@@ -58,13 +59,24 @@ export function useCanonicalChatState(): ChatState {
   }, [client]);
 
   const loadDetail = useCallback(async (chatId: string) => {
+    const generation = ++detailRequestGeneration.current;
     try {
       const value = await client.detail(chatId);
-      if (activeChatIdRef.current !== chatId) return null;
+      if (activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
+        return null;
+      }
+      const current = detailRef.current;
+      if (current?.record.chat.id === chatId
+        && current.record.chat.revision > value.record.chat.revision) {
+        return null;
+      }
       setDetail(value);
       setSafeError(null);
       return value;
     } catch (error: unknown) {
+      if (activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
+        return null;
+      }
       console.warn("[canonical-chat] Shell detail unavailable:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("Chat could not be loaded. Try again.");
       return null;
@@ -213,12 +225,14 @@ export function useCanonicalChatState(): ChatState {
   }, [activeChatId, client, loadDetail, loadList, submitting]);
 
   const newChat = useCallback(async () => {
+    detailRequestGeneration.current += 1;
     setActiveChatId(undefined);
     setDetail(null);
     setSafeError(null);
   }, []);
 
   const switchConversation = useCallback((chatId: string) => {
+    detailRequestGeneration.current += 1;
     setActiveChatId(chatId);
     setDetail(null);
     setSafeError(null);

@@ -5,6 +5,8 @@ import {
   CanonicalProviderCatalogSchema,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
+  type CanonicalProviderInstanceDescriptor,
+  type CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import {
   canonicalProviderAvailabilityLabel,
@@ -12,6 +14,7 @@ import {
   type CanonicalProviderChoice,
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 import { CheckIcon, CalendarIcon, GithubIcon, MailIcon, MessageSquareIcon } from "@/lib/hugeicons";
 
 const PROVIDER_SELECTION_STORAGE_KEY = "matrix:canonical-chat-provider-selection";
@@ -101,36 +104,45 @@ export function useChatProviderState(boundSelection?: CanonicalChatModelSelectio
   useEffect(() => {
     let cancelled = false;
     let refreshing = false;
-    const refresh = () => {
-      if (refreshing) return;
+    let pending = false;
+    const refresh = async () => {
+      if (refreshing) {
+        pending = true;
+        return;
+      }
       refreshing = true;
-      void fetch(`${getGatewayUrl()}/api/chat-providers?refresh=true`, {
-        signal: AbortSignal.timeout(10_000),
-      }).then(async (response) => {
-        if (!response.ok) throw new Error("ProviderCatalogUnavailable");
-        return CanonicalProviderCatalogSchema.parse(await response.json());
-      }).then((value) => {
-        if (!cancelled) {
-          setCatalog(value);
-          setUnavailable(false);
+      do {
+        pending = false;
+        try {
+          const response = await fetch(`${getGatewayUrl()}/api/chat-providers?refresh=true`, {
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!response.ok) throw new Error("ProviderCatalogUnavailable");
+          const value = CanonicalProviderCatalogSchema.parse(await response.json());
+          if (!cancelled) {
+            setCatalog(value);
+            setUnavailable(false);
+          }
+        } catch (error: unknown) {
+          console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
+          if (!cancelled) setUnavailable(true);
+        } finally {
+          if (!cancelled) setLoading(false);
         }
-      }).catch((error: unknown) => {
-        console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
-        if (!cancelled) setUnavailable(true);
-      }).finally(() => {
-        refreshing = false;
-        if (!cancelled) setLoading(false);
-      });
+      } while (!cancelled && pending);
+      refreshing = false;
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refresh();
     };
-    refresh();
+    void refresh();
     window.addEventListener("focus", refresh);
+    window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, refresh);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", refresh);
+      window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, refresh);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
@@ -241,6 +253,7 @@ export function ChatProviderSetupPanel({
   onInteractionModeChange,
   onPermissionModeChange,
   onOptionChange,
+  onSetupAction,
   lockedInstanceId,
   showChannels,
   channels,
@@ -253,6 +266,10 @@ export function ChatProviderSetupPanel({
   onInteractionModeChange: (mode: string) => void;
   onPermissionModeChange: (mode: string) => void;
   onOptionChange: (id: string, value: string | boolean) => void;
+  onSetupAction: (
+    instance: CanonicalProviderInstanceDescriptor,
+    action: CanonicalProviderSetupAction,
+  ) => void;
   lockedInstanceId?: string;
   showChannels: boolean;
   channels: Set<string>;
@@ -286,9 +303,23 @@ export function ChatProviderSetupPanel({
               );
             })}
             {catalog?.instances.filter((instance) => instance.availability !== "available").map((instance) => (
-              <p key={instance.id} className="rounded-md border border-border/40 px-2.5 py-2 text-xs text-muted-foreground">
-                {instance.displayName} — {canonicalProviderAvailabilityLabel(instance)}
-              </p>
+              <div key={instance.id} className="rounded-md border border-border/40 px-2.5 py-2 text-xs text-muted-foreground">
+                <p>{instance.displayName} — {canonicalProviderAvailabilityLabel(instance)}</p>
+                {instance.setupActions.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {instance.setupActions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        className="min-h-9 rounded-md border border-border/50 bg-background px-2 text-xs font-medium text-foreground"
+                        onClick={() => onSetupAction(instance, action)}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             ))}
             {choices.length === 0 && (
               <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">

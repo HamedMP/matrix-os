@@ -16,6 +16,7 @@ import {
   createProviderSettingsTransport,
   ProviderSettingsTransportError,
 } from "../../shell/src/lib/provider-settings-transport.js";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
 
 const snapshot = ProviderSettingsSnapshotSchema.parse({
   contractVersion: 1,
@@ -94,6 +95,23 @@ describe("provider settings shell transport", () => {
       `${window.location.origin}/api/ai/provider-settings`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("invalidates the shared Provider catalog only after a successful mutation", async () => {
+    const changed = vi.fn();
+    window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
+    const fetcher = vi.fn(async () => Response.json({ kind: "snapshot", snapshot }));
+    const transport = createProviderSettingsTransport({ fetcher });
+
+    await expect(transport.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: 2,
+      idempotencyKey: "budget_success",
+      monthlyBudgetMicrousd: 2_000_000,
+    })).resolves.toEqual({ kind: "snapshot", snapshot });
+    expect(changed).toHaveBeenCalledOnce();
+
+    window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
   });
 
   it("validates mutation inputs and responses without exposing upstream details", async () => {

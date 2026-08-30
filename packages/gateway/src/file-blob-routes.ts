@@ -9,7 +9,6 @@ import { z } from "zod/v4";
 import { getMimeType } from "./file-utils.js";
 import {
   resolveExistingFileApiPath,
-  resolveWithinHome,
   resolveWritableFileApiPath,
 } from "./path-security.js";
 import { isDirectChatAttachmentPath } from "./chat/attachment-cleanup.js";
@@ -232,7 +231,7 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
     if (!parsed || parsed.filename || parsed.force || parsed.secret || !isDirectChatAttachmentPath(parsed.path)) {
       return invalidPath(c);
     }
-    const lexicalPath = resolveWithinHome(deps.homePath, parsed.path);
+    const lexicalPath = resolveWritableFileApiPath(deps.homePath, parsed.path);
     if (!lexicalPath) return invalidPath(c);
 
     try {

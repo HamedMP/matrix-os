@@ -315,6 +315,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   refreshedAt: IsoTimestampSchema,
   access: ProviderSettingsAccessSchema,
   supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(15),
+  configurationHarnessKinds: z.array(ProviderHarnessKindSchema).max(6).optional(),
   modelProviders: z.array(ProviderModelProviderSchema).max(32),
   accessSources: z.array(ProviderAccessSourceSchema).max(64),
   accounts: z.array(ProviderAccountSchema).max(128),
@@ -329,6 +330,9 @@ export const ProviderSettingsSnapshotSchema = z.object({
   ] as const;
   if (!unique(snapshot.supportedActions)) {
     ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Duplicate supported action" });
+  }
+  if (snapshot.configurationHarnessKinds && !unique(snapshot.configurationHarnessKinds)) {
+    ctx.addIssue({ code: "custom", path: ["configurationHarnessKinds"], message: "Duplicate configurable harness kind" });
   }
   if (snapshot.access.mode === "read_only" && snapshot.supportedActions.length > 0) {
     ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Read-only settings cannot advertise mutations" });

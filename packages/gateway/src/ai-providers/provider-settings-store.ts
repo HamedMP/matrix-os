@@ -184,6 +184,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         fundingSummary,
         fundedPolicy,
         fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
+        configurationHarnessKinds: [...(this.#runtime?.supportedHarnessKinds ?? [])],
         loginMethods: (harness) => coordinatorLoginMethods({
           login: this.#login,
           harness,

@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
-import type { CanonicalChatApprovalDecision, CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type {
+  CanonicalChatApprovalDecision,
+  CanonicalChatModelSelection,
+  CanonicalProviderInstanceDescriptor,
+  CanonicalProviderSetupAction,
+} from "@matrix-os/contracts";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -27,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useVoice } from "@/hooks/useVoice";
+import { executeCanonicalProviderSetupAction } from "@/lib/canonical-provider-setup";
 import {
   DEFAULT_HERMES_CHANNELS,
   createChannelConfiguredPrompt,
@@ -113,6 +119,10 @@ interface ChatAppProps {
   onSubmitApproval?: (approvalId: string, decision: CanonicalChatApprovalDecision) => Promise<boolean>;
   composerDraftRequest?: { id: number; text: string } | null;
   onComposerDraftConsumed?: (id: number) => void;
+  onProviderSetupAction?: (
+    instance: CanonicalProviderInstanceDescriptor,
+    action: CanonicalProviderSetupAction,
+  ) => void;
   mobile?: boolean;
 }
 
@@ -156,6 +166,7 @@ export function ChatApp({
   onSubmitApproval,
   composerDraftRequest,
   onComposerDraftConsumed,
+  onProviderSetupAction,
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
@@ -358,6 +369,10 @@ export function ChatApp({
             onInteractionModeChange={providerState.selectInteractionMode}
             onPermissionModeChange={providerState.selectPermissionMode}
             onOptionChange={providerState.selectOption}
+            onSetupAction={(instance, action) => {
+              if (onProviderSetupAction) onProviderSetupAction(instance, action);
+              else void executeCanonicalProviderSetupAction({ instance, action });
+            }}
             lockedInstanceId={providerSelection?.instanceId}
             showChannels={providerState.selected?.driverKind === "hermes"}
             channels={channels}

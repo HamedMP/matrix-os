@@ -217,4 +217,21 @@ describe("file blob routes", () => {
     );
     expect(oversized.status).toBe(413);
   });
+
+  it("rejects a temporary attachment path whose directory is a symlink into owner state", async () => {
+    await mkdir(join(homePath, "temporary"), { recursive: true });
+    await mkdir(join(homePath, "system"), { recursive: true });
+    const protectedPath = join(homePath, "system/provider-settings.json");
+    await writeFile(protectedPath, "keep");
+    await symlink(join(homePath, "system"), join(homePath, "temporary/desktop-chat"));
+
+    const response = await app.request(
+      "/blob?path=temporary%2Fdesktop-chat%2Fprovider-settings.json",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_path" });
+    expect(await readFile(protectedPath, "utf8")).toBe("keep");
+  });
 });

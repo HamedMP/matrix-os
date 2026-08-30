@@ -13,8 +13,6 @@ const HARNESS_CATALOG: ReadonlyArray<{
   { id: "openclaw", label: "OpenClaw", routeKind: "configurable", preferredProvider: null },
   { id: "pi", label: "Pi", routeKind: "configurable", preferredProvider: null },
   { id: "opencode", label: "OpenCode", routeKind: "configurable", preferredProvider: null },
-  { id: "codex", label: "Codex", routeKind: "fixed", preferredProvider: "openai" },
-  { id: "claude", label: "Claude", routeKind: "fixed", preferredProvider: "anthropic" },
 ];
 
 function sourceSupportsRoute(
@@ -38,7 +36,9 @@ export function AddHarnessDialog({
   onMutate: (intent: ProviderSettingsMutationIntent) => void;
   onClose: () => void;
 }) {
-  const firstCatalog = HARNESS_CATALOG[0]!;
+  const availableCatalog = HARNESS_CATALOG.filter((entry) =>
+    snapshot.configurationHarnessKinds?.includes(entry.id));
+  const firstCatalog = availableCatalog[0] ?? HARNESS_CATALOG[0]!;
   const [kind, setKind] = useState<ProviderHarnessKind>(firstCatalog.id);
   const selectedCatalog = HARNESS_CATALOG.find((entry) => entry.id === kind) ?? firstCatalog;
   const defaultProvider = snapshot.modelProviders.find((provider) => provider.id === selectedCatalog.preferredProvider)
@@ -53,7 +53,8 @@ export function AddHarnessDialog({
     sourceSupportsRoute(snapshot, source, providerId, modelId)), [modelId, providerId, snapshot]);
   const [sourceId, setSourceId] = useState(eligibleSources[0]?.id ?? "");
   const selectedSource = eligibleSources.find((source) => source.id === sourceId) ?? eligibleSources[0] ?? null;
-  const canAdd = displayName.trim() !== "" && provider !== null && modelId !== "" && selectedSource !== null;
+  const canAdd = availableCatalog.some((entry) => entry.id === kind)
+    && displayName.trim() !== "" && provider !== null && modelId !== "" && selectedSource !== null;
 
   const selectKind = (nextKind: ProviderHarnessKind) => {
     const catalog = HARNESS_CATALOG.find((entry) => entry.id === nextKind) ?? HARNESS_CATALOG[0]!;
@@ -107,7 +108,7 @@ export function AddHarnessDialog({
   return (
     <FeatureDialog title="Add harness" onClose={onClose}>
       <div className="matrix-ap-driver-grid">
-        {HARNESS_CATALOG.map((entry) => (
+        {availableCatalog.map((entry) => (
           <label key={entry.id} data-selected={entry.id === kind ? "true" : undefined}>
             <input
               type="radio"
