@@ -110,7 +110,18 @@ STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly
 STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual
 STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly
 STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual
+STRIPE_PRICE_AI_CREDIT_USD_5=stripe-price-ai-credit-usd-5
+STRIPE_PRICE_AI_CREDIT_USD_10=stripe-price-ai-credit-usd-10
+STRIPE_PRICE_AI_CREDIT_USD_25=stripe-price-ai-credit-usd-25
 ```
+
+Funded AI add-on credit remains disabled unless the three one-time USD Prices,
+Stripe secret/signing secret, and
+`MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=true` are all present. Set
+`MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED=true` only after the Stripe
+account has the required active tax registrations; otherwise add-on Checkout
+deliberately creates sessions with automatic tax disabled. Use a restricted
+Stripe key and, where Cloud Run has stable egress, a Stripe IP allowlist.
 
 The two portal configurations are required to enable the customer-facing
 add-computer flow, but their absence does not block an otherwise healthy

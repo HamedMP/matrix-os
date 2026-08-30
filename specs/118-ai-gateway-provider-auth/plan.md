@@ -356,7 +356,7 @@ before those authorities exist.
 2. Add Kysely migrations for entitlements, atomic reservations, content-free usage, and reconciliation.
 3. Reserve before dispatch in one transaction with budget predicate in the write and unique request ID.
 4. Reconcile canonical model/tokens/cost; bounded job releases/reconciles abandoned holds.
-5. Add allowance/add-on UI, warnings, stops, exports, deletion/retention, and support tools. Exact remaining credit comes only from the authoritative Matrix ledger; provider subscription allowance and provider API balance remain separately labeled sources.
+5. Add allowance/add-on UI, warnings, stops, exports, deletion/retention, and support tools. Exact remaining credit comes only from the authoritative Matrix ledger; provider subscription allowance and provider API balance remain separately labeled sources. Add-on Checkout accepts only a bounded server-owned package ID and request UUID; Clerk auth plus the active machine row derive owner/machine/runtime, and a signed webhook verifies exact paid USD totals before atomically recording its receipt and idempotent ledger grant.
 6. Retain Cloudflare limits as a second, eventually consistent fuse.
 7. Do not model variable user add-ons as Cloudflare rules: a split-by-user rule gives each value the same budget, Cloudflare caps gateways at 20 spend rules, and concurrent requests can briefly overshoot.
 
@@ -429,9 +429,17 @@ The first layer-6 increment exposes the platform Postgres metering summary to
 the exact authenticated runtime and projects it into provider settings. The
 Matrix card distinguishes promotional and add-on balances, held reservations,
 settled monthly use, remaining monthly budget, and the smaller amount currently
-spendable. Stripe purchase is deliberately not advertised: `topUpEnabled`
-remains false and `add_credit` remains absent until a real checkout and ledger
-grant workflow exists.
+spendable. Stripe purchase is advertised only when the real checkout and ledger
+grant workflow is authoritatively configured. `topUpEnabled` comes from the
+platform funding summary (never owner-local JSON), and `add_credit` appears only
+with it. The shared Canvas/Web Desktop/Electron package picker sends
+`$5/$10/$25` package IDs to one Clerk-authenticated platform route. Hosted
+Stripe Checkout owns card collection; the signed completion webhook verifies
+kind, mode, status, payment status, currency, exact amount, Price, request,
+owner, machine, and runtime. Webhook receipt and non-expiring add-on grant
+commit in one transaction and use `ON CONFLICT` idempotency. Cloudflare remains
+upstream; Matrix's ledger owns the credit. Add-on Stripe Tax remains disabled
+until operators explicitly attest that required registrations are active.
 
 ## Documentation and Review Deliverables
 

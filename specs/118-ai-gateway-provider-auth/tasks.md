@@ -128,6 +128,14 @@ mutation or funded balances.
 - [ ] T046 Add Matrix Postgres/Kysely entitlements, atomic spend reservations, reconciliation, add-ons, and truthful credit UI; retain Cloudflare limits as a coarse fuse
 - [ ] T047 Add generic/model-specific harness routing and additional model providers through V3 conformance tests, one adapter PR at a time
 
+### T046 add-on checkout increment
+
+- [X] T046A Add server-owned `$5/$10/$25` Stripe Price configuration and a strict Clerk-authenticated Checkout route that derives the active owner machine/runtime
+- [X] T046B Add signed completion validation plus one-transaction, `ON CONFLICT`-idempotent webhook receipt and Matrix add-on ledger grant
+- [X] T046C Gate `topUpEnabled` and `add_credit` only from authoritative platform checkout configuration, failing closed when absent
+- [X] T046D Add one shared package/busy/safe-error UI with same-origin web navigation and authenticated Electron external-browser handoff
+- [X] T046E Cover package spoofing, unpaid/expired/mismatched events, duplicate delivery, transaction rollback, shell parity, redirect validation, and Stripe integration metadata
+
 ---
 
 ## Dependencies and Execution Order
