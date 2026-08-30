@@ -54,6 +54,11 @@ describe("OS-view parity contract", () => {
     expect(contract).toMatch(/Web Desktop[^\n]+Electron Desktop[^\n]+same logical/i);
     expect(contract).toMatch(/Canvas[^\n]+pan[^\n]+zoom/i);
     expect(contract).toMatch(/Chat[^\n]+Settings[^\n]+Terminal[^\n]+Files/i);
+    expect(contract).toMatch(/multiple related records[^\n]+one transaction/i);
+    expect(contract).toMatch(/Revision checks[^\n]+write statement/i);
+    expect(contract).toMatch(/Retried requests[^\n]+idempotent/i);
+    expect(contract).toMatch(/REST mutations[^\n]+notify subscribers[^\n]+after commit/i);
+    expect(contract).toMatch(/reconnect[^\n]+latest revision[^\n]+stale local geometry/i);
   });
 
   it("retires Workspace Canvas without deleting owner data", () => {
