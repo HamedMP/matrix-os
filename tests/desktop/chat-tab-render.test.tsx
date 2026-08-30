@@ -315,8 +315,9 @@ describe("ChatTab", () => {
     const failureNotice = screen.getByRole("status", { name: "Agent work failed" });
     expect(failureNotice.textContent).toContain("Agent work failed");
     expect(failureNotice.textContent).toContain("The command failed.");
-    expect(failureNotice.className).toContain("rounded-none");
-    expect(failureNotice.className).toContain("border-l-2");
+    expect(failureNotice.className).toContain("rounded-xl");
+    expect(failureNotice.className).toContain("border");
+    expect(failureNotice.className).toContain("px-3");
     expect(failureNotice.style.background).toBe("");
     expect(failureNotice.style.borderColor).toBe("var(--danger)");
     expect(screen.queryByRole("button", { name: "Running command: bun run test" })).toBeNull();

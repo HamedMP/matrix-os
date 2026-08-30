@@ -247,6 +247,104 @@ describe("canonical Chat presentation adapter", () => {
     expect(presented?.final).toBeUndefined();
   });
 
+  it("uses generic Thinking only as a live placeholder until visible process text arrives", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const reasoning = {
+      id: "activity_thinking_placeholder",
+      chatId: snapshot.chat.id,
+      runId: run.id,
+      sequence: 1,
+      type: "agent.activity" as const,
+      activityId: "reasoning_placeholder",
+      kind: "reasoning" as const,
+      label: "Thinking",
+      status: "running" as const,
+      occurredAt: "2026-08-26T00:00:01.000Z",
+    };
+
+    const [placeholderOnly] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [reasoning],
+    });
+    expect(placeholderOnly?.work).toEqual([
+      expect.objectContaining({
+        kind: "activity-group",
+        activities: [expect.objectContaining({ kind: "reasoning", label: "Thinking" })],
+      }),
+    ]);
+
+    const [withVisibleProcessText] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [reasoning, {
+        id: "activity_visible_process",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 2,
+        type: "assistant.delta",
+        messageId: "msg_visible_process",
+        delta: "I’ll inspect the project first.",
+        occurredAt: "2026-08-26T00:00:02.000Z",
+      }],
+    });
+    expect(withVisibleProcessText?.work).toEqual([
+      expect.objectContaining({
+        kind: "message",
+        id: "msg_visible_process",
+        markdown: "I’ll inspect the project first.",
+      }),
+    ]);
+  });
+
+  it("omits generic Thinking rows from completed Worked history", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const run = snapshot.runs[0]!;
+    const process = {
+      id: "msg_completed_process",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text: "I inspected the project." }],
+      createdAt: "2026-08-26T00:00:02.000Z",
+    };
+    const result = {
+      ...process,
+      id: "msg_completed_result",
+      seq: 3,
+      parts: [{ type: "text" as const, text: "The project is ready." }],
+      createdAt: "2026-08-26T00:00:04.000Z",
+    };
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, process, result],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [{
+        id: "activity_completed_thinking",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "agent.activity",
+        activityId: "reasoning_completed_placeholder",
+        kind: "reasoning",
+        label: "Thinking",
+        status: "completed",
+        occurredAt: "2026-08-26T00:00:01.000Z",
+      }],
+    });
+
+    expect(presented?.work).toEqual([
+      expect.objectContaining({ id: "msg_completed_process", markdown: "I inspected the project." }),
+    ]);
+    expect(presented?.final).toMatchObject({ id: "msg_completed_result", markdown: "The project is ready." });
+  });
+
   it("projects typed activity in durable server sequence with partial state intact", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;

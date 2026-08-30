@@ -188,11 +188,11 @@ export function ConversationContent({ children, className }: { children: ReactNo
   // Longer conversations scroll normally. The log
   // role marks the transcript as a live region whose streamed text mutations
   // are not announced token by token (aria-relevant=additions only).
-  // The 46rem centered column keeps line length readable (Codex-style) while
-  // the scroll viewport itself stays full-width for the edge fade.
+  // The adaptive 72rem column uses wide Desktop windows without forcing long
+  // lines on narrower surfaces; the viewport itself stays full-width for fade.
   return (
     <div
-      className={cn("mx-auto flex min-h-full w-full max-w-[46rem] flex-col gap-5 px-6 py-6", className ?? "justify-end")}
+      className={cn("mx-auto flex min-h-full w-full max-w-[72rem] flex-col gap-3 px-4 py-6 sm:px-6 lg:px-8", className ?? "justify-end")}
       role="log"
       aria-relevant="additions"
       data-slot="message-scroller-content"

@@ -234,6 +234,37 @@ function activityState(
   return "running";
 }
 
+function isGenericThinkingPlaceholder(item: ConversationWorkPresentation): boolean {
+  if (item.kind !== "activity-group" || item.activities.length !== 1) return false;
+  const [activity] = item.activities;
+  return activity?.kind === "reasoning"
+    && activity.label === "Thinking"
+    && activity.preview === undefined
+    && activity.detail === undefined;
+}
+
+function replaceThinkingPlaceholders(
+  work: ConversationWorkPresentation[],
+  active: boolean,
+): ConversationWorkPresentation[] {
+  if (!active) return work.filter((item) => !isGenericThinkingPlaceholder(item));
+  const visible: ConversationWorkPresentation[] = [];
+  let pendingThinkingIndex: number | undefined;
+  for (const item of work) {
+    if (isGenericThinkingPlaceholder(item)) {
+      visible.push(item);
+      pendingThinkingIndex = visible.length - 1;
+      continue;
+    }
+    if (item.kind === "message" && pendingThinkingIndex !== undefined) {
+      visible.splice(pendingThinkingIndex, 1);
+      pendingThinkingIndex = undefined;
+    }
+    visible.push(item);
+  }
+  return visible;
+}
+
 function runPresentation(
   run: CanonicalChatRun | undefined,
   activities: CanonicalChatRunActivity[],
@@ -474,20 +505,21 @@ export function canonicalChatPresentation(input: {
     const otherWork = unsortedWork.filter((item) => item.kind !== "activity-group")
       .map((item, index) => ({ item, index }))
       .sort((left, right) => left.item.timestamp - right.item.timestamp || left.index - right.index);
-    const work: ConversationWorkPresentation[] = [];
+    const orderedWork: ConversationWorkPresentation[] = [];
     let activityIndex = 0;
     let otherIndex = 0;
     while (activityIndex < activityWork.length || otherIndex < otherWork.length) {
       const activity = activityWork[activityIndex];
       const other = otherWork[otherIndex];
       if (!other || (activity && (activity.item.timestamp ?? Number.MAX_SAFE_INTEGER) <= other.item.timestamp)) {
-        work.push(activity!.item);
+        orderedWork.push(activity!.item);
         activityIndex += 1;
       } else {
-        work.push(other.item);
+        orderedWork.push(other.item);
         otherIndex += 1;
       }
     }
+    const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run));
     const startedAt = Date.parse(run?.startedAt ?? run?.createdAt ?? turn.createdAt);
     const endedAt = Date.parse(run?.completedAt ?? run?.updatedAt ?? turn.updatedAt);
     return {

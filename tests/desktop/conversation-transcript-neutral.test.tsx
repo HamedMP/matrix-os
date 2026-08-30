@@ -197,7 +197,7 @@ describe("provider-neutral conversation transcript", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:matrix-screenshot");
   });
 
-  it("uses a rotating progress indicator and a compact terminal failure outcome", () => {
+  it("uses a rotating progress indicator and a compact rounded terminal failure outcome", () => {
     const turns: ConversationTurnPresentation[] = [{
       id: "turn-running-command",
       startedAt: 1_000,
@@ -233,8 +233,54 @@ describe("provider-neutral conversation transcript", () => {
     expect(progress?.getAttribute("class")).toContain("animate-spin");
     expect(progress?.getAttribute("class")).not.toContain("status-pulse");
     const failure = screen.getByRole("status", { name: "Agent work failed" });
-    expect(failure.className).toContain("rounded-none");
+    expect(failure.className).toContain("rounded-xl");
+    expect(failure.className).toContain("border");
+    expect(failure.className).toContain("w-fit");
+    expect(failure.className).toContain("px-3");
+    expect(failure.className).toContain("py-2.5");
     expect(failure.getAttribute("style") ?? "").not.toContain("background:");
+  });
+
+  it("keeps expanded Work compact inside an adaptive wide transcript", () => {
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-compact-work",
+      startedAt: 1_000,
+      endedAt: 4_000,
+      active: true,
+      work: [
+        {
+          kind: "message",
+          id: "process-before-command",
+          role: "assistant",
+          phase: "commentary",
+          markdown: "I’ll inspect the project first.",
+          copyText: "I’ll inspect the project first.",
+          timestamp: 2_000,
+        },
+        {
+          kind: "activity-group",
+          id: "command-after-process",
+          timestamp: 3_000,
+          activities: [{
+            id: "command-compact",
+            kind: "command",
+            state: "completed",
+            label: "Run command",
+            preview: "pnpm build",
+            previewKind: "command",
+          }],
+        },
+      ],
+    }];
+
+    render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
+
+    const transcript = screen.getByRole("log");
+    expect(transcript.className).toContain("max-w-[72rem]");
+    expect(transcript.className).toContain("gap-3");
+    const rows = transcript.querySelectorAll('[data-slot="message-scroller-item"]');
+    expect(rows[1]?.textContent).toContain("I’ll inspect the project first.");
+    expect(rows[2]?.textContent).toContain("Run command");
   });
 
   it("renders provider-neutral approval actions through transcript callbacks", async () => {

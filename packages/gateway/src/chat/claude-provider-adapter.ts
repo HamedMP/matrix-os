@@ -33,7 +33,11 @@ const ClaudeStreamLineSchema = z.object({
   event: z.object({
     type: z.string(),
     index: z.number().int().min(0).max(10_000).optional(),
-    delta: z.object({ type: z.string().optional(), text: z.string().optional() }).passthrough().optional(),
+    delta: z.object({
+      type: z.string().optional(),
+      text: z.string().optional(),
+      partial_json: z.string().max(16_000).optional(),
+    }).passthrough().optional(),
     content_block: z.object({
       type: z.string(),
       id: z.string().min(1).max(128).optional(),
@@ -143,7 +147,12 @@ export function createClaudeChatProviderAdapter(options: {
     let resultFailed = false;
     let emittedState = resumeState;
     let pendingDelta = "";
+    let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
+    let nextTextBlockId = 0;
+    const textMessageByIndex = new Map<number, string>();
+    const toolInputByIndex = new Map<number, string>();
+    const toolNameByIndex = new Map<number, string>();
     const activityByIndex = new Map<number, {
       activityId: string;
       kind: ReturnType<typeof claudeActivity>["kind"] | "reasoning";
@@ -157,13 +166,21 @@ export function createClaudeChatProviderAdapter(options: {
       deltaFlushScheduled = false;
       if (!pendingDelta) return;
       const text = pendingDelta;
+      const messageId = pendingDeltaMessageId;
       pendingDelta = "";
+      pendingDeltaMessageId = undefined;
       for (const delta of outputChunks(text)) {
-        queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+        queue.push(CanonicalProviderRunEventSchema.parse({
+          type: "assistant.delta",
+          ...(messageId ? { messageId } : {}),
+          delta,
+        }));
       }
     };
 
-    const enqueueDelta = (delta: string) => {
+    const enqueueDelta = (delta: string, messageId?: string) => {
+      if (pendingDelta && pendingDeltaMessageId !== messageId) flushPendingDelta();
+      pendingDeltaMessageId = messageId;
       pendingDelta += delta;
       if (pendingDelta.length >= 4_000) {
         flushPendingDelta();
@@ -198,12 +215,24 @@ export function createClaudeChatProviderAdapter(options: {
         enqueueDelta(sanitizeAssistantText(delta, {
           homePath: options.homePath,
           executionRoot: input.executionRoot,
-        }));
+        }), line.event?.index === undefined ? undefined : textMessageByIndex.get(line.event.index));
+      }
+      if (line.type === "stream_event" && line.event?.type === "content_block_delta"
+        && line.event.index !== undefined && line.event.delta?.type === "input_json_delta"
+        && line.event.delta.partial_json) {
+        const current = toolInputByIndex.get(line.event.index) ?? "";
+        if (current.length + line.event.delta.partial_json.length <= 16_000) {
+          toolInputByIndex.set(line.event.index, `${current}${line.event.delta.partial_json}`);
+        }
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_start"
         && line.event.index !== undefined && line.event.content_block) {
+        flushPendingDelta();
         const block = line.event.content_block;
-        if (block.type === "thinking") {
+        if (block.type === "text") {
+          textMessageByIndex.set(line.event.index, `claude_text_${nextTextBlockId}`);
+          nextTextBlockId += 1;
+        } else if (block.type === "thinking") {
           const activity = {
             activityId: `reasoning_${line.event.index}`,
             kind: "reasoning" as const,
@@ -225,6 +254,8 @@ export function createClaudeChatProviderAdapter(options: {
             }),
           };
           activityByIndex.set(line.event.index, activity);
+          toolInputByIndex.set(line.event.index, "");
+          toolNameByIndex.set(line.event.index, block.name);
           queue.push(CanonicalProviderRunEventSchema.parse({
             type: "agent.activity",
             ...activity,
@@ -234,15 +265,36 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_stop"
         && line.event.index !== undefined) {
+        flushPendingDelta();
         const activity = activityByIndex.get(line.event.index);
         if (activity) {
           activityByIndex.delete(line.event.index);
+          const partialInput = toolInputByIndex.get(line.event.index);
+          toolInputByIndex.delete(line.event.index);
+          const toolName = toolNameByIndex.get(line.event.index);
+          toolNameByIndex.delete(line.event.index);
+          let completedActivity = activity;
+          if (partialInput && toolName) {
+            try {
+              const parsedInput: unknown = JSON.parse(partialInput);
+              completedActivity = {
+                ...activity,
+                ...safeToolPreview(toolName, parsedInput, {
+                  homePath: options.homePath,
+                  executionRoot: input.executionRoot,
+                }),
+              };
+            } catch (error: unknown) {
+              console.warn("[chat-claude] Ignoring malformed bounded tool input:", error instanceof Error ? error.name : "UnknownError");
+            }
+          }
           queue.push(CanonicalProviderRunEventSchema.parse({
             type: "agent.activity",
-            ...activity,
+            ...completedActivity,
             status: "completed",
           }));
         }
+        textMessageByIndex.delete(line.event.index);
       }
       if (line.type === "result") {
         sawResult = true;

@@ -104,7 +104,7 @@ function UserMessage({
       <Message align="end">
         <MessageContent>
           <Bubble variant="secondary" align="end">
-            <BubbleContent className="max-w-[580px] whitespace-pre-wrap" data-selectable>
+            <BubbleContent className="max-w-[48rem] whitespace-pre-wrap" data-selectable>
               {renderStructuredContent ? message.content!.map((segment, index) => {
                 if (segment.kind === "text") return <span key={`text:${index}`}>{segment.text}</span>;
                 if (segment.kind === "image") {
@@ -268,7 +268,7 @@ function ResponseMessage({
       <Message>
         <MessageContent>
           <Bubble variant="ghost">
-            <BubbleContent className="max-w-[620px] overflow-visible">
+            <BubbleContent className="max-w-[64rem] overflow-visible">
               <MessageResponse copyText={callbacks.copyText}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
@@ -316,11 +316,10 @@ function Notice({
     <ConversationItem messageId={`notice:${notice.id}`}>
       <Message>
         <MessageContent>
-          <Bubble variant="ghost">
-            <BubbleContent
+          <div
               role="status"
               aria-label={notice.label}
-              className={`max-w-[620px] rounded-none border-l-2 py-1 pl-2 text-sm ${failed ? "flex items-start gap-2" : ""}`}
+              className={`w-fit min-w-[20rem] max-w-full rounded-xl border px-3 py-2.5 text-sm sm:max-w-[42rem] ${failed ? "flex items-start gap-2.5" : ""}`}
               style={{
                 borderColor: failed ? "var(--danger)" : "var(--border-default)",
                 color: "var(--text-primary)",
@@ -358,8 +357,7 @@ function Notice({
                 ) : null}
                 {actionFailed ? <p role="alert" className="mt-1 text-xs">The action failed. Try again.</p> : null}
               </div>
-            </BubbleContent>
-          </Bubble>
+          </div>
         </MessageContent>
       </Message>
     </ConversationItem>

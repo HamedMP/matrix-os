@@ -157,6 +157,129 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|Authorization|\/home\/matrix\/home|Inspecting the manifest/);
   });
 
+  it("keeps official Claude text blocks and completed command detail in provider order", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        session_id: "claude_timeline_session",
+        model: "claude-sonnet-4-6",
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "message_start" } }),
+      JSON.stringify({
+        type: "stream_event",
+        event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "I’ll inspect the project first." },
+        },
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "tool_build", name: "Bash", input: {} },
+        },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "input_json_delta", partial_json: "{\"command\":\"pnpm build\",\"cwd\":\"/home/matrix/home/apps/flappy-bird\"}" },
+        },
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 1 } }),
+      JSON.stringify({ type: "stream_event", event: { type: "message_start" } }),
+      JSON.stringify({
+        type: "stream_event",
+        event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "The build is ready in /home/matrix/home/apps/flappy-bird." },
+        },
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "The build is ready in /home/matrix/home/apps/flappy-bird.",
+        session_id: "claude_timeline_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "state.updated",
+        state: { sessionId: "claude_timeline_session", model: "claude-sonnet-4-6" },
+      },
+      {
+        type: "assistant.delta",
+        messageId: "claude_text_0",
+        delta: "I’ll inspect the project first.",
+      },
+      {
+        type: "agent.activity",
+        activityId: "tool_build",
+        kind: "command",
+        label: "Run command",
+        status: "running",
+      },
+      {
+        type: "agent.activity",
+        activityId: "tool_build",
+        kind: "command",
+        label: "Run command",
+        status: "completed",
+        preview: "pnpm build",
+        previewKind: "command",
+        detail: "Working directory: ~/apps/flappy-bird",
+      },
+      {
+        type: "assistant.delta",
+        messageId: "claude_text_1",
+        delta: "The build is ready in ~/apps/flappy-bird.",
+      },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+  });
+
+  it("preserves harmless JSX closers and prose separators while redacting real unrelated absolute paths", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
+        session_id: "claude_path_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toContainEqual({
+      type: "assistant.delta",
+      delta: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect [redacted path]",
+    });
+  });
+
   it("coalesces a healthy long Claude text stream instead of failing on total event count", async () => {
     const deltas = Array.from({ length: 600 }, () => JSON.stringify({
       type: "stream_event",
