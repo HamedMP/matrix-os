@@ -849,6 +849,69 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("keeps local layout edits dirty without overwriting newer state after a revision conflict", async () => {
+    const layoutId = "term-layout_0123456789abcdef0123456789abcdef";
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT") {
+        return Promise.resolve(mockJsonResponse({
+          error: { code: "layout_revision_conflict", message: "Layout changed elsewhere" },
+        }, 409));
+      }
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`)) {
+        return Promise.resolve(mockJsonResponse({
+          layoutId,
+          revision: 4,
+          layout: {
+            activeTabId: "bench-tab",
+            sidebarOpen: true,
+            tabs: [{
+              id: "bench-tab",
+              label: "bench",
+              paneTree: { type: "pane", id: "bench-pane", cwd: "projects", sessionId: "bench" },
+            }],
+          },
+        }));
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve(mockJsonResponse({ sessions: [{ name: "bench", status: "active" }] }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    }));
+
+    render(<TerminalApp layoutId={layoutId} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const paneProps = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+    act(() => paneProps.onSessionAttached(paneProps.paneTree.id, "bench-local"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    const putsAfterConflict = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT"
+    ));
+    expect(putsAfterConflict).toHaveLength(1);
+
+    act(() => window.dispatchEvent(new Event("pagehide")));
+    const putsAfterPageHide = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT"
+    ));
+    expect(putsAfterPageHide).toHaveLength(2);
+    expect(JSON.parse(String(putsAfterPageHide[1]?.[1]?.body))).toMatchObject({
+      baseRevision: 4,
+      layout: {
+        tabs: [{ paneTree: { sessionId: "bench-local" } }],
+      },
+    });
+  });
+
   it("does not read or save durable layouts for an ephemeral setup terminal", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(mockJsonResponse({ sessions: [] }))));
 

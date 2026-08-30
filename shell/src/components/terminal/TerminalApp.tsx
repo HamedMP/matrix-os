@@ -267,9 +267,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const terminalLayoutHydratedRef = useRef(false);
   const terminalLayoutDirtyRef = useRef(false);
+  const terminalLayoutChangeVersionRef = useRef(0);
   const terminalLayoutRevisionRef = useRef(0);
   const markTerminalLayoutDirty = () => {
     terminalLayoutDirtyRef.current = true;
+    terminalLayoutChangeVersionRef.current += 1;
   };
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `log` is consumed in the dependency array of the tabs-changed useEffect below; removing the memo would re-create it every render and re-run that effect.
   const log = useCallback((event: string, details: Record<string, unknown> = {}) => {
@@ -301,8 +303,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, [mobile, mobileTerminalInputId]);
 
-  const persistLayoutNow = async () => {
-    if (persistence === "ephemeral") return;
+  const persistLayoutNow = async (): Promise<boolean> => {
+    if (persistence === "ephemeral") return true;
     const layout: TerminalLayout = {
       tabs: tabsRef.current,
       activeTabId: activeTabIdRef.current,
@@ -313,38 +315,29 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       ? `${getGatewayUrl()}/api/terminal/window-layouts/${encodeURIComponent(layoutId)}`
       : `${getGatewayUrl()}/api/terminal/layout`;
     try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const res = await fetch(endpoint, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(layoutId
-            ? { baseRevision: terminalLayoutRevisionRef.current, layout }
-            : layout),
-          keepalive: true,
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (layoutId && res.status === 409 && attempt === 0) {
-          const current = await fetch(endpoint, { signal: AbortSignal.timeout(10_000) });
-          if (!current.ok) return;
-          const snapshot = await current.json() as { revision?: unknown };
-          if (typeof snapshot.revision !== "number") return;
-          terminalLayoutRevisionRef.current = snapshot.revision;
-          continue;
-        }
-        if (!res.ok) {
-          console.warn("Failed to save terminal layout:", res.status);
-          return;
-        }
-        if (layoutId) {
-          const saved = await res.json() as { revision?: unknown };
-          if (typeof saved.revision === "number") {
-            terminalLayoutRevisionRef.current = saved.revision;
-          }
-        }
-        return;
+      const res = await fetch(endpoint, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(layoutId
+          ? { baseRevision: terminalLayoutRevisionRef.current, layout }
+          : layout),
+        keepalive: true,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        console.warn("Failed to save terminal layout:", res.status);
+        return false;
       }
+      if (layoutId) {
+        const saved = await res.json() as { revision?: unknown };
+        if (typeof saved.revision === "number") {
+          terminalLayoutRevisionRef.current = saved.revision;
+        }
+      }
+      return true;
     } catch (err: unknown) {
       console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
+      return false;
     }
   };
 
@@ -725,9 +718,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, [initialized, launchTargetId]);
 
-  const flushLayout = useEffectEvent(() => {
-    void persistLayoutNow();
-  });
+  const flushLayout = useEffectEvent(() => persistLayoutNow());
 
   useEffect(() => {
     if (!initialized) {
@@ -739,15 +730,20 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       if (!terminalLayoutDirtyRef.current) return;
     }
     terminalLayoutDirtyRef.current = true;
+    terminalLayoutChangeVersionRef.current += 1;
 
     if (layoutSaveTimerRef.current) {
       clearTimeout(layoutSaveTimerRef.current);
     }
 
+    const changeVersion = terminalLayoutChangeVersionRef.current;
     layoutSaveTimerRef.current = setTimeout(() => {
       layoutSaveTimerRef.current = null;
-      flushLayout();
-      terminalLayoutDirtyRef.current = false;
+      void flushLayout().then((saved) => {
+        if (saved && terminalLayoutChangeVersionRef.current === changeVersion) {
+          terminalLayoutDirtyRef.current = false;
+        }
+      });
     }, 500);
 
     return () => {
@@ -772,8 +768,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         layoutSaveTimerRef.current = null;
       }
 
-      flushLayout();
-      terminalLayoutDirtyRef.current = false;
+      const changeVersion = terminalLayoutChangeVersionRef.current;
+      void flushLayout().then((saved) => {
+        if (saved && terminalLayoutChangeVersionRef.current === changeVersion) {
+          terminalLayoutDirtyRef.current = false;
+        }
+      });
     };
 
     window.addEventListener("pagehide", flushOnPageHide);
