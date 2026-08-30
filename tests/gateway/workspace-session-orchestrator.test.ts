@@ -8,6 +8,10 @@ import {
 } from "../../packages/gateway/src/workspace-session-orchestrator.js";
 
 describe("workspace session orchestrator", () => {
+  const terminalRef = {
+    workspaceId: "tws_00000000000000000000000000000001",
+    tabId: "tt_00000000000000000000000000000001",
+  };
   const tempHomes: string[] = [];
 
   afterEach(async () => {
@@ -28,7 +32,7 @@ describe("workspace session orchestrator", () => {
     worktreeId: "wt_abc123def456",
     agent: "codex",
     runtime: { type: "zellij", status: "running" },
-    terminalSessionId: "term_sess_fixed",
+    terminalRef,
   };
 
   function deps(overrides: Record<string, unknown> = {}) {
@@ -62,7 +66,7 @@ describe("workspace session orchestrator", () => {
       killSession: vi.fn(async () => ({ ok: true, session: { ...session, runtime: { type: "zellij", status: "exited" } } })),
     };
     const sessionRuntimeBridge = {
-      registerSession: vi.fn(() => ({ ok: true, mode: "observe", terminalSessionId: "term_sess_fixed" })),
+      registerSession: vi.fn(() => ({ ok: true, mode: "observe", terminalRef })),
     };
     const eventPublisher = {
       publishSessionStarted: vi.fn(async () => undefined),
@@ -612,7 +616,7 @@ describe("workspace session orchestrator", () => {
     });
     await expect(orchestrator.attachSession("sess_fixed", "observe")).resolves.toMatchObject({
       ok: true,
-      terminalSessionId: "term_sess_fixed",
+      terminalRef,
     });
     await expect(orchestrator.stopSession("sess_fixed")).resolves.toMatchObject({
       ok: true,

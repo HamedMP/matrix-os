@@ -148,10 +148,16 @@ describe("self-host server installer", () => {
     expect(script).toContain("Downloading Matrix OS");
     expect(script).toContain("--progress-bar");
     expect(script).toContain("run_required");
+    expect(script).toContain("restart_required_service matrix-terminal-runtime");
     expect(script).toContain("restart_required_service matrix-gateway");
     expect(script).toContain("restart_optional_service matrix-developer-tools");
     expect(script).toContain("wait_http_ok");
     expect(script).toContain("Verifying Matrix OS");
+    expect(script).toContain('run_required "verifying matrix-terminal-runtime" systemctl is-active --quiet matrix-terminal-runtime');
+    expect(script).toContain("wait_terminal_runtime_ready");
+    expect(script).toContain("/opt/matrix/bin/matrix-terminal-runtime --health-check");
+    expect(script).toContain("matrix-terminal-runtime socket is ready");
+    expect(script).toContain("matrix-terminal-runtime is active");
     expect(script).toContain('${description} returned HTTP 500');
     expect(script).toContain("wait_http_ok_auth");
     expect(script).toContain('wait_http_ok "Matrix shell"');
@@ -171,8 +177,14 @@ describe("self-host server installer", () => {
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code-server.service");
     expect(script).toContain("write_self_host_restore_service");
-    expect(script).toContain("systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server");
+    expect(script).toContain("systemctl enable docker matrix-restore matrix-terminal-runtime matrix-gateway matrix-shell matrix-code matrix-code-server");
     expect(script).toContain("systemctl enable --now docker");
+    expect(script.indexOf("restart_required_service matrix-restore")).toBeLessThan(
+      script.indexOf("restart_required_service matrix-terminal-runtime"),
+    );
+    expect(script.indexOf("restart_required_service matrix-terminal-runtime")).toBeLessThan(
+      script.indexOf("restart_required_service matrix-gateway"),
+    );
     expect(script).not.toContain("systemctl restart docker");
     expect(script).not.toContain("write_postgres_compose");
     expect(script).not.toContain("postgres-compose.yml");

@@ -58,6 +58,10 @@ vi.mock("@/stores/terminal-settings", () => {
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
 
+const WORKSPACE_ID = `tws_${"1".repeat(32)}`;
+const TAB_ID = `tt_${"2".repeat(32)}`;
+const TERMINAL_REF = `${WORKSPACE_ID}:${TAB_ID}`;
+
 class ResizeObserverMock {
   observe() {}
   disconnect() {}
@@ -98,8 +102,20 @@ describe("TerminalApp per-design interior chrome", () => {
       if (url.includes("/api/files/tree")) {
         return Promise.resolve(mockJsonResponse([]));
       }
-      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
-        return Promise.resolve(mockJsonResponse({ name: "quiet-river" }));
+      if (url.endsWith("/api/terminal/workspaces/ensure") && init?.method === "POST") {
+        return Promise.resolve(mockJsonResponse({
+          workspace: {
+            id: WORKSPACE_ID,
+            scope: "main",
+            projectId: null,
+            canonicalSize: { cols: 120, rows: 32 },
+            status: "running",
+            tabs: [],
+          },
+        }));
+      }
+      if (url.endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST") {
+        return Promise.resolve(mockJsonResponse({ tab: { id: TAB_ID } }));
       }
       return Promise.resolve(mockJsonResponse({}));
     }));
@@ -111,7 +127,7 @@ describe("TerminalApp per-design interior chrome", () => {
   });
 
   it("keeps the default interior when no OS design is active", async () => {
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     const root = screen.getByRole("application", { name: "Terminal" });
@@ -122,7 +138,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("keeps the default interior under the neumorphic design", async () => {
     setThemeStyle("neumorphic");
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     const root = screen.getByRole("application", { name: "Terminal" });
@@ -132,7 +148,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("renders the XP raised tab strip and cmd.exe content colors under winxp", async () => {
     setThemeStyle("winxp");
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     const root = screen.getByRole("application", { name: "Terminal" });
@@ -155,7 +171,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("does not render the design tab strip on mobile even under winxp", async () => {
     setThemeStyle("winxp");
-    render(<TerminalApp mobile initialSessionId="canvas-session-123" />);
+    render(<TerminalApp mobile initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     expect(screen.queryByTestId("terminal-design-tabstrip")).toBeNull();
@@ -164,7 +180,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("renders the Windows Terminal acrylic strip under win11 without recoloring content", async () => {
     setThemeStyle("win11");
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     const root = screen.getByRole("application", { name: "Terminal" });
@@ -186,7 +202,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("renders the minimal glass strip under macos-glass with a light translucent content surface", async () => {
     setThemeStyle("macos-glass");
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     const root = screen.getByRole("application", { name: "Terminal" });
@@ -204,7 +220,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("activates, creates, and closes tabs from the design tab strip", async () => {
     setThemeStyle("win11");
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     const tablist = screen.getByRole("tablist", { name: "Terminal tabs" });
@@ -218,7 +234,7 @@ describe("TerminalApp per-design interior chrome", () => {
     await flushAsync();
 
     expect(vi.mocked(fetch).mock.calls.some(([input, init]) => (
-      String(input).includes("/api/terminal/sessions") && init?.method === "POST"
+      String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST"
     ))).toBe(true);
 
     const shellTab = within(tablist).getByRole("tab", { name: "Shell" });
@@ -276,7 +292,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("links design tabs to the terminal panel with ARIA containment and controls", async () => {
     setThemeStyle("win11");
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     const tablist = screen.getByRole("tablist", { name: "Terminal tabs" });
@@ -291,7 +307,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("omits the tabpanel role when no design tab strip renders (flat design)", async () => {
     setThemeStyle("flat");
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     expect(screen.queryByRole("tabpanel")).toBeNull();
@@ -300,7 +316,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
   it("lists and activates open tabs from the win11 chevron menu", async () => {
     setThemeStyle("win11");
-    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    render(<TerminalApp initialSessionId={TERMINAL_REF} />);
     await flushAsync();
 
     await act(async () => {

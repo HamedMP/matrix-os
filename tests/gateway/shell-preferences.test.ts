@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
+import { createTerminalWorkspaceRoutes } from "../../packages/gateway/src/shell/workspace-routes.js";
 import {
   ShellPreferencesSchema,
   ShellPreferencesStore,
@@ -171,7 +172,7 @@ describe("shell preferences", () => {
     expect(rmMock.mock.calls.some(([path]) => String(path).endsWith("review-main.json"))).toBe(false);
   });
 
-  it("serves GET and PUT preferences routes with validation", async () => {
+  it("rejects legacy per-session preference routes with the client-upgrade contract", async () => {
     const root = await tempRoot();
     const preferences = new ShellPreferencesStore({ homePath: root });
     const setShellTheme = vi.fn(async () => {});
@@ -191,28 +192,21 @@ describe("shell preferences", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ shellThemeId: "light", fontFamily: "MesloLGS NF", cursorStyle: "underline" }),
     });
-    expect(put.status).toBe(200);
-    expect(setShellTheme).toHaveBeenCalledWith("light");
+    expect(put.status).toBe(426);
+    expect(setShellTheme).not.toHaveBeenCalled();
 
     const get = await app.request("/api/sessions/main/preferences");
-    expect(get.status).toBe(200);
-    await expect(get.json()).resolves.toMatchObject({
-      preferences: {
-        shellThemeId: "light",
-        fontFamily: "MesloLGS NF",
-        cursorStyle: "underline",
-      },
-    });
+    expect(get.status).toBe(426);
 
     const invalid = await app.request("/api/sessions/main/preferences", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fontFamily: "../bad" }),
     });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(426);
   });
 
-  it("serves global terminal preferences separately from session preferences", async () => {
+  it("serves global terminal preferences without reviving session preferences", async () => {
     const root = await tempRoot();
     const preferences = new ShellPreferencesStore({ homePath: root });
     const setShellTheme = vi.fn(async () => {});
@@ -242,17 +236,7 @@ describe("shell preferences", () => {
     });
 
     const sessionGet = await app.request("/api/sessions/main/preferences");
-    expect(sessionGet.status).toBe(200);
-    await expect(sessionGet.json()).resolves.toMatchObject({
-      preferences: { shellThemeId: "dark" },
-    });
-
-    const terminalSessionPut = await app.request("/api/sessions/terminal/preferences", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shellThemeId: "light" }),
-    });
-    expect(terminalSessionPut.status).toBe(200);
+    expect(sessionGet.status).toBe(426);
 
     const globalAfterTerminalSession = await app.request("/api/preferences");
     expect(globalAfterTerminalSession.status).toBe(200);
@@ -290,56 +274,58 @@ describe("shell preferences", () => {
 
   it("serves PATCH session UI state with validation and body limits", async () => {
     const updateUiState = vi.fn(async () => ({
-      name: "main",
+      id: tabId,
+      workspaceId,
+      displayName: "main",
+      cwd: "projects",
+      status: "running",
+      revision: 2,
       placement: "background",
-      visualStatus: "waiting",
       lastSeenSeq: 12,
-      latestSeq: 15,
-      unread: true,
     }));
     const app = new Hono();
-    app.route("/api", createShellRoutes({
-      registry: {
-        list: vi.fn(async () => []),
-        create: vi.fn(),
-        delete: vi.fn(),
-        updateUiState,
-      },
-    }));
+    app.route("/api/terminal", createTerminalWorkspaceRoutes({ runtime: {
+      listWorkspaces: vi.fn(async () => []),
+      ensureWorkspace: vi.fn(),
+      createTab: vi.fn(),
+      deletionImpact: vi.fn(async () => ({ runningTabs: 0, tabs: [] })),
+      deleteWorkspace: vi.fn(),
+      updateTabUiState: updateUiState,
+    } as any }));
 
-    const patch = await app.request("/api/sessions/main/ui-state", {
+    const patch = await app.request(`/api/terminal/workspaces/${workspaceId}/tabs/${tabId}/ui-state`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         placement: "background",
-        visualStatus: "waiting",
         lastSeenSeq: 12,
+        baseRevision: 1,
       }),
     });
     expect(patch.status).toBe(200);
     await expect(patch.json()).resolves.toMatchObject({
-      session: {
-        name: "main",
+      tab: {
+        displayName: "main",
         placement: "background",
-        visualStatus: "waiting",
       },
     });
-    expect(updateUiState).toHaveBeenCalledWith("main", {
+    expect(updateUiState).toHaveBeenCalledWith({ workspaceId, tabId }, {
       placement: "background",
       lastSeenSeq: 12,
+      baseRevision: 1,
     });
 
-    const invalid = await app.request("/api/sessions/main/ui-state", {
+    const invalid = await app.request(`/api/terminal/workspaces/${workspaceId}/tabs/${tabId}/ui-state`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ placement: "foreground" }),
+      body: JSON.stringify({ placement: "foreground", baseRevision: 1 }),
     });
     expect(invalid.status).toBe(400);
 
-    const tooLarge = await app.request("/api/sessions/main/ui-state", {
+    const tooLarge = await app.request(`/api/terminal/workspaces/${workspaceId}/tabs/${tabId}/ui-state`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note: "x".repeat(4096) }),
+      body: JSON.stringify({ note: "x".repeat(20 * 1024) }),
     });
     expect(tooLarge.status).toBe(413);
   });

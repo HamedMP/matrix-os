@@ -182,6 +182,12 @@ function safeCwdSchema() {
 
 export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
+  const clientUpgradeRequired = (c: Context) => c.json({
+    error: "client_upgrade_required",
+    message: "Upgrade Matrix OS to use terminal workspaces.",
+  }, 426);
+  app.all("/sessions", clientUpgradeRequired);
+  app.all("/sessions/*", clientUpgradeRequired);
   const sessionCreateRateLimiter =
     deps.sessionCreateRateLimiter ?? createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });

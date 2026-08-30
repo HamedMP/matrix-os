@@ -14,7 +14,7 @@ function summary(status: RuntimeSummary["runtime"]["status"]): RuntimeSummary {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: {

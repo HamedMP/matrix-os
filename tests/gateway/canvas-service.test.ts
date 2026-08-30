@@ -6,6 +6,20 @@ import { CanvasNotFoundError } from "../../packages/gateway/src/canvas/repositor
 import { CanvasConfigurationError, CanvasService, mapCanvasError } from "../../packages/gateway/src/canvas/service.js";
 
 const now = "2026-04-27T00:00:00.000Z";
+const workspaceId = "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const tabId = "tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+function terminalRuntime(workspaces: any[] = []) {
+  const workspace = { id: workspaceId, scope: "main", tabs: [] };
+  const tab = { id: tabId, workspaceId, name: "terminal", cwd: "projects/app", status: "running" };
+  return {
+    listWorkspaces: vi.fn().mockResolvedValue(workspaces),
+    ensureWorkspace: vi.fn().mockResolvedValue(workspace),
+    createTab: vi.fn().mockResolvedValue(tab),
+    writeInput: vi.fn().mockResolvedValue(undefined),
+    terminateTab: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 function record(overrides: Partial<any> = {}) {
   return {
@@ -76,37 +90,30 @@ describe("CanvasService", () => {
     expect(result.canvases[0].nodeCounts).toEqual({ total: 2, stale: 1, live: 1 });
   });
 
-  it("delegates terminal actions to the durable session registry", async () => {
-    const terminalRegistry = {
-      create: vi.fn().mockReturnValue("550e8400-e29b-41d4-a716-446655440000"),
-      getSession: vi.fn().mockReturnValue({ sessionId: "550e8400-e29b-41d4-a716-446655440000", state: "running" }),
-      destroy: vi.fn(),
-    };
-    const service = new CanvasService(repository([record()]), { terminalRegistry });
+  it("delegates terminal actions to the project workspace runtime", async () => {
+    const runtime = terminalRuntime();
+    const service = new CanvasService(repository([record()]), { terminalRuntime: runtime });
 
     await expect(service.executeAction("user_a", "cnv_0123456789abcdef", {
       nodeId: "node_terminal",
       type: "terminal.create",
       payload: { cwd: "projects/app" },
-    })).resolves.toMatchObject({ result: { kind: "terminal_session" } });
-    expect(terminalRegistry.create).toHaveBeenCalledWith("projects/app", undefined);
+    })).resolves.toEqual({ ok: true, result: { kind: "terminal_tab", terminalRef: { workspaceId, tabId } } });
+    expect(runtime.ensureWorkspace).toHaveBeenCalledWith({});
+    expect(runtime.createTab).toHaveBeenCalledWith(workspaceId, { name: "terminal", cwd: "projects/app" });
   });
 
   it("validates terminal cwd at the canvas action boundary", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "canvas-home-"));
-    const terminalRegistry = {
-      create: vi.fn().mockReturnValue("550e8400-e29b-41d4-a716-446655440000"),
-      getSession: vi.fn(),
-      destroy: vi.fn(),
-    };
-    const service = new CanvasService(repository([record()]), { terminalRegistry, homePath });
+    const runtime = terminalRuntime();
+    const service = new CanvasService(repository([record()]), { terminalRuntime: runtime, homePath });
 
     await expect(service.executeAction("user_a", "cnv_0123456789abcdef", {
       nodeId: "node_terminal",
       type: "terminal.create",
       payload: { cwd: "../outside" },
     })).rejects.toBeInstanceOf(CanvasNotFoundError);
-    expect(terminalRegistry.create).not.toHaveBeenCalled();
+    expect(runtime.createTab).not.toHaveBeenCalled();
   });
 
   it("requires homePath before resolving file.open actions", async () => {
@@ -136,16 +143,12 @@ describe("CanvasService", () => {
       nodes: [{
         id: "node_terminal",
         type: "terminal",
-        sourceRef: { kind: "terminal_session", id: "550e8400-e29b-41d4-a716-446655440000" },
+        sourceRef: { kind: "terminal_tab", terminalRef: { workspaceId, tabId } },
         displayState: "normal",
         metadata: {},
       }],
     })]), {
-      terminalRegistry: {
-        create: vi.fn(),
-        getSession: vi.fn().mockReturnValue(null),
-        destroy: vi.fn(),
-      },
+      terminalRuntime: terminalRuntime([]),
     });
 
     const result = await service.getCanvas("user_a", "cnv_0123456789abcdef");

@@ -47,7 +47,7 @@ function navCardsForSummary(summary: RuntimeSummary): NavCard[] {
       icon: "terminal-outline",
       accessibilityLabel: "Open terminals",
       route: "/agents/terminals",
-      badge: summary.terminalSessions.items.length,
+      badge: summary.terminalWorkspaces.items.reduce((count, workspace) => count + workspace.tabs.length, 0),
     },
   ];
 }

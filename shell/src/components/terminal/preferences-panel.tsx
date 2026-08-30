@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type ShellThemeId, type TerminalCursorStyle, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isShellThemeId } from "@/stores/terminal-defaults";

@@ -66,6 +66,9 @@ const HERMES_CONVERSATIONS = [
     updatedAt: HERMES_NOW - 1_800_000,
   },
 ] as const;
+const TERMINAL_WORKSPACE_ID = "tws_00000000000000000000000000000001";
+const TERMINAL_TAB_ID = "tt_00000000000000000000000000000001";
+const TERMINAL_REF = { workspaceId: TERMINAL_WORKSPACE_ID, tabId: TERMINAL_TAB_ID };
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
@@ -133,7 +136,7 @@ function codingAgentThread(prompt = "Fix the failing auth tests"): AgentThreadSn
     status: "completed",
     attention: "completed",
     projectId: "matrix-os",
-    terminalSessionId: "matrix-task-1",
+    terminalRef: TERMINAL_REF,
     createdAt: NOW,
     updatedAt: NOW,
   };
@@ -271,7 +274,7 @@ export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): Agen
           eventId: "evt_operator_terminal",
           threadId: thread.id,
           occurredAt: NOW,
-          terminalSessionId: "matrix-task-1",
+          terminalRef: TERMINAL_REF,
         },
         {
           type: "thread.completed",
@@ -511,16 +514,28 @@ export function codingAgentSummary(): RuntimeSummary {
       hasMore: false,
       limit: 50,
     },
-    terminalSessions: {
+    terminalWorkspaces: {
       items: [
         {
-          id: "matrix-task-1",
-          name: "Matrix shell",
+          id: "tws_00000000000000000000000000000001",
+          scope: "project",
+          projectId: "matrix-os",
+          canonicalSize: { cols: 120, rows: 36 },
           status: "running",
-          attachable: true,
-          cwdLabel: "matrix-os",
+          revision: 1,
           createdAt: NOW,
           updatedAt: NOW,
+          tabs: [{
+            id: "tt_00000000000000000000000000000001",
+            workspaceId: "tws_00000000000000000000000000000001",
+            name: "Matrix shell",
+            cwd: "projects/matrix-os",
+            status: "running",
+            revision: 1,
+            order: 0,
+            createdAt: NOW,
+            updatedAt: NOW,
+          }],
         },
       ],
       hasMore: false,
@@ -970,32 +985,8 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       });
       return;
     }
-    if (path === "/api/terminal/sessions") {
-      json(res, 200, {
-        sessions: [
-          {
-            name: "matrix-task-1",
-            status: "active",
-            visualStatus: "running",
-            createdAt: "2026-07-08T08:30:00.000Z",
-            updatedAt: NOW,
-          },
-          {
-            name: "matrix-review",
-            status: "degraded",
-            visualStatus: "waiting",
-            createdAt: "2026-07-08T08:15:00.000Z",
-            updatedAt: NOW,
-          },
-          {
-            name: "matrix-closed",
-            status: "exited",
-            visualStatus: "finished",
-            createdAt: "2026-07-08T07:45:00.000Z",
-            updatedAt: NOW,
-          },
-        ],
-      });
+    if (path === "/api/terminal/workspaces") {
+      json(res, 200, { workspaces: codingAgentSummary().terminalWorkspaces.items });
       return;
     }
     if (req.method === "GET" && path === "/api/auth/ws-token") {
@@ -1151,7 +1142,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     if (path === "/api/sessions") {
       json(res, 200, {
         sessions: [
-          { id: "sess-orch-1", name: "Task 1 session", runtime: { zellijSession: "matrix-task-1" } },
+          { id: "sess-orch-1", name: "Task 1 session", runtime: { terminalRef: TERMINAL_REF } },
           { id: "sess-orch-2", name: "Orchestrator-only", runtime: {} },
         ],
         nextCursor: null,
@@ -1190,9 +1181,12 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       socket.destroy();
       return;
     }
-    if (url.pathname === "/ws/terminal/session") {
+    if (url.pathname === "/ws/terminal/tab") {
       terminalWss.handleUpgrade(req, socket, head, (ws) => {
-        runTerminalSession(ws, url.searchParams.get("session") ?? "");
+        runTerminalTab(ws, {
+          workspaceId: url.searchParams.get("workspaceId") ?? "",
+          tabId: url.searchParams.get("tabId") ?? "",
+        });
       });
       return;
     }
@@ -1205,17 +1199,23 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     socket.destroy();
   });
 
-  function runTerminalSession(ws: WebSocket, session: string): void {
+  function runTerminalTab(ws: WebSocket, terminalRef: { workspaceId: string; tabId: string }): void {
     let seq = 0;
-    if (session !== "matrix-task-1") {
-      ws.send(JSON.stringify({ type: "error", code: "session_not_found", message: "Session not found" }));
+    if (terminalRef.workspaceId !== TERMINAL_WORKSPACE_ID || terminalRef.tabId !== TERMINAL_TAB_ID) {
+      ws.send(JSON.stringify({ type: "error", code: "tab_not_found", message: "Terminal tab is unavailable" }));
       ws.close();
       return;
     }
-    ws.send(JSON.stringify({ type: "attached", session, state: "running", fromSeq: seq }));
+    ws.send(JSON.stringify({
+      type: "attached",
+      terminalRef: TERMINAL_REF,
+      revision: 1,
+      canonicalSize: { cols: 120, rows: 36 },
+      nextSeq: seq,
+    }));
     const sendOutput = (data: string) => {
       seq += 1;
-      ws.send(JSON.stringify({ type: "output", seq, data }));
+      ws.send(JSON.stringify({ type: "output", terminalRef: TERMINAL_REF, revision: 1, seq, data }));
     };
     activeTerminalOutput = sendOutput;
     ws.once("close", () => {
@@ -1238,7 +1238,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         // Echo back like a shell, with deterministic seq numbering.
         sendOutput(msg.data.replace(/\r/g, "\r\nran!\r\nstub-shell$ "));
       } else if (msg.type === "ping") {
-        ws.send(JSON.stringify({ type: "pong" }));
+        ws.send(JSON.stringify({ type: "pong", terminalRef: TERMINAL_REF, revision: 1 }));
       }
     });
   }

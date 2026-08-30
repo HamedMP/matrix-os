@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { ClipboardImageReader } from "./clipboard-image.js";
 
 export const RICH_PASTE_MAX_ASSETS = 5;
-export const RICH_PASTE_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const RICH_PASTE_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 export const RICH_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_LOCAL_IMAGE_READ_RETRY_DELAYS_MS = [50, 100, 200, 300, 400, 450] as const;
 
@@ -233,20 +233,24 @@ export function createRichPasteUploadClient(options: RichPasteUploadClientOption
     async uploadPasteAssets(input) {
       const uploaded: RemotePasteAsset[] = [];
       for (const [index, asset] of input.assets.entries()) {
-        const headers: Record<string, string> = {
-          "Content-Type": asset.mimeType,
-          "X-Matrix-Filename": safeUploadFilename(asset),
-        };
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (options.token) {
           headers.Authorization = `Bearer ${options.token}`;
         }
-        const body = Buffer.from(asset.bytes);
-        const query = options.cwd ? `?${new URLSearchParams({ cwd: options.cwd }).toString()}` : "";
+        const [workspaceId, tabId, extra] = input.sessionName.split(":");
+        if (extra !== undefined || !/^tws_[0-9a-f]{32}$/.test(workspaceId ?? "") || !/^tt_[0-9a-f]{32}$/.test(tabId ?? "")) {
+          throw codedError("Image paste failed", "upload_failed");
+        }
+        const body = JSON.stringify({ assets: [{
+          name: safeUploadFilename(asset),
+          mimeType: asset.mimeType,
+          dataBase64: Buffer.from(asset.bytes).toString("base64"),
+        }] });
 
         let res: Response;
         try {
           res = await fetchImpl(
-            `${base}/api/terminal/sessions/${encodeURIComponent(input.sessionName)}/paste-assets${query}`,
+            `${base}/api/terminal/workspaces/${workspaceId}/tabs/${tabId}/paste-assets`,
             {
               method: "POST",
               headers,
@@ -269,7 +273,10 @@ export function createRichPasteUploadClient(options: RichPasteUploadClientOption
           throw codedError("Image paste failed", "upload_failed", err);
         }
 
-        uploaded.push(parseUploadResponse(payload, index));
+        const uploadedAssets = typeof payload === "object" && payload !== null && Array.isArray((payload as { assets?: unknown }).assets)
+          ? (payload as { assets: unknown[] }).assets
+          : [];
+        uploaded.push(parseUploadResponse(uploadedAssets[0], index));
       }
       return uploaded;
     },

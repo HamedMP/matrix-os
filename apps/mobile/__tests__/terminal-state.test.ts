@@ -127,32 +127,53 @@ describe("mobile terminal state", () => {
     expect(refreshed.activeSessionId).toBeNull();
   });
 
-  it("parses gateway shell sessions by name with status, clients and tabs", () => {
+  it("parses gateway workspaces into stable tab references with status and metadata", () => {
     const sessions = parseShellSessions([
       {
-        name: "matrix-7af3c2e",
-        status: "active",
-        visualStatus: "waiting",
-        agent: "claude",
-        subtitle: "Refactor the terminal sidebar",
-        lastAction: "Requested approval",
-        agentUpdatedAt: "2026-07-18T10:00:00.000Z",
-        model: "claude-sonnet-4-6",
-        strength: "high",
-        project: "Matrix OS",
-        repository: "HamedMP/matrix-os",
-        branch: "codex/session-context",
-        pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
-        attachedClients: 2,
-        updatedAt: "2026-06-24T10:00:00Z",
-        tabs: [{ idx: 0, name: "claude", focused: true }, { idx: 1 }],
+        id: `tws_${"a".repeat(32)}`,
+        projectId: "proj_matrix_os",
+        revision: 4,
+        tabs: [{
+          id: `tt_${"b".repeat(32)}`,
+          name: "matrix-7af3c2e",
+          cwd: "/home/matrix/home/projects/matrix-os",
+          status: "running",
+          revision: 3,
+          visualStatus: "waiting",
+          agent: { providerId: "claude" },
+          subtitle: "Refactor the terminal sidebar",
+          lastAction: "Requested approval",
+          agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+          model: "claude-sonnet-4-6",
+          strength: "high",
+          project: "Matrix OS",
+          repository: "HamedMP/matrix-os",
+          branch: "codex/session-context",
+          pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
+          attachedClients: 2,
+          updatedAt: "2026-06-24T10:00:00Z",
+        }],
       },
-      { name: "INVALID NAME" }, // rejected
-      { name: "main", visualStatus: "running" },
+      { id: "INVALID WORKSPACE", tabs: [] }, // rejected
+      {
+        id: `tws_${"c".repeat(32)}`,
+        revision: 1,
+        tabs: [{
+          id: `tt_${"d".repeat(32)}`,
+          name: "main",
+          cwd: "/home/matrix/home",
+          status: "running",
+          revision: 1,
+          visualStatus: "running",
+        }],
+      },
     ]);
     expect(sessions).toHaveLength(2);
     expect(sessions[0]).toMatchObject({
-      sessionId: "matrix-7af3c2e",
+      sessionId: `${`tws_${"a".repeat(32)}`}:${`tt_${"b".repeat(32)}`}`,
+      workspaceId: `tws_${"a".repeat(32)}`,
+      tabId: `tt_${"b".repeat(32)}`,
+      projectId: "proj_matrix_os",
       state: "running",
       visualStatus: "waiting",
       attachedClients: 2,
@@ -167,12 +188,21 @@ describe("mobile terminal state", () => {
       branch: "codex/session-context",
       pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
     });
-    expect(sessions[0]?.tabs).toEqual([{ idx: 0, name: "claude", focused: true }, { idx: 1 }]);
-    expect(sessions[1]?.sessionId).toBe("main");
+    expect(sessions[1]?.name).toBe("main");
   });
 
-  it("maps finished/exited shell sessions to an exited state", () => {
-    const [session] = parseShellSessions([{ name: "matrix-done01", visualStatus: "finished" }]);
+  it("maps exited workspace tabs to an exited state", () => {
+    const [session] = parseShellSessions([{
+      id: `tws_${"e".repeat(32)}`,
+      revision: 2,
+      tabs: [{
+        id: `tt_${"f".repeat(32)}`,
+        name: "matrix-done01",
+        cwd: "/home/matrix/home",
+        status: "exited",
+        revision: 2,
+      }],
+    }]);
     expect(session?.state).toBe("exited");
   });
 

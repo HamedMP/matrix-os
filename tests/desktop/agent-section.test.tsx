@@ -8,6 +8,15 @@ import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
+const TERMINAL_WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TERMINAL_TAB_ID = `tt_${"b".repeat(32)}`;
+
+function terminalPostResponse(path: string): unknown {
+  if (path === "/api/terminal/workspaces/ensure") return { workspace: { id: TERMINAL_WORKSPACE_ID } };
+  if (path === `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`) return { tab: { id: TERMINAL_TAB_ID } };
+  return { valid: true };
+}
+
 function currentAgentSettings() {
   return {
     identity: {},
@@ -176,7 +185,7 @@ describe("AgentSection", () => {
             projects: { items: [], hasMore: false, limit: 20 },
             activeThreads: { items: [], hasMore: false, limit: 20 },
             attentionThreads: { items: [], hasMore: false, limit: 20 },
-            terminalSessions: { items: [], hasMore: false, limit: 20 },
+            terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
             recentActivity: { items: [], hasMore: false, limit: 20 },
             limits: {
               maxPromptBytes: 16384,
@@ -300,7 +309,7 @@ describe("AgentSection", () => {
       return Promise.reject(new Error(`unexpected path ${path}`));
     });
     api.put.mockResolvedValue(current);
-    api.post.mockResolvedValue({ valid: true });
+    api.post.mockImplementation((path: string) => Promise.resolve(terminalPostResponse(path)));
 
     render(<AgentSection />);
 
@@ -311,9 +320,9 @@ describe("AgentSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Install OpenClaw" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
+      `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`,
       expect.objectContaining({
-        cmd: "/opt/matrix/bin/matrix-agent-runtime-control install openclaw",
+        command: ["sh", "-lc", "/opt/matrix/bin/matrix-agent-runtime-control install openclaw"],
         cwd: "projects",
       }),
     ));
@@ -345,8 +354,8 @@ describe("AgentSection", () => {
     expect(await screen.findByRole("button", { name: "Open setup terminal" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open setup terminal" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
-      expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),
+      `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`,
+      expect.objectContaining({ command: ["sh", "-lc", "hermes model"], cwd: "projects" }),
     ));
 
     const invalidApi = {
@@ -401,7 +410,7 @@ describe("AgentSection", () => {
     api.get.mockImplementation((path: string) => path === "/api/settings/agent"
       ? Promise.resolve(current)
       : Promise.resolve({}));
-    api.post.mockResolvedValue({ name: "matrix-install-hermes" });
+    api.post.mockImplementation((path: string) => Promise.resolve(terminalPostResponse(path)));
 
     render(<AgentSection />);
 
@@ -409,9 +418,9 @@ describe("AgentSection", () => {
     expect(screen.queryByText("Hermes is active")).toBeNull();
     fireEvent.click(install);
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
+      `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`,
       expect.objectContaining({
-        cmd: "/opt/matrix/bin/matrix-agent-runtime-control install hermes",
+        command: ["sh", "-lc", "/opt/matrix/bin/matrix-agent-runtime-control install hermes"],
         cwd: "projects",
       }),
     ));
@@ -428,7 +437,7 @@ describe("AgentSection", () => {
     api.get.mockImplementation((path: string) => path === "/api/settings/agent"
       ? Promise.resolve(current)
       : Promise.resolve({}));
-    api.post.mockResolvedValue({ name: "matrix-restart-hermes" });
+    api.post.mockImplementation((path: string) => Promise.resolve(terminalPostResponse(path)));
 
     render(<AgentSection />);
 
@@ -436,9 +445,9 @@ describe("AgentSection", () => {
     expect(screen.queryByText("Hermes is active")).toBeNull();
     fireEvent.click(restart);
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
+      `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`,
       expect.objectContaining({
-        cmd: "/opt/matrix/bin/matrix-agent-runtime-control switch hermes",
+        command: ["sh", "-lc", "/opt/matrix/bin/matrix-agent-runtime-control switch hermes"],
         cwd: "projects",
       }),
     ));
@@ -864,8 +873,8 @@ describe("AgentSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open provider setup Connect Codex" }));
 
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/terminal/sessions", expect.objectContaining({
-      cmd: "matrix setup codex",
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`, expect.objectContaining({
+      command: ["sh", "-lc", "matrix setup codex"],
       cwd: "projects",
     })));
     await act(async () => resolveSetupSession({ name: "matrix-setup-codex" }));
@@ -914,7 +923,7 @@ describe("AgentSection", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminalSessions: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
         recentActivity: { items: [], hasMore: false, limit: 20 },
         limits: {
           maxPromptBytes: 16384,

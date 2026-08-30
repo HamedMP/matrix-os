@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ProjectIdSchema, TerminalRefSchema } from "@matrix-os/contracts";
 
 export const CANVAS_DOCUMENT_MAX_BYTES = 256 * 1024;
 export const CANVAS_NODE_METADATA_MAX_BYTES = 16 * 1024;
@@ -95,7 +96,7 @@ export const CanvasDisplayStateSchema = z.enum([
 ]);
 
 export const NodeSourceKindSchema = z.enum([
-  "terminal_session",
+  "terminal_tab",
   "project",
   "task",
   "pull_request",
@@ -110,14 +111,21 @@ export const NodeSourceKindSchema = z.enum([
 
 export const NodeSourceRefSchema = z.object({
   kind: NodeSourceKindSchema,
-  id: z.string().min(1).max(256),
+  id: z.string().min(1).max(256).optional(),
+  terminalRef: TerminalRefSchema.optional(),
   projectId: z.string().min(1).max(120).optional(),
   external: z.record(z.string(), z.unknown()).optional(),
 }).superRefine((value, ctx) => {
-  if (value.kind === "url" && !safeUrl(value.id)) {
+  if (value.kind === "terminal_tab" && !value.terminalRef) {
+    ctx.addIssue({ code: "custom", message: "Terminal reference is required", path: ["terminalRef"] });
+  }
+  if (value.kind !== "terminal_tab" && !value.id) {
+    ctx.addIssue({ code: "custom", message: "Source id is required", path: ["id"] });
+  }
+  if (value.kind === "url" && (!value.id || !safeUrl(value.id))) {
     ctx.addIssue({ code: "custom", message: "Unsafe URL", path: ["id"] });
   }
-  if (value.kind === "file" && !safeRelativePath(value.id)) {
+  if (value.kind === "file" && (!value.id || !safeRelativePath(value.id))) {
     ctx.addIssue({ code: "custom", message: "Unsafe file path", path: ["id"] });
   }
 });
@@ -154,7 +162,7 @@ export const CanvasNodeSchema = z.object({
       ctx.addIssue({ code: "custom", message: "Custom nodes require type and version metadata", path: ["metadata"] });
     }
   }
-  if (value.type === "preview" && value.sourceRef?.kind === "url" && !safeUrl(value.sourceRef.id)) {
+  if (value.type === "preview" && value.sourceRef?.kind === "url" && (!value.sourceRef.id || !safeUrl(value.sourceRef.id))) {
     ctx.addIssue({ code: "custom", message: "Unsafe preview URL", path: ["sourceRef", "id"] });
   }
 });
@@ -264,9 +272,7 @@ const CanvasActionBaseSchema = z.object({
 });
 
 const ReviewActionPayloadSchema = boundedJson(64 * 1024);
-const TerminalSessionPayloadSchema = z.object({
-  sessionId: z.uuid(),
-}).strict();
+const TerminalTabPayloadSchema = z.object({ terminalRef: TerminalRefSchema }).strict();
 
 export const CanvasActionSchema = z.discriminatedUnion("type", [
   CanvasActionBaseSchema.extend({
@@ -274,27 +280,28 @@ export const CanvasActionSchema = z.discriminatedUnion("type", [
     payload: z.object({
       cwd: z.string().min(1).max(512).optional(),
       shell: z.string().min(1).max(120).optional(),
+      projectId: ProjectIdSchema.optional(),
     }).strict().default({}),
   }),
   CanvasActionBaseSchema.extend({
     type: z.literal("terminal.attach"),
-    payload: TerminalSessionPayloadSchema,
+    payload: TerminalTabPayloadSchema,
   }),
   CanvasActionBaseSchema.extend({
     type: z.literal("terminal.observe"),
-    payload: TerminalSessionPayloadSchema,
+    payload: TerminalTabPayloadSchema,
   }),
   CanvasActionBaseSchema.extend({
     type: z.literal("terminal.takeover"),
-    payload: TerminalSessionPayloadSchema,
+    payload: TerminalTabPayloadSchema,
   }),
   CanvasActionBaseSchema.extend({
     type: z.literal("terminal.kill"),
-    payload: TerminalSessionPayloadSchema,
+    payload: TerminalTabPayloadSchema,
   }),
   CanvasActionBaseSchema.extend({
     type: z.literal("terminal.write"),
-    payload: TerminalSessionPayloadSchema.extend({
+    payload: TerminalTabPayloadSchema.extend({
       input: z.string().min(1).max(32 * 1024),
     }),
   }),

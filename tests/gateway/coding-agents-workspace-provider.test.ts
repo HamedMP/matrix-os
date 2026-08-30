@@ -26,6 +26,10 @@ const execFileAsync = promisify(execFile);
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const baseNow = new Date("2026-07-06T12:00:00.000Z");
 const runtimeCreatedAt = "2026-07-06T12:00:00.500Z";
+const TEST_TERMINAL_REF = {
+  workspaceId: "tws_00000000000000000000000000000001",
+  tabId: "tt_00000000000000000000000000000001",
+} as const;
 
 const createBody = {
   providerId: "codex",
@@ -53,7 +57,7 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
       zellijSession: "matrix-agent-workspace-1",
       createdAt: runtimeCreatedAt,
     },
-    terminalSessionId: "term_sess_workspace_1",
+    terminalRef: TEST_TERMINAL_REF,
     startedAt: baseNow.toISOString(),
     lastActivityAt: baseNow.toISOString(),
     transcriptPath: "/home/matrix/home/system/sessions/sess_workspace_1.jsonl",
@@ -306,7 +310,7 @@ exec /bin/sh "$@"
       expect.objectContaining({ type: "thread.status", status: "running" }),
       expect.objectContaining({
         type: "terminal.bound",
-        terminalSessionCreatedAt: runtimeCreatedAt,
+        terminalRef: TEST_TERMINAL_REF,
       }),
     ]));
     expect(runtime.startSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -385,7 +389,7 @@ exec /bin/sh "$@"
       providerId: "codex",
       projectId: "repo-main",
       taskId: "task_abc123",
-      terminalSessionId: "matrix-agent-workspace-1",
+      terminalRef: TEST_TERMINAL_REF,
       status: "running",
       attention: "none",
     });
@@ -396,7 +400,7 @@ exec /bin/sh "$@"
       "terminal.bound",
     ]);
     expect(snapshot.events.items.at(-1)).toMatchObject({
-      terminalSessionCreatedAt: runtimeCreatedAt,
+      terminalRef: TEST_TERMINAL_REF,
     });
   });
 
@@ -502,7 +506,7 @@ exec /bin/sh "$@"
       title: "Coding agent run",
       status: "running",
       attention: "none",
-      terminalSessionId: "matrix-agent-workspace-1",
+      terminalRef: TEST_TERMINAL_REF,
       createdAt: baseNow.toISOString(),
       updatedAt: baseNow.toISOString(),
     });
