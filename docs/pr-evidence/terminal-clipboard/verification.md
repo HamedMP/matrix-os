@@ -2,8 +2,8 @@
 
 ## Feature checks
 
-- Focused Vitest matrix: 14 files, 281 tests passed.
-- Packaged Electron Playwright journey: 1 test passed in 75.68 seconds.
+- Focused Vitest matrix after restacking onto current main: 15 files, 295 tests passed.
+- Packaged Electron Playwright journey after restacking: 1 test passed in 53.70 seconds.
 - Desktop production package build: passed.
 - TypeScript builds/typechecks for all workspace packages: passed.
 - Pattern scanner: passed with zero violations.
@@ -11,7 +11,7 @@
   diagnostics are pre-existing project findings.
 - New shared clipboard policy: 100% statements, branches, functions, and lines
   in the focused V8 coverage report.
-- Feature source coverage run: all 281 tests passed. The repository-wide
+- Feature source coverage run: all 281 coverage-selected tests passed. The repository-wide
   threshold still exits non-zero because the root coverage configuration adds
   every kernel, gateway, platform, and desktop renderer source file even when
   the command selects only this feature's tests.
