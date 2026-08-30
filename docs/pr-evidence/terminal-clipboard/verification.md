@@ -31,3 +31,19 @@ open terminal handle and was stopped. No unrelated baseline files were changed.
 - `passive-selection-stability.webm`: complete synthetic packaged-Electron
   journey, including ten seconds of passive pointer movement in an SGR
   mouse-aware session.
+
+## Acceptance mapping
+
+- SC-001 and SC-005: shortcut classifier, native/web component suites, and the
+  packaged Electron journey cover exact Copy parity and exactly-once Paste.
+- SC-002: the packaged journey performs 50 consecutive single-line, multiline,
+  wrapped, Unicode, and Select All context-menu trials.
+- SC-003: the packaged SGR any-motion journey retains selection for at least ten
+  seconds; plain-shell behavior is covered by the same xterm path.
+- SC-004: renderer tests cover native Canvas scales 0.5, 1, and 2 and web Canvas
+  scales 0.25, 0.5, 1, 1.5, and 3, plus fitted zoom and Desktop layouts.
+- SC-006: denial, stale ownership, unmount, zero-write, privacy, and exactly-once
+  retry paths are covered in both renderers.
+- SC-007: the deterministic first-attempt proxy is the zero-failure 50-trial
+  packaged journey. Representative-user research remains a post-release product
+  measurement rather than a local automated-test assertion.

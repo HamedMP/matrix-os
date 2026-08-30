@@ -190,7 +190,7 @@
 - [x] T053 Run `bun run typecheck`, `bun run check:patterns`, `bun run test`, and the relevant coverage command from `package.json`; resolve all feature failures and verify changed pure/renderer logic meets the repository coverage target
 - [x] T054 Capture and attach a current screenshot plus short recording using synthetic output, showing multiline selection, Copy enabled, and passive motion stability, following `specs/118-fix-terminal-clipboard/quickstart.md`
 - [x] T055 Open a separate private documentation PR in `FinnaAI/matrix-os-site` updating the existing terminal page under `content/docs/` with shortcuts, right-click/Select All behavior, mouse-aware selection behavior, and renderer parity
-- [ ] T056 Re-run every acceptance scenario and measurable outcome in `specs/118-fix-terminal-clipboard/spec.md`, mark all completed implementation tasks in `specs/118-fix-terminal-clipboard/tasks.md`, verify `git diff --check`, and freeze the review commit range
+- [x] T056 Re-run every acceptance scenario and measurable outcome in `specs/118-fix-terminal-clipboard/spec.md`, mark all completed implementation tasks in `specs/118-fix-terminal-clipboard/tasks.md`, verify `git diff --check`, and freeze the review commit range
 
 **Checkpoint**: Complete feature is review-ready only after CI is green, screenshot/recording evidence is attached, both React audits pass, the docs PR exists, and Greptile reports 5/5 for every code-stack layer.
 
