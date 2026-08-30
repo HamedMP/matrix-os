@@ -148,6 +148,22 @@ platform summary. The response is identity-free and is never persisted on the
 VPS. If the summary is unavailable, the card says usage is unavailable; it does
 not reuse local configuration as a balance.
 
+Budget and model-policy controls become operator-owned as soon as that platform
+summary is configured. The gateway then omits `set_gateway_budget` and
+`set_gateway_allowlist` from `supportedActions`; web and Electron render the
+same values read-only and cannot write cosmetic owner JSON that the relay would
+ignore. Operators use the authenticated platform policy routes with optimistic
+revisions. Owner self-service may later narrow an operator ceiling, but it must
+be a machine-authenticated platform mutation before either shell advertises it.
+
+First-launch promotional credit is also platform-owned. It is disabled unless
+an operator explicitly configures one bounded campaign ID, positive microusd
+amount, and ISO expiry. Grant creation derives the exact owner, machine, and
+runtime slot from the running handle and uses one `ON CONFLICT`-guarded ledger
+entry per campaign/runtime. Retries cannot double-credit. Once remaining
+promotional credit expires, new funded admission and usage summaries fail
+closed; an expired local value is never treated as spendable credit.
+
 Usage displays must state their authority:
 
 - Matrix credit shows exact used and spendable amounts only from the reconciled

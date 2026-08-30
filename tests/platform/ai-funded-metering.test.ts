@@ -290,6 +290,57 @@ describe("funded AI metering", () => {
       .selectAll().where("entry_id", "=", "addon_1").execute()).toHaveLength(1);
   });
 
+  it("persists promotional expiry idempotently and fails closed after remaining credit expires", async () => {
+    await repo.updateGlobalPolicy({
+      expectedRevision: 0,
+      enabled: true,
+      allowedModelIds: [modelId],
+    });
+    await repo.setRuntimePolicy({
+      identity,
+      expectedRevision: 0,
+      enabled: true,
+      allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000,
+      expiresAt: null,
+    });
+    const grant = {
+      entryId: "launch_campaign_2026",
+      identity,
+      kind: "promotional_grant" as const,
+      amountMicrousd: 500,
+      sourceReference: "launch-2026",
+      expiresAt: "2026-08-30T20:05:00.000Z",
+    };
+    const [first, concurrentReplay] = await Promise.all([
+      repo.grantCredit(grant),
+      repo.grantCredit(grant),
+    ]);
+    expect(concurrentReplay).toEqual(first);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .selectAll().where("entry_id", "=", grant.entryId).execute()).toHaveLength(1);
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      promotionalBalanceMicrousd: 500,
+      creditBalanceMicrousd: 500,
+    });
+    await expect(repo.grantCredit({ ...grant, expiresAt: "2026-08-30T20:06:00.000Z" }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+    await expect(repo.grantCredit({ ...grant, entryId: "bad_addon_expiry", kind: "addon_grant" }))
+      .rejects.toThrow();
+    const issued = await repo.issueRuntimeCredential(identity);
+
+    clock = new Date("2026-08-30T20:05:00.000Z");
+    await expect(repo.getFundingSummary(identity)).rejects.toMatchObject({ code: "access_disabled" });
+    await expect(repo.authorize({
+      credential: issued.credential.token,
+      requestId: "expired_promotion",
+      modelId,
+      maxCostMicrousd: 1,
+    })).rejects.toMatchObject({ code: "access_disabled" });
+    await expect(repo.issueRuntimeCredential(identity)).rejects.toMatchObject({ code: "access_disabled" });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute()).toHaveLength(0);
+  });
+
   it("tracks promotional and add-on balances without exposing ledger internals", async () => {
     const credential = await enableAndFund({ budget: 200, credit: 50 });
     await repo.grantCredit({

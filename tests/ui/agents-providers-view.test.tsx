@@ -507,6 +507,19 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByRole("button", { name: "Add credit" })).toHaveAttribute("title", "Adding credit is not available yet");
   });
 
+  it("renders platform-authoritative gateway policy as read-only", () => {
+    const authoritative = snapshot();
+    authoritative.supportedActions = authoritative.supportedActions.filter((action) =>
+      action !== "set_gateway_budget" && action !== "set_gateway_allowlist");
+    const { onMutate } = setup({ snapshot: authoritative });
+
+    expect(screen.getByLabelText("Monthly budget in USD")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save budget" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Allow Claude Sonnet 5" })).toBeDisabled();
+    expect(screen.getByText("Some gateway controls are unavailable in this runtime.")).toBeVisible();
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+
   it("adds a harness from the top-rail flow without collecting credentials", () => {
     const { onMutate } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Add harness" }));

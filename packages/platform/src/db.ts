@@ -181,6 +181,7 @@ export interface AiFundedCreditLedgerTable {
   source_reference: string;
   reservation_id: string | null;
   period_start: string | null;
+  expires_at: string | null;
   created_at: string;
 }
 
@@ -1380,6 +1381,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       source_reference TEXT NOT NULL,
       reservation_id TEXT REFERENCES ai_funded_usage_reservations(reservation_id) ON UPDATE CASCADE ON DELETE CASCADE,
       period_start TEXT,
+      expires_at TEXT,
       created_at TEXT NOT NULL,
       CHECK (
         (kind IN ('promotional_grant', 'addon_grant') AND amount_microusd > 0 AND reservation_id IS NULL AND period_start IS NULL)
@@ -1387,8 +1389,14 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       )
     )
   `.execute(db);
+  await sql`ALTER TABLE ai_funded_credit_ledger ADD COLUMN IF NOT EXISTS expires_at TEXT`.execute(db);
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_funded_ledger_reservation_kind ON ai_funded_credit_ledger(reservation_id, kind) WHERE reservation_id IS NOT NULL`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_ledger_runtime ON ai_funded_credit_ledger(machine_id, runtime_slot, created_at)`.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ai_funded_ledger_promotional_expiry
+    ON ai_funded_credit_ledger(machine_id, runtime_slot, expires_at)
+    WHERE kind = 'promotional_grant' AND expires_at IS NOT NULL
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS provisioning_jobs (

@@ -318,6 +318,20 @@ describe("ProviderSettingsStore", () => {
       topUpEnabled: false,
     });
     expect(snapshot.supportedActions).not.toContain("add_credit");
+    expect(snapshot.supportedActions).not.toContain("set_gateway_budget");
+    expect(snapshot.supportedActions).not.toContain("set_gateway_allowlist");
+    await expect(store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "platform_budget_is_read_only",
+      monthlyBudgetMicrousd: 4_000_000,
+    })).rejects.toMatchObject({ code: "runtime_unavailable" });
+    await expect(store.mutate({
+      type: "set_gateway_allowlist",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "platform_allowlist_is_read_only",
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+    })).rejects.toMatchObject({ code: "runtime_unavailable" });
 
     const stale = await createStore({
       fundingSummary: { ...fundingSummary, asOf: "2026-08-30T09:50:00.000Z" },

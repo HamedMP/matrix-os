@@ -59,6 +59,17 @@ MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=<bounded>
 MATRIX_FUNDED_AI_RATE_LIMIT=<bounded>
 CLOUDFLARE_AI_GATEWAY_URL=<fixed dedicated gateway URL>
 CLOUDFLARE_AI_GATEWAY_TOKEN=<central relay only>
+
+# Platform control plane; all three secrets are distinct and at least 32 chars.
+MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=true
+AI_RELAY_CONTROL_TOKEN=<dedicated relay service token>
+AI_FUNDED_CREDENTIAL_HASH_SECRET=<dedicated credential hash secret>
+
+# Optional first-launch campaign. Omit or set false to issue no free credit.
+AI_FUNDED_PROMOTIONAL_GRANT_ENABLED=true
+AI_FUNDED_PROMOTIONAL_GRANT_CAMPAIGN_ID=<bounded stable campaign id>
+AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD=<positive integer>
+AI_FUNDED_PROMOTIONAL_GRANT_EXPIRES_AT=<ISO timestamp>
 ```
 
 Incomplete funded configuration must fail before listen. The transport checkpoint uses a distinct `sk-matrix-funded-*` HMAC audience; activation replaces it with the planned owner/runtime/expiry/revocation-scoped credential. Customer VPSes receive only relay URL and that scoped runtime token.
@@ -66,6 +77,19 @@ Incomplete funded configuration must fail before listen. The transport checkpoin
 Matrix AI becomes selectable only when explicit current owner/runtime policy
 allows at least one model **and** fresh bounded relay health is ready. A legacy
 key, configured URL, or previous successful request does not satisfy readiness.
+Global and per-runtime policy activation is operator-authenticated and
+revisioned. The runtime policy route derives owner, machine, and runtime slot
+from the reviewed handle; request bodies cannot supply identity. Promotional
+grant creation is separately operator-authenticated, disabled without the
+explicit campaign configuration above, and idempotent for that campaign and
+runtime. Stripe/add-on purchase remains unavailable.
+
+The platform exposes operator-authenticated `GET`/`PUT`
+`/api/operator/ai/funded/global-policy`, `GET`/`PUT`
+`/api/operator/ai/funded/runtimes/:handle/policy`, and `POST`
+`/api/operator/ai/funded/runtimes/:handle/promotional-grant`. Read the current
+revision before each `PUT`; a stale `expectedRevision` returns a safe conflict.
+Never place owner or machine IDs in these request bodies.
 
 ## 5. Exercise the full fake-upstream path
 

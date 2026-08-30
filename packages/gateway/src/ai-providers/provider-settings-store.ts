@@ -207,6 +207,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       dependencies: this.#dependencies,
       config,
       canonical,
+      gatewayPolicyAuthority: this.#fundingSummary ? "platform" : "local",
     });
   }
 

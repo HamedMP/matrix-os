@@ -44,6 +44,7 @@ import { dispatchBillingRuntimeActions } from './billing-runtime-actions.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import {
+  createAiFundedOperatorRoutes,
   createAiFundedRelayRoutes,
   createAiFundedRuntimeRoutes,
   loadAiFundedControlPlaneConfig,
@@ -164,6 +165,7 @@ type CreatePlatformApp = (deps: {
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
+  internalFundedAiOperatorRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -260,6 +262,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   });
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
+  let internalFundedAiOperatorRoutes: Hono | undefined;
   if (fundedAiConfig.enabled) {
     const fundedAiRepository = createAiFundedPolicyRepository({
       db,
@@ -276,6 +279,12 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
       repository: fundedAiRepository,
+    });
+    internalFundedAiOperatorRoutes = createAiFundedOperatorRoutes({
+      db,
+      operatorSecret: fundedAiConfig.platformSecret,
+      repository: fundedAiRepository,
+      promotionalGrant: fundedAiConfig.promotionalGrant,
     });
     console.log('[platform] Funded AI control plane enabled; relay activation remains disabled');
   }
@@ -770,6 +779,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     internalSyncRoutes,
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
+    internalFundedAiOperatorRoutes,
     customerVpsService,
     goldenSnapshotService,
     goldenSnapshotConfig,
