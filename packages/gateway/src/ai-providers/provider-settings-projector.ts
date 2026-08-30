@@ -353,7 +353,6 @@ export async function projectProviderSettings(input: {
       ? { mode: "writable" }
       : { mode: "read_only", reason: "runtime_unavailable" },
     supportedActions,
-    supportedActions,
     configurationHarnessKinds: input.configurationHarnessKinds ?? [],
     modelProviders,
     accessSources: sources,
