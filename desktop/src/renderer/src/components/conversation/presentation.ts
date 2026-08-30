@@ -121,4 +121,5 @@ export interface ConversationPresentationCallbacks {
   loadImage?: (src: string) => Promise<Blob>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
+  openFile?: (path: string) => boolean;
 }

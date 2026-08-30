@@ -87,6 +87,16 @@ describe("createFilesApi", () => {
     expect(api.getText).toHaveBeenCalledWith("/files/projects/my%20notes.md");
   });
 
+  it("passes the configured transfer cap to bounded editor reads", async () => {
+    const api = makeApi();
+    const files = createFilesApi(api, 1_024);
+    await expect(files.read("projects/large notes.md")).resolves.toBe("file body");
+    expect(api.getText).toHaveBeenCalledWith(
+      "/files/projects/large%20notes.md",
+      { maxBytes: 1_024 },
+    );
+  });
+
   it("writes raw text via PUT /files with per-segment path encoding", async () => {
     const api = makeApi();
     const files = createFilesApi(api);

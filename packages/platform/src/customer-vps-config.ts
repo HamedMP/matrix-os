@@ -17,11 +17,6 @@ export interface CustomerVpsConfig {
   hostBundleUrlOverride?: boolean;
   platformRegisterUrl: string;
   platformSecret: string;
-  r2AccessKeyId: string;
-  r2SecretAccessKey: string;
-  r2Endpoint: string;
-  r2AccountId: string;
-  r2Bucket: string;
   r2PrefixRoot: string;
   posthogToken: string;
   posthogProjectToken: string;
@@ -83,11 +78,6 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     hostBundleUrlOverride: Boolean(env.MATRIX_HOST_BUNDLE_URL),
     platformRegisterUrl: `${platformUrl.replace(/\/$/, '')}/vps/register`,
     platformSecret: env.PLATFORM_SECRET ?? '',
-    r2AccessKeyId: env.S3_ACCESS_KEY_ID ?? env.R2_ACCESS_KEY_ID ?? '',
-    r2SecretAccessKey: env.S3_SECRET_ACCESS_KEY ?? env.R2_SECRET_ACCESS_KEY ?? '',
-    r2Endpoint: env.S3_ENDPOINT ?? env.R2_ENDPOINT ?? '',
-    r2AccountId: env.R2_ACCOUNT_ID ?? '',
-    r2Bucket: env.S3_BUCKET ?? env.R2_BUCKET ?? 'matrixos-sync',
     r2PrefixRoot: env.R2_PREFIX_ROOT ?? 'matrixos-sync',
     posthogToken: env.POSTHOG_TOKEN ?? env.NEXT_PUBLIC_POSTHOG_KEY ?? '',
     posthogProjectToken:

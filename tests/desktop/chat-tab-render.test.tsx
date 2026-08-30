@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
 import { createLegacyGlobalProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
 import {
   conversationMessageDisplay,
   sharedConversationResources,
@@ -68,6 +69,7 @@ describe("ChatTab", () => {
       status: "ready",
     });
     useTabs.setState(useTabs.getInitialState(), true);
+    useDesktopEditor.setState(useDesktopEditor.getInitialState(), true);
     useProviderPreferences.setState({
       defaultProviderId: null,
       composerSelections: {},
@@ -266,6 +268,30 @@ describe("ChatTab", () => {
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noopener");
     expect(link.hasAttribute("node")).toBe(false);
+  });
+
+  it("opens full Matrix-home file paths from Chat in a new Editor tab", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{
+        id: "assistant-file-path",
+        role: "assistant",
+        content: "Open `/home/matrix/home/projects/app/src/main.ts:42` to inspect the change.",
+        timestamp: 10_000,
+      }],
+    });
+
+    render(<ChatTab />);
+    fireEvent.click(screen.getByRole("button", { name: "Open main.ts in Editor" }));
+
+    expect(useDesktopEditor.getState()).toMatchObject({
+      paths: ["projects/app/src/main.ts"],
+      activePath: "projects/app/src/main.ts",
+    });
+    expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
+      kind: "editor",
+      title: "Editor",
+    }));
   });
 
   it("shows live turn and tool status without claiming unavailable reasoning", () => {

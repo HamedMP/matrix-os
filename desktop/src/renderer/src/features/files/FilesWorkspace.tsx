@@ -6,6 +6,7 @@ import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowser";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
+import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 
 export { resolveActivePath } from "./FilePreviewPane";
 export type { FileSelection } from "./FilePreviewPane";
@@ -179,7 +180,12 @@ export default function FilesWorkspace() {
         </div>
         {previewSelection ? (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>}>
-            <PreviewPane key={previewSelection.path} selection={previewSelection} onClose={() => setSelections((current) => ({ ...current, [activeTabId]: null }))} />
+            <PreviewPane
+              key={previewSelection.path}
+              selection={previewSelection}
+              onEdit={openFileInDesktopEditor}
+              onClose={() => setSelections((current) => ({ ...current, [activeTabId]: null }))}
+            />
           </Suspense>
         ) : null}
       </div>

@@ -16,7 +16,7 @@ const electronMock = vi.hoisted(() => {
       return webContents;
     }),
     setWindowOpenHandler: vi.fn(),
-    loadURL: vi.fn(),
+    loadURL: vi.fn(async () => {}),
     isDestroyed: vi.fn(() => false),
     close: vi.fn(),
   };
@@ -43,11 +43,31 @@ beforeEach(() => {
   electronMock.viewOptions.length = 0;
   electronMock.shell.openExternal.mockClear();
   electronMock.webContents.setWindowOpenHandler.mockClear();
+  electronMock.webContents.loadURL.mockClear();
   electronMock.webContents.session.setPermissionCheckHandler.mockClear();
   electronMock.webContents.session.setPermissionRequestHandler.mockClear();
 });
 
 describe("createWebContentsView", () => {
+  it("denies browser permissions for the trusted code editor surface", () => {
+    createWebContentsView({
+      window: {
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:code-editor",
+      allowedOrigins: ["https://code.matrix-os.com"],
+      denyPermissions: true,
+      onState: vi.fn(),
+    });
+
+    expect(electronMock.webContents.session.setPermissionCheckHandler).toHaveBeenCalledWith(
+      expect.any(Function),
+    );
+    expect(electronMock.webContents.session.setPermissionRequestHandler).toHaveBeenCalledWith(
+      expect.any(Function),
+    );
+  });
+
   it("installs the restricted bridge preload only for app views and unregisters it on close", () => {
     const register = vi.fn();
     const unregister = vi.fn();
@@ -137,6 +157,36 @@ describe("createWebContentsView", () => {
 
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(electronMock.shell.openExternal).toHaveBeenCalledWith("https://evil.test/phish");
+  });
+
+  it("rewrites canonical runtime redirects and popups through the authenticated tunnel", () => {
+    const resolveNavigation = vi.fn(() => ({
+      disposition: "rewrite" as const,
+      url: "http://127.0.0.1:49152/callback?code=ok",
+    }));
+    createWebContentsView({
+      window: {
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "runtime-browser-id",
+      allowedOrigins: ["http://127.0.0.1:49152"],
+      resolveNavigation,
+      onState: vi.fn(),
+    });
+    const preventDefault = vi.fn();
+    const redirect = electronMock.handlers.get("will-redirect");
+
+    redirect?.({ preventDefault }, "http://localhost:3000/callback?code=ok");
+    const openHandler = electronMock.webContents.setWindowOpenHandler.mock.calls[0]?.[0];
+    expect(openHandler?.({ url: "http://localhost:3000/callback?code=ok" })).toEqual({ action: "deny" });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(resolveNavigation).toHaveBeenCalledWith("http://localhost:3000/callback?code=ok");
+    expect(electronMock.webContents.loadURL).toHaveBeenCalledTimes(2);
+    expect(electronMock.webContents.loadURL).toHaveBeenCalledWith(
+      "http://127.0.0.1:49152/callback?code=ok",
+    );
+    expect(electronMock.shell.openExternal).not.toHaveBeenCalled();
   });
 
   it("opens HTTPS links requested by the hosted Shell in the system browser", () => {

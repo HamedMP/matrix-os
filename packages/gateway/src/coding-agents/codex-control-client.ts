@@ -6,6 +6,7 @@ import {
   AgentModelOptionSchema,
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
+  ProviderModelReferenceSchema,
   RequestIdSchema,
   UserInputAnswerRequestSchema,
 } from "@matrix-os/contracts";
@@ -37,7 +38,7 @@ const TurnFrameSchema = z.object({
   type: z.literal("turn"),
   prompt: z.string().trim().min(1).max(64 * 1024)
     .refine((value) => Buffer.byteLength(value, "utf8") <= 64 * 1024),
-  model: z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32),
   clientRequestId: RequestIdSchema,
 }).strict();

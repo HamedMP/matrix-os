@@ -43,9 +43,16 @@ vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({
 }));
 vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
   default: () => <button type="button">Chat workspace</button>,
+  HermesPane: () => <button type="button">Hermes workspace</button>,
+  ChatUnavailableState: () => <div>Chat unavailable</div>,
 }));
 vi.mock("@desktop/renderer/src/features/files/FilesWorkspace", () => ({
   default: () => <button type="button">Files workspace</button>,
+}));
+vi.mock("@desktop/renderer/src/features/browser/BrowserTab", () => ({
+  default: ({ active }: { active: boolean }) => (
+    <button type="button" data-active={String(active)}>Browser workspace</button>
+  ),
 }));
 
 describe("TabContent", () => {
@@ -176,6 +183,15 @@ describe("TabContent", () => {
     render(<TabContent />);
 
     expect(screen.getByRole("heading", { name: /^(Apps|Loading apps)$/ })).toBeTruthy();
+  });
+
+  it("renders Browser through its dedicated runtime-aware workspace", () => {
+    useTabs.getState().openTab({ kind: "browser", title: "Browser", closable: false });
+
+    render(<TabContent />);
+
+    expect(screen.getByRole("button", { name: "Browser workspace" }).getAttribute("data-active"))
+      .toBe("true");
   });
 
   it("contains a task panel exception without blanking the desktop renderer", () => {

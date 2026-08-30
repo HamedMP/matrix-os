@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
+import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 import {
   AgentAttachmentSchema,
   AgentAttentionSchema,
@@ -21,7 +21,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.150.1";
+export const CODEX_VERIFIED_VERSION = "0.151.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
@@ -41,7 +41,7 @@ export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#safe-client-error";
 export * from "#terminal-links";
-export { IsoTimestampSchema } from "#contract-primitives";
+export { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 
 const UNSAFE_ASSISTANT_PREVIEW_TEXT =
   /(postgres(?:ql)?:\/\/|mysql:\/\/|sqlite:|pipedream|twilio|openai|anthropic|constraint|stack trace|zod|issues|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+|password\s*[=:]|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16}|token|secret|private key|db\.internal|localhost|127\.0\.0\.1)/i;
@@ -377,7 +377,7 @@ export const CreateAgentThreadRequestSchema = z.object({
   mode: AgentModeSchema.optional(),
   approvalPolicy: ApprovalPolicySchema.optional(),
   sandboxMode: SandboxModeSchema.optional(),
-  model: referenceId(160).optional(),
+  model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
   clientRequestId: RequestIdSchema,
@@ -396,7 +396,7 @@ export type AdoptAgentThreadRequest = z.infer<typeof AdoptAgentThreadRequestSche
 export const CreateAgentTurnRequestSchema = z.object({
   message: boundedText(24_000, 96 * 1024),
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
-  model: referenceId(160).optional(),
+  model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
   clientRequestId: RequestIdSchema,
 }).strict();

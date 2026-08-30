@@ -4,6 +4,14 @@ export function parseSemver(value: string): [number, number, number] | null {
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
+const SAFE_SYSTEM_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+export function safeSystemVersion(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return SAFE_SYSTEM_VERSION.test(trimmed) ? trimmed : undefined;
+}
+
 export function normalizeMatrixReleaseTag(tagName: string): string | null {
   if (tagName.startsWith("cli-")) return null;
   const parsed = parseSemver(tagName);

@@ -32,6 +32,28 @@ describe("buildGatewayUrl", () => {
 });
 
 describe("createApiClient", () => {
+  it("can pin requests to the original runtime", async () => {
+    let runtimeSlot = "computer-a";
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => runtimeSlot,
+      fetchFn,
+    });
+    const pinned = client.forRuntime(runtimeSlot);
+
+    runtimeSlot = "computer-b";
+    await pinned.post("/api/bridge/query", { action: "update" });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/bridge/query?runtime=computer-a",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("fetches and parses JSON with a timeout signal", async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { projects: [{ slug: "matrix-os" }] }));
     const client = createApiClient({

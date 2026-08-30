@@ -48,7 +48,7 @@ const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "agent", label: "Agent", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
-  { id: "integrations", label: "Integrations", icon: CableIcon },
+  { id: "integrations", label: "Services", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },
@@ -57,14 +57,14 @@ const sections = [
   { id: "system", label: "System", icon: MonitorIcon },
 ] as const;
 
-type StandardSectionId = typeof sections[number]["id"];
-type SectionId = StandardSectionId | "default-installs";
+export type SettingsSectionId = typeof sections[number]["id"];
+type SectionId = SettingsSectionId | "default-installs";
 type SettingsSection = { id: SectionId; label: string; icon: typeof PaletteIcon };
 
 // Sections temporarily hidden from the Settings nav for the paid-beta scope.
 // The section components and render branches below are intentionally kept so a
 // section can be re-enabled by removing its id here. See AGENTS.md "Deferred work".
-const HIDDEN_SECTION_IDS = new Set<StandardSectionId>([
+const HIDDEN_SECTION_IDS = new Set<SettingsSectionId>([
   "channels",
   "skills",
   "security",
@@ -257,8 +257,11 @@ function SettingsFrame({
   if (open !== prevOpen) setPrevOpen(open);
   if (open && resolvedLockedSection) {
     if (activeSection !== resolvedLockedSection) setActiveSection(resolvedLockedSection);
-  } else if (justOpened && showBillingSection && billingActive === false) {
-    if (activeSection !== "billing") setActiveSection("billing");
+  } else if (justOpened) {
+    const openSection = showBillingSection && billingActive === false
+      ? "billing"
+      : resolvedDefaultSection;
+    if (activeSection !== openSection) setActiveSection(openSection);
   } else if (!open) {
     if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   }

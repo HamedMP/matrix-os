@@ -66,12 +66,19 @@ const NativeApprovalDecisionListSchema = z.array(z.unknown()).max(16).transform(
     const parsed = NativeApprovalDecisionSchema.safeParse(decision);
     return parsed.success ? [parsed.data] : [];
   }));
+// This runner is executed directly by plain Node, so keep this boundary schema
+// aligned with ProviderModelReferenceSchema from @matrix-os/contracts.
+const ProviderModelReferenceSchema = z.string()
+  .min(1)
+  .max(160)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/)
+  .refine((value) => !value.includes(".."));
 const RunnerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
-  model: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  model: ProviderModelReferenceSchema.optional(),
   effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
   serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
 }).strict();

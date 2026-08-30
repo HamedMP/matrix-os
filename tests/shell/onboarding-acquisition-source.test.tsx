@@ -136,6 +136,26 @@ describe("onboarding acquisition source", () => {
     expect(onBuild).toHaveBeenCalledWith(["claude-code", "opencode"]);
   });
 
+  it("submits an immutable empty selection by click and Enter", () => {
+    const submittedSelections: string[][] = [];
+    const onBuild = vi.fn((tools: Array<"codex" | "claude-code" | "opencode" | "pi">) => {
+      submittedSelections.push([...tools]);
+      tools.push("codex");
+    });
+    render(<DefaultInstallsStep onBuild={onBuild} />);
+
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      fireEvent.click(screen.getByRole("checkbox", { name: label }));
+    }
+    const buildButton = screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement;
+    expect(buildButton.disabled).toBe(false);
+
+    fireEvent.click(buildButton);
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(submittedSelections).toEqual([[], []]);
+  });
+
   it("does not repeat first-touch attribution in reused add-computer flows", () => {
     render(<DefaultInstallsStep onBuild={vi.fn()} />);
 

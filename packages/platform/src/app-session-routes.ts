@@ -14,7 +14,10 @@ import type { ClerkAuth } from './clerk-auth.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { HetznerLocationSchema, HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
-import { DeveloperToolsSchema } from './developer-tools.js';
+import {
+  DeveloperToolsSchema,
+  resolveProvisioningDeveloperTools,
+} from './developer-tools.js';
 import { getActivePrebillingIntent } from './prebilling-provisioning-store.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import {
@@ -212,21 +215,25 @@ export function createAppSessionRoutes(opts: {
         opts.applyNoStoreHeaders(c);
         return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
       }
-      const checkoutAttempt = parsed.data.developerTools
+      const checkoutAttempt = parsed.data.developerTools !== undefined
         ? null
         : await getSettlingCheckoutAttempt(opts.db, result.userId, parsed.data.runtime);
-      const developerTools = parsed.data.developerTools ?? (
+      const settlingCheckoutDeveloperTools = (
         checkoutAttempt &&
         (checkoutAttempt.status === 'paid' || checkoutAttempt.status === 'open')
           ? checkoutAttempt.developerTools
           : undefined
+      );
+      const developerTools = resolveProvisioningDeveloperTools(
+        parsed.data.developerTools,
+        settlingCheckoutDeveloperTools,
       );
       const provisioned = await opts.customerVpsService.provision(
         {
           handle: identity.handle,
           clerkUserId: result.userId,
           runtimeSlot: parsed.data.runtime,
-          ...(developerTools ? { developerTools } : {}),
+          ...(developerTools !== undefined ? { developerTools } : {}),
           ...(parsed.data.serverType ? { serverType: parsed.data.serverType } : {}),
           ...(parsed.data.location ? { location: parsed.data.location } : {}),
         },

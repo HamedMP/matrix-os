@@ -27,6 +27,12 @@ export interface R2Client {
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
+  completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: Array<{ partNumber: number; etag: string }>,
+  ): Promise<{ etag?: string }>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
   getObject(
     key: string,
     options?: { signal?: AbortSignal },
@@ -73,6 +79,8 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     DeleteObjectCommand,
     CreateMultipartUploadCommand,
     UploadPartCommand,
+    CompleteMultipartUploadCommand,
+    AbortMultipartUploadCommand,
     getSignedUrl,
   } = await loadS3();
   const s3Config = {
@@ -150,6 +158,39 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
       return getSignedUrl(presignS3 as any, command as any, {
         expiresIn,
         signingDate: new Date(),
+      });
+    },
+
+    async completeMultipartUpload(
+      key: string,
+      uploadId: string,
+      parts: Array<{ partNumber: number; etag: string }>,
+    ): Promise<{ etag?: string }> {
+      const command = new CompleteMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: parts.map((part) => ({
+            PartNumber: part.partNumber,
+            ETag: part.etag,
+          })),
+        },
+      });
+      const response = await s3.send(command, {
+        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
+      });
+      return { etag: response.ETag ?? undefined };
+    },
+
+    async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+      const command = new AbortMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+      });
+      await s3.send(command, {
+        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
       });
     },
 

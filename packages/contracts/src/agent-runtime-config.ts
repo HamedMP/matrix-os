@@ -1,12 +1,12 @@
 import { z } from "zod/v4";
-import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
+import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 
 const SafeSlugSchema = z.string().min(1).max(80).regex(SAFE_SLUG);
 const SafeLabelSchema = z.string().trim().min(1).max(120);
-const ModelReferenceSchema = z.string().trim().min(1).max(160);
+const ModelReferenceSchema = ProviderModelReferenceSchema;
 
 export const AgentRuntimeIdSchema = z.enum(["hermes", "openclaw"]);
-export const AgentEffortSchema = z.enum(["low", "medium", "high", "max"]);
+export const AgentEffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export const AgentAuthKindSchema = z.enum([
   "platform",
   "api_key",
@@ -72,7 +72,7 @@ export const AgentModelDescriptorSchema = z.object({
   displayName: SafeLabelSchema,
   description: z.string().trim().min(1).max(240).optional(),
   capabilities: z.array(AgentModelCapabilitySchema).max(12),
-  efforts: z.array(AgentEffortSchema).max(4),
+  efforts: z.array(AgentEffortSchema).max(5),
   available: z.boolean(),
 }).strict().superRefine((model, ctx) => {
   if (new Set(model.capabilities).size !== model.capabilities.length) {
@@ -269,7 +269,7 @@ export const LegacyAgentSettingsViewSchema = z.object({
   identity: z.record(z.string(), z.unknown()),
   kernel: LegacyAgentKernelSchema,
   availableModels: z.array(LegacyAgentModelSchema).max(32),
-  availableEfforts: z.array(AgentEffortSchema).max(4),
+  availableEfforts: z.array(AgentEffortSchema).max(5),
   defaults: LegacyAgentKernelSchema,
 }).strict();
 const LegacyCompatibleAgentSettingsViewSchema = LegacyAgentSettingsViewSchema

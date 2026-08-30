@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { createSettingsRoutes } from "../../packages/gateway/src/routes/settings.js";
+import { buildAgentSettingsView } from "../../packages/gateway/src/agent-config/service.js";
 
 function stubChannelManager() {
   return {
@@ -131,8 +132,8 @@ describe("GET /api/settings/agent/summary", () => {
     expect(body.soulPreview).not.toContain("sk-ant-never-return-this");
     expect(body.soulPreview).not.toContain("/opt/matrix/private");
     expect(body.kernel).toEqual({
-      model: "claude-opus-4-6",
-      modelLabel: "Claude Opus 4.6",
+      model: "claude-opus-5",
+      modelLabel: "Claude Opus 5",
       effort: "high",
     });
     expect(JSON.stringify(body)).not.toContain("/opt/matrix/private");
@@ -241,5 +242,29 @@ describe("GET /api/settings/agent/summary", () => {
       tagline: "Stay curious, grounded, and useful.",
     });
     expect(body.soulPreview).toBe("Stay curious, grounded, and useful.");
+  });
+});
+
+describe("current and legacy Anthropic models", () => {
+  it("advertises Claude 5 while retaining an explicitly saved legacy model", () => {
+    const view = buildAgentSettingsView({
+      identity: { name: "Matrix Owner" },
+      config: { kernel: { model: "claude-sonnet-4-5", effort: "medium" } },
+      claudeLoginAvailable: false,
+      platformCredentialAvailable: true,
+    });
+
+    expect(view.chat).toMatchObject({
+      model: "claude-sonnet-4-5",
+      effort: "medium",
+      source: "saved",
+    });
+    expect(view.availableModels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "claude-fable-5" }),
+      expect.objectContaining({ id: "claude-opus-5" }),
+      expect.objectContaining({ id: "claude-sonnet-5" }),
+      expect.objectContaining({ id: "claude-haiku-4-5" }),
+      expect.objectContaining({ id: "claude-sonnet-4-5", tier: "Legacy" }),
+    ]));
   });
 });

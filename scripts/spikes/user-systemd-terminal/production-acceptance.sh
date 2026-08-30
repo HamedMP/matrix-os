@@ -1066,7 +1066,7 @@ diagnose_update_failure() {
   if [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; then
     error_code="$(read_update_error_code 2>/dev/null || true)"
     case "$error_code" in
-      download_failed|download_metadata_changed|update_target_mismatch|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown) ;;
+      download_failed|download_metadata_changed|update_target_mismatch|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|pre_install_service_stop_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_service_start_failed|post_install_health_failed|post_install_runtime_version_mismatch|post_install_rollback_failed|apply_failed|apply_interrupted|unknown) ;;
       *) error_code=unknown ;;
     esac
   fi
@@ -1109,7 +1109,7 @@ wait_update() {
       { [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; }; then
       error_code="$(read_update_error_code 2>/dev/null || true)"
       case "$error_code" in
-        download_failed|download_metadata_changed|update_target_mismatch|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown) ;;
+        download_failed|download_metadata_changed|update_target_mismatch|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|pre_install_service_stop_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_service_start_failed|post_install_health_failed|post_install_runtime_version_mismatch|post_install_rollback_failed|apply_failed|apply_interrupted|unknown) ;;
         *) error_code=unknown ;;
       esac
       if [ "$error_code" != none ]; then

@@ -22,6 +22,17 @@ export const DeveloperToolsWithDefaultSchema = z.preprocess(
   DeveloperToolsSchema,
 );
 
+export function resolveProvisioningDeveloperTools(
+  explicitSelection: readonly DeveloperToolId[] | undefined,
+  settlingCheckoutSelection: readonly DeveloperToolId[] | undefined,
+): DeveloperToolId[] {
+  return canonicalizeDeveloperTools(
+    explicitSelection !== undefined
+      ? explicitSelection
+      : settlingCheckoutSelection ?? DEFAULT_DEVELOPER_TOOLS,
+  );
+}
+
 export function serializeDeveloperTools(input: readonly DeveloperToolId[] = DEFAULT_DEVELOPER_TOOLS): string {
   return JSON.stringify(canonicalizeDeveloperTools(input));
 }

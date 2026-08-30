@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import {
   CanonicalChatMessageSchema,
+  CanonicalChatModelReferenceSchema,
   CanonicalChatInvocationSchema,
   CanonicalChatResourceKindSchema,
   CanonicalChatResourceReferenceSchema,
@@ -12,7 +13,6 @@ import {
   CanonicalChatTurnSchema,
   CanonicalChatTurnIdSchema,
   CanonicalProviderInstanceIdSchema,
-  CanonicalProviderModelIdSchema,
 } from "#canonical-chat";
 import { CanonicalProviderDriverKindSchema } from "#canonical-chat-provider";
 import {
@@ -50,7 +50,7 @@ const CanonicalChatInspectorRunSchema = z.object({
   ]),
   driverKind: CanonicalProviderDriverKindSchema,
   instanceId: CanonicalProviderInstanceIdSchema,
-  model: CanonicalProviderModelIdSchema,
+  model: CanonicalChatModelReferenceSchema,
   startedAt: IsoTimestampSchema.optional(),
   completedAt: IsoTimestampSchema.optional(),
 }).strict();

@@ -12,6 +12,7 @@ import { MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
+import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -539,6 +540,7 @@ export function CanonicalChatWorkspace({
           <>
             <ConversationTranscript turns={transcript} callbacks={{
               copyText,
+              openFile: openFileInDesktopEditor,
               ...(api ? { loadImage: (src: string) => api.getBlob(src, { maxBytes: 10 * 1024 * 1024 }) } : {}),
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,

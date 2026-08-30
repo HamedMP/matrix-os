@@ -27,6 +27,7 @@ export function DesktopTerminalThemePicker() {
           aria-label="Shell theme"
           title="Shell theme"
           disabled={!api}
+          onPointerDown={(event) => event.stopPropagation()}
           className="inline-flex size-7 shrink-0 items-center justify-center rounded-md border outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             background: "var(--bg-surface)",

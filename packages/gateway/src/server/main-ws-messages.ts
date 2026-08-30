@@ -44,6 +44,12 @@ export function kernelEventToServerMessage(event: KernelEvent, requestId?: strin
       return { type: "kernel:result", data: event.data, requestId };
     case "aborted":
       return { type: "kernel:aborted", requestId };
+    case "refusal":
+      return {
+        type: "kernel:error",
+        message: "The selected model could not complete this request",
+        requestId,
+      };
   }
 }
 

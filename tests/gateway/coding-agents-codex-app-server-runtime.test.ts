@@ -479,7 +479,7 @@ describe("Codex app-server control runtime", () => {
       approvalPolicy: "on-request",
       sandbox: "workspace-write",
       writableRoots: [homePath],
-      model: "gpt-5.6-sol",
+      model: "openai/gpt-5.6-sol",
       effort: "low",
       serviceTier: "fast",
     }), "utf8").toString("base64");
@@ -493,7 +493,7 @@ describe("Codex app-server control runtime", () => {
     ], { cwd: homePath, stdio: ["pipe", "pipe", "pipe"] });
     const secondTurn = Buffer.from(JSON.stringify({
       prompt: "Second turn.",
-      model: "gpt-5.6-terra",
+      model: "openai/gpt-5.6-terra",
       modelOptions: [
         { id: "effort", value: "high" },
         { id: "service_tier", value: "standard" },
@@ -509,14 +509,14 @@ describe("Codex app-server control runtime", () => {
       expect(requests[0]).toMatchObject({
         threadId: "native-thread-turns",
         input: [{ type: "text", text: "First turn.", text_elements: [] }],
-        model: "gpt-5.6-sol",
+        model: "openai/gpt-5.6-sol",
         effort: "low",
         serviceTier: "fast",
       });
       expect(requests[1]).toMatchObject({
         threadId: "native-thread-turns",
         input: [{ type: "text", text: "Second turn.", text_elements: [] }],
-        model: "gpt-5.6-terra",
+        model: "openai/gpt-5.6-terra",
         effort: "high",
         serviceTier: "standard",
       });

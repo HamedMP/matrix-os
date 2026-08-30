@@ -26,7 +26,7 @@ describe("TerminalSessionSidebar", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+    fireEvent.click(screen.getByRole("button", { name: "New shell session" }));
     expect(onCreate).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Open swift-willow" }));
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: "swift-willow" }));
