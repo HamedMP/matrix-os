@@ -19,7 +19,6 @@ import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./Termin
 import {
   DesktopWebLinkProvider,
   activateDesktopTerminalLink,
-  copyDesktopTerminalLink,
   copyDesktopTerminalText,
   findDesktopTerminalLinkAtPointer,
   openDesktopTerminalLink,
@@ -87,6 +86,7 @@ export default function TerminalView({
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
+  const clipboardOperationGenerationRef = useRef(0);
   const visualScaleRef = useRef(visualScale);
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
@@ -102,6 +102,17 @@ export default function TerminalView({
     termRef.current?.focus();
   }, []);
   const [pasteError, setPasteError] = useState<string | null>(null);
+  const copyTerminalTextWithFeedback = useCallback(async (text: string) => {
+    const operation = ++clipboardOperationGenerationRef.current;
+    const result = await copyDesktopTerminalText(text);
+    if (clipboardOperationGenerationRef.current !== operation) return result;
+    setPasteError(result === "success" ? null : "Clipboard copy failed. Try again.");
+    return result;
+  }, []);
+
+  useEffect(() => () => {
+    clipboardOperationGenerationRef.current += 1;
+  }, []);
 
   if (stateSessionName !== sessionName) {
     setStateSessionName(sessionName);
@@ -159,7 +170,7 @@ export default function TerminalView({
       if (!action) return true;
       event.preventDefault();
       if (action === "copy") {
-        void copyDesktopTerminalText(terminal.getSelection());
+        void copyTerminalTextWithFeedback(terminal.getSelection());
       } else if (action === "paste") {
         void pasteClipboardRef.current();
       } else {
@@ -295,7 +306,7 @@ export default function TerminalView({
       terminal.dispose();
       termRef.current = null;
     };
-  }, [sessionName]);
+  }, [copyTerminalTextWithFeedback, sessionName]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -364,6 +375,14 @@ export default function TerminalView({
     const host = hostRef.current;
     if (!host || !active) return;
     let cancelled = false;
+    clipboardOperationGenerationRef.current += 1;
+
+    const isCurrentOperation = (
+      operation: number,
+      attachment: ActiveAttachment | null,
+    ) => !cancelled
+      && clipboardOperationGenerationRef.current === operation
+      && attachmentRef.current === attachment;
 
     const filesForEvent = (event: ClipboardEvent | DragEvent) => terminalPasteFiles(
       "clipboardData" in event ? event.clipboardData : event.dataTransfer,
@@ -378,13 +397,21 @@ export default function TerminalView({
       return files;
     };
 
-    const uploadAndPaste = async (files: ReturnType<typeof terminalPasteFiles>) => {
+    const uploadAndPaste = async (
+      files: ReturnType<typeof terminalPasteFiles>,
+      operation = ++clipboardOperationGenerationRef.current,
+      initiatingAttachment = attachmentRef.current,
+    ) => {
       if (files.some(({ file }) => file.size > MAX_TERMINAL_PASTE_FILE_BYTES)) {
-        if (!cancelled) setPasteError("Images are limited to 10 MB.");
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          setPasteError("Images are limited to 10 MB.");
+        }
         return;
       }
-      if (!api || !attachmentRef.current) {
-        if (!cancelled) setPasteError("Image paste is unavailable. Reconnect and try again.");
+      if (!api || !initiatingAttachment) {
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          setPasteError("Image paste is unavailable. Reconnect and try again.");
+        }
         return;
       }
       try {
@@ -407,21 +434,29 @@ export default function TerminalView({
           }
           return response.terminalPath;
         }));
-        if (paths.length === 0 || cancelled) return;
+        if (paths.length === 0 || !isCurrentOperation(operation, initiatingAttachment)) return;
         const payload = bracketTerminalPaths(paths);
         if (payload === "\x1b[200~\x1b[201~") throw new Error("invalid terminal paste paths");
-        attachmentRef.current?.write(payload);
+        initiatingAttachment.write(payload);
         setPasteError(null);
       } catch (err: unknown) {
-        console.warn("[terminal] image paste failed:", err instanceof Error ? err.message : String(err));
-        if (!cancelled) setPasteError("Image paste failed. Try again.");
+        console.warn("[terminal] image paste failed", {
+          category: err instanceof DOMException ? err.name : "terminal-paste-error",
+        });
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          setPasteError("Image paste failed. Try again.");
+        }
       }
     };
 
     const pasteFromClipboard = async () => {
+      const operation = ++clipboardOperationGenerationRef.current;
+      const initiatingAttachment = attachmentRef.current;
       const clipboard = navigator.clipboard;
       if (!clipboard) {
-        if (!cancelled) setPasteError("Clipboard paste is unavailable. Try again.");
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          setPasteError("Clipboard paste is unavailable. Try again.");
+        }
         return;
       }
       const clipboardWithOptionalRead = clipboard as Clipboard & {
@@ -431,7 +466,8 @@ export default function TerminalView({
         try {
           const imageFiles = await readTerminalClipboardFiles(clipboardWithOptionalRead);
           if (imageFiles.length > 0) {
-            await uploadAndPaste(imageFiles);
+            if (!isCurrentOperation(operation, initiatingAttachment)) return;
+            await uploadAndPaste(imageFiles, operation, initiatingAttachment);
             return;
           }
         } catch (error: unknown) {
@@ -441,19 +477,25 @@ export default function TerminalView({
         }
       }
       if (!clipboard.readText) {
-        if (!cancelled) setPasteError("Clipboard paste is unavailable. Try again.");
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          setPasteError("Clipboard paste is unavailable. Try again.");
+        }
         return;
       }
       try {
         const text = await clipboard.readText();
-        if (cancelled || text.length === 0) return;
-        termRef.current?.paste(text);
+        if (!isCurrentOperation(operation, initiatingAttachment) || text.length === 0) return;
+        const terminal = termRef.current;
+        if (!terminal) return;
+        terminal.paste(text);
         setPasteError(null);
       } catch (error: unknown) {
         console.warn("[terminal] clipboard text read unavailable", {
           category: error instanceof DOMException ? error.name : "clipboard-error",
         });
-        if (!cancelled) setPasteError("Clipboard paste failed. Try again.");
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          setPasteError("Clipboard paste failed. Try again.");
+        }
       }
     };
     pasteClipboardRef.current = pasteFromClipboard;
@@ -476,6 +518,7 @@ export default function TerminalView({
     host.addEventListener("drop", onDrop, { capture: true });
     return () => {
       cancelled = true;
+      clipboardOperationGenerationRef.current += 1;
       if (pasteClipboardRef.current === pasteFromClipboard) {
         pasteClipboardRef.current = async () => undefined;
       }
@@ -544,8 +587,8 @@ export default function TerminalView({
         menu={terminalContextMenu}
         onClose={closeTerminalContextMenu}
         onOpen={openDesktopTerminalLink}
-        onCopy={copyDesktopTerminalLink}
-        onCopySelection={copyDesktopTerminalText}
+        onCopy={(link) => copyTerminalTextWithFeedback(link.url)}
+        onCopySelection={copyTerminalTextWithFeedback}
         onSelectAll={() => termRef.current?.selectAll()}
       />
     </div>

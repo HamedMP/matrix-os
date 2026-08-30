@@ -18,6 +18,14 @@ const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "p
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const attachmentResize = vi.fn();
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
 const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoisted(() => ({
   createdFitAddons: [] as Array<{ fitCalls: number }>,
   createdTerminals: [] as Array<{
@@ -699,6 +707,120 @@ describe("TerminalView session switching", () => {
     expect(writeText).toHaveBeenCalledWith("focused pane");
   });
 
+  it("keeps denied copy selected and exposes only generic feedback", async () => {
+    const selection = "token=clipboard-secret /Users/operator/private.txt session-alpha";
+    const rawFailure = "OpenAI clipboard provider rejected private.txt";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error(rawFailure)) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = selection;
+
+    terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    expect(await screen.findByText("Clipboard copy failed. Try again.")).toBeTruthy();
+    expect(terminal.selection).toBe(selection);
+    expect(document.body.textContent).not.toContain(selection);
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(selection);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("OpenAI");
+    expect(diagnostics).not.toContain("private.txt");
+    expect(diagnostics).not.toContain("session-alpha");
+  });
+
+  it("cancels a delayed clipboard paste when its initiating session is replaced", async () => {
+    const pendingRead = deferred<string>();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText: vi.fn(() => pendingRead.promise) },
+    });
+    const { rerender } = render(<TerminalView sessionName="alpha" />);
+    const initiatingTerminal = createdTerminals.at(-1)!;
+
+    initiatingTerminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    rerender(<TerminalView sessionName="beta" />);
+    pendingRead.resolve("must not reach beta");
+    await act(async () => pendingRead.promise);
+
+    expect(attachmentWrite).not.toHaveBeenCalledWith("must not reach beta");
+  });
+
+  it("cancels delayed clipboard work on unmount and retries exactly once after denial", async () => {
+    const unmountedRead = deferred<string>();
+    const readText = vi.fn()
+      .mockImplementationOnce(() => unmountedRead.promise)
+      .mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"))
+      .mockResolvedValueOnce("retry payload");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText },
+    });
+    const first = render(<TerminalView sessionName="alpha" />);
+    createdTerminals.at(-1)!.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    first.unmount();
+    unmountedRead.resolve("after unmount");
+    await act(async () => unmountedRead.promise);
+    expect(attachmentWrite).not.toHaveBeenCalledWith("after unmount");
+
+    render(<TerminalView sessionName="beta" />);
+    const retryTerminal = createdTerminals.at(-1)!;
+    const paste = () => retryTerminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    paste();
+    expect(await screen.findByText("Clipboard paste failed. Try again.")).toBeTruthy();
+    attachmentWrite.mockClear();
+    paste();
+    await waitFor(() => expect(attachmentWrite).toHaveBeenCalledWith("retry payload"));
+    expect(attachmentWrite).toHaveBeenCalledTimes(1);
+  });
+
   it("opens terminal actions on right click and copies the xterm selection", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -985,7 +1107,10 @@ describe("TerminalView session switching", () => {
     });
 
     expect(await screen.findByText("Image paste failed. Try again.")).toBeTruthy();
-    expect(warn).toHaveBeenCalledWith("[terminal] image paste failed:", "preview gateway offline");
+    expect(warn).toHaveBeenCalledWith("[terminal] image paste failed", {
+      category: "terminal-paste-error",
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("preview gateway offline");
     expect(attachmentWrite).not.toHaveBeenCalled();
   });
 

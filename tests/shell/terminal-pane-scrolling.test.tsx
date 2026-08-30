@@ -6,6 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 const createdTerminals = vi.hoisted(() => [] as Array<{
   options: Record<string, unknown>;
   element: HTMLElement | null;
@@ -723,6 +731,112 @@ describe("TerminalPane scrolling", () => {
     expect(handled).toBe(true);
     expect(preventDefault).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("cancels delayed clipboard paste after pane session replacement or unmount", async () => {
+    const replacementRead = deferred<string>();
+    const unmountRead = deferred<string>();
+    const readText = vi.fn()
+      .mockImplementationOnce(() => replacementRead.promise)
+      .mockImplementationOnce(() => unmountRead.promise);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText },
+    });
+    const view = render(
+      <TerminalPane
+        paneId="pane-stale-paste"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const paste = () => createdTerminals[0]!.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    paste();
+    view.rerender(
+      <TerminalPane
+        paneId="pane-stale-paste"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="replacement"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    replacementRead.resolve("must not reach replacement");
+    await act(async () => replacementRead.promise);
+    expect(stubWs.send).not.toHaveBeenCalledWith(expect.stringContaining("must not reach replacement"));
+
+    paste();
+    view.unmount();
+    unmountRead.resolve("must not write after unmount");
+    await act(async () => unmountRead.promise);
+    expect(stubWs.send).not.toHaveBeenCalledWith(expect.stringContaining("must not write after unmount"));
+  });
+
+  it("shows generic paste feedback and retries exactly once after recovery", async () => {
+    const readText = vi.fn()
+      .mockRejectedValueOnce(new Error("OpenAI /Users/operator/private.txt session-main"))
+      .mockResolvedValueOnce("retry payload");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-paste-retry"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const paste = () => createdTerminals[0]!.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    paste();
+    expect(await screen.findByText(/Clipboard paste failed\. Try again/)).toBeTruthy();
+    stubWs.send.mockClear();
+    paste();
+    await waitFor(() => expect(stubWs.send).toHaveBeenCalledOnce());
+    expect(JSON.parse(stubWs.send.mock.calls[0]![0])).toEqual({
+      type: "input",
+      data: "\x1b[200~retry payload\x1b[201~",
+    });
   });
 
   it("captures right-click before inner xterm can replace the multiline selection", async () => {

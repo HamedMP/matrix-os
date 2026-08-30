@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bracketTerminalPaste,
   clipboardDataHasImage,
+  copyTerminalClipboardText,
   formatTerminalPastePrompt,
   pasteClipboardDataIntoTerminal,
   pasteClipboardIntoTerminal,
@@ -265,5 +266,45 @@ describe("terminal rich clipboard paste", () => {
     })).resolves.toBe("failed");
 
     expect(disconnected.send).not.toHaveBeenCalled();
+  });
+
+  it("returns cancelled when pane ownership changes during an asynchronous read", async () => {
+    vi.stubGlobal("WebSocket", { OPEN: 1 });
+    let resolveRead!: (value: string) => void;
+    const read = new Promise<string>((resolve) => {
+      resolveRead = resolve;
+    });
+    let current = true;
+    const ws = { readyState: 1, send: vi.fn() };
+    const paste = pasteClipboardIntoTerminal({
+      clipboard: { readText: vi.fn(() => read) },
+      gatewayUrl: "https://gateway.example",
+      ws,
+      canCommit: () => current,
+    });
+
+    current = false;
+    resolveRead("stale pane payload");
+
+    await expect(paste).resolves.toBe("cancelled");
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it("reports clipboard copy denial without logging content or raw provider details", async () => {
+    const selection = "token=clipboard-secret";
+    const rawFailure = "OpenAI /Users/operator/private.txt session-main";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(copyTerminalClipboardText({
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error(rawFailure)) },
+      text: selection,
+    })).resolves.toBe("unavailable");
+
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(selection);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("OpenAI");
+    expect(diagnostics).not.toContain("private.txt");
+    expect(diagnostics).not.toContain("session-main");
   });
 });

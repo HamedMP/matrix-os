@@ -15,14 +15,20 @@ type CurrentRef<T> = { current: T };
 interface TerminalFilePasteOptions {
   containerRef: CurrentRef<HTMLDivElement | null>;
   cwd: string;
+  operationGenerationRef: CurrentRef<number>;
   sessionIdRef: CurrentRef<string | null>;
+  setPasteError: (message: string | null) => void;
+  socketGenerationRef: CurrentRef<number>;
   wsRef: CurrentRef<WebSocket | null>;
 }
 
 export function useTerminalFilePaste({
   containerRef,
   cwd,
+  operationGenerationRef,
   sessionIdRef,
+  setPasteError,
+  socketGenerationRef,
   wsRef,
 }: TerminalFilePasteOptions): void {
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers paste/drop listeners; the fetch runs later from those user event handlers with an AbortSignal timeout.
@@ -30,31 +36,50 @@ export function useTerminalFilePaste({
     const container = containerRef.current;
     if (!container) return;
 
-    const sendBracketedPaste = (terminalPaths: string[]) => {
-      const ws = wsRef.current;
+    const sendBracketedPaste = (terminalPaths: string[], ws: WebSocket | null): boolean => {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        for (const chunk of splitBracketedPastePayload(terminalPaths)) {
-          ws.send(JSON.stringify({
-            type: "input",
-            data: `${BRACKETED_PASTE_OPEN}${chunk}${BRACKETED_PASTE_CLOSE}`,
-          }));
+        try {
+          for (const chunk of splitBracketedPastePayload(terminalPaths)) {
+            ws.send(JSON.stringify({
+              type: "input",
+              data: `${BRACKETED_PASTE_OPEN}${chunk}${BRACKETED_PASTE_CLOSE}`,
+            }));
+          }
+          return true;
+        } catch (error: unknown) {
+          console.warn("[terminal] image paste transport failed", {
+            category: error instanceof DOMException ? error.name : "transport-error",
+          });
         }
       }
+      return false;
     };
 
     const uploadAndPasteFiles = async (files: File[]) => {
+      const operation = ++operationGenerationRef.current;
       const sessionId = sessionIdRef.current;
-      if (!sessionId) {
+      const initiatingSocket = wsRef.current;
+      const initiatingSocketGeneration = socketGenerationRef.current;
+      const canCommit = () => operationGenerationRef.current === operation
+        && sessionIdRef.current === sessionId
+        && wsRef.current === initiatingSocket
+        && socketGenerationRef.current === initiatingSocketGeneration;
+      if (!sessionId || !initiatingSocket) {
+        if (canCommit()) setPasteError("Image paste failed. Try again.");
         return;
       }
       const terminalPaths: string[] = [];
+      let failed = false;
       let authToken: string | null = null;
       try {
         authToken = await getWebSocketAuthToken();
       } catch (err: unknown) {
-        console.warn("Terminal paste auth token unavailable:", err instanceof Error ? err.message : err);
+        console.warn("[terminal] paste authentication unavailable", {
+          category: err instanceof DOMException ? err.name : "auth-error",
+        });
       }
       for (const file of files) {
+        if (!canCommit()) return;
         const mimeType = terminalPasteMimeType(file);
         if (!mimeType) {
           continue;
@@ -80,22 +105,33 @@ export function useTerminalFilePaste({
             body: file,
           });
           if (!res.ok) {
-            console.warn(`Terminal paste upload failed: ${res.status}`);
+            console.warn("[terminal] image paste upload failed", { category: "upload-error" });
+            failed = true;
             continue;
           }
           const payload = await res.json() as { terminalPath?: unknown };
           if (typeof payload.terminalPath === "string") {
             terminalPaths.push(payload.terminalPath);
+          } else {
+            failed = true;
           }
         } catch (err: unknown) {
-          console.warn("Terminal paste upload failed:", err instanceof Error ? err.message : err);
+          console.warn("[terminal] image paste upload failed", {
+            category: err instanceof DOMException ? err.name : "upload-error",
+          });
+          failed = true;
         } finally {
           uploadTimeout.cleanup();
         }
       }
-      if (terminalPaths.length > 0) {
-        sendBracketedPaste(terminalPaths);
+      if (!canCommit()) return;
+      if (failed || terminalPaths.length === 0) {
+        setPasteError("Image paste failed. Try again.");
+        return;
       }
+      setPasteError(sendBracketedPaste(terminalPaths, initiatingSocket)
+        ? null
+        : "Image paste failed. Try again.");
     };
 
     const captureImagePayload = (event: ClipboardEvent | DragEvent): File[] => {
@@ -137,5 +173,13 @@ export function useTerminalFilePaste({
       container.removeEventListener("dragover", onDrag, { capture: true });
       container.removeEventListener("drop", onDrop, { capture: true });
     };
-  }, [containerRef, cwd, sessionIdRef, wsRef]);
+  }, [
+    containerRef,
+    cwd,
+    operationGenerationRef,
+    sessionIdRef,
+    setPasteError,
+    socketGenerationRef,
+    wsRef,
+  ]);
 }

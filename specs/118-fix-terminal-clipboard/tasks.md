@@ -165,15 +165,15 @@
 
 ### Tests for User Story 6 — write and observe RED first
 
-- [ ] T043 [P] [US6] Add failing native clipboard denial, fallback failure, generic feedback, selection retention, stale-session cancellation, unmount, and exactly-once retry tests in `tests/desktop/terminal-link-actions.test.ts` and `tests/desktop/terminal-view.test.tsx`
-- [ ] T044 [P] [US6] Add failing web clipboard denial, disconnected transport, stale-pane cancellation, generic feedback, zero-write failure, and exactly-once retry tests in `tests/shell/terminal-rich-paste.test.ts` and `tests/shell/terminal-pane-scrolling.test.tsx`
-- [ ] T045 [US6] Add privacy assertions that UI and diagnostics never contain selected text, clipboard text, raw errors, provider details, paths, filenames, or session IDs in `tests/desktop/terminal-view.test.tsx` and `tests/shell/terminal-pane-privacy.test.tsx` after T043–T044
+- [x] T043 [P] [US6] Add failing native clipboard denial, fallback failure, generic feedback, selection retention, stale-session cancellation, unmount, and exactly-once retry tests in `tests/desktop/terminal-link-actions.test.ts` and `tests/desktop/terminal-view.test.tsx`
+- [x] T044 [P] [US6] Add failing web clipboard denial, disconnected transport, stale-pane cancellation, generic feedback, zero-write failure, and exactly-once retry tests in `tests/shell/terminal-rich-paste.test.ts` and `tests/shell/terminal-pane-scrolling.test.tsx`
+- [x] T045 [US6] Add privacy assertions that UI and diagnostics never contain selected text, clipboard text, raw errors, provider details, paths, filenames, or session IDs in `tests/desktop/terminal-view.test.tsx` and `tests/shell/terminal-pane-privacy.test.tsx` after T043–T044
 
 ### Implementation for User Story 6
 
-- [ ] T046 [P] [US6] Add bounded native clipboard operation state, safe generic feedback, and session-generation/unmount cancellation in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`, `desktop/src/renderer/src/features/terminal/terminal-link-actions.ts`, and `desktop/src/renderer/src/features/terminal/terminal-rich-paste.ts`
-- [ ] T047 [P] [US6] Add bounded web clipboard outcomes, safe generic feedback, and pane/socket generation cancellation in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/terminal-rich-paste.ts`
-- [ ] T048 [US6] Run all User Story 6 tests in `tests/desktop/terminal-link-actions.test.ts`, `tests/desktop/terminal-view.test.tsx`, `tests/shell/terminal-rich-paste.test.ts`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-pane-privacy.test.tsx`
+- [x] T046 [P] [US6] Add bounded native clipboard operation state, safe generic feedback, and session-generation/unmount cancellation in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`, `desktop/src/renderer/src/features/terminal/terminal-link-actions.ts`, and `desktop/src/renderer/src/features/terminal/terminal-rich-paste.ts`
+- [x] T047 [P] [US6] Add bounded web clipboard outcomes, safe generic feedback, and pane/socket generation cancellation in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/terminal-rich-paste.ts`
+- [x] T048 [US6] Run all User Story 6 tests in `tests/desktop/terminal-link-actions.test.ts`, `tests/desktop/terminal-view.test.tsx`, `tests/shell/terminal-rich-paste.test.ts`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-pane-privacy.test.tsx`
 
 **Checkpoint**: Clipboard failures are safe, private, retryable, and independently testable.
 

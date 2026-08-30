@@ -16,6 +16,10 @@ type ClipboardLike = {
   readText?: () => Promise<string>;
 };
 
+type ClipboardWriterLike = {
+  writeText?: (text: string) => Promise<void>;
+};
+
 type ClipboardItems = Array<{
   types: readonly string[];
   getType(type: string): Promise<Blob>;
@@ -35,7 +39,26 @@ type ClipboardImageBlob = {
   type: string;
 };
 
-export type TerminalRichPasteResult = "image" | "text" | "empty" | "unavailable" | "failed";
+export type TerminalRichPasteResult = "image" | "text" | "empty" | "unavailable" | "failed" | "cancelled";
+export type TerminalClipboardCopyResult = "success" | "empty" | "unavailable" | "cancelled";
+
+export async function copyTerminalClipboardText(input: {
+  clipboard: ClipboardWriterLike | undefined;
+  text: string;
+  canCommit?: () => boolean;
+}): Promise<TerminalClipboardCopyResult> {
+  if (input.text.length === 0) return "empty";
+  if (!input.clipboard?.writeText) return "unavailable";
+  try {
+    await input.clipboard.writeText(input.text);
+    return input.canCommit && !input.canCommit() ? "cancelled" : "success";
+  } catch (error: unknown) {
+    console.warn("[terminal] clipboard copy unavailable", {
+      category: error instanceof DOMException ? error.name : "clipboard-error",
+    });
+    return input.canCommit && !input.canCommit() ? "cancelled" : "unavailable";
+  }
+}
 
 export function bracketTerminalPaste(text: string): string {
   const safe = text.replace(/\x1b\[20[01]~/g, "");
@@ -248,6 +271,7 @@ export async function pasteClipboardIntoTerminal(input: {
   gatewayUrl: string;
   ws: TerminalInputSink | null | undefined;
   submit?: boolean;
+  canCommit?: () => boolean;
 }): Promise<TerminalRichPasteResult> {
   if (!input.clipboard?.read && !input.clipboard?.readText) {
     return "unavailable";
@@ -259,6 +283,7 @@ export async function pasteClipboardIntoTerminal(input: {
         clipboard: input.clipboard,
         gatewayUrl: input.gatewayUrl,
       });
+      if (input.canCommit && !input.canCommit()) return "cancelled";
       if (imagePaths.length > 0) {
         const sent = sendFormattedTerminalPaste({
           ws: input.ws,
@@ -287,6 +312,7 @@ export async function pasteClipboardIntoTerminal(input: {
     });
     return "unavailable";
   }
+  if (input.canCommit && !input.canCommit()) return "cancelled";
   if (text.length === 0) {
     return "empty";
   }

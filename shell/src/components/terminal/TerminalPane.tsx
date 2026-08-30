@@ -5,7 +5,6 @@ import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { createSocketHealth } from "@/lib/socket-health";
 import { useTerminalSettings } from "@/stores/terminal-settings";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
-import type { Theme } from "@/hooks/useTheme";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
@@ -19,7 +18,6 @@ import { TerminalLinkContextMenu, type TerminalLinkMenuState } from "./TerminalL
 import {
   INITIAL_TERMINAL_LINKS_STATE,
   activateTerminalLink,
-  copyTerminalLink,
   findTerminalLinkAtCell,
   mayContainTerminalLink,
   openTerminalLink,
@@ -49,6 +47,7 @@ import {
   markTerminalZoomCorrected,
 } from "./terminal-pointer-interception";
 import {
+  copyTerminalClipboardText,
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
 import {
@@ -84,6 +83,7 @@ import {
 import { createXtermLogger } from "./xterm-logger";
 import { createColdReplayVisibility, type ColdReplayVisibility } from "./cold-replay-visibility";
 import { parseTerminalServerMessage, stripTerminalControls } from "./terminal-server-message";
+import type { TerminalPaneProps } from "./terminal-pane-types";
 import { useTerminalFocusRequest } from "./useTerminalFocusRequest";
 import { useTerminalFilePaste } from "./useTerminalFilePaste";
 import type { TerminalCompatMode } from "@/stores/terminal-store";
@@ -103,34 +103,6 @@ const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
   fontSize: 13,
   boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
 };
-interface TerminalPaneProps {
-  paneId: string;
-  cwd: string;
-  theme: Theme;
-  isFocused: boolean;
-  focusRequestId?: number;
-  sessionId?: string;
-  claudeMode?: boolean;
-  startupCommand?: string;
-  compatMode?: TerminalCompatMode;
-  onFocus?: (paneId: string) => void;
-  onSessionAttached?: (paneId: string, sessionId: string) => void;
-  isClosing?: boolean;
-  shouldCacheOnUnmount?: (paneId: string) => boolean;
-  shouldDestroyOnUnmount?: (paneId: string) => boolean;
-  allowRemoteResize?: boolean;
-  suppressNativeKeyboard?: boolean;
-  /**
-   * The CSS transform scale applied to the canvas ancestor. When the canvas is
-   * zoomed via `transform: scale(z)`, xterm's mouse-to-cell mapping breaks
-   * because getBoundingClientRect() returns scaled screen pixels while
-   * cssCellWidth is measured at the unscaled font size. Providing the live zoom
-   * factor allows TerminalPane to correct pointer events before xterm sees them.
-   * Defaults to 1 (no correction).
-   */
-  canvasZoom?: number;
-}
-
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/no-many-boolean-props -- cohesive xterm lifecycle owner: terminal creation, WS attach/replay, fit/resize, addon wiring, and caching are one tightly-coupled effect graph that cannot be split without leaking refs across components; the boolean props (isFocused, isClosing, allowRemoteResize, suppressNativeKeyboard) are independent terminal modes, not a hidden variant enum, so collapsing them into an options object would obscure call sites.
 export function TerminalPane({
   paneId,
@@ -175,6 +147,7 @@ export function TerminalPane({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingReconnectBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsGenerationRef = useRef(0);
+  const clipboardOperationGenerationRef = useRef(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
@@ -219,15 +192,53 @@ export function TerminalPane({
     (termRef.current as Terminal | null)?.focus();
   }, []);
   const copyTerminalSelection = useCallback((selection: string) => {
-    if (!navigator.clipboard?.writeText) {
-      setPasteError("Clipboard copy failed. Try again.");
-      return;
-    }
-    void navigator.clipboard.writeText(selection).catch((error: unknown) => {
+    const operation = ++clipboardOperationGenerationRef.current;
+    const initiatingSession = sessionIdRef.current;
+    const canCommit = () => clipboardOperationGenerationRef.current === operation
+      && sessionIdRef.current === initiatingSession;
+    void copyTerminalClipboardText({
+      clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+      text: selection,
+      canCommit,
+    }).then((result) => {
+      if (!canCommit() || result === "cancelled") return;
+      setPasteError(result === "success" ? null : "Clipboard copy failed. Try again.");
+    }).catch((error: unknown) => {
       console.warn("[terminal] clipboard copy unavailable", {
         category: error instanceof DOMException ? error.name : "clipboard-error",
       });
-      setPasteError("Clipboard copy failed. Try again.");
+      if (canCommit()) setPasteError("Clipboard copy failed. Try again.");
+    });
+  }, []);
+  const pasteTerminalClipboard = useCallback((submit = false) => {
+    const operation = ++clipboardOperationGenerationRef.current;
+    const initiatingSession = sessionIdRef.current;
+    const initiatingSocket = wsRef.current;
+    const initiatingSocketGeneration = wsGenerationRef.current;
+    const canCommit = () => clipboardOperationGenerationRef.current === operation
+      && sessionIdRef.current === initiatingSession
+      && wsRef.current === initiatingSocket
+      && wsGenerationRef.current === initiatingSocketGeneration;
+    void pasteClipboardIntoTerminal({
+      clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+      gatewayUrl: getGatewayUrl(),
+      ws: initiatingSocket,
+      submit,
+      canCommit,
+    }).then((result) => {
+      if (!canCommit() || result === "cancelled") return;
+      if (result === "failed" || result === "unavailable") {
+        setPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
+      } else if (result === "image" || result === "text") {
+        setPasteError(null);
+      }
+    }).catch((error: unknown) => {
+      console.warn("[terminal] clipboard paste unavailable", {
+        category: error instanceof DOMException ? error.name : "clipboard-error",
+      });
+      if (canCommit()) {
+        setPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
+      }
     });
   }, []);
   const selectAllTerminal = useCallback(() => {
@@ -341,7 +352,7 @@ export function TerminalPane({
 
     return installTerminalPointerInterception({
       container,
-      getTerminal: () => termRef.current,
+      getTerminal: () => termRef.current as Terminal | null,
       getVisualScale: () => canvasZoomRef.current * softGridScaleRef.current,
       shouldCorrectPointer: (event) => shouldCorrectTerminalPointerCoordinates({
         type: event.type as "mousedown" | "mousemove" | "mouseup",
@@ -361,11 +372,15 @@ export function TerminalPane({
     (termRef.current as { focus?: () => void } | null)?.focus?.();
   };
 
-  const showPasteError = (message = "Image paste failed. Try a smaller image or paste a saved file with `mos shell paste-file`.") => {
-    setPasteError(message);
-  };
-
-  useTerminalFilePaste({ containerRef, cwd, sessionIdRef, wsRef });
+  useTerminalFilePaste({
+    containerRef,
+    cwd,
+    operationGenerationRef: clipboardOperationGenerationRef,
+    sessionIdRef,
+    setPasteError,
+    socketGenerationRef: wsGenerationRef,
+    wsRef,
+  });
 
   useEffect(() => {
     isClosingRef.current = !!isClosing;
@@ -374,11 +389,16 @@ export function TerminalPane({
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- syncs the initialSessionId prop into a mutable ref consumed by the imperative WebSocket/PTY layer; this is prop->ref mirroring, not a DOM event handler, and has no parent handler to hoist into
     if (initialSessionId && initialSessionId !== sessionIdRef.current) {
+      clipboardOperationGenerationRef.current += 1;
       sessionIdRef.current = initialSessionId;
       lastSeqRef.current = 0;
       hasReplayCursorRef.current = false;
     }
   }, [initialSessionId]);
+
+  useEffect(() => () => {
+    clipboardOperationGenerationRef.current += 1;
+  }, []);
 
   // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom
   // window event with the target paneId; we forward to this pane's PTY if it
@@ -392,15 +412,7 @@ export function TerminalPane({
         return;
       }
       if (detail.action === "paste") {
-        pasteClipboardIntoTerminal({
-          clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
-          gatewayUrl: getGatewayUrl(),
-          ws: wsRef.current,
-          submit: detail.submit === true,
-        }).catch((err: unknown) => {
-          console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
-          showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
-        });
+        pasteTerminalClipboard(detail.submit === true);
         return;
       }
       if (!detail.data) return;
@@ -411,7 +423,7 @@ export function TerminalPane({
     };
     window.addEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
     return () => window.removeEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
-  }, [paneId]);
+  }, [paneId, pasteTerminalClipboard]);
 
   // This effect owns the terminal's full lifecycle (WebSocket connect, xterm
   // bootstrap, reconnect timers, heartbeat). init() returns the real cleanup,
@@ -1582,9 +1594,7 @@ export function TerminalPane({
         if (ev.altKey && ev.shiftKey && ev.key.toUpperCase() === "C") {
           const block = commandBlockBufferRef.current.trim();
           if (block) {
-            navigator.clipboard.writeText(block).catch((err: unknown) => {
-              console.warn("Command block copy failed:", err instanceof Error ? err.message : err);
-            });
+            copyTerminalSelection(block);
             return false;
           }
           return true;
@@ -1604,31 +1614,12 @@ export function TerminalPane({
         });
         if (clipboardAction === "copy") {
           ev.preventDefault();
-          const selection = term.getSelection();
-          void navigator.clipboard?.writeText(selection).catch((error: unknown) => {
-            console.warn("[terminal] clipboard copy unavailable", {
-              category: error instanceof DOMException ? error.name : "clipboard-error",
-            });
-            showPasteError("Clipboard copy failed. Try again.");
-          });
+          copyTerminalSelection(term.getSelection());
           return false;
         }
         if (clipboardAction === "paste") {
           ev.preventDefault();
-          void pasteClipboardIntoTerminal({
-            clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
-            gatewayUrl: getGatewayUrl(),
-            ws: wsRef.current,
-          }).then((result) => {
-            if (result === "failed" || result === "unavailable") {
-              showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
-            }
-          }).catch((error: unknown) => {
-            console.warn("[terminal] clipboard paste unavailable", {
-              category: error instanceof DOMException ? error.name : "clipboard-error",
-            });
-            showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
-          });
+          pasteTerminalClipboard();
           return false;
         }
         if (clipboardAction === "select-all") {
@@ -1970,13 +1961,13 @@ export function TerminalPane({
         onCollapse={collapseTerminalLinks}
         onDismiss={dismissTerminalLinks}
         onOpen={openTerminalLink}
-        onCopy={copyTerminalLink}
+        onCopy={(link) => copyTerminalSelection(link.url)}
       />
       <TerminalLinkContextMenu
         menu={linkContextMenu}
         onClose={closeLinkContextMenu}
         onOpen={openTerminalLink}
-        onCopy={copyTerminalLink}
+        onCopy={(link) => copyTerminalSelection(link.url)}
         onCopySelection={copyTerminalSelection}
         onSelectAll={selectAllTerminal}
       />
