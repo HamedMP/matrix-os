@@ -126,6 +126,34 @@ function outputChunks(text: string): string[] {
   return chunks;
 }
 
+function normalizedHermesInterimText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function remainingHermesInterimText(streamed: string, interim: string): string | undefined {
+  const normalizedStreamed = normalizedHermesInterimText(streamed);
+  const normalizedInterim = normalizedHermesInterimText(interim);
+  if (!normalizedStreamed || !normalizedInterim.startsWith(normalizedStreamed)) return undefined;
+  if (normalizedInterim === normalizedStreamed) return "";
+
+  let interimIndex = 0;
+  let normalizedIndex = 0;
+  while (interimIndex < interim.length && /\s/.test(interim[interimIndex] ?? "")) interimIndex += 1;
+  while (interimIndex < interim.length && normalizedIndex < normalizedStreamed.length) {
+    const character = interim[interimIndex] ?? "";
+    if (/\s/.test(character)) {
+      if (normalizedStreamed[normalizedIndex] !== " ") return undefined;
+      normalizedIndex += 1;
+      while (interimIndex < interim.length && /\s/.test(interim[interimIndex] ?? "")) interimIndex += 1;
+      continue;
+    }
+    if (normalizedStreamed[normalizedIndex] !== character) return undefined;
+    normalizedIndex += 1;
+    interimIndex += 1;
+  }
+  return normalizedIndex === normalizedStreamed.length ? interim.slice(interimIndex) : undefined;
+}
+
 function hermesToolActivity(name: string): Pick<HermesActivity, "kind" | "label"> {
   const normalized = name.trim().toLowerCase();
   if (["terminal", "shell", "bash", "execute", "execute_code", "run_command"].includes(normalized)) {
@@ -359,12 +387,15 @@ export function createHermesChatProviderAdapter(options: {
       } else if (event.type === "message.interim") {
         const interim = HermesInterimSchema.parse(event.payload);
         if (interim.already_streamed) {
-          // Hermes derives this seal marker from its visible commentary projection,
-          // which trims surrounding whitespace after the raw deltas have streamed.
-          // Preserve strict content equality while accepting that documented
-          // normalization so a harmless newline cannot terminate a long Run.
-          if (interim.text.trim() !== currentSegment.trim()) {
+          const remainingText = remainingHermesInterimText(currentSegment, interim.text);
+          if (remainingText === undefined) {
             throw new Error("Hermes interim response did not match streamed output");
+          }
+          if (remainingText && !currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
+            emitVisibleText(sanitizeAssistantText(remainingText, {
+              homePath: options.homePath,
+              executionRoot: input.executionRoot,
+            }));
           }
         } else {
           if (currentSegment) separatorPending = true;
@@ -381,6 +412,7 @@ export function createHermesChatProviderAdapter(options: {
             unsafeToolFragments,
           ), { homePath: options.homePath, executionRoot: input.executionRoot }));
         }
+        flushVisibleText(true);
         lastSealedSegment = interim.text;
         currentSegment = "";
         currentSegmentSuppressed = false;
