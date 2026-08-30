@@ -445,6 +445,7 @@ describe("ChatRepository", () => {
       approvalId: "approval_rail_exact",
       title: "Allow the command",
       risk: "medium",
+      allowedDecisions: ["approve", "approve_for_session", "decline"],
     });
     await appendActivity(repository, inputRequired, {
       id: "activity_rail_input",
@@ -485,6 +486,7 @@ describe("ChatRepository", () => {
       approvalId: "approval_rail_transition",
       title: "Allow the command",
       risk: "medium",
+      allowedDecisions: ["approve", "approve_for_session", "decline"],
     };
 
     await expect(appendActivity(repository, admitted, approvalRequested)).resolves.toBe(1);
