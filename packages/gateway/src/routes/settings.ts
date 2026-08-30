@@ -223,6 +223,21 @@ function mergeDesktopDefaults(config: Record<string, unknown>): Record<string, u
   };
 }
 
+function preserveRetiredPinnedApps(
+  currentPinnedApps: unknown,
+  visiblePinnedApps: unknown,
+): string[] {
+  const visible = Array.isArray(visiblePinnedApps)
+    ? visiblePinnedApps.filter((path): path is string => typeof path === "string")
+    : [...DESKTOP_DEFAULTS.pinnedApps];
+  const retired = Array.isArray(currentPinnedApps)
+    ? currentPinnedApps.filter((path): path is string => (
+      typeof path === "string" && RETIRED_DESKTOP_APP_PATHS.has(path)
+    ))
+    : [];
+  return [...visible, ...retired.filter((path) => !visible.includes(path))];
+}
+
 export function createSettingsRoutes(opts: {
   homePath: string;
   channelManager: ChannelManager;
@@ -467,7 +482,13 @@ export function createSettingsRoutes(opts: {
       }
       return c.json({ error: "Invalid JSON" }, 400);
     }
-    await enqueueDesktopWrite(() => writeJsonAtomic(desktopPath, body));
+    await enqueueDesktopWrite(async () => {
+      const current = await readJson<Record<string, unknown>>(desktopPath, {}, "desktop config");
+      await writeJsonAtomic(desktopPath, {
+        ...body,
+        pinnedApps: preserveRetiredPinnedApps(current.pinnedApps, body.pinnedApps),
+      });
+    });
     return c.json({ ok: true });
   });
 
@@ -488,7 +509,13 @@ export function createSettingsRoutes(opts: {
 
     const config = await enqueueDesktopWrite(async () => {
       const current = await readJson<Record<string, unknown>>(desktopPath, {}, "desktop config");
-      const { dock: dockPatch, ...topLevelPatch } = parsed.data;
+      const { dock: dockPatch, ...parsedTopLevelPatch } = parsed.data;
+      const topLevelPatch = parsedTopLevelPatch.pinnedApps
+        ? {
+            ...parsedTopLevelPatch,
+            pinnedApps: preserveRetiredPinnedApps(current.pinnedApps, parsedTopLevelPatch.pinnedApps),
+          }
+        : parsedTopLevelPatch;
       const currentDock = current.dock !== null
         && typeof current.dock === "object"
         && !Array.isArray(current.dock)

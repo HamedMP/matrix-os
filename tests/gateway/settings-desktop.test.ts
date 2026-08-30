@@ -137,6 +137,22 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(res.status).toBe(400);
     });
 
+    it("preserves retired pins when a client replaces the visible config", async () => {
+      writeFileSync(join(homePath, "system/desktop.json"), JSON.stringify({
+        pinnedApps: ["__workspace__", "__terminal__"],
+      }));
+
+      const response = await app.request("/api/settings/desktop", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinnedApps: ["__terminal__", "apps/notes/index.html"] }),
+      });
+
+      expect(response.status).toBe(200);
+      const saved = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      expect(saved.pinnedApps).toEqual(["__terminal__", "apps/notes/index.html", "__workspace__"]);
+    });
+
     it("rejects oversized desktop payloads", async () => {
       const res = await app.request("/api/settings/desktop", {
         method: "PUT",
@@ -200,6 +216,25 @@ describe("Settings: desktop + theme + wallpapers", () => {
         body: JSON.stringify({ desktopIcons: [{ path: "__chat__", x: -1, y: 20 }] }),
       });
       expect(invalid.status).toBe(400);
+    });
+
+    it("preserves retired pins when a client patches the filtered visible array", async () => {
+      writeFileSync(join(homePath, "system/desktop.json"), JSON.stringify({
+        pinnedApps: ["__workspace__", "__terminal__"],
+      }));
+
+      const response = await app.request("/api/settings/desktop", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinnedApps: ["__terminal__", "apps/notes/index.html"] }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        config: { pinnedApps: ["__terminal__", "apps/notes/index.html"] },
+      });
+      const saved = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      expect(saved.pinnedApps).toEqual(["__terminal__", "apps/notes/index.html", "__workspace__"]);
     });
 
     it("rejects invalid and oversized patch bodies", async () => {
