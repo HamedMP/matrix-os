@@ -90,7 +90,7 @@ describe("SignInScreen email code flow", () => {
     });
     expect(mockPrepareFirstFactor).not.toHaveBeenCalled();
     expect(mockSetActive).toHaveBeenCalledWith({ session: "sess_pw" });
-    expect(mockReplace).toHaveBeenCalledWith("/(tabs)/apps");
+    expect(mockReplace).toHaveBeenCalledWith("/(drawer)");
   });
 
   it("points an account with no password at the code path instead of dead-ending", async () => {
@@ -206,7 +206,7 @@ describe("SignInScreen email code flow", () => {
     await waitFor(() => {
       expect(mockSetActive).toHaveBeenCalledWith({ session: "sess_1" });
     });
-    expect(mockReplace).toHaveBeenCalledWith("/(tabs)/apps");
+    expect(mockReplace).toHaveBeenCalledWith("/(drawer)");
   });
 
   it("keeps the user on the code step and shows why an incorrect code failed", async () => {

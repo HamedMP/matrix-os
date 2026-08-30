@@ -71,7 +71,7 @@ export default function SignInScreen() {
   useEffect(() => {
     if (isSignedIn && !redirectedRef.current) {
       redirectedRef.current = true;
-      router.replace("/(tabs)/apps" as any);
+      router.replace("/(drawer)" as any);
     }
   }, [isSignedIn, router]);
 
@@ -89,7 +89,7 @@ export default function SignInScreen() {
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
         redirectedRef.current = true;
-        router.replace("/(tabs)/apps" as any);
+        router.replace("/(drawer)" as any);
       }
     } catch (err: unknown) {
       console.warn(`[mobile] ${provider} sign-in failed:`, err);
@@ -117,7 +117,7 @@ export default function SignInScreen() {
   const goToApps = useCallback(() => {
     setGatewayError(null);
     redirectedRef.current = true;
-    router.replace("/(tabs)/apps" as any);
+    router.replace("/(drawer)" as any);
   }, [router]);
 
   // Persist the chosen computer before Clerk is involved, so a bad URL reports
@@ -202,7 +202,7 @@ export default function SignInScreen() {
       setGatewayUrl(gateway.url);
       setGatewayError(null);
       setGateway(gateway);
-      router.replace("/(tabs)/apps" as any);
+      router.replace("/(drawer)" as any);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Check the URL, username, and password.";
       setGatewayError(message);

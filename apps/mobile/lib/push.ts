@@ -1,4 +1,3 @@
-import { ThreadIdSchema } from "@matrix-os/contracts";
 import * as Notifications from "expo-notifications";
 import { z } from "zod/v4";
 
@@ -34,27 +33,22 @@ function parseNotificationData(data: unknown): z.infer<typeof NotificationDataSc
   return parsed.success ? parsed.data : {};
 }
 
-function getAgentNotificationRoute(threadId: unknown): string {
-  const parsed = ThreadIdSchema.safeParse(threadId);
-  return parsed.success ? `/agents/${parsed.data}` : "/agents";
-}
-
 export function getRouteForNotification(data: unknown): string {
   const notification = parseNotificationData(data);
 
   switch (notification.category) {
     case "task":
-      return "/(tabs)/mission-control";
+      return "/(drawer)";
     case "cron":
-      return "/(tabs)/mission-control";
+      return "/(drawer)";
     case "message":
-      return "/(tabs)/chat";
+      return "/(drawer)";
     case "security":
-      return "/(tabs)/settings";
+      return "/(drawer)";
     case "agent":
-      return getAgentNotificationRoute(notification.threadId);
+      return "/(drawer)";
     default:
-      return "/(tabs)/chat";
+      return "/(drawer)";
   }
 }
 

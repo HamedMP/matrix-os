@@ -23,6 +23,13 @@ import {
   BricolageGrotesque_600SemiBold,
   BricolageGrotesque_700Bold,
 } from "@expo-google-fonts/bricolage-grotesque";
+import {
+  Geist_400Regular,
+  Geist_500Medium,
+  Geist_600SemiBold,
+  Geist_700Bold,
+  Geist_800ExtraBold,
+} from "@expo-google-fonts/geist";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
@@ -95,6 +102,11 @@ export default function RootLayout() {
     JetBrainsMono_700Bold,
     BricolageGrotesque_600SemiBold,
     BricolageGrotesque_700Bold,
+    Geist_400Regular,
+    Geist_500Medium,
+    Geist_600SemiBold,
+    Geist_700Bold,
+    Geist_800ExtraBold,
   });
 
   const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
@@ -369,24 +381,16 @@ function GatewayShell() {
           }}
         >
           <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="apps" options={{ headerShown: false }} />
-          <Stack.Screen name="runtime" options={{ headerShown: false }} />
-          <Stack.Screen name="canvas/index" options={{ headerShown: false }} />
-          <Stack.Screen name="agents" options={{ headerShown: false }} />
-          <Stack.Screen name="sessions" options={{ headerShown: false, presentation: "modal" }} />
+          <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+          <Stack.Screen name="file-browser" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+          <Stack.Screen name="terminal-session" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+          <Stack.Screen name="app-preview" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+          <Stack.Screen name="integrations-installed" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+          <Stack.Screen name="integration-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
           <Stack.Screen
             name="computers"
             options={{
               title: "Computers",
-              headerBackButtonDisplayMode: "minimal",
-              headerStyle: { backgroundColor: theme.colors.background },
-            }}
-          />
-          <Stack.Screen
-            name="files"
-            options={{
-              title: "Files",
               headerBackButtonDisplayMode: "minimal",
               headerStyle: { backgroundColor: theme.colors.background },
             }}

@@ -17,7 +17,7 @@ import { resetAnalytics } from "@/lib/analytics";
 const JOURNEY_POLL_INTERVAL_MS = 5_000;
 
 // Signed-in users are routed through the journey gate: only a connectable phase
-// (first_run/ready) enters the shell tabs; otherwise the user sees their
+// (first_run/ready) enters the drawer shell; otherwise the user sees their
 // onboarding phase (plan / settling / building / retry) instead of a broken shell.
 function SignedInJourneyGate() {
   const router = useRouter();
@@ -33,14 +33,14 @@ function SignedInJourneyGate() {
       try {
         const gateway = await getSelectedGatewayConnection();
         if (!isHostedGatewayUrl(gateway.url)) {
-          router.replace("/(tabs)/apps" as any);
+          router.replace("/(drawer)" as any);
           return;
         }
         const token = await getToken();
         const next = await fetchMobileJourney(getMobileJourneyGatewayUrl(gateway.url), token);
         if (!active) return;
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
-          router.replace("/(tabs)/apps" as any);
+          router.replace("/(drawer)" as any);
           return;
         }
         setResult(next);
@@ -127,7 +127,7 @@ export default function Index() {
       .then((gateway) => {
         if (cancelled) return;
         if (!isHostedGatewayUrl(gateway.url) && gateway.token) {
-          router.replace("/(tabs)/apps" as any);
+          router.replace("/(drawer)" as any);
           return;
         }
         setCheckingSelfHosted(false);

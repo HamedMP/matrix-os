@@ -83,6 +83,9 @@ importers:
       '@expo-google-fonts/bricolage-grotesque':
         specifier: ^0.4.1
         version: 0.4.1
+      '@expo-google-fonts/geist':
+        specifier: ^0.4.2
+        version: 0.4.2
       '@expo-google-fonts/inter':
         specifier: ^0.2.3
         version: 0.2.3

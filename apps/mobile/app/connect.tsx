@@ -27,7 +27,7 @@ export default function ConnectScreen() {
         <Text style={styles.statusPill}>{connectionState}</Text>
       </View>
       <Pressable
-        onPress={() => router.replace("/(tabs)/apps" as any)}
+        onPress={() => router.replace("/(drawer)" as any)}
         style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
       >
         <Ionicons name="apps" size={17} color={theme.colors.primaryForeground} />

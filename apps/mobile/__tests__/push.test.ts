@@ -1,43 +1,43 @@
 import { getRouteForNotification, type NotificationData } from "../lib/push";
 
 describe("push notification routing", () => {
-  it("routes message notifications to chat tab", () => {
+  it("routes message notifications to the mock drawer home", () => {
     const data: NotificationData = { category: "message" };
-    expect(getRouteForNotification(data)).toBe("/(tabs)/chat");
+    expect(getRouteForNotification(data)).toBe("/(drawer)");
   });
 
-  it("routes task notifications to mission control", () => {
+  it("routes task notifications to the mock drawer home", () => {
     const data: NotificationData = { category: "task" };
-    expect(getRouteForNotification(data)).toBe("/(tabs)/mission-control");
+    expect(getRouteForNotification(data)).toBe("/(drawer)");
   });
 
-  it("routes cron notifications to mission control", () => {
+  it("routes cron notifications to the mock drawer home", () => {
     const data: NotificationData = { category: "cron" };
-    expect(getRouteForNotification(data)).toBe("/(tabs)/mission-control");
+    expect(getRouteForNotification(data)).toBe("/(drawer)");
   });
 
-  it("routes security notifications to settings", () => {
+  it("routes security notifications to the mock drawer home", () => {
     const data: NotificationData = { category: "security" };
-    expect(getRouteForNotification(data)).toBe("/(tabs)/settings");
+    expect(getRouteForNotification(data)).toBe("/(drawer)");
   });
 
-  it("routes coding-agent attention notifications to the bounded thread route", () => {
+  it("keeps coding-agent attention notifications inside the mock shell", () => {
     const data: NotificationData = { category: "agent", threadId: "thread_mobile_attention" };
-    expect(getRouteForNotification(data)).toBe("/agents/thread_mobile_attention");
+    expect(getRouteForNotification(data)).toBe("/(drawer)");
   });
 
-  it("defaults coding-agent notifications with invalid thread ids to the agent workspace", () => {
+  it("keeps invalid coding-agent notification targets inside the mock shell", () => {
     const data: NotificationData = { category: "agent", threadId: "../secret" };
-    expect(getRouteForNotification(data)).toBe("/agents");
+    expect(getRouteForNotification(data)).toBe("/(drawer)");
   });
 
-  it("defaults to chat for unknown category", () => {
+  it("defaults to the mock drawer home for unknown category", () => {
     const data: NotificationData = {};
-    expect(getRouteForNotification(data)).toBe("/(tabs)/chat");
+    expect(getRouteForNotification(data)).toBe("/(drawer)");
   });
 
-  it("defaults to chat for undefined category", () => {
+  it("defaults to the mock drawer home for undefined category", () => {
     const data: NotificationData = { category: undefined };
-    expect(getRouteForNotification(data)).toBe("/(tabs)/chat");
+    expect(getRouteForNotification(data)).toBe("/(drawer)");
   });
 });
