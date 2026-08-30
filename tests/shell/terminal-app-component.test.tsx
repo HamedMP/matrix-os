@@ -1084,6 +1084,75 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("flushes a dirty durable layout when the Terminal unmounts after a conflict", async () => {
+    const layoutId = "term-layout_0123456789abcdef0123456789abcdef";
+    let layoutReads = 0;
+    let layoutWrites = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT") {
+        layoutWrites += 1;
+        if (layoutWrites <= 2) {
+          return Promise.resolve(mockJsonResponse({
+            error: { code: "layout_revision_conflict", message: "Layout changed elsewhere" },
+          }, 409));
+        }
+        const body = JSON.parse(String(init.body));
+        return Promise.resolve(mockJsonResponse({ layoutId, revision: 7, layout: body.layout }));
+      }
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`)) {
+        layoutReads += 1;
+        return Promise.resolve(mockJsonResponse({
+          layoutId,
+          revision: layoutReads === 1 ? 4 : 5,
+          layout: {
+            activeTabId: "bench-tab",
+            sidebarOpen: true,
+            tabs: [{
+              id: "bench-tab",
+              label: "bench",
+              paneTree: { type: "pane", id: "bench-pane", cwd: "projects", sessionId: "bench" },
+            }],
+          },
+        }));
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve(mockJsonResponse({ sessions: [{ name: "bench", status: "active" }] }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    }));
+
+    const mounted = render(<TerminalApp layoutId={layoutId} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const paneProps = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+    act(() => paneProps.onSessionAttached(paneProps.paneTree.id, "bench-local"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(layoutWrites).toBe(2);
+
+    mounted.unmount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(layoutWrites).toBe(3);
+    const finalPut = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT"
+    )).at(-1);
+    expect(JSON.parse(String(finalPut?.[1]?.body))).toMatchObject({
+      layout: { tabs: [{ paneTree: { sessionId: "bench-local" } }] },
+    });
+  });
+
   it("does not read or save durable layouts for an ephemeral setup terminal", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(mockJsonResponse({ sessions: [] }))));
 
