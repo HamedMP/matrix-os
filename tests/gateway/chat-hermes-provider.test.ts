@@ -956,6 +956,32 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).not.toHaveBeenCalled();
   });
 
+  it("publishes authoritative trailing Hermes whitespace when sealing a streamed segment", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking  " });
+    gateway.event("message.interim", {
+      text: "Checking  ",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Checking  ",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "assistant.delta", delta: "  " },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
   it("interrupts the live Hermes session before closing an aborted Run", async () => {
     const gateway = fakeGateway();
     const abortController = new AbortController();
