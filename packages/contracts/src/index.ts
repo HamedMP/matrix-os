@@ -1143,6 +1143,7 @@ export {
   otherOsViewMode,
   createDefaultOsViewDocument,
   mergeOsViewStatePatch,
+  rebaseOsViewStatePatch,
   OsViewAppStateSchema,
   OsViewCanvasTransformSchema,
   OsViewDesktopIconSchema,

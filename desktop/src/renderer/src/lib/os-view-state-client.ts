@@ -2,6 +2,7 @@ import {
   OsViewStateResponseSchema,
   createDefaultOsViewDocument,
   mergeOsViewStatePatch,
+  rebaseOsViewStatePatch,
   type OsViewStatePatch,
   type OsViewStateResponse,
 } from "@matrix-os/contracts";
@@ -58,8 +59,14 @@ export function patchNativeOsViewState(api: ApiClient, patch: OsViewStatePatch):
     } catch (error: unknown) {
       if (!(error instanceof AppError && error.detail === "os_view_state_conflict")) throw error;
     }
+    const conflictedBase = base;
     base = await loadNativeOsViewState(api);
-    cached = { api, state: await sendPatch(api, base, patch, id) };
+    const rebasedPatch = rebaseOsViewStatePatch(
+      conflictedBase.document,
+      base.document,
+      patch,
+    );
+    cached = { api, state: await sendPatch(api, base, rebasedPatch, id) };
   };
   const pending = mutationQueue.then(write, write);
   mutationQueue = pending.catch((error: unknown) => {

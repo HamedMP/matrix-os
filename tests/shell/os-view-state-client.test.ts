@@ -33,10 +33,17 @@ describe("Web OS-view state client", () => {
   });
 
   it("reloads and retries the same mutation after a revision conflict", async () => {
-    const afterRetry = { ...latest, revision: 8 };
+    const latestAfterConflict = {
+      ...latest,
+      document: {
+        ...latest.document,
+        pinnedApps: ["__terminal__"],
+      },
+    };
+    const afterRetry = { ...latestAfterConflict, revision: 8 };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, status: 409 })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => latest })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => latestAfterConflict })
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => afterRetry })
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ...afterRetry, revision: 9 }) });
     vi.stubGlobal("fetch", fetchMock);
@@ -49,7 +56,7 @@ describe("Web OS-view state client", () => {
     expect(first.baseRevision).toBe(1);
     expect(retried.baseRevision).toBe(4);
     expect(retried.mutationId).toBe(first.mutationId);
-    expect(retried.patch).toEqual({ pinnedApps: ["__chat__"] });
+    expect(retried.patch).toEqual({ pinnedApps: ["__terminal__", "__chat__"] });
     expect(JSON.parse(fetchMock.mock.calls[3][1].body).baseRevision).toBe(8);
   });
 });

@@ -2,6 +2,7 @@ import {
   OsViewStateResponseSchema,
   createDefaultOsViewDocument,
   mergeOsViewStatePatch,
+  rebaseOsViewStatePatch,
   type OsViewStatePatch,
   type OsViewStateResponse,
   type OsViewMode,
@@ -76,8 +77,14 @@ export function patchWebOsViewState(
     };
     let result = await sendPatch(gatewayUrl, base, patch, id);
     if (result.conflict) {
+      const conflictedBase = base;
       base = await requestState(gatewayUrl);
-      result = await sendPatch(gatewayUrl, base, patch, id);
+      const rebasedPatch = rebaseOsViewStatePatch(
+        conflictedBase.document,
+        base.document,
+        patch,
+      );
+      result = await sendPatch(gatewayUrl, base, rebasedPatch, id);
     }
     if (!result.state) throw new Error("OS-view state remained conflicted");
     cached = { gatewayUrl, state: result.state };

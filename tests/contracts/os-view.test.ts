@@ -8,6 +8,7 @@ import {
   mergeOsViewStatePatch,
   normalizeOsViewMode,
   otherOsViewMode,
+  rebaseOsViewStatePatch,
 } from "@matrix-os/contracts";
 
 describe("shared OS-view contract", () => {
@@ -56,5 +57,56 @@ describe("shared OS-view contract", () => {
       mutationId: "retry-me",
       patch: {},
     }).success).toBe(false);
+  });
+
+  it("rebases stale collection snapshots without losing concurrent entity or field edits", () => {
+    const base = mergeOsViewStatePatch(createDefaultOsViewDocument(), {
+      apps: [{ path: "__chat__", title: "Chat", state: "open" }],
+      pinnedApps: ["__chat__"],
+      desktop: {
+        windows: [{ path: "__chat__", x: 20, y: 30, width: 800, height: 600 }],
+      },
+    });
+    const latest = mergeOsViewStatePatch(base, {
+      apps: [
+        { path: "__chat__", title: "Chat", state: "open" },
+        { path: "__terminal__", title: "Terminal", state: "open" },
+      ],
+      pinnedApps: ["__chat__", "__terminal__"],
+      desktop: {
+        windows: [
+          { path: "__chat__", x: 140, y: 30, width: 800, height: 600 },
+          { path: "__terminal__", x: 80, y: 90, width: 900, height: 640 },
+        ],
+      },
+    });
+
+    expect(rebaseOsViewStatePatch(base, latest, {
+      apps: [
+        { path: "__chat__", title: "Chat", state: "minimized" },
+        { path: "__file-browser__", title: "Files", state: "open" },
+      ],
+      pinnedApps: ["__chat__", "__file-browser__"],
+      desktop: {
+        windows: [
+          { path: "__chat__", x: 20, y: 220, width: 800, height: 600 },
+          { path: "__file-browser__", x: 60, y: 70, width: 880, height: 620 },
+        ],
+      },
+    })).toEqual({
+      apps: [
+        { path: "__chat__", title: "Chat", state: "minimized" },
+        { path: "__terminal__", title: "Terminal", state: "open" },
+        { path: "__file-browser__", title: "Files", state: "open" },
+      ],
+      pinnedApps: ["__chat__", "__terminal__", "__file-browser__"],
+      desktop: {
+        windows: [
+          { path: "__chat__", x: 140, y: 220, width: 800, height: 600 },
+          { path: "__terminal__", x: 80, y: 90, width: 900, height: 640 },
+          { path: "__file-browser__", x: 60, y: 70, width: 880, height: 620 },
+        ],
+      },
+    });
   });
 });
