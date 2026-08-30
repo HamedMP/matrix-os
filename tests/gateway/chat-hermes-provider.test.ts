@@ -406,6 +406,36 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/proc_preview|private process output/);
   });
 
+  it("keeps provider-native Hermes tool notices advisory when their metadata is not display-safe", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: 42,
+      name: null,
+      args: { session_id: "proc_preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: 42,
+      name: null,
+      result: { success: true, output: "private process output" },
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      { type: "agent.activity", activityId: "42", kind: "dynamic_tool", label: "Use tool", status: "running" },
+      { type: "agent.activity", activityId: "42", kind: "dynamic_tool", label: "Use tool", status: "completed", summary: "Tool completed." },
+      { type: "assistant.delta", delta: "Created the app." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toMatch(/proc_preview|private process output/);
+  });
+
   it("projects safe Hermes command, file, and published reasoning details without raw payloads", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
