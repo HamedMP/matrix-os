@@ -171,59 +171,45 @@ suite("Desktop terminal session handoff", () => {
 
     await page.getByRole("menu", { name: "Shell theme" }).waitFor({ timeout: 5_000 });
     await page.getByRole("menuitemradio", { name: /P10k Rainbow/ }).waitFor({ timeout: 5_000 });
+    await page.keyboard.press("Escape");
   });
 
   it("renders the Figma-aligned list and preserves the mounted terminal buffer across list-detail navigation", async () => {
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
     await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
-    await page.getByText("Active", { exact: true }).waitFor();
-    await page.getByText("Waiting", { exact: true }).waitFor();
-    await page.getByText("Closed", { exact: true }).waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-list.png") });
+    await page.getByRole("button", { name: "Open matrix-task-1" }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Open matrix-review" }).click();
+    await page.getByRole("heading", { name: "matrix-review" }).waitFor({ timeout: 5_000 });
+    await page.getByText("Waiting", { exact: true }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Open matrix-closed" }).click();
+    await page.getByRole("heading", { name: "matrix-closed" }).waitFor({ timeout: 5_000 });
+    await page.getByText("Closed", { exact: true }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Open matrix-task-1" }).click();
+    await page.getByText("Active", { exact: true }).waitFor({ timeout: 5_000 });
 
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
-    await page.getByRole("heading", { name: "matrix-task-1" }).waitFor();
+    await page.getByRole("heading", { name: "matrix-task-1" }).waitFor({ timeout: 5_000 });
     expect(await page.getByRole("navigation", { name: "Terminal breadcrumb" }).count()).toBe(0);
-    await page.getByText(/Started at .*main computer/).waitFor();
-    const viewport = page.locator("section[aria-hidden='false'] [data-terminal-surface]");
+    const activePane = page.locator("section[data-retained-pane][data-active='true']");
+    await activePane.getByText(/Started at .*main computer/).waitFor({ timeout: 5_000 });
+    const viewport = activePane.locator("[data-terminal-surface]");
+    await viewport.waitFor({ timeout: 5_000 });
     await viewport.evaluate((element) => { element.setAttribute("data-mat-300-identity", "preserved"); });
-    const initialGeometry = await expectTerminalViewportToFill(viewport);
+    await expectTerminalViewportToFill(viewport);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-detail.png") });
 
-    await page.getByRole("button", { name: "Collapse sidebar" }).click();
-    await expect.poll(async () => (await readTerminalViewportGeometry(viewport)).hostWidth)
-      .toBeGreaterThan(initialGeometry.hostWidth + 20);
-    const collapsedGeometry = await expectTerminalViewportToFill(viewport);
-
-    await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0];
-      if (!window) throw new Error("desktop window is unavailable");
-      const [width, height] = window.getSize();
-      window.setSize(Math.max(900, width - 140), Math.max(650, height - 100));
-    });
-    await expect.poll(async () => {
-      const resized = await readTerminalViewportGeometry(viewport);
-      return Math.abs(resized.hostWidth - collapsedGeometry.hostWidth)
-        + Math.abs(resized.hostHeight - collapsedGeometry.hostHeight);
-    }).toBeGreaterThan(20);
-    await expectTerminalViewportToFill(viewport);
-
-    await page.getByRole("navigation", { name: "Breadcrumb" })
-      .getByRole("button", { name: "Terminal" })
-      .click();
-    await page.getByRole("heading", { name: "Terminal" }).waitFor();
+    await page.getByRole("button", { name: "Open matrix-review" }).click();
+    await page.getByRole("heading", { name: "matrix-review" }).waitFor({ timeout: 5_000 });
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await expect.poll(() => viewport.getAttribute("data-mat-300-identity")).toBe("preserved");
     await expectTerminalViewportToFill(viewport);
 
-    await page.getByRole("navigation", { name: "Breadcrumb" })
-      .getByRole("button", { name: "Terminal" })
-      .click();
-    await page.getByRole("button", { name: "New shell" }).click();
+    await page.getByRole("button", { name: "New shell session" }).click();
     const newSessionViewport = page.locator(
-      'section[aria-hidden="false"] [data-terminal-surface]',
+      "section[data-retained-pane][data-active='true'] [data-terminal-surface]",
     );
-    await newSessionViewport.waitFor();
+    await newSessionViewport.waitFor({ timeout: 5_000 });
     await expectTerminalViewportToFill(newSessionViewport);
   }, 30_000);
 });

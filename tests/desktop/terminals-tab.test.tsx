@@ -278,9 +278,11 @@ describe("TerminalsTab", () => {
   });
 
   it("opens the Figma-aligned session detail without a Terminal-local back control", () => {
+    const stableRef = `tws_${"a".repeat(32)}:tt_${"1".repeat(32)}`;
     useShellSessions.setState({
       sessions: [{
-        name: "matrix-main",
+        name: stableRef,
+        subtitle: "matrix-main",
         status: "active",
         placement: "active",
         createdAt: "2026-08-12T09:30:00.000Z",
@@ -296,9 +298,10 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Back to terminal sessions" })).toBeNull();
     expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
+    expect(screen.queryByText(stableRef)).toBeNull();
     expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
-    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
-    expect(terminalMounts.get("matrix-main")).toBe(1);
+    expect(screen.getByTestId(`terminal-view-${stableRef}`).getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get(stableRef)).toBe(1);
   });
 
   it("uses the Figma session frame without a secondary session rail", () => {

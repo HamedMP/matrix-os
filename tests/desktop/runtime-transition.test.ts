@@ -387,7 +387,7 @@ describe("desktop runtime transition", () => {
     const previewLoad = useGit.getState().loadPreviews(api, "old-project", "task_old");
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
 
-    for (const resolve of resolvers.get("/api/terminal/sessions") ?? []) resolve({ sessions: [{ name: "old" }] });
+    for (const resolve of resolvers.get("/api/terminal/workspaces") ?? []) resolve({ workspaces: [] });
     for (const resolve of resolvers.get("/api/sessions") ?? []) resolve({ sessions: [], nextCursor: null });
     for (const resolve of resolvers.get("/api/projects/old-project/branches") ?? []) resolve({ branches: [{ name: "old" }] });
     for (const resolve of resolvers.get("/api/projects/old-project/prs") ?? []) resolve({ prs: [{ number: 1 }] });
