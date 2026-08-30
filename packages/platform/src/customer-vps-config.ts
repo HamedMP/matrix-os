@@ -67,24 +67,26 @@ function fundedAiRuntimeFromEnv(env: NodeJS.ProcessEnv): {
   if (!enabledFromEnv(env.MATRIX_FUNDED_AI_RUNTIME_ENABLED)) {
     return { fundedAiEnabled: false, fundedAiRelayUrl: '' };
   }
-  try {
-    const raw = env.MATRIX_FUNDED_AI_RELAY_URL ?? '';
-    if (!raw || raw.length > 2_048 || !/^[A-Za-z0-9:/._~%\[\]-]+$/.test(raw)) {
-      throw new Error('invalid');
-    }
-    const url = new URL(raw);
-    const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
-    if ((url.protocol !== 'https:' && !(loopback && url.protocol === 'http:'))
-      || url.username || url.password || url.search || url.hash) {
-      throw new Error('invalid');
-    }
-    return {
-      fundedAiEnabled: true,
-      fundedAiRelayUrl: url.toString().replace(/\/$/, ''),
-    };
-  } catch {
+  const raw = env.MATRIX_FUNDED_AI_RELAY_URL ?? '';
+  if (!raw || raw.length > 2_048 || !/^[A-Za-z0-9:/._~%\[\]-]+$/.test(raw)) {
     throw new Error('Funded AI runtime is misconfigured');
   }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    throw new Error('Funded AI runtime is misconfigured');
+  }
+  const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !(loopback && url.protocol === 'http:'))
+    || url.username || url.password || url.search || url.hash) {
+    throw new Error('Funded AI runtime is misconfigured');
+  }
+  return {
+    fundedAiEnabled: true,
+    fundedAiRelayUrl: url.toString().replace(/\/$/, ''),
+  };
 }
 
 export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): CustomerVpsConfig {
