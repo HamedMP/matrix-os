@@ -6,6 +6,7 @@ import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { useCanvasSettings } from "@/stores/canvas-settings";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
@@ -494,6 +495,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         <TerminalApp
           mobile={isMobile}
           launchTargetId={win.id}
+          layoutId={win.terminalLayoutId}
+          persistence={win.path === TERMINAL_SETUP_WINDOW_PATH ? "ephemeral" : "durable"}
           embeddedChrome
           canvasZoom={isFullscreen ? 1 : zoom}
           suspended={hidden || isPreview}

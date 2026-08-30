@@ -795,6 +795,97 @@ describe("TerminalApp", () => {
     expect(layoutPutCalls).toHaveLength(0);
   });
 
+  it("loads and revision-saves only its ID-scoped Terminal window layout", async () => {
+    const layoutId = "term-layout_0123456789abcdef0123456789abcdef";
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT") {
+        return Promise.resolve(mockJsonResponse({ layoutId, revision: 5, layout: JSON.parse(String(init.body)).layout }));
+      }
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`)) {
+        return Promise.resolve(mockJsonResponse({
+          layoutId,
+          revision: 4,
+          layout: {
+            activeTabId: "bench-tab",
+            sidebarOpen: true,
+            tabs: [{
+              id: "bench-tab",
+              label: "bench",
+              paneTree: { type: "pane", id: "bench-pane", cwd: "projects", sessionId: "bench" },
+            }],
+          },
+        }));
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve(mockJsonResponse({ sessions: [{ name: "bench", status: "active" }] }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    }));
+
+    render(<TerminalApp layoutId={layoutId} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const paneProps = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+    act(() => paneProps.onSessionAttached(paneProps.paneTree.id, "bench-next"));
+    act(() => window.dispatchEvent(new Event("pagehide")));
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/terminal/window-layouts/${layoutId}`),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    const putCall = vi.mocked(global.fetch).mock.calls.find(([input, init]) => (
+      String(input).includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT"
+    ));
+    expect(JSON.parse(String(putCall?.[1]?.body))).toMatchObject({
+      baseRevision: 4,
+      layout: { activeTabId: "bench-tab" },
+    });
+  });
+
+  it("does not read or save durable layouts for an ephemeral setup terminal", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(mockJsonResponse({ sessions: [] }))));
+
+    render(<TerminalApp persistence="ephemeral" />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => window.dispatchEvent(new Event("pagehide")));
+
+    expect(vi.mocked(global.fetch).mock.calls.some(([input]) => (
+      String(input).includes("/api/terminal/layout")
+      || String(input).includes("/api/terminal/window-layouts")
+    ))).toBe(false);
+  });
+
+  it("deletes the temporary shell when an ephemeral setup terminal closes", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(mockJsonResponse({ ok: true }))));
+    const mounted = render(<TerminalApp persistence="ephemeral" initialCommand="codex" />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+    act(() => props.onSessionAttached(props.paneTree.id, "setup-shell"));
+
+    mounted.unmount();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/setup-shell?force=1"),
+      expect.objectContaining({ method: "DELETE", keepalive: true }),
+    );
+  });
+
   it("does not render workspace transport ids as managed shell sessions", async () => {
     render(<TerminalApp initialSessionId="matrix-sess_run_db0dded67faaca6b" />);
 
@@ -3525,6 +3616,9 @@ describe("TerminalApp", () => {
       if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
         return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
       }
+      if (url.includes("/api/terminal/sessions/bench/recover") && init?.method === "POST") {
+        return Promise.resolve(mockJsonResponse({ session: { name: "bench", status: "active" } }, 201));
+      }
       return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
     }));
 
@@ -3539,8 +3633,24 @@ describe("TerminalApp", () => {
     expect(terminalSessionPostBodies()).toHaveLength(0);
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string };
+      unavailableSessionIds?: string[];
+      onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
     };
-    expect(props.paneTree.sessionId).toBe("main");
+    expect(props.paneTree.sessionId).toBe("bench");
+    expect(props.unavailableSessionIds).toEqual(["bench"]);
+
+    await act(async () => {
+      await expect(props.onRecoverSession?.("bench", "projects")).resolves.toBe(true);
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/bench/recover"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ cwd: "projects" }),
+      }),
+    );
+    const recoveredProps = paneGridSpy.mock.lastCall?.[0] as { unavailableSessionIds?: string[] };
+    expect(recoveredProps.unavailableSessionIds).toEqual([]);
   });
 
   it("preserves a saved shell layout when the session catalog is unavailable", async () => {

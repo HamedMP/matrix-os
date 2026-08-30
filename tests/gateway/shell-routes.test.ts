@@ -332,6 +332,30 @@ describe("gateway shell routes", () => {
     expect(registry.create).toHaveBeenCalledWith({ name: "main", cwd: "~/projects" });
   });
 
+  it("clears an explicit session tombstone before creating its runtime", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "main" })),
+      delete: vi.fn(),
+    };
+    const sessionLifecycle = {
+      deleteSessionReferences: vi.fn(),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0]).toBeLessThan(
+      registry.create.mock.invocationCallOrder[0],
+    );
+  });
+
   it("accepts optional recognized agent identity during session creation", async () => {
     const registry = {
       list: vi.fn(async () => []),
@@ -625,6 +649,54 @@ describe("gateway shell routes", () => {
 
     expect(res.status).toBe(200);
     expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
+  });
+
+  it("tombstones layout references only after authoritative session deletion succeeds", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(async () => undefined),
+    };
+    const sessionLifecycle = {
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    expect(registry.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionLifecycle.deleteSessionReferences.mock.invocationCallOrder[0],
+    );
+    expect(sessionLifecycle.deleteSessionReferences).toHaveBeenCalledWith("main");
+  });
+
+  it("recovers a missing session only through the explicit recover endpoint", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "bench", status: "active" })),
+      delete: vi.fn(),
+    };
+    const sessionLifecycle = {
+      deleteSessionReferences: vi.fn(),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions/bench/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "projects/demo" }),
+    });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ session: { name: "bench", status: "active" } });
+    expect(registry.create).toHaveBeenCalledWith({ name: "bench", cwd: "projects/demo" });
+    expect(sessionLifecycle.clearSessionTombstone).toHaveBeenCalledWith("bench");
+    expect(sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0]).toBeLessThan(
+      registry.create.mock.invocationCallOrder[0],
+    );
   });
 
   it("deletes legacy matrix session names with force query support under both mounts", async () => {

@@ -4,6 +4,7 @@ import { TERMINAL_MIN_WINDOW_HEIGHT, TERMINAL_MIN_WINDOW_WIDTH } from "@/lib/bui
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";
+import { TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { patchWebOsViewState, resetWebOsViewStateClientForTests } from "@/lib/os-view-state-client";
 
@@ -17,6 +18,7 @@ export interface AppWindow {
   height: number;
   minimized: boolean;
   zIndex: number;
+  terminalLayoutId?: string;
 }
 
 export interface LayoutWindow {
@@ -27,6 +29,7 @@ export interface LayoutWindow {
   width: number;
   height: number;
   state: "open" | "minimized" | "closed";
+  terminalLayoutId?: string;
 }
 
 export interface AppEntry {
@@ -78,6 +81,20 @@ interface ClosedLayout {
   y: number;
   width: number;
   height: number;
+  terminalLayoutId?: string;
+}
+
+const TERMINAL_LAYOUT_ID_PATTERN = /^term-layout_[0-9a-f]{32}$/;
+
+function createTerminalLayoutId(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return `term-layout_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function terminalLayoutIdForPath(path: string, existing?: string): string | undefined {
+  if (!isTerminalWindowPath(path) || path === TERMINAL_SETUP_WINDOW_PATH) return undefined;
+  return existing && TERMINAL_LAYOUT_ID_PATTERN.test(existing) ? existing : createTerminalLayoutId();
 }
 
 function normalizeRestoredLayout(path: string, layout: ClosedLayout): ClosedLayout {
@@ -170,19 +187,24 @@ function debouncedSave(
   saveTimer = setTimeout(() => {
     if (isPreVpsBillingSetupRoute()) return;
     const gatewayUrl = getGatewayUrl();
-    const layoutWindows: LayoutWindow[] = state.windows.map((w) => ({
-      path: w.path,
-      title: w.title,
-      x: w.x,
-      y: w.y,
-      width: w.width,
-      height: w.height,
-      state: w.minimized ? ("minimized" as const) : ("open" as const),
-    }));
+    const layoutWindows: LayoutWindow[] = state.windows.flatMap((w) => (
+      w.path === TERMINAL_SETUP_WINDOW_PATH
+        ? []
+        : [{
+            path: w.path,
+            title: w.title,
+            x: w.x,
+            y: w.y,
+            width: w.width,
+            height: w.height,
+            state: w.minimized ? ("minimized" as const) : ("open" as const),
+            ...(w.terminalLayoutId ? { terminalLayoutId: w.terminalLayoutId } : {}),
+          }]
+    ));
 
     const layoutPaths = new Set(layoutWindows.map((lw) => lw.path));
     for (const path of state.closedPaths) {
-      if (!layoutPaths.has(path)) {
+      if (path !== TERMINAL_SETUP_WINDOW_PATH && !layoutPaths.has(path)) {
         const closedLayout = state.closedLayouts.get(path);
         layoutWindows.push({
           path,
@@ -192,6 +214,7 @@ function debouncedSave(
           width: closedLayout?.width ?? 640,
           height: closedLayout?.height ?? 480,
           state: "closed",
+          ...(closedLayout?.terminalLayoutId ? { terminalLayoutId: closedLayout.terminalLayoutId } : {}),
         });
       }
     }
@@ -261,6 +284,7 @@ function createWindowRecord(
     height: Math.max(saved?.height ?? defaultHeight, minSize.height),
     minimized: false,
     zIndex: state.nextZ,
+    terminalLayoutId: terminalLayoutIdForPath(path, saved?.terminalLayoutId),
   };
 }
 
@@ -414,6 +438,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             y: win.y,
             width: win.width,
             height: win.height,
+            ...(win.terminalLayoutId ? { terminalLayoutId: win.terminalLayoutId } : {}),
           });
         }
         // Evict oldest entries if over cap
@@ -557,6 +582,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
               y: restored.y,
               width: restored.width,
               height: restored.height,
+              ...(s.terminalLayoutId ? { terminalLayoutId: s.terminalLayoutId } : {}),
             });
             continue;
           }
@@ -570,6 +596,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             height: restored.height,
             minimized: s.state === "minimized",
             zIndex: z++,
+            terminalLayoutId: terminalLayoutIdForPath(s.path, s.terminalLayoutId),
           });
         }
 
