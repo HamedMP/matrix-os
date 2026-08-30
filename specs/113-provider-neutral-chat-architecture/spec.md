@@ -1,5 +1,7 @@
 # Canonical Chat, Provider, and Project Workspace Architecture
 
+> **OS-view amendment:** canonical Chat identity, provider binding, Turn state, copy, recovery, and persistence are shared across Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile. Renderers may adapt chrome and spatial composition but must not create renderer-specific Chat models. See `specs/119-os-view-parity/spec.md`.
+
 **Linear issue:** MAT-319
 **Created:** 2026-08-13
 **Status:** Amended for final architecture review on 2026-08-24
