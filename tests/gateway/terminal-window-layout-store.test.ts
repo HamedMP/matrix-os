@@ -105,6 +105,9 @@ describe("terminal window layout store", () => {
     await store.deleteSessionReferences("deleted-shell");
 
     await expect(store.listSessionTombstones()).resolves.toEqual(["deleted-shell"]);
+    await expect(store.isSessionTombstoned("deleted-shell")).resolves.toBe(true);
+    await store.clearSessionTombstone("deleted-shell");
+    await expect(store.isSessionTombstoned("deleted-shell")).resolves.toBe(false);
   });
 
   it("deletes one shell through the gateway and reconciles every window layout", async () => {

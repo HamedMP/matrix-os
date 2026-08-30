@@ -547,6 +547,7 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellWs = createShellWsHandler({
     registry: zellijShellRegistry,
     adapter: zellijAdapter,
+    isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
     scrollbackStore: shellScrollbackStore,
     persistCanonicalSize: (name, size) => {
       void zellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
@@ -559,6 +560,7 @@ export async function createGateway(config: GatewayConfig) {
     : createShellWsHandler({
         registry: chatZellijShellRegistry,
         adapter: chatZellijAdapter,
+        isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
         scrollbackStore: shellScrollbackStore,
         persistCanonicalSize: (name, size) => {
           void chatZellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
