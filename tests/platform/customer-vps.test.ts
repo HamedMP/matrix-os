@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createHmac } from 'node:crypto';
 import {
   claimUserMachineDelete,
   claimRunningUserMachineResize,
@@ -36,6 +35,7 @@ import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-
 import {
   buildPlatformRuntimeVerificationToken,
   timingSafeTokenEquals,
+  buildPlatformVerificationToken,
 } from '../../packages/platform/src/platform-token.js';
 
 describe('platform/customer-vps', () => {
@@ -1429,7 +1429,7 @@ describe('platform/customer-vps', () => {
 
     await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
-    const expected = createHmac('sha256', 'platform-secret').update('alice').digest('hex');
+    const expected = buildPlatformVerificationToken('alice', 'platform-secret');
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     const fundedRuntimeToken = createInput?.userData
       .match(/^\s*MATRIX_FUNDED_AI_RUNTIME_TOKEN=([^\s]+)$/m)?.[1];
@@ -1468,6 +1468,14 @@ describe('platform/customer-vps', () => {
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain('MATRIX_FUNDED_AI_ENABLED=true');
     expect(createInput?.userData).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.matrix-os.com');
+    const machine = await getActiveUserMachineByHandle(db, 'alice');
+    const fundedToken = buildPlatformRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: machine!.machineId,
+      runtimeSlot: machine!.runtimeSlot,
+    }, 'platform-secret');
+    expect(createInput?.userData).toContain(`MATRIX_FUNDED_AI_RUNTIME_TOKEN=${fundedToken}`);
+    expect(fundedToken).not.toBe(buildPlatformVerificationToken('alice', 'platform-secret'));
     expect(createInput?.userData).not.toContain('AI_RELAY_CONTROL_TOKEN');
     expect(createInput?.userData).not.toContain('CF_AIG_AUTHORIZATION');
   });

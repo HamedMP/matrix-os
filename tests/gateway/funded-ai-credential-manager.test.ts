@@ -14,7 +14,8 @@ function runtimeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     MATRIX_FUNDED_AI_ENABLED: "true",
     MATRIX_FUNDED_AI_RELAY_URL: "https://relay.matrix-os.com",
     PLATFORM_INTERNAL_URL: "https://platform.matrix-os.com",
-    MATRIX_AUTH_TOKEN: "p".repeat(64),
+    MATRIX_AUTH_TOKEN: "legacy-stable-token-must-not-authorize-funded-ai",
+    MATRIX_FUNDED_AI_RUNTIME_TOKEN: "p".repeat(64),
     MATRIX_HANDLE: "alice",
     MATRIX_CLERK_USER_ID: "user_123",
     MATRIX_MACHINE_ID: "machine_123",
@@ -53,7 +54,9 @@ describe("funded AI runtime credential manager", () => {
 
   it("is disabled by default and fails startup closed for partial or unsafe configuration", () => {
     expect(loadFundedAiRuntimeConfig({})).toBeUndefined();
-    expect(() => loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_AUTH_TOKEN: "short" })))
+    expect(() => loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_FUNDED_AI_RUNTIME_TOKEN: "short" })))
+      .toThrow("Funded AI runtime is misconfigured");
+    expect(() => loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_FUNDED_AI_RUNTIME_TOKEN: undefined })))
       .toThrow("Funded AI runtime is misconfigured");
     expect(() => loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_FUNDED_AI_RELAY_URL: "http://relay.example" })))
       .toThrow("Funded AI runtime is misconfigured");
