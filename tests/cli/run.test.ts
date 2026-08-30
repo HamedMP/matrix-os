@@ -16,6 +16,10 @@ import {
 } from "../../packages/sync-client/src/cli/commands/run.js";
 import { PUBLISHED_CLI_COMMANDS, resolvePublishedCliRedirect } from "../../packages/cli/src/index.js";
 
+const WORKSPACE_ID = "tws_00000000000000000000000000000001";
+const TAB_ID = "tt_00000000000000000000000000000001";
+const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID } as const;
+
 async function createFakeRunGateway(runResult: Record<string, unknown> = {
   stdout: "file.txt\n",
   stderr: "warn\n",
@@ -29,11 +33,21 @@ async function createFakeRunGateway(runResult: Record<string, unknown> = {
   let runRequests: unknown[] = [];
   let wsConnections = 0;
   const server = http.createServer((req, res) => {
-    if (req.method === "POST" && req.url === "/api/terminal/sessions") {
+    if (req.method === "GET" && req.url === "/api/coding-agents/summary") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ projects: { items: [] } }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/api/terminal/workspaces") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ workspaces: [{ id: WORKSPACE_ID, scope: "main", tabs: [] }] }));
+      return;
+    }
+    if (req.method === "POST" && req.url === `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) {
       createRequests += 1;
       req.resume();
       res.writeHead(201, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ name: "run-session", created: true }));
+      res.end(JSON.stringify({ tab: { id: TAB_ID, name: "Run echo" } }));
       return;
     }
     if (req.method === "POST" && req.url === "/api/terminal/run") {
@@ -49,12 +63,18 @@ async function createFakeRunGateway(runResult: Record<string, unknown> = {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: { code: "not_found" } }));
   });
-  const wss = new WebSocketServer({ server, path: "/ws/terminal/session" });
+  const wss = new WebSocketServer({ server, path: "/ws/terminal/tab" });
   wss.on("connection", (ws) => {
     wsConnections += 1;
-    ws.send(JSON.stringify({ type: "attached" }));
+    ws.send(JSON.stringify({
+      type: "attached",
+      terminalRef: TERMINAL_REF,
+      revision: 1,
+      canonicalSize: { cols: 120, rows: 36 },
+      nextSeq: 0,
+    }));
     setTimeout(() => {
-      ws.send(JSON.stringify({ type: "exit" }));
+      ws.send(JSON.stringify({ type: "exit", terminalRef: TERMINAL_REF, revision: 1, exitCode: 0 }));
       ws.close();
     }, 10).unref?.();
   });
@@ -199,22 +219,20 @@ describe("run CLI command", () => {
     expect(inferRunAgent(["env", "FOO=bar", "bash"])).toBeUndefined();
   });
 
-  it("attaches existing named sessions instead of failing create-or-attach", async () => {
+  it("creates and attaches an interactive run as a workspace tab", async () => {
     const client = {
-      createSession: vi.fn(async () => {
-        throw Object.assign(new Error("Request failed"), { code: "session_exists" });
-      }),
-      attachSession: vi.fn(async () => ({ detached: true })),
+      createTab: vi.fn(async () => ({ tab: { id: TAB_ID } })),
+      attachTab: vi.fn(async () => ({ detached: true, exitCode: null })),
     };
 
     await expect(
       createOrAttachRunSession(client, {
-        name: "setup",
+        workspaceId: WORKSPACE_ID,
+        name: "Run claude",
         command: ["claude"],
-        sessionProvided: true,
       }),
-    ).resolves.toEqual({ detached: true });
-    expect(client.attachSession).toHaveBeenCalledWith("setup", {});
+    ).resolves.toEqual({ detached: true, exitCode: null, terminalRef: TERMINAL_REF });
+    expect(client.attachTab).toHaveBeenCalledWith(TERMINAL_REF, {});
   });
 
   it("maps timed-out runs to 124 even when the remote process reports an exit code", () => {
@@ -225,39 +243,37 @@ describe("run CLI command", () => {
 
   it("passes no-mouse mode through interactive run attach", async () => {
     const client = {
-      createSession: vi.fn(async () => ({ name: "setup" })),
-      attachSession: vi.fn(async () => ({ detached: true })),
+      createTab: vi.fn(async () => ({ tab: { id: TAB_ID } })),
+      attachTab: vi.fn(async () => ({ detached: true, exitCode: null })),
     };
 
     await expect(
       createOrAttachRunSession(client, {
-        name: "setup",
+        workspaceId: WORKSPACE_ID,
+        name: "Run claude",
         command: ["claude"],
-        sessionProvided: true,
         mouse: false,
       }),
-    ).resolves.toEqual({ detached: true });
-    expect(client.attachSession).toHaveBeenCalledWith("setup", { mouse: false });
-    expect(client.createSession).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude" }));
+    ).resolves.toEqual({ detached: true, exitCode: null, terminalRef: TERMINAL_REF });
+    expect(client.attachTab).toHaveBeenCalledWith(TERMINAL_REF, { mouse: false });
   });
 
   it("passes no-rich-paste mode through interactive run attach", async () => {
     const client = {
-      createSession: vi.fn(async () => ({ name: "setup" })),
-      attachSession: vi.fn(async () => ({ detached: true })),
+      createTab: vi.fn(async () => ({ tab: { id: TAB_ID } })),
+      attachTab: vi.fn(async () => ({ detached: true, exitCode: null })),
     };
 
     await expect(
       createOrAttachRunSession(client, {
-        name: "setup",
+        workspaceId: WORKSPACE_ID,
+        name: "Run codex",
         cwd: "projects/app",
         command: ["codex"],
-        sessionProvided: true,
         attachOptions: { cwd: "projects/app", noRichPaste: true },
       }),
-    ).resolves.toEqual({ detached: true });
-    expect(client.attachSession).toHaveBeenCalledWith("setup", { cwd: "projects/app", noRichPaste: true });
-    expect(client.createSession).toHaveBeenCalledWith(expect.objectContaining({ agent: "codex" }));
+    ).resolves.toEqual({ detached: true, exitCode: null, terminalRef: TERMINAL_REF });
+    expect(client.attachTab).toHaveBeenCalledWith(TERMINAL_REF, { cwd: "projects/app", noRichPaste: true });
   });
 
   it("keeps stdout JSON-only for run -it --json", async () => {
@@ -266,8 +282,8 @@ describe("run CLI command", () => {
       const result = await runMatrixCli([
         "run",
         "-it",
-        "--session",
-        "run-session",
+        "--project",
+        "main",
         "--gateway",
         gateway.gatewayUrl,
         "--token",
@@ -284,7 +300,7 @@ describe("run CLI command", () => {
       expect(JSON.parse(result.stdout)).toEqual({
         v: 1,
         ok: true,
-        data: { detached: false, session: "run-session" },
+        data: { detached: false, exitCode: 0, terminalRef: TERMINAL_REF },
       });
       expect(result.stderr).toContain("\u001b[?1000l");
       expect(gateway.createRequests).toBe(1);
@@ -351,7 +367,7 @@ describe("run CLI command", () => {
     }
   });
 
-  it("rejects --session without interactive mode", async () => {
+  it("rejects the removed --session option", async () => {
     const gateway = await createFakeRunGateway();
     try {
       const result = await runMatrixCli([
@@ -368,7 +384,7 @@ describe("run CLI command", () => {
 
       expect(result.status).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("--session is only supported with -it");
+      expect(result.stderr).toContain("`--session` was removed");
       expect(gateway.runRequests).toEqual([]);
       expect(gateway.createRequests).toBe(0);
       expect(gateway.wsConnections).toBe(0);
@@ -377,22 +393,20 @@ describe("run CLI command", () => {
     }
   });
 
-  it("does not reuse an accidental ephemeral session collision", async () => {
+  it("rejects an invalid tab create response instead of attaching another tab", async () => {
     const client = {
-      createSession: vi.fn(async () => {
-        throw Object.assign(new Error("Request failed"), { code: "session_exists" });
-      }),
-      attachSession: vi.fn(async () => ({ detached: true })),
+      createTab: vi.fn(async () => ({ tab: { id: "invalid" } })),
+      attachTab: vi.fn(async () => ({ detached: true, exitCode: null })),
     };
 
     await expect(
       createOrAttachRunSession(client, {
+        workspaceId: WORKSPACE_ID,
         name: "run-collision",
         command: ["claude"],
-        sessionProvided: false,
       }),
-    ).rejects.toMatchObject({ code: "session_exists" });
-    expect(client.attachSession).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({ code: "invalid_response" });
+    expect(client.attachTab).not.toHaveBeenCalled();
   });
 
   it("quotes remote argv so shell sessions preserve spaces and single quotes", () => {
