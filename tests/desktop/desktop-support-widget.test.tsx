@@ -83,6 +83,7 @@ describe("Desktop support widget", () => {
     });
     useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
     useTabs.setState(useTabs.getInitialState(), true);
+    useUi.setState(useUi.getInitialState(), true);
   });
 
   afterEach(() => {
@@ -196,6 +197,7 @@ describe("Desktop support widget", () => {
     fireEvent.click(screen.getByRole("button", { name: "Support" }));
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
     expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
@@ -209,11 +211,13 @@ describe("Desktop support widget", () => {
     fireEvent.click(replacementClose);
 
     await waitFor(() => expect(document.getElementById("ph-conversations-widget-container")).toBeNull());
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Support" }));
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(2));
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
     expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
   });
