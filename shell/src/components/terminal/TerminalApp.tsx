@@ -41,6 +41,7 @@ import {
   genId,
   hasPaneId,
   layoutUsesOnlyCanonicalShellSessions,
+  mergeTerminalLayouts,
   removeSessionFromPaneTree,
   renameSessionInTree,
   setPaneSessionId,
@@ -269,6 +270,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const terminalLayoutDirtyRef = useRef(false);
   const terminalLayoutChangeVersionRef = useRef(0);
   const terminalLayoutRevisionRef = useRef(0);
+  const terminalLayoutBaseRef = useRef<TerminalLayout | null>(null);
+  const terminalLayoutSkipNextDirtyRef = useRef(false);
   const markTerminalLayoutDirty = () => {
     terminalLayoutDirtyRef.current = true;
     terminalLayoutChangeVersionRef.current += 1;
@@ -305,6 +308,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   const persistLayoutNow = async (): Promise<boolean> => {
     if (persistence === "ephemeral") return true;
+    const changeVersion = terminalLayoutChangeVersionRef.current;
     const layout: TerminalLayout = {
       tabs: tabsRef.current,
       activeTabId: activeTabIdRef.current,
@@ -324,14 +328,70 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         keepalive: true,
         signal: AbortSignal.timeout(10_000),
       });
+      if (layoutId && res.status === 409) {
+        const currentRes = await fetch(endpoint, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!currentRes.ok) {
+          console.warn("Failed to reload terminal layout after conflict:", currentRes.status);
+          return false;
+        }
+        const current = await currentRes.json() as {
+          revision?: unknown;
+          layout?: TerminalLayout;
+        };
+        if (typeof current.revision !== "number" || !current.layout) {
+          console.warn("Failed to reload terminal layout after conflict: invalid response");
+          return false;
+        }
+        const merged = mergeTerminalLayouts(
+          terminalLayoutBaseRef.current ?? current.layout,
+          layout,
+          current.layout,
+        );
+        const retryRes = await fetch(endpoint, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ baseRevision: current.revision, layout: merged }),
+          keepalive: true,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!retryRes.ok) {
+          console.warn("Failed to save rebased terminal layout:", retryRes.status);
+          return false;
+        }
+        const saved = await retryRes.json() as { revision?: unknown; layout?: TerminalLayout };
+        if (typeof saved.revision !== "number") {
+          console.warn("Failed to save rebased terminal layout: invalid response");
+          return false;
+        }
+        terminalLayoutRevisionRef.current = saved.revision;
+        const persistedLayout = saved.layout ?? merged;
+        terminalLayoutBaseRef.current = persistedLayout;
+        if (
+          terminalLayoutChangeVersionRef.current === changeVersion
+          && JSON.stringify(persistedLayout) !== JSON.stringify(layout)
+        ) {
+          const nextTabs = persistedLayout.tabs ?? [];
+          const nextActiveTabId = nextTabs.some((tab) => tab.id === persistedLayout.activeTabId)
+            ? persistedLayout.activeTabId ?? ""
+            : nextTabs[0]?.id ?? "";
+          terminalLayoutSkipNextDirtyRef.current = true;
+          setTabs(applyCompatModeToTabs(nextTabs));
+          setActiveTabId(nextActiveTabId);
+          if (!initialMobileRef.current) setSidebarOpen(persistedLayout.sidebarOpen ?? true);
+        }
+        return true;
+      }
       if (!res.ok) {
         console.warn("Failed to save terminal layout:", res.status);
         return false;
       }
       if (layoutId) {
-        const saved = await res.json() as { revision?: unknown };
+        const saved = await res.json() as { revision?: unknown; layout?: TerminalLayout };
         if (typeof saved.revision === "number") {
           terminalLayoutRevisionRef.current = saved.revision;
+          terminalLayoutBaseRef.current = saved.layout ?? layout;
         }
       }
       return true;
@@ -587,6 +647,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
             : response as TerminalLayout;
           if (layoutId && "revision" in response && typeof response.revision === "number") {
             terminalLayoutRevisionRef.current = response.revision;
+            terminalLayoutBaseRef.current = data;
           }
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
@@ -728,6 +789,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     if (!terminalLayoutHydratedRef.current) {
       terminalLayoutHydratedRef.current = true;
       if (!terminalLayoutDirtyRef.current) return;
+    }
+    if (terminalLayoutSkipNextDirtyRef.current) {
+      terminalLayoutSkipNextDirtyRef.current = false;
+      return;
     }
     terminalLayoutDirtyRef.current = true;
     terminalLayoutChangeVersionRef.current += 1;

@@ -406,6 +406,32 @@ describe("gateway shell routes", () => {
     expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
   });
 
+  it("keeps a failed creation rollback tombstoned and hidden from session listings", async () => {
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      create: vi.fn(async () => ({ name: "main" })),
+      delete: vi.fn(async () => { throw new Error("runtime cleanup unavailable"); }),
+    };
+    const sessionLifecycle = {
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => { throw new Error("layout unavailable"); }),
+      listSessionTombstones: vi.fn(async () => ["main"]),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const created = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+    const listed = await app.request("/api/terminal/sessions");
+
+    expect(created.status).toBe(500);
+    expect(sessionLifecycle.deleteSessionReferences).toHaveBeenCalledWith("main");
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual({ sessions: [] });
+  });
+
   it("accepts optional recognized agent identity during session creation", async () => {
     const registry = {
       list: vi.fn(async () => []),

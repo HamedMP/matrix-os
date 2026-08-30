@@ -849,28 +849,48 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("keeps local layout edits dirty without overwriting newer state after a revision conflict", async () => {
+  it("rebases local layout edits onto newer state after a revision conflict", async () => {
     const layoutId = "term-layout_0123456789abcdef0123456789abcdef";
+    let layoutReads = 0;
+    let layoutWrites = 0;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT") {
-        return Promise.resolve(mockJsonResponse({
-          error: { code: "layout_revision_conflict", message: "Layout changed elsewhere" },
-        }, 409));
+        layoutWrites += 1;
+        if (layoutWrites === 1) {
+          return Promise.resolve(mockJsonResponse({
+            error: { code: "layout_revision_conflict", message: "Layout changed elsewhere" },
+          }, 409));
+        }
+        const body = JSON.parse(String(init.body));
+        return Promise.resolve(mockJsonResponse({ layoutId, revision: 6, layout: body.layout }));
       }
       if (url.includes(`/api/terminal/window-layouts/${layoutId}`)) {
+        layoutReads += 1;
         return Promise.resolve(mockJsonResponse({
           layoutId,
-          revision: 4,
-          layout: {
-            activeTabId: "bench-tab",
-            sidebarOpen: true,
-            tabs: [{
-              id: "bench-tab",
-              label: "bench",
-              paneTree: { type: "pane", id: "bench-pane", cwd: "projects", sessionId: "bench" },
-            }],
-          },
+          revision: layoutReads === 1 ? 4 : 5,
+          layout: layoutReads === 1 ? {
+              activeTabId: "bench-tab",
+              sidebarOpen: true,
+              tabs: [{
+                id: "bench-tab",
+                label: "bench",
+                paneTree: { type: "pane", id: "bench-pane", cwd: "projects", sessionId: "bench" },
+              }],
+            } : {
+              activeTabId: "bench-tab",
+              sidebarOpen: false,
+              tabs: [{
+                id: "bench-tab",
+                label: "bench",
+                paneTree: { type: "pane", id: "bench-pane", cwd: "projects", sessionId: "bench" },
+              }, {
+                id: "remote-tab",
+                label: "remote",
+                paneTree: { type: "pane", id: "remote-pane", cwd: "projects", sessionId: "remote" },
+              }],
+            },
         }));
       }
       if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
@@ -897,19 +917,23 @@ describe("TerminalApp", () => {
     const putsAfterConflict = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
       String(input).includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT"
     ));
-    expect(putsAfterConflict).toHaveLength(1);
+    expect(putsAfterConflict).toHaveLength(2);
+    expect(JSON.parse(String(putsAfterConflict[1]?.[1]?.body))).toMatchObject({
+      baseRevision: 5,
+      layout: {
+        sidebarOpen: false,
+        tabs: [
+          { id: "bench-tab", paneTree: { sessionId: "bench-local" } },
+          { id: "remote-tab", paneTree: { sessionId: "remote" } },
+        ],
+      },
+    });
 
     act(() => window.dispatchEvent(new Event("pagehide")));
     const putsAfterPageHide = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
       String(input).includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT"
     ));
     expect(putsAfterPageHide).toHaveLength(2);
-    expect(JSON.parse(String(putsAfterPageHide[1]?.[1]?.body))).toMatchObject({
-      baseRevision: 4,
-      layout: {
-        tabs: [{ paneTree: { sessionId: "bench-local" } }],
-      },
-    });
   });
 
   it("does not read or save durable layouts for an ephemeral setup terminal", async () => {
