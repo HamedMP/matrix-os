@@ -36,6 +36,7 @@ export function createStripeBillingClient(options: {
         ...(input.expiresAt ? { expires_at: Math.floor(Date.parse(input.expiresAt) / 1_000) } : {}),
         ...(input.paymentMethodMode === 'card_required'
           ? {
+            payment_method_types: ['card'] as const,
             payment_method_collection: 'always' as const,
           }
           : {}),

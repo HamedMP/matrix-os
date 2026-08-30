@@ -127,6 +127,7 @@ describe('platform/stripe-billing', () => {
     });
 
     expect(sessionsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      payment_method_types: ['card'],
       payment_method_collection: 'always',
       subscription_data: expect.objectContaining({
         trial_period_days: 7,
@@ -135,7 +136,6 @@ describe('platform/stripe-billing', () => {
         },
       }),
     }), { idempotencyKey: 'attempt_trial' });
-    expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
   });
 
   it('binds an eligible preparation intent to an explicitly expiring checkout and subscription', async () => {
