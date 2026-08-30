@@ -155,7 +155,7 @@ describe('host bundle golden snapshot release hook', () => {
     expect(deployJob).not.toContain('enqueue-golden-snapshot');
   });
 
-  it('deploys an explicit disabled-by-default golden build contract without enabling selection', () => {
+  it('deploys production golden snapshot selection at 100 percent', () => {
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
     const candidateDeploy = workflow.slice(
       workflow.indexOf('      - name: Deploy tagged revision'),
@@ -169,12 +169,21 @@ describe('host bundle golden snapshot release hook', () => {
     expect(workflow).toContain(
       "GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}",
     );
+    expect(workflow).toContain("GOLDEN_SNAPSHOTS_ENABLED: 'true'");
+    expect(workflow).toContain("GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100'");
     expect(candidateDeploy).toContain('GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}');
-    expect(candidateDeploy).toContain('GOLDEN_SNAPSHOTS_ENABLED=false');
-    expect(candidateDeploy).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0');
+    expect(candidateDeploy).toContain('GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}');
+    expect(candidateDeploy).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}');
     expect(productionDeploy).toContain('GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}');
-    expect(productionDeploy).toContain('GOLDEN_SNAPSHOTS_ENABLED=false');
-    expect(productionDeploy).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0');
+    expect(productionDeploy).toContain('GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}');
+    expect(productionDeploy).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}');
+
+    const deployedContract = workflow.slice(
+      workflow.indexOf('      - name: Verify deployed provisioning contract'),
+      workflow.indexOf('      - name: Smoke candidate revision'),
+    );
+    expect(deployedContract).toContain('GOLDEN_SNAPSHOTS_ENABLED');
+    expect(deployedContract).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT');
   });
 
   it('lets durable release registration derive eligibility from the promoted channel', () => {
