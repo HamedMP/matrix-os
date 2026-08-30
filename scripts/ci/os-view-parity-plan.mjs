@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 const SHARED_SURFACE_PREFIXES = [
   "shell/src/",
   "desktop/src/renderer/src/",
+  "desktop/src/shared/",
   "packages/brand/",
   "packages/ui/",
   "packages/contracts/",
@@ -17,11 +18,16 @@ const GATEWAY_SURFACE_PREFIXES = [
 
 const PARITY_TEST_PREFIXES = [
   "tests/fixtures/os-view-parity.ts",
+  "tests/contracts/os-view.test.ts",
   "tests/shell/desktop-mode-parity.test.ts",
   "tests/shell/desktop-launcher-mode.test.tsx",
   "tests/shell/web-desktop-surface.test.tsx",
+  "tests/shell/os-view-state-client.test.ts",
   "tests/desktop/app-launcher.test.tsx",
   "tests/desktop/native-desktop-shell.test.tsx",
+  "tests/desktop/os-view-state-client.test.ts",
+  "tests/desktop/native-os-view-persistence.test.ts",
+  "tests/gateway/os-view-state-repository.test.ts",
 ];
 
 const PARITY_GATE_PATHS = [
