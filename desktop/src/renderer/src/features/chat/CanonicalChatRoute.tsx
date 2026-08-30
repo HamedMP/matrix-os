@@ -14,6 +14,7 @@ type CanonicalRouteAvailability = "checking" | "available" | "unavailable";
 export function CanonicalChatRoute({
   api,
   projectId,
+  tabId,
   initialChatId,
   initialView,
   projectLabel,
@@ -26,6 +27,7 @@ export function CanonicalChatRoute({
 }: {
   api: ApiClient | null;
   projectId: string | null;
+  tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
@@ -151,6 +153,14 @@ export function CanonicalChatRoute({
           );
         }
         if (projectId === null) {
+          if (tabId) {
+            useTabs.getState().updateChatRoute(tabId, {
+              title: title ?? "Chat",
+              chatView: chatId ? "conversation" : "draft",
+              ...(chatId ? { chatId } : {}),
+            });
+            return;
+          }
           useTabs.getState().openTab({
             kind: "chat",
             title: title ?? "Chat",
@@ -165,11 +175,20 @@ export function CanonicalChatRoute({
           projectSlug: projectId,
           title: projectLabel ?? projectId,
           ...(chatId ? { chatId } : {}),
+          ...(chatId ? { chatTitle: title, chatView: "conversation" as const } : { chatView: "draft" as const }),
         });
       }}
       onProjectChanged={(chatId, targetProjectId, title) => {
         useTabs.getState().recordRecentCanonicalChat(chatId, title, targetProjectId);
         if (targetProjectId === null) {
+          if (tabId) {
+            useTabs.getState().updateChatRoute(tabId, {
+              title,
+              chatId,
+              chatView: "conversation",
+            });
+            return;
+          }
           useTabs.getState().openTab({ kind: "chat", title, chatId, closable: false });
           return;
         }

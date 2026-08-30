@@ -6,6 +6,7 @@ import type {
   UnifiedThemeVariant,
 } from "./theme-types";
 import { matrix } from "./matrix";
+import { matrixNeon } from "./matrix-neon";
 import { operator } from "./operator";
 import { trueBlack } from "./true-black";
 import { oneDark } from "./one-dark";
@@ -32,6 +33,7 @@ export const DEFAULT_THEME_ID = "operator";
 export const unifiedThemes: UnifiedThemeDefinition[] = [
   operator,
   matrix,
+  matrixNeon,
   trueBlack,
   oneDark,
   dracula,

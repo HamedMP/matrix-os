@@ -8,6 +8,7 @@ import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sid
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useBrowserNavigation } from "../../desktop/src/renderer/src/stores/browser-navigation";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
@@ -69,6 +70,7 @@ describe("Desktop sidebar navigation shell", () => {
       activeThreadId: null,
     });
     useTabs.setState(useTabs.getInitialState(), true);
+    useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
     useTabs.getState().ensureNavigationScope("runtime-a");
     useTabs.getState().openTab({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" });
     useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
@@ -270,13 +272,7 @@ describe("Desktop sidebar navigation shell", () => {
         ExpectedIcon,
       );
     }
-    const pluginsGlyph = screen.getByRole("button", { name: "Plugins" })
-      .querySelector<HTMLElement>('[data-figma-icon="phosphor-plugs"]');
-    expect(pluginsGlyph).toBeTruthy();
-    expect(pluginsGlyph?.style.maskImage).toContain("plugs.svg");
-    expect(pluginsGlyph?.style.maskRepeat).toBe("no-repeat");
-
-    for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Plugins", "Projects"]) {
+    for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Projects"]) {
       const icon = screen.getByRole("button", { name: label }).querySelector<HTMLElement>("[data-sidebar-icon]");
       expect(icon?.style.width).toBe("14px");
       expect(icon?.style.height).toBe("14px");
@@ -289,7 +285,6 @@ describe("Desktop sidebar navigation shell", () => {
       "Terminal",
       "Files",
       "Apps",
-      "Plugins",
       "Projects",
       "Filter recents",
       "Open account menu",
@@ -411,7 +406,12 @@ describe("Desktop sidebar navigation shell", () => {
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Get help" }));
-    expect(invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://matrix-os.com/docs" });
+    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId))
+      .toMatchObject({ kind: "browser", title: "Browser" });
+    expect(useBrowserNavigation.getState().pending).toMatchObject({
+      url: "https://matrix-os.com/docs",
+    });
+    expect(invoke).not.toHaveBeenCalledWith("shell:open-external", expect.anything());
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Logout" }));

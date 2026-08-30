@@ -1,9 +1,15 @@
-import { LayoutGrid, Search } from "@renderer/lib/hugeicons";
+import { LayoutGrid, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useApps, type MatrixApp } from "../../stores/apps";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
+
+type LauncherEntry =
+  | { type: "create"; key: "__create-app__"; name: "Create app" }
+  | { type: "fixed"; key: string; name: string; app: DesktopAppConfig }
+  | { type: "installed"; key: string; name: string; app: MatrixApp };
 
 function AppIcon({ url, name, large = false }: { url: string | null; name: string; large?: boolean }) {
   const [failed, setFailed] = useState(false);
@@ -37,10 +43,16 @@ export default function AppLauncher({
   presentation = "surface",
   launcherActive = true,
   onLaunch,
+  onCreateApp,
+  onOpenDesktopApp,
+  onAddToDesktop,
 }: {
   presentation?: "surface" | "launchpad";
   launcherActive?: boolean;
   onLaunch?: (tabId: string) => void;
+  onCreateApp?: () => void;
+  onOpenDesktopApp?: (app: DesktopAppConfig) => void;
+  onAddToDesktop?: (path: string) => void;
 } = {}) {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
@@ -53,6 +65,7 @@ export default function AppLauncher({
   const load = useApps((s) => s.load);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [contextEntry, setContextEntry] = useState<LauncherEntry | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -64,15 +77,40 @@ export default function AppLauncher({
     if (launcherActive) inputRef.current?.focus();
   }, [launcherActive]);
 
+  const entries = useMemo<LauncherEntry[]>(() => {
+    if (presentation !== "launchpad") {
+      return apps.map((app) => ({ type: "installed", key: `installed:${app.slug}`, name: app.name, app }));
+    }
+    const fixedNames = new Set(FIXED_DESKTOP_APPS.map((app) => app.name.toLowerCase()));
+    return [
+      { type: "create", key: "__create-app__", name: "Create app" },
+      ...FIXED_DESKTOP_APPS.map((app) => {
+        const installed = apps.find((candidate) => candidate.name.toLowerCase() === app.name.toLowerCase());
+        return {
+          type: "fixed" as const,
+          key: app.path,
+          name: app.name,
+          app: installed
+            ? { ...app, iconUrl: appIconUrl(platformHost, installed.slug, runtimeSlot) ?? app.iconUrl }
+            : app,
+        };
+      }),
+      ...apps
+        .filter((app) => !fixedNames.has(app.name.toLowerCase()))
+        .map((app) => ({ type: "installed" as const, key: `installed:${app.slug}`, name: app.name, app })),
+    ];
+  }, [apps, platformHost, presentation, runtimeSlot]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return apps;
-    return apps.filter((a) => a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q));
-  }, [apps, query]);
+    if (!q) return entries;
+    return entries.filter((entry) => entry.name.toLowerCase().includes(q)
+      || (entry.type === "installed" && entry.app.slug.toLowerCase().includes(q)));
+  }, [entries, query]);
 
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
-  const open = (app: MatrixApp) => {
+  const openInstalled = (app: MatrixApp) => {
     const tabId = openTab({
       kind: "app",
       slug: app.slug,
@@ -81,6 +119,18 @@ export default function AppLauncher({
       ...(appIconUrl(platformHost, app.slug, runtimeSlot) ? { icon: appIconUrl(platformHost, app.slug, runtimeSlot)! } : {}),
     });
     onLaunch?.(tabId);
+  };
+
+  const open = (entry: LauncherEntry) => {
+    if (entry.type === "create") {
+      onCreateApp?.();
+      return;
+    }
+    if (entry.type === "fixed") {
+      onOpenDesktopApp?.(entry.app);
+      return;
+    }
+    openInstalled(entry.app);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -93,8 +143,8 @@ export default function AppLauncher({
       setActive((i) => (i - 1 + filtered.length) % filtered.length);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const app = filtered[activeIndex];
-      if (app) open(app);
+      const entry = filtered[activeIndex];
+      if (entry) open(entry);
     }
   };
 
@@ -170,13 +220,14 @@ export default function AppLauncher({
         {filtered.length === 0 ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (
-          <div className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>
-            {filtered.map((app, i) => {
+          <div data-testid="desktop-launcher-grid" className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>
+            {filtered.map((entry, i) => {
               const highlighted = i === activeIndex;
               return (
                 <button
-                  key={app.slug}
+                  key={entry.key}
                   type="button"
+                  aria-label={entry.name}
                   data-launchpad-interactive={presentation === "launchpad" || undefined}
                   className={`flex flex-col items-center gap-2 rounded-xl transition-colors duration-100 ${presentation === "launchpad" ? "border border-transparent p-3" : "border p-4"}`}
                   style={{
@@ -186,20 +237,54 @@ export default function AppLauncher({
                     borderColor: highlighted ? "var(--accent)" : presentation === "launchpad" ? "transparent" : "var(--border-subtle)",
                   }}
                   onMouseEnter={() => setActive(i)}
-                onClick={() => open(app)}
+                  onContextMenu={(event) => {
+                    if (entry.type === "create") return;
+                    event.preventDefault();
+                    setContextEntry(entry);
+                  }}
+                  onClick={() => open(entry)}
                 >
-                  <AppIcon url={appIconUrl(platformHost, app.slug, runtimeSlot)} name={app.name} large={presentation === "launchpad"} />
+                  {entry.type === "create" ? (
+                    <span className="flex size-16 items-center justify-center rounded-[18px] bg-[var(--accent)] text-white shadow-[var(--shadow-1)]">
+                      <Plus size={40} aria-hidden="true" />
+                    </span>
+                  ) : entry.type === "fixed" ? (
+                    <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
+                      {entry.app.iconUrl
+                        ? <img src={entry.app.iconUrl} alt="" className="size-full rounded-[18px] object-cover" draggable={false} />
+                        : <entry.app.icon size={32} aria-hidden="true" />}
+                    </span>
+                  ) : (
+                    <AppIcon url={appIconUrl(platformHost, entry.app.slug, runtimeSlot)} name={entry.name} large={presentation === "launchpad"} />
+                  )}
                   <span
                     className="w-full truncate text-center text-sm font-medium"
                     style={{ color: "var(--text-primary)", textShadow: presentation === "launchpad" ? "0 1px 2px var(--bg-app)" : undefined }}
                   >
-                    {app.name}
+                    {entry.name}
                   </span>
                 </button>
               );
             })}
           </div>
         )}
+        {contextEntry && onAddToDesktop ? (
+          <div role="menu" data-launchpad-interactive className="fixed left-1/2 top-1/2 z-50 min-w-48 -translate-x-1/2 rounded-xl border bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-3)]">
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--bg-hover)]"
+              onClick={() => {
+                if (contextEntry.type === "create") return;
+                const path = contextEntry.app.path;
+                if (path) onAddToDesktop(path);
+                setContextEntry(null);
+              }}
+            >
+              Add {contextEntry.name} to Desktop
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

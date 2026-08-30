@@ -78,6 +78,31 @@ describe('platform/customer-vps-routes telemetry', () => {
     });
   });
 
+  it('reports zero selected developer tools without treating the field as omitted', async () => {
+    const captureEvent = vi.fn();
+    const service = {
+      provision: vi.fn().mockResolvedValue({ machineId: MACHINE_ID, status: 'provisioning' }),
+    };
+    const app = buildApp(service, captureEvent);
+
+    const res = await app.request('/vps/provision', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ clerkUserId: 'user_123', handle: 'alice', developerTools: [] }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_REQUESTED, {
+      distinctId: 'user_123',
+      properties: {
+        handle: 'alice',
+        runtime_slot: 'primary',
+        requested_server_type: undefined,
+        developer_tools_count: 0,
+      },
+    });
+  });
+
   it('captures matrix_vps_provision_failed with the CustomerVpsError failure code', async () => {
     const captureEvent = vi.fn();
     const service = {

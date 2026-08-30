@@ -194,6 +194,7 @@ function ResponsiveWorkInspector({
 }
 
 export default function WorkTab({
+  tabId,
   route,
   projectSlug,
   active,
@@ -201,6 +202,7 @@ export default function WorkTab({
   initialChatView,
   initialChatTitle,
 }: {
+  tabId?: string;
   route: WorkRoute;
   projectSlug?: string;
   active: boolean;
@@ -220,6 +222,7 @@ export default function WorkTab({
   const inspectorRegionRef = useRef<HTMLDivElement>(null);
   const measuredWidthRef = useRef(false);
   const pendingFocusRef = useRef<RefObject<HTMLButtonElement | null> | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   const surfaceChromeHost = useSurfaceChromeHost();
   const hostedChrome = surfaceChromeHost !== null;
   const [responsive, setResponsive] = useState<WorkResponsiveState>({
@@ -306,6 +309,8 @@ export default function WorkTab({
     return () => observer.disconnect();
   }, [hasInspector, initialChatId, routeKey]);
 
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
   useLayoutEffect(() => {
     const target = pendingFocusRef.current;
     if (!target) return;
@@ -340,10 +345,11 @@ export default function WorkTab({
   }, []);
 
   const startResize = (side: "left" | "right") => (event: React.PointerEvent<HTMLDivElement>) => {
-    if (layout === "narrow") return;
+    if (layout === "narrow" || event.button !== 0) return;
     event.preventDefault();
     const bounds = workRef.current?.getBoundingClientRect();
     if (!bounds) return;
+    resizeCleanupRef.current?.();
     const move = (moveEvent: PointerEvent) => {
       if (side === "left") {
         const requested = moveEvent.clientX - bounds.left;
@@ -364,12 +370,30 @@ export default function WorkTab({
       const maxInspector = Math.max(MIN_INSPECTOR_WIDTH, Math.min(MAX_INSPECTOR_WIDTH, bounds.width - navigationSpace - MIN_CHAT_WIDTH));
       setInspectorWidth(Math.max(MIN_INSPECTOR_WIDTH, Math.min(maxInspector, requested)));
     };
+    const captureTarget = event.currentTarget;
+    const pointerId = event.pointerId;
+    let finished = false;
     const stop = () => {
+      if (finished) return;
+      finished = true;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", stop);
+      captureTarget.removeEventListener("lostpointercapture", stop);
+      if (resizeCleanupRef.current === stop) resizeCleanupRef.current = null;
+      if (typeof captureTarget.hasPointerCapture === "function"
+        && captureTarget.hasPointerCapture(pointerId)) {
+        captureTarget.releasePointerCapture(pointerId);
+      }
     };
+    resizeCleanupRef.current = stop;
+    captureTarget.setPointerCapture?.(pointerId);
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop, { once: true });
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", stop);
+    captureTarget.addEventListener("lostpointercapture", stop);
   };
   const resizeWithKeyboard = (side: "left" | "right") => (delta: number) => {
     const width = workRef.current?.getBoundingClientRect().width ?? 0;
@@ -508,7 +532,7 @@ export default function WorkTab({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab active={active} initialChatId={initialChatId} initialView={initialChatView} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug

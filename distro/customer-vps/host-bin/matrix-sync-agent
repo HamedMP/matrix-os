@@ -35,6 +35,8 @@ readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
 readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
 readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
 readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
+readonly LEGACY_R2_ENV_FILE="/opt/matrix/env/r2.env"
+readonly LEGACY_R2_RETRY_INTERVAL_SECONDS="${MATRIX_LEGACY_R2_RETRY_INTERVAL_SECONDS:-300}"
 readonly TERMINAL_RUNTIME_ROOT="/opt/matrix/terminal-runtime"
 readonly TERMINAL_RUNTIME_GENERATION_FILE="TERMINAL_RUNTIME_GENERATION"
 readonly TERMINAL_RUNTIME_MAX_GENERATIONS="${MATRIX_TERMINAL_RUNTIME_MAX_GENERATIONS:-8}"
@@ -47,6 +49,27 @@ log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
 staged_release_metadata=""
+
+stop_runtime_services() {
+  local service state
+  if ! sudo systemctl stop matrix-symphony matrix-gateway matrix-shell; then
+    log "ERROR: systemd could not stop all runtime services"
+    return 1
+  fi
+  for service in matrix-symphony matrix-gateway matrix-shell; do
+    if ! state="$(sudo systemctl show --property=ActiveState --value "$service")"; then
+      log "ERROR: systemd could not inspect $service after stopping it"
+      return 1
+    fi
+    case "$state" in
+      inactive|failed) ;;
+      *)
+        log "ERROR: $service remained in state ${state:-unknown} after stopping it"
+        return 1
+        ;;
+    esac
+  done
+}
 
 cleanup_staged_release_metadata() {
   if [ -n "$staged_release_metadata" ]; then
@@ -219,6 +242,82 @@ install_host_bin_payload() {
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
 }
 
+prepare_legacy_r2_migration() {
+  local extract_dir="$1" helper
+  if [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]; then
+    return 0
+  fi
+  if [ -L "$LEGACY_R2_ENV_FILE" ] || [ ! -f "$LEGACY_R2_ENV_FILE" ]; then
+    log "ERROR: legacy R2 credential path has an invalid file type"
+    return 1
+  fi
+  helper="$extract_dir/bin/matrix-r2-broker.mjs"
+  if [ ! -f "$helper" ] || [ -L "$helper" ] || [ ! -x /opt/matrix/runtime/node/bin/node ]; then
+    log "ERROR: storage broker migration payload is unavailable"
+    return 1
+  fi
+  if ! /opt/matrix/runtime/node/bin/node "$helper" probe; then
+    log "ERROR: storage broker is not ready; preserving legacy credentials"
+    return 1
+  fi
+}
+
+remove_legacy_r2_credentials() {
+  if [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]; then
+    return 0
+  fi
+  if [ -L "$LEGACY_R2_ENV_FILE" ] || [ ! -f "$LEGACY_R2_ENV_FILE" ]; then
+    log "ERROR: refusing to remove invalid legacy R2 credential path"
+    return 1
+  fi
+  /opt/matrix/bin/matrixctl r2 broker-ready || return 1
+  sudo rm -f -- /opt/matrix/env/r2.env || return 1
+  [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]
+}
+
+clear_legacy_r2_update_error() {
+  [ -f "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 0
+  if python3 - "$UPDATE_ERROR_MARKER" <<'PY'
+import json
+import os
+import stat
+import sys
+
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+try:
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 65536:
+        raise ValueError("invalid update error marker")
+    payload = os.read(fd, 65537)
+    if len(payload) > 65536:
+        raise ValueError("oversized update error marker")
+    if json.loads(payload).get("code") != "legacy_storage_credentials_remain":
+        raise SystemExit(1)
+finally:
+    os.close(fd)
+PY
+  then
+    rm -f -- "$UPDATE_ERROR_MARKER"
+  fi
+}
+
+reconcile_legacy_r2_credentials() {
+  if [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]; then
+    clear_legacy_r2_update_error
+    return 0
+  fi
+  if ! curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+    write_update_error "legacy_storage_credentials_remain" "Legacy storage credentials remain until the installed release and tenant-isolated broker are healthy." "$(current_version)" || true
+    return 1
+  fi
+  if ! remove_legacy_r2_credentials; then
+    write_update_error "legacy_storage_credentials_remain" "Legacy storage credentials remain until the tenant-isolated broker is available." "$(current_version)" || true
+    return 1
+  fi
+  clear_legacy_r2_update_error
+  log "Removed legacy R2 credentials after broker and release health verification"
+}
+
 install_terminal_runtime_bootstrap_helpers() {
   local source_dir="$1" name source incoming destination
   [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
@@ -263,6 +362,12 @@ release_url_for_version() { echo "$(platform_url)/system-bundles/releases/$1.jso
 release_url_for_channel() { echo "$(platform_url)/system-bundles/channels/$1.json"; }
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
+
+running_gateway_version() {
+  local response
+  response="$(curl --fail --silent --max-time 5 "$HEALTH_URL")" || return 1
+  json_field "$response" runningVersion
+}
 
 compare_host_bundle_versions() {
   local candidate="$1" current="$2"
@@ -774,6 +879,11 @@ apply_update() {
     write_update_error "bundle_layout_invalid" "The release bundle layout was invalid." "$version"
     rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
+  if ! prepare_legacy_r2_migration "$extract_dir"; then
+    write_update_error "storage_broker_unavailable" "The tenant-isolated backup broker was unavailable; the update was not applied." "$version"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   if ! install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"; then
     log "ERROR: Terminal runtime helper bootstrap failed; aborting before app replacement"
     write_update_error "terminal_runtime_helper_install_failed" "The terminal runtime verification helpers could not be installed." "$version"
@@ -800,7 +910,13 @@ apply_update() {
     return 1
   fi
   log "Stopping services..."
-  sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  if ! stop_runtime_services; then
+    log "ERROR: runtime services did not stop; aborting before app replacement"
+    write_update_error "pre_install_service_stop_failed" "The running services could not be stopped safely, so the update was not installed." "$version"
+    cleanup_staged_release_metadata
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   sudo rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
     sudo mv "$APP_DIR" "$APP_DIR.rollback"
@@ -893,16 +1009,25 @@ apply_update() {
   fi
   log "Running health check..."
   write_update_phase health || return 1
-  local healthy=false
+  local healthy=false gateway_reached=false observed_running_version=""
   for _ in $(seq 1 18); do
-    if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
-      healthy=true; break
+    if observed_running_version="$(running_gateway_version)"; then
+      gateway_reached=true
+      if [ "$observed_running_version" = "$version" ]; then
+        healthy=true; break
+      fi
     fi
     sleep 5
   done
   if [ "$healthy" = true ]; then
     if commit_release_metadata; then
       log "Updated release metadata"
+      if ! remove_legacy_r2_credentials; then
+        log "ERROR: legacy R2 credentials could not be removed after the broker migration"
+        write_update_error "legacy_storage_credentials_remain" "The update completed, but legacy storage credentials still require removal." "$version"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
       log "Health check passed — update to $version complete"
       rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
     else
@@ -917,9 +1042,18 @@ apply_update() {
       return 1
     fi
   else
-    log "ERROR: health check failed — rolling back"
+    local verification_error_code verification_error_message
+    if [ "$gateway_reached" = true ]; then
+      log "ERROR: gateway running version did not match the candidate release — rolling back"
+      verification_error_code="post_install_runtime_version_mismatch"
+      verification_error_message="The updated gateway did not report the expected running version and the previous release was restored."
+    else
+      log "ERROR: health check failed — rolling back"
+      verification_error_code="post_install_health_failed"
+      verification_error_message="The updated gateway failed its health check and the previous release was restored."
+    fi
     if do_rollback false; then
-      write_update_error "post_install_health_failed" "The updated gateway failed its health check and the previous release was restored." "$version"
+      write_update_error "$verification_error_code" "$verification_error_message" "$version"
     else
       write_update_error "post_install_rollback_failed" "The updated gateway failed its health check and rollback did not complete." "$version"
     fi
@@ -960,7 +1094,10 @@ do_rollback() {
     return 1
   fi
   log "Rolling back..."
-  sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  if ! stop_runtime_services; then
+    log "ERROR: rollback could not stop the runtime services safely"
+    return 1
+  fi
   if [ -d "$APP_DIR" ]; then
     sudo mkdir -p "$STAGING_DIR"
     sudo chown matrix:matrix "$STAGING_DIR"
@@ -1124,6 +1261,7 @@ perform_update_repair() {
 }
 
 last_staging_cleanup=0
+last_legacy_r2_reconcile=0
 
 maybe_clean_staging() {
   local now
@@ -1133,6 +1271,19 @@ maybe_clean_staging() {
   fi
   last_staging_cleanup="$now"
   clean_staging || true
+}
+
+maybe_reconcile_legacy_r2_credentials() {
+  if [ ! -e "$LEGACY_R2_ENV_FILE" ] && [ ! -L "$LEGACY_R2_ENV_FILE" ]; then
+    return 0
+  fi
+  local now
+  now="$(date +%s)"
+  if [ $((now - last_legacy_r2_reconcile)) -lt "$LEGACY_R2_RETRY_INTERVAL_SECONDS" ]; then
+    return 0
+  fi
+  last_legacy_r2_reconcile="$now"
+  reconcile_legacy_r2_credentials
 }
 
 if [ -x "$BOOTSTRAP_ATTESTATION_WRITER" ]; then
@@ -1156,6 +1307,8 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+last_legacy_r2_reconcile="$(date +%s)"
+reconcile_legacy_r2_credentials || log "WARN: legacy R2 credential removal deferred; will retry"
 last_staging_cleanup="$(date +%s)"
 
 while true; do
@@ -1215,6 +1368,7 @@ while true; do
   # Poll for new version
   check_for_update || true
   maybe_clean_staging
+  maybe_reconcile_legacy_r2_credentials || log "WARN: legacy R2 credential removal retry failed"
 
   # Sleep in 6s increments (50x = 5 min) so we react quickly to triggers
   for _ in $(seq 1 50); do

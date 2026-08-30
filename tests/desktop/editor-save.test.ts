@@ -80,18 +80,31 @@ describe("createFilesApi", () => {
     });
   });
 
-  it("reads raw text from /files with per-segment path encoding", async () => {
+  it("reads raw text through the authenticated file-blob route", async () => {
     const api = makeApi();
     const files = createFilesApi(api);
     await expect(files.read("projects/my notes.md")).resolves.toBe("file body");
-    expect(api.getText).toHaveBeenCalledWith("/files/projects/my%20notes.md");
+    expect(api.getText).toHaveBeenCalledWith("/api/files/blob?path=projects%2Fmy%20notes.md");
   });
 
-  it("writes raw text via PUT /files with per-segment path encoding", async () => {
+  it("passes the configured transfer cap to bounded editor reads", async () => {
+    const api = makeApi();
+    const files = createFilesApi(api, 1_024);
+    await expect(files.read("projects/large notes.md")).resolves.toBe("file body");
+    expect(api.getText).toHaveBeenCalledWith(
+      "/api/files/blob?path=projects%2Flarge%20notes.md",
+      { maxBytes: 1_024 },
+    );
+  });
+
+  it("writes raw text through the authenticated file-blob route", async () => {
     const api = makeApi();
     const files = createFilesApi(api);
     await expect(files.write("projects/my notes.md", "hello")).resolves.toEqual({ mtime: null });
-    expect(api.putText).toHaveBeenCalledWith("/files/projects/my%20notes.md", "hello");
+    expect(api.putText).toHaveBeenCalledWith(
+      "/api/files/blob?path=projects%2Fmy%20notes.md&force=true",
+      "hello",
+    );
   });
 
   it("returns the normalized write mtime when PUT includes modified metadata", async () => {

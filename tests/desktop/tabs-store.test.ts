@@ -379,6 +379,28 @@ describe("tabs store", () => {
     expect(useTabs.getState().tabs.find((tab) => tab.id === chatTabId)?.chatView).toBe("draft");
   });
 
+  it("preserves explicit top-level Chat instances when legacy Work routes normalize", () => {
+    const workId = useTabs.getState().openTab({
+      kind: "chat",
+      title: "Chat",
+      chatView: "draft",
+      closable: false,
+    });
+    const independentChatId = useTabs.getState().openTabInstance({
+      kind: "chat",
+      title: "Chat",
+      chatView: "draft",
+      closable: true,
+    });
+
+    useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: workId, kind: "work", workRoute: "chat", closable: false }),
+      expect.objectContaining({ id: independentChatId, kind: "chat", chatView: "draft", closable: true }),
+    ]));
+  });
+
   it("treats distinct terminal identities as distinct tabs", () => {
     useTabs.getState().openTab({ kind: "terminal", sessionName: "a", title: "A" });
     useTabs.getState().openTab({ kind: "terminal", sessionName: "b", title: "B" });

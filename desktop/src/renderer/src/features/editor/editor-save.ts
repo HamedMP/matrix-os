@@ -7,8 +7,10 @@
 //     type: "file"|"directory", size?, modified: ISO string, created: ISO
 //     string, mime? }; 404 when missing. mtime field is `modified` (ISO),
 //     normalized here to epoch ms.
-//   GET /files/{path}            -> raw text body
-//   PUT /files/{path}            -> raw text body in, { ok: true, modified? } out
+//   GET /api/files/blob?path=... -> raw text body
+//   PUT /api/files/blob?path=... -> raw text body in, { ok: true, modified? } out
+// The authenticated `/api` route is required behind the platform runtime
+// router; raw `/files/*` is app-content delivery and can resolve to the shell.
 import { z } from "zod/v4";
 import { AppError } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
@@ -32,11 +34,8 @@ const WireWriteSchema = z.looseObject({
   modified: z.union([z.string(), z.number()]).optional(),
 });
 
-function encodeFilesPath(path: string): string {
-  return path
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+function fileBlobPath(path: string, force = false): string {
+  return `/api/files/blob?path=${encodeURIComponent(path)}${force ? "&force=true" : ""}`;
 }
 
 function normalizeMtime(value: string | number | undefined): number | null {
@@ -48,7 +47,7 @@ function normalizeMtime(value: string | number | undefined): number | null {
   return null;
 }
 
-export function createFilesApi(api: ApiClient): FilesApi {
+export function createFilesApi(api: ApiClient, maxReadBytes?: number): FilesApi {
   return {
     stat: async (path) => {
       let raw: unknown;
@@ -63,9 +62,14 @@ export function createFilesApi(api: ApiClient): FilesApi {
       if (!parsed.success) return { mtime: null };
       return { mtime: normalizeMtime(parsed.data.modified) };
     },
-    read: (path) => api.getText(`/files/${encodeFilesPath(path)}`),
+    read: (path) => {
+      const encodedPath = fileBlobPath(path);
+      return maxReadBytes === undefined
+        ? api.getText(encodedPath)
+        : api.getText(encodedPath, { maxBytes: maxReadBytes });
+    },
     write: async (path, content) => {
-      const raw = await api.putText<unknown>(`/files/${encodeFilesPath(path)}`, content);
+      const raw = await api.putText<unknown>(fileBlobPath(path, true), content);
       const parsed = WireWriteSchema.safeParse(raw);
       if (!parsed.success) return { mtime: null };
       return { mtime: normalizeMtime(parsed.data.modified) };

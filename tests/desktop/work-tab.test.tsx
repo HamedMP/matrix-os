@@ -17,20 +17,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const inspectorProps = vi.hoisted(() => ({
   active: [] as boolean[],
 }));
+const chatTabProps = vi.hoisted(() => ({
+  tabIds: [] as Array<string | undefined>,
+}));
 
 vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
   default: ({
+    tabId,
     renderInspector,
     inspectorExclusive,
   }: {
+    tabId?: string;
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
-  }) => (
-    <>
-      <main aria-hidden={inspectorExclusive || undefined}>Chat center</main>
-      {renderInspector?.({ record: { chat: { id: "chat_global" } }, activities: [] })}
-    </>
-  ),
+  }) => {
+    chatTabProps.tabIds.push(tabId);
+    return (
+      <>
+        <main aria-hidden={inspectorExclusive || undefined}>Chat center</main>
+        {renderInspector?.({ record: { chat: { id: "chat_global" } }, activities: [] })}
+      </>
+    );
+  },
 }));
 vi.mock("@desktop/renderer/src/features/project/ProjectChatsView", () => ({
   default: ({
@@ -151,6 +159,7 @@ describe("WorkTab rail integration", () => {
   beforeEach(() => {
     resizeObserverCallbacks.length = 0;
     inspectorProps.active = [];
+    chatTabProps.tabIds = [];
     initialWorkWidth = 1_400;
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
       configurable: true,
@@ -198,6 +207,12 @@ describe("WorkTab rail integration", () => {
     cleanup();
     if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
     HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+  });
+
+  it("forwards the owning top-level tab id to the Global Chat route", () => {
+    render(<WorkTab tabId="chat-tab-2" route="chat" active />);
+
+    expect(chatTabProps.tabIds).toContain("chat-tab-2");
   });
 
   it("opens a Global draft and the existing Create Project dialog state", async () => {
@@ -397,6 +412,21 @@ describe("WorkTab rail integration", () => {
 
     expect(screen.getByRole("separator", { name: "Resize Chat navigation" }).getAttribute("aria-valuenow")).toBe("276");
     expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("656");
+  });
+
+  it("stops resizing the Chat inspector when an extreme pointer drag is cancelled", async () => {
+    render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
+    await screen.findByRole("button", { name: "Global chat" });
+
+    const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
+    fireEvent.pointerDown(inspectorSeparator, { button: 0, clientX: 760, pointerId: 17 });
+    fireEvent.pointerMove(window, { clientX: 700, pointerId: 17 });
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
+
+    fireEvent.pointerCancel(window, { pointerId: 17 });
+    fireEvent.pointerMove(window, { clientX: -1_000, pointerId: 17 });
+
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
   });
 
   it("collapses both sidebars when their dividers move past the minimum", async () => {

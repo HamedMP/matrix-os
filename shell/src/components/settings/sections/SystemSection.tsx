@@ -15,7 +15,8 @@ const UPDATE_INSTALL_TIMEOUT_MS = 5 * 60_000;
 interface SystemInfo {
   managedUpdates?: boolean;
   versionSelectionAllowed?: boolean;
-  version?: string;
+  version?: unknown;
+  runningVersion?: unknown;
   image?: string;
   updateChannel?: string;
   release?: {
@@ -101,6 +102,7 @@ import {
   resolveUpgradeInstallCopy,
   severityBadgeStyle,
   resolveSystemUpdateState,
+  safeSystemVersion,
 } from "./system-update-state";
 
 const RELEASE_CHANNELS = ["stable", "canary", "beta", "dev"] as const;
@@ -205,8 +207,17 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
 
   }, [refreshReleaseData]);
 
+  const installedVersion = safeSystemVersion(info.release?.version ?? info.version);
+  const runningVersion = safeSystemVersion(info.runningVersion);
+  const runningVersionMatchesInstalled = Boolean(
+    installedVersion && runningVersion && installedVersion === runningVersion,
+  );
+  const runningVersionMismatch = Boolean(
+    installedVersion && runningVersion && installedVersion !== runningVersion,
+  );
+  const runningVersionUnavailable = Boolean(installedVersion && !runningVersion);
   const resolvedUpdate = resolveSystemUpdateState({
-    installedVersion: info.release?.version ?? info.version,
+    installedVersion,
     latestVersion: updateStatus?.latest?.version ?? null,
     updateAvailable: updateStatus?.updateAvailable,
     severity: updateStatus?.latest?.severity,
@@ -243,14 +254,18 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
         if (!res.ok) continue;
         // react-doctor-disable-next-line react-doctor/async-defer-await -- the post-await mount/install guards operate on the parsed poll result and on state that can only change during this await; they cannot be hoisted before parsing the response body, so this is intentional polling, not a skippable synchronous guard.
         const nextInfo = await res.json() as SystemInfo;
-        const installedVersion = nextInfo.release?.version ?? nextInfo.version;
+        const installedVersion = safeSystemVersion(nextInfo.release?.version ?? nextInfo.version);
+        const runningVersion = safeSystemVersion(nextInfo.runningVersion);
         const polledChannel = coerceReleaseChannel(nextInfo.release?.channel);
         const channelInstalled = target.channel ? polledChannel === target.channel : true;
-        const installed = target.version
+        const runtimeVerified = Boolean(
+          installedVersion && runningVersion && installedVersion === runningVersion,
+        );
+        const installed = runtimeVerified && (target.version
           ? installedVersion === target.version && channelInstalled
           : target.channel
             ? channelInstalled && (installedVersion !== currentVersion || target.channel !== installedChannel)
-            : installedVersion !== currentVersion;
+            : installedVersion !== currentVersion);
         if (!mountedRef.current) return false;
         if (installed) {
           setInfo(nextInfo);
@@ -485,8 +500,12 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
 
           <div className="grid gap-2 text-sm">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-muted-foreground">Current version</span>
+              <span className="text-muted-foreground">Installed version</span>
               <span className="font-mono text-xs text-right">{currentVersion}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted-foreground">Running version</span>
+              <span className="font-mono text-xs text-right">{runningVersion ?? "unavailable"}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">Installed channel</span>
@@ -506,6 +525,17 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
               </div>
             )}
           </div>
+
+          {(runningVersionMismatch || runningVersionUnavailable) && (
+            <div
+              role="alert"
+              className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-800 dark:text-amber-300"
+            >
+              {runningVersionMismatch
+                ? "The running services do not match the installed update. Restart Matrix services to finish applying it."
+                : "The running version could not be verified. Restart Matrix services before managing projects."}
+            </div>
+          )}
 
           {(updateStatus?.error || releaseList?.error) && (
             <p className="text-xs text-muted-foreground">{updateStatus?.error ?? releaseList?.error}</p>
@@ -607,7 +637,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
               </button>
             </div>
           )}
-          {latestVersion && !canInstallSelectedChannel && (
+          {latestVersion && !canInstallSelectedChannel && runningVersionMatchesInstalled && (
             <p className="text-xs text-muted-foreground pt-1">
               You are running the latest release for this channel.
             </p>
@@ -683,7 +713,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
         </CardHeader>
         <CardContent className="space-y-2">
           {[
-            ["Version", info.version ?? "0.1.0"],
+            ["Version", installedVersion ?? "0.1.0"],
             ["Host Bundle", info.release?.version],
             ["Channel", info.release?.channel],
             ["Build ID", formatReleaseBuildShortId(info.release?.gitCommit)],

@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import {
   AgentAttachmentSchema,
   AgentModelOptionSchema,
+  ProviderModelReferenceSchema,
   type AgentAttachment,
 } from "@matrix-os/contracts";
 import {
@@ -106,7 +107,7 @@ const StartSessionSchema = z.object({
   agent: SupportedAgentSchema.optional(),
   prompt: PromptContentSchema.optional(),
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
-  model: z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
   mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
   approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "never"]).optional(),

@@ -5,9 +5,8 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
-import { resolveThemeMode } from "../../design/themes/apply";
-import { useAppearance } from "../../stores/appearance";
 import { useConnection } from "../../stores/connection";
+import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { useTabs } from "../../stores/tabs";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
@@ -31,7 +30,6 @@ import {
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
-import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 const RECENT_ACTIVITY_THROTTLE_MS = 30_000;
@@ -73,11 +71,10 @@ export default function TerminalView({
   onRecreate,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
-  const appearanceMode = useAppearance((state) => state.mode);
-  const resolvedThemeMode = resolveThemeMode(appearanceMode);
-  const terminalTheme = getDesktopTerminalXtermTheme(resolvedThemeMode);
-  const latestThemeModeRef = useRef(resolvedThemeMode);
-  latestThemeModeRef.current = resolvedThemeMode;
+  const terminalThemeId = useTerminalAppearance((state) => state.themeId);
+  const terminalTheme = getDesktopTerminalXtermTheme(terminalThemeId);
+  const latestTerminalThemeIdRef = useRef(terminalThemeId);
+  latestTerminalThemeIdRef.current = terminalThemeId;
   const hostRef = useRef<HTMLDivElement>(null);
   const [stateSessionName, setStateSessionName] = useState(sessionName);
   const termRef = useRef<Terminal | null>(null);
@@ -106,7 +103,7 @@ export default function TerminalView({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const theme = getDesktopTerminalXtermTheme(latestThemeModeRef.current);
+    const theme = getDesktopTerminalXtermTheme(latestTerminalThemeIdRef.current);
     const screenReaderMode = navigator.webdriver === true;
     const terminal = new Terminal({
       allowProposedApi: true,
@@ -235,10 +232,10 @@ export default function TerminalView({
   useEffect(() => {
     const terminal = termRef.current;
     if (!terminal) return;
-    const theme = getDesktopTerminalXtermTheme(resolvedThemeMode);
+    const theme = getDesktopTerminalXtermTheme(terminalThemeId);
     terminal.options.theme = theme;
     applyTerminalSurfaceTheme(terminal.element, theme.background);
-  }, [resolvedThemeMode]);
+  }, [terminalThemeId]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
   useEffect(() => {
@@ -410,7 +407,7 @@ export default function TerminalView({
     <div
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4"
       data-terminal-surface
-      style={{ backgroundColor: SURFACE_BASE_BACKGROUND }}
+      style={{ backgroundColor: terminalTheme.background }}
     >
       <div
         ref={hostRef}

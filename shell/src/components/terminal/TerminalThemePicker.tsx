@@ -3,6 +3,7 @@ import { ChevronLeftIcon, ChevronRightIcon, CheckIcon, SquareTerminalIcon } from
 import { getGatewayUrl } from "@/lib/gateway";
 import { MATRIX_OS_APP_THEME_OPTIONS } from "@/lib/theme-presets";
 import { useTerminalSettings, type ShellThemeId, type TerminalAppThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
+import { isShellThemeId } from "@/stores/terminal-defaults";
 import type { TerminalAppThemeOption } from "./terminal-app-chrome-theme";
 
 const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
@@ -304,20 +305,6 @@ const SHELL_THEME_OPTIONS: Array<{
   };
 }> = [
   {
-    id: "dark",
-    label: "Dark",
-    badge: "RECOMMENDED",
-    badgeTone: "recommended",
-    description: "Zellij default · best contrast",
-    preview: {
-      background: "#0C0C0C",
-      border: "#15180F",
-      line: "#0AD18B",
-      dotA: "#2BD9D9",
-      dotB: "#F1FA5C",
-    },
-  },
-  {
     id: "light",
     label: "Light",
     badge: "NOT FULLY TUNED",
@@ -329,6 +316,20 @@ const SHELL_THEME_OPTIONS: Array<{
       line: "#3C3836",
       dotA: "#79740E",
       dotB: "#CC241D",
+    },
+  },
+  {
+    id: "dark",
+    label: "Matrix OS Dark",
+    badge: "RECOMMENDED",
+    badgeTone: "recommended",
+    description: "Zellij default · best contrast",
+    preview: {
+      background: "#0C0C0C",
+      border: "#15180F",
+      line: "#0AD18B",
+      dotA: "#2BD9D9",
+      dotB: "#F1FA5C",
     },
   },
   {
@@ -345,10 +346,50 @@ const SHELL_THEME_OPTIONS: Array<{
       dotB: "#00CC44",
     },
   },
+  {
+    id: "powerlevel10k-lean",
+    label: "P10k Lean",
+    badge: "NOT FULLY TUNED",
+    badgeTone: "warning",
+    description: "minimal · gruvbox material",
+    preview: { background: "#1D2021", border: "#665C54", line: "#A9B665", dotA: "#7DAEA3", dotB: "#D3869B" },
+  },
+  {
+    id: "powerlevel10k-lean-8-colors",
+    label: "P10k Lean · 8 colors",
+    badge: "NOT FULLY TUNED",
+    badgeTone: "warning",
+    description: "minimal · standard ANSI",
+    preview: { background: "#111111", border: "#555555", line: "#55FF55", dotA: "#5555FF", dotB: "#FF55FF" },
+  },
+  {
+    id: "powerlevel10k-classic",
+    label: "P10k Classic",
+    badge: "NOT FULLY TUNED",
+    badgeTone: "warning",
+    description: "segmented · catppuccin",
+    preview: { background: "#1E1E2E", border: "#585B70", line: "#A6E3A1", dotA: "#89B4FA", dotB: "#F5C2E7" },
+  },
+  {
+    id: "powerlevel10k-rainbow",
+    label: "P10k Rainbow",
+    badge: "NOT FULLY TUNED",
+    badgeTone: "warning",
+    description: "segmented · vivid spectrum",
+    preview: { background: "#0B1020", border: "#686868", line: "#5AF78E", dotA: "#57C7FF", dotB: "#FF6AC1" },
+  },
+  {
+    id: "powerlevel10k-pure",
+    label: "P10k Pure",
+    badge: "NOT FULLY TUNED",
+    badgeTone: "warning",
+    description: "minimal · monokai",
+    preview: { background: "#1B1D1E", border: "#75715E", line: "#A6E22E", dotA: "#66D9EF", dotB: "#AE81FF" },
+  },
 ];
 
 function mapTerminalThemeToShellTheme(themeId: TerminalThemeId | undefined): ShellThemeId {
-  if (themeId === "dark" || themeId === "light" || themeId === "matrix") {
+  if (isShellThemeId(themeId)) {
     return themeId;
   }
   if (themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light") {

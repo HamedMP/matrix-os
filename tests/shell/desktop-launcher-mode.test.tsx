@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Desktop } from "../../shell/src/components/Desktop.js";
@@ -144,7 +144,7 @@ function createMemoryStorage(): Storage {
   };
 }
 
-function resetShellMode(mode: "canvas" | "dev", hydrated: boolean) {
+function resetShellMode(mode: "canvas" | "desktop" | "dev", hydrated: boolean) {
   desktopModeStore.setState({
     mode,
     previousMode: null,
@@ -207,6 +207,100 @@ describe("Desktop launcher dock button by mode", () => {
       expect(screen.getByTestId("dock-tasks")).toBeTruthy();
       expect(screen.getByTestId("dock-settings")).toBeTruthy();
     });
+  });
+
+  it("shows and launches Chat as the first canonical app in Desktop mode", async () => {
+    resetShellMode("desktop", true);
+
+    render(<DesktopComponent />);
+
+    const desktopApps = await screen.findByRole("navigation", { name: "Desktop apps" });
+    await waitFor(() => {
+      expect(Array.from(desktopApps.querySelectorAll("button")).map(
+        (button) => button.getAttribute("aria-label"),
+      ).slice(0, 4)).toEqual(["Chat", "Terminal", "Files", "Editor"]);
+    });
+    expect(windowManagerStore.getState().apps.find((app) => app.path === "__chat__"))
+      .toMatchObject({ name: "Hermes", path: "__chat__" });
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
+    expect(windowManagerStore.getState().windows.find((windowRecord) => windowRecord.path === "__chat__"))
+      .toMatchObject({ title: "Chat", path: "__chat__" });
+  });
+
+  it("routes an installed Browser command through the dedicated public browser launch", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) {
+        return jsonResponse({
+          layout: { windows: [] },
+          apps: [{
+            name: "Browser",
+            path: "/files/apps/browser/dist/index.html",
+            icon: "browser",
+            slug: "browser",
+          }],
+          modules: [],
+        });
+      }
+      return jsonResponse({});
+    }));
+    const openExternal = vi.spyOn(window, "open").mockImplementation(() => null);
+    const commandStore = (await import("../../shell/src/stores/commands.js")).useCommandStore;
+    resetShellMode("desktop", true);
+
+    render(<DesktopComponent />);
+
+    const browserCommand = await waitFor(() => {
+      const command = commandStore.getState().commands.get("app:apps/browser/dist/index.html");
+      expect(command).toBeDefined();
+      return command!;
+    });
+    act(() => browserCommand.execute());
+
+    expect(openExternal).toHaveBeenCalledWith("https://www.google.com", "_blank", "noopener,noreferrer");
+    expect(windowManagerStore.getState().windows.some(
+      (windowRecord) => windowRecord.path === "apps/browser/dist/index.html",
+    )).toBe(false);
+  });
+
+  it("routes a mobile pinned Browser through the dedicated public browser launch", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) {
+        return jsonResponse({
+          layout: { windows: [] },
+          apps: [{
+            name: "Browser",
+            path: "/files/apps/browser/dist/index.html",
+            icon: "browser",
+            slug: "browser",
+          }],
+          modules: [],
+        });
+      }
+      return jsonResponse({});
+    }));
+    const openExternal = vi.spyOn(window, "open").mockImplementation(() => null);
+    resetShellMode("canvas", true);
+
+    render(<DesktopComponent />);
+
+    await waitFor(() => {
+      expect(windowManagerStore.getState().apps.some(
+        (app) => app.path === "apps/browser/dist/index.html",
+      )).toBe(true);
+    });
+    act(() => desktopConfigStore.setState({ pinnedApps: ["apps/browser/dist/index.html"] }));
+    const browserButtons = await screen.findAllByRole("button", { name: "Browser" });
+    fireEvent.click(browserButtons.at(-1)!);
+
+    expect(openExternal).toHaveBeenCalledWith("https://www.google.com", "_blank", "noopener,noreferrer");
+    expect(windowManagerStore.getState().windows.some(
+      (windowRecord) => windowRecord.path === "apps/browser/dist/index.html",
+    )).toBe(false);
   });
 
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {

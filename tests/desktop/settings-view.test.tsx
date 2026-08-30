@@ -61,14 +61,29 @@ describe("SettingsView", () => {
   it("keeps the selected navigation highlight in sync with the visible section", () => {
     render(<SettingsView />);
     const providers = screen.getByRole("button", { name: "Providers" });
-    const integrations = screen.getByRole("button", { name: "Integrations" });
+    const services = screen.getByRole("button", { name: "Services" });
 
     fireEvent.click(providers);
     expect(providers.className).toContain("bg-[var(--bg-selected)]");
 
-    fireEvent.click(integrations);
-    expect(integrations.className).toContain("bg-[var(--bg-selected)]");
+    fireEvent.click(services);
+    expect(services.className).toContain("bg-[var(--bg-selected)]");
     expect(providers.className).not.toContain("bg-[var(--bg-selected)]");
+  });
+
+  it("groups services, MCPs, skills, and CLI under Integrations", () => {
+    render(<SettingsView />);
+    const sidebar = screen.getByRole("navigation", { name: "Settings sections" });
+    const integrationGroup = screen.getByText("Integrations");
+    const machineGroup = screen.getByText("Machine");
+
+    expect(integrationGroup).not.toBeNull();
+    expect(integrationGroup.compareDocumentPosition(machineGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Services" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "MCPs" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Skills" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "CLI" })).not.toBeNull();
+    expect(sidebar.textContent).not.toContain("Integration categories");
   });
 
   it("can render its section content without owning the sidebar navigation", async () => {

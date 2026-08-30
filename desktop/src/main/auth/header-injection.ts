@@ -4,6 +4,8 @@
 // partitions never get this hook (lesson L1: remote content can never ride the
 // native principal).
 
+import { DESKTOP_DEV_RENDERER_HOST } from "../renderer-url";
+
 interface WebRequestLike {
   onBeforeSendHeaders(
     listener: (
@@ -85,7 +87,12 @@ function isLocalDevRendererOrigin(origin: string): boolean {
   if (!normalized) return false;
   const url = new URL(normalized);
   return (
-    (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]") &&
+    (
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "[::1]" ||
+      url.hostname === DESKTOP_DEV_RENDERER_HOST
+    ) &&
     url.port.length > 0
   );
 }

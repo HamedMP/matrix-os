@@ -61,10 +61,11 @@ function attachmentReference(item: InternalAttachment): AgentAttachment | null {
   if (!item.uploadedPath) return null;
   return {
     id: `desktop_upload_${item.uploadId}`,
-    kind: "structured_ref",
+    kind: shouldPreview(item.file) ? "image" : "file",
     label: item.file.name,
     path: item.uploadedPath,
     ...(item.file.type ? { mimeType: item.file.type } : {}),
+    sizeBytes: item.file.size,
   };
 }
 

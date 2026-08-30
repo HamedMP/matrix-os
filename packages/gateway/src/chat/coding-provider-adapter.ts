@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   AgentModeSchema,
   CanonicalChatSafeErrorSchema,
+  type CanonicalChatAgentActivityKind,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
   type CreateAgentThreadRequest,
@@ -20,6 +21,8 @@ import {
 } from "./provider-adapter.js";
 
 const MAX_BUFFERED_EVENTS = 500;
+const MAX_RECENT_EVENT_IDS = MAX_BUFFERED_EVENTS * 2;
+const MAX_ACTIVE_TOOL_ACTIVITIES = 128;
 
 type CodingThreads = Pick<
   CodingAgentThreadStore & CodingAgentTurnStore,
@@ -55,31 +58,92 @@ function safeResourceId(path: string): string {
   return `file_${createHash("sha256").update(path).digest("hex").slice(0, 32)}`;
 }
 
-function normalizeEvent(event: AgentThreadEvent): CanonicalProviderRunEvent[] {
+interface ToolActivity {
+  label: string;
+  kind?: CanonicalChatAgentActivityKind;
+  preview?: string;
+  previewKind?: "command" | "path" | "text";
+  detail?: string;
+}
+
+function activityKind(kind: string): CanonicalChatAgentActivityKind | undefined {
+  if (kind === "command") return "command";
+  if (kind === "file_change") return "file_change";
+  if (kind === "mcp_tool") return "mcp_tool";
+  if (kind === "dynamic_tool") return "dynamic_tool";
+  if (kind === "agent" || kind === "delegation") return "delegation";
+  if (kind === "search" || kind === "web_search") return "web_search";
+  if (kind === "plan") return "plan";
+  if (kind === "phase") return "phase";
+  if (kind === "reasoning") return "reasoning";
+  if (kind === "image" || kind === "image_inspection") return "image_inspection";
+  return undefined;
+}
+
+function failedActivitySummary(kind: CanonicalChatAgentActivityKind): string {
+  if (kind === "command") return "Command failed.";
+  if (kind === "delegation") return "Delegated work failed.";
+  if (kind === "web_search") return "Web search failed.";
+  return "Activity failed.";
+}
+
+function normalizeEvent(
+  event: AgentThreadEvent,
+  toolActivities: Map<string, ToolActivity>,
+): CanonicalProviderRunEvent[] {
   if (event.type === "assistant.text.delta") {
-    return [CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta: event.delta })];
+    return [CanonicalProviderRunEventSchema.parse({
+      type: "assistant.delta",
+      messageId: event.messageId,
+      delta: event.delta,
+    })];
   }
   if (event.type === "tool.started") {
-    return [CanonicalProviderRunEventSchema.parse({
-      type: "tool.progress", toolCallId: event.toolCallId, label: event.displayName, status: "running",
+    const toolActivity = {
+      label: event.displayName,
+      kind: activityKind(event.kind),
+      ...(event.preview ? { preview: event.preview, previewKind: event.previewKind } : {}),
+      ...(event.detail ? { detail: event.detail } : {}),
+    };
+    if (!toolActivities.has(event.toolCallId) && toolActivities.size >= MAX_ACTIVE_TOOL_ACTIVITIES) {
+      const oldest = toolActivities.keys().next().value;
+      if (oldest !== undefined) toolActivities.delete(oldest);
+    }
+    toolActivities.set(event.toolCallId, toolActivity);
+    return [CanonicalProviderRunEventSchema.parse(toolActivity.kind ? {
+      type: "agent.activity",
+      activityId: event.toolCallId,
+      kind: toolActivity.kind,
+      label: toolActivity.label,
+      status: "running",
+      ...(toolActivity.preview ? { preview: toolActivity.preview, previewKind: toolActivity.previewKind } : {}),
+      ...(toolActivity.detail ? { detail: toolActivity.detail } : {}),
+    } : {
+      type: "tool.progress",
+      toolCallId: event.toolCallId,
+      label: toolActivity.label,
+      status: "running",
     })];
   }
   if (event.type === "tool.output") {
-    const candidate = CanonicalProviderRunEventSchema.safeParse({
-      type: "tool.output", toolCallId: event.toolCallId, text: event.text, truncated: event.truncated ?? false,
-    });
-    return [candidate.success ? candidate.data : CanonicalProviderRunEventSchema.parse({
-      type: "tool.output",
-      toolCallId: event.toolCallId,
-      text: "Provider tool output is available in the bound terminal.",
-      truncated: true,
-    })];
+    return [];
   }
   if (event.type === "tool.completed") {
-    return [CanonicalProviderRunEventSchema.parse({
+    const toolActivity = toolActivities.get(event.toolCallId);
+    toolActivities.delete(event.toolCallId);
+    return [CanonicalProviderRunEventSchema.parse(toolActivity?.kind ? {
+      type: "agent.activity",
+      activityId: event.toolCallId,
+      kind: toolActivity.kind,
+      label: toolActivity.label,
+      status: event.outcome === "success" ? "completed" : event.outcome,
+      ...(event.outcome === "failed" ? { summary: failedActivitySummary(toolActivity.kind) } : {}),
+      ...(toolActivity.preview ? { preview: toolActivity.preview, previewKind: toolActivity.previewKind } : {}),
+      ...(toolActivity.detail ? { detail: toolActivity.detail } : {}),
+    } : {
       type: "tool.progress",
       toolCallId: event.toolCallId,
-      label: "Tool",
+      label: toolActivity?.label ?? "Tool",
       status: event.outcome === "success" ? "completed" : event.outcome,
     })];
   }
@@ -144,6 +208,7 @@ function attachments(input: CanonicalProviderRunInput) {
         label: part.label,
         ...(part.mimeType ? { mimeType: part.mimeType } : {}),
         ...(part.sizeBytes === undefined ? {} : { sizeBytes: part.sizeBytes }),
+        ...(part.ownerReference ? { path: part.ownerReference } : {}),
       }];
     }
     if (part.type === "resource_reference") {
@@ -208,16 +273,18 @@ async function* normalizedEvents(
   initial: AgentThreadEvent[],
   inbox: ThreadEventInbox,
 ): AsyncGenerator<CanonicalProviderRunEvent> {
-  const seen = new Set<string>();
+  const recentEventIds = new Set<string>();
+  const toolActivities = new Map<string, ToolActivity>();
   let batch: AgentThreadEvent[] | null = initial;
   while (batch !== null) {
     for (const event of batch) {
-      if (seen.has(event.eventId)) continue;
-      if (seen.size >= MAX_BUFFERED_EVENTS * 2) {
-        throw new Error("Canonical coding Provider event history exceeded");
+      if (recentEventIds.has(event.eventId)) continue;
+      if (recentEventIds.size >= MAX_RECENT_EVENT_IDS) {
+        const oldest = recentEventIds.values().next().value;
+        if (oldest !== undefined) recentEventIds.delete(oldest);
       }
-      seen.add(event.eventId);
-      for (const normalized of normalizeEvent(event)) {
+      recentEventIds.add(event.eventId);
+      for (const normalized of normalizeEvent(event, toolActivities)) {
         yield normalized;
         if (normalized.type === "run.completed") return;
       }

@@ -93,6 +93,19 @@ textarea,
   border-radius: var(--radius-sm);
 }
 
+/* Command rows select instantly, then linger briefly as the pointer leaves. */
+[data-instant-list-hover] {
+  transition-delay: 75ms;
+  transition-duration: 180ms;
+  transition-property: background-color, color;
+  transition-timing-function: ease-out;
+}
+
+[data-instant-list-hover][data-selected="true"] {
+  transition-delay: 0ms;
+  transition-duration: 0ms;
+}
+
 /* ── Markdown code highlighting (rehype-highlight) ────────────────
    Brand-variable token colors so highlighting works in light + dark
    without shipping a fixed highlight.js theme. The <pre> owns the bg. */

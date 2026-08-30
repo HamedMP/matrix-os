@@ -1,6 +1,7 @@
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
@@ -302,7 +303,7 @@ export function HermesPane() {
         </div>
       ) : (
         <>
-          <ConversationTranscript turns={turns} callbacks={{ copyText }} />
+          <ConversationTranscript turns={turns} callbacks={{ copyText, openFile: openFileInDesktopEditor }} />
           <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
             {renderComposer("Reply to Hermes…")}
           </div>
@@ -371,6 +372,7 @@ export function ChatUnavailableState({ onRetry }: { onRetry: () => void }) {
 
 export default function ChatTab({
   active = true,
+  tabId,
   initialChatId,
   initialView,
   externalNavigation = false,
@@ -379,6 +381,7 @@ export default function ChatTab({
   allowLegacyFallback = true,
 }: {
   active?: boolean;
+  tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
   externalNavigation?: boolean;
@@ -393,6 +396,7 @@ export default function ChatTab({
       key={routeAttempt}
       api={api}
       projectId={null}
+      tabId={tabId}
       initialChatId={initialChatId}
       initialView={initialView}
       active={active}

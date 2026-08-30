@@ -58,6 +58,8 @@ describe("useShellSessions", () => {
           sessions: [
             {
               name: "matrix-main",
+              cwd: "projects/matrix-os",
+              pinned: true,
               status: "active",
               placement: "active",
               createdAt: "2026-06-23T11:00:00.000Z",
@@ -97,6 +99,8 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions[0]?.tabs).toEqual([{ idx: 0, name: "main", focused: true }]);
     expect(useShellSessions.getState().sessions[0]).toMatchObject({
       createdAt: "2026-06-23T11:00:00.000Z",
+      cwd: "projects/matrix-os",
+      pinned: true,
       agent: "codex",
       subtitle: "Implement agent-aware terminal sessions",
       lastAction: "Edited registry.ts",
@@ -185,6 +189,19 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-current"]);
   });
 
+  it("keeps an adopted provider session when an older load settles afterwards", async () => {
+    const staleResponse = deferred<{ sessions: Array<{ name: string }> }>();
+    const pending = useShellSessions.getState().load(makeApi({
+      get: vi.fn().mockReturnValue(staleResponse.promise),
+    }));
+
+    useShellSessions.getState().adoptCreatedSession("matrix-setup-codex");
+    staleResponse.resolve({ sessions: [] });
+
+    expect(await pending).toBeNull();
+    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-setup-codex"]);
+  });
+
   it("creates shell sessions with two-word names, projects cwd, and retries one 409 conflict", async () => {
     const post = vi
       .fn()
@@ -205,6 +222,26 @@ describe("useShellSessions", () => {
       cwd: "projects",
     });
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-created"]);
+  });
+
+  it("creates agent sessions with the canonical command and agent metadata", async () => {
+    const post = vi.fn().mockResolvedValue({ name: "matrix-codex" });
+    const get = vi.fn().mockResolvedValue({
+      sessions: [{ name: "matrix-codex", status: "active", agent: "codex" }],
+    });
+
+    const created = await useShellSessions.getState().create(makeApi({ post, get }), {
+      cmd: "codex",
+      agent: "codex",
+    });
+
+    expect(created).toMatchObject({ name: "matrix-codex", agent: "codex" });
+    expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
+      name: expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      cwd: "projects",
+      cmd: "codex",
+      agent: "codex",
+    });
   });
 
   it("uses fresh two-word shell names only after repeated collisions", async () => {

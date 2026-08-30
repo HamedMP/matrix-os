@@ -305,15 +305,33 @@ export const INVOKE_CHANNELS = {
     response: Ok,
   },
   "embed:open": {
-    request: z.strictObject({
-      kind: z.enum(["hosted-shell", "app"]),
-      slug: z.string().min(1).max(128).optional(),
-      appIdentity: z.string().min(1).max(256)
-        .regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/)
-        .optional(),
-      bounds: BoundsSchema,
-      active: z.boolean().optional(),
-    }),
+    request: z.discriminatedUnion("kind", [
+      z.strictObject({
+        kind: z.literal("hosted-shell"),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
+        kind: z.literal("code-editor"),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
+        kind: z.literal("app"),
+        slug: z.string().min(1).max(128),
+        appIdentity: z.string().min(1).max(256)
+          .regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/)
+          .optional(),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
+        kind: z.literal("browser"),
+        url: z.string().min(1).max(2_048),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+    ]),
     response: z.object({ embedId: z.string().min(1).max(64), state: EmbedStateSchema }).strict(),
   },
   "embed:set-bounds": {
@@ -438,7 +456,19 @@ export const EVENT_CHANNELS = {
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
   "app:zoom-changed": ZoomFactorResultSchema,
   "menu:action": z
-    .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open", "refresh-home"]) })
+    .object({
+      action: z.enum([
+        "new-task",
+        "new-thread",
+        "new-context",
+        "new-tab",
+        "close-tab",
+        "close-app",
+        "palette",
+        "quick-open",
+        "refresh-home",
+      ]),
+    })
     .strict(),
   "menu:navigate": z.object({ kind: z.enum(["settings", "board", "project", "terminals"]) }).strict(),
 } as const;

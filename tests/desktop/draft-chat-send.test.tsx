@@ -490,7 +490,7 @@ describe("draft chat implicit thread creation", () => {
     expect(pane.className).not.toContain("overflow-hidden");
   });
 
-  it("uploads dropped files and creates a project chat with existing structured refs", async () => {
+  it("uploads dropped files and creates a project chat with typed file attachments", async () => {
     const putBytes = vi.fn(async (path: string, file: File) => ({
       ok: true,
       path: decodeURIComponent(path.split("path=")[1] ?? ""),
@@ -515,7 +515,7 @@ describe("draft chat implicit thread creation", () => {
           prompt: "Use this context",
           attachments: [expect.objectContaining({
             id: expect.stringMatching(/^desktop_upload_[A-Za-z0-9]+$/),
-            kind: "structured_ref",
+            kind: "file",
             label: "context.txt",
             path: expect.stringMatching(/^temporary\/desktop-chat\/[A-Za-z0-9]+-context\.txt$/),
             mimeType: "text/plain",

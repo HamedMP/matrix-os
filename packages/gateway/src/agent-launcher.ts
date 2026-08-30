@@ -3,7 +3,12 @@ import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { AgentModelOptionSchema, CODEX_VERIFIED_VERSION, type AgentModelOption } from "@matrix-os/contracts";
+import {
+  AgentModelOptionSchema,
+  CODEX_VERIFIED_VERSION,
+  ProviderModelReferenceSchema,
+  type AgentModelOption,
+} from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 
@@ -81,7 +86,7 @@ const CodexAppServerConfigSchema = z.object({
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
-  model: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  model: ProviderModelReferenceSchema.optional(),
   effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
   serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
 }).strict();

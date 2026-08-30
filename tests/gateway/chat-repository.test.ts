@@ -154,6 +154,13 @@ describe("ChatRepository", () => {
       WHERE schemaname = 'public' AND indexname = 'idx_chat_run_events_run_occurred'
     `.execute(repository.kysely);
     expect(activityIndex.rows).toEqual([{ indexname: "idx_chat_run_events_run_occurred" }]);
+    const sequenceIndex = await sql<{ indexdef: string }>`
+      SELECT indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'idx_chat_run_events_run_sequence'
+    `.execute(repository.kysely);
+    expect(sequenceIndex.rows).toEqual([
+      expect.objectContaining({ indexdef: expect.stringMatching(/UNIQUE INDEX.*run_id.*run_seq/i) }),
+    ]);
   });
 
   it("creates idempotently, isolates owners, and commits the outbox atomically", async () => {
@@ -712,13 +719,101 @@ describe("ChatRepository", () => {
     });
 
     const snapshot = await repository.exportChat(owner, created.chat.id);
-    expect(snapshot?.activities).toEqual([activity]);
+    expect(snapshot?.activities).toEqual([{ ...activity, sequence: 1 }]);
     expect(snapshot?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
     expect(snapshot).not.toHaveProperty("adapterState");
     expect((await repository.get(owner, created.chat.id))?.activeRun).toBeUndefined();
     expect((await repository.replayOutbox(owner, { afterCursor: 0, limit: 10 })).at(-1)).toMatchObject({
       eventType: "run.completed",
     });
+  });
+
+  it("assigns a stable run-local sequence when activities share a timestamp", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_activity_sequence",
+      clientRequestId: "req_create_activity_sequence",
+      title: "Activity sequence",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    const activities = [
+      { ...activity(created.chat.id, acceptedRun.id, 3), id: "activity_z" },
+      { ...activity(created.chat.id, acceptedRun.id, 1), id: "activity_a" },
+      { ...activity(created.chat.id, acceptedRun.id, 2), id: "activity_m" },
+    ];
+
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, activities.slice(0, 2));
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, activities.slice(2));
+
+    expect((await repository.exportChat(owner, created.chat.id))?.activities).toEqual([
+      expect.objectContaining({ id: "activity_z", sequence: 1 }),
+      expect.objectContaining({ id: "activity_a", sequence: 2 }),
+      expect.objectContaining({ id: "activity_m", sequence: 3 }),
+    ]);
+  });
+
+  it("updates a typed activity in place without changing its first receive sequence", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_activity_lifecycle",
+      clientRequestId: "req_create_activity_lifecycle",
+      title: "Activity lifecycle",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    const running: CanonicalChatRunActivity = {
+      id: "activity_command",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: now,
+      type: "agent.activity",
+      activityId: "tool_command",
+      kind: "command",
+      label: "Run command",
+      status: "running",
+    };
+    const failed: CanonicalChatRunActivity = {
+      ...running,
+      occurredAt: "2026-08-25T00:00:05.000Z",
+      status: "failed",
+      summary: "Command failed.",
+    };
+
+    await expect(repository.appendRunActivities(
+      owner,
+      created.chat.id,
+      acceptedRun.id,
+      [running],
+    )).resolves.toBe(1);
+    await expect(repository.appendRunActivities(
+      owner,
+      created.chat.id,
+      acceptedRun.id,
+      [failed],
+    )).resolves.toBe(1);
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      { ...activity(created.chat.id, acceptedRun.id, 2), id: "activity_after_command" },
+    ]);
+
+    expect((await repository.exportChat(owner, created.chat.id))?.activities).toEqual([
+      { ...failed, occurredAt: now, sequence: 1 },
+      expect.objectContaining({ id: "activity_after_command", sequence: 2 }),
+    ]);
   });
 
   it("commits assistant output with the terminal transition and rejects late Provider events", async () => {

@@ -100,6 +100,8 @@ interface ChatAppProps {
     files?: Array<{ name: string; type: string; data: string }>,
     options?: { displayText?: string; promptText?: string },
   ) => void;
+  composerDraftRequest?: { id: number; text: string } | null;
+  onComposerDraftConsumed?: (id: number) => void;
   mobile?: boolean;
 }
 
@@ -139,6 +141,8 @@ export function ChatApp({
   onNewChat,
   onSwitchConversation,
   onSubmit,
+  composerDraftRequest,
+  onComposerDraftConsumed,
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields (sidebarOpen, searchQuery, setupOpen, model, channels) are independent UI concerns with separate update sites and lifecycles, not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
 }: ChatAppProps) {
@@ -342,6 +346,8 @@ export function ChatApp({
             suggestions={suggestions}
             mobile={mobile}
             model={model}
+            composerDraftRequest={composerDraftRequest}
+            onComposerDraftConsumed={onComposerDraftConsumed}
           />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -394,7 +400,13 @@ export function ChatApp({
                   />
                 </div>
               )}
-              <ChatInput connected={connected} busy={busy} onSubmit={submitWithHermesSetup} />
+              <ChatInput
+                connected={connected}
+                busy={busy}
+                onSubmit={submitWithHermesSetup}
+                draftRequest={composerDraftRequest}
+                onDraftConsumed={onComposerDraftConsumed}
+              />
             </div>
           </div>
         )}
@@ -409,12 +421,16 @@ function EmptyState({
   suggestions,
   mobile,
   model,
+  composerDraftRequest,
+  onComposerDraftConsumed,
 }: {
   onSubmit: (text: string) => void;
   connected: boolean;
   suggestions: string[];
   mobile: boolean;
   model: string;
+  composerDraftRequest?: { id: number; text: string } | null;
+  onComposerDraftConsumed?: (id: number) => void;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4">
@@ -428,7 +444,14 @@ function EmptyState({
         </div>
 
         {/* Input */}
-        <ChatInput connected={connected} busy={false} onSubmit={onSubmit} autoFocus={!mobile} />
+        <ChatInput
+          connected={connected}
+          busy={false}
+          onSubmit={onSubmit}
+          autoFocus={!mobile}
+          draftRequest={composerDraftRequest}
+          onDraftConsumed={onComposerDraftConsumed}
+        />
 
         {/* Suggestions */}
         {suggestions.length > 0 && (
@@ -559,11 +582,15 @@ function ChatInput({
   busy,
   onSubmit,
   autoFocus,
+  draftRequest,
+  onDraftConsumed,
 }: {
   connected: boolean;
   busy: boolean;
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
   autoFocus?: boolean;
+  draftRequest?: { id: number; text: string } | null;
+  onDraftConsumed?: (id: number) => void;
 }) {
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -584,6 +611,13 @@ function ChatInput({
     // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
     if (autoFocus) textareaRef.current?.focus();
   }, [autoFocus]);
+
+  useEffect(() => {
+    if (!draftRequest) return;
+    setInput(draftRequest.text);
+    textareaRef.current?.focus();
+    onDraftConsumed?.(draftRequest.id);
+  }, [draftRequest, onDraftConsumed]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();

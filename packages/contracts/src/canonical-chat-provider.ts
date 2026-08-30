@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import {
   CanonicalChatAttachmentKindSchema,
+  CanonicalChatModelReferenceSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatResourceKindSchema,
   CanonicalProviderInstanceIdSchema,
@@ -34,7 +35,7 @@ export const CanonicalModelCapabilitySchema = z.enum([
 ]);
 
 export const CanonicalModelDescriptorSchema = z.object({
-  id: canonicalReferenceId(160),
+  id: CanonicalChatModelReferenceSchema,
   displayName: canonicalSafeLabel(120, 480),
   description: canonicalSafeLabel(280, 1_120).optional(),
   availability: z.enum(["available", "auth_required", "unavailable"]),

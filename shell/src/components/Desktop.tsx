@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -18,7 +18,7 @@ import {
 } from "@/lib/desktop-first-run";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
-import { Settings } from "./Settings";
+import { Settings, type SettingsSectionId } from "./Settings";
 import { CanvasRenderer } from "./canvas/CanvasRenderer";
 import {
   Tooltip,
@@ -49,6 +49,10 @@ import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import {
+  buildWebDesktopLauncherApps,
+  resolveWebDesktopBuiltInLaunch,
+} from "@/lib/web-desktop-app-launch";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
@@ -79,6 +83,11 @@ import {
 import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
 import { DesktopWindow, hasActiveWindowInteraction } from "./desktop/DesktopWindow";
 import { WebDesktopSurface } from "./desktop/WebDesktopSurface";
+import {
+  WebDesktopControls,
+  type WebDesktopSettingsSection,
+} from "./desktop/WebDesktopControls";
+import { openShellSupport } from "@/lib/posthog-client";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -131,6 +140,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsDefaultSection, setSettingsDefaultSection] = useState<SettingsSectionId>("appearance");
   // Chat popup is now fully controlled here so the dock button can toggle
   // it on click (open if closed, close if open). ChatPopover used to wrap
   // the button in Radix Dialog.Trigger, which only opened — clicking the
@@ -152,6 +162,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const togglePin = useDesktopConfigStore((s) => s.togglePin);
   const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
   const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
+  const desktopIcons = useDesktopConfigStore((s) => s.desktopIcons);
+  const moveDesktopIcon = useDesktopConfigStore((s) => s.moveDesktopIcon);
+  const removeDesktopIcon = useDesktopConfigStore((s) => s.removeDesktopIcon);
+  const addDesktopIcon = useDesktopConfigStore((s) => s.addDesktopIcon);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
   const isHorizontal = dock.position === "bottom";
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
@@ -437,6 +451,27 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
   }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
+  // Keep every app entry point on one routing path. Some installed catalog
+  // apps (notably Browser) intentionally map to shell-owned behavior instead
+  // of AppViewer, so dock, command-palette, launcher, and deep-link launches
+  // must all resolve them before opening a window.
+  const openAppOrFocus = useCallback((path: string, name?: string) => {
+    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path);
+    if (builtInLaunch?.kind === "external") {
+      window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (builtInLaunch?.kind === "external-code") {
+      window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (builtInLaunch?.kind === "app") {
+      focusOrOpen(builtInLaunch.name, builtInLaunch.path);
+      return;
+    }
+    focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
+  }, [apps, focusOrOpen]);
+
   const openSetupTerminal = (action: TerminalLaunchAction) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
@@ -482,7 +517,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     const currentApps = useWindowManager.getState().apps;
     const match = findAppByName(currentApps, query);
     if (match) {
-      focusOrOpen(match.name, match.path);
+      openAppOrFocus(match.path, match.name);
       return { success: true, resolvedName: match.name };
     }
     return { success: false };
@@ -493,8 +528,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     const match = useWindowManager.getState().apps.find((app) => app.path === launchAppPath);
     if (!match) return;
     launchPathConsumedRef.current = launchAppPath;
-    focusOrOpen(match.name, match.path);
-  }, [apps, focusOrOpen, launchAppPath]);
+    openAppOrFocus(match.path, match.name);
+  }, [apps, launchAppPath, openAppOrFocus]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async (signal?: AbortSignal) => {
@@ -886,10 +921,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   };
 
   const toggleMcRef = useRef(() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); });
-  const openWindowRef = useRef(openWindow);
-  useEffect(() => {
-    openWindowRef.current = openWindow;
-  }, [openWindow]);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- false positive: the setState calls counted here (setDesktopMode, setSettingsOpen, setTaskBoardOpen) live inside command `execute` handlers that only fire on user invocation; this effect just registers/unregisters command-palette entries and runs no setState synchronously, so there is no render cascade
   useEffect(() => {
@@ -1085,11 +1116,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       group: "Apps" as const,
       icon: app.iconUrl,
       keywords: [app.path],
-      execute: () => openWindowRef.current(app.name, app.path),
+      execute: () => openAppOrFocus(app.path, app.name),
     }));
     if (appCommands.length > 0) register(appCommands);
     return () => unregister(apps.map((a) => `app:${a.path}`));
-  }, [apps, register, unregister]);
+  }, [apps, openAppOrFocus, register, unregister]);
 
   useEffect(() => {
     if (!fullscreenWindowId) return;
@@ -1107,10 +1138,19 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     />
   ) : null;
 
-  // Shared by the Windows taskbar (start menu, quick launch) and the XP
-  // desktop icons: open the app window or focus the existing one.
-  const openAppOrFocus = (path: string, name?: string) =>
-    focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path);
+  const launcherApps = useMemo(() => buildWebDesktopLauncherApps(apps), [apps]);
+
+  const openLauncherDestination = useCallback((name: string, path: string) => {
+    if (path === "__settings__" || path === "__plugins__") {
+      setSettingsDefaultSection(path === "__plugins__" ? "integrations" : "appearance");
+      setSettingsOpen(true);
+      setTaskBoardOpen(false);
+      setChatOpen(false);
+      return;
+    }
+    openAppOrFocus(path, name);
+    setTaskBoardOpen(false);
+  }, [openAppOrFocus]);
 
   if (firstRunStatus === "checking") {
     return (
@@ -1235,7 +1275,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       <DockIcon
                         name={app.name}
                         active={hasAny}
-                        onClick={() => focusOrOpen(app.name, app.path)}
+                        onClick={() => openAppOrFocus(app.path, app.name)}
                         iconSize={dock.iconSize}
                         tooltipSide={tooltipSide}
                         iconUrl={app.iconUrl}
@@ -1342,7 +1382,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       key={app.path}
                       name={app.name}
                       active={hasAny}
-                      onClick={() => focusOrOpen(app.name, app.path)}
+                      onClick={() => openAppOrFocus(app.path, app.name)}
                       iconSize={dock.iconSize}
                       tooltipSide={tooltipSide}
                       iconUrl={app.iconUrl}
@@ -1542,7 +1582,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 <button
                   type="button"
                   key={app.path}
-                  onClick={() => openWindow(app.name, app.path)}
+                  onClick={() => openAppOrFocus(app.path, app.name)}
                   className={`flex shrink-0 h-9 items-center gap-1.5 px-3 rounded-lg border transition-all active:scale-95 ${
                     win
                       ? "bg-primary/10 border-primary/30 text-foreground"
@@ -1571,7 +1611,20 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 setSettingsOpen(false);
                 setChatOpen(false);
               }}
-              onOpenSettings={() => {
+              headerActions={(
+                <WebDesktopControls
+                  onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
+                  onOpenSupport={() => void openShellSupport()}
+                  onOpenSettings={(section) => {
+                    setSettingsDefaultSection(section);
+                    setSettingsOpen(true);
+                    setTaskBoardOpen(false);
+                    setChatOpen(false);
+                  }}
+                />
+              )}
+              onOpenSettings={(section: WebDesktopSettingsSection) => {
+                setSettingsDefaultSection(section);
                 setSettingsOpen(true);
                 setTaskBoardOpen(false);
                 setChatOpen(false);
@@ -1585,6 +1638,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 }
               }}
               onToggleFullscreen={wmToggleFullscreen}
+              desktopIcons={desktopIcons}
+              onMoveDesktopIcon={moveDesktopIcon}
+              onRemoveDesktopIcon={removeDesktopIcon}
             />
           ) : null}
           {/* XP desktop icons: above the wallpaper, below app windows. The
@@ -1594,18 +1650,23 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           <MissionControl
             open={taskBoardOpen}
             nativePresentation={desktopMode === "desktop"}
-            apps={apps}
+            apps={launcherApps}
             openWindows={windows.reduce<Set<string>>((acc, w) => {
               if (!w.minimized) acc.add(w.path);
               return acc;
             }, new Set())}
-            onOpenApp={openWindow}
+            onOpenApp={openLauncherDestination}
             onClose={() => setTaskBoardOpen(false)}
             pinnedApps={pinnedApps}
             onTogglePin={togglePin}
             onRegenerateIcon={regenerateIcon}
             onRenameApp={renameAppOnServer}
             onRemoveFromCanvas={removeFromCanvas}
+            onCreateApp={() => {
+              focusOrOpen("Chat", "__chat__");
+              chat?.requestComposerDraft("/matrix-app-builder ");
+            }}
+            onAddToDesktop={addDesktopIcon}
           />
 
           {!modeConfig.showWindows && modeConfig.id === "ambient" && (
@@ -1701,6 +1762,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       <Settings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+        defaultSection={settingsDefaultSection}
         onOpenAgentTerminal={(action) => {
           setSettingsOpen(false);
           openSetupTerminal(action);

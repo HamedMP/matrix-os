@@ -1,7 +1,9 @@
 import "posthog-js/dist/conversations";
 import posthog from "posthog-js/dist/module.no-external";
+import { DESKTOP_ANALYTICS_EVENT, isDesktopAnalyticsName, type DesktopAnalyticsDetail } from "../../lib/desktop-analytics";
 import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
+import { useUi } from "../../stores/ui";
 
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 
@@ -13,6 +15,7 @@ let launcherObserver: MutationObserver | null = null;
 let openSupportPromise: Promise<boolean> | null = null;
 let supportLifecycleGeneration = 0;
 let cancelPendingElementWait: (() => void) | null = null;
+let supportOverlayHeld = false;
 
 const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
 const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
@@ -28,7 +31,7 @@ function configuredToken(): string | null {
   return token || null;
 }
 
-export function isDesktopSupportConfigured(): boolean {
+function isDesktopSupportConfigured(): boolean {
   return configuredToken() !== null;
 }
 
@@ -55,16 +58,29 @@ function hidePostHogWidget(): void {
   }
 }
 
+function acquireSupportOverlay(): void {
+  if (supportOverlayHeld) return;
+  supportOverlayHeld = true;
+  useUi.getState().acquireRendererOverlay();
+}
+
+function releaseSupportOverlay(): void {
+  if (!supportOverlayHeld) return;
+  supportOverlayHeld = false;
+  useUi.getState().releaseRendererOverlay();
+}
+
 function suppressDefaultLauncher(): void {
   const widget = document.getElementById(POSTHOG_WIDGET_ID);
   const launcher = widget?.querySelector(POSTHOG_LAUNCHER_SELECTOR);
   const panel = widget?.querySelector(POSTHOG_CLOSE_SELECTOR);
-  if (!launcher && !panel) return;
 
   if (allowPostHogWidget) {
     if (openSupportPromise || panel) return;
     allowPostHogWidget = false;
+    releaseSupportOverlay();
   }
+  if (!launcher && !panel) return;
   hidePostHogWidget();
 }
 
@@ -157,12 +173,18 @@ async function openSupportPanel(generation: number): Promise<boolean> {
 }
 
 export function openDesktopSupport(): Promise<boolean> {
+  if (!isDesktopSupportConfigured()) return Promise.resolve(false);
   if (!openSupportPromise) {
+    acquireSupportOverlay();
     const generation = supportLifecycleGeneration;
     const promise = openSupportPanel(generation)
       .catch((error: unknown) => {
         console.warn("[desktop-support] Support chat unavailable:", errorKind(error));
         return false;
+      })
+      .then((opened) => {
+        if (!opened) releaseSupportOverlay();
+        return opened;
       })
       .finally(() => {
         if (openSupportPromise === promise) openSupportPromise = null;
@@ -175,6 +197,7 @@ export function openDesktopSupport(): Promise<boolean> {
 function hideAndResetSupport(): void {
   invalidatePendingSupportOpen();
   allowPostHogWidget = false;
+  releaseSupportOverlay();
   if (!initialized) return;
   hidePostHogWidget();
   if (activeIdentity === null) return;
@@ -272,9 +295,24 @@ export default function DesktopSupportWidget() {
     }
   }, [authGeneration, displayName, handle, platformHost, status]);
 
+  useEffect(() => {
+    const capture = (event: Event) => {
+      const detail = (event as CustomEvent<DesktopAnalyticsDetail>).detail;
+      if (!initialized || activeIdentity === null || !isDesktopAnalyticsName(detail?.name)) return;
+      posthog.capture(detail.name, {
+        ...(detail.appKind ? { app_kind: detail.appKind } : {}),
+        ...(typeof detail.open === "boolean" ? { open: detail.open } : {}),
+        matrix_client: "desktop",
+      });
+    };
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    return () => window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+  }, []);
+
   useEffect(() => () => {
     invalidatePendingSupportOpen();
     allowPostHogWidget = false;
+    releaseSupportOverlay();
     stopLauncherObserver();
   }, []);
 

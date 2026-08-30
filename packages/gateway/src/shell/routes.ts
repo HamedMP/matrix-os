@@ -165,6 +165,7 @@ const PasteAssetQuerySchema = z.object({
 const SessionUiStateBodySchema = z.object({
   placement: z.enum(["active", "background"]).optional(),
   lastSeenSeq: z.number().int().nonnegative().nullable().optional(),
+  pinned: z.boolean().optional(),
   visualStatus: z.enum(["running", "finished", "idle", "waiting"]).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0);
 const SessionRenameBodySchema = z.object({
@@ -589,14 +590,13 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
           503,
         );
       }
-      const current = await deps.preferences.loadGlobal();
-      const preferences = await deps.preferences.saveGlobal({
-        ...current,
-        ...(await c.req.json()),
-      });
-      if (deps.shellThemeConfig) {
-        await deps.shellThemeConfig.setShellTheme(preferences.shellThemeId);
-      }
+      const shellThemeConfig = deps.shellThemeConfig;
+      const preferences = await deps.preferences.updateGlobal(
+        await c.req.json(),
+        shellThemeConfig
+          ? (next) => shellThemeConfig.setShellTheme(next.shellThemeId)
+          : undefined,
+      );
       return c.json({ preferences });
     } catch (err) {
       return safeError(c, err);

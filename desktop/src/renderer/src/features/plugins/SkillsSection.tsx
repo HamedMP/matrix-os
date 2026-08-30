@@ -1,7 +1,7 @@
 // Skills section of the Plugins hub. REAL data path: GET /api/settings/skills
 // (see plugins-store.ts) — the list below is the actual installed skill pack
 // on the connected computer, rendered read-only. The empty state is honest:
-// no skills installed, with the canonical terminal path to manage them.
+// no skills installed, with the canonical Terminal app path to manage them.
 import { Search, Sparkles, X } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { categoryMessage } from "../../../../shared/app-error";
@@ -11,8 +11,6 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { openPluginsTerminal } from "./open-plugins-terminal";
 import { usePlugins } from "./plugins-store";
-
-const SKILLS_TERMINAL_SESSION = "plugins-skills";
 
 function SkillsLoadingSkeleton() {
   return (
@@ -30,8 +28,6 @@ export function SkillsSection() {
   const skills = usePlugins((s) => s.skills);
   const status = usePlugins((s) => s.skillsStatus);
   const errorMessage = usePlugins((s) => s.skillsError);
-  const [terminalBusy, setTerminalBusy] = useState(false);
-  const [terminalError, setTerminalError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -52,26 +48,6 @@ export function SkillsSection() {
     void usePlugins.getState().refreshSkills(api);
   };
 
-  const handleOpenTerminal = async (): Promise<void> => {
-    if (terminalBusy) return;
-    if (!api) {
-      setTerminalError(categoryMessage("misconfigured"));
-      return;
-    }
-    setTerminalBusy(true);
-    setTerminalError(null);
-    try {
-      const opened = await openPluginsTerminal(api, openTab, {
-        sessionName: SKILLS_TERMINAL_SESSION,
-        title: "Skills",
-      });
-      // "runtime-changed" is not a failure: the session was created on the
-      // computer the user just left, so there is nothing to apologise for.
-      if (opened === "failed") setTerminalError(categoryMessage("server"));
-    } finally {
-      setTerminalBusy(false);
-    }
-  };
 
   let body: ReactNode;
   if (status === "idle" || status === "loading") {
@@ -119,13 +95,10 @@ export function SkillsSection() {
           Ask Hermes to create one, or manage them in a terminal.
         </p>
         <div className="mt-2">
-          <Button variant="primary" disabled={terminalBusy} onClick={() => void handleOpenTerminal()}>
-            {terminalBusy ? "Opening…" : "Open terminal"}
+          <Button variant="primary" onClick={() => openPluginsTerminal(openTab)}>
+            Open terminal
           </Button>
         </div>
-        {terminalError ? (
-          <p className="text-xs" style={{ color: "var(--danger)" }}>{terminalError}</p>
-        ) : null}
       </div>
     );
   } else if (filteredSkills.length === 0) {

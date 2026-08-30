@@ -4,12 +4,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
-import {
-  SURFACE_BASE_BACKGROUND,
-  SURFACE_BASE_BACKGROUND_FALLBACK,
-} from "@desktop/renderer/src/design/surface";
 import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useTerminalAppearance } from "@desktop/renderer/src/stores/terminal-appearance";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import {
   bracketTerminalPaths,
@@ -165,6 +162,11 @@ describe("TerminalView session switching", () => {
     attachmentResize.mockReset();
     attachmentWrite.mockReset();
     useAppearance.setState({ mode: "light", themeId: "operator", hydrated: true });
+    useTerminalAppearance.setState({
+      ...useTerminalAppearance.getInitialState(),
+      themeId: "dark",
+      hydrated: true,
+    }, true);
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -203,7 +205,7 @@ describe("TerminalView session switching", () => {
     const root = host.querySelector<HTMLElement>(".xterm")!;
     const viewport = host.querySelector<HTMLElement>(".xterm-viewport")!;
     const scrollable = host.querySelector<HTMLElement>(".xterm-scrollable-element")!;
-    const background = SURFACE_BASE_BACKGROUND_FALLBACK;
+    const background = "#0C0C0C";
     const colorProbe = document.createElement("div");
     colorProbe.style.backgroundColor = background;
 
@@ -215,7 +217,7 @@ describe("TerminalView session switching", () => {
     expect(frame.className).not.toContain("pl-3");
     expect(frame.className).not.toContain("pl-4");
     expect(frame.className).toContain("overflow-hidden");
-    expect(frame.style.backgroundColor).toBe(SURFACE_BASE_BACKGROUND);
+    expect(frame.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
     expect(root.style.width).toBe("100%");
     expect(root.style.height).toBe("100%");
     expect(root.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
@@ -379,17 +381,22 @@ describe("TerminalView session switching", () => {
     expect(terminal.reset).toHaveBeenCalledOnce();
   });
 
-  it("uses the resolved Desktop appearance and re-themes with Settings", () => {
+  it("re-themes the right-hand shell without changing or following Desktop appearance", () => {
     render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;
-    expect(terminal.initialOptions.theme).toMatchObject({ background: "#fffffd" });
+    expect(terminal.initialOptions.theme).toMatchObject({ background: "#0C0C0C" });
 
-    const colorProbe = document.createElement("div");
     act(() => {
       useAppearance.setState({ mode: "dark", themeId: "dracula" });
     });
-    colorProbe.style.backgroundColor = "#141614";
-    expect(terminal.options.theme).toMatchObject({ background: "#141614" });
+    expect(terminal.options.theme).toMatchObject({ background: "#0C0C0C" });
+
+    act(() => {
+      useTerminalAppearance.setState({ themeId: "matrix" });
+    });
+    const colorProbe = document.createElement("div");
+    colorProbe.style.backgroundColor = "#020A02";
+    expect(terminal.options.theme).toMatchObject({ background: "#020A02", cursor: "#39FF6A" });
     expect(terminal.element?.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
     expect(terminal.element?.querySelector<HTMLElement>(".xterm-viewport")?.style.backgroundColor)
       .toBe(colorProbe.style.backgroundColor);
@@ -399,12 +406,12 @@ describe("TerminalView session switching", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" />);
 
     act(() => {
-      useAppearance.setState({ mode: "dark", themeId: "dracula" });
+      useTerminalAppearance.setState({ themeId: "powerlevel10k-pure" });
     });
     rerender(<TerminalView sessionName="beta" />);
 
     expect(createdTerminals).toHaveLength(2);
-    expect(createdTerminals.at(-1)?.initialOptions.theme).toMatchObject({ background: "#141614" });
+    expect(createdTerminals.at(-1)?.initialOptions.theme).toMatchObject({ background: "#1B1D1E" });
   });
 
   it("overrides xterm OSC activation and registers plain-text URL detection", () => {

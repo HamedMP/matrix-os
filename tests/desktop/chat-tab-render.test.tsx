@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
 import { createLegacyGlobalProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
 import {
   conversationMessageDisplay,
   sharedConversationResources,
@@ -68,6 +69,7 @@ describe("ChatTab", () => {
       status: "ready",
     });
     useTabs.setState(useTabs.getInitialState(), true);
+    useDesktopEditor.setState(useDesktopEditor.getInitialState(), true);
     useProviderPreferences.setState({
       defaultProviderId: null,
       composerSelections: {},
@@ -145,7 +147,7 @@ describe("ChatTab", () => {
     const receipt = screen.getByRole("button", { name: "Worked for 12s" });
     expect(receipt.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("I’ll inspect it.")).toBeNull();
-    expect(screen.queryByRole("button", { name: "2 previous tool calls" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "2 previous activities" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
     expect(screen.getByText("The repository is clean.")).toBeTruthy();
 
@@ -153,7 +155,7 @@ describe("ChatTab", () => {
     expect(receipt.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("I’ll inspect it.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "2 previous tool calls" }));
+    fireEvent.click(screen.getByRole("button", { name: "2 previous activities" }));
     expect(screen.getByRole("button", { name: "Searched tools: repository tools" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Read file: README.md" })).toBeTruthy();
 
@@ -268,6 +270,30 @@ describe("ChatTab", () => {
     expect(link.hasAttribute("node")).toBe(false);
   });
 
+  it("opens full Matrix-home file paths from Chat in a new Editor tab", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{
+        id: "assistant-file-path",
+        role: "assistant",
+        content: "Open `/home/matrix/home/projects/app/src/main.ts:42` to inspect the change.",
+        timestamp: 10_000,
+      }],
+    });
+
+    render(<ChatTab />);
+    fireEvent.click(screen.getByRole("button", { name: "Open main.ts in Editor" }));
+
+    expect(useDesktopEditor.getState()).toMatchObject({
+      paths: ["projects/app/src/main.ts"],
+      activePath: "projects/app/src/main.ts",
+    });
+    expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
+      kind: "editor",
+      title: "Editor",
+    }));
+  });
+
   it("shows live turn and tool status without claiming unavailable reasoning", () => {
     useHermesChat.setState({
       status: "streaming",
@@ -316,8 +342,10 @@ describe("ChatTab", () => {
     expect(failureNotice.textContent).toContain("Agent work failed");
     expect(failureNotice.textContent).toContain("The command failed.");
     expect(failureNotice.className).toContain("rounded-xl");
-    expect(failureNotice.style.background).toContain("var(--danger)");
-    expect(failureNotice.style.borderColor).toBe("");
+    expect(failureNotice.className).toContain("border");
+    expect(failureNotice.className).toContain("px-3");
+    expect(failureNotice.style.background).toBe("");
+    expect(failureNotice.style.borderColor).toBe("var(--danger)");
     expect(screen.queryByRole("button", { name: "Running command: bun run test" })).toBeNull();
   });
 
@@ -666,7 +694,10 @@ describe("ChatTab", () => {
       status: "ready",
       refresh: vi.fn(async () => undefined),
     });
-    const post = vi.fn(async () => ({ name: "matrix-setup-claude" }));
+    let resolveSetupSession!: (value: { name: string }) => void;
+    const post = vi.fn(() => new Promise<{ name: string }>((resolve) => {
+      resolveSetupSession = resolve;
+    }));
     useConnection.setState({
       api: {
         get: vi.fn(async (path: string) => {
@@ -687,10 +718,12 @@ describe("ChatTab", () => {
       "/api/terminal/sessions",
       expect.objectContaining({ cmd: "claude" }),
     ));
+    await act(async () => resolveSetupSession({ name: "matrix-setup-claude" }));
     expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
-      kind: "terminal",
-      title: "Connect Claude",
+      kind: "terminals",
+      title: "Terminal",
     }));
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-claude");
   });
 
   it("persists Global Chat effort and permission selections", async () => {

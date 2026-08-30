@@ -1,4 +1,13 @@
-import { ChevronRight, CircleAlert, FileText } from "@renderer/lib/hugeicons";
+import {
+  CheckCircle2,
+  ChevronRight,
+  CircleAlert,
+  FileText,
+  Link2,
+  MessageCircle,
+  ShieldAlert,
+  Wrench,
+} from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import {
   Conversation,
@@ -13,6 +22,7 @@ import type {
   ConversationMessagePresentation,
   ConversationNoticePresentation,
   ConversationPresentationCallbacks,
+  ConversationRequestPresentation,
   ConversationTurnPresentation,
   ConversationWorkPresentation,
 } from "./presentation";
@@ -81,26 +91,75 @@ function UserMessage({
   message: ConversationMessagePresentation;
   callbacks: ConversationPresentationCallbacks;
 }) {
+  const lines = message.markdown.split("\n");
+  const collapsible = message.markdown.length > 700 || lines.length > 12;
+  const [expanded, setExpanded] = useState(false);
+  const references = message.references ?? message.attachments ?? [];
+  const visibleMarkdown = collapsible && !expanded
+    ? `${lines.slice(0, 10).join("\n").slice(0, 700)}…`
+    : message.markdown;
+  const renderStructuredContent = Boolean(message.content?.length) && (!collapsible || expanded);
   return (
     <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
       <Message align="end">
         <MessageContent>
           <Bubble variant="secondary" align="end">
-            <BubbleContent className="max-w-[580px] whitespace-pre-wrap" data-selectable>
-              {message.markdown}
-              {message.attachments?.length ? (
+            <BubbleContent className="max-w-[48rem] whitespace-pre-wrap" data-selectable>
+              {renderStructuredContent ? message.content!.map((segment, index) => {
+                if (segment.kind === "text") return <span key={`text:${index}`}>{segment.text}</span>;
+                if (segment.kind === "image") {
+                  return (
+                    <span key={`image:${segment.id}`} className="mt-2 block overflow-hidden rounded-lg border" style={{ borderColor: "var(--border-default)" }}>
+                      <AuthenticatedMessageImage
+                        src={segment.src}
+                        label={segment.label}
+                        loadImage={callbacks.loadImage}
+                      />
+                    </span>
+                  );
+                }
+                const Icon = segment.referenceKind === "file"
+                  ? FileText
+                  : segment.referenceKind === "resource" ? Link2 : Wrench;
+                return (
+                  <span
+                    key={`${segment.referenceKind}:${segment.id}`}
+                    className="mx-0.5 inline-flex max-w-full translate-y-px items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs"
+                    style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+                  >
+                    <Icon size={12} aria-hidden className="shrink-0" />
+                    <span className="truncate">{segment.label}</span>
+                  </span>
+                );
+              }) : visibleMarkdown}
+              {!renderStructuredContent && references.length > 0 ? (
                 <span className="mt-2 flex flex-wrap justify-end gap-1.5">
-                  {message.attachments.map((attachment) => (
+                  {references.map((reference) => {
+                    const Icon = reference.kind === "file" ? FileText : reference.kind === "resource" ? Link2 : Wrench;
+                    return (
                     <span
-                      key={attachment.id}
+                      key={`${reference.kind}:${reference.id}`}
                       className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
                       style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
                     >
-                      <FileText size={12} aria-hidden className="shrink-0" />
-                      <span className="truncate">{attachment.label}</span>
+                      <Icon size={12} aria-hidden className="shrink-0" />
+                      <span className="truncate">{reference.label}</span>
                     </span>
-                  ))}
+                    );
+                  })}
                 </span>
+              ) : null}
+              {collapsible ? (
+                <button
+                  type="button"
+                  aria-label={expanded ? "Show less" : "Show full message"}
+                  aria-expanded={expanded}
+                  className="mt-2 block rounded-md text-xs font-medium underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                  style={{ color: "var(--text-secondary)" }}
+                  onClick={() => setExpanded((value) => !value)}
+                >
+                  {expanded ? "Show less" : "Show more"}
+                </button>
               ) : null}
             </BubbleContent>
           </Bubble>
@@ -113,6 +172,44 @@ function UserMessage({
         </MessageContent>
       </Message>
     </ConversationItem>
+  );
+}
+
+function AuthenticatedMessageImage({
+  src,
+  label,
+  loadImage,
+}: {
+  src: string;
+  label: string;
+  loadImage?: (src: string) => Promise<Blob>;
+}) {
+  const [resolvedSrc, setResolvedSrc] = useState(loadImage ? "" : src);
+  useEffect(() => {
+    if (!loadImage) {
+      setResolvedSrc(src);
+      return;
+    }
+    let active = true;
+    let objectUrl: string | undefined;
+    void loadImage(src).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setResolvedSrc(objectUrl);
+    }).catch((error: unknown) => {
+      console.warn("[conversation] image preview unavailable:", error instanceof Error ? error.name : "UnknownError");
+    });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [loadImage, src]);
+  return resolvedSrc ? (
+    <img src={resolvedSrc} alt={label} className="block max-h-72 w-full object-contain" />
+  ) : (
+    <span role="status" aria-label={`Loading ${label}`} className="block px-3 py-6 text-center text-xs" style={{ color: "var(--text-tertiary)" }}>
+      Loading image…
+    </span>
   );
 }
 
@@ -130,6 +227,7 @@ function ResponseMessage({
   animateOnMount: boolean;
 }) {
   const previousMessageId = useRef(message.id);
+  const previousStreaming = useRef(streaming);
   const [visibleMarkdown, setVisibleMarkdown] = useState(() => (
     streaming || animateOnMount ? "" : message.markdown
   ));
@@ -139,6 +237,12 @@ function ResponseMessage({
     previousMessageId.current = message.id;
     setVisibleMarkdown(streaming || animateOnMount ? "" : message.markdown);
   }, [animateOnMount, message.id, message.markdown, streaming]);
+
+  useEffect(() => {
+    const terminalized = previousStreaming.current && !streaming;
+    previousStreaming.current = streaming;
+    if (terminalized) setVisibleMarkdown(message.markdown);
+  }, [message.markdown, streaming]);
 
   useEffect(() => {
     if (visibleMarkdown === message.markdown) return;
@@ -164,8 +268,8 @@ function ResponseMessage({
       <Message>
         <MessageContent>
           <Bubble variant="ghost">
-            <BubbleContent className="max-w-[620px] overflow-visible">
-              <MessageResponse copyText={callbacks.copyText}>{visibleMarkdown}</MessageResponse>
+            <BubbleContent className="max-w-[64rem] overflow-visible">
+              <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (
@@ -190,18 +294,34 @@ function Notice({
   callbacks: ConversationPresentationCallbacks;
 }) {
   const failed = notice.tone === "failed";
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [actionFailed, setActionFailed] = useState(false);
+  const availableActions = (notice.actions ?? []).filter((action) => (
+    callbacks.performAction && (!callbacks.canPerformAction || callbacks.canPerformAction(action))
+  ));
+  const perform = async (action: typeof availableActions[number]) => {
+    if (!callbacks.performAction || pendingAction) return;
+    setPendingAction(action.kind);
+    setActionFailed(false);
+    try {
+      await callbacks.performAction(action, undefined);
+    } catch (error) {
+      console.warn("[conversation] action failed:", error instanceof Error ? error.name : "UnknownError");
+      setActionFailed(true);
+    } finally {
+      setPendingAction(null);
+    }
+  };
   return (
     <ConversationItem messageId={`notice:${notice.id}`}>
       <Message>
         <MessageContent>
-          <Bubble variant="ghost">
-            <BubbleContent
-              {...(failed ? { role: "status", "aria-label": notice.label } : {})}
-              className={`max-w-[620px] rounded-xl px-3.5 py-3 text-sm ${failed ? "flex items-start gap-2.5" : ""}`}
+          <div
+              role="status"
+              aria-label={notice.label}
+              className={`w-fit min-w-[20rem] max-w-full rounded-xl border px-3 py-2.5 text-sm sm:max-w-[42rem] ${failed ? "flex items-start gap-2.5" : ""}`}
               style={{
-                background: failed
-                  ? "color-mix(in srgb, var(--danger) 8%, transparent)"
-                  : "var(--bg-sunken)",
+                borderColor: failed ? "var(--danger)" : "var(--border-default)",
                 color: "var(--text-primary)",
               }}
             >
@@ -216,13 +336,137 @@ function Notice({
               <div className="min-w-0">
                 <p className="font-medium leading-5">{notice.label}</p>
                 <div className="mt-0.5 leading-5" style={{ color: "var(--text-secondary)" }}>
-                  <MessageResponse copyText={callbacks.copyText}>{notice.markdown}</MessageResponse>
+                  <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile}>{notice.markdown}</MessageResponse>
                 </div>
+                {availableActions.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {availableActions.map((action) => (
+                      <button
+                        key={`${action.kind}:${action.label}`}
+                        type="button"
+                        aria-label={`${action.label} ${notice.label}`}
+                        disabled={pendingAction !== null}
+                        className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50"
+                        style={{ borderColor: "var(--border-default)" }}
+                        onClick={() => void perform(action)}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {actionFailed ? <p role="alert" className="mt-1 text-xs">The action failed. Try again.</p> : null}
               </div>
-            </BubbleContent>
-          </Bubble>
+          </div>
         </MessageContent>
       </Message>
+    </ConversationItem>
+  );
+}
+
+function Request({
+  request,
+  callbacks,
+}: {
+  request: ConversationRequestPresentation;
+  callbacks: ConversationPresentationCallbacks;
+}) {
+  const [answer, setAnswer] = useState("");
+  const [pending, setPending] = useState(false);
+  const [actionFailed, setActionFailed] = useState(false);
+  const activeAction = useRef<symbol | null>(null);
+  const availableActions = (request.actions ?? []).filter((action) => (
+    callbacks.performAction && (!callbacks.canPerformAction || callbacks.canPerformAction(action))
+  ));
+  const inputAction = availableActions.find((action) => action.kind === "input");
+  const label = `${request.requestKind === "approval" ? "Approval" : "Input"} ${request.state === "waiting" ? "required" : "resolved"}: ${request.label}`;
+  const perform = async (action: typeof availableActions[number], input?: string) => {
+    if (!callbacks.performAction || activeAction.current) return;
+    const actionToken = Symbol("conversation-request-action");
+    activeAction.current = actionToken;
+    setPending(true);
+    setActionFailed(false);
+    try {
+      await callbacks.performAction(action, input);
+    } catch (error) {
+      console.warn("[conversation] request action failed:", error instanceof Error ? error.name : "UnknownError");
+      setActionFailed(true);
+    } finally {
+      if (activeAction.current === actionToken) {
+        activeAction.current = null;
+        setPending(false);
+      }
+    }
+  };
+  const Icon = request.requestKind === "approval" ? ShieldAlert : MessageCircle;
+  return (
+    <ConversationItem messageId={`request:${request.id}`}>
+      <div
+        role="group"
+        aria-label={label}
+        className="max-w-[620px] rounded-xl border p-3"
+        style={{ borderColor: "var(--border-default)", background: "var(--bg-sunken)" }}
+      >
+        <div className="flex min-w-0 items-start gap-2.5">
+          {request.state === "resolved"
+            ? <CheckCircle2 aria-hidden className="mt-0.5 size-4 shrink-0" style={{ color: "var(--success)" }} />
+            : <Icon aria-hidden className="mt-0.5 size-4 shrink-0" style={{ color: "var(--text-secondary)" }} />}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-medium">{request.label}</p>
+              {request.risk ? (
+                <span className="rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide" style={{ borderColor: "var(--border-default)", color: "var(--text-tertiary)" }}>
+                  {request.risk} risk
+                </span>
+              ) : null}
+            </div>
+            {request.detail ? <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{request.detail}</p> : null}
+            {request.state === "waiting" && inputAction ? (
+              <form
+                className="mt-2 flex min-w-0 gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (answer.trim()) void perform(inputAction, answer.trim());
+                }}
+              >
+                <input
+                  aria-label={`Answer ${request.label}`}
+                  value={answer}
+                  disabled={pending}
+                  className="h-8 min-w-0 flex-1 rounded-md border bg-transparent px-2 text-sm outline-none focus:border-[var(--accent)]"
+                  style={{ borderColor: "var(--border-default)" }}
+                  onChange={(event) => setAnswer(event.currentTarget.value)}
+                />
+                <button
+                  type="submit"
+                  disabled={pending || answer.trim().length === 0}
+                  className="rounded-md bg-[var(--accent)] px-2.5 text-xs font-medium text-[var(--text-on-accent)] disabled:opacity-50"
+                >
+                  {inputAction.label}
+                </button>
+              </form>
+            ) : null}
+            {request.state === "waiting" && request.requestKind === "approval" && availableActions.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {availableActions.map((action) => (
+                  <button
+                    key={action.kind === "approval" ? action.decision : action.label}
+                    type="button"
+                    aria-label={`${action.label} ${request.label}`}
+                    disabled={pending}
+                    className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50"
+                    style={{ borderColor: "var(--border-default)" }}
+                    onClick={() => void perform(action, undefined)}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {actionFailed ? <p role="alert" className="mt-1 text-xs">The action failed. Try again.</p> : null}
+          </div>
+        </div>
+      </div>
     </ConversationItem>
   );
 }
@@ -248,6 +492,7 @@ function PresentationItem({
     );
   }
   if (item.kind === "notice") return <Notice notice={item} callbacks={callbacks} />;
+  if (item.kind === "request") return <Request request={item} callbacks={callbacks} />;
   return (
     <ResponseMessage
       message={item}
@@ -271,6 +516,12 @@ function ConversationTurn({
   const [expanded, setExpanded] = useState(false);
   const showWork = turn.active || expanded;
   const hasWork = turn.work.length > 0;
+  const terminalPartial = !turn.active
+    && turn.final?.kind === "notice"
+    && (turn.final.tone === "failed" || turn.final.tone === "stopped")
+    ? [...turn.work].reverse().find((item) => item.kind === "message")
+    : undefined;
+  const visibleWork = showWork ? turn.work : terminalPartial ? [terminalPartial] : [];
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={callbacks} /> : null}
@@ -284,9 +535,9 @@ function ConversationTurn({
           onToggle={() => setExpanded((value) => !value)}
         />
       ) : null}
-      {showWork ? turn.work.map((item) => (
+      {visibleWork.map((item) => (
         <PresentationItem key={item.id} item={item} callbacks={callbacks} />
-      )) : null}
+      ))}
       {turn.final ? (
         <PresentationItem
           item={turn.final}
@@ -307,7 +558,7 @@ export function ConversationTranscript({
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
 }) {
-  const initialFinalIds = useRef(new Set(
+  const [initialFinalIds] = useState(() => new Set(
     turns.flatMap((turn) => turn.final ? [turn.final.id] : []),
   ));
   return (
@@ -318,7 +569,7 @@ export function ConversationTranscript({
             key={turn.id}
             turn={turn}
             callbacks={callbacks}
-            initialFinalIds={initialFinalIds.current}
+            initialFinalIds={initialFinalIds}
           />
         ))}
       </ConversationContent>

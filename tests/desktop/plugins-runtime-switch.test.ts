@@ -12,11 +12,11 @@ import {
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
-function makeApi(get: (path: string) => Promise<unknown>, post?: (path: string, body?: unknown) => Promise<unknown>) {
+function makeApi(get: (path: string) => Promise<unknown>) {
   return {
     baseUrl: "https://gateway.test",
     get: vi.fn(get),
-    post: vi.fn(post ?? (async () => ({ name: "plugins-mcp" }))),
+    post: vi.fn(),
     delete: vi.fn(),
     patch: vi.fn(),
     put: vi.fn(),
@@ -54,21 +54,13 @@ describe("plugins hub across runtime switches", () => {
     expect(usePlugins.getState().skills.map((skill) => skill.name)).toEqual(["current-skill"]);
   });
 
-  it("does not open a terminal tab for a session created on the previous computer", async () => {
-    let releaseSession!: (value: { name: string }) => void;
-    const api = makeApi(
-      async () => [],
-      () => new Promise<{ name: string }>((resolve) => { releaseSession = resolve; }),
-    );
+  it("opens the Terminal app without creating a session on a runtime", async () => {
+    const api = makeApi(async () => []);
     const openTab = vi.fn();
 
-    const opening = openPluginsTerminal(api, openTab, { sessionName: "plugins-mcp", title: "MCP servers" });
-    // The user switches computers while the session POST is in flight.
-    useConnection.setState({ runtimeSlot: "secondary", authGeneration: 2 });
-    releaseSession({ name: "plugins-mcp" });
-
-    await expect(opening).resolves.toBe("runtime-changed");
-    expect(openTab).not.toHaveBeenCalled();
+    await expect(openPluginsTerminal(openTab)).resolves.toBe("opened");
+    expect(api.post).not.toHaveBeenCalled();
+    expect(openTab).toHaveBeenCalledWith({ kind: "terminals", title: "Terminal" });
   });
 
   it("drops an in-flight skills response and cached owner data on sign-out", async () => {
@@ -95,12 +87,11 @@ describe("plugins hub across runtime switches", () => {
   });
 
   it("still opens the tab when the runtime is unchanged", async () => {
-    const api = makeApi(async () => [], async () => ({ name: "plugins-mcp" }));
     const openTab = vi.fn();
 
     await expect(
-      openPluginsTerminal(api, openTab, { sessionName: "plugins-mcp", title: "MCP servers" }),
+      openPluginsTerminal(openTab),
     ).resolves.toBe("opened");
-    expect(openTab).toHaveBeenCalledWith({ kind: "terminal", sessionName: "plugins-mcp", title: "MCP servers" });
+    expect(openTab).toHaveBeenCalledWith({ kind: "terminals", title: "Terminal" });
   });
 });

@@ -125,6 +125,7 @@ const ZellijPaneListSchema = z.array(z.object({
   tab_id: z.number().int().nonnegative(),
   pane_cwd: z.string().min(1).max(4096).nullable().optional(),
   pane_command: z.string().trim().min(1).max(4096).nullable().optional(),
+  pane_title: z.string().trim().min(1).max(4096).nullable().optional(),
 }).passthrough()).max(256);
 
 const SAFE_ATTACH_ENV_KEYS = new Set([
@@ -299,6 +300,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   }>();
   const zellijConfigPaths = deps.homePath ? matrixZellijConfigPaths(deps.homePath) : null;
   let ensureConfigPromise: Promise<void> | null = null;
+  let shellThemeUpdateQueue: Promise<void> = Promise.resolve();
   let shellThemeId: MatrixZellijShellThemeId = "dark";
 
   function cacheFocusedPaneRuntime(
@@ -491,6 +493,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         const value: FocusedPaneRuntimeObservation = {
           cwd: focusedPane.pane_cwd ?? null,
           command: focusedPane.pane_command,
+          ...(focusedPane.pane_title ? { title: focusedPane.pane_title } : {}),
           observed: true,
         };
         return cacheFocusedPaneRuntime(name, value);
@@ -639,9 +642,16 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       return { kdl };
     },
     async setShellTheme(themeId) {
-      shellThemeId = themeId;
-      ensureConfigPromise = null;
-      await ensureMatrixZellijConfig();
+      const update = shellThemeUpdateQueue.then(async () => {
+        shellThemeId = themeId;
+        ensureConfigPromise = null;
+        await ensureMatrixZellijConfig();
+      });
+      shellThemeUpdateQueue = update.then(
+        () => undefined,
+        () => undefined,
+      );
+      await update;
     },
   };
 }

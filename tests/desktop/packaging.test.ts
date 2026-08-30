@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -13,7 +16,22 @@ function readPngDimensions(path: string): { width: number; height: number } {
   };
 }
 
+function sha256(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
 describe("desktop packaging", () => {
+  it("uses an electron-builder version that preserves branded DMG backgrounds", () => {
+    const packageJson = JSON.parse(
+      readFileSync(join(process.cwd(), "desktop/package.json"), "utf8"),
+    ) as { devDependencies?: Record<string, string> };
+    const version = packageJson.devDependencies?.["electron-builder"];
+
+    expect(version).toMatch(/^~?\d+\.\d+\.\d+$/);
+    const [major, minor, patch] = version!.replace(/^~/, "").split(".").map(Number);
+    expect(major * 1_000_000 + minor * 1_000 + patch).toBeGreaterThanOrEqual(26_005_000);
+  });
+
   it("registers canonical and legacy macOS URL schemes", () => {
     const raw = readFileSync(join(process.cwd(), "desktop/electron-builder.yml"), "utf8");
     const config = parse(raw) as {
@@ -72,13 +90,30 @@ describe("desktop packaging", () => {
     expect(generator).toContain("forestDeep: brandPalette.forestDeep");
     expect(generator).toContain("cream: brandPalette.cream");
     expect(generator).toContain("ember: brandPalette.ember");
-    expect(generator).toContain("displayFontFamily = resolveCssFontFamily(brandFonts.display)");
-    expect(generator).toContain("@fontsource/instrument-serif/files");
-    expect(generator).toContain("instrument-serif-latin-400-normal.woff2");
-    expect(generator).toContain("existsSync(packagePath) && existsSync(fontPath)");
-    expect(generator).not.toContain("instrument-sans");
-    expect(generator.match(/<text class="display"/g)).toHaveLength(3);
-    expect(generator).not.toContain('<text class="sans"');
+    expect(generator).toContain("displayFontFamily = desktopFonts.display");
+    expect(generator).toContain("uiFontFamily = desktopFonts.sans");
+    expect(generator).toContain("@expo-google-fonts/bricolage-grotesque");
+    expect(generator).toContain("BricolageGrotesque_700Bold.ttf");
+    expect(generator).not.toContain("BricolageGrotesque_400Regular.ttf");
+    expect(generator).not.toContain("BricolageGrotesque_600SemiBold.ttf");
+    expect(generator).toContain("@expo-google-fonts/geist");
+    expect(generator).toContain("Geist_400Regular.ttf");
+    expect(generator).toContain("Geist_600SemiBold.ttf");
+    expect(generator).toContain("@resvg/resvg-js");
+    expect(generator).toContain("existsSync(resvgPackagePath)");
+    expect(generator).toContain("fontPaths.every(existsSync)");
+    expect(generator).toContain(
+      "fontFiles: [displayFontBoldPath, uiFontRegularPath, uiFontSemiBoldPath]",
+    );
+    expect(generator).toContain("loadSystemFonts: false");
+    expect(generator).not.toContain("@font-face");
+    expect(generator).not.toContain("Instrument Serif");
+    expect(generator).not.toContain("instrument-serif");
+    expect(generator.match(/<text class="display text-4xl"/g)).toHaveLength(1);
+    expect(generator.match(/<text class="ui text-(?:base|xs)"/g)).toHaveLength(2);
+    expect(generator).toContain('"text-4xl": { fontSize: 36, lineHeight: 40 }');
+    expect(generator).toContain('"text-base": { fontSize: 16, lineHeight: 24 }');
+    expect(generator).toContain('"text-xs": { fontSize: 12, lineHeight: 16 }');
 
     const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
@@ -89,9 +124,50 @@ describe("desktop packaging", () => {
 
     const desktopPackageJson = JSON.parse(
       readFileSync(join(root, "desktop/package.json"), "utf8"),
-    ) as { dependencies?: Record<string, string> };
+    ) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    expect(
+      desktopPackageJson.devDependencies?.["@expo-google-fonts/bricolage-grotesque"],
+    ).toMatch(/^\^0\.4\./);
+    expect(desktopPackageJson.devDependencies?.["@expo-google-fonts/geist"]).toMatch(/^\^0\.4\./);
+    expect(desktopPackageJson.devDependencies?.["@resvg/resvg-js"]).toBe("^2.6.2");
+    expect(desktopPackageJson.dependencies).not.toHaveProperty(
+      "@expo-google-fonts/bricolage-grotesque",
+    );
+    expect(desktopPackageJson.dependencies).not.toHaveProperty("@expo-google-fonts/geist");
+    expect(desktopPackageJson.dependencies).not.toHaveProperty("@resvg/resvg-js");
     expect(desktopPackageJson.dependencies?.["@fontsource/instrument-serif"]).toMatch(/^\^5\./);
   });
+
+  it("renders the committed DMG artwork with the packaged brand fonts", () => {
+    const root = process.cwd();
+    const outputDirectory = mkdtempSync(join(tmpdir(), "matrix-dmg-background-"));
+
+    try {
+      execFileSync(process.execPath, [join(root, "scripts/generate-desktop-dmg-background.mjs")], {
+        cwd: root,
+        env: { ...process.env, MATRIX_DMG_OUTPUT_DIR: outputDirectory },
+        stdio: "pipe",
+      });
+
+      for (const filename of ["dmg-background.png", "dmg-background@2x.png"]) {
+        const committedPath = join(root, "desktop/build", filename);
+        const generatedPath = join(outputDirectory, filename);
+        expect(readFileSync(generatedPath)).toEqual(readFileSync(committedPath));
+      }
+
+      expect(sha256(join(root, "desktop/build/dmg-background.png"))).toBe(
+        "b452452bf5a9a2dc23c3bc9de1acd3f6aa880733ae501bdb322665d831f09e93",
+      );
+      expect(sha256(join(root, "desktop/build/dmg-background@2x.png"))).toBe(
+        "676b042d7498fde42cf84266cf056bfd2db05d9fb4c8b62aa11470530edb518e",
+      );
+    } finally {
+      rmSync(outputDirectory, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("uses the minimal Electron hardened-runtime entitlements for macOS", () => {
     const root = process.cwd();

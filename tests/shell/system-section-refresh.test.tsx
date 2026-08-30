@@ -86,6 +86,52 @@ describe("SystemSection release refresh", () => {
     );
   });
 
+  it("distinguishes installed release metadata from the gateway process serving requests", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/system/info")) {
+        return Promise.resolve(jsonResponse({
+          version: "v2026.08.19-1002",
+          runningVersion: "v2026.08.18-997",
+          updateChannel: "dev",
+          release: {
+            version: "v2026.08.19-1002",
+            channel: "dev",
+          },
+        }));
+      }
+      if (url.endsWith("/health")) {
+        return Promise.resolve(jsonResponse({
+          status: "ok",
+          runningVersion: "v2026.08.18-997",
+          cronJobs: 0,
+          channels: {},
+        }));
+      }
+      if (url.endsWith("/api/system/update?channel=dev")) {
+        return Promise.resolve(jsonResponse({
+          channel: "dev",
+          latest: { version: "v2026.08.19-1002" },
+          updateAvailable: false,
+        }));
+      }
+      if (url.endsWith("/api/system/releases?channel=dev")) {
+        return Promise.resolve(jsonResponse({ channel: "dev", releases: [] }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SystemSection />);
+
+    expect(await screen.findByText("Installed version")).toBeTruthy();
+    expect(screen.getByText("Running version")).toBeTruthy();
+    expect(screen.getAllByText("v2026.08.19-1002").length).toBeGreaterThan(0);
+    expect(screen.getByText("v2026.08.18-997")).toBeTruthy();
+    expect(screen.getByText(/running services do not match the installed update/i)).toBeTruthy();
+    expect(screen.queryByText("You are running the latest release for this channel.")).toBeNull();
+  });
+
   it("ignores stale release metadata when the selected channel changes", async () => {
     const stableUpdate = deferred<Response>();
     const stableReleases = deferred<Response>();
@@ -185,9 +231,12 @@ describe("SystemSection release refresh", () => {
         if (updateStarted) {
           infoPollsAfterUpdate += 1;
         }
-        if (infoPollsAfterUpdate >= 4) {
+        if (infoPollsAfterUpdate >= 2) {
           return Promise.resolve(jsonResponse({
             version: "v2026.05.28-151",
+            runningVersion: infoPollsAfterUpdate >= 4
+              ? "v2026.05.28-151"
+              : "v2026.05.28-145",
             release: {
               version: "v2026.05.28-151",
               channel: "stable",
@@ -277,7 +326,14 @@ describe("SystemSection release refresh", () => {
     expect(screen.getByText("Installing stable. This can take a few minutes...")).toBeTruthy();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(13_000);
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+
+    expect(screen.getByText("Installing... checking status")).toBeTruthy();
+    expect(screen.queryByText("Installed. Reloading...")).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7_000);
     });
 
     expect(screen.getByText("Installed. Reloading...")).toBeTruthy();
@@ -291,6 +347,7 @@ describe("SystemSection release refresh", () => {
         if (updateStarted) {
           return Promise.resolve(jsonResponse({
             version: "v2026.05.28-152",
+            runningVersion: "v2026.05.28-152",
             release: {
               version: "v2026.05.28-152",
               channel: "stable",
@@ -454,6 +511,7 @@ describe("SystemSection release refresh", () => {
         if (updateStarted) {
           return Promise.resolve(jsonResponse({
             version: "v2026.05.28-151",
+            runningVersion: "v2026.05.28-151",
             release: {
               version: "v2026.05.28-151",
               channel: "stable",
@@ -621,6 +679,7 @@ describe("SystemSection release refresh", () => {
     await act(async () => {
       successfulPoll.resolve(jsonResponse({
         version: "v2026.05.28-151",
+        runningVersion: "v2026.05.28-151",
         release: {
           version: "v2026.05.28-151",
           channel: "stable",

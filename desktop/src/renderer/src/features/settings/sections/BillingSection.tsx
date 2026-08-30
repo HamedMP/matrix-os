@@ -52,7 +52,7 @@ type BillingEntitlement = z.infer<typeof BillingEntitlementSchema>;
 type BillingStatus = z.infer<typeof BillingStatusSchema>;
 type BillingInterval = "monthly" | "annual";
 type BillingPlan = "matrix_starter" | "matrix_builder" | "matrix_max";
-type BillingRegion = "region_fsn1" | "region_nbg1" | "region_ash" | "region_hil";
+type BillingRegion = "region_fsn1" | "region_nbg1";
 type BillingAction = "checkout" | "portal";
 
 interface BillingUiState {
@@ -95,8 +95,6 @@ const PLANS: Array<{ slug: BillingPlan; label: string }> = [
 const REGIONS: Array<{ slug: BillingRegion; label: string }> = [
   { slug: "region_fsn1", label: "EU Falkenstein" },
   { slug: "region_nbg1", label: "EU Nuremberg" },
-  { slug: "region_ash", label: "US Ashburn" },
-  { slug: "region_hil", label: "US Hillsboro" },
 ];
 
 function planLabel(slug: string): string {

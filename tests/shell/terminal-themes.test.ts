@@ -4,6 +4,7 @@ import {
   getAnsiPalette,
   getTerminalMinimumContrastRatio,
   getTerminalThemePreset,
+  TERMINAL_THEME_OPTIONS,
   TERMINAL_MINIMUM_CONTRAST_RATIO,
   type AnsiPalette,
 } from "../../shell/src/components/terminal/terminal-themes.js";
@@ -37,11 +38,27 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("Terminal Themes", () => {
+  it("offers the three existing shell themes followed by Powerlevel10k palettes", () => {
+    expect(TERMINAL_THEME_OPTIONS).toEqual([
+      { id: "light", label: "Light" },
+      { id: "dark", label: "Matrix OS Dark" },
+      { id: "matrix", label: "Matrix" },
+      { id: "powerlevel10k-lean", label: "P10k Lean" },
+      { id: "powerlevel10k-lean-8-colors", label: "P10k Lean · 8 colors" },
+      { id: "powerlevel10k-classic", label: "P10k Classic" },
+      { id: "powerlevel10k-rainbow", label: "P10k Rainbow" },
+      { id: "powerlevel10k-pure", label: "P10k Pure" },
+    ]);
+    for (const option of TERMINAL_THEME_OPTIONS) {
+      assertCompleteAnsiPalette(getTerminalThemePreset(option.id));
+    }
+  });
+
   it("uses the original dark shell theme as the default terminal palette", () => {
     const preset = getTerminalThemePreset("dark");
 
     expect(preset).toMatchObject({
-      label: "Dark",
+      label: "Matrix OS Dark",
       background: "#0C0C0C",
       foreground: "#BFBFBF",
       cursor: "#0AD18B",

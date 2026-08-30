@@ -6,7 +6,6 @@ import {
 } from "../../desktop/src/renderer/src/lib/terminal/terminal-settings-types";
 import { buildTerminalFontStack } from "../../desktop/src/renderer/src/lib/terminal/terminal-fonts";
 import {
-  getAnsiPalette,
   getTerminalThemePreset,
   TERMINAL_THEME_OPTIONS,
 } from "../../desktop/src/renderer/src/lib/terminal/terminal-themes";
@@ -31,16 +30,25 @@ const REQUIRED_ANSI_KEYS = [
 ] as const;
 
 describe("terminal theme presets", () => {
-  it("exposes the system option and the default concrete theme", () => {
+  it("keeps the existing Light, Matrix OS Dark, and Matrix shell choices", () => {
     const ids = TERMINAL_THEME_OPTIONS.map((option) => option.id);
 
-    expect(ids[0]).toBe("system");
+    expect(ids.slice(0, 3)).toEqual(["light", "dark", "matrix"]);
     expect(ids).toContain(DEFAULT_TERMINAL_THEME_ID);
+  });
+
+  it("offers palettes inspired by every official Powerlevel10k prompt style family", () => {
+    expect(TERMINAL_THEME_OPTIONS).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "powerlevel10k-lean", label: "P10k Lean" }),
+      expect.objectContaining({ id: "powerlevel10k-lean-8-colors", label: "P10k Lean · 8 colors" }),
+      expect.objectContaining({ id: "powerlevel10k-classic", label: "P10k Classic" }),
+      expect.objectContaining({ id: "powerlevel10k-rainbow", label: "P10k Rainbow" }),
+      expect.objectContaining({ id: "powerlevel10k-pure", label: "P10k Pure" }),
+    ]));
   });
 
   it("returns a complete ANSI palette for every concrete theme option", () => {
     for (const option of TERMINAL_THEME_OPTIONS) {
-      if (option.id === "system") continue;
       const preset = getTerminalThemePreset(option.id);
 
       for (const key of REQUIRED_ANSI_KEYS) {
@@ -51,24 +59,6 @@ describe("terminal theme presets", () => {
     }
   });
 
-  it("maps known shell theme slugs and falls back by background luminance", () => {
-    expect(getAnsiPalette("catppuccin", "#000000").brightWhite).toBe("#cdd6f4");
-    expect(getAnsiPalette("missing-theme", "#101010").black).toBe("#282c34");
-    expect(getAnsiPalette("missing-theme", "#ffffff").black).toBe("#383a42");
-  });
-
-  it("maps desktop-native theme ids without falling back by luminance", () => {
-    expect(getAnsiPalette("one-dark", "#ffffff").black).toBe("#282c34");
-    expect(getAnsiPalette("one-light", "#101010").black).toBe("#383a42");
-    expect(getAnsiPalette("catppuccin-mocha", "#101010").brightWhite).toBe("#cdd6f4");
-  });
-
-  it("keeps solarized-light ANSI black distinct from white", () => {
-    const palette = getTerminalThemePreset("solarized-light");
-
-    expect(palette.black).toBe("#073642");
-    expect(palette.black).not.toBe(palette.white);
-  });
 });
 
 describe("terminal font stacks", () => {
@@ -83,7 +73,7 @@ describe("terminal font stacks", () => {
   it("accepts every terminal theme id in option output", () => {
     const ids: TerminalThemeId[] = TERMINAL_THEME_OPTIONS.map((option) => option.id);
 
-    expect(ids).toContain("system");
-    expect(ids).toContain("github-light");
+    expect(ids).toContain("dark");
+    expect(ids).toContain("powerlevel10k-rainbow");
   });
 });

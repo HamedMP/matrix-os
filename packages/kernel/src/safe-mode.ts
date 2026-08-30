@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 export const safeModeAgentDef = {
-  model: "claude-sonnet-4-5-20250929",
+  model: "claude-sonnet-5",
   maxTurns: 10,
   disallowedTools: ["agent"],
 };

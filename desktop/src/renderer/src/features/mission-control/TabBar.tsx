@@ -1,10 +1,13 @@
 import {
-  Blocks,
   FileCode2,
+  FilePenLine,
+  Code2,
   FolderKanban,
   FolderTree,
+  Globe2,
   Home,
   LayoutGrid,
+  Notebook,
   Sparkles,
   Settings,
   SquareTerminal,
@@ -16,6 +19,7 @@ import { useTabs, type Tab, type TabKind } from "../../stores/tabs";
 
 const TAB_ICON: Record<TabKind, LucideIcon> = {
   home: Home,
+  browser: Globe2,
   work: FolderKanban,
   chat: Sparkles,
   projects: FolderKanban,
@@ -24,15 +28,17 @@ const TAB_ICON: Record<TabKind, LucideIcon> = {
   terminal: SquareTerminal,
   terminals: SquareTerminal,
   files: FolderTree,
+  editor: FilePenLine,
+  vscode: Code2,
+  notes: Notebook,
   apps: LayoutGrid,
   app: LayoutGrid,
-  plugins: Blocks,
   settings: Settings,
 };
 
 function TabIcon({ tab, active }: { tab: Tab; active: boolean }) {
   const Icon = TAB_ICON[tab.kind];
-  const iconUrl = tab.icon && /^https?:\/\//.test(tab.icon) ? tab.icon : null;
+  const iconUrl = tab.icon && /^(?:https?:\/\/|\/|data:image\/)/.test(tab.icon) ? tab.icon : null;
   const [failed, setFailed] = useState(false);
   const prev = useRef<string | null>(null);
   if (prev.current !== iconUrl) {

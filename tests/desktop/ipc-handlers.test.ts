@@ -172,10 +172,29 @@ describe("registerIpcHandlers", () => {
     ).resolves.toEqual({ embedId: "embed-1", state: "loading" });
     expect(harness.ctx.embeds.open).toHaveBeenCalledWith({
       kind: "hosted-shell",
-      slug: undefined,
-      appIdentity: undefined,
       bounds: { x: 360, y: 57, width: 920, height: 764 },
       active: true,
+    });
+  });
+
+  it("routes Browser embeds with only the validated tunnel URL fields", async () => {
+    const harness = makeHarness();
+    vi.mocked(harness.ctx.embeds.open).mockResolvedValue({
+      embedId: "embed-browser",
+      state: "loading",
+    });
+
+    await expect(harness.invoke("embed:open", {
+      kind: "browser",
+      url: "http://127.0.0.1:3000/dashboard",
+      bounds: { x: 20, y: 30, width: 640, height: 480 },
+      active: false,
+    })).resolves.toEqual({ embedId: "embed-browser", state: "loading" });
+    expect(harness.ctx.embeds.open).toHaveBeenCalledWith({
+      kind: "browser",
+      url: "http://127.0.0.1:3000/dashboard",
+      bounds: { x: 20, y: 30, width: 640, height: 480 },
+      active: false,
     });
   });
 

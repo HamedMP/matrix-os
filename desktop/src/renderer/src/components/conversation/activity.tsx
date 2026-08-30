@@ -19,7 +19,16 @@ import type {
 } from "./presentation";
 
 const ACTIVITY_ICON: Record<ConversationActivityPresentation["kind"], ComponentType<{ className?: string; style?: CSSProperties }>> = {
+  phase: Wrench,
+  reasoning: Eye,
+  plan: Check,
   command: SquareTerminal,
+  file_change: FilePenLine,
+  mcp_tool: Wrench,
+  dynamic_tool: Wrench,
+  delegation: Wrench,
+  web_search: Search,
+  image_inspection: Eye,
   read: Eye,
   edit: FilePenLine,
   search: Search,
@@ -52,7 +61,9 @@ export function ConversationActivity({
               <Icon className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
             </MarkerIcon>
             <MarkerContent className="flex min-w-0 items-baseline gap-1.5">
-              <span className="shrink-0 font-medium text-[var(--text-primary)]">{activity.label}</span>
+              <span className={`shrink-0 font-medium text-[var(--text-primary)] ${activity.kind === "reasoning" && activity.state === "running" ? "shimmer" : ""}`}>
+                {activity.label}
+              </span>
               {activity.preview ? (
                 <span
                   title={activity.preview}
@@ -67,11 +78,13 @@ export function ConversationActivity({
               ) : null}
             </MarkerContent>
             {activity.state === "running" ? (
-              <LoaderCircle aria-hidden className="status-pulse size-3.5 shrink-0" />
+              <LoaderCircle aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
             ) : activity.state === "failed" ? (
               <X aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--danger)" }} />
             ) : activity.state === "stopped" ? (
               <Minus aria-hidden className="size-3.5 shrink-0" />
+            ) : activity.state === "partial" ? (
+              <Minus aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--warning)" }} />
             ) : (
               <Check aria-hidden className="size-3.5 shrink-0" />
             )}
@@ -121,12 +134,12 @@ export function ConversationActivityGroup({
         <button
           type="button"
           aria-expanded={showPrevious}
-          aria-label={`${previous.length} previous tool ${previous.length === 1 ? "call" : "calls"}`}
+          aria-label={`${previous.length} previous ${previous.length === 1 ? "activity" : "activities"}`}
           className="flex h-8 items-center rounded-lg px-2 text-left text-sm font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
           style={{ color: "var(--text-secondary)" }}
           onClick={() => setShowPrevious((value) => !value)}
         >
-          +{previous.length} previous tool {previous.length === 1 ? "call" : "calls"}
+          +{previous.length} previous {previous.length === 1 ? "activity" : "activities"}
         </button>
       ) : null}
       {visible.map((activity) => (

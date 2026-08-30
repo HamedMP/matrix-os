@@ -11,6 +11,7 @@ import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
 
 const LIST: Record<string, { entries: Array<{ name: string; type: string }> }> = {
   "/api/files/list?path=": {
@@ -95,6 +96,7 @@ describe("Files workspace", () => {
       api: api as never,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useDesktopEditor.setState(useDesktopEditor.getInitialState(), true);
   });
 
   afterEach(() => {
@@ -218,6 +220,17 @@ describe("Files workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
     expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
     expect(screen.getByRole("button", { name: "Open app.ts" })).toBeTruthy();
+  });
+
+  it("opens a previewed text file in the first-class Editor", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open in Editor" }));
+
+    expect(useDesktopEditor.getState().activePath).toBe("workspaces/app.ts");
+    expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({ kind: "editor" }));
   });
 
   it("shows an unsupported state without reading unknown file bytes", async () => {

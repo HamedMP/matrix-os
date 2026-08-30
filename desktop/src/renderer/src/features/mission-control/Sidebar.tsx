@@ -6,7 +6,6 @@ import {
   MessageCircle,
   Terminal,
 } from "@renderer/lib/hugeicons";
-import phosphorPlugsUrl from "../../assets/phosphor/plugs.svg?no-inline";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { FILES_WORKSPACE_TAB_SPEC, isWorkRoute, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
@@ -21,26 +20,6 @@ import {
   SidebarDivider,
   SidebarNavRow,
 } from "./SidebarPrimitives";
-
-function FigmaPlugsIcon() {
-  return (
-    <span
-      data-figma-icon="phosphor-plugs"
-      className="block size-3.5"
-      style={{
-        backgroundColor: "currentColor",
-        maskImage: `url(${phosphorPlugsUrl})`,
-        maskPosition: "center",
-        maskRepeat: "no-repeat",
-        maskSize: "contain",
-        WebkitMaskImage: `url(${phosphorPlugsUrl})`,
-        WebkitMaskPosition: "center",
-        WebkitMaskRepeat: "no-repeat",
-        WebkitMaskSize: "contain",
-      }}
-    />
-  );
-}
 
 export default function Sidebar() {
   const tabs = useTabs((s) => s.tabs);
@@ -112,13 +91,6 @@ export default function Sidebar() {
                 collapsed={false}
                 active={activeTab?.kind === "apps" || activeTab?.kind === "app"}
                 onClick={() => openTab({ kind: "apps", title: "Apps" })}
-              />
-              <SidebarNavRow
-                icon={<FigmaPlugsIcon />}
-                label="Plugins"
-                collapsed={false}
-                active={activeTab?.kind === "plugins"}
-                onClick={() => openTab({ kind: "plugins", title: "Plugins" })}
               />
               <SidebarNavRow
                 icon={<FolderOpen size={14} />}

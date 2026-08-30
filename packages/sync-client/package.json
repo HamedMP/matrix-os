@@ -34,7 +34,8 @@
       "types": "./src/protocol/shell.d.ts",
       "import": "./src/protocol/shell.js",
       "default": "./src/protocol/shell.js"
-    }
+    },
+    "./port-forward": "./src/cli/port-forward.ts"
   },
   "files": [
     "bin/",

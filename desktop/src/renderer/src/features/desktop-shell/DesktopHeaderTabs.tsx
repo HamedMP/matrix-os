@@ -1,5 +1,8 @@
 import { useCallback } from "react";
-import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
+import {
+  topmostVisibleDesktopSurfaceId,
+  useDesktopSurfaces,
+} from "../../stores/desktop-surfaces";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
@@ -42,29 +45,20 @@ export default function DesktopHeaderTabs() {
   }, [activateSurface, focusTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
-    let fallback: Tab | undefined;
-    let fallbackZIndex = Number.NEGATIVE_INFINITY;
-    for (const tab of useTabs.getState().tabs) {
-      const surface = useDesktopSurfaces.getState().surfaces[tab.id];
-      if (
-        tab.id !== excludedTabId
-        && surface
-        && surface.mode !== "minimized"
-        && surface.mode !== "closed"
-        && surface.zIndex > fallbackZIndex
-      ) {
-        fallback = tab;
-        fallbackZIndex = surface.zIndex;
-      }
-    }
-    if (fallback) activate(fallback.id);
+    const tabIds = useTabs.getState().tabs.map((tab) => tab.id);
+    const fallbackId = topmostVisibleDesktopSurfaceId(
+      tabIds,
+      useDesktopSurfaces.getState(),
+      excludedTabId,
+    );
+    if (fallbackId) activate(fallbackId);
   }, [activate]);
 
   const close = useCallback((tab: Tab) => {
     const wasActive = useTabs.getState().activeTabId === tab.id;
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
-    if (tab.kind === "home") requestBackgroundRefresh();
+    if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
     if (wasActive) focusFallback(tab.id);
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
 
@@ -72,7 +66,7 @@ export default function DesktopHeaderTabs() {
     const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
     restoreAsWindow(tabId);
     focusTab(tabId);
-    if (tab?.kind === "home") requestBackgroundRefresh();
+    if (tab?.kind === "home" || tab?.kind === "browser") requestBackgroundRefresh();
   }, [focusTab, requestBackgroundRefresh, restoreAsWindow]);
 
   return (

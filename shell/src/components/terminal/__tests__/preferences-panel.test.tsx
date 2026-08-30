@@ -2,12 +2,13 @@
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalPreferencesPanel } from "../preferences-panel.js";
 import { useTerminalSettings } from "@/stores/terminal-settings";
 
 describe("TerminalPreferencesPanel", () => {
   beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
     useTerminalSettings.setState({
       themeId: "system",
       fontSize: 13,
@@ -23,7 +24,7 @@ describe("TerminalPreferencesPanel", () => {
     render(<TerminalPreferencesPanel />);
 
     expect(screen.getByRole("option", { name: "MesloLGS NF" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Dark" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Matrix OS Dark" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Light" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Matrix" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "Dracula" })).toBeNull();

@@ -94,6 +94,74 @@ describe("canonical Chat route controller", () => {
     expect(result.current.detail?.record.projectId).toBe("project_1");
   });
 
+  it("retries a failed canonical turn and installs the admitted Run in the active detail", async () => {
+    const failedRecord = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, revision: 3 },
+    };
+    const failedRun = {
+      id: "run_failed",
+      chatId: globalRecord.chat.id,
+      turnId: "cturn_failed",
+      attempt: 1,
+      driverKind: "codex" as const,
+      instanceId: "codex_default",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      status: "failed" as const,
+      outcome: "failed" as const,
+      historyBoundarySeq: 1,
+      capabilitySnapshot: {
+        revision: "catalog_1",
+        rootChat: true,
+        attachments: ["file" as const],
+        resources: ["file" as const],
+        tools: [],
+        approvals: true,
+        userInput: true,
+        resume: true,
+        cancellation: true,
+        worktrees: "optional" as const,
+        interactionModes: ["default"],
+        permissionModes: ["supervised"],
+      },
+      createdAt: "2026-08-26T00:00:00.000Z",
+      updatedAt: "2026-08-26T00:01:00.000Z",
+      completedAt: "2026-08-26T00:01:00.000Z",
+    };
+    const admittedRun = { ...failedRun, id: "run_retry", attempt: 2, status: "accepted" as const, outcome: undefined, completedAt: undefined };
+    const admittedRecord = {
+      ...failedRecord,
+      chat: { ...failedRecord.chat, revision: 4 },
+      activeRun: { runId: admittedRun.id, turnId: admittedRun.turnId, status: "accepted" as const },
+    };
+    const retryTurn = vi.fn(async () => ({ admission: "accepted" as const, record: admittedRecord, run: admittedRun }));
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [failedRecord] })),
+      getDetail: vi.fn(async () => ({ ...detail, record: failedRecord, runs: [failedRun] })),
+      retryTurn,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.runs).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.retryTurn("cturn_failed");
+    });
+
+    expect(retryTurn).toHaveBeenCalledWith(globalRecord.chat.id, "cturn_failed", {
+      clientRequestId: expect.any(String),
+      baseRevision: 3,
+    });
+    expect(result.current.detail?.record.activeRun?.runId).toBe("run_retry");
+    expect(result.current.detail?.runs.map((run) => run.id)).toEqual(["run_failed", "run_retry"]);
+  });
+
   it("uses one scoped search identity instead of a second Project index", async () => {
     const search = vi.fn(async () => ({ items: [globalRecord] }));
     const sharedClient = client({ search });
@@ -261,6 +329,122 @@ describe("canonical Chat route controller", () => {
       expect(getDetail).toHaveBeenCalledTimes(1);
       await act(async () => { await vi.advanceTimersByTimeAsync(250); });
       expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries after one transient detail failure and converges on the completed Run", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const runningRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 1 },
+        activeRun: { runId: "run_retry", turnId: "turn_retry", status: "running" as const },
+      };
+      const completedRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 3 },
+      };
+      const getDetail = vi.fn()
+        .mockResolvedValueOnce({ ...detail, record: runningRecord })
+        .mockRejectedValueOnce(new TypeError("temporary schema mismatch"))
+        .mockResolvedValueOnce({ ...detail, record: completedRecord });
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.detail?.record.chat.revision).toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      expect(getDetail).toHaveBeenCalledTimes(3);
+      expect(result.current.detail?.record.chat.revision).toBe(3);
+      expect(result.current.detail?.record.activeRun).toBeUndefined();
+      expect(result.current.error).toBeNull();
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a transient initial detail failure without requiring the Chat to be reselected", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const completedRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 3 },
+      };
+      const getDetail = vi.fn()
+        .mockRejectedValueOnce(new TypeError("temporary gateway failure"))
+        .mockResolvedValueOnce({ ...detail, record: completedRecord });
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [completedRecord] })),
+        getDetail,
+      });
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      expect(result.current.detail).toBeNull();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      expect(getDetail).toHaveBeenCalledTimes(2);
+      expect(result.current.detail?.record.chat.revision).toBe(3);
+      expect(result.current.error).toBeNull();
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects an older revision while an active Run continues polling", async () => {
+    vi.useFakeTimers();
+    try {
+      const recordAt = (revision: number, activeRun = true) => ({
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision },
+        ...(activeRun ? {
+          activeRun: { runId: "run_revision", turnId: "turn_revision", status: "running" as const },
+        } : {}),
+      });
+      const getDetail = vi.fn()
+        .mockResolvedValueOnce({ ...detail, record: recordAt(5) })
+        .mockResolvedValueOnce({ ...detail, record: recordAt(4) })
+        .mockResolvedValueOnce({ ...detail, record: recordAt(6, false) });
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [recordAt(5)] })),
+        getDetail,
+      });
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.detail?.record.chat.revision).toBe(5);
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(result.current.detail?.record.chat.revision).toBe(5);
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(result.current.detail?.record.chat.revision).toBe(6);
+      expect(getDetail).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }

@@ -11,6 +11,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
+import { isShellThemeId } from "@/stores/terminal-defaults";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { getTerminalAppChromeCssVars, getTerminalAppChromeTheme, getTerminalAppThemeOption } from "./terminal-app-chrome-theme";
 import { TerminalAppContext, type CreateShellSessionTabOptions, type TerminalWindowControls } from "./TerminalAppContext";
@@ -187,7 +188,7 @@ function loadGlobalShellThemePreference(setThemeId: (themeId: TerminalThemeId) =
         return;
       }
       const next = (data as { preferences?: { shellThemeId?: unknown } }).preferences?.shellThemeId;
-      if (next === "dark" || next === "light" || next === "matrix") {
+      if (isShellThemeId(next)) {
         setThemeId(next);
       }
     })
@@ -402,6 +403,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const tab: Tab = {
       id,
       label: label ?? basename,
+      ...(claude ? { agent: "claude" as const } : startupCommand === "codex" ? { agent: "codex" as const } : {}),
       paneTree: {
         type: "pane",
         id: paneId,
@@ -422,13 +424,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     label: string,
     sessionId: string,
     cwd = DEFAULT_CWD,
-    options: { compatMode?: TerminalCompatMode; legacyCompat?: boolean } = {},
+    options: { agent?: CreateShellSessionTabOptions["agent"]; compatMode?: TerminalCompatMode; legacyCompat?: boolean } = {},
   ) => {
     const id = genId();
     const paneId = genId();
     const tab: Tab = {
       id,
       label,
+      ...(options.agent ? { agent: options.agent } : {}),
       paneTree: {
         type: "pane",
         id: paneId,
@@ -484,7 +487,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         }
         const data = await res.json() as { name?: unknown };
         const sessionName = typeof data.name === "string" ? data.name : name;
-        addSessionTab(label, sessionName, requestedCwd, { compatMode: options.compatMode, legacyCompat: false });
+        addSessionTab(label, sessionName, requestedCwd, {
+          ...(options.agent ? { agent: options.agent } : {}),
+          ...(options.compatMode ? { compatMode: options.compatMode } : {}),
+          legacyCompat: false,
+        });
         return sessionName;
       } catch (err: unknown) {
         console.warn(

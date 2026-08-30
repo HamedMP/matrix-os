@@ -48,6 +48,16 @@ describe("AppearanceSection", () => {
     expect(radios).toHaveLength(unifiedThemes.length);
     expect(screen.getByRole("radio", { name: "Use Operator theme" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("radio", { name: "Use Matrix theme" })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "Use Matrix Neon theme" })).not.toBeNull();
+  });
+
+  it("selects the neon Matrix theme for the whole Desktop app", () => {
+    renderSection();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Use Matrix Neon theme" }));
+
+    expect(useAppearance.getState().themeId).toBe("matrix-neon");
+    expect(document.documentElement.getAttribute("data-theme-id")).toBe("matrix-neon");
   });
 
   it("selects a theme, applies it, and persists it", () => {

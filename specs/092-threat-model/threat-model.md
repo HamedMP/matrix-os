@@ -149,7 +149,7 @@ Full secrets table (issuer, at-rest mode, scope, risk) in
 | **Authenticated Matrix user** | Their own shell→gateway; the platform routes the shell proxies to | Other users' VPSes (host-routed by verified Clerk id) | F1/F2 residual, F3, F8 |
 | **Malicious / compromised installed app** | Sandboxed JS in owner's shell; the `/api/bridge/*` surface via the relay | Shell DOM/cookies (null-origin), non-bridge URLs (policy allowlist) | **F3**, F8, F14 |
 | **Anyone who can put text in front of the kernel** (channel msg, social, fetched web page) | Full kernel toolset under `bypassPermissions`; the confused deputy | — (no per-source gating exists) | **F5**, F6, F12, F14 |
-| **A single popped VPS** | The standing full-bucket R2 credential → every user's backups | Platform Postgres, other users' kernels directly | **F4**, F7, F15 |
+| **A single popped VPS** | Its own brokered R2 capabilities; legacy fleet members may retain the old shared key until rollout/revocation | Platform Postgres, other users' kernels directly | **F4 migration**, F7, F15 |
 | **Compromised platform / manifest** | Serves a malicious host bundle (SHA256-only, no signature) to every VPS | — | F10 |
 
 **Out of scope this pass:** a malicious Anthropic/Clerk/Stripe/Hetzner; physical
@@ -169,9 +169,9 @@ internet ──▶ [platform @ matrix-os.com] ──▶ provisions/routes ──
                   │    and the gate is mount-order-dependent (N1)│ owner JWT / header
                   ▼                                               ▼
             [platform Postgres,                            [per-app Postgres schemas]
-             shared R2 bucket]  ◀── every VPS holds the    [KV store]
-                                     SAME full-bucket key   [kernel = Agent SDK]
-                                     (F4) ✗                       │ bypassPermissions, all
+             shared R2 bucket]  ◀── platform broker ◀── VPS [KV store]
+                                  server-derived prefix     [kernel = Agent SDK]
+                                  (F4 rollout pending)             │ bypassPermissions, all
                                                                   │ sources (F5) ✗
                                                                   ▼
                                                             [sandboxed apps]
@@ -207,7 +207,7 @@ verified.
 
 Re-verification reshuffled the board. The two original CRITICALs were substantially
 mitigated by the auth refactor; the worst live issues are now the app sandbox and
-the shared R2 key.
+the operational rollout/revocation tail of the former shared R2 key.
 
 1. **F3 — any installed app reads/writes every other app's data (HIGH, PERSISTENT).**
    The single most important correction this pass. A prior explorer (and one agent
@@ -221,11 +221,13 @@ the shared R2 key.
    With a store now shipping installable apps, "install one bad app" is expected
    behavior. **This is the #1 fix.**
 
-2. **F4 — one key opens every user's backups (HIGH, PERSISTENT).** Every VPS is
-   handed the *same* full-bucket R2 credential (`customer-vps-config.ts:51`). The
-   normal sync path is presign-prefix-scoped (good), but the standing credential on a
-   popped box reads/writes `matrixos-sync/<any-user>/` directly. Highest blast radius
-   of any live finding: one box → everyone's files.
+2. **F4 — brokered in source; rollout/revocation pending (HIGH until closed).** New
+   customer hosts receive no R2 provider credential. Backup and restore use the
+   authenticated platform broker, which derives the owner prefix server-side and
+   grants short-lived capabilities for exact backup keys. The updater removes legacy
+   `r2.env` only after broker readiness and a healthy release. Until every VPS is
+   migrated and the old provider token is revoked, copied or undeployed credentials
+   retain the original all-user blast radius.
 
 3. **F5 — the kernel is a confused deputy by design (HIGH, PERSISTENT).** Every
    source — owner chat, a stranger's Telegram message, cron, heartbeat — runs under
@@ -320,7 +322,8 @@ process:
 1. **F3** — at the relay, overwrite `body.app` with the iframe's real slug before
    forwarding (don't trust it from the app); at the gateway, check the resolved app
    belongs to the owner. The store makes this urgent.
-2. **F4** — per-user scoped R2 credentials, or drop the standing key and presign-only.
+2. **F4** — deploy the presign-only host bundle fleet-wide, verify legacy credential
+   removal, then rotate and revoke the formerly shared R2 token.
 3. **F5/F6** — per-source `allowedTools` (untrusted channels get a read-only subset),
    wire `createApprovalHook` for the dangerous tools, make the injection scan a
    blocking `PreToolUse` decision, and add a `Bash` arm to the protected-file hook.

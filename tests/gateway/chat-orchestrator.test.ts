@@ -165,10 +165,264 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.activities.map((activity) => activity.type)).toEqual([
       "run.status",
       "turn.status",
-      "assistant.delta",
-      "assistant.delta",
       "run.status",
     ]);
+  });
+
+  it("persists one stable typed activity row across live lifecycle updates", async () => {
+    await repository.create(owner, {
+      id: "chat_activity_projection",
+      clientRequestId: "req_create_activity_projection",
+      title: "Activity projection",
+    });
+    const provider = adapter(async function* () {
+      yield {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "running",
+      };
+      yield {
+        type: "agent.activity",
+        activityId: "tool_command",
+        kind: "command",
+        label: "Run command",
+        status: "failed",
+        summary: "Command failed.",
+      };
+      yield { type: "run.completed", outcome: "failed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_activity_projection", {
+      clientRequestId: "req_activity_projection_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "run tests" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const activities = (await repository.exportChat(owner, "chat_activity_projection"))?.activities
+      .filter((activity) => activity.type === "agent.activity");
+    expect(activities).toEqual([expect.objectContaining({
+      type: "agent.activity",
+      activityId: "tool_command",
+      kind: "command",
+      label: "Run command",
+      status: "failed",
+      summary: "Command failed.",
+    })]);
+  });
+
+  it("persists provider message boundaries so process text and the final result reload identically", async () => {
+    await repository.create(owner, {
+      id: "chat_message_boundaries",
+      clientRequestId: "req_create_message_boundaries",
+      title: "Message boundaries",
+    });
+    const provider = adapter(async function* () {
+      yield { type: "assistant.delta", messageId: "process_1", delta: "I’ll inspect the project first." };
+      yield { type: "assistant.delta", messageId: "process_1", delta: " The manifest needs an update." };
+      yield { type: "assistant.delta", messageId: "result_1", delta: "The app is ready in ~/apps/flappy-bird." };
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_message_boundaries", {
+      clientRequestId: "req_message_boundaries_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "build the app" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const live = await repository.exportChat(owner, "chat_message_boundaries");
+    const reloaded = await repository.exportChat(owner, "chat_message_boundaries");
+    const assistantMessages = live?.messages.filter((message) => message.role === "assistant");
+    expect(assistantMessages).toHaveLength(2);
+    expect(assistantMessages?.map((message) => ({
+      id: message.id,
+      seq: message.seq,
+      state: message.state,
+      text: message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join(""),
+    }))).toEqual([
+      expect.objectContaining({
+        seq: 2,
+        state: "committed",
+        text: "I’ll inspect the project first. The manifest needs an update.",
+      }),
+      expect.objectContaining({
+        seq: 3,
+        state: "committed",
+        text: "The app is ready in ~/apps/flappy-bird.",
+      }),
+    ]);
+    expect(reloaded?.messages).toEqual(live?.messages);
+  });
+
+  it("keeps one durable pending assistant message through 501 deltas and finalizes it in place", async () => {
+    await repository.create(owner, {
+      id: "chat_lossless_long_run",
+      clientRequestId: "req_create_lossless_long_run",
+      title: "Lossless long Run",
+    });
+    let releaseProvider!: () => void;
+    let firstDeltaPersisted!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const paused = new Promise<void>((resolve) => {
+      firstDeltaPersisted = resolve;
+    });
+    const provider = adapter(async function* () {
+      yield { type: "assistant.delta", delta: "a" };
+      firstDeltaPersisted();
+      await release;
+      for (let index = 0; index < 500; index += 1) {
+        yield { type: "assistant.delta", delta: String(index % 10) };
+      }
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_lossless_long_run", {
+      clientRequestId: "req_lossless_long_run_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "stream for a long time" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await paused;
+
+    const pending = await repository.exportChat(owner, "chat_lossless_long_run");
+    const pendingAssistant = pending?.messages.find((message) => message.role === "assistant");
+    expect(pendingAssistant).toMatchObject({
+      id: `msg_${admitted.run.id.slice("run_".length)}_assistant`,
+      runId: admitted.run.id,
+      state: "pending",
+      parts: [{ type: "text", text: "a" }],
+    });
+
+    releaseProvider();
+    await orchestrator.drain();
+
+    const completed = await repository.exportChat(owner, "chat_lossless_long_run");
+    const completedAssistant = completed?.messages.find((message) => message.role === "assistant");
+    expect(completedAssistant).toMatchObject({
+      id: pendingAssistant?.id,
+      state: "committed",
+      parts: [{
+        type: "text",
+        text: `a${Array.from({ length: 500 }, (_, index) => String(index % 10)).join("")}`,
+      }],
+    });
+    expect(completed?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
+    expect(completed?.activities.map((activity) => activity.type)).toEqual([
+      "run.status",
+      "turn.status",
+      "run.status",
+    ]);
+  });
+
+  it("commits exact assistant output beyond one text-part boundary", async () => {
+    await repository.create(owner, {
+      id: "chat_lossless_multi_part_output",
+      clientRequestId: "req_create_lossless_multi_part_output",
+      title: "Lossless multi-part output",
+    });
+    const chunks = Array.from({ length: 18 }, (_, index) => String(index % 10).repeat(4_000));
+    const expected = chunks.join("");
+    const provider = adapter(async function* () {
+      for (const delta of chunks) yield { type: "assistant.delta", delta };
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_lossless_multi_part_output", {
+      clientRequestId: "req_lossless_multi_part_output_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "stream more than 32,000 characters" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const snapshot = await repository.exportChat(owner, "chat_lossless_multi_part_output");
+    const assistant = snapshot?.messages.find((message) => message.runId === admitted.run.id);
+    expect(assistant).toMatchObject({
+      id: `msg_${admitted.run.id.slice("run_".length)}_assistant`,
+      state: "committed",
+    });
+    expect(assistant?.parts.every((part) => part.type !== "text" || part.text.length <= 32_000)).toBe(true);
+    expect(assistant?.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join(""))
+      .toBe(expected);
+    expect(snapshot?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
+  });
+
+  it("keeps durable partial assistant text when a Provider fails before completion", async () => {
+    await repository.create(owner, {
+      id: "chat_lossless_partial_failure",
+      clientRequestId: "req_create_lossless_partial_failure",
+      title: "Lossless partial failure",
+    });
+    const provider = adapter(async function* () {
+      yield { type: "assistant.delta", delta: "Durable partial answer" };
+      throw new Error("private Provider failure");
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_lossless_partial_failure", {
+      clientRequestId: "req_lossless_partial_failure_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "fail after partial output" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    const reloaded = await repository.exportChat(owner, "chat_lossless_partial_failure");
+    expect(reloaded?.messages.find((message) => message.runId === admitted.run.id)).toMatchObject({
+      id: `msg_${admitted.run.id.slice("run_".length)}_assistant`,
+      state: "failed",
+      parts: [{ type: "text", text: "Durable partial answer" }],
+    });
+    expect(reloaded?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+    expect(reloaded?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.error" }),
+    ]));
   });
 
   it("does not reconcile a committed Run while its dispatch registration is pending", async () => {
@@ -332,7 +586,13 @@ describe("CanonicalChatOrchestrator", () => {
       clientRequestId: "req_create_cancelled",
       title: "Cancelled",
     });
+    let partialPersisted!: () => void;
+    const persisted = new Promise<void>((resolve) => {
+      partialPersisted = resolve;
+    });
     const provider = adapter(async function* (input) {
+      yield { type: "assistant.delta", delta: "durable partial before cancellation" };
+      partialPersisted();
       await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
       yield { type: "assistant.delta", delta: "late output" };
       yield { type: "run.completed", outcome: "aborted" };
@@ -351,6 +611,7 @@ describe("CanonicalChatOrchestrator", () => {
       interactionMode: "default",
       permissionMode: "supervised",
     });
+    await persisted;
 
     const cancelled = await orchestrator.cancelRun(owner, "chat_cancelled", admitted.run.id);
     expect(cancelled).toMatchObject({ cancellation: "aborted", run: { status: "aborted" } });
@@ -359,7 +620,11 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
 
     const snapshot = await repository.exportChat(owner, "chat_cancelled");
-    expect(snapshot?.messages).toHaveLength(1);
+    expect(snapshot?.messages).toHaveLength(2);
+    expect(snapshot?.messages.find((message) => message.runId === admitted.run.id)).toMatchObject({
+      state: "failed",
+      parts: [{ type: "text", text: "durable partial before cancellation" }],
+    });
     expect(snapshot?.runs[0]).toMatchObject({ status: "aborted", outcome: "aborted" });
     expect(snapshot?.activities.some((activity) =>
       activity.type === "assistant.delta" && activity.delta === "late output"
@@ -619,6 +884,9 @@ describe("CanonicalChatOrchestrator", () => {
     const snapshot = await repository.exportChat(owner, "chat_reconcile_overflow");
     expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
     expect(snapshot?.activities).toHaveLength(500);
+    expect(snapshot?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.error" }),
+    ]));
   });
 
   it("limits one owner to eight concurrent Runs without consuming the global registry", async () => {
@@ -666,7 +934,7 @@ describe("CanonicalChatOrchestrator", () => {
     expect(rejected?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
   });
 
-  it("commits successful output when terminal activity exceeds the persisted limit", async () => {
+  it("commits successful output at the former text-delta activity boundary", async () => {
     await repository.create(owner, {
       id: "chat_terminal_activity_overflow",
       clientRequestId: "req_create_terminal_activity_overflow",
@@ -700,10 +968,10 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "assistant", state: "committed", parts: [{ type: "text", text: "x".repeat(498) }] }),
     ]));
-    expect(snapshot?.activities).toHaveLength(500);
+    expect(snapshot?.activities).toHaveLength(3);
   });
 
-  it("terminalizes a Run when normalized activity exceeds the persisted limit", async () => {
+  it("terminalizes a Run when semantic activity exceeds the persisted limit", async () => {
     await repository.create(owner, {
       id: "chat_activity_overflow",
       clientRequestId: "req_create_activity_overflow",
@@ -711,7 +979,12 @@ describe("CanonicalChatOrchestrator", () => {
     });
     const provider = adapter(async function* () {
       for (let index = 0; index < 501; index += 1) {
-        yield { type: "assistant.delta", delta: "x" };
+        yield {
+          type: "tool.progress",
+          toolCallId: `tool_${index}`,
+          label: `Tool ${index}`,
+          status: "running",
+        };
       }
       yield { type: "run.completed", outcome: "completed" };
     });
@@ -734,6 +1007,10 @@ describe("CanonicalChatOrchestrator", () => {
 
     const snapshot = await repository.exportChat(owner, "chat_activity_overflow");
     expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+    expect(snapshot?.activities.length).toBeLessThanOrEqual(500);
+    expect(snapshot?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.error" }),
+    ]));
     expect(orchestrator.activeCount).toBe(0);
   });
 

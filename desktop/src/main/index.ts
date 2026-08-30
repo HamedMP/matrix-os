@@ -45,12 +45,17 @@ import {
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
+import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
+const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
 
 app.setName(DESKTOP_APP_NAME);
+if (desktopRendererUrl && desktopRendererUrl !== process.env.ELECTRON_RENDERER_URL) {
+  app.commandLine.appendSwitch("host-resolver-rules", desktopDevHostResolverRules());
+}
 
 // Test isolation: e2e runs point userData at a temp dir so they never touch
 // the real profile or credential.
@@ -130,8 +135,8 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   win.on("focus", () => sendEvent("window:focus-changed", { focused: true }));
   win.on("blur", () => sendEvent("window:focus-changed", { focused: false }));
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL).catch((err: unknown) => {
+  if (desktopRendererUrl) {
+    void win.loadURL(desktopRendererUrl).catch((err: unknown) => {
       logMainError("failed to load renderer URL", err);
     });
   } else {
@@ -207,8 +212,8 @@ if (!gotLock) {
       });
       await auth.init();
 
-      const rendererOrigin = process.env.ELECTRON_RENDERER_URL
-        ? new URL(process.env.ELECTRON_RENDERER_URL).origin
+      const rendererOrigin = desktopRendererUrl
+        ? new URL(desktopRendererUrl).origin
         : "null";
       // Renderer session gets origin-scoped bearer injection; embed partitions
       // (separate sessions) never do (lesson L1).

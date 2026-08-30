@@ -93,6 +93,41 @@ describe("AppLauncher", () => {
     });
   });
 
+  it("puts Create app first and includes every first-class Desktop app", () => {
+    const onCreateApp = vi.fn();
+    render(<AppLauncher presentation="launchpad" onCreateApp={onCreateApp} />);
+
+    const launcher = screen.getByTestId("desktop-launcher-grid");
+    const names = Array.from(launcher.querySelectorAll("button"))
+      .map((button) => button.getAttribute("aria-label"));
+    expect(names.slice(0, 11)).toEqual([
+      "Create app",
+      "Chat",
+      "Terminal",
+      "Files",
+      "Editor",
+      "VS Code",
+      "Settings",
+      "Plugins",
+      "Browser",
+      "Notes",
+      "Whiteboard",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create app" }));
+    expect(onCreateApp).toHaveBeenCalledOnce();
+  });
+
+  it("adds a launcher app back to the Desktop from its context menu", () => {
+    const onAddToDesktop = vi.fn();
+    render(<AppLauncher presentation="launchpad" onAddToDesktop={onAddToDesktop} />);
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
+
+    expect(onAddToDesktop).toHaveBeenCalledWith("__notes__");
+  });
+
   it("keeps the focused launcher search field free of a nested focus ring", () => {
     render(<AppLauncher presentation="launchpad" />);
 

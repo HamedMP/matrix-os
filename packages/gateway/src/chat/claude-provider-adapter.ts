@@ -13,6 +13,10 @@ import {
   runCanonicalCli,
   type CanonicalCliSpawn,
 } from "./cli-process.js";
+import {
+  safeToolPreview,
+  sanitizeAssistantText,
+} from "./safe-activity-projection.js";
 
 const ClaudeChatStateSchema = z.object({
   sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/),
@@ -28,7 +32,18 @@ const ClaudeStreamLineSchema = z.object({
   model: z.string().min(1).max(160).optional(),
   event: z.object({
     type: z.string(),
-    delta: z.object({ type: z.string().optional(), text: z.string().optional() }).passthrough().optional(),
+    index: z.number().int().min(0).max(10_000).optional(),
+    delta: z.object({
+      type: z.string().optional(),
+      text: z.string().optional(),
+      partial_json: z.string().max(16_000).optional(),
+    }).passthrough().optional(),
+    content_block: z.object({
+      type: z.string(),
+      id: z.string().min(1).max(128).optional(),
+      name: z.string().min(1).max(160).optional(),
+      input: z.unknown().optional(),
+    }).passthrough().optional(),
   }).passthrough().optional(),
 }).passthrough();
 
@@ -62,6 +77,23 @@ function outputChunks(text: string): string[] {
     if (chunk) chunks.push(chunk);
   }
   return chunks;
+}
+
+function claudeActivity(name: string) {
+  const normalized = name.trim().toLowerCase();
+  if (["bash", "shell", "terminal", "execute", "run_command"].includes(normalized)) {
+    return { kind: "command" as const, label: "Run command" };
+  }
+  if (["write", "edit", "apply_patch", "notebookedit"].includes(normalized)) {
+    return { kind: "file_change" as const, label: "Update file" };
+  }
+  if (["websearch", "webfetch", "web_search"].includes(normalized)) {
+    return { kind: "web_search" as const, label: "Search the web" };
+  }
+  if (["task", "agent", "delegate"].includes(normalized)) {
+    return { kind: "delegation" as const, label: "Delegated task" };
+  }
+  return { kind: "dynamic_tool" as const, label: name };
 }
 
 export function createClaudeChatProviderAdapter(options: {
@@ -114,6 +146,49 @@ export function createClaudeChatProviderAdapter(options: {
     let sawResult = false;
     let resultFailed = false;
     let emittedState = resumeState;
+    let pendingDelta = "";
+    let pendingDeltaMessageId: string | undefined;
+    let deltaFlushScheduled = false;
+    let nextTextBlockId = 0;
+    const textMessageByIndex = new Map<number, string>();
+    const toolInputByIndex = new Map<number, string>();
+    const toolNameByIndex = new Map<number, string>();
+    const activityByIndex = new Map<number, {
+      activityId: string;
+      kind: ReturnType<typeof claudeActivity>["kind"] | "reasoning";
+      label: string;
+      preview?: string;
+      previewKind?: "command" | "path" | "text";
+      detail?: string;
+    }>();
+
+    const flushPendingDelta = () => {
+      deltaFlushScheduled = false;
+      if (!pendingDelta) return;
+      const text = pendingDelta;
+      const messageId = pendingDeltaMessageId;
+      pendingDelta = "";
+      pendingDeltaMessageId = undefined;
+      for (const delta of outputChunks(text)) {
+        queue.push(CanonicalProviderRunEventSchema.parse({
+          type: "assistant.delta",
+          ...(messageId ? { messageId } : {}),
+          delta,
+        }));
+      }
+    };
+
+    const enqueueDelta = (delta: string, messageId?: string) => {
+      if (pendingDelta && pendingDeltaMessageId !== messageId) flushPendingDelta();
+      pendingDeltaMessageId = messageId;
+      pendingDelta += delta;
+      if (pendingDelta.length >= 4_000) {
+        flushPendingDelta();
+      } else if (!deltaFlushScheduled) {
+        deltaFlushScheduled = true;
+        queueMicrotask(flushPendingDelta);
+      }
+    };
 
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
@@ -122,6 +197,7 @@ export function createClaudeChatProviderAdapter(options: {
         line.session_id !== emittedState?.sessionId
         || (line.model !== undefined && line.model !== emittedState.model)
       )) {
+        flushPendingDelta();
         const state = ClaudeChatStateSchema.parse({
           sessionId: line.session_id,
           ...(line.model ? { model: line.model } : {}),
@@ -136,11 +212,96 @@ export function createClaudeChatProviderAdapter(options: {
         : undefined;
       if (delta) {
         streamedText = true;
-        queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+        enqueueDelta(sanitizeAssistantText(delta, {
+          homePath: options.homePath,
+          executionRoot: input.executionRoot,
+        }), line.event?.index === undefined ? undefined : textMessageByIndex.get(line.event.index));
+      }
+      if (line.type === "stream_event" && line.event?.type === "content_block_delta"
+        && line.event.index !== undefined && line.event.delta?.type === "input_json_delta"
+        && line.event.delta.partial_json) {
+        const current = toolInputByIndex.get(line.event.index) ?? "";
+        if (current.length + line.event.delta.partial_json.length <= 16_000) {
+          toolInputByIndex.set(line.event.index, `${current}${line.event.delta.partial_json}`);
+        }
+      }
+      if (line.type === "stream_event" && line.event?.type === "content_block_start"
+        && line.event.index !== undefined && line.event.content_block) {
+        flushPendingDelta();
+        const block = line.event.content_block;
+        if (block.type === "text") {
+          textMessageByIndex.set(line.event.index, `claude_text_${nextTextBlockId}`);
+          nextTextBlockId += 1;
+        } else if (block.type === "thinking") {
+          const activity = {
+            activityId: `reasoning_${line.event.index}`,
+            kind: "reasoning" as const,
+            label: "Thinking",
+          };
+          activityByIndex.set(line.event.index, activity);
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "agent.activity",
+            ...activity,
+            status: "running",
+          }));
+        } else if (block.type === "tool_use" && block.id && block.name) {
+          const activity = {
+            activityId: block.id,
+            ...claudeActivity(block.name),
+            ...safeToolPreview(block.name, block.input, {
+              homePath: options.homePath,
+              executionRoot: input.executionRoot,
+            }),
+          };
+          activityByIndex.set(line.event.index, activity);
+          toolInputByIndex.set(line.event.index, "");
+          toolNameByIndex.set(line.event.index, block.name);
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "agent.activity",
+            ...activity,
+            status: "running",
+          }));
+        }
+      }
+      if (line.type === "stream_event" && line.event?.type === "content_block_stop"
+        && line.event.index !== undefined) {
+        flushPendingDelta();
+        const activity = activityByIndex.get(line.event.index);
+        if (activity) {
+          activityByIndex.delete(line.event.index);
+          const partialInput = toolInputByIndex.get(line.event.index);
+          toolInputByIndex.delete(line.event.index);
+          const toolName = toolNameByIndex.get(line.event.index);
+          toolNameByIndex.delete(line.event.index);
+          let completedActivity = activity;
+          if (partialInput && toolName) {
+            try {
+              const parsedInput: unknown = JSON.parse(partialInput);
+              completedActivity = {
+                ...activity,
+                ...safeToolPreview(toolName, parsedInput, {
+                  homePath: options.homePath,
+                  executionRoot: input.executionRoot,
+                }),
+              };
+            } catch (error: unknown) {
+              console.warn("[chat-claude] Ignoring malformed bounded tool input:", error instanceof Error ? error.name : "UnknownError");
+            }
+          }
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "agent.activity",
+            ...completedActivity,
+            status: "completed",
+          }));
+        }
+        textMessageByIndex.delete(line.event.index);
       }
       if (line.type === "result") {
         sawResult = true;
-        resultText = line.result ?? "";
+        resultText = sanitizeAssistantText(line.result ?? "", {
+          homePath: options.homePath,
+          executionRoot: input.executionRoot,
+        });
         resultFailed = line.is_error === true || line.subtype === "error";
       }
     };
@@ -171,6 +332,7 @@ export function createClaudeChatProviderAdapter(options: {
       },
     }).then(() => {
       if (buffered.trim()) parseLine(buffered);
+      flushPendingDelta();
       emitBufferedResult();
       queue.push(CanonicalProviderRunEventSchema.parse(!sawResult || resultFailed
         ? {
@@ -186,6 +348,7 @@ export function createClaudeChatProviderAdapter(options: {
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
     }).catch((error: unknown) => {
+      flushPendingDelta();
       if (sawResult && !resultFailed) {
         console.warn(
           "[chat-claude] Claude CLI exited non-zero after a successful result:",

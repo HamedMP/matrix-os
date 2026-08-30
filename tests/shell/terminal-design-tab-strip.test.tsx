@@ -184,6 +184,21 @@ describe("TerminalApp per-design interior chrome", () => {
     expect(gridProps.theme.colors.background).toBe("#1C2019");
   });
 
+  it("keeps the agent icon and agent title on web terminal tabs", async () => {
+    setThemeStyle("win11");
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    await flushAsync();
+
+    fireEvent.keyDown(screen.getByRole("application", { name: "Terminal" }), {
+      key: "C",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    expect(screen.getByRole("tab", { name: /Claude Code/ })).toBeTruthy();
+    expect(screen.getByTestId("terminal-design-tab-agent-logo-claude")).toBeTruthy();
+  });
+
   it("renders the minimal glass strip under macos-glass with a light translucent content surface", async () => {
     setThemeStyle("macos-glass");
     render(<TerminalApp initialSessionId="canvas-session-123" />);

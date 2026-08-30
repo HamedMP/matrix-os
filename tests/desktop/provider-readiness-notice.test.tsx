@@ -164,8 +164,9 @@ describe("ProviderReadinessNotice", () => {
       expect.objectContaining({ cmd: installAction.command, cwd: "projects" }),
     ));
     expect(useTabs.getState().tabs).toEqual([
-      expect.objectContaining({ kind: "terminal", title: "Install Codex" }),
+      expect.objectContaining({ kind: "terminals", title: "Terminal" }),
     ]);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-codex");
   });
 
   it("refuses a renderer-supplied Claude action when the Gateway omits setup actions", async () => {

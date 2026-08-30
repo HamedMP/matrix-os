@@ -114,11 +114,16 @@ describe("EmbedManager", () => {
     ).toThrow(/exactly one allowed origin source/);
   });
 
-  it("names partitions persist:hosted-shell and persist:app-<slug>", () => {
+  it("names hosted, code editor, and app partitions deterministically", () => {
     const { manager, views } = makeManager();
     manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    manager.open("code-editor", null, BOUNDS, "https://gw.test/code");
     manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/");
-    expect(views.map((v) => v.partition)).toEqual(["persist:hosted-shell", "persist:app-notes"]);
+    expect(views.map((v) => v.partition)).toEqual([
+      "persist:hosted-shell",
+      "persist:code-editor",
+      "persist:app-notes",
+    ]);
   });
 
   it("uses the route slug for the partition while retaining a nested app identity", () => {
@@ -402,6 +407,37 @@ describe("EmbedManager", () => {
     const next = { x: 10, y: 20, width: 400, height: 300 };
     expect(manager.setBounds(id, next)).toBe(true);
     expect(views[0]?.view.bounds).toEqual(next);
+  });
+
+  it("allows a runtime browser to opt into only its ephemeral loopback origin", () => {
+    const created: Array<{ kind: string; partition: string; allowedOrigins: string[] }> = [];
+    const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
+      createView: ({ kind, partition, allowedOrigins, onState }) => {
+        created.push({ kind, partition, allowedOrigins });
+        return new FakeView(null, onState);
+      },
+    });
+
+    manager.open("browser", null, BOUNDS, "http://127.0.0.1:49152/docs", {
+      allowedOrigins: ["http://127.0.0.1:49152"],
+    });
+
+    expect(created).toEqual([{
+      kind: "browser",
+      partition: "persist:browser",
+      allowedOrigins: ["http://127.0.0.1:49152"],
+    }]);
+  });
+
+  it("runs embed disposal exactly once when a browser closes", () => {
+    const { manager } = makeManager();
+    const onDispose = vi.fn();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/", { onDispose });
+
+    expect(manager.close(id)).toBe(true);
+    expect(manager.close(id)).toBe(false);
+    expect(onDispose).toHaveBeenCalledTimes(1);
   });
 
   it("close destroys the view and forgets the embed", () => {

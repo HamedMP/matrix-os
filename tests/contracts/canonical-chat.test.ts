@@ -19,6 +19,21 @@ import {
 const now = "2026-08-25T00:00:00.000Z";
 
 describe("canonical Chat contracts", () => {
+  it("accepts namespaced Provider model references without accepting traversal", () => {
+    expect(CanonicalChatModelSelectionSchema.parse({
+      instanceId: "hermes_default",
+      model: "nous:anthropic/claude-opus-5",
+    })).toMatchObject({ model: "nous:anthropic/claude-opus-5" });
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "hermes_default",
+      model: "nous:../private-model",
+    }).success).toBe(false);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "hermes_default",
+      model: "nous:anthropic\\claude-opus-5",
+    }).success).toBe(false);
+  });
+
   it("parses one complete Chat, Turn, Run, and message without exposing runtime internals", () => {
     const chat = CanonicalChatSchema.parse({
       id: "chat_demo",
@@ -131,7 +146,15 @@ describe("canonical Chat contracts", () => {
         { type: "text", text: "Updated the contract." },
         { type: "tool_request", toolCallId: "tool_1", name: "Read", label: "Read the contract" },
         { type: "tool_result", toolCallId: "tool_1", outcome: "success", text: "Contract loaded.", truncated: false },
-        { type: "attachment_reference", attachmentId: "attachment_1", kind: "file", label: "spec.md" },
+        {
+          type: "attachment_reference",
+          attachmentId: "attachment_1",
+          kind: "image",
+          label: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 1_024,
+          ownerReference: "temporary/desktop-chat/screenshot.png",
+        },
         {
           type: "approval_request",
           approvalId: "approval_1",
@@ -167,6 +190,67 @@ describe("canonical Chat contracts", () => {
 
     expect(message.parts).toHaveLength(10);
     expect(activity.type).toBe("tool.progress");
+    const detailedActivity = CanonicalChatRunActivitySchema.parse({
+      id: "activity_command",
+      chatId: "chat_demo",
+      runId: "run_demo",
+      sequence: 2,
+      occurredAt: now,
+      type: "agent.activity",
+      activityId: "command_tests",
+      kind: "command",
+      label: "Run tests",
+      status: "running",
+      preview: "bun run test tests/desktop/canonical-chat-presentation.test.ts",
+      previewKind: "command",
+      detail: "Running from ~/projects/matrix-os",
+    });
+    expect(detailedActivity).toMatchObject({
+      previewKind: "command",
+      preview: "bun run test tests/desktop/canonical-chat-presentation.test.ts",
+      detail: "Running from ~/projects/matrix-os",
+    });
+    expect(message.parts[3]).toMatchObject({
+      type: "attachment_reference",
+      kind: "image",
+      ownerReference: "temporary/desktop-chat/screenshot.png",
+    });
+    for (const ownerReference of [
+      "/home/matrix/home/temporary/screenshot.png",
+      "../private/screenshot.png",
+      "temporary/../../private/screenshot.png",
+    ]) {
+      expect(CanonicalChatMessageSchema.safeParse({
+        ...message,
+        parts: [{
+          type: "attachment_reference",
+          attachmentId: "attachment_unsafe",
+          kind: "image",
+          label: "screenshot.png",
+          mimeType: "image/png",
+          ownerReference,
+        }],
+      }).success).toBe(false);
+    }
+    for (const unsafeDetail of [
+      "Running from /home/matrix/private",
+      "Authorization: Bearer secret-value",
+      "API_TOKEN=secret-value",
+    ]) {
+      expect(CanonicalChatRunActivitySchema.safeParse({
+        id: "activity_unsafe_detail",
+        chatId: "chat_demo",
+        runId: "run_demo",
+        occurredAt: now,
+        type: "agent.activity",
+        activityId: "command_unsafe",
+        kind: "command",
+        label: "Run tests",
+        status: "running",
+        preview: unsafeDetail,
+        previewKind: "command",
+      }).success).toBe(false);
+    }
     expect(CanonicalChatRunActivitySchema.safeParse({
       ...activity,
       providerPayload: { stderr: "secret" },
@@ -318,6 +402,22 @@ describe("canonical Chat contracts", () => {
       model: "gpt-5.6-sol",
       options: [{ id: "effort", value: "low" }, { id: "effort", value: "high" }],
     }).success).toBe(false);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "hermes_default",
+      model: "openai-codex:anthropic/claude-opus-4.6",
+    }).success).toBe(true);
+    for (const model of [
+      "/absolute/model",
+      "C:/absolute/model",
+      "provider:model/../secret",
+      "provider:model//secret",
+      "provider:model/",
+    ]) {
+      expect(CanonicalChatModelSelectionSchema.safeParse({
+        instanceId: "hermes_default",
+        model,
+      }).success).toBe(false);
+    }
     expect(CanonicalProviderCatalogSchema.safeParse({
       revision: "catalog_2",
       drivers: [driver],

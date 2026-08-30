@@ -8,6 +8,7 @@ import { useTerminalSettings } from "../../shell/src/stores/terminal-settings.js
 
 describe("TerminalPreferencesPanel", () => {
   beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
     useTerminalSettings.setState({
       themeId: "dark",
       fontSize: 13,
@@ -24,7 +25,7 @@ describe("TerminalPreferencesPanel", () => {
 
     expect(screen.getByRole("option", { name: "MesloLGS NF" })).toBeTruthy();
 
-    expect(screen.getByRole("option", { name: "Dark" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Matrix OS Dark" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Light" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Matrix" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "Dracula" })).toBeNull();

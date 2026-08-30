@@ -76,6 +76,36 @@ const palettes: Record<string, AnsiPalette> = {
     brightCyan: "#B3FFC6",
     brightWhite: "#D8FFD9",
   },
+  "powerlevel10k-lean": {
+    black: "#1D2021", red: "#EA6962", green: "#A9B665", yellow: "#D8A657",
+    blue: "#7DAEA3", magenta: "#D3869B", cyan: "#89B482", white: "#D4BE98",
+    brightBlack: "#665C54", brightRed: "#EA6962", brightGreen: "#A9B665", brightYellow: "#D8A657",
+    brightBlue: "#7DAEA3", brightMagenta: "#D3869B", brightCyan: "#89B482", brightWhite: "#F2E5BC",
+  },
+  "powerlevel10k-lean-8-colors": {
+    black: "#000000", red: "#CC5555", green: "#55AA55", yellow: "#CDCD55",
+    blue: "#5555CC", magenta: "#CC55CC", cyan: "#55CCCC", white: "#CCCCCC",
+    brightBlack: "#555555", brightRed: "#FF5555", brightGreen: "#55FF55", brightYellow: "#FFFF55",
+    brightBlue: "#5555FF", brightMagenta: "#FF55FF", brightCyan: "#55FFFF", brightWhite: "#FFFFFF",
+  },
+  "powerlevel10k-classic": {
+    black: "#181825", red: "#F38BA8", green: "#A6E3A1", yellow: "#F9E2AF",
+    blue: "#89B4FA", magenta: "#F5C2E7", cyan: "#94E2D5", white: "#BAC2DE",
+    brightBlack: "#585B70", brightRed: "#F38BA8", brightGreen: "#A6E3A1", brightYellow: "#F9E2AF",
+    brightBlue: "#89B4FA", brightMagenta: "#F5C2E7", brightCyan: "#94E2D5", brightWhite: "#CDD6F4",
+  },
+  "powerlevel10k-rainbow": {
+    black: "#070B14", red: "#FF5C7C", green: "#5AF78E", yellow: "#F3F99D",
+    blue: "#57C7FF", magenta: "#FF6AC1", cyan: "#9AEDFE", white: "#E6E6E6",
+    brightBlack: "#686868", brightRed: "#FF7092", brightGreen: "#69FF94", brightYellow: "#FFFFA5",
+    brightBlue: "#6DD5FF", brightMagenta: "#FF92DF", brightCyan: "#A4FFFF", brightWhite: "#FFFFFF",
+  },
+  "powerlevel10k-pure": {
+    black: "#1B1D1E", red: "#F92672", green: "#A6E22E", yellow: "#FD971F",
+    blue: "#66D9EF", magenta: "#AE81FF", cyan: "#38CCD1", white: "#D7D7D7",
+    brightBlack: "#75715E", brightRed: "#FF669D", brightGreen: "#BEED5F", brightYellow: "#E6DB74",
+    brightBlue: "#89E4F4", brightMagenta: "#C6A3FF", brightCyan: "#66E5E8", brightWhite: "#F8F8F2",
+  },
   "one-dark": {
     black: "#282c34",
     red: "#e06c75",
@@ -270,7 +300,7 @@ const themeMapping: Record<string, string> = {
 
 const terminalThemePresets = {
   "dark": {
-    label: "Dark",
+    label: "Matrix OS Dark",
     background: "#0C0C0C",
     foreground: "#BFBFBF",
     cursor: "#0AD18B",
@@ -289,6 +319,26 @@ const terminalThemePresets = {
     foreground: "#2FBF55",
     cursor: "#39FF6A",
     selectionBackground: "#39FF6A33",
+  },
+  "powerlevel10k-lean": {
+    label: "P10k Lean", background: "#1D2021", foreground: "#D4BE98",
+    cursor: "#A9B665", selectionBackground: "#A9B66533",
+  },
+  "powerlevel10k-lean-8-colors": {
+    label: "P10k Lean · 8 colors", background: "#111111", foreground: "#CCCCCC",
+    cursor: "#55FF55", selectionBackground: "#55FFFF33",
+  },
+  "powerlevel10k-classic": {
+    label: "P10k Classic", background: "#1E1E2E", foreground: "#CDD6F4",
+    cursor: "#89B4FA", selectionBackground: "#89B4FA33",
+  },
+  "powerlevel10k-rainbow": {
+    label: "P10k Rainbow", background: "#0B1020", foreground: "#E6E6E6",
+    cursor: "#57C7FF", selectionBackground: "#FF6AC133",
+  },
+  "powerlevel10k-pure": {
+    label: "P10k Pure", background: "#1B1D1E", foreground: "#D7D7D7",
+    cursor: "#AE81FF", selectionBackground: "#AE81FF33",
   },
   "one-dark": {
     label: "One Dark",
@@ -365,9 +415,14 @@ const terminalThemePresets = {
 >;
 
 export const TERMINAL_THEME_OPTIONS: TerminalThemeOption[] = [
-  { id: "dark", label: "Dark" },
   { id: "light", label: "Light" },
+  { id: "dark", label: "Matrix OS Dark" },
   { id: "matrix", label: "Matrix" },
+  { id: "powerlevel10k-lean", label: "P10k Lean" },
+  { id: "powerlevel10k-lean-8-colors", label: "P10k Lean · 8 colors" },
+  { id: "powerlevel10k-classic", label: "P10k Classic" },
+  { id: "powerlevel10k-rainbow", label: "P10k Rainbow" },
+  { id: "powerlevel10k-pure", label: "P10k Pure" },
 ];
 
 function inferMode(bg: string): "light" | "dark" {
@@ -416,18 +471,21 @@ export function getTerminalThemePreset(
   themeId: Exclude<TerminalThemeId, "system">,
 ) {
   const mappedThemeId =
-    themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light"
+    themeId.startsWith("powerlevel10k-")
+      ? themeId
+      : themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light"
       ? "light"
       : themeId === "matrix"
         ? "matrix"
         : themeId === "dark" || themeId === "light"
           ? themeId
           : "dark";
-  const shellPalette =
-    mappedThemeId === "light"
-      ? palettes["matrix-shell-light"]
-      : mappedThemeId === "matrix"
-        ? palettes["matrix-shell-neon"]
+  const shellPalette = mappedThemeId === "light"
+    ? palettes["matrix-shell-light"]
+    : mappedThemeId === "matrix"
+      ? palettes["matrix-shell-neon"]
+      : mappedThemeId.startsWith("powerlevel10k-")
+        ? palettes[mappedThemeId]
         : palettes["matrix-shell-dark"];
   return {
     ...terminalThemePresets[mappedThemeId],

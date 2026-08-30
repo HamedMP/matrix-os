@@ -65,8 +65,6 @@ const profileBlurbs: Record<string, string> = {
 };
 const regionGroupLabels: Record<string, string> = {
   "eu-central": "Europe",
-  "us-east": "Americas",
-  "us-west": "Americas",
   "ap-southeast": "Asia Pacific",
 };
 const includedHighlights = [
@@ -730,21 +728,8 @@ function annualSavingsPercent(
   return Math.round((1 - annual / yearlyAtMonthly) * 100);
 }
 
-function getNearestRegionSlug(): string {
-  if (typeof Intl === "undefined") return MATRIX_BILLING_REGIONS[0]?.featureSlug ?? "";
-
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone.toLowerCase();
-  if (timeZone.startsWith("america/")) {
-    return timeZone.includes("los_angeles") ||
-      timeZone.includes("vancouver") ||
-      timeZone.includes("phoenix") ||
-      timeZone.includes("denver") ||
-      timeZone.includes("anchorage") ||
-      timeZone.includes("honolulu")
-      ? "region_hil"
-      : "region_ash";
-  }
-  return "region_fsn1";
+function getDefaultRegionSlug(): string {
+  return MATRIX_BILLING_REGIONS[0]?.featureSlug ?? "";
 }
 
 function ProfileOptionRows({
@@ -836,11 +821,11 @@ function groupRegions(): { group: string; regions: (typeof MATRIX_BILLING_REGION
 
 function RegionOptionRows({
   selectedFeature,
-  nearestFeature,
+  defaultFeature,
   onSelect,
 }: {
   selectedFeature: string;
-  nearestFeature: string;
+  defaultFeature: string;
   onSelect: (featureSlug: string) => void;
 }) {
   return (
@@ -870,9 +855,9 @@ function RegionOptionRows({
                   </span>
                   <span className="truncate text-sm font-medium text-deep">{region.label}</span>
                   <span className="font-mono text-[11px] text-forest/40">{region.location}</span>
-                  {region.featureSlug === nearestFeature && (
+                  {region.featureSlug === defaultFeature && (
                     <span className="shrink-0 rounded-full bg-forest/8 px-1.5 py-0.5 text-[10px] font-semibold text-forest/55">
-                      Nearest
+                      Default
                     </span>
                   )}
                 </span>
@@ -950,7 +935,7 @@ function SelectionTriggerCards({
   const regionOpen = openPicker === "region";
   const containerRef = useRef<HTMLDivElement>(null);
   const onCloseEvent = useEffectEvent(onClose);
-  const nearestRegionSlug = getNearestRegionSlug();
+  const defaultRegionSlug = getDefaultRegionSlug();
 
   useEffect(() => {
     if (!openPicker) return;
@@ -1062,7 +1047,7 @@ function SelectionTriggerCards({
                 {selectedRegion.label}
               </span>
               <span className="font-mono text-[11px] text-forest/45">
-                {selectedRegion.location} · selected automatically
+                {selectedRegion.location} · selected by default
               </span>
             </span>
           </span>
@@ -1072,10 +1057,10 @@ function SelectionTriggerCards({
           />
         </button>
         {regionOpen && (
-          <PickerDropdown title="Choose a region" hint="Closest location is selected automatically">
+          <PickerDropdown title="Choose a region" hint="Falkenstein is selected by default">
             <RegionOptionRows
               selectedFeature={selectedRegion.featureSlug}
-              nearestFeature={nearestRegionSlug}
+              defaultFeature={defaultRegionSlug}
               onSelect={onSelectRegion}
             />
           </PickerDropdown>
@@ -1174,7 +1159,7 @@ function BillingPanelInner({
       MATRIX_BILLING_SERVER_PROFILES[0]?.featureSlug ??
       "",
   );
-  const [selectedRegionSlug, setSelectedRegionSlug] = useState(getNearestRegionSlug);
+  const [selectedRegionSlug, setSelectedRegionSlug] = useState(getDefaultRegionSlug);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
   const [developerTools, setDeveloperTools] = useState<DeveloperToolId[]>(defaultDeveloperTools);
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
@@ -1228,7 +1213,7 @@ function BillingPanelInner({
     initialViewTracked.current = true;
     captureBillingTelemetry(active ? "view_active_billing" : "view_provisioning_billing", {
       ...telemetryPropertiesRef.current,
-      auto_selected_region: getNearestRegionSlug(),
+      auto_selected_region: getDefaultRegionSlug(),
     });
   }, [active]);
 

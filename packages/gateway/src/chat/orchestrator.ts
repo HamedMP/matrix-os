@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
@@ -69,6 +69,18 @@ interface ActiveRun {
 
 function id(prefix: "cturn_" | "run_" | "msg_" | "activity_"): string {
   return `${prefix}${randomUUID().replaceAll("-", "")}`;
+}
+
+function activityPersistenceId(runId: string, event: Record<string, unknown>): string {
+  if (event.type !== "agent.activity" || typeof event.activityId !== "string") return id("activity_");
+  const digest = createHash("sha256").update(`${runId}\0${event.activityId}`).digest("hex").slice(0, 32);
+  return `activity_${digest}`;
+}
+
+function assistantMessageId(runId: string, providerMessageId?: string): string {
+  if (!providerMessageId) return `msg_${runId.slice("run_".length)}_assistant`;
+  const digest = createHash("sha256").update(`${runId}\0${providerMessageId}`).digest("hex").slice(0, 32);
+  return `msg_${digest}`;
 }
 
 function safeError(
@@ -151,6 +163,7 @@ export class CanonicalChatOrchestrator {
       | "admitTurn"
       | "markRunRunning"
       | "appendRunActivities"
+      | "appendAssistantDelta"
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
@@ -603,11 +616,16 @@ export class CanonicalChatOrchestrator {
         signal: controller.signal,
       };
       let text = "";
+      const assistantMessageSequences = new Map<string, number>();
+      let nextOutputSeq = outputSeq;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
         : adapter.start(input);
       for await (const rawEvent of events) {
+        if (controller.signal.aborted) {
+          throw new Error("Provider emitted an event after cancellation");
+        }
         const event = CanonicalProviderRunEventSchema.parse(rawEvent);
         if (terminal) throw new Error("Provider emitted an event after completion");
         if (event.type === "state.updated") {
@@ -625,11 +643,21 @@ export class CanonicalChatOrchestrator {
             throw new Error("Provider assistant output exceeded the canonical limit");
           }
           text += event.delta;
-          await this.persistActivities(owner, run, [{
-            type: "assistant.delta",
-            messageId: `msg_${run.id.slice("run_".length)}_assistant`,
+          const messageId = assistantMessageId(run.id, event.messageId);
+          let messageSeq = assistantMessageSequences.get(messageId);
+          if (messageSeq === undefined) {
+            messageSeq = nextOutputSeq;
+            nextOutputSeq += 1;
+            assistantMessageSequences.set(messageId, messageSeq);
+          }
+          await this.options.repository.appendAssistantDelta(owner, {
+            chatId: run.chatId,
+            runId: run.id,
+            messageId,
+            seq: messageSeq,
             delta: event.delta,
-          }]);
+            createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
+          });
         } else if (event.type === "run.completed") {
           terminal = event;
         } else {
@@ -651,23 +679,11 @@ export class CanonicalChatOrchestrator {
           activityError.name,
         );
       }
-      const output = text ? CanonicalChatMessageSchema.parse({
-        id: `msg_${run.id.slice("run_".length)}_assistant`,
-        chatId: run.chatId,
-        seq: outputSeq,
-        role: "assistant",
-        state: terminal.outcome === "completed" ? "committed" : "failed",
-        turnId: run.turnId,
-        runId: run.id,
-        parts: [{ type: "text", text }],
-        createdAt: completedAt,
-      }) : undefined;
       await this.options.repository.finishRun(owner, {
         chatId: run.chatId,
         runId: run.id,
         outcome: terminal.outcome,
         completedAt,
-        ...(output ? { output } : {}),
       });
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
@@ -708,7 +724,7 @@ export class CanonicalChatOrchestrator {
   ): Promise<void> {
     const activities = events.map((event) => CanonicalChatRunActivitySchema.parse({
       ...event,
-      id: id("activity_"),
+      id: activityPersistenceId(run.id, event),
       chatId: run.chatId,
       runId: run.id,
       occurredAt,

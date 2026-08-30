@@ -6,12 +6,19 @@ import { WebContentsView, shell, type BaseWindow } from "electron";
 import { isNavigationAllowed } from "./origin-policy";
 import type { Bounds, EmbedViewLike } from "./embed-manager";
 import { safeExternalHttpUrl } from "../external-url";
+import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
+import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
+
+const MAX_PUBLIC_BROWSER_ORIGINS = 64;
 
 export function createWebContentsView(options: {
   window: BaseWindow;
   partition: string;
   allowedOrigins: string[];
+  resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
+  allowPublicNavigation?: boolean;
   onState: (state: "loading" | "ready" | "failed") => void;
+  denyPermissions?: boolean;
   appBridge?: {
     appIdentity: string;
     routeSlug: string;
@@ -34,7 +41,32 @@ export function createWebContentsView(options: {
   });
 
   const contents = view.webContents;
-  if (options.appBridge) {
+  const publicOrigins = new Map<string, true>();
+  for (const origin of options.allowedOrigins) publicOrigins.set(origin, true);
+  const rememberPublicOrigin = (origin: string) => {
+    publicOrigins.delete(origin);
+    publicOrigins.set(origin, true);
+    while (publicOrigins.size > MAX_PUBLIC_BROWSER_ORIGINS) {
+      const oldest = publicOrigins.keys().next().value as string | undefined;
+      if (!oldest) break;
+      publicOrigins.delete(oldest);
+    }
+  };
+  const publicNavigationUrl = (rawUrl: string): string | null => {
+    if (!options.allowPublicNavigation) return null;
+    const resolved = resolveBrowserAddress(rawUrl);
+    return resolved?.disposition === "public" ? resolved.url : null;
+  };
+  const isAllowedNavigation = (url: string): boolean => {
+    if (isNavigationAllowed(url, options.allowedOrigins)) return true;
+    if (!options.allowPublicNavigation) return false;
+    try {
+      return publicOrigins.has(new URL(url).origin);
+    } catch {
+      return false;
+    }
+  };
+  if (options.appBridge || options.denyPermissions) {
     // App views receive only the explicit typed bridge. Browser capabilities
     // that could escape that permission model are denied by default.
     contents.session.setPermissionCheckHandler(() => false);
@@ -50,8 +82,20 @@ export function createWebContentsView(options: {
     );
   }
 
-  // Block any navigation outside the allowlist; route external links to the
-  // system browser.
+  const loadResolvedNavigation = (decision: RuntimeBrowserNavigationDecision): boolean => {
+    if (decision.disposition === "block") return true;
+    if (decision.disposition === "external") return false;
+    if (!isNavigationAllowed(decision.url, options.allowedOrigins)) {
+      options.onState("failed");
+      return true;
+    }
+    void contents.loadURL(decision.url).catch(() => options.onState("failed"));
+    return true;
+  };
+
+  // Block any navigation outside the allowlist. Browser embeds may rewrite
+  // canonical runtime origins back through their ephemeral authenticated
+  // tunnel; only explicitly public destinations reach the system browser.
   const blockExternalNavigation = (event: unknown, maybeUrl: unknown) => {
     const url = typeof maybeUrl === "string" ? maybeUrl : typeof event === "string" ? event : null;
     const preventDefault =
@@ -59,8 +103,16 @@ export function createWebContentsView(options: {
         ? (event as { preventDefault?: unknown }).preventDefault
         : null;
     if (!url || typeof preventDefault !== "function") return;
-    if (!isNavigationAllowed(url, options.allowedOrigins)) {
+    if (!isAllowedNavigation(url)) {
       preventDefault.call(event);
+      const decision = options.resolveNavigation?.(url);
+      if (decision && loadResolvedNavigation(decision)) return;
+      const publicUrl = publicNavigationUrl(url);
+      if (publicUrl) {
+        rememberPublicOrigin(new URL(publicUrl).origin);
+        void contents.loadURL(publicUrl).catch(() => options.onState("failed"));
+        return;
+      }
       const externalUrl = safeExternalHttpUrl(url);
       if (externalUrl) void shell.openExternal(externalUrl);
     }
@@ -68,6 +120,18 @@ export function createWebContentsView(options: {
   contents.on("will-navigate", blockExternalNavigation);
   contents.on("will-redirect", blockExternalNavigation);
   contents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedNavigation(url)) {
+      void contents.loadURL(url).catch(() => options.onState("failed"));
+      return { action: "deny" };
+    }
+    const decision = options.resolveNavigation?.(url);
+    if (decision && loadResolvedNavigation(decision)) return { action: "deny" };
+    const publicUrl = publicNavigationUrl(url);
+    if (publicUrl) {
+      rememberPublicOrigin(new URL(publicUrl).origin);
+      void contents.loadURL(publicUrl).catch(() => options.onState("failed"));
+      return { action: "deny" };
+    }
     const externalUrl = safeExternalHttpUrl(url);
     if (externalUrl) void shell.openExternal(externalUrl);
     return { action: "deny" };

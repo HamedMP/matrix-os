@@ -27,6 +27,9 @@ export interface ChatState {
   connected: boolean;
   queue: QueuedMessage[];
   conversations: ReturnType<typeof useConversation>["conversations"];
+  composerDraftRequest: { id: number; text: string } | null;
+  requestComposerDraft: (text: string) => void;
+  consumeComposerDraft: (id: number) => void;
   submitMessage: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -44,6 +47,8 @@ export function useChatState(): ChatState {
   const [busy, setBusy] = useState(false);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
+  const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
+  const composerDraftSequence = useRef(0);
   const { connected, connectionEpoch, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
@@ -214,6 +219,14 @@ export function useChatState(): ChatState {
     // show a "stopping..." pending state in the meantime if needed.
   }, [send]);
 
+  const requestComposerDraft = useCallback((text: string) => {
+    setComposerDraftRequest({ id: ++composerDraftSequence.current, text });
+  }, []);
+
+  const consumeComposerDraft = useCallback((id: number) => {
+    setComposerDraftRequest((current) => current?.id === id ? null : current);
+  }, []);
+
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const newChat = useCallback(async () => {
     setMessages([]);
@@ -263,6 +276,9 @@ export function useChatState(): ChatState {
     connected,
     queue,
     conversations,
+    composerDraftRequest,
+    requestComposerDraft,
+    consumeComposerDraft,
     submitMessage,
     newChat,
     switchConversation,

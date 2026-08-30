@@ -179,7 +179,7 @@ import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.
 import { registerIconRoutes } from "./icon-routes.js";
 import { buildShellBootstrap } from "./shell-bootstrap.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
-import { getSystemInfo } from "./system-info.js";
+import { getSystemInfo, getVersion } from "./system-info.js";
 import { collectSystemActivity } from "./system-activity/collector.js";
 import { CleanupCandidateRegistry, executeCleanupAction } from "./system-activity/cleanup.js";
 import { ActivityHistoryStore, AutoCleanupPolicyStore } from "./system-activity/history.js";
@@ -191,6 +191,7 @@ import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel"
 import { listApps } from "./apps.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
+import { registerNativeAppStorage } from "./native-app-storage.js";
 import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
 import { BridgeQueryBodySchema } from "./app-db-contracts.js";
 import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
@@ -372,6 +373,9 @@ const MAX_MAIN_WS_CLIENTS = 100;
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
+  const runningVersion = getVersion(
+    config.runningVersion ? { version: config.runningVersion } : undefined,
+  );
   let syncReportSent = false;
   const allowedOriginController = createAllowedOriginController({
     shellOrigin: process.env.SHELL_ORIGIN,
@@ -899,6 +903,9 @@ export async function createGateway(config: GatewayConfig) {
       queryEngine = createQueryEngine(appDb);
       kvStore = createKvStore(kysely);
       appRegistry = createAppRegistry(appDb, kysely);
+      for (const slug of await registerNativeAppStorage(appRegistry)) {
+        rememberProvisionedAppSlug(slug);
+      }
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
@@ -3866,7 +3873,7 @@ export async function createGateway(config: GatewayConfig) {
   const managedUpdatePolicy = createManagedUpdatePolicy();
   const managedServiceHealth = createManagedServiceHealth();
   app.get("/api/system/info", async (c) => {
-    const info = getSystemInfo(homePath, { model: config.model });
+    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
     const today = new Date().toISOString().slice(0, 10);
     return c.json({ ...info, managedUpdates: managedUpdatePolicy.managed,
       ...(managedUpdatePolicy.managed ? { managedServiceHealth: await managedServiceHealth() } : {}),
@@ -3887,7 +3894,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.route("/api/system", createSystemUpdateRoutes({
-    getInfo: () => getSystemInfo(homePath, { model: config.model }),
+    getInfo: () => getSystemInfo(homePath, { model: config.model, runningVersion }),
     policy: managedUpdatePolicy,
     isBusy: () => dispatcher.activeCount > 0 || dispatcher.queueLength > 0,
     capture: (event, properties) => posthogErrorTracker.captureEvent(event, {
@@ -4261,6 +4268,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get("/health", (c) => c.json({
     status: "ok",
+    runningVersion,
     cronJobs: cronService.listJobs().length,
     channels: channelManager.status(),
     plugins: loadedPlugins.length,

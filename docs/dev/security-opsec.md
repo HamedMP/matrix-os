@@ -59,7 +59,7 @@ mean immediate rotation.
 | Stripe secret + webhook secret | Secret Manager | platform | git, logs, client |
 | `PIPEDREAM_CLIENT_SECRET` + webhook secret | Secret Manager (**platform only**) | platform | **any customer VPS**, git |
 | `HETZNER_API_TOKEN` | Secret Manager | customer-VPS project (not control-plane) | git, customer VPS |
-| R2 access key / secret | Secret Manager / per-VPS env | **currently full-bucket, shared (F4)** | git, public |
+| R2 access key / secret | Secret Manager (**platform only**) | bucket-scoped platform storage broker | **any customer VPS**, git, public |
 | `PLATFORM_SECRET` (admin bearer) | Secret Manager | platform | git, client, logs |
 | `DATABASE_URL` / `PLATFORM_DATABASE_URL` (Neon) | Secret Manager / Vercel | platform | git, logs, error traces |
 | JWT/HMAC seeds, `MATRIX_AUTH_TOKEN`, Matrix appservice tokens | Secret Manager / per-VPS env | per-deployment | git, logs |
@@ -112,13 +112,15 @@ Each tool: the one rule that matters most, where the secret lives, and rotation.
   capability is briefly down; do it in a window.
 
 ### Cloudflare R2 (storage / sync)
-- **Rule:** today every VPS holds the **same full-bucket key (finding F4)** — the
-  highest-blast item in the threat model. Until that's fixed, treat the R2 key as the
-  crown jewel: a single leaked one reads every user's backups. Target state: per-user
-  scoped tokens or presign-only (no standing key on the box).
-- **Lives:** Secret Manager + per-VPS env (`0640`).
-- **Rotate:** Cloudflare dashboard → R2 → Manage API tokens. Rotating the shared key
-  means redeploying env to every VPS — another reason to scope it down.
+- **Rule:** the standing bucket credential is platform-only. Customer VPSes authenticate
+  to the platform broker with their per-host token and receive short-lived presigned
+  capabilities for exact, server-derived tenant keys. Never recreate `r2.env` or put an
+  S3/R2 access key in customer cloud-init.
+- **Lives:** Secret Manager on the platform only.
+- **Rotate:** first verify the brokered host bundle is live across the fleet and legacy
+  `/opt/matrix/env/r2.env` files are gone. Rotate the token in Secret Manager, restart
+  the platform, exercise brokered backup/restore, then revoke the old token. The first
+  post-migration rotation is mandatory because older VPSes previously held the key.
 
 ### GCP (Cloud Run + Secret Manager)
 - **Rule:** CI authenticates via **Workload Identity Federation (OIDC)** — no
@@ -221,7 +223,7 @@ Speed beats blame. Run these in order; don't wait for a meeting.
 6. **Write it down** — a two-line internal note: what leaked, blast radius, what
    rotated. Feeds the next person's muscle memory.
 
-For the highest-blast secrets — `PLATFORM_SECRET`, the shared R2 key, `DATABASE_URL`,
+For the highest-blast secrets — `PLATFORM_SECRET`, the platform R2 key, `DATABASE_URL`,
 Hetzner token — treat any suspected leak as confirmed and rotate immediately. The cost
 of an unnecessary rotation is minutes; the cost of a real one ignored is every user.
 
