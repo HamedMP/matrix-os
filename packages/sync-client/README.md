@@ -37,10 +37,11 @@ curl -sL get.matrix-os.com | sh
 matrix login              # device-code flow against app.matrix-os.com
 matrix sync ~/matrixos    # start the sync daemon against the logged-in instance
 matrix run -it -- claude  # attach local TTY to Claude on your Matrix VPS
-matrix run -it -- codex   # same shared zellij session primitive for Codex
-matrix run -it --session setup -- gh auth login
+matrix run -it -- codex   # creates a tab in the current project's workspace
+matrix run -it --project main -- gh auth login
+matrix shell list         # list tabs grouped by project
+matrix shell connect --project main --tab <tab-id>
 matrix forward 5173       # forward a Matrix computer dev server to local loopback
-mos shell attach setup    # reattach the same session from local CLI or web terminal
 matrix peers              # list connected peers
 matrix logout             # clear local credentials
 ```
