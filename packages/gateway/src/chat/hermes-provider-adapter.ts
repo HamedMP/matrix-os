@@ -550,7 +550,7 @@ export function createHermesChatProviderAdapter(options: {
         if (failed) {
           recoverableActivityFailureObserved = true;
           deferAssistantAfterToolFailure = true;
-          deferredSegmentPrefixLength = currentSegment.length;
+          deferredSegmentPrefixLength = Math.max(0, currentSegment.length - pendingStreamBoundaryText.length);
           collectUnsafeToolFragments(parsed.data.result, unsafeToolFragments);
         }
         emitAgentActivity({
