@@ -41,7 +41,7 @@ const HermesCompletionSchema = z.object({
   response_previewed: z.boolean().default(false),
 }).passthrough();
 const HermesToolStartSchema = z.object({
-  tool_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
+  tool_id: z.string().min(1).max(4_096),
   name: z.string().trim().min(1).max(160),
   args: z.unknown().optional(),
 }).passthrough();
@@ -461,6 +461,7 @@ export function createHermesChatProviderAdapter(options: {
         });
       } else if (event.type === "tool.start") {
         const parsed = HermesToolStartSchema.parse(event.payload);
+        const activityId = providerReference("", parsed.tool_id);
         const activity = {
           ...hermesToolActivity(parsed.name),
           ...safeToolPreview(parsed.name, parsed.args, {
@@ -468,16 +469,17 @@ export function createHermesChatProviderAdapter(options: {
             executionRoot: input.executionRoot,
           }),
         };
-        setBounded(toolActivities, parsed.tool_id, activity, MAX_ACTIVE_TOOL_ACTIVITIES);
+        setBounded(toolActivities, activityId, activity, MAX_ACTIVE_TOOL_ACTIVITIES);
         emitAgentActivity({
-          activityId: parsed.tool_id,
+          activityId,
           ...activity,
           status: "running",
         });
       } else if (event.type === "tool.complete") {
         const parsed = HermesToolCompleteSchema.parse(event.payload);
-        const activity = toolActivities.get(parsed.tool_id) ?? hermesToolActivity(parsed.name);
-        toolActivities.delete(parsed.tool_id);
+        const activityId = providerReference("", parsed.tool_id);
+        const activity = toolActivities.get(activityId) ?? hermesToolActivity(parsed.name);
+        toolActivities.delete(activityId);
         const failed = hermesToolFailed(parsed.result);
         if (failed) {
           recoverableActivityFailureObserved = true;
@@ -486,7 +488,7 @@ export function createHermesChatProviderAdapter(options: {
           collectUnsafeToolFragments(parsed.result, unsafeToolFragments);
         }
         emitAgentActivity({
-          activityId: parsed.tool_id,
+          activityId,
           ...activity,
           status: failed ? "failed" : "completed",
           summary: hermesActivitySummary(activity.kind, failed),
