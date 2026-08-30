@@ -6,7 +6,11 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./agents-providers.css": "./src/agents-providers/agents-providers.css"
+  },
+  "dependencies": {
+    "@matrix-os/contracts": "workspace:*"
   },
   "peerDependencies": {
     "react": "^19.0.0",
