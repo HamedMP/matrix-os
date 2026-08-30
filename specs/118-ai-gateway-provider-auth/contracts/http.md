@@ -17,8 +17,17 @@ All route schemas use `zod/v4`. Every mutating route uses Hono `bodyLimit` befor
 | `POST` | `/v1/messages` | central relay | Exact relay service token/HMAC audience and scope | 2 MiB initial cap | Anthropic-compatible funded request |
 | `POST` | `/v1/messages/count_tokens` | central relay | Same relay service credential | 256 KiB | Optional funded token-count endpoint |
 | `GET` | `/health/ready` | central relay | Platform/internal health auth; never public detail | n/a | Coarse readiness |
+| `POST` | `/internal/containers/:handle/ai/funding-summary` | platform internal | Exact per-handle platform HMAC; owner/machine/runtime derived from the running machine record | 1 KiB | Identity-free authoritative Matrix credit and monthly-budget summary |
 
 The exact prefix can be adapted to existing `/api/settings` compatibility routes. Compatibility routes must call the same service and return the canonical state; they cannot maintain a second provider truth.
+
+The funding-summary request body and query are both strict-empty schemas. Its
+response contains only `contractVersion` plus reconciled microusd funding
+totals. It never returns owner ID, machine ID, runtime slot, credential, ledger
+entries, source references, or database/provider errors. The owner gateway uses
+the provisioned per-handle platform HMAC, a bounded response reader, an explicit
+timeout, and `redirect: "error"`; failure projects usage as unavailable instead
+of falling back to local estimates.
 
 ## `GET /api/ai/providers`
 

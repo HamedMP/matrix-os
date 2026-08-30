@@ -21,6 +21,7 @@ const AuthTokenSchema = z.string().min(32).max(512).regex(/^[A-Za-z0-9._~+/=-]+$
 
 export interface FundedAiRuntimeConfig {
   issueUrl: string;
+  fundingSummaryUrl: string;
   relayBaseUrl: string;
   runtimeAuthToken: string;
   identity: { ownerId: string; machineId: string; runtimeSlot: string };
@@ -122,8 +123,14 @@ export function loadFundedAiRuntimeConfig(
     platform,
   );
   issueUrl.searchParams.set("runtimeSlot", identity.runtimeSlot);
+  const fundingSummaryUrl = new URL(
+    `/internal/containers/${encodeURIComponent(handle)}/ai/funding-summary`,
+    platform,
+  );
+  fundingSummaryUrl.searchParams.set("runtimeSlot", identity.runtimeSlot);
   return {
     issueUrl: issueUrl.toString(),
+    fundingSummaryUrl: fundingSummaryUrl.toString(),
     relayBaseUrl: relay.toString().replace(/\/$/, ""),
     runtimeAuthToken,
     identity,

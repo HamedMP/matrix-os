@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
+  FundedAiFundingSummarySchema,
   ProviderConnectionAttemptSchema,
   ProviderDependencyCountsSchema,
   ProviderSettingsMutationResponseSchema,
@@ -48,6 +49,7 @@ import {
   hashProviderSettingsMutation,
   sameProviderDependencyCounts,
 } from "./provider-settings-receipts.js";
+import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
 
 const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
@@ -76,6 +78,7 @@ interface ProviderSettingsStoreOptions {
   now?: () => Date;
   idGenerator?: () => string;
   maxProjectionAgeMs?: number;
+  fundingSummaryReader?: FundedAiFundingSummaryReader;
 }
 
 export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
@@ -89,6 +92,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #now: () => Date;
   readonly #id: () => string;
   readonly #maxProjectionAgeMs: number;
+  readonly #fundingSummary?: FundedAiFundingSummaryReader;
   #writeTail: Promise<void> = Promise.resolve();
 
   constructor(options: ProviderSettingsStoreOptions) {
@@ -113,6 +117,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       1,
       Math.min(options.maxProjectionAgeMs ?? DEFAULT_PROJECTION_AGE_MS, 30 * 60_000),
     );
+    this.#fundingSummary = options.fundingSummaryReader;
   }
 
   async #serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -154,12 +159,27 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
 
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration) {
     try {
+      let fundingSummary;
+      if (this.#fundingSummary && canonical.accessSources.some((source) =>
+        source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon")) {
+        try {
+          fundingSummary = FundedAiFundingSummarySchema.parse(
+            await this.#fundingSummary.getFundingSummary(),
+          );
+        } catch (error) {
+          console.warn(
+            "[provider-settings] Matrix funding summary unavailable:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      }
       return await projectProviderSettings({
         canonical,
         config,
         now: this.#now(),
         dependencies: this.#dependencies,
         supportedActions: this.#supportedActions(config, canonical),
+        fundingSummary,
         loginMethods: (harness) => coordinatorLoginMethods({
           login: this.#login,
           harness,

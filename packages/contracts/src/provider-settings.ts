@@ -94,6 +94,35 @@ const ProviderBalanceSchema = z.object({
   asOf: IsoTimestampSchema,
 }).strict();
 
+export const ProviderManagedCreditSchema = z.object({
+  promotionalBalanceMicrousd: MicrousdSchema,
+  addonBalanceMicrousd: MicrousdSchema,
+  creditBalanceMicrousd: MicrousdSchema,
+  reservedMicrousd: MicrousdSchema,
+  remainingBalanceMicrousd: MicrousdSchema,
+}).strict().superRefine((credit, ctx) => {
+  const total = credit.promotionalBalanceMicrousd + credit.addonBalanceMicrousd;
+  if (!Number.isSafeInteger(total) || credit.creditBalanceMicrousd !== total) {
+    ctx.addIssue({ code: "custom", path: ["creditBalanceMicrousd"], message: "Credit buckets must equal total credit" });
+  }
+  if (credit.remainingBalanceMicrousd !== Math.max(0, credit.creditBalanceMicrousd - credit.reservedMicrousd)) {
+    ctx.addIssue({ code: "custom", path: ["remainingBalanceMicrousd"], message: "Remaining credit is inconsistent" });
+  }
+});
+
+export const ProviderManagedBudgetSchema = z.object({
+  monthlyBudgetMicrousd: MicrousdSchema,
+  settledThisMonthMicrousd: MicrousdSchema,
+  reservedThisMonthMicrousd: MicrousdSchema,
+  remainingBudgetMicrousd: MicrousdSchema,
+}).strict().superRefine((budget, ctx) => {
+  const committed = budget.settledThisMonthMicrousd + budget.reservedThisMonthMicrousd;
+  if (!Number.isSafeInteger(committed)
+    || budget.remainingBudgetMicrousd !== Math.max(0, budget.monthlyBudgetMicrousd - committed)) {
+    ctx.addIssue({ code: "custom", path: ["remainingBudgetMicrousd"], message: "Remaining budget is inconsistent" });
+  }
+});
+
 export const ProviderUsageSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("managed_credit"),
@@ -107,9 +136,16 @@ export const ProviderUsageSchema = z.discriminatedUnion("kind", [
     periodStartedAt: IsoTimestampSchema,
     resetsAt: IsoTimestampSchema.nullable(),
     asOf: IsoTimestampSchema,
+    credit: ProviderManagedCreditSchema,
+    budget: ProviderManagedBudgetSchema,
   }).strict().superRefine((usage, ctx) => {
-    if (usage.usedMicrousd + usage.remainingMicrousd !== usage.limitMicrousd) {
-      ctx.addIssue({ code: "custom", path: ["remainingMicrousd"], message: "Managed credit must reconcile to its limit" });
+    if (usage.limitMicrousd !== usage.budget.monthlyBudgetMicrousd
+      || usage.usedMicrousd !== usage.budget.settledThisMonthMicrousd
+      || usage.remainingMicrousd !== Math.min(
+        usage.credit.remainingBalanceMicrousd,
+        usage.budget.remainingBudgetMicrousd,
+      )) {
+      ctx.addIssue({ code: "custom", path: ["budget"], message: "Managed credit summary must match spendable credit and monthly budget" });
     }
   }),
   z.object({
@@ -457,6 +493,8 @@ export type ProviderModelProvider = z.infer<typeof ProviderModelProviderSchema>;
 export type ProviderConfigurableRoute = z.infer<typeof ProviderConfigurableRouteSchema>;
 export type ProviderFixedRoute = z.infer<typeof ProviderFixedRouteSchema>;
 export type ProviderHarnessRoute = z.infer<typeof ProviderHarnessRouteSchema>;
+export type ProviderManagedCredit = z.infer<typeof ProviderManagedCreditSchema>;
+export type ProviderManagedBudget = z.infer<typeof ProviderManagedBudgetSchema>;
 export type ProviderUsage = z.infer<typeof ProviderUsageSchema>;
 export type ProviderFundingKind = z.infer<typeof ProviderFundingKindSchema>;
 export type ProviderAccessSource = z.infer<typeof ProviderAccessSourceSchema>;
