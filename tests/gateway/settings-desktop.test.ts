@@ -153,6 +153,21 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(saved.pinnedApps).toEqual(["__terminal__", "apps/notes/index.html", "__workspace__"]);
     });
 
+    it("preserves the complete pin list when a replacement omits pinnedApps", async () => {
+      const pinnedApps = ["__workspace__", "apps/custom/index.html"];
+      writeFileSync(join(homePath, "system/desktop.json"), JSON.stringify({ pinnedApps }));
+
+      const response = await app.request("/api/settings/desktop", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ background: { type: "solid", color: "#123456" } }),
+      });
+
+      expect(response.status).toBe(200);
+      const saved = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      expect(saved.pinnedApps).toEqual(pinnedApps);
+    });
+
     it("rejects oversized desktop payloads", async () => {
       const res = await app.request("/api/settings/desktop", {
         method: "PUT",

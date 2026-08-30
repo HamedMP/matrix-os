@@ -486,7 +486,9 @@ export function createSettingsRoutes(opts: {
       const current = await readJson<Record<string, unknown>>(desktopPath, {}, "desktop config");
       await writeJsonAtomic(desktopPath, {
         ...body,
-        pinnedApps: preserveRetiredPinnedApps(current.pinnedApps, body.pinnedApps),
+        pinnedApps: body.pinnedApps === undefined
+          ? current.pinnedApps
+          : preserveRetiredPinnedApps(current.pinnedApps, body.pinnedApps),
       });
     });
     return c.json({ ok: true });
