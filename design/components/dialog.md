@@ -3,9 +3,9 @@ title: Dialog
 description: Modals, sheets, and drawers for focused interactions.
 status: stable
 tokens:
-  - colors.card
-  - colors.foreground
-  - colors.border
+  - semanticColors.surface
+  - semanticColors.foreground
+  - semanticColors.border
   - rounded.xl
   - shadows.xl
 ---
@@ -47,7 +47,7 @@ Dialogs interrupt the user to request information or confirmation.
 | Shadow      | `xl`                         |
 | Padding     | `lg` (24px)                  |
 | Background  | Paper `#FCFCF8`              |
-| Border      | 1px solid `--border`         |
+| Border      | 1px solid `semanticColors.border` |
 | Backdrop    | `rgba(31, 45, 29, 0.40)` blur 8px |
 
 ## Behavior (from UX Guide)

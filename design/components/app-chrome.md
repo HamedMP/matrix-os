@@ -3,9 +3,9 @@ title: App Chrome
 description: Window chrome, title bar, and traffic lights for app windows.
 status: stable
 tokens:
-  - colors.card
-  - colors.foreground
-  - colors.border
+  - semanticColors.surface
+  - semanticColors.foreground
+  - semanticColors.border
   - rounded.xl
   - shadows.xl
 ---
@@ -33,7 +33,7 @@ The window frame surrounding every app in the Matrix OS desktop.
 |--------------|------------------------------|
 | Height       | 32px                         |
 | Background   | Paper `#FCFCF8`              |
-| Border       | 1px bottom `--border`        |
+| Border       | 1px bottom `semanticColors.border` |
 | Title font   | Body small (0.875rem), 500   |
 | Title align  | Center                       |
 | Draggable    | Yes (except over controls)   |
@@ -53,7 +53,7 @@ palette. Native macOS or Windows chrome remains platform-native.
 - Gap: 8px between dots
 - Left padding: 12px from window edge
 - Hover: brighten slightly
-- Inactive window: all three become `--muted` (gray)
+- Inactive window: all three use `semanticColors.muted`
 
 ## Window Frame
 
@@ -61,8 +61,8 @@ palette. Native macOS or Windows chrome remains platform-native.
 |-------------|-------------------------|
 | Radius      | 16px                     |
 | Shadow      | `xl`                    |
-| Border      | 1px solid `--border`    |
-| Background  | `--card`                |
+| Border      | 1px solid `semanticColors.border` |
+| Background  | `semanticColors.surface` |
 | Min size    | 320×200px               |
 | Resize      | Bottom-right corner     |
 

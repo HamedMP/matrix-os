@@ -3,11 +3,12 @@ title: Button
 description: Buttons trigger actions with one clear visual hierarchy.
 status: stable
 tokens:
-  - colors.primary
-  - colors.secondary
-  - colors.foreground
-  - colors.border
-  - rounded.xl
+  - semanticColors.primary
+  - semanticColors.primaryForeground
+  - semanticColors.surface
+  - semanticColors.foreground
+  - semanticColors.border
+  - rounded.lg
   - rounded.full
 ---
 

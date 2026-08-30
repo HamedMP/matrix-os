@@ -3,9 +3,9 @@ title: Card
 description: Cards are the primary content container in Matrix OS.
 status: stable
 tokens:
-  - colors.card
-  - colors.card-foreground
-  - colors.border
+  - semanticColors.surface
+  - semanticColors.foreground
+  - semanticColors.border
   - rounded.xl
   - shadows.sm
   - shadows.md
@@ -54,7 +54,7 @@ Cards group related content and actions into a single surface.
 |-------------|-------------------------|
 | Radius      | 16px                     |
 | Padding     | `lg` (24px)             |
-| Border      | 1px solid `--border`    |
+| Border      | 1px solid `semanticColors.border` |
 | Shadow rest | `sm`                    |
 | Shadow hover| `md` (if interactive)   |
 
@@ -65,7 +65,7 @@ Cards group related content and actions into a single surface.
 | Default  | `shadow-sm`, static                              |
 | Hover    | `shadow-md`, slight lift (if card is clickable)  |
 | Active   | Scale 0.99 (if card is clickable)                |
-| Selected | 2px border in `--primary`, `shadow-md`           |
+| Selected | 2px border in `semanticColors.primary`, `shadow-md` |
 
 ## Sizing
 

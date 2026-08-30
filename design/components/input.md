@@ -3,11 +3,11 @@ title: Input
 description: Text inputs, textareas, and select fields.
 status: stable
 tokens:
-  - colors.card
-  - colors.input
-  - colors.foreground
-  - colors.muted-foreground
-  - colors.ring
+  - semanticColors.surface
+  - semanticColors.border
+  - semanticColors.foreground
+  - semanticColors.mutedForeground
+  - semanticColors.focus
   - rounded.lg
 ---
 
@@ -29,7 +29,7 @@ Form inputs for collecting user data.
 
 | Variant   | Background | Border          | Use For                    |
 |-----------|------------|-----------------|----------------------------|
-| Default   | `--card`   | 1px `--input`   | Standard form fields       |
+| Default   | `semanticColors.surface` | 1px `semanticColors.border` | Standard form fields |
 | Ghost     | transparent| none            | Inline editing, search bars|
 
 ## Properties
@@ -40,18 +40,18 @@ Form inputs for collecting user data.
 | Radius      | 12px                       |
 | Padding     | 8px vertical, 16px horiz  |
 | Font        | Geist, body-small (0.875rem) |
-| Placeholder | `--muted-foreground`      |
-| Border      | 1px solid `--input`       |
+| Placeholder | `semanticColors.mutedForeground` |
+| Border      | 1px solid `semanticColors.border` |
 
 ## States
 
 | State    | Change                                          |
 |----------|-------------------------------------------------|
-| Default  | 1px border `--input`                             |
+| Default  | 1px border `semanticColors.border`                |
 | Hover    | Border darkens slightly                          |
 | Focus    | 2px Gold 300 ring; border becomes Gold 500       |
-| Error    | Border and ring become `--destructive`           |
-| Disabled | 50% opacity, `--muted` background                |
+| Error    | Border and ring become `semanticColors.danger`    |
+| Disabled | 50% opacity, `semanticColors.muted` background    |
 
 ## Input Bar Pattern (Shell)
 

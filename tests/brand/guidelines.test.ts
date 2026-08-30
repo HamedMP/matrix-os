@@ -12,6 +12,15 @@ describe("Matrix OS brand guidelines", () => {
   const colors = readRepoFile("design/foundations/colors.md");
   const typography = readRepoFile("design/foundations/typography.md");
   const publicGuide = readRepoFile("shell/public/brand-guidelines.html");
+  const componentGuides = [
+    "app-chrome",
+    "badge",
+    "button",
+    "card",
+    "dialog",
+    "input",
+    "navigation",
+  ].map((name) => readRepoFile(`design/components/${name}.md`));
 
   it("records the approved Figma frame as the upstream visual source", () => {
     expect(design).toContain("xPG2FeYRtC9owCKSVXCqWA");
@@ -29,7 +38,9 @@ describe("Matrix OS brand guidelines", () => {
     ] as const) {
       expect(design).toContain(`${name}: "${hex}"`);
       expect(colors).toContain(hex);
-      expect(publicGuide).toContain(hex);
+      expect(publicGuide).toMatch(
+        new RegExp(`--${name}:\\s*${hex.toLowerCase()};`, "i"),
+      );
     }
   });
 
@@ -50,5 +61,17 @@ describe("Matrix OS brand guidelines", () => {
   it("keeps implementation parity outside this brand-contract document", () => {
     expect(design).toContain("Cross-platform implementation status");
     expect(design).toContain("tracked separately");
+  });
+
+  it("uses canonical semantic token names throughout component guidance", () => {
+    for (const guide of componentGuides) {
+      expect(guide).not.toContain("colors.");
+    }
+    expect(componentGuides.join("\n")).not.toContain("(14px)");
+  });
+
+  it("disables smooth scrolling when reduced motion is requested", () => {
+    expect(publicGuide).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(publicGuide).toMatch(/scroll-behavior:\s*auto/);
   });
 });

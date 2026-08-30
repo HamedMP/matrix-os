@@ -3,10 +3,10 @@ title: Badge
 description: Tags, pills, and status indicators.
 status: stable
 tokens:
-  - colors.primary
-  - colors.accent
-  - colors.secondary
-  - colors.muted
+  - semanticColors.primary
+  - semanticColors.accent
+  - semanticColors.muted
+  - semanticColors.foreground
   - rounded.full
   - typography.caption
 ---
@@ -29,11 +29,11 @@ Small labels for categorization, status, and metadata.
 |-----------|-------------------------|-------------------|-----------------------------|
 | Default   | Teal 100                | Teal 800          | Categories, tags            |
 | Accent    | Green 200               | Ink               | Highlights, new, featured   |
-| Muted     | `--muted`               | `--muted-fg`      | Metadata, secondary info    |
+| Muted     | `semanticColors.muted`   | `semanticColors.mutedForeground` | Metadata, secondary info |
 | Success   | Green 200               | Teal 800          | Active, online, completed   |
 | Warning   | Gold 200                | Gold 800          | Pending, attention needed   |
 | Danger    | Coral 100               | Coral 700         | Error, offline, critical    |
-| Outline   | transparent             | `--foreground`    | Subtle categorization       |
+| Outline   | transparent             | `semanticColors.foreground` | Subtle categorization    |
 
 ## Properties
 
