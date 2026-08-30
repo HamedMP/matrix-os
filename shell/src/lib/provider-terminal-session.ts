@@ -22,21 +22,24 @@ function readQueue(): QueuedSession[] {
     const value = JSON.parse(window.sessionStorage.getItem(QUEUE_KEY) ?? "[]") as unknown;
     if (!Array.isArray(value)) return [];
     const now = Date.now();
+    let migratedLegacyEntry = false;
     const queue = value.flatMap((entry): QueuedSession[] => {
       if (!entry || typeof entry !== "object") return [];
       const item = entry as { sessionId?: unknown; targetId?: unknown; expiresAt?: unknown };
       if (typeof item.sessionId !== "string" || !isCanonicalShellSessionId(item.sessionId)) return [];
       if (item.targetId !== undefined
         && (typeof item.targetId !== "string" || !TARGET_ID_PATTERN.test(item.targetId))) return [];
-      if (!Number.isSafeInteger(item.expiresAt) || (item.expiresAt as number) <= now
-        || (item.expiresAt as number) > now + QUEUE_TTL_MS) return [];
+      const expiresAt = item.expiresAt === undefined ? now + QUEUE_TTL_MS : item.expiresAt;
+      if (!Number.isSafeInteger(expiresAt) || (expiresAt as number) <= now
+        || (expiresAt as number) > now + QUEUE_TTL_MS) return [];
+      migratedLegacyEntry ||= item.expiresAt === undefined;
       return [{
         sessionId: item.sessionId,
         ...(item.targetId ? { targetId: item.targetId } : {}),
-        expiresAt: item.expiresAt as number,
+        expiresAt: expiresAt as number,
       }];
     }).slice(-QUEUE_LIMIT);
-    if (queue.length !== value.length) {
+    if (queue.length !== value.length || migratedLegacyEntry) {
       window.sessionStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
     }
     return queue;

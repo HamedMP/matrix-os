@@ -122,4 +122,19 @@ describe("provider terminal session handoff", () => {
     expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
   });
+
+  it("migrates the preceding queue format without making its lifetime unbounded", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    sessionStorage.setItem("matrix:provider-terminal-session-queue", JSON.stringify([
+      { sessionId: "provider-login", targetId: "window-a" },
+    ]));
+
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(true);
+    expect(JSON.parse(sessionStorage.getItem("matrix:provider-terminal-session-queue") ?? "[]"))
+      .toEqual([{ sessionId: "provider-login", targetId: "window-a", expiresAt: 601_000 }]);
+
+    now.mockReturnValue(601_001);
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
+  });
 });
