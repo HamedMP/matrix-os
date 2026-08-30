@@ -7,6 +7,7 @@ import {
   CanonicalChatRecordSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatRunIdSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
@@ -54,7 +55,16 @@ const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
 ]);
 
 type CursorEnvelope = z.infer<typeof CursorEnvelopeSchema>;
-type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "updateUserState" | "hardDelete" | "list" | "search" | "getDetailPage">;
+type ChatServiceRepository = Pick<ChatRepository,
+  | "create"
+  | "update"
+  | "updateUserState"
+  | "acknowledgeCompletion"
+  | "hardDelete"
+  | "list"
+  | "search"
+  | "getDetailPage"
+>;
 
 function encodeCursor(value: CursorEnvelope): string {
   return CanonicalChatApiCursorSchema.parse(
@@ -158,6 +168,14 @@ export function createCanonicalChatService(
         owner,
         CanonicalChatIdSchema.parse(chatId),
         CanonicalUpdateChatUserStateRequestSchema.parse(input),
+      ));
+    },
+
+    async acknowledgeCompletion(owner, chatId, runId): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.acknowledgeCompletion(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalChatRunIdSchema.parse(runId),
       ));
     },
 
@@ -299,6 +317,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     create: unavailable,
     updateProject: unavailable,
     updateUserState: unavailable,
+    acknowledgeCompletion: unavailable,
     delete: unavailable,
     list: unavailable,
     search: unavailable,

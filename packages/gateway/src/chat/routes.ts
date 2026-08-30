@@ -1,6 +1,8 @@
 import {
+  CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
+  CanonicalChatEventCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
@@ -43,11 +45,19 @@ import {
 } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestrator.js";
+import {
+  createCanonicalChatEventStream,
+  type CanonicalChatEventStreamSession,
+  type CanonicalChatEventStreamSocket,
+} from "./event-stream.js";
+
+export { createCanonicalChatEventStream } from "./event-stream.js";
 
 const CHAT_CREATE_BODY_LIMIT = 96 * 1024;
 const CHAT_TURN_BODY_LIMIT = 128 * 1024;
 const CHAT_CANCEL_BODY_LIMIT = 4 * 1024;
 const CHAT_UPDATE_BODY_LIMIT = 4 * 1024;
+const CHAT_ACKNOWLEDGEMENT_BODY_LIMIT = 4 * 1024;
 
 const ChatListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -84,6 +94,11 @@ export interface CanonicalChatRouteService {
     owner: ChatOwner,
     chatId: string,
     input: CanonicalUpdateChatUserStateRequest,
+  ): Promise<CanonicalChatRecord>;
+  acknowledgeCompletion(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
   ): Promise<CanonicalChatRecord>;
   delete(owner: ChatOwner, chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   list(owner: ChatOwner, input: {
@@ -131,6 +146,39 @@ export interface CanonicalChatRouteService {
 
 function ownerFromPrincipal(principal: RequestPrincipal): ChatOwner {
   return { type: "personal", ownerId: principal.userId };
+}
+
+export function registerCanonicalChatEventRoute(options: {
+  mount(
+    path: string,
+    open: (input: {
+      context: unknown;
+      ws: CanonicalChatEventStreamSocket;
+      cursor?: string;
+    }) => Promise<CanonicalChatEventStreamSession>,
+  ): void;
+  getPrincipal(context: unknown): RequestPrincipal;
+  stream: Pick<ReturnType<typeof createCanonicalChatEventStream>, "open">;
+}): void {
+  options.mount("/ws/chats/events", async ({ context, ws, cursor }) => {
+    const principal = options.getPrincipal(context);
+    const parsedCursor = cursor === undefined
+      ? undefined
+      : CanonicalChatEventCursorSchema.parse(Number(cursor));
+    return options.stream.open({
+      ws,
+      principal,
+      ...(parsedCursor === undefined ? {} : { cursor: parsedCursor }),
+    });
+  });
+}
+
+export async function closeCanonicalChatEventLifecycle(options: {
+  stream: Pick<ReturnType<typeof createCanonicalChatEventStream>, "shutdown">;
+  releaseRepository(): Promise<void>;
+}): Promise<void> {
+  options.stream.shutdown();
+  await options.releaseRepository();
 }
 
 function bodyTooLarge(c: Context) {
@@ -196,6 +244,10 @@ export function createCanonicalChatRoutes(options: {
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
   const cancelBodyLimit = bodyLimit({ maxSize: CHAT_CANCEL_BODY_LIMIT, onError: bodyTooLarge });
   const updateBodyLimit = bodyLimit({ maxSize: CHAT_UPDATE_BODY_LIMIT, onError: bodyTooLarge });
+  const acknowledgementBodyLimit = bodyLimit({
+    maxSize: CHAT_ACKNOWLEDGEMENT_BODY_LIMIT,
+    onError: bodyTooLarge,
+  });
 
   routes.delete("/api/chats/:chatId", cancelBodyLimit, async (context) => {
     try {
@@ -308,6 +360,29 @@ export function createCanonicalChatRoutes(options: {
       return handleError(context, error);
     }
   });
+
+  routes.post(
+    "/api/chats/:chatId/runs/:runId/acknowledge",
+    acknowledgementBodyLimit,
+    async (context) => {
+      try {
+        const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+        const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+        const parsed = CanonicalAcknowledgeChatCompletionRequestSchema.safeParse(
+          await context.req.json(),
+        );
+        if (!parsed.success) return validationError(context);
+        const result = await options.service.acknowledgeCompletion(
+          ownerFromPrincipal(options.getPrincipal(context)),
+          chatId,
+          runId,
+        );
+        return context.json(CanonicalChatRecordSchema.parse(result));
+      } catch (error: unknown) {
+        return handleError(context, error);
+      }
+    },
+  );
 
   routes.get("/api/chats/:chatId", async (context) => {
     try {

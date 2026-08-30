@@ -134,6 +134,29 @@ describe("canonical Chat client", () => {
     expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/user-state", { pinned: true });
   });
 
+  it("acknowledges an exact completed Run through the strict canonical path", async () => {
+    const acknowledged = {
+      ...record,
+      latestSuccessfulCompletion: {
+        runId: "run_client_completed",
+        completedAt: "2026-08-25T12:02:00.000Z",
+        unacknowledged: false,
+      },
+    };
+    const post = vi.fn(async () => acknowledged);
+    const client = createCanonicalChatClient(api({ post }));
+    const { acknowledgeCompletion } = client;
+    await expect(acknowledgeCompletion(record.chat.id, "run_client_completed"))
+      .resolves.toEqual(acknowledged);
+    expect(post).toHaveBeenCalledWith(
+      "/api/chats/chat_client_test/runs/run_client_completed/acknowledge",
+      {},
+    );
+    await expect(acknowledgeCompletion("not-a-chat", "run_client_completed")).rejects.toThrow();
+    await expect(acknowledgeCompletion(record.chat.id, "not-a-run")).rejects.toThrow();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
   it("deletes a Chat through the canonical Gateway endpoint", async () => {
     const remove = vi.fn(async () => ({
       chatId: record.chat.id,

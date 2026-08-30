@@ -15,6 +15,29 @@ export interface WorkRailModel {
   recents: CanonicalChatRecord[];
 }
 
+export type WorkRailAgentState =
+  | "approval_required"
+  | "input_required"
+  | "running"
+  | "failed"
+  | "unseen_completion"
+  | "idle";
+
+export function resolveWorkRailAgentState(record: CanonicalChatRecord): WorkRailAgentState {
+  if (record.chat.attention === "approval_required"
+    || record.activeRun?.status === "waiting_for_approval") {
+    return "approval_required";
+  }
+  if (record.chat.attention === "input_required"
+    || record.activeRun?.status === "waiting_for_input") {
+    return "input_required";
+  }
+  if (record.activeRun) return "running";
+  if (record.chat.attention === "failed") return "failed";
+  if (record.latestSuccessfulCompletion?.unacknowledged) return "unseen_completion";
+  return "idle";
+}
+
 export function buildWorkRailModel(
   records: readonly CanonicalChatRecord[],
   projects: readonly Project[],

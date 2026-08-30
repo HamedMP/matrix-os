@@ -1,6 +1,9 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
-import { buildWorkRailModel } from "@desktop/renderer/src/features/work/work-rail-model";
+import {
+  buildWorkRailModel,
+  resolveWorkRailAgentState,
+} from "@desktop/renderer/src/features/work/work-rail-model";
 import type { Project } from "@desktop/renderer/src/stores/board";
 
 function chat(
@@ -29,12 +32,57 @@ function chat(
   };
 }
 
+function statusRecord(options: {
+  attention?: "none" | "approval_required" | "input_required" | "failed";
+  activeRunStatus?: "accepted" | "running" | "waiting_for_approval" | "waiting_for_input";
+  unacknowledged?: boolean;
+}): CanonicalChatRecord {
+  const record = chat("chat_status", "Status chat", {
+    updatedAt: "2026-08-28T12:00:00.000Z",
+  });
+  return {
+    ...record,
+    chat: { ...record.chat, attention: options.attention ?? "none" },
+    ...(options.activeRunStatus ? {
+      activeRun: {
+        runId: "run_status",
+        turnId: "cturn_status",
+        status: options.activeRunStatus,
+      },
+    } : {}),
+    ...(options.unacknowledged === undefined ? {} : {
+      latestSuccessfulCompletion: {
+        runId: "run_completed_status",
+        completedAt: "2026-08-28T12:01:00.000Z",
+        unacknowledged: options.unacknowledged,
+      },
+    }),
+  } as CanonicalChatRecord;
+}
+
 const projects: Project[] = [
   { id: "project_alpha_id", slug: "alpha", name: "Alpha", kind: "folder" },
   { id: "project_beta_id", slug: "beta", name: "Beta", kind: "scratch" },
 ];
 
 describe("buildWorkRailModel", () => {
+  it("resolves rail state with attention ahead of running, failed, and unseen completion", () => {
+    const cases: Array<[Parameters<typeof statusRecord>[0], string]> = [
+      [{ attention: "approval_required", activeRunStatus: "running", unacknowledged: true }, "approval_required"],
+      [{ attention: "input_required", activeRunStatus: "running", unacknowledged: true }, "input_required"],
+      [{ activeRunStatus: "waiting_for_approval", unacknowledged: true }, "approval_required"],
+      [{ activeRunStatus: "waiting_for_input", unacknowledged: true }, "input_required"],
+      [{ activeRunStatus: "accepted", unacknowledged: true }, "running"],
+      [{ attention: "failed", activeRunStatus: "running", unacknowledged: true }, "running"],
+      [{ attention: "failed", unacknowledged: true }, "failed"],
+      [{ unacknowledged: true }, "unseen_completion"],
+      [{ unacknowledged: false }, "idle"],
+      [{}, "idle"],
+    ];
+    expect(cases.map(([input]) => resolveWorkRailAgentState(statusRecord(input))))
+      .toEqual(cases.map(([, expected]) => expected));
+  });
+
   it("places every chat once across Pinned, Projects, and Recents", () => {
     const pinnedProject = chat("chat_pinned_project", "Pinned project", {
       pinned: true,

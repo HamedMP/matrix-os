@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
+import type { CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
@@ -368,6 +369,7 @@ export default function ChatTab({
   renderInspector,
   inspectorExclusive = false,
   allowLegacyFallback = true,
+  eventSource,
 }: {
   active?: boolean;
   tabId?: string;
@@ -377,6 +379,7 @@ export default function ChatTab({
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
   allowLegacyFallback?: boolean;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const api = useConnection((state) => state.api);
   const [routeAttempt, setRouteAttempt] = useState(0);
@@ -389,6 +392,7 @@ export default function ChatTab({
       initialChatId={initialChatId}
       initialView={initialView}
       active={active}
+      eventSource={eventSource}
       externalNavigation={externalNavigation}
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}

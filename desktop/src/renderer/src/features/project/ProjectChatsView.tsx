@@ -5,6 +5,7 @@ import { defaultAgentThreadComposerDraft, type CanonicalChatDetailResponse } fro
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, EmptyState } from "../../design/primitives";
 import { useProjectChatLauncher } from "../../lib/project-chat";
+import type { CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
@@ -718,6 +719,7 @@ export default function ProjectChatsView({
   renderInspector,
   inspectorExclusive = false,
   allowLegacyFallback = true,
+  eventSource,
 }: {
   projectId: string;
   active: boolean;
@@ -727,6 +729,7 @@ export default function ProjectChatsView({
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
   allowLegacyFallback?: boolean;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const api = useConnection((state) => state.api);
   const [routeAttempt, setRouteAttempt] = useState(0);
@@ -742,6 +745,7 @@ export default function ProjectChatsView({
       initialView={initialView}
       projectLabel={projectLabel}
       active={active}
+      eventSource={eventSource}
       externalNavigation={externalNavigation}
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}
