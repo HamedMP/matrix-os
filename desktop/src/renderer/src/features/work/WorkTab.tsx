@@ -228,6 +228,10 @@ export default function WorkTab({
   const measuredWidthRef = useRef(false);
   const pendingFocusRef = useRef<RefObject<HTMLButtonElement | null> | null>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const pendingEventSourceDisposalRef = useRef<{
+    source: CanonicalChatEventSource;
+    cancelled: boolean;
+  } | null>(null);
   const surfaceChromeHost = useSurfaceChromeHost();
   const hostedChrome = surfaceChromeHost !== null;
   const [responsive, setResponsive] = useState<WorkResponsiveState>({
@@ -267,9 +271,23 @@ export default function WorkTab({
   );
 
   useEffect(() => {
+    const pendingDisposal = pendingEventSourceDisposalRef.current;
+    if (pendingDisposal?.source === eventSource) {
+      pendingDisposal.cancelled = true;
+      pendingEventSourceDisposalRef.current = null;
+    }
     if (!eventSource) return;
     void eventSource.start();
-    return () => eventSource.dispose();
+    return () => {
+      const disposal = { source: eventSource, cancelled: false };
+      pendingEventSourceDisposalRef.current = disposal;
+      queueMicrotask(() => {
+        if (!disposal.cancelled) disposal.source.dispose();
+        if (pendingEventSourceDisposalRef.current === disposal) {
+          pendingEventSourceDisposalRef.current = null;
+        }
+      });
+    };
   }, [eventSource]);
 
   useEffect(() => {

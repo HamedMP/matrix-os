@@ -34,10 +34,14 @@ vi.mock("@desktop/renderer/src/lib/canonical-chat-client", async (importOriginal
   return {
     ...actual,
     createCanonicalChatEventSource: () => {
+      let disposed = false;
       const source = {
-        subscribe: vi.fn(() => ({ dispose: vi.fn() })),
+        subscribe: vi.fn(() => {
+          if (disposed) throw new Error("Chat event source is disposed");
+          return { dispose: vi.fn() };
+        }),
         start: vi.fn(async () => undefined),
-        dispose: vi.fn(),
+        dispose: vi.fn(() => { disposed = true; }),
       };
       chatEventSourceFactory.sources.push(source);
       return source;
@@ -293,7 +297,27 @@ describe("WorkTab rail integration", () => {
     expect(eventSourceProps.project.at(-1)).toBe(thirdSource);
 
     view.unmount();
-    expect(thirdSource?.dispose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(thirdSource?.dispose).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the shared Chat event source alive through the StrictMode effect replay", async () => {
+    const view = render(
+      <React.StrictMode>
+        <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />
+      </React.StrictMode>,
+    );
+
+    await screen.findByRole("button", { name: "Global chat" });
+    expect(chatEventSourceFactory.sources).toHaveLength(2);
+    const committedSource = chatEventSourceFactory.sources.find((source) => source.subscribe.mock.calls.length > 0);
+    const discardedSource = chatEventSourceFactory.sources.find((source) => source !== committedSource);
+    expect(discardedSource?.start).not.toHaveBeenCalled();
+    expect(discardedSource?.subscribe).not.toHaveBeenCalled();
+    expect(committedSource?.subscribe).toHaveBeenCalled();
+    expect(committedSource?.dispose).not.toHaveBeenCalled();
+
+    view.unmount();
+    await waitFor(() => expect(committedSource?.dispose).toHaveBeenCalledTimes(1));
   });
 
   it("opens a Global draft and the existing Create Project dialog state", async () => {
