@@ -713,6 +713,26 @@ describe("zellij terminal WebSocket", () => {
     expect(ws.closed).toBe(true);
   });
 
+  it("rejects tombstoned sessions before attaching a remaining runtime", async () => {
+    const ws = socket();
+    const attachSession = vi.fn();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "deleted-shell", status: "active" }]),
+      },
+      adapter: { attachSession },
+      isSessionTombstoned: vi.fn(async (name) => name === "deleted-shell"),
+    });
+
+    await handler.open({ ws, session: "deleted-shell", fromSeq: 0 });
+
+    expect(ws.sent).toEqual([
+      { type: "error", code: "session_not_found", message: "Session not found" },
+    ]);
+    expect(ws.closed).toBe(true);
+    expect(attachSession).not.toHaveBeenCalled();
+  });
+
   it("delivers live output before persistence completes (send-first)", async () => {
     const pty = new FakePty();
     const ws = socket();

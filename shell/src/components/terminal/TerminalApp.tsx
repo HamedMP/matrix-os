@@ -265,6 +265,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const terminalLayoutRevisionRef = useRef(0);
   const terminalLayoutBaseRef = useRef<TerminalLayout | null>(null);
   const terminalLayoutSkipNextDirtyRef = useRef(false);
+  const terminalLayoutRetryAttemptRef = useRef(0);
   const markTerminalLayoutDirty = () => {
     terminalLayoutDirtyRef.current = true;
     terminalLayoutChangeVersionRef.current += 1;
@@ -361,18 +362,24 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         terminalLayoutRevisionRef.current = saved.revision;
         const persistedLayout = saved.layout ?? merged;
         terminalLayoutBaseRef.current = persistedLayout;
-        if (
-          terminalLayoutChangeVersionRef.current === changeVersion
-          && JSON.stringify(persistedLayout) !== JSON.stringify(layout)
-        ) {
-          const nextTabs = persistedLayout.tabs ?? [];
-          const nextActiveTabId = nextTabs.some((tab) => tab.id === persistedLayout.activeTabId)
-            ? persistedLayout.activeTabId ?? ""
+        const changedDuringSave = terminalLayoutChangeVersionRef.current !== changeVersion;
+        const latestLayout: TerminalLayout = {
+          tabs: tabsRef.current,
+          activeTabId: activeTabIdRef.current,
+          ...(initialMobileRef.current ? {} : { sidebarOpen: sidebarOpenRef.current }),
+        };
+        const layoutToAdopt = changedDuringSave
+          ? mergeTerminalLayouts(layout, latestLayout, persistedLayout)
+          : persistedLayout;
+        if (JSON.stringify(layoutToAdopt) !== JSON.stringify(latestLayout)) {
+          const nextTabs = layoutToAdopt.tabs ?? [];
+          const nextActiveTabId = nextTabs.some((tab) => tab.id === layoutToAdopt.activeTabId)
+            ? layoutToAdopt.activeTabId ?? ""
             : nextTabs[0]?.id ?? "";
-          terminalLayoutSkipNextDirtyRef.current = true;
+          terminalLayoutSkipNextDirtyRef.current = !changedDuringSave;
           setTabs(applyCompatModeToTabs(nextTabs));
           setActiveTabId(nextActiveTabId);
-          if (!initialMobileRef.current) setSidebarOpen(persistedLayout.sidebarOpen ?? true);
+          if (!initialMobileRef.current) setSidebarOpen(layoutToAdopt.sidebarOpen ?? true);
         }
         return true;
       }
@@ -717,6 +724,25 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   const flushLayout = useEffectEvent(() => persistLayoutNow());
 
+  const settleLayoutSave = useEffectEvent(function settle(saved: boolean, changeVersion: number) {
+    if (saved) {
+      terminalLayoutRetryAttemptRef.current = 0;
+      if (terminalLayoutChangeVersionRef.current === changeVersion) {
+        terminalLayoutDirtyRef.current = false;
+        return;
+      }
+    }
+    if (!terminalLayoutDirtyRef.current || layoutSaveTimerRef.current) return;
+    const retryAttempt = Math.min(terminalLayoutRetryAttemptRef.current, 4);
+    terminalLayoutRetryAttemptRef.current = retryAttempt + 1;
+    const retryDelayMs = Math.min(500 * (2 ** retryAttempt), 5_000);
+    layoutSaveTimerRef.current = setTimeout(() => {
+      layoutSaveTimerRef.current = null;
+      const retryVersion = terminalLayoutChangeVersionRef.current;
+      void flushLayout().then((retrySaved) => settle(retrySaved, retryVersion));
+    }, retryDelayMs);
+  });
+
   useEffect(() => {
     if (!initialized) {
       return;
@@ -740,11 +766,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const changeVersion = terminalLayoutChangeVersionRef.current;
     layoutSaveTimerRef.current = setTimeout(() => {
       layoutSaveTimerRef.current = null;
-      void flushLayout().then((saved) => {
-        if (saved && terminalLayoutChangeVersionRef.current === changeVersion) {
-          terminalLayoutDirtyRef.current = false;
-        }
-      });
+      void flushLayout().then((saved) => settleLayoutSave(saved, changeVersion));
     }, 500);
 
     return () => {
@@ -770,11 +792,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       const changeVersion = terminalLayoutChangeVersionRef.current;
-      void flushLayout().then((saved) => {
-        if (saved && terminalLayoutChangeVersionRef.current === changeVersion) {
-          terminalLayoutDirtyRef.current = false;
-        }
-      });
+      void flushLayout().then((saved) => settleLayoutSave(saved, changeVersion));
     };
 
     window.addEventListener("pagehide", flushOnPageHide);
