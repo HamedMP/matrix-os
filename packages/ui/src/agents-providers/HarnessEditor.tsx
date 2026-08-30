@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  ProviderAccessSource,
   ProviderAccentColor,
   ProviderHarnessInstance,
   ProviderModelProvider,
@@ -12,6 +13,27 @@ const ACCENTS: ProviderAccentColor[] = ["blue", "green", "orange", "red", "purpl
 
 function providerFor(snapshot: ProviderSettingsSnapshot, harness: ProviderHarnessInstance): ProviderModelProvider | null {
   return snapshot.modelProviders.find((provider) => provider.id === harness.route.providerId) ?? null;
+}
+
+function sourceSupportsModel(
+  snapshot: ProviderSettingsSnapshot,
+  source: ProviderAccessSource,
+  modelId: string,
+): boolean {
+  if (!source.eligibleModelIds.includes(modelId)) return false;
+  if (source.kind !== "matrix_gateway") return true;
+  return snapshot.gatewayPolicy?.accessSourceId === source.id
+    && snapshot.gatewayPolicy.allowedModelIds.includes(modelId);
+}
+
+function routeTargetForProvider(snapshot: ProviderSettingsSnapshot, provider: ProviderModelProvider) {
+  for (const model of provider.models) {
+    if (!model.enabled) continue;
+    const source = snapshot.accessSources.find((candidate) =>
+      candidate.providerId === provider.id && sourceSupportsModel(snapshot, candidate, model.id));
+    if (source) return { model, source };
+  }
+  return null;
 }
 
 export function HarnessEditor({
@@ -42,28 +64,45 @@ export function HarnessEditor({
   const accessSource = snapshot.accessSources.find((source) => source.id === harness.accessSourceId) ?? null;
   const account = snapshot.accounts.find((candidate) => candidate.id === harness.selectedAccountId) ?? null;
   const sources = snapshot.accessSources.filter((source) => source.providerId === harness.route.providerId
-    && source.eligibleModelIds.includes(harness.route.modelId));
+    && sourceSupportsModel(snapshot, source, harness.route.modelId));
   const accounts = snapshot.accounts.filter((candidate) => {
     if (!harness.accountIds.includes(candidate.id)) return false;
     const candidateSource = snapshot.accessSources.find((source) => source.id === candidate.accessSourceId);
     return candidateSource?.providerId === harness.route.providerId
-      && candidateSource.eligibleModelIds.includes(harness.route.modelId);
+      && sourceSupportsModel(snapshot, candidateSource, harness.route.modelId);
   });
   const gatewaySource = sources.find((source) => source.kind === "matrix_gateway") ?? null;
-  const routeProviders = accessSource === null
-    ? snapshot.modelProviders
-    : snapshot.modelProviders.filter((candidate) => candidate.id === accessSource.providerId);
+  const routeProviders = snapshot.modelProviders.filter((candidate) => routeTargetForProvider(snapshot, candidate) !== null);
   const mutableRoute = harness.route.kind === "configurable";
 
   const changeProvider = (nextProviderId: string) => {
     const nextProvider = snapshot.modelProviders.find((candidate) => candidate.id === nextProviderId);
-    const nextModel = nextProvider?.models.find((candidate) => candidate.enabled
-      && (accessSource === null || accessSource.eligibleModelIds.includes(candidate.id)));
-    if (!nextModel) return;
+    const target = nextProvider ? routeTargetForProvider(snapshot, nextProvider) : null;
+    if (!target) return;
     onMutate({
       type: "set_route",
       harnessInstanceId: harness.id,
-      route: { kind: "configurable", providerId: nextProviderId, modelId: nextModel.id },
+      route: { kind: "configurable", providerId: nextProviderId, modelId: target.model.id },
+      accessSourceId: target.source.id,
+      accountId: target.source.accountId,
+    });
+  };
+
+  const changeModel = (nextModelId: string) => {
+    const targetSource = snapshot.accessSources.find((candidate) =>
+      candidate.id === harness.accessSourceId
+      && candidate.providerId === harness.route.providerId
+      && sourceSupportsModel(snapshot, candidate, nextModelId))
+      ?? snapshot.accessSources.find((candidate) =>
+        candidate.providerId === harness.route.providerId
+        && sourceSupportsModel(snapshot, candidate, nextModelId));
+    if (!targetSource) return;
+    onMutate({
+      type: "set_route",
+      harnessInstanceId: harness.id,
+      route: { kind: "configurable", providerId: harness.route.providerId, modelId: nextModelId },
+      accessSourceId: targetSource.id,
+      accountId: targetSource.accountId,
     });
   };
 
@@ -169,14 +208,11 @@ export function HarnessEditor({
               value={harness.route.modelId}
               disabled={disabled || !canSetRoute || !mutableRoute}
               title={!canSetRoute ? "Changing the model route is not available" : undefined}
-              onChange={(event) => onMutate({
-                type: "set_route",
-                harnessInstanceId: harness.id,
-                route: { kind: "configurable", providerId: harness.route.providerId, modelId: event.target.value },
-              })}
+              onChange={(event) => changeModel(event.target.value)}
             >
               {provider?.models
-                .filter((candidate) => candidate.enabled && (accessSource === null || accessSource.eligibleModelIds.includes(candidate.id)))
+                .filter((candidate) => candidate.enabled && snapshot.accessSources.some((source) =>
+                  source.providerId === harness.route.providerId && sourceSupportsModel(snapshot, source, candidate.id)))
                 .map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
             </select>
           </label>

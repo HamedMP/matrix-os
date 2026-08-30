@@ -20,7 +20,13 @@ export type ProviderSettingsMutationIntent =
     }
   | { type: "update_harness"; harnessInstanceId: string; displayName?: string; accentColor?: ProviderAccentColor | null }
   | { type: "set_harness_enabled"; harnessInstanceId: string; enabled: boolean }
-  | { type: "set_route"; harnessInstanceId: string; route: ProviderConfigurableRoute }
+  | {
+      type: "set_route";
+      harnessInstanceId: string;
+      route: ProviderConfigurableRoute;
+      accessSourceId: string;
+      accountId: string | null;
+    }
   | { type: "select_account"; harnessInstanceId: string; accountId: string }
   | { type: "select_access_source"; harnessInstanceId: string; accessSourceId: string }
   | { type: "start_login"; harnessInstanceId: string; accountId: string | null; method: ProviderLoginMethod }
