@@ -467,6 +467,42 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
   });
 
+  it("switches Electron Desktop to Canvas and back without replacing shared apps or geometry", () => {
+    useApps.setState({ apps: [], loaded: true, loading: false, error: null });
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
+    const chatTab = useTabs.getState().tabs.find((tab) => tab.kind === "work")!;
+    const desktopBounds = useDesktopSurfaces.getState().surfaces[chatTab.id]!.bounds;
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Canvas" }));
+
+    expect(useNativeDesktopMode.getState().mode).toBe("canvas");
+    expect(screen.getByTestId("native-desktop-canvas")).toBeTruthy();
+    expect(screen.getByText("Chat content")).toBeTruthy();
+    expect(useTabs.getState().tabs.find((tab) => tab.id === chatTab.id)).toEqual(chatTab);
+
+    act(() => useDesktopSurfaces.getState().setSurfaceBounds(
+      chatTab.id,
+      { x: 2_000, y: -600, width: 900, height: 700 },
+      { width: 1_200, height: 720 },
+      false,
+    ));
+    const canvasBounds = useDesktopSurfaces.getState().surfaces[chatTab.id]!.bounds;
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Desktop" }));
+    expect(useNativeDesktopMode.getState().mode).toBe("desktop");
+    expect(useDesktopSurfaces.getState().surfaces[chatTab.id]!.bounds).toEqual(desktopBounds);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Canvas" }));
+    expect(useDesktopSurfaces.getState().surfaces[chatTab.id]!.bounds).toEqual(canvasBounds);
+  });
+
   it("retains launcher icon elements after closing so reopening does not download them again", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
     useApps.setState({

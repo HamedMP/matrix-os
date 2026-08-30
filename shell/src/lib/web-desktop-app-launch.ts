@@ -1,6 +1,12 @@
 import type { AppEntry } from "@/hooks/useWindowManager";
 import type { DesktopMode } from "@/stores/desktop-mode";
 import { iconUrlForSlug } from "@/lib/app-launch";
+import {
+  OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_LABELS,
+  isOsViewDestinationPath,
+  otherOsViewMode,
+} from "@matrix-os/contracts";
 
 export type WebDesktopBuiltInLaunch =
   | { kind: "external"; url: string }
@@ -8,9 +14,7 @@ export type WebDesktopBuiltInLaunch =
   | { kind: "os-view"; mode: DesktopMode }
   | { kind: "app"; name: string; path: string };
 
-export function isOsViewDestinationPath(path: string): boolean {
-  return path === "__os-view-canvas__" || path === "__os-view-desktop__";
-}
+export { isOsViewDestinationPath };
 
 export function resolveWebDesktopBuiltInLaunch(path: string): WebDesktopBuiltInLaunch | null {
   if (
@@ -26,10 +30,10 @@ export function resolveWebDesktopBuiltInLaunch(path: string): WebDesktopBuiltInL
   if (path === "__editor__") {
     return { kind: "app", name: "Files", path: "__file-browser__" };
   }
-  if (path === "__os-view-canvas__") {
+  if (path === OS_VIEW_DESTINATION_PATHS.canvas) {
     return { kind: "os-view", mode: "canvas" };
   }
-  if (path === "__os-view-desktop__") {
+  if (path === OS_VIEW_DESTINATION_PATHS.desktop) {
     return { kind: "os-view", mode: "desktop" };
   }
   return null;
@@ -64,8 +68,11 @@ export function buildWebDesktopLauncherApps(
   apps: readonly AppEntry[],
   currentMode: DesktopMode = "desktop",
 ): AppEntry[] {
-  const viewDestination: AppEntry = currentMode === "canvas"
-    ? { name: "Web Desktop", path: "__os-view-desktop__", iconUrl: iconUrlForSlug("desktop") }
-    : { name: "Web Canvas", path: "__os-view-canvas__", iconUrl: iconUrlForSlug("canvas") };
+  const destinationMode = otherOsViewMode(currentMode);
+  const viewDestination: AppEntry = {
+    name: `Web ${OS_VIEW_LABELS[destinationMode]}`,
+    path: OS_VIEW_DESTINATION_PATHS[destinationMode],
+    iconUrl: iconUrlForSlug(destinationMode),
+  };
   return [viewDestination, ...buildWebDesktopIconApps(apps)];
 }
