@@ -390,6 +390,69 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha"));
   });
 
+  it("uses linked agent-session titles instead of repeating the generic thread title", () => {
+    useShellSessions.setState({
+      sessions: [
+        {
+          name: "support-chat-fix",
+          status: "active",
+          agent: "codex",
+          subtitle: "Fix support chat",
+          cwd: "projects/matrix-os",
+        },
+        {
+          name: "browser-tabs",
+          status: "active",
+          agent: "claude",
+          subtitle: "Improve Browser tabs",
+          cwd: "projects/matrix-os",
+        },
+        {
+          name: "bright-tide",
+          status: "active",
+          agent: "pi",
+          cwd: "projects/matrix-os",
+        },
+      ],
+    });
+    useCodingAgentWorkspace.setState({
+      summary: runtimeSummaryWithThreads({
+        activeThreads: [
+          threadSummary("thread_support", {
+            title: "Coding agent run",
+            terminalSessionId: "term_support",
+          }),
+          threadSummary("thread_browser", {
+            title: "Coding agent run",
+            terminalSessionId: "term_browser",
+          }),
+          threadSummary("thread_untitled", {
+            title: "Coding agent run",
+            terminalSessionId: "term_untitled",
+          }),
+          threadSummary("thread_stale_terminal", {
+            title: "Coding agent run",
+            terminalSessionId: "term_no_longer_live",
+            projectId: "matrix-os",
+          }),
+        ],
+        terminalSessions: [
+          terminalSessionSummary("term_support", { name: "support-chat-fix" }),
+          terminalSessionSummary("term_browser", { name: "browser-tabs" }),
+          terminalSessionSummary("term_untitled", { name: "bright-tide" }),
+        ],
+      }),
+    });
+
+    render(<CommandPalette />);
+
+    expect(screen.getByText("Open thread Fix support chat")).toBeTruthy();
+    expect(screen.getByText("Open thread Improve Browser tabs")).toBeTruthy();
+    expect(screen.getByText("Open thread bright-tide")).toBeTruthy();
+    expect(screen.getByText("Open thread matrix-os agent run")).toBeTruthy();
+    expect(screen.queryByText("Open thread Coding agent run")).toBeNull();
+  });
+
   it("opens attachable coding-agent terminal sessions from the command palette", async () => {
     const openTab = vi.fn();
     useTabs.setState({ openTab });

@@ -1,13 +1,13 @@
 import { Command } from "cmdk";
 import { Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import type { AgentThreadSummary, ReviewSummary, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Search, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
-import { useShellSessions } from "../../stores/shell-sessions";
+import { useShellSessions, type ShellSessionSummary } from "../../stores/shell-sessions";
 import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
@@ -22,6 +22,7 @@ const EMPTY_REVIEWS: ReviewSummary[] = [];
 const MAX_PALETTE_REVIEWS = 10;
 const MAX_PALETTE_THREADS = 20;
 const MAX_PALETTE_TERMINALS = 20;
+const GENERIC_THREAD_TITLE = "Coding agent run";
 const TERMINAL_REVIEW_STATUSES: ReviewSummary["status"][] = ["approved", "converged", "stopped"];
 const SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
 const SETUP_DISCONNECTED_ERROR = "Connect to your Matrix computer before opening setup.";
@@ -57,14 +58,49 @@ function paletteReviewCommands(reviews: ReviewSummary[]): ReviewSummary[] {
     .slice(0, MAX_PALETTE_REVIEWS);
 }
 
-function paletteThreadCommands(summary: { activeThreads: { items: AgentThreadSummary[] }; attentionThreads: { items: AgentThreadSummary[] } } | null): AgentThreadSummary[] {
+interface PaletteThreadCommand {
+  thread: AgentThreadSummary;
+  title: string;
+}
+
+function contextualAgentRunTitle(thread: AgentThreadSummary): string {
+  const context = thread.projectId?.trim() || thread.taskId?.trim() || thread.providerId;
+  return `${context} agent run`;
+}
+
+function linkedThreadTitle(
+  thread: AgentThreadSummary,
+  summary: RuntimeSummary,
+  shellSessions: ShellSessionSummary[],
+): string {
+  const persistedTitle = thread.title.trim();
+  if (persistedTitle.toLocaleLowerCase() !== GENERIC_THREAD_TITLE.toLocaleLowerCase()) {
+    return persistedTitle;
+  }
+  if (!thread.terminalSessionId) return contextualAgentRunTitle(thread);
+  const terminalSession = summary.terminalSessions.items.find((session) => (
+    session.id === thread.terminalSessionId
+  ));
+  if (!terminalSession) return contextualAgentRunTitle(thread);
+  const shellSession = shellSessions.find((session) => session.name === terminalSession.name);
+  const agentTitle = shellSession?.subtitle?.trim();
+  if (agentTitle && agentTitle.toLocaleLowerCase() !== GENERIC_THREAD_TITLE.toLocaleLowerCase()) {
+    return agentTitle;
+  }
+  return terminalSession.name;
+}
+
+function paletteThreadCommands(
+  summary: RuntimeSummary | null,
+  shellSessions: ShellSessionSummary[],
+): PaletteThreadCommand[] {
   if (!summary) return [];
-  const commands: AgentThreadSummary[] = [];
+  const commands: PaletteThreadCommand[] = [];
   const seen = new Set<string>();
   for (const thread of [...summary.attentionThreads.items, ...summary.activeThreads.items]) {
     if (seen.has(thread.id)) continue;
     seen.add(thread.id);
-    commands.push(thread);
+    commands.push({ thread, title: linkedThreadTitle(thread, summary, shellSessions) });
     if (commands.length >= MAX_PALETTE_THREADS) break;
   }
   return commands;
@@ -158,7 +194,7 @@ export default function CommandPalette() {
   const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
   const otherTabs = tabs.filter((t) => t.id !== activeTabId);
   const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteReviewCommands(reviews?.items ?? EMPTY_REVIEWS) : EMPTY_REVIEWS;
-  const threadCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteThreadCommands(summary) : [];
+  const threadCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteThreadCommands(summary, shellSessions) : [];
   const terminalCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteTerminalCommands(summary, shellSessions) : [];
   const setupCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? providerSetupCommands(summary?.providers ?? []) : [];
   const showActions = category === "all" || category === "actions";
@@ -381,11 +417,12 @@ export default function CommandPalette() {
 
           {showProjects && threadCommands.length > 0 ? (
             <Command.Group heading="Threads" style={{ color: "var(--text-tertiary)" }}>
-              {threadCommands.map((thread) => (
+              {threadCommands.map(({ thread, title }) => (
                 <PaletteItem
                   key={thread.id}
                   icon={<GitBranch size={14} />}
-                  label={`Open thread ${thread.title}`}
+                  label={`Open thread ${title}`}
+                  keywords={[thread.title, thread.providerId, title]}
                   onSelect={() =>
                     run(() => void openCodingAgentThread(thread.id))
                   }
