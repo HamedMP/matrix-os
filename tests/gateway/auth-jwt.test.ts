@@ -265,10 +265,10 @@ describe("authMiddleware: hybrid bearer + JWT acceptance", () => {
     let nextCalled = false;
     await mw(
       mockContext(
-        "/ws/terminal",
+        "/ws/terminal/tab",
         undefined,
         undefined,
-        `http://localhost:4000/ws/terminal?token=${encodeURIComponent(issued.token)}&cwd=projects`,
+        `http://localhost:4000/ws/terminal/tab?token=${encodeURIComponent(issued.token)}&workspaceId=tws_00000000000000000000000000000001&tabId=tt_00000000000000000000000000000001&client=browser`,
       ),
       async () => {
         nextCalled = true;

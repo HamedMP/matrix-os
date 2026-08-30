@@ -85,11 +85,14 @@ function normalizeEvent(event: AgentThreadEvent): CanonicalProviderRunEvent[] {
     })];
   }
   if (event.type === "terminal.bound") {
-    if (!event.terminalSessionCreatedAt) return [];
+    const terminalSessionId = event.terminalRef
+      ? `${event.terminalRef.workspaceId}:${event.terminalRef.tabId}`
+      : event.terminalSessionId;
+    if (!terminalSessionId) return [];
     return [CanonicalProviderRunEventSchema.parse({
       type: "terminal.bound",
-      terminalSessionId: event.terminalSessionId,
-      terminalSessionCreatedAt: event.terminalSessionCreatedAt,
+      terminalSessionId,
+      terminalSessionCreatedAt: event.terminalSessionCreatedAt ?? event.occurredAt,
     })];
   }
   if (event.type === "review.ready") {

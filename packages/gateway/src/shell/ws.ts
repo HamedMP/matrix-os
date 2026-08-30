@@ -419,7 +419,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
       runtime.outputCompat = outputCompat;
       // zellij attach can lose the race against the session's own creation
-      // (POST /api/terminal/sessions followed immediately by the ws attach, or
+      // (POST /api/terminal/workspaces/:workspaceId/tabs followed immediately by the ws attach, or
       // a cold zellij daemon). Retry briefly before declaring attach_failed so
       // transient startup races do not surface as user-visible errors.
       const maxAttachAttempts = 3;
