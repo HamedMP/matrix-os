@@ -478,6 +478,7 @@ export function createHermesChatProviderAdapter(options: {
         currentSegment = "";
         pendingStreamBoundaryText = "";
         currentSegmentSuppressed = false;
+        deferAssistantAfterToolFailure = false;
         deferredSegmentPrefixLength = 0;
         separatorPending = emittedOutputBytes > 0;
       } else if (event.type === "message.complete") {
@@ -711,8 +712,7 @@ export function createHermesChatProviderAdapter(options: {
         if (final.status === "error" && isRawProviderFailureText(final.text)) {
           throw new HermesRunFailure("run", "Hermes Run failed");
         }
-        const previewAlreadySealed = final.response_previewed
-          && !currentSegment
+        const previewAlreadySealed = !currentSegment
           && final.text === lastSealedSegment;
         if (!previewAlreadySealed) {
           if (!final.text.startsWith(currentSegment)) {
