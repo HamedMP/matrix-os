@@ -1,4 +1,9 @@
-# Research: Multi-Device Terminal Efficiency
+# Research: Project-Scoped Zellij Terminal Workspaces
+
+> Revised 2026-08-11. The implementation uses Zellij 0.44.3 structured IDs,
+> targeted pane actions, and structured subscription output. The earlier
+> recorder-election, legacy-coexistence, 0.44.1, and deferred-client conclusions
+> below are historical evidence only and are superseded by `spec.md`.
 
 Investigation date: 2026-07-13. Sources: code inspection of the gateway shell stack, live measurement on a production-representative customer VPS (2 vCPU / 4 GB, zellij 0.44.1), and upstream zellij issue tracker review. No customer-identifying details are recorded here.
 

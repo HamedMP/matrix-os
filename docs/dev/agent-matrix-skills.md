@@ -92,9 +92,9 @@ The product bundles three focused skills:
 | `matrix-github-project` | Collision-safe GitHub clone, checkout reuse, changes, and validation. |
 
 All authentication happens through browser/device flows inside Matrix. The skills never require
-copying local credential files to the cloud computer. Every remote command uses a unique named
-session and reports the matching `matrix shell connect <session-name>` command. The workflows
-never create or use tabs; each additional terminal or concurrent task gets a separate session.
+copying local credential files to the cloud computer. Every remote command creates a tab in the
+resolved project workspace and reports the matching `matrix shell connect --project <project>
+--tab <tab-id>` command. Each additional terminal or concurrent task gets another tab.
 
 If you installed an unpublished preview under the old `matrix-onboarding` namespace, remove that
 preview and install the renamed plugin once:
@@ -163,37 +163,38 @@ matrix doctor
 matrix whoami
 matrix status
 matrix instance info --json
-matrix run -it --session inspect-example-a1b2 -C projects/example -- git status --short
-matrix run -it --session task-example-a1b2 -C projects/example -- codex --ask-for-approval never --sandbox workspace-write
-matrix shell connect inspect-example-a1b2
-matrix shell connect task-example-a1b2
+matrix run -it --project example -C projects/example -- git status --short
+matrix run -it --project example -C projects/example -- codex --ask-for-approval never --sandbox workspace-write
+matrix shell list
+matrix shell connect --project example --tab <tab-id>
 ```
 
-`matrix run -it --session <name> -C <dir> -- <argv...>` selects an existing directory, creates a
-zellij-backed Matrix shell session, starts the requested command, and attaches the local terminal
-over `/ws/terminal`. `-C` does not create the directory. The local terminal is a dumb TTY: stdin
+`matrix run -it --project <project> -C <dir> -- <argv...>` selects an existing directory, creates a
+tab in that project's Zellij workspace, starts the requested command, and attaches the local terminal
+over `/ws/terminal/tab`. `-C` does not create the directory. The local terminal is a dumb TTY: stdin
 is put in raw mode, Ctrl-C/Ctrl-D are forwarded to the remote process, terminal resizes are
 forwarded as `resize` frames, and `Ctrl-\ Ctrl-\` detaches without killing the remote session.
 
-Always create Matrix CLI sessions for remote commands, including readiness probes and short
-commands. Never create or use shell tabs. Create a separate uniquely named session whenever a
-second terminal or concurrent task is needed, and report its reattach command immediately.
+Always create Matrix CLI tabs for remote commands, including readiness probes and short commands.
+Each project owns one workspace; concurrent work gets another tab. Report the returned tab ID and
+its `matrix shell connect --project <project> --tab <tab-id>` command immediately.
 
 `matrix instance info --json` can return `ready: true` with `source: execution_probe` when the
 management endpoint is degraded but command execution is healthy. Continue in that state, report
 the degraded management plane, and retry later for full metadata. Stop only if both the management
 request and execution probe fail.
 
-Use named sessions for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all reattach the same VPS context:
+Use the reserved `main` workspace for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all view the same tab:
 
-Use unique purpose-specific names such as `auth-codex-a1b2`, `auth-github-c3d4`, and
-`task-fix-search-e5f6` instead of sharing one setup session across unrelated workflows.
+Create separate tabs for unrelated workflows and use the stable tab ID for reconnects; display names are not identities and may be duplicated.
 
-If `matrix run -it`, `matrix shell new`, or `mos shell attach` fails with `zellij_failed`, do not keep retrying the same command. Run `mos shell ls`, then use `mos shell attach <session-name>` against an existing session. `mos shell attach -c <session-name>` is the create-if-missing path; if creation fails, ask the human to create or choose a session from the Matrix web terminal and attach to that existing session.
+If `matrix run -it` or `matrix shell new` fails, do not keep retrying the same command. Run
+`matrix shell list`, then use `matrix shell connect --project <project> --tab <tab-id>` against an
+existing tab. If creation still fails, ask the human to choose an existing tab in Matrix.
 
 For unattended Codex work, pair `--ask-for-approval never` with `--sandbox read-only` or
 `--sandbox workspace-write` and scope `-C` to the narrow target. For Claude Code, use
-`claude --permission-mode auto -p <prompt>` in its own named session to avoid repetitive permission
+`claude --permission-mode auto -p <prompt>` in its own tab to avoid repetitive permission
 questions while retaining Claude's safety classifier. If auto mode is unavailable, stop and report
 the limitation; never fall back to a permission bypass. Never use Codex `danger-full-access`
 without explicit user direction.
