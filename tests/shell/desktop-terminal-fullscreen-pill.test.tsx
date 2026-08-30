@@ -82,10 +82,6 @@ vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => null,
 }));
 
-vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
-  BillingTrialNotification: () => null,
-}));
-
 const terminalWindow: AppWindow = {
   id: "win-terminal",
   title: "Terminal",
