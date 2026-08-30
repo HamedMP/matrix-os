@@ -97,6 +97,40 @@ interface UserMachinesTable {
   activation_authorized_at: Generated<string | null>;
 }
 
+export interface AiFundedGlobalPolicyTable {
+  policy_id: string;
+  enabled: boolean;
+  allowed_model_ids: string;
+  revision: number;
+  updated_at: string;
+}
+
+export interface AiFundedRuntimePoliciesTable {
+  machine_id: string;
+  owner_id: string;
+  runtime_slot: string;
+  enabled: boolean;
+  allowed_model_ids: string;
+  expires_at: string | null;
+  next_issue_at: string;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AiRuntimeCredentialsTable {
+  token_id: string;
+  token_hash: string;
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  audience: string;
+  scope: string;
+  issued_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
+
 export interface ProvisioningJobsTable {
   job_id: string;
   machine_id: string;
@@ -576,6 +610,9 @@ export interface PlatformDatabase {
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  ai_funded_global_policy: AiFundedGlobalPolicyTable;
+  ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
+  ai_runtime_credentials: AiRuntimeCredentialsTable;
   provisioning_jobs: ProvisioningJobsTable;
   billing_checkout_attempts: BillingCheckoutAttemptsTable;
   prebilling_provisioning_intents: PrebillingProvisioningIntentsTable;
@@ -1164,6 +1201,52 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     WHERE deleted_at IS NULL AND provisioning_class = 'preview'
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_global_policy (
+      policy_id TEXT PRIMARY KEY CHECK (policy_id = 'default'),
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      allowed_model_ids TEXT NOT NULL DEFAULT '[]',
+      revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`
+    INSERT INTO ai_funded_global_policy (policy_id, enabled, allowed_model_ids, revision, updated_at)
+    VALUES ('default', FALSE, '[]', 0, '1970-01-01T00:00:00.000Z')
+    ON CONFLICT (policy_id) DO NOTHING
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_runtime_policies (
+      machine_id TEXT PRIMARY KEY REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      allowed_model_ids TEXT NOT NULL DEFAULT '[]',
+      expires_at TEXT,
+      next_issue_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',
+      revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`ALTER TABLE ai_funded_runtime_policies ADD COLUMN IF NOT EXISTS next_issue_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_runtime_owner ON ai_funded_runtime_policies(owner_id, runtime_slot)`.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_runtime_credentials (
+      token_id TEXT PRIMARY KEY,
+      token_hash TEXT UNIQUE NOT NULL CHECK (length(token_hash) = 64),
+      owner_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      runtime_slot TEXT NOT NULL,
+      audience TEXT NOT NULL CHECK (audience = 'matrix-funded-relay'),
+      scope TEXT NOT NULL CHECK (scope = 'ai:invoke'),
+      issued_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_runtime_credentials_machine_issued ON ai_runtime_credentials(machine_id, issued_at DESC)`.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS provisioning_jobs (

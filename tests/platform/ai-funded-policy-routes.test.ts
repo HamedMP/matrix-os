@@ -1,0 +1,153 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FundedAiRuntimeCredentialIssueResponseSchema } from "@matrix-os/contracts";
+import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
+import {
+  createAiFundedRelayRoutes,
+  createAiFundedRuntimeRoutes,
+  loadAiFundedControlPlaneConfig,
+} from "../../packages/platform/src/ai-funded-policy-routes.js";
+import { insertContainer, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
+import { createApp } from "../../packages/platform/src/main.js";
+import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
+import { buildPlatformRuntimeVerificationToken } from "../../packages/platform/src/platform-token.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+
+const platformSecret = "platform-secret-for-tests-123456789";
+const relayControlToken = "relay-control-token-for-tests-123456";
+const hashSecret = "credential-hash-secret-for-tests-123";
+const now = "2026-08-30T20:00:00.000Z";
+const modelId = "anthropic/claude-sonnet-5";
+
+function bearerFor(handle: string, machineId = "machine_123", runtimeSlot = "primary"): string {
+  return buildPlatformRuntimeVerificationToken({ handle, machineId, runtimeSlot }, platformSecret);
+}
+
+function stubOrchestrator(): Orchestrator {
+  return {
+    provision: vi.fn(), start: vi.fn(), stop: vi.fn(), destroy: vi.fn(), upgrade: vi.fn(),
+    rollingRestart: vi.fn(), getInfo: vi.fn(), getImage: vi.fn(), listAll: vi.fn().mockReturnValue([]),
+    syncStates: vi.fn(),
+  };
+}
+
+describe("funded AI policy routes", () => {
+  let db: PlatformDB;
+
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    await insertUserMachine(db, {
+      machineId: "machine_123", clerkUserId: "user_alice", handle: "alice", runtimeSlot: "primary",
+      status: "running", imageVersion: "v1", provisionedAt: "2026-08-30T19:00:00.000Z",
+      activationState: "authorized",
+    });
+  });
+
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
+    vi.restoreAllMocks();
+  });
+
+  async function createTestApp() {
+    const repository = createAiFundedPolicyRepository({
+      db, credentialHashSecret: hashSecret, now: () => new Date(now),
+      tokenIdFactory: () => "credential_123", tokenSecretFactory: () => "s".repeat(43),
+      issueCooldownMs: 60_000,
+    });
+    await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    await repository.setRuntimePolicy({
+      identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      expectedRevision: 0, enabled: true, allowedModelIds: [modelId], expiresAt: null,
+    });
+    return {
+      repository,
+      app: createApp({
+        db,
+        orchestrator: stubOrchestrator(),
+        platformSecret,
+        internalFundedAiRuntimeRoutes: createAiFundedRuntimeRoutes({ db, platformSecret, repository }),
+        internalFundedAiRelayRoutes: createAiFundedRelayRoutes({ relayControlToken, repository }),
+      }),
+    };
+  }
+
+  it("fails closed unless dedicated, distinct secrets are configured", () => {
+    expect(loadAiFundedControlPlaneConfig({})).toEqual({ enabled: false });
+    expect(() => loadAiFundedControlPlaneConfig({
+      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true",
+      PLATFORM_SECRET: platformSecret,
+      AI_RELAY_CONTROL_TOKEN: platformSecret,
+      AI_FUNDED_CREDENTIAL_HASH_SECRET: hashSecret,
+    })).toThrow(/misconfigured/i);
+    expect(loadAiFundedControlPlaneConfig({
+      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true",
+      PLATFORM_SECRET: platformSecret,
+      AI_RELAY_CONTROL_TOKEN: relayControlToken,
+      AI_FUNDED_CREDENTIAL_HASH_SECRET: hashSecret,
+    })).toMatchObject({ enabled: true, credentialTtlMs: 900_000 });
+  });
+
+  it("issues a scoped credential from the authenticated running machine record", async () => {
+    const { app } = await createTestApp();
+    const response = await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await response.json());
+    expect(issued.identity).toEqual({ ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" });
+    expect((await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice", "machine_predecessor")}` },
+    })).status).toBe(401);
+  });
+
+  it("rejects missing auth, caller identity fields, oversized bodies, and legacy-only handles", async () => {
+    const { app } = await createTestApp();
+    expect((await app.request("/internal/containers/alice/ai/funded-credential", { method: "POST" })).status).toBe(401);
+    const spoofed = await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: JSON.stringify({ ownerId: "user_bob", machineId: "machine_other" }),
+    });
+    expect(spoofed.status).toBe(400);
+    const oversized = await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(2_000) }),
+    });
+    expect(oversized.status).toBe(413);
+
+    await insertContainer(db, {
+      handle: "legacy", clerkUserId: "user_legacy", port: 5001, shellPort: 6001, status: "running",
+    });
+    const legacy = await app.request("/internal/containers/legacy/ai/funded-credential", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("legacy")}` },
+    });
+    expect(legacy.status).toBe(401);
+  });
+
+  it("authorizes only through the dedicated timing-safe relay service credential", async () => {
+    const { app } = await createTestApp();
+    const issuedResponse = await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await issuedResponse.json());
+    const body = JSON.stringify({ credential: issued.credential.token, requestId: "request_123", modelId });
+
+    const unauthenticated = await app.request("/internal/ai/funded/authorize", {
+      method: "POST", headers: { "content-type": "application/json" }, body,
+    });
+    expect(unauthenticated.status).toBe(401);
+    const authorized = await app.request("/internal/ai/funded/authorize", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body,
+    });
+    expect(authorized.status).toBe(200);
+    expect(await authorized.json()).toMatchObject({ authorized: true, identity: { ownerId: "user_alice" } });
+  });
+});
