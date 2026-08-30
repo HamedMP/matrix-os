@@ -10,8 +10,30 @@ import {
 } from "../../packages/sync-client/src/cli/shell-client.js";
 
 const LOCAL_TERMINAL_INPUT_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l\u001b[?2004l\u001b[>4;0m\u001b[<1u";
+const TERMINAL_REF = {
+  workspaceId: "tws_00000000000000000000000000000001",
+  tabId: "tt_00000000000000000000000000000001",
+} as const;
+const WS_ATTACH_BASE = `ws://gateway/ws/terminal/tab?workspaceId=${TERMINAL_REF.workspaceId}&tabId=${TERMINAL_REF.tabId}&client=cli`;
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 const roots: string[] = [];
+
+function serverFrame(
+  type: "attached" | "output" | "exit" | "pong" | "error",
+  fields: Record<string, unknown> = {},
+): string {
+  if (type === "error") {
+    return JSON.stringify({ type, terminalRef: TERMINAL_REF, code: "attach_failed", message: "Terminal unavailable", ...fields });
+  }
+  const defaults = type === "attached"
+    ? { canonicalSize: { cols: 80, rows: 24 }, nextSeq: 0 }
+    : type === "exit"
+      ? { exitCode: null }
+      : type === "output"
+        ? { seq: 0, data: "output" }
+        : {};
+  return JSON.stringify({ type, terminalRef: TERMINAL_REF, revision: 1, ...defaults, ...fields });
+}
 
 class ControlledWebSocket {
   static last: ControlledWebSocket | null = null;
@@ -53,6 +75,17 @@ class ControlledWebSocket {
   }
 }
 
+function comparableFrames(socket: ControlledWebSocket | null | undefined = ControlledWebSocket.last): Array<Record<string, unknown>> {
+  return (socket?.sent ?? []).map((raw) => {
+    const { terminalRef: _terminalRef, ...frame } = JSON.parse(raw) as Record<string, unknown>;
+    if (frame.type === "resize" && frame.size && typeof frame.size === "object") {
+      const size = frame.size as { cols?: unknown; rows?: unknown };
+      return { type: "resize", cols: size.cols, rows: size.rows };
+    }
+    return frame;
+  });
+}
+
 class FakeTtyInput extends EventEmitter {
   isTTY = true;
   columns = 100;
@@ -84,17 +117,17 @@ describe("shell REST client", () => {
     return Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  it("lists sessions with bearer auth, JSON parsing, and fetch timeout", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ sessions: [] })));
+  it("lists workspaces with bearer auth, JSON parsing, and fetch timeout", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ workspaces: [] })));
     const client = createShellClient({
       gatewayUrl: "http://gateway",
       token: "tok",
       fetch: fetchImpl,
     });
 
-    await expect(client.listSessions()).resolves.toEqual([]);
+    await expect(client.listWorkspaces()).resolves.toEqual([]);
     expect(fetchImpl).toHaveBeenCalledWith(
-      "http://gateway/api/terminal/sessions",
+      "http://gateway/api/terminal/workspaces",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer tok" }),
         signal: expect.any(AbortSignal),
@@ -113,7 +146,7 @@ describe("shell REST client", () => {
       fetch: fetchImpl,
     });
 
-    await expect(client.deleteSession("missing")).rejects.toMatchObject({
+    await expect(client.terminateTab(TERMINAL_REF)).rejects.toMatchObject({
       code: "session_not_found",
       message: "Request failed",
     });
@@ -130,7 +163,7 @@ describe("shell REST client", () => {
       fetch: fetchImpl,
     });
 
-    await expect(client.listSessions()).rejects.toMatchObject({
+    await expect(client.listWorkspaces()).rejects.toMatchObject({
       code: "auth_expired",
       message: "Request failed",
     });
@@ -146,7 +179,7 @@ describe("shell REST client", () => {
       fetch: fetchImpl,
     });
 
-    await expect(client.listSessions()).rejects.toMatchObject({
+    await expect(client.listWorkspaces()).rejects.toMatchObject({
       code: "gateway_unreachable",
       message: "Request failed",
     });
@@ -162,7 +195,7 @@ describe("shell REST client", () => {
       fetch: fetchImpl,
     });
 
-    await expect(client.listSessions()).rejects.toMatchObject({
+    await expect(client.listWorkspaces()).rejects.toMatchObject({
       code: "request_timeout",
       message: "Request failed",
     });
@@ -179,7 +212,7 @@ describe("shell REST client", () => {
       fetch: fetchImpl,
     });
 
-    await expect(client.listSessions()).rejects.toMatchObject({
+    await expect(client.listWorkspaces()).rejects.toMatchObject({
       code: "request_failed",
       message: "Request failed",
     });
@@ -191,8 +224,8 @@ describe("shell REST client", () => {
       token: "tok",
     });
 
-    expect(client.createAttachUrl("main", { fromSeq: 7 })).toBe(
-      "wss://gateway.example/ws/terminal/session?session=main&fromSeq=7",
+    expect(client.createAttachUrl(TERMINAL_REF, { fromSeq: 7 })).toBe(
+      `wss://gateway.example/ws/terminal/tab?workspaceId=${TERMINAL_REF.workspaceId}&tabId=${TERMINAL_REF.tabId}&client=cli&fromSeq=7`,
     );
   });
 
@@ -202,20 +235,12 @@ describe("shell REST client", () => {
       token: "bearer-token",
     });
 
-    expect(client.createAttachUrl("main", { token: "query-token" })).toBe(
-      "wss://gateway.example/ws/terminal/session?session=main&token=query-token",
+    expect(client.createAttachUrl(TERMINAL_REF, { token: "query-token" })).toBe(
+      `wss://gateway.example/ws/terminal/tab?workspaceId=${TERMINAL_REF.workspaceId}&tabId=${TERMINAL_REF.tabId}&client=cli&token=query-token`,
     );
   });
 
-  it("requests an exclusive live lease when attaching from a sized TTY", () => {
-    const client = createShellClient({ gatewayUrl: "https://gateway.example", token: "tok" });
-
-    expect(client.createAttachUrl("main", { size: { cols: 120, rows: 40 } })).toBe(
-      "wss://gateway.example/ws/terminal/session?session=main&client=hard&cols=120&rows=40&lease=exclusive",
-    );
-  });
-
-  it("sends one-shot input over HTTP without opening a websocket attach", async () => {
+  it("terminates one tab without deleting its workspace", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
     const client = createShellClient({
       gatewayUrl: "http://gateway",
@@ -223,17 +248,15 @@ describe("shell REST client", () => {
       fetch: fetchImpl,
     });
 
-    await expect(client.sendInput("main", "pwd\r")).resolves.toBeUndefined();
+    await expect(client.terminateTab(TERMINAL_REF)).resolves.toBeUndefined();
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      "http://gateway/api/terminal/sessions/main/input",
+      `http://gateway/api/terminal/workspaces/${TERMINAL_REF.workspaceId}/tabs/${TERMINAL_REF.tabId}`,
       expect.objectContaining({
-        method: "POST",
+        method: "DELETE",
         headers: expect.objectContaining({
           Authorization: "Bearer tok",
-          "Content-Type": "application/json",
         }),
-        body: JSON.stringify({ data: "pwd\r" }),
       }),
     );
     expect(ControlledWebSocket.instances).toHaveLength(0);
@@ -269,7 +292,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    await expect(client.attachSession("main", {
+    await expect(client.attachTab(TERMINAL_REF, {
       WebSocketImpl: HangingWebSocket,
       input,
       output,
@@ -283,7 +306,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -291,12 +314,12 @@ describe("shell REST client", () => {
     });
     ControlledWebSocket.last?.emit("open");
     await new Promise((resolve) => setTimeout(resolve, 10));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
     expect(ControlledWebSocket.lastUrl).toBe(
-      `ws://gateway/ws/terminal/session?session=main&fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`,
+      `${WS_ATTACH_BASE}&fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`,
     );
     expect(ControlledWebSocket.lastOptions).toEqual({
       headers: { Authorization: "Bearer tok" },
@@ -309,7 +332,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -317,11 +340,11 @@ describe("shell REST client", () => {
       fromSeq: 0,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
-    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=0");
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+    expect(ControlledWebSocket.lastUrl).toBe(`${WS_ATTACH_BASE}&fromSeq=0`);
   });
 
   it("rejects attach when the websocket closes before an attached, error, or exit frame", async () => {
@@ -330,7 +353,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -349,7 +372,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -358,16 +381,16 @@ describe("shell REST client", () => {
       heartbeatTimeoutMs: 60,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
 
     await vi.advanceTimersByTimeAsync(20);
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "ping" });
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "pong" }));
+    expect(comparableFrames()).toContainEqual({ type: "ping" });
+    ControlledWebSocket.last?.emit("message", serverFrame("pong"));
     await vi.advanceTimersByTimeAsync(19);
     expect(ControlledWebSocket.instances).toHaveLength(1);
 
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("keeps the socket open across repeated heartbeat pongs", async () => {
@@ -377,7 +400,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -386,18 +409,18 @@ describe("shell REST client", () => {
       heartbeatTimeoutMs: 60,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
 
     for (let i = 0; i < 3; i += 1) {
       await vi.advanceTimersByTimeAsync(20);
-      ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "pong" }));
+      ControlledWebSocket.last?.emit("message", serverFrame("pong"));
     }
     await vi.advanceTimersByTimeAsync(59);
 
     expect(ControlledWebSocket.instances).toHaveLength(1);
     expect(ControlledWebSocket.last?.closed).toBe(false);
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("closes and reconnects after consecutive missed heartbeat pongs or output", async () => {
@@ -407,7 +430,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -418,7 +441,7 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     const first = ControlledWebSocket.last!;
 
     await vi.advanceTimersByTimeAsync(80);
@@ -431,15 +454,15 @@ describe("shell REST client", () => {
     expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
     expect(output.write).not.toHaveBeenCalledWith(expect.stringContaining("Matrix shell disconnected"));
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     const second = ControlledWebSocket.last!;
     expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection restored.\r\n");
     expect(output.write).not.toHaveBeenCalledWith(expect.stringContaining("\u001b[1A"));
     expect(output.write).not.toHaveBeenCalledWith(expect.stringContaining("connection restored"));
     await vi.advanceTimersByTimeAsync(80);
     expect(second.closed).toBe(false);
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("keeps reconnect lifecycle notices out of the terminal byte stream", async () => {
@@ -449,7 +472,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -458,7 +481,7 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     ControlledWebSocket.last?.emit("close");
     await vi.advanceTimersByTimeAsync(5);
 
@@ -466,12 +489,12 @@ describe("shell REST client", () => {
     expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
 
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
 
     expect(output.write).not.toHaveBeenCalledWith("\r\u001b[2K\u001b[1A\r\u001b[2K\u001b[1A\r\u001b[2K");
     expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection restored.\r\n");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("ignores stale socket events after a reconnect owns the attach", async () => {
@@ -481,7 +504,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -490,8 +513,8 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready", seq: 41 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", { data: "ready", seq: 41 }));
     const first = ControlledWebSocket.last!;
     const staleMessage = first.listeners.get("message");
     const staleError = first.listeners.get("error");
@@ -500,9 +523,9 @@ describe("shell REST client", () => {
     await vi.advanceTimersByTimeAsync(5);
     const second = ControlledWebSocket.last!;
     second.emit("open");
-    second.emit("message", JSON.stringify({ type: "attached" }));
+    second.emit("message", serverFrame("attached"));
 
-    staleMessage?.(JSON.stringify({ type: "output", data: "stale", seq: 0 }));
+    staleMessage?.(serverFrame("output", { data: "stale", seq: 0 }));
     staleError?.(new Error("WebSocket was closed before the connection was established"));
 
     expect(output.write).toHaveBeenCalledWith("ready");
@@ -511,12 +534,12 @@ describe("shell REST client", () => {
 
     second.emit("close");
     await vi.advanceTimersByTimeAsync(5);
-    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=42");
+    expect(ControlledWebSocket.lastUrl).toBe(`${WS_ATTACH_BASE}&fromSeq=42`);
 
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("reconnects instead of resolving detached after an unexpected close once attached", async () => {
@@ -526,7 +549,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -535,15 +558,15 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     ControlledWebSocket.last?.emit("close");
     await vi.advanceTimersByTimeAsync(5);
 
     expect(ControlledWebSocket.instances).toHaveLength(2);
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("keeps retrying when a reconnect attempt times out", async () => {
@@ -553,7 +576,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -563,7 +586,7 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     ControlledWebSocket.last?.emit("close");
     await vi.advanceTimersByTimeAsync(5);
     const timedOutReconnect = ControlledWebSocket.last!;
@@ -574,9 +597,9 @@ describe("shell REST client", () => {
 
     expect(ControlledWebSocket.instances).toHaveLength(3);
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("retries transient attach failures after a prior attach", async () => {
@@ -586,7 +609,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -595,21 +618,21 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     ControlledWebSocket.last?.emit("close");
     await vi.advanceTimersByTimeAsync(5);
 
     const transientFailure = ControlledWebSocket.last!;
     transientFailure.emit("open");
-    transientFailure.emit("message", JSON.stringify({ type: "error", code: "attach_failed" }));
+    transientFailure.emit("message", serverFrame("error", { code: "attach_failed" }));
     expect(transientFailure.closed).toBe(true);
     await vi.advanceTimersByTimeAsync(5);
 
     expect(ControlledWebSocket.instances).toHaveLength(3);
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("reconnects with fromSeq set after the last output sequence", async () => {
@@ -619,7 +642,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -628,16 +651,55 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready", seq: 41 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", { data: "ready", seq: 41 }));
     ControlledWebSocket.last?.emit("close");
     await vi.advanceTimersByTimeAsync(5);
 
-    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=42");
+    expect(ControlledWebSocket.lastUrl).toBe(`${WS_ATTACH_BASE}&fromSeq=42`);
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+  });
+
+  it("accepts a lower tab revision after reconnecting from a workspace resize revision", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachTab(TERMINAL_REF, {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", serverFrame("attached", { revision: 2 }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({
+      type: "canonical-size",
+      terminalRef: TERMINAL_REF,
+      revision: 50,
+      canonicalSize: { cols: 120, rows: 40 },
+    }));
+    ControlledWebSocket.last?.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", serverFrame("attached", { revision: 3 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", {
+      revision: 4,
+      seq: 1,
+      data: "reconnected",
+    }));
+
+    expect(output.write).toHaveBeenCalledWith("reconnected");
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { revision: 51, exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("clamps reconnect replay cursors at the maximum safe sequence", async () => {
@@ -647,7 +709,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -656,7 +718,7 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     ControlledWebSocket.last?.emit("message", JSON.stringify({
       type: "output",
       data: "ready",
@@ -666,12 +728,12 @@ describe("shell REST client", () => {
     await vi.advanceTimersByTimeAsync(5);
 
     expect(ControlledWebSocket.lastUrl).toBe(
-      `ws://gateway/ws/terminal/session?session=main&fromSeq=${Number.MAX_SAFE_INTEGER}`,
+      `${WS_ATTACH_BASE}&fromSeq=${Number.MAX_SAFE_INTEGER}`,
     );
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("resends terminal resize after reconnect", async () => {
@@ -681,7 +743,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 120, rows: 40 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -690,17 +752,17 @@ describe("shell REST client", () => {
       reconnectMaxDelayMs: 5,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     const first = ControlledWebSocket.last!;
     ControlledWebSocket.last?.emit("close");
     await vi.advanceTimersByTimeAsync(5);
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
 
-    expect(first.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "resize", cols: 120, rows: 40 });
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "resize", cols: 120, rows: 40 });
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    expect(comparableFrames(first)).toContainEqual({ type: "resize", cols: 120, rows: 40 });
+    expect(comparableFrames()).toContainEqual({ type: "resize", cols: 120, rows: 40 });
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("allowlists terminal websocket error frame codes", async () => {
@@ -709,14 +771,14 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "error", code: "internal_path_leak" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("error", { code: "internal_path_leak" }));
 
     await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
   });
@@ -727,17 +789,17 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("queues stdin frames until the websocket is open", async () => {
@@ -746,7 +808,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -756,12 +818,12 @@ describe("shell REST client", () => {
     expect(ControlledWebSocket.last?.sent).toEqual([]);
 
     ControlledWebSocket.last?.emit("open");
-    expect(ControlledWebSocket.last?.sent).toEqual([
-      JSON.stringify({ type: "input", data: "pwd\r" }),
+    expect(comparableFrames()).toEqual([
+      { type: "input", data: "pwd\r" },
     ]);
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
-    await expect(attached).resolves.toEqual({ detached: false });
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
   it("uploads a pasted quoted macOS screenshot path and sends the VPS terminal path", async () => {
@@ -770,19 +832,22 @@ describe("shell REST client", () => {
     const imagePath = join(root, "Screenshot 2026-07-07 at 6.50.39 PM.png");
     await writeFile(imagePath, PNG_BYTES, { flag: "wx" });
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === "http://gateway/api/terminal/sessions/main/paste-assets?cwd=projects%2Fapp") {
+      if (url === `http://gateway/api/terminal/workspaces/${TERMINAL_REF.workspaceId}/tabs/${TERMINAL_REF.tabId}/paste-assets`) {
         expect(init?.method).toBe("POST");
         expect(init?.headers).toEqual(expect.objectContaining({
           Authorization: "Bearer tok",
-          "Content-Type": "image/png",
-          "X-Matrix-Filename": "Screenshot-2026-07-07-at-6.50.39-PM.png",
+          "Content-Type": "application/json",
         }));
-        expect(Buffer.from(init?.body as BodyInit as ArrayBuffer)).toEqual(PNG_BYTES);
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          assets: [{ mimeType: "image/png", dataBase64: PNG_BYTES.toString("base64") }],
+        });
         return new Response(JSON.stringify({
-          path: "projects/.matrix-terminal-pastes/2026-07-07/upload.png",
-          terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png",
-          size: PNG_BYTES.length,
-          mimeType: "image/png",
+          assets: [{
+            path: "projects/.matrix-terminal-pastes/2026-07-07/upload.png",
+            terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png",
+            size: PNG_BYTES.length,
+            mimeType: "image/png",
+          }],
         }));
       }
       throw new Error(`unexpected fetch ${url}`);
@@ -797,7 +862,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -806,20 +871,20 @@ describe("shell REST client", () => {
       richPaste: { statusMinVisibleMs: 0 },
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", `"${imagePath}"`);
     await vi.waitFor(() => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+      expect(comparableFrames()).toContainEqual({
         type: "input",
         data: "\"/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png\"",
       });
     });
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+    expect(comparableFrames()).toContainEqual({
       type: "input",
       data: "\"/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png\"",
     });
@@ -844,7 +909,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -852,13 +917,13 @@ describe("shell REST client", () => {
       noRichPaste: true,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", `"${imagePath}"`);
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+    expect(comparableFrames()).toContainEqual({
       type: "input",
       data: `"${imagePath}"`,
     });
@@ -871,20 +936,19 @@ describe("shell REST client", () => {
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const largeInput = "x".repeat(140_000);
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", largeInput);
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
-    const inputFrames = ControlledWebSocket.last!.sent
-      .map((frame) => JSON.parse(frame))
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+    const inputFrames = comparableFrames()
       .filter((frame) => frame.type === "input") as Array<{ data: string }>;
     expect(inputFrames.length).toBeGreaterThan(1);
     expect(inputFrames.every((frame) => frame.data.length < 65_536)).toBe(true);
@@ -897,19 +961,19 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", "a\u001b]1337;File=name=x.png;inline=1:AAAA\u0007b\u001b_Gf=100;AAAA\u001b\\c");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+    expect(comparableFrames()).toContainEqual({
       type: "input",
       data: "abc",
     });
@@ -923,7 +987,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -944,7 +1008,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 120, rows: 40 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -952,14 +1016,14 @@ describe("shell REST client", () => {
     });
 
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     process.emit("SIGWINCH", "SIGWINCH");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
     expect((input as unknown as FakeTtyInput).rawModes).toEqual([true, false]);
     expect((input as unknown as FakeTtyInput).resumed).toBe(true);
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 120, rows: 40 },
       { type: "resize", cols: 120, rows: 40 },
     ]);
@@ -971,24 +1035,24 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", "a");
     input.emit("data", "\u001c");
     input.emit("data", "b");
     input.emit("data", "\u001c");
     input.emit("data", "\u001c");
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: true, exitCode: null });
     expect(ControlledWebSocket.last?.closed).toBe(true);
     expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
       { type: "input", data: "\u001cb" },
@@ -1002,7 +1066,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -1022,7 +1086,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -1030,12 +1094,12 @@ describe("shell REST client", () => {
       mouse: false,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", "a\u001b[<0;10;20M\u001b[Mabc\u001b[I\u001b[O");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
     ]);
@@ -1047,19 +1111,19 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", "\u001b[Ia\u001b[O\u001b[<0;10;20M");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
     ]);
@@ -1072,22 +1136,22 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", { data: "ready" }));
     nowSpy.mockReturnValue(6_000);
     input.emit("data", "\u001b[I\u001b[<0;10;20M\u001b[Mabcx");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
     expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "x" },
     ]);
@@ -1101,22 +1165,22 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", { data: "ready" }));
     nowSpy.mockReturnValue(6_000);
     input.emit("data", "\u001b[I\u001b[99;5u\u001b[100;5uok");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
     expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "ok" },
     ]);
@@ -1129,19 +1193,19 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", "\u001b[99;5u");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "\u001b[99;5u" },
     ]);
@@ -1153,20 +1217,20 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", "a\u001b[99");
     input.emit("data", ";5ub");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
       { type: "input", data: "\u001b[99;5ub" },
@@ -1179,7 +1243,7 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("setup", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
@@ -1187,13 +1251,13 @@ describe("shell REST client", () => {
       mouse: false,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     input.emit("data", "a\u001b[<0;10;");
     input.emit("data", "20Mbc");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
-    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+    expect(comparableFrames()).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
       { type: "input", data: "bc" },
@@ -1211,17 +1275,17 @@ describe("shell REST client", () => {
     } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready", seq: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", { data: "ready", seq: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: true, exitCode: null });
     expect(ControlledWebSocket.last?.closed).toBe(true);
     expect(errorOutput.write).not.toHaveBeenCalledWith("Shell attach failed\n");
   });
@@ -1232,17 +1296,17 @@ describe("shell REST client", () => {
     const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: false });
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
     const resetWrites = vi.mocked(output.write).mock.calls.filter(([data]) => data === LOCAL_TERMINAL_INPUT_RESET);
     expect(resetWrites).toHaveLength(2);
   });
@@ -1257,15 +1321,15 @@ describe("shell REST client", () => {
     } as unknown as NodeJS.WriteStream;
     const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
 
-    const attached = client.attachSession("main", {
+    const attached = client.attachTab(TERMINAL_REF, {
       WebSocketImpl: ControlledWebSocket,
       input,
       output,
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready", seq: 0 }));
+    ControlledWebSocket.last?.emit("message", serverFrame("attached"));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", { data: "ready", seq: 0 }));
 
     await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
     expect(ControlledWebSocket.last?.closed).toBe(true);

@@ -112,7 +112,6 @@ export function shouldRestartCloudflared(consecutiveFailures, threshold) {
 }
 
 function parseConfig(env = process.env) {
-  const terminalSession = env.CLOUDFLARED_WATCHDOG_TERMINAL_SESSION || 'main';
   return {
     platformInternalUrl: env.PLATFORM_INTERNAL_URL || 'http://platform:9000',
     platformPublicUrl: env.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com',
@@ -124,11 +123,27 @@ function parseConfig(env = process.env) {
     restartCooldownMs: toPositiveInt(env.CLOUDFLARED_WATCHDOG_RESTART_COOLDOWN_MS, 300_000),
     dockerSocket: env.CLOUDFLARED_WATCHDOG_DOCKER_SOCKET || DEFAULT_DOCKER_SOCKET,
     containerName: env.CLOUDFLARED_WATCHDOG_CONTAINER || '',
-    wsPaths: [
-      ...DEFAULT_WS_PATHS,
-      `/ws/terminal/session?session=${encodeURIComponent(terminalSession)}&fromSeq=0`,
-    ],
+    wsPaths: [...DEFAULT_WS_PATHS],
   };
+}
+
+async function resolveTerminalProbePath(config, token) {
+  const url = new URL('/api/terminal/workspaces', config.platformPublicUrl);
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    redirect: 'error',
+    signal: AbortSignal.timeout(config.probeTimeoutMs),
+  });
+  if (!response.ok) throw new Error(`terminal workspace probe failed with status ${response.status}`);
+  const body = await response.json();
+  const workspaces = Array.isArray(body?.workspaces) ? body.workspaces : [];
+  for (const workspace of workspaces) {
+    if (!/^tws_[0-9a-f]{32}$/.test(workspace?.id) || !Array.isArray(workspace?.tabs)) continue;
+    const tab = workspace.tabs.find((candidate) => /^tt_[0-9a-f]{32}$/.test(candidate?.id));
+    if (!tab) continue;
+    return `/ws/terminal/tab?workspaceId=${encodeURIComponent(workspace.id)}&tabId=${encodeURIComponent(tab.id)}&client=soft&fromSeq=0`;
+  }
+  return null;
 }
 
 async function fetchFleet(config) {
@@ -269,7 +284,12 @@ async function runProbeCycle(config) {
   }
   const token = await issueProbeToken(config, machine);
   const results = [];
-  for (const path of config.wsPaths) {
+  const terminalPath = await resolveTerminalProbePath(config, token).catch((err) => {
+    console.warn('[cloudflared-watchdog] Could not resolve a terminal tab for the live-route probe:', err instanceof Error ? err.message : String(err));
+    return null;
+  });
+  const paths = terminalPath ? [...config.wsPaths, terminalPath] : config.wsPaths;
+  for (const path of paths) {
     const url = buildProbeWebSocketUrl(config.platformPublicUrl, path, token);
     const result = await probeWebSocket(url, config.probeTimeoutMs);
     results.push({ path, url: url.toString(), ...result });

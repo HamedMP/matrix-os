@@ -1,4 +1,5 @@
 import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "../protocol/shell.js";
+import { z } from "zod/v4";
 import {
   createMacOsClipboardImageReader,
   type ClipboardImageReader,
@@ -20,36 +21,94 @@ export interface ShellClientOptions {
 }
 
 export interface ShellClient {
-  listSessions(): Promise<unknown[]>;
+  listWorkspaces(): Promise<unknown[]>;
+  listProjects(): Promise<unknown[]>;
+  ensureWorkspace(input?: { projectId?: string }): Promise<Record<string, unknown>>;
   runCommand(input: {
     command: string[];
     cwd?: string;
     timeoutMs?: number;
   }): Promise<ShellRunResult>;
-  createSession(input: {
+  createTab(workspaceId: string, input: {
     name: string;
     cwd?: string;
-    layout?: string;
-    cmd?: string;
-    agent?: "claude" | "codex" | "opencode" | "pi";
+    command?: string[];
   }): Promise<Record<string, unknown>>;
-  deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
-  listTabs(name: string): Promise<unknown[]>;
-  createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<Record<string, unknown>>;
-  switchTab(name: string, tab: number): Promise<Record<string, unknown>>;
-  closeTab(name: string, tab: number): Promise<Record<string, unknown>>;
-  splitPane(name: string, input: { direction: "right" | "down"; cwd?: string; cmd?: string }): Promise<Record<string, unknown>>;
-  closePane(name: string, pane: string): Promise<Record<string, unknown>>;
-  listLayouts(): Promise<unknown[]>;
-  showLayout(name: string): Promise<Record<string, unknown>>;
-  saveLayout(name: string, kdl: string): Promise<Record<string, unknown>>;
-  deleteLayout(name: string): Promise<Record<string, unknown>>;
-  applyLayout(session: string, layout: string): Promise<Record<string, unknown>>;
-  dumpLayout(session: string): Promise<Record<string, unknown>>;
-  createAttachUrl(name: string, options?: { fromSeq?: number; token?: string; size?: { cols: number; rows: number } | null }): string;
-  sendInput(name: string, data: string): Promise<void>;
-  attachSession(name: string, options?: ShellAttachOptions): Promise<{ detached: boolean }>;
+  terminateTab(ref: TerminalRef): Promise<void>;
+  createAttachUrl(ref: TerminalRef, options?: { fromSeq?: number; token?: string; size?: { cols: number; rows: number } | null }): string;
+  sendInput(ref: TerminalRef, data: string): Promise<void>;
+  attachTab(ref: TerminalRef, options?: ShellAttachOptions): Promise<{ detached: boolean; exitCode: number | null }>;
 }
+
+export interface TerminalRef { workspaceId: string; tabId: string }
+
+const TerminalRefSchema = z.object({
+  workspaceId: z.string().regex(/^tws_[0-9a-f]{32}$/),
+  tabId: z.string().regex(/^tt_[0-9a-f]{32}$/),
+}).strict();
+const TerminalGridSizeSchema = z.object({
+  cols: z.number().int().min(20).max(500),
+  rows: z.number().int().min(5).max(200),
+}).strict();
+const TerminalServerEventBaseSchema = z.object({
+  terminalRef: TerminalRefSchema,
+  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+});
+const TerminalServerFrameSchema = z.discriminatedUnion("type", [
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("attached"),
+    canonicalSize: TerminalGridSizeSchema,
+    nextSeq: z.number().int().min(0),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("snapshot"),
+    canonicalSize: TerminalGridSizeSchema,
+    seq: z.number().int().min(0),
+    ansi: z.string().max(4 * 1024 * 1024),
+    viewport: z.object({
+      top: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      rows: z.number().int().min(1).max(200),
+    }).strict(),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("output"),
+    seq: z.number().int().min(0),
+    data: z.string().min(1).max(64 * 1024),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({ type: z.literal("replay-start"), fromSeq: z.number().int().min(0) }).strict(),
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("replay-evicted"),
+    fromSeq: z.number().int().min(0),
+    nextSeq: z.number().int().min(0),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("replay-gap"),
+    fromSeq: z.number().int().min(0),
+    nextSeq: z.number().int().min(0),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("replay-end"),
+    nextSeq: z.number().int().min(0),
+    toSeq: z.number().int().min(0).nullable().optional(),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({ type: z.literal("canonical-size"), canonicalSize: TerminalGridSizeSchema }).strict(),
+  TerminalServerEventBaseSchema.extend({ type: z.literal("pong") }).strict(),
+  TerminalServerEventBaseSchema.extend({ type: z.literal("exit"), exitCode: z.number().int().nullable() }).strict(),
+  z.object({
+    type: z.literal("error"),
+    terminalRef: TerminalRefSchema.optional(),
+    code: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]{0,79}$/),
+    message: z.string().min(1).max(720),
+  }).strict(),
+  z.object({
+    type: z.literal("safe-error"),
+    terminalRef: TerminalRefSchema.optional(),
+    error: z.object({
+      code: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]{0,79}$/),
+      message: z.string().min(1).max(720),
+    }).strict(),
+  }).strict(),
+]);
 
 export interface ShellClientError extends Error {
   code: string;
@@ -481,13 +540,14 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const base = options.gatewayUrl.replace(/\/+$/, "");
-  const terminalSessionsPath = "/api/terminal/sessions";
-  const terminalLayoutsPath = "/api/terminal/layouts";
+  const terminalWorkspacesPath = "/api/terminal/workspaces";
 
-  function createAttachUrl(name: string, attachOptions: { fromSeq?: number; token?: string; size?: { cols: number; rows: number } | null } = {}): string {
-    const url = new URL(`${base}/ws/terminal/session`);
+  function createAttachUrl(ref: TerminalRef, attachOptions: { fromSeq?: number; token?: string; size?: { cols: number; rows: number } | null } = {}): string {
+    const url = new URL(`${base}/ws/terminal/tab`);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.searchParams.set("session", name);
+    url.searchParams.set("workspaceId", ref.workspaceId);
+    url.searchParams.set("tabId", ref.tabId);
+    url.searchParams.set("client", "cli");
     if (attachOptions.size) {
       // Declare as a hard sizing client (spec 107 FR-007): a TTY cannot scale
       // its render, so its size participates in canonical-size negotiation.
@@ -569,18 +629,57 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
     return payload;
   }
 
+  async function sendOneShotInput(url: string, ref: TerminalRef, data: string): Promise<void> {
+    const WebSocketImpl = await import("ws").then((mod) => mod.WebSocket as unknown as NonNullable<ShellAttachOptions["WebSocketImpl"]>);
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocketImpl(url, options.token ? { headers: { Authorization: `Bearer ${options.token}` } } : undefined);
+      const timer = setTimeout(() => {
+        ws.close();
+        reject(Object.assign(new Error("Request failed"), { code: "request_timeout" }));
+      }, timeoutMs);
+      timer.unref?.();
+      const finish = (error?: Error) => {
+        clearTimeout(timer);
+        ws.close();
+        if (error) reject(error); else resolve();
+      };
+      ws.on("message", (raw: unknown) => {
+        try {
+          const frame = JSON.parse(Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw)) as { type?: unknown };
+          if (frame.type !== "attached") return;
+          ws.send(JSON.stringify({ type: "input", terminalRef: ref, data }));
+          ws.send(JSON.stringify({ type: "detach", terminalRef: ref }));
+          finish();
+        } catch (error) {
+          console.error(
+            "matrix shell: invalid terminal response",
+            error instanceof Error ? error.name : "unknown_error",
+          );
+          finish(Object.assign(new Error("Request failed"), { code: "invalid_response" }));
+        }
+      });
+      ws.on("error", () => finish(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
+    });
+  }
+
   return {
-    async listSessions() {
-      const payload = await request(terminalSessionsPath);
+    async listWorkspaces() {
+      const payload = await request(terminalWorkspacesPath);
       if (
         typeof payload === "object" &&
         payload !== null &&
-        "sessions" in payload &&
-        Array.isArray((payload as { sessions: unknown }).sessions)
+        "workspaces" in payload &&
+        Array.isArray((payload as { workspaces: unknown }).workspaces)
       ) {
-        return (payload as { sessions: unknown[] }).sessions;
+        return (payload as { workspaces: unknown[] }).workspaces;
       }
       return [];
+    },
+    async listProjects() {
+      const payload = await request("/api/coding-agents/summary");
+      if (!payload || typeof payload !== "object") return [];
+      const projects = (payload as { projects?: { items?: unknown } }).projects?.items;
+      return Array.isArray(projects) ? projects : [];
     },
     async runCommand(input) {
       const payload = await request("/api/terminal/run", {
@@ -601,87 +700,28 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         durationMs: typeof result.durationMs === "number" ? result.durationMs : 0,
       };
     },
-    async createSession(input) {
-      return (await request(terminalSessionsPath, {
+    async ensureWorkspace(input = {}) {
+      return (await request(`${terminalWorkspacesPath}/ensure`, {
         method: "POST",
         body: JSON.stringify(input),
       })) as Record<string, unknown>;
     },
-    async deleteSession(name, options = {}) {
-      const suffix = options.force ? "?force=1" : "";
-      await request(`${terminalSessionsPath}/${encodeURIComponent(name)}${suffix}`, {
+    async createTab(workspaceId, input) {
+      return (await request(`${terminalWorkspacesPath}/${encodeURIComponent(workspaceId)}/tabs`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      })) as Record<string, unknown>;
+    },
+    async terminateTab(ref) {
+      await request(`${terminalWorkspacesPath}/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`, {
         method: "DELETE",
       });
-    },
-    async listTabs(name) {
-      const payload = await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/tabs`);
-      return typeof payload === "object" && payload !== null && "tabs" in payload && Array.isArray((payload as { tabs: unknown }).tabs)
-        ? (payload as { tabs: unknown[] }).tabs
-        : [];
-    },
-    async createTab(name, input) {
-      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/tabs`, {
-        method: "POST",
-        body: JSON.stringify(input),
-      })) as Record<string, unknown>;
-    },
-    async switchTab(name, tab) {
-      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/tabs/${tab}/go`, {
-        method: "POST",
-      })) as Record<string, unknown>;
-    },
-    async closeTab(name, tab) {
-      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/tabs/${tab}`, {
-        method: "DELETE",
-      })) as Record<string, unknown>;
-    },
-    async splitPane(name, input) {
-      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/panes`, {
-        method: "POST",
-        body: JSON.stringify(input),
-      })) as Record<string, unknown>;
-    },
-    async closePane(name, pane) {
-      return (await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/panes/${encodeURIComponent(pane)}`, {
-        method: "DELETE",
-      })) as Record<string, unknown>;
-    },
-    async listLayouts() {
-      const payload = await request(terminalLayoutsPath);
-      return typeof payload === "object" && payload !== null && "layouts" in payload && Array.isArray((payload as { layouts: unknown }).layouts)
-        ? (payload as { layouts: unknown[] }).layouts
-        : [];
-    },
-    async showLayout(name) {
-      return (await request(`${terminalLayoutsPath}/${encodeURIComponent(name)}`)) as Record<string, unknown>;
-    },
-    async saveLayout(name, kdl) {
-      return (await request(`${terminalLayoutsPath}/${encodeURIComponent(name)}`, {
-        method: "PUT",
-        body: JSON.stringify({ kdl }),
-      })) as Record<string, unknown>;
-    },
-    async deleteLayout(name) {
-      return (await request(`${terminalLayoutsPath}/${encodeURIComponent(name)}`, {
-        method: "DELETE",
-      })) as Record<string, unknown>;
-    },
-    async applyLayout(session, layout) {
-      return (await request(`${terminalSessionsPath}/${encodeURIComponent(session)}/layouts/${encodeURIComponent(layout)}/apply`, {
-        method: "POST",
-      })) as Record<string, unknown>;
-    },
-    async dumpLayout(session) {
-      return (await request(`${terminalSessionsPath}/${encodeURIComponent(session)}/layout`)) as Record<string, unknown>;
     },
     createAttachUrl,
-    async sendInput(name, data) {
-      await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/input`, {
-        method: "POST",
-        body: JSON.stringify({ data }),
-      });
+    async sendInput(ref, data) {
+      await sendOneShotInput(createAttachUrl(ref, { token: options.token }), ref, data);
     },
-    async attachSession(name, attachOptions = {}) {
+    async attachTab(ref, attachOptions = {}) {
       const WebSocketImpl =
         attachOptions.WebSocketImpl ??
         (await import("ws").then((mod) => mod.WebSocket as unknown as ShellAttachOptions["WebSocketImpl"]));
@@ -759,7 +799,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       let inputQueue = Promise.resolve();
       let queuedAsyncInputs = 0;
 
-      return new Promise<{ detached: boolean }>((resolve, reject) => {
+      return new Promise<{ detached: boolean; exitCode: number | null }>((resolve, reject) => {
         let settled = false;
         let currentWs: AttachWebSocket | null = null;
         let currentSocketListeners: {
@@ -776,6 +816,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         let reconnectAttempt = 0;
         let socketGeneration = 0;
         let lastSeq: number | undefined;
+        let lastRevision = -1;
         const queuedFrames: string[] = [];
         let queuedFrameBytes = 0;
         let attachTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -793,12 +834,12 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           const wsToClose = currentWs;
           if (socketOpen) {
             try {
-              wsToClose?.send(JSON.stringify({ type: "detach" }));
+              wsToClose?.send(JSON.stringify({ type: "detach", terminalRef: ref }));
             } catch (err: unknown) {
               console.warn("[shell] failed to send detach after local pipe closed:", err instanceof Error ? err.message : String(err));
             }
           }
-          settle(() => resolve({ detached: true }));
+          settle(() => resolve({ detached: true, exitCode: null }));
           wsToClose?.close();
         };
         const handleLocalStreamError = (err: unknown) => {
@@ -924,7 +965,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               return;
             }
             try {
-              currentWs.send(JSON.stringify({ type: "ping" }));
+              currentWs.send(JSON.stringify({ type: "ping", terminalRef: ref }));
               heartbeatPending = true;
               heartbeatTimeout = setTimeout(() => {
                 if (!settled && heartbeatPending) {
@@ -972,7 +1013,11 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           cleanupSocket();
           const generation = socketGeneration + 1;
           socketGeneration = generation;
-          const ws = new WebSocketImpl(createAttachUrl(name, {
+          // Revisions are ordered only within one runtime attachment. A resize
+          // can advance the workspace revision beyond the tab revision used by
+          // the next attachment, so never compare revisions across sockets.
+          lastRevision = -1;
+          const ws = new WebSocketImpl(createAttachUrl(ref, {
             ...attachOptions,
             fromSeq: currentFromSeq(),
             size: terminalSize(input, output),
@@ -1079,13 +1124,13 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         };
         const sendInputData = (data: string) => {
           for (const frameData of splitTerminalInputFrames(data)) {
-            sendFrame(JSON.stringify({ type: "input", data: frameData }));
+            sendFrame(JSON.stringify({ type: "input", terminalRef: ref, data: frameData }));
           }
         };
         const detachLocal = () => {
           const wsToClose = currentWs;
-          sendFrame(JSON.stringify({ type: "detach" }));
-          settle(() => resolve({ detached: true }));
+          sendFrame(JSON.stringify({ type: "detach", terminalRef: ref }));
+          settle(() => resolve({ detached: true, exitCode: null }));
           wsToClose?.close();
         };
         const handleInputFailure = (err: unknown) => {
@@ -1119,7 +1164,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           const progressShownAt = Date.now();
           writeError(`\r\n${RICH_PASTE_PROGRESS_MESSAGE}\r\n`);
           return richPasteRewriter.rewrite({
-            sessionName: name,
+            sessionName: `${ref.workspaceId}:${ref.tabId}`,
             text: options.manualClipboardPaste ? "" : data,
             observablePaste: options.manualClipboardPaste ? true : observablePaste,
           }).then(async (result) => {
@@ -1266,7 +1311,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           if (!size) {
             return;
           }
-          sendFrame(JSON.stringify({ type: "resize", ...size }));
+          sendFrame(JSON.stringify({ type: "resize", terminalRef: ref, mode: "hard", size }));
         };
         const schedulePostAttachResizeFrames = () => {
           setTimeout(sendResizeFrame, 50).unref?.();
@@ -1280,7 +1325,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             detachLocal();
             return;
           }
-          sendFrame(JSON.stringify({ type: "input", data: "\u0003" }));
+          sendFrame(JSON.stringify({ type: "input", terminalRef: ref, data: "\u0003" }));
           process.once("SIGINT", onSignal);
         };
         const onProcessExit = () => {
@@ -1305,10 +1350,20 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
             return;
           }
-          if (!parsed || typeof parsed !== "object") {
+          const validated = TerminalServerFrameSchema.safeParse(parsed);
+          if (!validated.success) {
             return;
           }
-          const msg = parsed as Record<string, unknown>;
+          const msg = validated.data;
+          if ("terminalRef" in msg && msg.terminalRef && (
+            msg.terminalRef.workspaceId !== ref.workspaceId || msg.terminalRef.tabId !== ref.tabId
+          )) {
+            return;
+          }
+          if ("revision" in msg) {
+            if (msg.revision < lastRevision) return;
+            lastRevision = msg.revision;
+          }
           if (msg.type === "attached") {
             everAttached = true;
             reconnectAttempt = 0;
@@ -1331,15 +1386,16 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             if (writeRemoteOutput(msg.data) && Number.isSafeInteger(msg.seq) && (msg.seq as number) >= 0) {
               lastSeq = Math.max(lastSeq ?? -1, msg.seq as number);
             }
+          } else if (msg.type === "snapshot" && typeof msg.ansi === "string") {
+            noteRemoteActivity();
+            writeRemoteOutput("\u001b[2J\u001b[H" + msg.ansi);
+            if (Number.isSafeInteger(msg.seq) && (msg.seq as number) >= 0) lastSeq = msg.seq as number;
           } else if (msg.type === "pong") {
             noteRemoteActivity();
-          } else if (msg.type === "lease-revoked") {
-            // Another focused renderer took control. Do not reconnect and
-            // immediately steal the lease back; leave the local TTY cleanly.
-            settle(() => resolve({ detached: true }));
-          } else if (msg.type === "error") {
-            const code = typeof msg.code === "string" && SAFE_SHELL_SERVER_ERROR_CODES.has(msg.code)
-              ? msg.code
+          } else if (msg.type === "error" || msg.type === "safe-error") {
+            const requestedCode = msg.type === "error" ? msg.code : msg.error.code;
+            const code = SAFE_SHELL_SERVER_ERROR_CODES.has(requestedCode)
+              ? requestedCode
               : "attach_failed";
             if (everAttached && code === "attach_failed") {
               currentWs?.close();
@@ -1347,7 +1403,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
             settle(() => reject(Object.assign(new Error("Request failed"), { code })));
           } else if (msg.type === "exit") {
-            settle(() => resolve({ detached: false }));
+            const exitCode = typeof msg.exitCode === "number" ? msg.exitCode : null;
+            settle(() => resolve({ detached: false, exitCode }));
           }
         };
         const onClose = () => {
