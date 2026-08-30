@@ -14,6 +14,7 @@ const GATEWAY_URL =
 const PLATFORM_URL = "https://platform.internal.example";
 const NATIVE_MODEL = "claude-sonnet-5";
 const CANONICAL_MODEL = "anthropic/claude-sonnet-5";
+const RESERVED_MICROUSD = 6_000;
 const CREDENTIAL = `sk-matrix-funded-credential_123.${"s".repeat(43)}`;
 const NOW = new Date("2026-08-30T20:00:00.000Z");
 
@@ -63,13 +64,14 @@ function authorizationResponse(requestId: string, reservationId = "reservation_1
     contractVersion: 1, authorized: true, identity: identity(), policy: policy(),
     funding: {
       asOf: NOW.toISOString(), periodStart: "2026-08-01T00:00:00.000Z", monthlyBudgetMicrousd: 100_000,
-      settledThisMonthMicrousd: 0, reservedMicrousd: 3_600, reservedThisMonthMicrousd: 3_600,
+      settledThisMonthMicrousd: 0, reservedMicrousd: RESERVED_MICROUSD,
+      reservedThisMonthMicrousd: RESERVED_MICROUSD,
       promotionalBalanceMicrousd: 100_000, addonBalanceMicrousd: 0, creditBalanceMicrousd: 100_000,
-      remainingBalanceMicrousd: 96_400, remainingBudgetMicrousd: 96_400,
+      remainingBalanceMicrousd: 94_000, remainingBudgetMicrousd: 94_000,
     },
     reservation: {
-      reservationId, requestId, modelId: CANONICAL_MODEL, reservedMicrousd: 3_600,
-      remainingBalanceMicrousd: 96_400, remainingBudgetMicrousd: 96_400,
+      reservationId, requestId, modelId: CANONICAL_MODEL, reservedMicrousd: RESERVED_MICROUSD,
+      remainingBalanceMicrousd: 94_000, remainingBudgetMicrousd: 94_000,
       periodStart: "2026-08-01T00:00:00.000Z", expiresAt: "2026-08-30T20:05:00.000Z", status: "reserved",
     },
   };
@@ -94,9 +96,9 @@ function finalizationResponse(input: {
     requestId: input.requestId,
     tokenId: "credential_123",
     actualCostMicrousd: input.actualCostMicrousd,
-    releasedMicrousd: 3_600 - input.actualCostMicrousd,
-    remainingBalanceMicrousd: 96_400,
-    remainingBudgetMicrousd: 96_400,
+    releasedMicrousd: RESERVED_MICROUSD - input.actualCostMicrousd,
+    remainingBalanceMicrousd: 94_000,
+    remainingBudgetMicrousd: 94_000,
     funding: authorizationResponse(input.requestId).funding,
     settledAt: NOW.toISOString(),
     status: "settled",
@@ -138,7 +140,7 @@ describe("funded relay configuration and pricing", () => {
     });
   });
 
-  it("maps exactly Sonnet 5 and prices only a current version with integer safety margin", () => {
+  it("maps exactly Sonnet 5 and reserves the current maximum cache-write price", () => {
     expect(mapFundedModel(NATIVE_MODEL)).toEqual({
       nativeModelId: NATIVE_MODEL, canonicalModelId: CANONICAL_MODEL,
     });
@@ -147,10 +149,17 @@ describe("funded relay configuration and pricing", () => {
     }
     expect(estimateWorstCaseMicrousd({
       canonicalModelId: CANONICAL_MODEL, inputTokens: 1_000, maxOutputTokens: 100, now: NOW,
-    })).toMatchObject({ amountMicrousd: 3_600, pricingVersion: "anthropic-2026-08-29" });
+    })).toMatchObject({
+      amountMicrousd: 6_000,
+      pricingVersion: "anthropic-2026-08-31-standard",
+      pricingValidThrough: "2026-09-30T23:59:59.999Z",
+    });
+    expect(estimateWorstCaseMicrousd({
+      canonicalModelId: CANONICAL_MODEL, inputTokens: 200_001, maxOutputTokens: 1, now: NOW,
+    })).toMatchObject({ amountMicrousd: 960_017 });
     expect(() => estimateWorstCaseMicrousd({
       canonicalModelId: CANONICAL_MODEL, inputTokens: 1, maxOutputTokens: 1,
-      now: new Date("2026-09-01T00:00:00.000Z"),
+      now: new Date("2026-10-01T00:00:00.000Z"),
     })).toThrow(/expired/i);
     expect(() => estimateWorstCaseMicrousd({
       canonicalModelId: "anthropic/unknown", inputTokens: 1, maxOutputTokens: 1, now: NOW,
@@ -178,7 +187,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         if (action === "authorize") {
           expect(body).toEqual({
             credential: CREDENTIAL, requestId: "request_123",
-            modelId: CANONICAL_MODEL, maxCostMicrousd: 3_600,
+            modelId: CANONICAL_MODEL, maxCostMicrousd: RESERVED_MICROUSD,
           });
           return json(authorizationResponse("request_123"));
         }
@@ -371,7 +380,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
-  it("fails closed on expired pricing after count and before reserve or generation", async () => {
+  it("fails closed after the deliberate pricing review horizon", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
@@ -384,7 +393,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       return json({});
     });
     const relay = configuredRelay(fetchMock as typeof fetch, {
-      now: () => new Date("2026-09-01T00:00:00.000Z"),
+      now: () => new Date("2026-10-01T00:00:00.000Z"),
     });
     const app = new Hono();
     relay.register(app);
@@ -421,7 +430,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
           reservationId: body.reservationId,
           requestId: "request_2",
           tokenId: "credential_123",
-          releasedMicrousd: 3_600,
+          releasedMicrousd: RESERVED_MICROUSD,
           releasedAt: NOW.toISOString(),
           reason: "pre_upstream_failure",
           status: "released",
@@ -434,7 +443,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         return json(finalizationResponse({
           requestId: "request_1",
           reservationId: body.reservationId,
-          actualCostMicrousd: 3_600,
+          actualCostMicrousd: RESERVED_MICROUSD,
           finalizationMode: "conservative",
         }));
       }
@@ -474,7 +483,8 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         const body = JSON.parse(String(init?.body));
         events.push(`finalize:${body.mode}`);
         return json(finalizationResponse({
-          requestId: "request_123", actualCostMicrousd: 3_600, finalizationMode: "conservative",
+          requestId: "request_123", actualCostMicrousd: RESERVED_MICROUSD,
+          finalizationMode: "conservative",
         }));
       }
       events.push("generation_failure");
@@ -506,7 +516,8 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         const body = JSON.parse(String(init?.body));
         events.push(`finalize:${body.mode}`);
         return json(finalizationResponse({
-          requestId: "request_123", actualCostMicrousd: 3_600, finalizationMode: "conservative",
+          requestId: "request_123", actualCostMicrousd: RESERVED_MICROUSD,
+          finalizationMode: "conservative",
         }));
       }
       return new Response(new ReadableStream<Uint8Array>({
