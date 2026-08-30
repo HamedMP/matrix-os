@@ -493,7 +493,9 @@ describe("CommandPalette", () => {
 
   it("opens provider setup actions in a foreground terminal from the command palette", async () => {
     const openTab = vi.fn();
-    const post = vi.fn().mockResolvedValue({ name: "matrix-setup-codex-a1b2c3" });
+    const post = vi.fn(async (path: string) => path.endsWith("/ensure")
+      ? { workspace: { id: "tws_00000000000000000000000000000001" } }
+      : { tab: { id: "tt_00000000000000000000000000000001" } });
     useTabs.setState({ openTab });
     useConnection.setState({
       api: {
@@ -539,7 +541,7 @@ describe("CommandPalette", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminals: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       },
     });
 
@@ -548,24 +550,29 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("Install Codex"));
 
     await waitFor(() => {
-      expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
-        name: expect.stringMatching(/^matrix-setup-codex-[a-z0-9]{6}$/),
+      expect(post).toHaveBeenCalledWith("/api/terminal/workspaces/tws_00000000000000000000000000000001/tabs", {
+        name: "Install Codex",
         cwd: "projects",
-        cmd: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@0.144.6",
+        command: ["sh", "-lc", "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@0.144.6"],
       });
     });
     expect(openTab).toHaveBeenCalledWith({
       kind: "terminals",
       title: "Terminal",
     });
-    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-codex-a1b2c3");
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(
+      "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
+    );
   });
 
-  it("uses distinct setup session names for similar provider setup actions", async () => {
+  it("creates distinct setup tabs for similar provider actions", async () => {
     const openTab = vi.fn();
-    const post = vi.fn()
-      .mockResolvedValueOnce({ name: "matrix-setup-codex-alp-111111" })
-      .mockResolvedValueOnce({ name: "matrix-setup-codex-alp-222222" });
+    let tab = 0;
+    const post = vi.fn(async (path: string) => {
+      if (path.endsWith("/ensure")) return { workspace: { id: "tws_00000000000000000000000000000001" } };
+      tab += 1;
+      return { tab: { id: `tt_${tab.toString(16).padStart(32, "0")}` } };
+    });
     useTabs.setState({ openTab });
     useConnection.setState({
       api: {
@@ -629,7 +636,7 @@ describe("CommandPalette", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminals: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       },
     });
 
@@ -639,13 +646,13 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("Install Codex Two"));
 
     await waitFor(() => {
-      expect(post).toHaveBeenCalledTimes(2);
+      expect(post).toHaveBeenCalledTimes(4);
     });
-    const firstName = (post.mock.calls[0]![1] as { name: string }).name;
-    const secondName = (post.mock.calls[1]![1] as { name: string }).name;
-    expect(firstName).not.toBe(secondName);
-    expect(firstName).toMatch(/^matrix-setup-[a-z0-9-]{1,18}$/);
-    expect(secondName).toMatch(/^matrix-setup-[a-z0-9-]{1,18}$/);
+    const tabCreates = post.mock.calls.filter(([path]) => String(path).endsWith("/tabs"));
+    expect(tabCreates.map((call) => call[1])).toEqual([
+      { name: "Install Codex One", cwd: "projects", command: ["sh", "-lc", "echo setup-one"] },
+      { name: "Install Codex Two", cwd: "projects", command: ["sh", "-lc", "echo setup-two"] },
+    ]);
   });
 
   it("keeps the palette open with a generic error when provider setup cannot create a terminal", async () => {
@@ -695,7 +702,7 @@ describe("CommandPalette", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminals: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       },
     });
 
@@ -752,7 +759,7 @@ describe("CommandPalette", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminals: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       },
     });
 

@@ -7,13 +7,14 @@ import { TerminalSessionSidebar } from "../../desktop/src/renderer/src/features/
 
 describe("TerminalSessionSidebar", () => {
   it("opens sessions from a non-squashing, scrollable list with status dots", () => {
+    const stableRef = `tws_${"a".repeat(32)}:tt_${"1".repeat(32)}`;
     const onSelect = vi.fn();
     const onCreate = vi.fn();
     const onDelete = vi.fn();
     const { container } = render(
       <TerminalSessionSidebar
         sessions={[
-          { name: "swift-willow", status: "active", updatedAt: new Date(Date.now() - 5 * 60_000).toISOString() },
+          { name: stableRef, subtitle: "swift-willow", status: "active", updatedAt: new Date(Date.now() - 5 * 60_000).toISOString() },
           { name: "quiet-pine", status: "exited" },
         ]}
         selectedName={null}
@@ -29,11 +30,12 @@ describe("TerminalSessionSidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "New shell session" }));
     expect(onCreate).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Open swift-willow" }));
-    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: "swift-willow" }));
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: stableRef, subtitle: "swift-willow" }));
+    expect(screen.queryByText(stableRef)).toBeNull();
     expect(screen.getByText("5 minutes ago")).toBeTruthy();
     fireEvent.mouseEnter(screen.getByRole("button", { name: "Open swift-willow" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete swift-willow" }));
-    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ name: "swift-willow" }));
+    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ name: stableRef }));
     expect(onSelect).toHaveBeenCalledOnce();
     expect(container.querySelector('[data-terminal-session-status="active"]')).toBeTruthy();
     expect(container.querySelector('[data-terminal-session-status="inactive"]')).toBeTruthy();

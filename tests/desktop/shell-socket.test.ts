@@ -7,6 +7,35 @@ import {
   type WebSocketLike,
 } from "@desktop/renderer/src/lib/shell-socket";
 
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TAB_ID = `tt_${"b".repeat(32)}`;
+const TERMINAL_REF_KEY = `${WORKSPACE_ID}:${TAB_ID}`;
+const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
+
+function currentServerFrame(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const frame = value as Record<string, unknown>;
+  if (typeof frame.type !== "string") return frame;
+  if (frame.type === "error" || frame.type === "safe-error") return frame;
+  const common = { ...frame, terminalRef: TERMINAL_REF, revision: frame.revision ?? 1 };
+  if (frame.type === "attached") {
+    return {
+      type: "attached",
+      terminalRef: TERMINAL_REF,
+      canonicalSize: frame.canonicalSize ?? { cols: 120, rows: 40 },
+      revision: frame.revision ?? 1,
+      nextSeq: frame.nextSeq ?? frame.fromSeq ?? 0,
+    };
+  }
+  if (frame.type === "exit") return {
+    type: "exit",
+    terminalRef: TERMINAL_REF,
+    revision: frame.revision ?? 1,
+    exitCode: frame.exitCode ?? frame.code ?? null,
+  };
+  return common;
+}
+
 class FakeWebSocket implements WebSocketLike {
   readonly sent: string[] = [];
   closed = false;
@@ -31,7 +60,7 @@ class FakeWebSocket implements WebSocketLike {
   }
 
   frame(value: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(value) });
+    this.onmessage?.({ data: JSON.stringify(currentServerFrame(value)) });
   }
 
   raw(data: unknown): void {
@@ -55,7 +84,10 @@ class FakeWebSocket implements WebSocketLike {
   resizeFrames(): Array<{ cols: number; rows: number }> {
     return this.sentFrames()
       .filter((frame) => frame.type === "resize")
-      .map((frame) => ({ cols: Number(frame.cols), rows: Number(frame.rows) }));
+      .map((frame) => {
+        const size = frame.size as Record<string, unknown>;
+        return { cols: Number(size.cols), rows: Number(size.rows) };
+      });
   }
 }
 
@@ -104,8 +136,6 @@ interface RecordedEvents {
   states: Array<{ state: ShellSocketState; detail?: { code?: string } }>;
   outputs: Array<{ data: string; seq: number }>;
   canonicalSizes: Array<{ cols: number; rows: number }>;
-  revocations: number;
-  presentationResets: number;
   gaps: number;
   exits: number[];
 }
@@ -122,10 +152,10 @@ interface Harness {
 function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
   const sockets: FakeWebSocket[] = [];
   const timers = new FakeTimers();
-  const events: RecordedEvents = { states: [], outputs: [], canonicalSizes: [], revocations: 0, presentationResets: 0, gaps: 0, exits: [] };
+  const events: RecordedEvents = { states: [], outputs: [], canonicalSizes: [], gaps: 0, exits: [] };
   const socket = new ShellSocket({
     baseUrl: "https://app.matrix-os.com",
-    sessionName: "main",
+    sessionName: TERMINAL_REF_KEY,
     runtimeSlot: "primary",
     events: {
       onState: (state, detail) => {
@@ -136,12 +166,6 @@ function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
       },
       onCanonicalSize: (size) => {
         events.canonicalSizes.push(size);
-      },
-      onLeaseRevoked: () => {
-        events.revocations += 1;
-      },
-      onPresentationReset: () => {
-        events.presentationResets += 1;
       },
       onGap: () => {
         events.gaps += 1;
@@ -174,10 +198,10 @@ function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
   };
 }
 
-function connectAndAttach(h: Harness, session = "main"): void {
+function connectAndAttach(h: Harness): void {
   h.socket.connect();
   h.latest().open();
-  h.latest().frame({ type: "attached", session, state: "running", fromSeq: 0 });
+  h.latest().frame({ type: "attached", nextSeq: 0 });
 }
 
 let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -195,7 +219,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness();
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
     );
     expect(LIVE_TAIL_FROM_SEQ).toBe(9_007_199_254_740_991);
   });
@@ -208,18 +232,18 @@ describe("ShellSocket URL building", () => {
     h.latest().frame({ type: "output", seq: 41, data: "x" });
     h.latest().serverClose();
     h.timers.advance(500);
-    expect(h.latest().url).toContain("session=main&fromSeq=42&chat=chat_selected-one");
+    expect(h.latest().url).toContain(`workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=42&chat=chat_selected-one`);
 
     h.socket.detach();
     expect(h.sockets).toHaveLength(3);
     expect(h.latest().url).toContain("&chat=chat_selected-one");
   });
 
-  it("keeps standalone session URLs unchanged when no Chat context is supplied", () => {
+  it("keeps standalone workspace-tab URLs free of Chat context", () => {
     const h = createHarness();
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
     );
     expect(h.latest().url).not.toContain("chat=");
   });
@@ -229,7 +253,8 @@ describe("ShellSocket URL building", () => {
     h.socket.resize(132, 36);
     h.socket.connect();
 
-    expect(h.latest().url).toContain("client=hard&cols=132&rows=36");
+    expect(h.latest().url).toContain("client=electron");
+    expect(h.latest().url).toContain("cols=132&rows=36");
     h.latest().open();
     h.latest().frame({
       type: "attached",
@@ -238,27 +263,13 @@ describe("ShellSocket URL building", () => {
       fromSeq: 0,
       canonicalSize: { cols: 132, rows: 36 },
     });
-    h.latest().frame({ type: "canonical-size", cols: 120, rows: 30 });
+    h.latest().frame({ type: "canonical-size", canonicalSize: { cols: 120, rows: 30 } });
 
     expect(h.events.canonicalSizes).toEqual([{ cols: 132, rows: 36 }, { cols: 120, rows: 30 }]);
   });
 
-  it("stops reconnecting after another renderer takes the live lease", () => {
-    const h = createHarness({ clientClass: "hard" });
-    h.socket.resize(120, 40);
-    connectAndAttach(h);
-
-    h.latest().frame({ type: "lease-revoked", epoch: 1 });
-    h.latest().serverClose();
-    h.timers.advance(30_000);
-
-    expect(h.events.revocations).toBe(1);
-    expect(h.stateNames().at(-1)).toBe("ended");
-    expect(h.sockets).toHaveLength(1);
-  });
-
-  it("renews an idle exclusive lease with periodic heartbeat pings", () => {
-    const h = createHarness({ clientClass: "hard" });
+  it("keeps an idle attachment healthy with periodic heartbeat pings", () => {
+    const h = createHarness();
     h.socket.resize(120, 40);
     h.socket.connect();
     h.latest().open();
@@ -267,14 +278,13 @@ describe("ShellSocket URL building", () => {
       session: "main",
       state: "running",
       fromSeq: 0,
-      lease: { epoch: 1 },
     });
 
-    h.timers.advance(10_000);
-    expect(h.latest().sentFrames()).toContainEqual({ type: "ping" });
+    h.timers.advance(30_000);
+    expect(h.latest().sentFrames()).toContainEqual({ type: "ping", terminalRef: TERMINAL_REF });
 
     h.latest().frame({ type: "pong" });
-    h.timers.advance(10_000);
+    h.timers.advance(30_000);
     expect(h.latest().sentFrames().filter((frame) => frame.type === "ping")).toHaveLength(2);
 
     h.socket.dispose();
@@ -283,15 +293,20 @@ describe("ShellSocket URL building", () => {
     expect(h.latest().sentFrames().filter((frame) => frame.type === "ping")).toHaveLength(pingCount);
   });
 
-  it("resets presentation state before accepting a fresh Zellij bootstrap", () => {
-    const h = createHarness({ clientClass: "hard" });
+  it("replaces replay state from a durable snapshot", () => {
+    const h = createHarness();
     h.socket.resize(120, 40);
     connectAndAttach(h);
 
-    h.latest().frame({ type: "presentation-reset" });
-    h.latest().frame({ type: "output", seq: 7, data: "\u001b[?1000hless redraw" });
+    h.latest().frame({
+      type: "snapshot",
+      seq: 7,
+      ansi: "\u001b[?1000hless redraw",
+      canonicalSize: { cols: 120, rows: 40 },
+      viewport: { top: 0, rows: 40 },
+    });
 
-    expect(h.events.presentationResets).toBe(1);
+    expect(h.events.gaps).toBe(1);
     expect(h.events.outputs).toEqual([{ data: "\u001b[?1000hless redraw", seq: 7 }]);
   });
 
@@ -299,7 +314,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness({ baseUrl: "http://localhost:3001/" });
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `ws://localhost:3001/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `ws://localhost:3001/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
     );
   });
 
@@ -313,23 +328,7 @@ describe("ShellSocket URL building", () => {
     expect(primary.latest().url).not.toContain("runtime=");
   });
 
-  it("auto-creates with an encoded cwd and no fromSeq", () => {
-    const h = createHarness({ sessionName: undefined, cwd: "/Users/h/my project" });
-    h.socket.connect();
-    expect(h.latest().url).toBe(
-      "wss://app.matrix-os.com/ws/terminal?cwd=%2FUsers%2Fh%2Fmy%20project",
-    );
-  });
-
-  it("appends runtime to the auto-create url for non-primary slots", () => {
-    const h = createHarness({ sessionName: undefined, cwd: "/work", runtimeSlot: "vm-3" });
-    h.socket.connect();
-    expect(h.latest().url).toBe(
-      "wss://app.matrix-os.com/ws/terminal?cwd=%2Fwork&runtime=vm-3",
-    );
-  });
-
-  it("requires exactly one of sessionName or cwd", () => {
+  it("requires a workspace/tab ref and rejects websocket auto-create", () => {
     const events = {
       onState: () => undefined,
       onOutput: () => undefined,
@@ -338,17 +337,17 @@ describe("ShellSocket URL building", () => {
     };
     expect(
       () => new ShellSocket({ baseUrl: "https://x", runtimeSlot: "primary", events }),
-    ).toThrow(/sessionName or cwd/);
+    ).toThrow(/workspace\/tab reference/);
     expect(
       () =>
         new ShellSocket({
           baseUrl: "https://x",
-          sessionName: "a",
+          sessionName: TERMINAL_REF_KEY,
           cwd: "/b",
           runtimeSlot: "primary",
           events,
         }),
-    ).toThrow(/sessionName or cwd/);
+    ).toThrow(/workspace\/tab reference/);
   });
 
   it("reconnects from lastSeq+1", () => {
@@ -359,7 +358,7 @@ describe("ShellSocket URL building", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      "wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=42",
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=42`,
     );
   });
 
@@ -370,21 +369,28 @@ describe("ShellSocket URL building", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
     );
   });
 
-  it("reconnects an auto-created terminal by its attached session name", () => {
-    const h = createHarness({ sessionName: undefined, cwd: "/work" });
+  it("accepts a reconnect handshake after a higher workspace resize revision", () => {
+    const h = createHarness();
     h.socket.connect();
     h.latest().open();
-    h.latest().frame({ type: "attached", session: "w-1", state: "running", fromSeq: 0 });
-    h.latest().frame({ type: "output", seq: 5, data: "x" });
+    h.latest().frame({ type: "attached", revision: 2, nextSeq: 0 });
+    h.latest().frame({
+      type: "canonical-size",
+      revision: 9,
+      canonicalSize: { cols: 132, rows: 36 },
+    });
+
     h.latest().serverClose();
     h.timers.advance(500);
-    expect(h.latest().url).toBe(
-      "wss://app.matrix-os.com/ws/terminal/session?session=w-1&fromSeq=6",
-    );
+    h.latest().open();
+    h.latest().frame({ type: "attached", revision: 2, nextSeq: 0 });
+
+    expect(h.socket.state).toBe("attached");
+    expect(h.stateNames()).toEqual(["connecting", "attached", "reconnecting", "attached"]);
   });
 });
 
@@ -408,6 +414,43 @@ describe("ShellSocket server frames", () => {
       { data: "world", seq: 8 },
     ]);
     expect(h.socket.lastSeq).toBe(8);
+  });
+
+  it("keeps output flowing after a higher workspace resize revision", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.latest().open();
+    h.latest().frame({ type: "attached", revision: 2, nextSeq: 0 });
+    h.latest().frame({
+      type: "canonical-size",
+      revision: 9,
+      canonicalSize: { cols: 132, rows: 36 },
+    });
+    h.latest().frame({ type: "output", revision: 3, seq: 1, data: "still live" });
+
+    expect(h.events.outputs).toEqual([{ data: "still live", seq: 1 }]);
+  });
+
+  it("keeps newer retained output when reconnect sends an older snapshot", () => {
+    const h = createHarness();
+    connectAndAttach(h);
+    h.latest().frame({ type: "output", seq: 7, data: "newer live output" });
+
+    h.latest().serverClose();
+    h.timers.advance(500);
+    h.latest().open();
+    h.latest().frame({ type: "attached", nextSeq: 8 });
+    h.latest().frame({
+      type: "snapshot",
+      seq: 5,
+      ansi: "older checkpoint",
+      canonicalSize: { cols: 120, rows: 40 },
+      viewport: { top: 0, rows: 40 },
+    });
+
+    expect(h.events.gaps).toBe(0);
+    expect(h.events.outputs).toEqual([{ data: "newer live output", seq: 7 }]);
+    expect(h.socket.lastSeq).toBe(7);
   });
 
   it("ends on exit with the exit code and never reconnects", () => {
@@ -493,7 +536,7 @@ describe("ShellSocket server frames", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
     );
   });
 
@@ -739,7 +782,7 @@ describe("ShellSocket resize coalescing", () => {
     h.timers.advance(90);
     expect(h.latest().resizeFrames()).toEqual([
       { cols: 500, rows: 200 },
-      { cols: 1, rows: 1 },
+      { cols: 20, rows: 5 },
     ]);
   });
 
@@ -874,7 +917,7 @@ describe("ShellSocket detach and dispose", () => {
     const h = createHarness();
     connectAndAttach(h);
     h.socket.detach();
-    expect(h.latest().sentFrames()).toContainEqual({ type: "detach" });
+    expect(h.latest().sentFrames()).toContainEqual(expect.objectContaining({ type: "detach", terminalRef: TERMINAL_REF }));
     expect(h.latest().closed).toBe(true);
     expect(h.socket.state).toBe("ended");
     expect(h.timers.pendingCount).toBe(0);
@@ -914,7 +957,7 @@ describe("ShellSocket detach and dispose", () => {
     expect(h.sockets).toHaveLength(2);
     h.latest().open();
     h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
-    expect(h.latest().sentFrames()).toContainEqual({ type: "detach" });
+    expect(h.latest().sentFrames()).toContainEqual(expect.objectContaining({ type: "detach", terminalRef: TERMINAL_REF }));
     expect(h.latest().closed).toBe(true);
     h.timers.advance(120_000);
     expect(h.sockets).toHaveLength(2);
@@ -957,7 +1000,7 @@ describe("ShellSocket detach and dispose", () => {
     expect(h.socket.state).toBe("ended");
     expect(h.events.outputs).toEqual([]);
     h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
-    expect(h.latest().sentFrames()).toContainEqual({ type: "detach" });
+    expect(h.latest().sentFrames()).toContainEqual(expect.objectContaining({ type: "detach", terminalRef: TERMINAL_REF }));
   });
 
   it("detach while connecting closes the partial socket and cleanup-attaches", () => {
@@ -973,7 +1016,7 @@ describe("ShellSocket detach and dispose", () => {
     expect(h.sockets).toHaveLength(2);
     h.latest().open();
     h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
-    expect(h.latest().sentFrames()).toContainEqual({ type: "detach" });
+    expect(h.latest().sentFrames()).toContainEqual(expect.objectContaining({ type: "detach", terminalRef: TERMINAL_REF }));
     expect(h.latest().closed).toBe(true);
   });
 

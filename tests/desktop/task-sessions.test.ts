@@ -9,7 +9,6 @@ function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     baseUrl: "https://x.test",
     get: vi.fn(async (path: string) => {
-      if (path === "/api/terminal/sessions") return { sessions: [{ name: "matrix-task-1", status: "active" }] };
       if (path === "/api/sessions") {
         return { sessions: [{ id: "sess_new", runtime: { zellijSession: "matrix-task-1" } }], nextCursor: null };
       }
@@ -83,14 +82,13 @@ describe("startTaskSession", () => {
     });
     expect(useBoard.getState().error).toBe("server");
     expect(useBoard.getState().cardsByProject.proj?.some((task) => task.linkedSessionId === "sess_new")).toBe(false);
-    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-task-1?force=1");
+    expect(del).toHaveBeenCalledWith("/api/sessions/sess_new");
   });
 
   it("stops the workspace session when task linking fails before an attachable session exists", async () => {
     const del = vi.fn().mockResolvedValue({ ok: true });
     const api = makeApi({
       get: vi.fn(async (path: string) => {
-        if (path === "/api/terminal/sessions") return { sessions: [] };
         if (path === "/api/sessions") {
           return { sessions: [{ id: "sess_new", runtime: {} }], nextCursor: null };
         }
@@ -119,7 +117,6 @@ describe("startTaskSession", () => {
     const del = vi.fn().mockRejectedValue(new AppError("offline"));
     const api = makeApi({
       get: vi.fn(async (path: string) => {
-        if (path === "/api/terminal/sessions") return { sessions: [] };
         if (path === "/api/sessions") {
           return { sessions: [{ id: "sess_new", runtime: {} }], nextCursor: null };
         }

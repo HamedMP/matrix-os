@@ -15,6 +15,10 @@ import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TAB_ID = `tt_${"b".repeat(32)}`;
+const REF_KEY = `${WORKSPACE_ID}:${TAB_ID}`;
+
 function instance(driverKind: CanonicalProviderDriverKind): CanonicalProviderInstanceDescriptor {
   return {
     id: `${driverKind}_default`,
@@ -103,23 +107,25 @@ describe("system harness setup routing", () => {
   });
 
   it("opens a catalog-owned missing harness action in a foreground Terminal", async () => {
-    const post = vi.fn(async () => ({ name: "matrix-setup-opencode" }));
+    const post = vi.fn(async (path: string) => path.endsWith("/ensure")
+      ? { workspace: { id: WORKSPACE_ID } }
+      : { tab: { id: TAB_ID } });
     render(<TerminalHarness api={{ post } as unknown as ApiClient} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
-    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/terminal/sessions", expect.objectContaining({
+    await waitFor(() => expect(post).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`, expect.objectContaining({
       cwd: "projects",
-      cmd: "sh -lc 'opencode'",
+      command: ["sh", "-lc", "sh -lc 'opencode'"],
     })));
     expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminals")).toBe(true);
-    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-opencode");
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-setup-opencode"]);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(REF_KEY);
+    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual([REF_KEY]);
   });
 
   it("does not adopt a setup session after switching runtimes", async () => {
-    let resolvePost: ((value: { name: string }) => void) | undefined;
-    const post = vi.fn(() => new Promise<{ name: string }>((resolve) => {
+    let resolvePost: ((value: { workspace: { id: string } }) => void) | undefined;
+    const post = vi.fn(() => new Promise<{ workspace: { id: string } }>((resolve) => {
       resolvePost = resolve;
     }));
     render(<TerminalHarness api={{ post } as unknown as ApiClient} />);
@@ -128,7 +134,7 @@ describe("system harness setup routing", () => {
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
 
     advanceRuntimeGeneration();
-    resolvePost?.({ name: "matrix-setup-opencode" });
+    resolvePost?.({ workspace: { id: WORKSPACE_ID } });
 
     await waitFor(() => expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminals")).toBe(false));
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
@@ -148,7 +154,6 @@ describe("system harness setup routing", () => {
         key: "opencode:connect",
         label: "Connect OpenCode",
         command: "sh -lc 'opencode'",
-        sessionName: "matrix-setup-opencode",
       },
       useTabs.getState().openTab,
     );

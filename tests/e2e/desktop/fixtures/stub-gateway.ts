@@ -49,6 +49,12 @@ const TOKEN = "stub-token-1";
 const REVIEW_TOKEN = "stub-review-token-with-enough-entropy-1";
 const NOW = "2026-07-08T00:00:00.000Z";
 const HERMES_NOW = Date.parse("2026-08-12T10:30:00.000Z");
+const TERMINAL_WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TERMINAL_TAB_IDS = [
+  `tt_${"1".repeat(32)}`,
+  `tt_${"2".repeat(32)}`,
+  `tt_${"3".repeat(32)}`,
+] as const;
 
 const HERMES_CONVERSATIONS = [
   {
@@ -554,6 +560,48 @@ export function codingAgentSummary(): RuntimeSummary {
 
 export async function startStubGateway(options: StubGatewayOptions = {}): Promise<StubGateway> {
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
+  const terminalTabs: Array<Record<string, unknown>> = [
+    {
+      id: TERMINAL_TAB_IDS[0],
+      workspaceId: TERMINAL_WORKSPACE_ID,
+      name: "matrix-task-1",
+      cwd: "projects/matrix-os",
+      status: "active",
+      revision: 1,
+      order: 0,
+      placement: "active",
+      visualStatus: "running",
+      createdAt: "2026-07-08T08:30:00.000Z",
+      updatedAt: NOW,
+    },
+    {
+      id: TERMINAL_TAB_IDS[1],
+      workspaceId: TERMINAL_WORKSPACE_ID,
+      name: "matrix-review",
+      cwd: "projects/matrix-os",
+      status: "degraded",
+      revision: 1,
+      order: 1,
+      placement: "background",
+      visualStatus: "waiting",
+      createdAt: "2026-07-08T08:15:00.000Z",
+      updatedAt: NOW,
+    },
+    {
+      id: TERMINAL_TAB_IDS[2],
+      workspaceId: TERMINAL_WORKSPACE_ID,
+      name: "matrix-closed",
+      cwd: "projects/matrix-os",
+      status: "exited",
+      revision: 1,
+      order: 2,
+      placement: "background",
+      visualStatus: "finished",
+      createdAt: "2026-07-08T07:45:00.000Z",
+      updatedAt: NOW,
+    },
+  ];
+  let nextTerminalTabNumber = 4;
   let projectLifecycle: "active" | "archived" | "deleted" = "active";
   const state: StubGateway["state"] = {
     deviceCodeRequests: 0,
@@ -970,6 +1018,59 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       });
       return;
     }
+    if (req.method === "GET" && path === "/api/terminal/workspaces") {
+      json(res, 200, {
+        workspaces: [{
+          id: TERMINAL_WORKSPACE_ID,
+          scope: "project",
+          projectId: "matrix-os",
+          canonicalSize: { cols: 120, rows: 40 },
+          status: "running",
+          revision: terminalTabs.length,
+          createdAt: "2026-07-08T07:45:00.000Z",
+          updatedAt: NOW,
+          tabs: terminalTabs,
+        }],
+      });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/terminal/workspaces/ensure") {
+      json(res, 200, {
+        workspace: {
+          id: TERMINAL_WORKSPACE_ID,
+          scope: "project",
+          projectId: "matrix-os",
+          canonicalSize: { cols: 120, rows: 40 },
+          status: "running",
+          revision: terminalTabs.length,
+          createdAt: "2026-07-08T07:45:00.000Z",
+          updatedAt: NOW,
+          tabs: terminalTabs,
+        },
+      });
+      return;
+    }
+    if (req.method === "POST" && path === `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`) {
+      const body = await readBody(req);
+      const suffix = nextTerminalTabNumber.toString(16).padStart(32, "0");
+      nextTerminalTabNumber += 1;
+      const tab = {
+        id: `tt_${suffix}`,
+        workspaceId: TERMINAL_WORKSPACE_ID,
+        name: typeof body.name === "string" ? body.name : "new-shell",
+        cwd: typeof body.cwd === "string" ? body.cwd : "projects",
+        status: "active",
+        revision: 1,
+        order: terminalTabs.length,
+        placement: "active",
+        visualStatus: "running",
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
+      terminalTabs.push(tab);
+      json(res, 201, { tab });
+      return;
+    }
     if (path === "/api/terminal/sessions") {
       json(res, 200, {
         sessions: [
@@ -1190,9 +1291,13 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       socket.destroy();
       return;
     }
-    if (url.pathname === "/ws/terminal/session") {
+    if (url.pathname === "/ws/terminal/tab") {
       terminalWss.handleUpgrade(req, socket, head, (ws) => {
-        runTerminalSession(ws, url.searchParams.get("session") ?? "");
+        runTerminalTab(
+          ws,
+          url.searchParams.get("workspaceId") ?? "",
+          url.searchParams.get("tabId") ?? "",
+        );
       });
       return;
     }
@@ -1205,17 +1310,26 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     socket.destroy();
   });
 
-  function runTerminalSession(ws: WebSocket, session: string): void {
+  function runTerminalTab(ws: WebSocket, workspaceId: string, tabId: string): void {
     let seq = 0;
-    if (session !== "matrix-task-1") {
-      ws.send(JSON.stringify({ type: "error", code: "session_not_found", message: "Session not found" }));
+    const terminalRef = { workspaceId, tabId };
+    const tab = terminalTabs.find((candidate) => candidate.id === tabId);
+    if (workspaceId !== TERMINAL_WORKSPACE_ID || !tab) {
+      ws.send(JSON.stringify({ type: "error", terminalRef, code: "terminal_not_found", message: "Terminal not found" }));
       ws.close();
       return;
     }
-    ws.send(JSON.stringify({ type: "attached", session, state: "running", fromSeq: seq }));
+    const revision = typeof tab.revision === "number" ? tab.revision : 1;
+    ws.send(JSON.stringify({
+      type: "attached",
+      terminalRef,
+      canonicalSize: { cols: 120, rows: 40 },
+      revision,
+      nextSeq: seq,
+    }));
     const sendOutput = (data: string) => {
       seq += 1;
-      ws.send(JSON.stringify({ type: "output", seq, data }));
+      ws.send(JSON.stringify({ type: "output", terminalRef, revision, seq, data }));
     };
     activeTerminalOutput = sendOutput;
     ws.once("close", () => {
@@ -1233,12 +1347,25 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         );
         return;
       }
+      const ref = msg.terminalRef as Record<string, unknown> | undefined;
+      if (ref?.workspaceId !== workspaceId || ref.tabId !== tabId) return;
       if (msg.type === "input" && typeof msg.data === "string") {
         state.terminalInputs.push(msg.data);
         // Echo back like a shell, with deterministic seq numbering.
         sendOutput(msg.data.replace(/\r/g, "\r\nran!\r\nstub-shell$ "));
       } else if (msg.type === "ping") {
-        ws.send(JSON.stringify({ type: "pong" }));
+        ws.send(JSON.stringify({ type: "pong", terminalRef, revision }));
+      } else if (msg.type === "resize") {
+        const size = msg.size as Record<string, unknown> | undefined;
+        ws.send(JSON.stringify({
+          type: "canonical-size",
+          terminalRef,
+          revision,
+          canonicalSize: {
+            cols: typeof size?.cols === "number" ? size.cols : 120,
+            rows: typeof size?.rows === "number" ? size.rows : 40,
+          },
+        }));
       }
     });
   }
