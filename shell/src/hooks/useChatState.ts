@@ -35,8 +35,9 @@ export interface ChatState {
     files?: Array<{ name: string; type: string; data: string }>,
     options?: { displayText?: string; promptText?: string },
   ) => void;
-  newChat: () => Promise<void>;
+  newChat: (projectId?: string) => Promise<void>;
   switchConversation: (id: string) => void;
+  deleteConversation: (id: string) => Promise<boolean>;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
 }
@@ -50,8 +51,9 @@ export function useChatState(): ChatState {
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
   const composerDraftSequence = useRef(0);
   const { connected, connectionEpoch, subscribe, send } = useSocket();
-  const { conversations, load } = useConversation();
+  const { conversations, load, refresh, remove, setProjectContext } = useConversation();
   const sessionRef = useRef(sessionId);
+  const initialRestoreSettledRef = useRef(false);
   const lastReattachKeyRef = useRef<string | null>(null);
   const seenReplayEventIdsRef = useRef<Set<string>>(new Set());
   // Tracks the requestId of the in-flight run so abortCurrent() can target
@@ -61,7 +63,7 @@ export function useChatState(): ChatState {
   sessionRef.current = sessionId;
 
   useEffect(() => {
-    if (conversations.length === 0) return;
+    if (initialRestoreSettledRef.current || conversations.length === 0) return;
     let aborted = false;
 
     const sorted = conversations.toSorted(
@@ -69,10 +71,13 @@ export function useChatState(): ChatState {
     );
     const latest = sorted[0];
 
-    if (!sessionId && latest.messageCount > 0) {
+    if (sessionId || latest.messageCount === 0) {
+      initialRestoreSettledRef.current = true;
+    } else {
       load(latest.id)
         .then((conv) => {
-          if (!aborted && conv) {
+          if (!aborted && conv && !initialRestoreSettledRef.current) {
+            initialRestoreSettledRef.current = true;
             setSessionId(conv.id);
             setMessages(hydrateMessages(conv.messages));
           }
@@ -113,6 +118,7 @@ export function useChatState(): ChatState {
       }
 
       if (msg.type === "kernel:init") {
+        initialRestoreSettledRef.current = true;
         setSessionId(msg.sessionId);
         if (msg.requestId) {
           currentRequestIdRef.current = msg.requestId;
@@ -228,7 +234,8 @@ export function useChatState(): ChatState {
   }, []);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
-  const newChat = useCallback(async () => {
+  const newChat = useCallback(async (projectId?: string) => {
+    initialRestoreSettledRef.current = true;
     setMessages([]);
     setQueue([]);
     try {
@@ -240,7 +247,11 @@ export function useChatState(): ChatState {
       });
       if (res.ok) {
         const { id } = await res.json();
+        if (projectId && !await setProjectContext(id, projectId)) {
+          console.warn("[chat] Failed to attach project context to new conversation");
+        }
         setSessionId(id);
+        refresh();
       } else {
         setSessionId(undefined);
       }
@@ -248,11 +259,23 @@ export function useChatState(): ChatState {
       console.warn("[chat] Failed to create conversation:", err);
       setSessionId(undefined);
     }
-  }, []);
+  }, [refresh, setProjectContext]);
+
+  const deleteConversation = useCallback(async (id: string): Promise<boolean> => {
+    const removed = await remove(id);
+    if (removed && sessionRef.current === id) {
+      initialRestoreSettledRef.current = true;
+      setSessionId(undefined);
+      setMessages([]);
+      setQueue([]);
+    }
+    return removed;
+  }, [remove]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const switchConversation = useCallback(
     (id: string) => {
+      initialRestoreSettledRef.current = true;
       load(id)
         .then((conv) => {
           if (conv) {
@@ -282,6 +305,7 @@ export function useChatState(): ChatState {
     submitMessage,
     newChat,
     switchConversation,
+    deleteConversation,
     abortCurrent,
   };
 }

@@ -640,10 +640,15 @@ describe("TerminalsTab", () => {
     expect(screen.getByRole("menuitem", { name: /Codex/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /OpenCode/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /Pi/ })).toBeTruthy();
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-claude").getAttribute("src")).toContain("/agent-logos/claude-code.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-codex").getAttribute("src")).toContain("/agent-logos/codex.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-opencode").getAttribute("src")).toContain("/agent-logos/opencode-white.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-pi").getAttribute("src")).toContain("/agent-logos/pi-coding-agent.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-claude").getAttribute("src")).toBe("agent-logos/claude-code.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-codex").getAttribute("src")).toBe("agent-logos/codex.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-opencode").getAttribute("src")).toBe("agent-logos/opencode-white.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-pi").getAttribute("src")).toBe("agent-logos/pi-coding-agent.png");
+
+    expect(new URL(
+      screen.getByTestId("desktop-terminal-agent-logo-image-codex").getAttribute("src")!,
+      "file:///Applications/Matrix%20OS.app/Contents/Resources/app.asar/out/renderer/index.html",
+    ).pathname).toBe("/Applications/Matrix%20OS.app/Contents/Resources/app.asar/out/renderer/agent-logos/codex.png");
 
     fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api, {

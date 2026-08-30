@@ -40,6 +40,7 @@ export * from "#hermes-configuration";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#safe-client-error";
+export * from "#system-desktop-apps";
 export * from "#terminal-links";
 export { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 

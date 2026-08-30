@@ -8,6 +8,7 @@ import type {
   CanonicalChatEventSource,
   CanonicalChatInvalidation,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
+import { DESKTOP_Z_INDEX } from "@desktop/renderer/src/design/layering";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -746,11 +747,16 @@ describe("WorkRail", () => {
     expect(onChatDeleted).not.toHaveBeenCalled();
   });
 
-  it("opens Project deletion from both hover and right-click actions", async () => {
+  it("opens the same discoverable Rename/Delete Project menu from click and right click", async () => {
     setup();
     const project = await screen.findByRole("button", { name: "Alpha" });
 
-    expect(screen.getByRole("button", { name: "Delete Alpha project" })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for Alpha project" }), { button: 0, ctrlKey: false });
+    expect((await screen.findByRole("menu") as HTMLElement).style.zIndex).toBe(String(DESKTOP_Z_INDEX.popover));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    expect(await screen.findByRole("dialog", { name: "Rename project" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
     fireEvent.contextMenu(project, { clientX: 100, clientY: 140 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
 

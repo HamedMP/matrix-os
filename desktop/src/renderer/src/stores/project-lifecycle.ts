@@ -12,6 +12,7 @@ import { useTabs } from "./tabs";
 type LifecycleAction =
   | { type: "archive" }
   | { type: "restore" }
+  | { type: "rename"; name: string }
   | { type: "delete"; confirmation: string };
 
 const SAFE_ACTION_ERRORS: Record<string, string> = {
@@ -58,6 +59,7 @@ interface ProjectLifecycleState {
   loadArchivedProjects(api: ApiClient): Promise<boolean>;
   archiveProject(api: ApiClient, slug: string): Promise<boolean>;
   restoreProject(api: ApiClient, slug: string): Promise<boolean>;
+  renameProject(api: ApiClient, slug: string, name: string): Promise<boolean>;
   deleteProject(api: ApiClient, slug: string, confirmation: string): Promise<boolean>;
 }
 
@@ -88,7 +90,7 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
     try {
       await api.post(lifecyclePath(slug), action);
       if (!isCurrentRuntimeGeneration(generation)) return false;
-      if (action.type !== "restore") {
+      if (action.type === "archive" || action.type === "delete") {
         useBoard.getState().removeProjectState(slug);
         useTabs.getState().closeProjectTabs(slug);
         clearProjectWorkspace(slug);
@@ -125,6 +127,7 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
     loadArchivedProjects,
     archiveProject: (api, slug) => applyAction(api, slug, { type: "archive" }),
     restoreProject: (api, slug) => applyAction(api, slug, { type: "restore" }),
+    renameProject: (api, slug, name) => applyAction(api, slug, { type: "rename", name }),
     deleteProject: (api, slug, confirmation) => applyAction(api, slug, { type: "delete", confirmation }),
   };
 });

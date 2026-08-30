@@ -1,11 +1,14 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
+  Edit3,
   Folder,
   LoaderCircle,
   MessageSquare,
+  MoreHorizontal,
   PanelLeftOpenIcon,
   PinIcon,
   PinOffIcon,
@@ -14,6 +17,7 @@ import {
 } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ContextMenu } from "../../design/primitives";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type {
   CanonicalChatClient,
   CanonicalChatEventSource,
@@ -22,6 +26,7 @@ import type { Project } from "../../stores/board";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { DeleteConversationDialog } from "../chat/DeleteConversationDialog";
 import ProjectLifecycleDialog from "../mission-control/ProjectLifecycleDialog";
+import ProjectRenameDialog from "../mission-control/ProjectRenameDialog";
 import {
   buildWorkRailModel,
   resolveWorkRailAgentState,
@@ -88,6 +93,7 @@ export function WorkRail({
   const [deletingChat, setDeletingChat] = useState(false);
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
+  const [renameProjectTarget, setRenameProjectTarget] = useState<Project | null>(null);
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
   if (routeScopeRef.current.key !== routeScope || routeScopeRef.current.client !== client) {
@@ -280,11 +286,10 @@ export function WorkRail({
             const expanded = Boolean(expandedProjects[group.id]);
             return (
               <div key={group.id}>
-                <ContextMenu items={[{
-                  label: "Delete",
-                  danger: true,
-                  onSelect: () => setDeleteProjectTarget(group.project),
-                }]}>
+                <ContextMenu items={[
+                  { label: "Rename", onSelect: () => setRenameProjectTarget(group.project) },
+                  { label: "Delete", danger: true, onSelect: () => setDeleteProjectTarget(group.project) },
+                ]}>
                   <div className="group/project flex min-w-0 items-center gap-1 rounded-md hover:bg-[var(--bg-hover)]">
                     <button
                       type="button"
@@ -311,15 +316,48 @@ export function WorkRail({
                       >
                         <Plus size={13} aria-hidden />
                       </button>
-                      <button
-                        type="button"
-                        aria-label={`Delete ${group.name} project`}
-                        title={`Delete ${group.name} project`}
-                        className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                        onClick={() => setDeleteProjectTarget(group.project)}
-                      >
-                        <Trash2 size={13} aria-hidden />
-                      </button>
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            aria-label={`Actions for ${group.name} project`}
+                            title={`Actions for ${group.name} project`}
+                            className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                          >
+                            <MoreHorizontal size={13} aria-hidden />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            align="end"
+                            sideOffset={5}
+                            className="fade-in min-w-[180px] rounded-lg border p-1"
+                            style={{
+                              zIndex: DESKTOP_Z_INDEX.popover,
+                              background: "var(--bg-overlay)",
+                              borderColor: "var(--border-default)",
+                              boxShadow: "var(--shadow-2)",
+                            }}
+                          >
+                            <DropdownMenu.Item
+                              className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+                              style={{ color: "var(--text-primary)" }}
+                              onSelect={() => setRenameProjectTarget(group.project)}
+                            >
+                              <Edit3 size={13} aria-hidden />
+                              Rename
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+                              style={{ color: "var(--danger)" }}
+                              onSelect={() => setDeleteProjectTarget(group.project)}
+                            >
+                              <Trash2 size={13} aria-hidden />
+                              Delete
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
                     </div>
                   </div>
                 </ContextMenu>
@@ -395,6 +433,13 @@ export function WorkRail({
           open
           project={deleteProjectTarget}
           onClose={() => setDeleteProjectTarget(null)}
+        />
+      ) : null}
+      {renameProjectTarget ? (
+        <ProjectRenameDialog
+          open
+          project={renameProjectTarget}
+          onClose={() => setRenameProjectTarget(null)}
         />
       ) : null}
     </nav>

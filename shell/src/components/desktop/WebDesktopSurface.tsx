@@ -2,6 +2,11 @@
 
 import { useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
+import {
+  SYSTEM_DESKTOP_APP_BY_ID,
+  type SystemDesktopAppIconKey,
+  type SystemDesktopAppId,
+} from "@matrix-os/contracts";
 import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { buildWebDesktopLauncherApps } from "@/lib/web-desktop-app-launch";
@@ -10,12 +15,12 @@ import {
   BrushIcon,
   Code2,
   FilePenLine,
-  FileText,
   FolderKanban,
   FolderTree,
   Globe2,
   LayoutGrid,
-  MessageCircle,
+  MessageSquare,
+  Notebook,
   Settings as SettingsGlyph,
   SquareTerminal,
   type LucideIcon,
@@ -46,48 +51,58 @@ interface DesktopIconAppearance {
   color: string;
   iconColor: string;
   icon: LucideIcon;
+  iconKey: SystemDesktopAppIconKey | "layout-grid" | "folder-kanban";
 }
 
 const DEFAULT_APPEARANCE: DesktopIconAppearance = {
   color: "#FFFEFC",
   iconColor: "var(--primary, #434E3F)",
   icon: LayoutGrid,
+  iconKey: "layout-grid",
 };
+
+const SYSTEM_ICON_BY_KEY: Record<SystemDesktopAppIconKey, LucideIcon> = {
+  "message-square": MessageSquare,
+  "square-terminal": SquareTerminal,
+  "folder-tree": FolderTree,
+  "file-pen-line": FilePenLine,
+  "code-2": Code2,
+  settings: SettingsGlyph,
+  blocks: Blocks,
+  "globe-2": Globe2,
+  notebook: Notebook,
+  brush: BrushIcon,
+};
+
+function systemAppIdForEntry(app: AppEntry): SystemDesktopAppId | null {
+  const name = app.name.toLowerCase();
+  if (app.path === "__chat__" || name === "chat" || name === "hermes") return "chat";
+  if (app.path.startsWith("__terminal__")) return "terminal";
+  if (app.path === "__file-browser__") return "files";
+  if (app.path === "__editor__") return "editor";
+  if (app.path === "__vscode__") return "vscode";
+  if (app.path === "__settings__") return "settings";
+  if (app.path === "__plugins__" || name === "plugins") return "plugins";
+  if (name === "browser") return "browser";
+  if (name === "notes") return "notes";
+  if (name === "whiteboard") return "whiteboard";
+  return null;
+}
 
 export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   const name = app.name.toLowerCase();
-  if (name === "browser") {
-    return { color: "var(--surface-info-emphasis, #3B85BA)", iconColor: "white", icon: Globe2 };
-  }
-  if (app.path === "__chat__" || name === "chat" || name === "hermes") {
-    return { color: "var(--surface-success-emphasis, #288A5B)", iconColor: "white", icon: MessageCircle };
-  }
-  if (app.path.startsWith("__terminal__")) {
-    return { color: "var(--surface-warning-emphasis, #E0AA52)", iconColor: "white", icon: SquareTerminal };
-  }
-  if (app.path === "__file-browser__") {
-    return { color: "var(--surface-brand-emphasis, #748E59)", iconColor: "white", icon: FolderTree };
-  }
-  if (app.path === "__editor__") {
-    return { color: "#4D7FA8", iconColor: "white", icon: FilePenLine };
-  }
-  if (app.path === "__vscode__") {
-    return { color: "#FFFEFC", iconColor: "#007ACC", icon: Code2 };
-  }
-  if (app.path === "__plugins__" || name === "plugins") {
-    return { color: "#7C6DB4", iconColor: "white", icon: Blocks };
-  }
-  if (app.path === "__settings__") {
-    return { color: "var(--surface-neutral-emphasis, #6B7280)", iconColor: "white", icon: SettingsGlyph };
-  }
-  if (name === "notes") {
-    return { color: "#E3B341", iconColor: "white", icon: FileText };
-  }
-  if (name === "whiteboard") {
-    return { color: "#D46A92", iconColor: "white", icon: BrushIcon };
+  const systemAppId = systemAppIdForEntry(app);
+  if (systemAppId) {
+    const definition = SYSTEM_DESKTOP_APP_BY_ID[systemAppId];
+    return {
+      color: definition.color,
+      iconColor: definition.iconColor,
+      icon: SYSTEM_ICON_BY_KEY[definition.iconKey],
+      iconKey: definition.iconKey,
+    };
   }
   if (app.path === "__workspace__" || name === "projects") {
-    return { color: "var(--surface-error-emphasis, #BA5236)", iconColor: "white", icon: FolderKanban };
+    return { color: "var(--surface-error-emphasis, #BA5236)", iconColor: "white", icon: FolderKanban, iconKey: "folder-kanban" };
   }
   return DEFAULT_APPEARANCE;
 }

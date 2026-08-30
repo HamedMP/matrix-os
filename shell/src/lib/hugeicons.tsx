@@ -194,6 +194,7 @@ import { MoreHorizontalIcon as MoreHorizontalIconData } from "@hugeicons/core-fr
 import { MousePointer as MousePointerData } from "@hugeicons/core-free-icons";
 import { MousePointer2 as MousePointer2Data } from "@hugeicons/core-free-icons";
 import { MusicIcon as MusicIconData } from "@hugeicons/core-free-icons";
+import { Note01Icon as Note01Data } from "@hugeicons/core-free-icons";
 import { OctagonXIcon as OctagonXIconData } from "@hugeicons/core-free-icons";
 import { Palette as PaletteData } from "@hugeicons/core-free-icons";
 import { PaletteIcon as PaletteIconData } from "@hugeicons/core-free-icons";
@@ -481,6 +482,7 @@ export const MoreHorizontalIcon: LucideIcon = createIcon(MoreHorizontalIconData)
 export const MousePointer: LucideIcon = createIcon(MousePointerData);
 export const MousePointer2: LucideIcon = createIcon(MousePointer2Data);
 export const MusicIcon: LucideIcon = createIcon(MusicIconData);
+export const Notebook: LucideIcon = createIcon(Note01Data);
 export const OctagonXIcon: LucideIcon = createIcon(OctagonXIconData);
 export const Palette: LucideIcon = createIcon(PaletteData);
 export const PaletteIcon: LucideIcon = createIcon(PaletteIconData);

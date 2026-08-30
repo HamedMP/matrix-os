@@ -217,6 +217,7 @@ export function DesktopWindow({
                 conversations={chat.conversations}
                 onNewChat={chat.newChat}
                 onSwitchConversation={chat.switchConversation}
+                onDeleteConversation={chat.deleteConversation}
                 onSubmit={chat.submitMessage}
                 composerDraftRequest={chat.composerDraftRequest}
                 onComposerDraftConsumed={chat.consumeComposerDraft}

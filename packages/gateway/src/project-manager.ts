@@ -779,6 +779,29 @@ export function createProjectManager(options: {
       return { ok: true, project: updated };
     },
 
+    async renameProject(input: {
+      slug: string;
+      ownerScope: OwnerScope;
+      name: string;
+    }): Promise<Result<{ project: ProjectConfig }> | Failure> {
+      const parsedName = ProjectNameSchema.safeParse(input.name);
+      if (!parsedName.success) {
+        return genericError(400, "invalid_project_name", "Project name is invalid");
+      }
+      const current = await this.getProjectForLifecycle(input);
+      if (!current.ok) return current;
+      if (current.project.deletingAt) {
+        return genericError(404, "not_found", "Project was not found");
+      }
+      const updated: ProjectConfig = {
+        ...current.project,
+        name: parsedName.data,
+        updatedAt: nowIso(options.now),
+      };
+      await registry.writeConfig(input.slug, updated);
+      return { ok: true, project: updated };
+    },
+
     async removeManagedProject(input: {
       slug: string;
       ownerScope: OwnerScope;
