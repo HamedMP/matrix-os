@@ -22,6 +22,7 @@ function snapshot(): ProviderSettingsSnapshot {
     revision: 12,
     refreshedAt: now,
     access: { mode: "writable" },
+    configurationHarnessKinds: ["hermes", "openclaw", "pi", "opencode"],
     modelProviders: [
       {
         id: "anthropic",
@@ -332,6 +333,21 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByText("Fixed by Claude")).toBeVisible();
     expect(screen.getByLabelText("Model provider")).toBeDisabled();
     expect(screen.getByLabelText("Model")).toBeDisabled();
+  });
+
+  it("does not advertise generic configuration mutations for specialized harnesses", () => {
+    const { onMutate } = setup({ selectedHarnessId: "harness_claude" });
+
+    expect(screen.getByRole("switch", { name: "Enable Claude" })).toBeDisabled();
+    expect(screen.getByLabelText("Display name")).toBeDisabled();
+    fireEvent.click(within(screen.getByTestId("account-account_personal"))
+      .getByRole("button", { name: "Log out Personal" }));
+    expect(onMutate).toHaveBeenCalledWith({ type: "logout_account", accountId: "account_personal" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    expect(within(dialog).queryByRole("radio", { name: "Codex" })).toBeNull();
+    expect(within(dialog).queryByRole("radio", { name: "Claude" })).toBeNull();
   });
 
   it("shows exact, stale, and unavailable gateway credit without inventing balances", () => {

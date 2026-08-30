@@ -20,6 +20,7 @@ import {
   type CanonicalProviderSetupAction,
   type CanonicalProviderSupport,
   type ProviderHarnessInstance,
+  type ProviderHarnessKind,
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { createHash } from "node:crypto";
@@ -517,6 +518,12 @@ function genericHarnessKind(kind: CanonicalProviderDriverKind): GenericDriverKin
   return GENERIC_DRIVERS.includes(kind as GenericDriverKind) ? kind as GenericDriverKind : null;
 }
 
+function settingsHarnessKind(kind: CanonicalProviderDriverKind): ProviderHarnessKind | null {
+  if (kind === "claude_code") return "claude";
+  if (kind === "codex") return "codex";
+  return genericHarnessKind(kind);
+}
+
 function unavailableReasonFor(
   instance: InstanceDraft,
 ): NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]> {
@@ -606,22 +613,23 @@ function applyHarnessSettings(input: {
 }): InstanceDraft[] {
   return input.instances.map((instance) => {
     const generic = genericHarnessKind(instance.driverKind);
-    if (generic !== null && input.settingsRequired && (!input.settingsAvailable || input.settings === null)) {
+    const settingsHarness = settingsHarnessKind(instance.driverKind);
+    if (settingsHarness !== null && input.settingsRequired && (!input.settingsAvailable || input.settings === null)) {
       return unavailableInstance(instance, "settings_unavailable");
     }
     // Runtime inventory is authoritative for whether a harness exists at all.
     // Do not let a disabled preference disguise a missing binary as configured.
-    if (generic !== null && input.settingsRequired
+    if (settingsHarness !== null && input.settingsRequired
       && (instance.availability === "setup_required" || instance.availability === "auth_required")) {
       return unavailableInstance(instance, unavailableReasonFor(instance));
     }
-    const enabledHarnesses = generic !== null && input.settingsRequired
-      ? input.settings!.harnesses.filter((harness) => harness.harness === generic && harness.enabled)
+    const enabledHarnesses = settingsHarness !== null && input.settingsRequired
+      ? input.settings!.harnesses.filter((harness) => harness.harness === settingsHarness && harness.enabled)
       : [];
     if (enabledHarnesses.length > 1) {
       return unavailableInstance(instance, "multiple_profiles_unsupported");
     }
-    if (generic !== null && input.settingsRequired && enabledHarnesses.length === 0) {
+    if (settingsHarness !== null && input.settingsRequired && enabledHarnesses.length === 0) {
       return unavailableInstance(instance, "disabled_in_settings");
     }
     const enabledHarness = enabledHarnesses[0];
@@ -640,7 +648,7 @@ function applyHarnessSettings(input: {
       return unavailableInstance(configuredInstance, "runtime_not_runnable");
     }
     if (instance.availability !== "available") {
-      return generic !== null && input.settingsRequired
+      return settingsHarness !== null && input.settingsRequired
         ? unavailableInstance(instance, unavailableReasonFor(instance))
         : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
     }
@@ -650,10 +658,13 @@ function applyHarnessSettings(input: {
       // the route would make a successful catalog probe fail at execution.
       return unavailableInstance(configuredInstance, "runtime_not_runnable");
     }
-    if (generic === null || !input.settingsRequired) {
+    if (settingsHarness === null || !input.settingsRequired) {
       return instance.availability === "available"
         ? { ...instance, unavailabilityReason: undefined }
         : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
+    }
+    if (generic === null) {
+      return { ...configuredInstance, unavailabilityReason: undefined };
     }
     const harness = enabledHarness!;
     if (generic === "pi") {

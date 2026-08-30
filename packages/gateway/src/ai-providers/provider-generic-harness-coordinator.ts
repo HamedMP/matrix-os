@@ -91,8 +91,8 @@ function canonicalDriverInstalled(
 ): boolean {
   const driver = canonical.drivers.find((candidate) => candidate.id === harness);
   return driver?.installState === "installed"
-    && driver.health !== "stopped"
-    && driver.health !== "unavailable";
+    && driver.health !== "unavailable"
+    && (systemHarness(harness) || driver.health !== "stopped");
 }
 
 function systemHarness(harness: ProviderHarnessKind): harness is "hermes" | "openclaw" {
@@ -129,8 +129,11 @@ export function createProviderGenericHarnessCoordinator(options: {
     }
     const snapshot = await readRuntimeSnapshot(options.runtimeSource);
     const runtime = snapshot.runtime.options.find((candidate) => candidate.id === harness.harness);
+    const healthy = runtime?.health === "healthy" || runtime?.health === "degraded";
+    const inactiveActivationTarget = runtime?.health === "stopped"
+      && runtime.selectionState === "available";
     if (runtime?.installState !== "installed"
-      || (runtime.health !== "healthy" && runtime.health !== "degraded")) {
+      || (!healthy && !inactiveActivationTarget)) {
       throw new ProviderSettingsStoreError("runtime_unavailable", 503);
     }
   }
@@ -205,6 +208,7 @@ export function createProviderGenericHarnessCoordinator(options: {
   }
 
   return {
+    supportedHarnessKinds: GenericHarnessSchema.options,
     supportedActions: [
       "add_harness",
       "remove_harness",

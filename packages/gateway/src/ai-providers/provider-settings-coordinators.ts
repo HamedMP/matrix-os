@@ -52,6 +52,7 @@ export interface ProviderAccountLifecycleCoordinator {
 /** Applies settings to the real runtime/control plane and durably deduplicates the key. */
 export interface ProviderSettingsRuntimeCoordinator {
   readonly supportedActions: readonly ProviderConfigurationMutation["type"][];
+  readonly supportedHarnessKinds?: readonly ProviderHarnessKind[];
   applyConfiguration(input: {
     mutation: ProviderConfigurationMutation;
     idempotencyKey: string;

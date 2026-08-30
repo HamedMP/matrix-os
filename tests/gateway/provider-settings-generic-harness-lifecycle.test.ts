@@ -82,6 +82,8 @@ describe("generic provider harness lifecycle coordinator", () => {
   async function makeCoordinator(options: {
     selected?: "hermes" | "openclaw";
     codingHarnesses?: Array<"pi" | "opencode">;
+    inactiveOpenClawHealth?: "healthy" | "stopped" | "unknown";
+    inactiveOpenClawInstallState?: "installed" | "missing";
   } = {}) {
     homePath = await mkdtemp(join(tmpdir(), "provider-generic-harness-"));
     await mkdir(join(homePath, "system"), { recursive: true });
@@ -117,8 +119,12 @@ describe("generic provider harness lifecycle coordinator", () => {
             {
               id: "openclaw",
               displayName: "OpenClaw",
-              installState: "installed",
-              health: "healthy",
+              installState: options.selected === "openclaw"
+                ? "installed"
+                : options.inactiveOpenClawInstallState ?? "installed",
+              health: options.selected === "openclaw"
+                ? "healthy"
+                : options.inactiveOpenClawHealth ?? "healthy",
               selectionState: options.selected === "openclaw" ? "active" : "available",
               configured: true,
               capabilities: ["provider_catalog", "model_selection"],
@@ -147,6 +153,12 @@ describe("generic provider harness lifecycle coordinator", () => {
       "update_harness",
       "set_harness_enabled",
       "set_route",
+    ]);
+    expect(coordinator.supportedHarnessKinds).toEqual([
+      "hermes",
+      "openclaw",
+      "pi",
+      "opencode",
     ]);
     const before = config([hermes]);
     const after = structuredClone(before);
@@ -210,6 +222,72 @@ describe("generic provider harness lifecycle coordinator", () => {
       provider: "anthropic",
       messagingModel: "claude-sonnet-5",
     });
+  });
+
+  it("activates an installed OpenClaw runtime reported stopped and available", async () => {
+    const { coordinator, update } = await makeCoordinator({ inactiveOpenClawHealth: "stopped" });
+    const canonical = genericCanonical();
+    canonical.drivers = canonical.drivers.map((driver) => driver.id === "openclaw"
+      ? { ...driver, health: "stopped" as const }
+      : driver);
+    const openclaw = {
+      ...hermes,
+      id: "harness_openclaw",
+      driverId: "openclaw",
+      harness: "openclaw" as const,
+      displayName: "OpenClaw",
+      enabled: false,
+    };
+
+    await coordinator.applyConfiguration({
+      mutation: {
+        type: "set_harness_enabled",
+        expectedRevision: 0,
+        idempotencyKey: "activate_stopped_openclaw_1",
+        harnessInstanceId: openclaw.id,
+        enabled: true,
+      },
+      before: config([hermes, openclaw]),
+      after: config([hermes, { ...openclaw, enabled: true }]),
+      canonical,
+      idempotencyKey: "activate_stopped_openclaw_1",
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      revision: 4,
+      runtime: "openclaw",
+      provider: "anthropic",
+      messagingModel: "claude-sonnet-5",
+    });
+  });
+
+  it.each([
+    { inactiveOpenClawHealth: "unknown" as const },
+    { inactiveOpenClawInstallState: "missing" as const },
+  ])("fails closed an invalid OpenClaw activation target %#", async (runtimeState) => {
+    const { coordinator, update } = await makeCoordinator(runtimeState);
+    const openclaw = {
+      ...hermes,
+      id: "harness_openclaw",
+      driverId: "openclaw",
+      harness: "openclaw" as const,
+      enabled: false,
+    };
+
+    await expect(coordinator.applyConfiguration({
+      mutation: {
+        type: "set_harness_enabled",
+        expectedRevision: 0,
+        idempotencyKey: "reject_invalid_openclaw_1",
+        harnessInstanceId: openclaw.id,
+        enabled: true,
+      },
+      before: config([hermes, openclaw]),
+      after: config([hermes, { ...openclaw, enabled: true }]),
+      canonical: genericCanonical(),
+      idempotencyKey: "reject_invalid_openclaw_1",
+    })).rejects.toMatchObject({ code: "runtime_unavailable" });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("fails closed for unregistered coding drivers and specialized Claude/Codex harnesses", async () => {

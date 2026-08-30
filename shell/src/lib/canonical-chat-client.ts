@@ -232,7 +232,9 @@ function partText(part: CanonicalChatMessage["parts"][number]): string | null {
 
 export function projectCanonicalMessages(messages: CanonicalChatMessage[]): ChatMessage[] {
   const resolvedApprovals = new Set(messages.flatMap((message) => message.parts.flatMap((part) =>
-    part.type === "approval_result" ? [part.approvalId] : [])));
+    part.type === "approval_result" && message.runId
+      ? [`${message.runId}\0${part.approvalId}`]
+      : [])));
   return messages.flatMap((message) => {
     const content = message.parts.map(partText).filter((part): part is string => part !== null).join("\n");
     if (!content) return [];
@@ -251,7 +253,8 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
         description: approvalRequest.description,
         risk: approvalRequest.risk,
         allowedDecisions: approvalRequest.allowedDecisions,
-        pending: !resolvedApprovals.has(approvalRequest.approvalId),
+        pending: !message.runId
+          || !resolvedApprovals.has(`${message.runId}\0${approvalRequest.approvalId}`),
       } } } : {}),
     }];
   });

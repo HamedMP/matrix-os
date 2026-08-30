@@ -6,20 +6,20 @@ import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatSta
 
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
 
-function record(id: string, title: string) {
+function record(id: string, title: string, revision = 0) {
   return {
     chat: {
       id, ownerScope: { type: "personal" as const, ownerId: "owner_shell" }, title,
-      lifecycle: "active" as const, attention: "none" as const, revision: 0, messageCount: 1,
+      lifecycle: "active" as const, attention: "none" as const, revision, messageCount: 1,
       currentSelection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" },
       createdAt: "2026-08-31T00:00:00.000Z", updatedAt: "2026-08-31T00:00:00.000Z",
     },
   };
 }
 
-function detail(id: string, title: string) {
+function detail(id: string, title: string, revision = 0) {
   return {
-    record: record(id, title),
+    record: record(id, title, revision),
     messages: [{
       id: `msg_${id}`, chatId: id, seq: 1, role: "assistant", state: "committed",
       parts: [{ type: "text", text: title }], createdAt: "2026-08-31T00:00:00.000Z",
@@ -53,6 +53,76 @@ describe("canonical shell Chat state", () => {
 
     expect(result.current.sessionId).toBe("chat_b");
     expect(result.current.messages[0]?.content).toBe("B");
+  });
+
+  it("keeps the newest same-chat detail revision when requests resolve out of order", async () => {
+    let resolveFirst: ((response: Response) => void) | undefined;
+    const firstDetail = new Promise<Response>((resolve) => { resolveFirst = resolve; });
+    let detailCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A")] });
+      if (url.includes("/api/chats/chat_a?")) {
+        detailCalls += 1;
+        return detailCalls === 1
+          ? firstDetail
+          : Response.json(detail("chat_a", "Newest", 2));
+      }
+      throw new Error("Unexpected request");
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.sessionId).toBe("chat_a"));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("Newest"));
+    resolveFirst!(Response.json(detail("chat_a", "Stale", 1)));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.messages[0]?.content).toBe("Newest");
+  });
+
+  it("does not expose an error from a superseded same-chat detail request", async () => {
+    let rejectFirst: ((error: Error) => void) | undefined;
+    const firstDetail = new Promise<Response>((_resolve, reject) => { rejectFirst = reject; });
+    let detailCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A")] });
+      if (url.includes("/api/chats/chat_a?")) {
+        detailCalls += 1;
+        return detailCalls === 1
+          ? firstDetail
+          : Response.json(detail("chat_a", "Current", 2));
+      }
+      throw new Error("Unexpected request");
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.sessionId).toBe("chat_a"));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("Current"));
+    rejectFirst!(new Error("stale private failure"));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.messages.map((message) => message.content))
+      .toEqual(["Current"]);
+  });
+
+  it("does not regress a chat when a later refresh returns an older revision", async () => {
+    let detailCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A", 2)] });
+      if (url.includes("/api/chats/chat_a?")) {
+        detailCalls += 1;
+        return Response.json(detail("chat_a", detailCalls === 1 ? "Revision two" : "Revision one", detailCalls === 1 ? 2 : 1));
+      }
+      throw new Error("Unexpected request");
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("Revision two"));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(detailCalls).toBe(2));
+
+    expect(result.current.messages[0]?.content).toBe("Revision two");
   });
 
   it("deletes uploaded attachment files when canonical turn admission fails", async () => {

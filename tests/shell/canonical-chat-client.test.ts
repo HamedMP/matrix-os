@@ -87,6 +87,32 @@ describe("canonical shell Chat client", () => {
     );
   });
 
+  it("resolves approvals by run and approval id instead of approval id alone", () => {
+    const projected = projectCanonicalMessages([{
+      id: "msg_request_a", chatId: "chat_shell_test", seq: 1, role: "system", state: "committed",
+      runId: "run_a", parts: [{
+        type: "approval_request", approvalId: "approval_reused", title: "Run A command",
+        description: "Allow A?", risk: "medium", allowedDecisions: ["approve", "decline"],
+      }], createdAt: "2026-08-31T00:00:01.000Z",
+    }, {
+      id: "msg_request_b", chatId: "chat_shell_test", seq: 2, role: "system", state: "committed",
+      runId: "run_b", parts: [{
+        type: "approval_request", approvalId: "approval_reused", title: "Run B command",
+        description: "Allow B?", risk: "medium", allowedDecisions: ["approve", "decline"],
+      }], createdAt: "2026-08-31T00:00:02.000Z",
+    }, {
+      id: "msg_result_a", chatId: "chat_shell_test", seq: 3, role: "system", state: "committed",
+      runId: "run_a", parts: [{
+        type: "approval_result", approvalId: "approval_reused", decision: "approve",
+      }], createdAt: "2026-08-31T00:00:03.000Z",
+    }]);
+
+    expect(projected.find((message) => message.id === "msg_request_a")
+      ?.metadata?.canonicalApproval?.pending).toBe(false);
+    expect(projected.find((message) => message.id === "msg_request_b")
+      ?.metadata?.canonicalApproval?.pending).toBe(true);
+  });
+
   it("uploads bounded web attachments and returns canonical owner references", async () => {
     const fetchFn = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(init?.method).toBe("PUT");

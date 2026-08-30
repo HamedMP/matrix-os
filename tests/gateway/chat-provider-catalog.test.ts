@@ -135,7 +135,7 @@ function harnessSettings(
 }
 
 function configuredHarness(
-  harness: "hermes" | "openclaw" | "pi" | "opencode",
+  harness: "hermes" | "openclaw" | "pi" | "opencode" | "codex" | "claude",
   enabled: boolean,
 ): ProviderSettingsSnapshot["harnesses"][number] {
   return {
@@ -264,11 +264,36 @@ describe("canonical Chat Provider catalog", () => {
     });
 
     const catalog = await service.getCatalog(principal);
-    for (const kind of ["hermes", "openclaw", "pi", "opencode"] as const) {
+    for (const kind of ["hermes", "openclaw", "pi", "opencode", "codex", "claude_code"] as const) {
       expect(catalog.instances.find((instance) => instance.driverKind === kind))
         .toMatchObject({ availability: "unavailable", unavailabilityReason: "settings_unavailable" });
     }
     expect(JSON.stringify(catalog)).not.toContain("private path");
+  });
+
+  it("overlays disabled owner settings onto specialized Codex and Claude instances", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider(),
+        codingProvider({
+          id: "claude",
+          displayName: "Claude",
+          kind: "claude",
+          defaultModel: "opus",
+        }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([
+        configuredHarness("codex", false),
+        configuredHarness("claude", false),
+      ]),
+    });
+
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "codex_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings" });
+    expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings" });
   });
 
   it("does not silently choose between concurrent enabled CLI profiles", async () => {

@@ -7,6 +7,7 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     const shellHome = readFileSync(join(process.cwd(), "shell/src/components/ShellHome.tsx"), "utf8");
     const canonicalState = readFileSync(join(process.cwd(), "shell/src/hooks/useCanonicalChatState.ts"), "utf8");
     const providerState = readFileSync(join(process.cwd(), "shell/src/components/chat-app-provider-setup.tsx"), "utf8");
+    const desktop = readFileSync(join(process.cwd(), "shell/src/components/Desktop.tsx"), "utf8");
 
     expect(shellHome).toContain("useCanonicalChatState()");
     expect(shellHome).not.toContain("useChatState()");
@@ -16,5 +17,8 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(canonicalState).not.toContain('type: "message"');
     expect(providerState).toContain("/api/chat-providers?refresh=true");
     expect(providerState).not.toContain("/api/ai/providers");
+    expect(providerState).toContain("onSetupAction(instance, action)");
+    expect(desktop).toContain("OPEN_PROVIDER_SETTINGS_EVENT");
+    expect(desktop).toContain("OPEN_PROVIDER_TERMINAL_EVENT");
   });
 });
