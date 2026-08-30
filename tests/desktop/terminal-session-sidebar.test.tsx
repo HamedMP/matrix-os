@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TerminalSessionSidebar } from "../../desktop/src/renderer/src/features/terminal/TerminalSessionSidebar.js";
 
 describe("TerminalSessionSidebar", () => {
-  it("opens sessions from a non-squashing, scrollable list with active paths and no status dots", () => {
+  it("opens sessions from a non-squashing, scrollable list with active paths and sidebar controls", () => {
     const onSelect = vi.fn();
     const onCreate = vi.fn();
     const onDelete = vi.fn();
@@ -39,6 +39,6 @@ describe("TerminalSessionSidebar", () => {
     expect(screen.getByText("~/projects/matrix-os")).toBeTruthy();
     expect(container.querySelector("[data-terminal-session-status]")).toBeNull();
     expect(screen.getByRole("list", { name: "Terminal sessions" }).className).toContain("overflow-y-auto");
-    expect(screen.queryByRole("button", { name: "Shell theme" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Shell theme" })).toBeTruthy();
   });
 });

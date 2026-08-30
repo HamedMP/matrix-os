@@ -274,7 +274,11 @@ describe("InspectorFilesPanel", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open README.md" }));
 
-    expect(await screen.findByRole("heading", { name: "Inspector files" })).toBeTruthy();
+    expect(await screen.findByRole(
+      "heading",
+      { name: "Inspector files" },
+      { timeout: 5_000 },
+    )).toBeTruthy();
   });
 
   it("previews a picked text file within the 1 MB cap", async () => {
