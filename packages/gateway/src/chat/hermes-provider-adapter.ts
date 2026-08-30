@@ -521,7 +521,6 @@ export function createHermesChatProviderAdapter(options: {
           ...(summary ? { summary } : {}),
         });
       } else if (event.type === "tool.start") {
-        flushStreamBoundary();
         const parsed = HermesToolStartSchema.safeParse(event.payload);
         if (!parsed.success) return;
         const activityId = hermesToolReference(parsed.data.tool_id);
