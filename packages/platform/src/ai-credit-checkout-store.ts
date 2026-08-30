@@ -215,13 +215,15 @@ export async function reverseClaimCredit(
     .returningAll().executeTakeFirstOrThrow();
 }
 
-export async function restoreDisputedClaimCredit(
+export async function settleWonDisputeCredit(
   trx: PlatformDB,
   claim: PlatformDatabase["ai_credit_checkout_claims"],
   at: string,
 ) {
-  if (claim.dispute_status !== "open" || claim.refunded_at !== null || Number(claim.reversed_microusd) === 0) return;
-  const restoreToBalance = Number(claim.reversed_microusd) - Number(claim.reversal_debt_microusd);
+  const shouldRestore = claim.refunded_at === null && Number(claim.reversed_microusd) > 0;
+  const restoreToBalance = shouldRestore
+    ? Number(claim.reversed_microusd) - Number(claim.reversal_debt_microusd)
+    : 0;
   if (restoreToBalance > 0) {
     const restoreId = createHash("sha256").update(claim.charge_id ?? claim.request_id).digest("hex").slice(0, 16);
     const inserted = await trx.executor.insertInto("ai_funded_credit_ledger").values({
@@ -243,17 +245,19 @@ export async function restoreDisputedClaimCredit(
       if (!restored) throw new Error("Funded AI credit restoration exceeds supported bounds");
     }
   }
-  await trx.executor.updateTable("ai_credit_checkout_claims").set({
-    reversed_microusd: 0, reversal_debt_microusd: 0, dispute_status: "won", updated_at: at,
-  }).where("request_id", "=", claim.request_id).execute();
+  if (shouldRestore) {
+    await trx.executor.updateTable("ai_credit_checkout_claims").set({
+      reversed_microusd: 0, reversal_debt_microusd: 0, updated_at: at,
+    }).where("request_id", "=", claim.request_id).where("dispute_status", "=", "won").execute();
+  }
+  const clearedDebt = shouldRestore ? Number(claim.reversal_debt_microusd) : 0;
   await trx.executor.updateTable("ai_funded_credit_restrictions").set({
-    debt_microusd: sql<number>`GREATEST(0, debt_microusd - ${Number(claim.reversal_debt_microusd)})`,
+    debt_microusd: sql<number>`GREATEST(0, debt_microusd - ${clearedDebt})`,
     frozen: sql<boolean>`
-      GREATEST(0, debt_microusd - ${Number(claim.reversal_debt_microusd)}) > 0
+      GREATEST(0, debt_microusd - ${clearedDebt}) > 0
       OR EXISTS (
         SELECT 1 FROM ai_credit_checkout_claims adverse
         WHERE adverse.machine_id = ${claim.machine_id}
-          AND adverse.request_id <> ${claim.request_id}
           AND adverse.dispute_status IN ('open', 'lost')
       )
     `,

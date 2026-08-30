@@ -11,8 +11,8 @@ import {
   getClaimByPaymentReference,
   getClaimByRequestId,
   markClaimSession,
-  restoreDisputedClaimCredit,
   reverseClaimCredit,
+  settleWonDisputeCredit,
   type AiCreditCheckoutClaim,
 } from "./ai-credit-checkout-store.js";
 import type { PlatformDB } from "./db.js";
@@ -162,19 +162,25 @@ async function processDisputeEvent(event: StripeWebhookEvent, trx: PlatformDB, a
     throw new Error("Funded AI dispute resolution is invalid");
   }
   if (metadataRequestId) assertAiCreditCheckoutMetadata(event.data.object, claimExpectation(claim));
-  await trx.executor.updateTable("ai_credit_checkout_claims").set({
+  // Stripe retries and delivery reordering must not turn a terminal dispute
+  // back into an open one, or change one terminal resolution into another.
+  if (claim.dispute_status === "won" || claim.dispute_status === "lost") {
+    return { received: true, processed: true } as const;
+  }
+  const nextStatus = event.type === "charge.dispute.created" ? "open" : dispute.status;
+  const transitioned = await trx.executor.updateTable("ai_credit_checkout_claims").set({
     charge_id: chargeId, payment_intent_id: paymentIntentId ?? claim.payment_intent_id,
-    dispute_status: event.type === "charge.dispute.created" ? "open" : dispute.status,
+    dispute_status: nextStatus,
     updated_at: at,
   }).where("request_id", "=", claim.request_id)
+    .where("dispute_status", "in", ["none", "open"])
     .where((eb) => eb.or([eb("charge_id", "is", null), eb("charge_id", "=", chargeId)]))
-    .executeTakeFirstOrThrow();
-  const updatedClaim = await getClaimByRequestId(trx, claim.request_id, true);
-  if (!updatedClaim) throw new Error("Funded AI dispute claim is missing");
+    .returningAll().executeTakeFirst();
+  if (!transitioned) throw new Error("Funded AI dispute transition conflicted");
   if (event.type === "charge.dispute.closed" && dispute.status === "won") {
-    await restoreDisputedClaimCredit(trx, { ...updatedClaim, dispute_status: claim.dispute_status }, at);
+    await settleWonDisputeCredit(trx, transitioned, at);
   } else {
-    await reverseClaimCredit(trx, updatedClaim, dispute.id, at, true);
+    await reverseClaimCredit(trx, transitioned, dispute.id, at, true);
   }
   return { received: true, processed: true } as const;
 }

@@ -101,6 +101,18 @@ describe("funded AI add-on checkout", () => {
     });
   }
 
+  async function deliver(event: StripeWebhookEvent) {
+    webhookEvent = event;
+    return app().request("/billing/webhooks/stripe", {
+      method: "POST", headers: { "stripe-signature": "signed" }, body: "{}",
+    });
+  }
+
+  async function purchaseCredit() {
+    expect((await createCheckout()).status).toBe(200);
+    expect((await deliver(completedEvent())).status).toBe(200);
+  }
+
   it("loads a complete, bounded, server-owned package catalog or disables checkout", () => {
     expect(loadAiCreditCheckoutConfig(checkoutEnv)).toEqual({
       enabled: true,
@@ -359,6 +371,57 @@ describe("funded AI add-on checkout", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ received: true, ignored: true });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual([]);
+  });
+
+  it("does not regress a won dispute when created or opposite terminal events arrive late", async () => {
+    await purchaseCredit();
+    expect((await deliver(disputeEvent("charge.dispute.created", "under_review", "evt_won_created"))).status).toBe(200);
+    expect((await deliver(disputeEvent("charge.dispute.closed", "won", "evt_won_closed"))).status).toBe(200);
+    expect((await deliver(disputeEvent("charge.dispute.created", "needs_response", "evt_won_late_created"))).status).toBe(200);
+    expect((await deliver(disputeEvent("charge.dispute.closed", "lost", "evt_won_late_lost"))).status).toBe(200);
+
+    expect(await db.executor.selectFrom("ai_credit_checkout_claims")
+      .select(["dispute_status", "reversed_microusd"]).executeTakeFirst()).toEqual({
+      dispute_status: "won", reversed_microusd: 0,
+    });
+    await expect(repository.getFundingSummary(identity)).resolves.toMatchObject({ creditBalanceMicrousd: 5_000_000 });
+    expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst())
+      .toMatchObject({ frozen: false, debt_microusd: 0 });
+  });
+
+  it("does not regress a lost dispute when created or opposite terminal events arrive late", async () => {
+    await purchaseCredit();
+    expect((await deliver(disputeEvent("charge.dispute.created", "under_review", "evt_lost_created"))).status).toBe(200);
+    expect((await deliver(disputeEvent("charge.dispute.closed", "lost", "evt_lost_closed"))).status).toBe(200);
+    expect((await deliver(disputeEvent("charge.dispute.created", "needs_response", "evt_lost_late_created"))).status).toBe(200);
+    expect((await deliver(disputeEvent("charge.dispute.closed", "won", "evt_lost_late_won"))).status).toBe(200);
+
+    expect(await db.executor.selectFrom("ai_credit_checkout_claims")
+      .select(["dispute_status", "reversed_microusd"]).executeTakeFirst()).toEqual({
+      dispute_status: "lost", reversed_microusd: 5_000_000,
+    });
+    await expect(repository.getFundingSummary(identity)).resolves.toMatchObject({ creditBalanceMicrousd: 0 });
+    expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst())
+      .toMatchObject({ frozen: true });
+  });
+
+  it("keeps refund reversal but clears zero-debt dispute freeze when a refunded dispute is won", async () => {
+    await purchaseCredit();
+    expect((await deliver(disputeEvent("charge.dispute.created", "under_review", "evt_refunded_created"))).status).toBe(200);
+    expect((await deliver(refundedEvent())).status).toBe(200);
+    expect((await deliver(disputeEvent("charge.dispute.closed", "won", "evt_refunded_won"))).status).toBe(200);
+
+    expect(await db.executor.selectFrom("ai_credit_checkout_claims")
+      .select(["dispute_status", "refunded_at", "reversed_microusd", "reversal_debt_microusd"])
+      .executeTakeFirst()).toEqual({
+      dispute_status: "won",
+      refunded_at: "2026-08-31T10:00:00.000Z",
+      reversed_microusd: 5_000_000,
+      reversal_debt_microusd: 0,
+    });
+    await expect(repository.getFundingSummary(identity)).resolves.toMatchObject({ creditBalanceMicrousd: 0 });
+    expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst())
+      .toMatchObject({ frozen: false, debt_microusd: 0 });
   });
 });
 
