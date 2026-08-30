@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -100,6 +102,25 @@ describe("production Agent SDK upgrade", () => {
     });
     expect(resolveKernelSdkControls("claude-haiku-4-5", "max")).toEqual({});
     expect(resolveKernelSdkControls("owner-custom-model", "high")).toEqual({});
+  });
+
+  it("verifies Fable controls against the production-pinned SDK declaration", () => {
+    const require = createRequire(import.meta.url);
+    const sdkDirectory = dirname(require.resolve("@anthropic-ai/claude-agent-sdk"));
+    const sdkPackage = JSON.parse(readFileSync(join(sdkDirectory, "package.json"), "utf8")) as {
+      version: string;
+      claudeCodeVersion: string;
+    };
+    const sdkTypes = readFileSync(join(sdkDirectory, "sdk.d.ts"), "utf8");
+
+    expect(sdkPackage).toMatchObject({ version: "0.3.240", claudeCodeVersion: "2.1.240" });
+    expect(sdkTypes).toContain("Examples: 'claude-sonnet-5', 'claude-opus-4-8', 'claude-fable-5'");
+    expect(sdkTypes).toMatch(/`'max'` — Maximum effort \(Fable 5,/);
+    expect(sdkTypes).toContain("thinking?: ThinkingConfig;");
+    expect(resolveKernelSdkControls("claude-fable-5", "max")).toEqual({
+      effort: "max",
+      thinking: { type: "adaptive" },
+    });
   });
 
   it("normalizes cumulative modelUsage across main and subagent calls", () => {
