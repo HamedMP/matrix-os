@@ -457,15 +457,15 @@ export function createHermesChatProviderAdapter(options: {
               executionRoot: input.executionRoot,
             }));
           }
-        } else {
+        } else if (!deferAssistantAfterToolFailure) {
           flushStreamBoundary();
           if (currentSegment) separatorPending = true;
-          if (!deferAssistantAfterToolFailure) {
-            emitVisibleText(sanitizeAssistantText(interim.text, {
-              homePath: options.homePath,
-              executionRoot: input.executionRoot,
-            }));
-          }
+          emitVisibleText(sanitizeAssistantText(interim.text, {
+            homePath: options.homePath,
+            executionRoot: input.executionRoot,
+          }));
+        } else {
+          pendingStreamBoundaryText = "";
         }
         if (deferAssistantAfterToolFailure) {
           emitVisibleText(sanitizeAssistantText(redactFailedToolOutput(
