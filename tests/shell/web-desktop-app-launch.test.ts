@@ -10,10 +10,18 @@ describe("web Desktop built-in app launch routing", () => {
   });
 
   it("routes the installed Browser catalog entry through the dedicated Browser launch", () => {
-    expect(resolveWebDesktopBuiltInLaunch("apps/browser/index.html", "Browser")).toEqual({
+    expect(resolveWebDesktopBuiltInLaunch("apps/browser/index.html")).toEqual({
       kind: "external",
       url: "https://www.google.com",
     });
+    expect(resolveWebDesktopBuiltInLaunch("apps/browser/dist/index.html")).toEqual({
+      kind: "external",
+      url: "https://www.google.com",
+    });
+  });
+
+  it("does not hijack a user app that is merely named Browser", () => {
+    expect(resolveWebDesktopBuiltInLaunch("apps/custom-browser/dist/index.html")).toBeNull();
   });
 
   it("routes VS Code externally and Editor to Files", () => {
@@ -26,7 +34,7 @@ describe("web Desktop built-in app launch routing", () => {
   });
 
   it("leaves installed and other built-ins to normal app handling", () => {
-    expect(resolveWebDesktopBuiltInLaunch("apps/browser/index.html", "Another app")).toBeNull();
+    expect(resolveWebDesktopBuiltInLaunch("apps/browser-clone/index.html")).toBeNull();
     expect(resolveWebDesktopBuiltInLaunch("__chat__")).toBeNull();
   });
 });

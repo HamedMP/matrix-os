@@ -453,7 +453,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // of AppViewer, so dock, command-palette, launcher, and deep-link launches
   // must all resolve them before opening a window.
   const openAppOrFocus = useCallback((path: string, name?: string) => {
-    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path, name);
+    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path);
     if (builtInLaunch?.kind === "external") {
       window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
       return;

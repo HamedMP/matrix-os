@@ -3,8 +3,12 @@ export type WebDesktopBuiltInLaunch =
   | { kind: "external-code" }
   | { kind: "app"; name: string; path: string };
 
-export function resolveWebDesktopBuiltInLaunch(path: string, name?: string): WebDesktopBuiltInLaunch | null {
-  if (path === "__browser__" || name?.trim().toLowerCase() === "browser") {
+export function resolveWebDesktopBuiltInLaunch(path: string): WebDesktopBuiltInLaunch | null {
+  if (
+    path === "__browser__"
+    || path === "apps/browser/index.html"
+    || path === "apps/browser/dist/index.html"
+  ) {
     return { kind: "external", url: "https://www.google.com" };
   }
   if (path === "__vscode__") {
