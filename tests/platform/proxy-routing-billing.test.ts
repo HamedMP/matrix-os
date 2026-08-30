@@ -417,7 +417,7 @@ describe("platform proxy routing billing and provisioning", () => {
 
   it("classifies websocket paths without preserving secrets", () => {
     expect(classifyWebSocketPath("/ws?token=secret")).toBe("/ws");
-    expect(classifyWebSocketPath("/ws/terminal/session?token=secret&session=main")).toBe("/ws/terminal");
+    expect(classifyWebSocketPath("/ws/terminal/tab?token=secret&workspaceId=tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&tabId=tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")).toBe("/ws/terminal");
     expect(classifyWebSocketPath("/ws/other?token=secret")).toBe("/ws/*");
     expect(classifyWebSocketPath("/api/ping")).toBe("other");
   });

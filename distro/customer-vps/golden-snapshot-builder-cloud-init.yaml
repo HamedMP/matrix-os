@@ -173,7 +173,7 @@ runcmd:
     test "$cloudFinalSubState" = exited
     failureStage='service_shutdown'
     printf '{"eventId":"{{callbackEventId}}","phase":"sanitized","bundleVersion":"{{bundleVersion}}","bundleSha256":"{{bundleSha256}}","builderMachineIdSha256":"%s","builderSshHostKeySha256":"%s"}\n' "$builderMachineIdSha256" "$builderSshHostKeySha256" >/run/golden-snapshot-callback.json
-    systemctl stop matrix-sync-agent.service matrix-shell.service matrix-gateway.service matrix-restore.service
+    systemctl stop matrix-sync-agent.service matrix-shell.service matrix-gateway.service matrix-terminal-runtime.service matrix-restore.service
     docker rm -f matrix-golden-postgres || true
     systemctl stop docker.service containerd.service
     systemctl disable docker.service containerd.service || true

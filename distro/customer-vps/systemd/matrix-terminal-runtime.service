@@ -1,0 +1,30 @@
+[Unit]
+Description=Matrix OS project-scoped terminal runtime
+After=matrix-restore.service
+Requires=matrix-restore.service
+ConditionPathExists=/opt/matrix/restore-complete
+ConditionPathExists=/opt/matrix/bin/matrix-terminal-runtime
+
+[Service]
+Type=exec
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+WorkingDirectory=/opt/matrix
+RuntimeDirectory=matrix
+RuntimeDirectoryMode=0700
+ExecStartPre=/opt/matrix/bin/matrix-terminal-runtime --migrate-only
+ExecStart=/opt/matrix/bin/matrix-terminal-runtime
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=720
+TimeoutStopSec=30
+KillMode=control-group
+MemoryHigh=768M
+MemoryMax=1G
+TasksMax=4096
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
