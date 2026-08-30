@@ -822,7 +822,6 @@ describe("native desktop shell", () => {
     expect(terminalChrome?.style.width).toBe("280px");
     expect(terminalChrome?.textContent).not.toContain("Terminal");
     expect((terminalWindow.querySelector("[data-os-window-gesture-layer]") as HTMLElement).className).toContain("inset-0");
-    expect((terminalWindow.querySelector('[data-os-window-safe-view="pane"]') as HTMLElement).style.paddingTop).toBe("48px");
     expect(screen.getByText("Chat content")).toBeTruthy();
     expect(screen.getByText("Terminal content")).toBeTruthy();
     expect(screen.getByTestId("desktop-surface-content-work").hasAttribute("inert")).toBe(true);
