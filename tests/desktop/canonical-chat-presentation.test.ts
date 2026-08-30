@@ -3,6 +3,35 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 
 describe("canonical Chat presentation adapter", () => {
+  it("caps transcript projection collections at the public activity-page boundary", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const occurredAt = run.startedAt ?? run.createdAt;
+    const activities = Array.from({ length: 501 }, (_, index) => ({
+      id: `activity_bounded_${index}`,
+      chatId: snapshot.chat.id,
+      runId: run.id,
+      sequence: index + 1,
+      type: "agent.activity" as const,
+      activityId: `bounded_${index}`,
+      kind: "phase" as const,
+      label: `Phase ${index}`,
+      status: "completed" as const,
+      occurredAt,
+    }));
+
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities,
+    });
+    const projectedActivities = presented?.work.filter((item) => item.kind === "activity-group") ?? [];
+
+    expect(projectedActivities).toHaveLength(500);
+    expect(projectedActivities.at(-1)?.id).toContain("activity_bounded_499");
+  });
+
   it("projects canonical messages into the shared provider-neutral transcript", () => {
     const { snapshot } = createCanonicalChatFixture("completed");
 
