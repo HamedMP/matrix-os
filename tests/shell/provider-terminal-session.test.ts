@@ -47,4 +47,31 @@ describe("provider terminal session handoff", () => {
     await expect(drainExistingTerminalSessionQueue("window-b", { fetcher: validFetcher }))
       .resolves.toEqual(["other-login"]);
   });
+
+  it("retains matched handoffs until the server confirms the session is active", async () => {
+    enqueueExistingTerminalSession("provider-login", "window-a");
+    const unavailable = vi.fn(async () => {
+      throw new TypeError("offline");
+    });
+
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: unavailable }))
+      .resolves.toEqual([]);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue"))
+      .toContain("provider-login");
+
+    const inactive = vi.fn(async () => Response.json({
+      sessions: [{ name: "provider-login", status: "exited" }],
+    }));
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: inactive }))
+      .resolves.toEqual([]);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue"))
+      .toContain("provider-login");
+
+    const active = vi.fn(async () => Response.json({
+      sessions: [{ name: "provider-login", status: "active" }],
+    }));
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: active }))
+      .resolves.toEqual(["provider-login"]);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
+  });
 });

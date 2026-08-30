@@ -1,5 +1,10 @@
 import { useState } from "react";
-import type { ProviderAccount, ProviderAccessSource } from "@matrix-os/contracts";
+import type {
+  ProviderAccount,
+  ProviderAccessSource,
+  ProviderGatewayPolicy,
+  ProviderHarnessInstance,
+} from "@matrix-os/contracts";
 import { FeatureDialog } from "./FeatureDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { dependenciesTotal } from "./utils.js";
@@ -12,6 +17,8 @@ export function RemovalDialog({
   account,
   accounts,
   sources,
+  harnesses,
+  gatewayPolicy,
   disabled,
   canRemove,
   canReassign,
@@ -21,24 +28,49 @@ export function RemovalDialog({
   account: ProviderAccount;
   accounts: ProviderAccount[];
   sources: ProviderAccessSource[];
+  harnesses: ProviderHarnessInstance[];
+  gatewayPolicy: ProviderGatewayPolicy | null;
   disabled: boolean;
   canRemove: boolean;
   canReassign: boolean;
   onMutate: (intent: ProviderSettingsMutationIntent) => void;
   onClose: () => void;
 }) {
+  const affectedHarnesses = harnesses.filter((harness) => harness.selectedAccountId === account.id);
+  const sourceSupportsEveryRoute = (source: ProviderAccessSource) => (
+    source.providerId === account.providerId
+    && affectedHarnesses.every((harness) => source.eligibleModelIds.includes(harness.route.modelId))
+    && (source.kind !== "matrix_gateway"
+      || (gatewayPolicy?.accessSourceId === source.id
+        && affectedHarnesses.every((harness) => gatewayPolicy.allowedModelIds.includes(harness.route.modelId))))
+  );
   const alternatives = [
-    ...sources.filter((source) => source.id !== account.accessSourceId),
-    ...accounts.filter((candidate) => candidate.id !== account.id && candidate.providerId === account.providerId),
+    ...sources
+      .filter((source) => source.id !== account.accessSourceId
+        && source.kind !== "provider_account"
+        && sourceSupportsEveryRoute(source))
+      .map((source) => ({
+        key: `source:${source.id}`,
+        label: source.displayName,
+        target: { kind: "access_source" as const, accessSourceId: source.id },
+      })),
+    ...accounts
+      .filter((candidate) => candidate.id !== account.id && candidate.providerId === account.providerId)
+      .flatMap((candidate) => {
+        const source = sources.find((value) => value.id === candidate.accessSourceId);
+        return source && sourceSupportsEveryRoute(source) ? [{
+          key: `account:${candidate.id}`,
+          label: candidate.displayName,
+          target: { kind: "account" as const, accountId: candidate.id },
+        }] : [];
+      }),
   ];
-  const [targetId, setTargetId] = useState(alternatives[0]?.id ?? "");
+  const [targetKey, setTargetKey] = useState(alternatives[0]?.key ?? "");
   const hasDependencies = dependenciesTotal(account.dependencies) > 0;
 
   const reassign = () => {
-    const targetAccount = accounts.find((candidate) => candidate.id === targetId);
-    const target = targetAccount
-      ? { kind: "account" as const, accountId: targetAccount.id }
-      : { kind: "access_source" as const, accessSourceId: targetId };
+    const target = alternatives.find((alternative) => alternative.key === targetKey)?.target;
+    if (!target) return;
     onMutate({
       type: "reassign_account",
       fromAccountId: account.id,
@@ -70,9 +102,9 @@ export function RemovalDialog({
           </p>
           <label className="matrix-ap-field">
             <span>Reassign to</span>
-            <select value={targetId} onChange={(event) => setTargetId(event.target.value)} disabled={disabled || !canReassign}>
+            <select value={targetKey} onChange={(event) => setTargetKey(event.target.value)} disabled={disabled || !canReassign}>
               {alternatives.map((alternative) => (
-                <option key={alternative.id} value={alternative.id}>{alternative.displayName}</option>
+                <option key={alternative.key} value={alternative.key}>{alternative.label}</option>
               ))}
             </select>
           </label>
@@ -82,7 +114,7 @@ export function RemovalDialog({
             <button
               type="button"
               className="matrix-ap-button matrix-ap-button-primary"
-              disabled={disabled || !canReassign || targetId === ""}
+              disabled={disabled || !canReassign || targetKey === ""}
               onClick={reassign}
               title={canReassign ? undefined : "Reassignment is not available"}
             >

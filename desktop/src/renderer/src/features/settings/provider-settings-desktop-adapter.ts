@@ -130,7 +130,8 @@ export async function openProviderAuthorizationPath(input: {
   const url = buildGatewayUrl(input.platformHost, action.data.authorizationPath, input.runtimeSlot);
   try {
     if (new URL(url).protocol !== "https:") return false;
-  } catch {
+  } catch (error) {
+    console.warn("[provider-settings] Invalid authorization URL:", error instanceof Error ? error.name : typeof error);
     return false;
   }
   try {

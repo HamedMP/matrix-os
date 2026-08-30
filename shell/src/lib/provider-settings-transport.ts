@@ -70,14 +70,16 @@ async function fetchJson(
   let response: Response;
   try {
     response = await fetcher(`${getGatewayUrl()}${path}`, init);
-  } catch {
+  } catch (error) {
+    console.warn("[provider-settings] Provider settings request failed:", error instanceof Error ? error.name : typeof error);
     throw new ProviderSettingsTransportError("unavailable");
   }
   if (!response.ok) {
     let value: unknown;
     try {
       value = await boundedJson(response);
-    } catch {
+    } catch (error) {
+      console.warn("[provider-settings] Provider settings error response was invalid:", error instanceof Error ? error.name : typeof error);
       throw new ProviderSettingsTransportError("unavailable");
     }
     const code = value && typeof value === "object"
