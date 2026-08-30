@@ -1,6 +1,8 @@
 import {
   TerminalRefSchema,
+  TerminalPaneActionSchema,
   TerminalWorkspaceIdSchema,
+  type TerminalPaneAction,
   type TerminalRef,
   type TerminalTab,
   type TerminalWorkspace,
@@ -35,6 +37,7 @@ export interface ZellijRuntimeAdapter {
   deleteSession?(sessionName: string): Promise<void>;
   resizeSession?(sessionName: string, size: { cols: number; rows: number }): Promise<void>;
   writeToPane?(sessionName: string, paneId: string, data: Uint8Array): Promise<void>;
+  paneAction?(sessionName: string, tabId: number, action: TerminalPaneAction): Promise<void>;
 }
 
 export interface ZellijAttachment {
@@ -305,6 +308,23 @@ export class TerminalRuntime {
         throw new Error("Terminal tab unavailable");
       }
       await this.zellij.writeToPane(workspace.zellijSessionName, tab.zellijPaneId, data);
+    });
+  }
+
+  async paneAction(refInput: TerminalRef, actionInput: TerminalPaneAction): Promise<void> {
+    const ref = TerminalRefSchema.parse(refInput);
+    const action = TerminalPaneActionSchema.parse(actionInput);
+    if (action.type === "close") {
+      await this.terminateTab(ref);
+      return;
+    }
+    await this.runWorkspaceMutation(async () => {
+      const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
+      const tab = workspace.tabs[ref.tabId];
+      if (!tab || tab.zellijTabId === null || !this.zellij.paneAction) {
+        throw new Error("Terminal tab unavailable");
+      }
+      await this.zellij.paneAction(workspace.zellijSessionName, tab.zellijTabId, action);
     });
   }
 

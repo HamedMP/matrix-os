@@ -15,14 +15,12 @@ import {
   type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import {
+  MAX_TERMINAL_SNAPSHOT_ANSI_BYTES,
+  MAX_TERMINAL_SNAPSHOT_BYTES,
+} from "./limits.js";
 
 const MAX_STATE_BYTES = 16 * 1024 * 1024;
-const MAX_SNAPSHOT_ANSI_BYTES = 5 * 1024 * 1024;
-// Zellij's ANSI string and its line arrays describe the same retained output.
-// JSON can expand each control character to six bytes (for example `\\u0001`),
-// so reserve that worst case for both representations plus bounded envelope
-// overhead. This remains a finite per-tab disk/read limit.
-const MAX_SNAPSHOT_BYTES = (MAX_SNAPSHOT_ANSI_BYTES * 6 * 2) + (4 * 1024 * 1024);
 const DEFAULT_SIZE = { cols: 120, rows: 36 } as const;
 const InternalTabSchema = TerminalTabSchema.omit({}).extend({
   zellijTabName: z.string().regex(/^matrix-tab-[0-9a-f]{32}$/),
@@ -53,8 +51,9 @@ const SnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   terminalRef: TerminalRefSchema,
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  presentationRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
   seq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  ansi: z.string().max(MAX_SNAPSHOT_ANSI_BYTES),
+  ansi: z.string().max(MAX_TERMINAL_SNAPSHOT_ANSI_BYTES),
   viewport: z.array(z.string().max(16_384)).max(200),
   scrollback: z.array(z.string().max(16_384)).max(100_000),
   updatedAt: z.string().datetime({ offset: true }),
@@ -300,6 +299,7 @@ export class TerminalWorkspaceStore {
         schemaVersion: 1,
         terminalRef: ref,
         revision: tab.revision,
+        presentationRevision: previous?.presentationRevision ?? 0,
         seq: (previous?.seq ?? -1) + 1,
         ansi: input.ansi,
         viewport: input.viewport,
@@ -342,6 +342,7 @@ export class TerminalWorkspaceStore {
         schemaVersion: 1,
         terminalRef: ref,
         revision: tab.revision,
+        presentationRevision: (previous?.presentationRevision ?? 0) + 1,
         seq,
         ansi: input.ansi,
         viewport: input.viewport,
@@ -477,7 +478,7 @@ export class TerminalWorkspaceStore {
     const path = this.snapshotPath(ref.tabId);
     try {
       const entry = await lstat(path);
-      if (!entry.isFile() || entry.isSymbolicLink() || entry.size > MAX_SNAPSHOT_BYTES) {
+      if (!entry.isFile() || entry.isSymbolicLink() || entry.size > MAX_TERMINAL_SNAPSHOT_BYTES) {
         throw new TerminalStateCorruptError();
       }
       const snapshot = SnapshotSchema.parse(JSON.parse(await readFile(path, "utf8")));
@@ -531,7 +532,7 @@ export class TerminalWorkspaceStore {
 
   private async persistSnapshot(snapshot: TerminalSnapshot): Promise<void> {
     const content = `${JSON.stringify(SnapshotSchema.parse(snapshot))}\n`;
-    if (Buffer.byteLength(content) > MAX_SNAPSHOT_BYTES) throw new Error("Terminal snapshot capacity reached");
+    if (Buffer.byteLength(content) > MAX_TERMINAL_SNAPSHOT_BYTES) throw new Error("Terminal snapshot capacity reached");
     const target = this.snapshotPath(snapshot.terminalRef.tabId);
     await writeTextAtomic(target, content);
   }

@@ -93,4 +93,22 @@ describe("terminal workspace store", () => {
     expect(retried).toEqual(exited);
     expect(workspaceAfterRetry.revision).toBe(workspaceAfterExit.revision);
   });
+
+  it("advances presentation revision only for intentional snapshot replacement", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-presentation-revision-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const workspace = await store.ensureWorkspace();
+    const tab = await store.createTab(workspace.id, { name: "revision", cwd: "" });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+
+    await expect(store.checkpointTab(ref, { ansi: "one", viewport: [], scrollback: ["one"] }))
+      .resolves.toMatchObject({ presentationRevision: 0 });
+    await expect(store.checkpointTab(ref, { ansi: "two", viewport: [], scrollback: ["two"] }))
+      .resolves.toMatchObject({ presentationRevision: 0 });
+    await expect(store.importSnapshot(ref, { ansi: "replacement", viewport: [], scrollback: ["replacement"], seq: 1 }))
+      .resolves.toMatchObject({ presentationRevision: 1 });
+    await expect(store.checkpointTab(ref, { ansi: "three", viewport: [], scrollback: ["three"] }))
+      .resolves.toMatchObject({ presentationRevision: 1 });
+  });
 });

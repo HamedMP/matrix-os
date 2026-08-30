@@ -617,6 +617,9 @@ importers:
       '@matrix-os/scope-runtime':
         specifier: workspace:*
         version: link:../scope-runtime
+      '@matrix-os/terminal-runtime':
+        specifier: workspace:*
+        version: link:../terminal-runtime
       '@pipedream/sdk':
         specifier: ^2.4.3
         version: 2.4.3
