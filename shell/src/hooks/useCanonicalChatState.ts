@@ -250,15 +250,20 @@ export function useCanonicalChatState(): ChatState {
   }, [client, loadDetail]);
 
   const submitApproval = useCallback(async (
+    runId: string,
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
   ) => {
     const current = detailRef.current;
-    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current) return false;
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current
+      || current.record.activeRun.runId !== runId) {
+      setSafeError("The approval could not be submitted. Refresh and try again.");
+      return false;
+    }
     try {
       await client.submitApproval(
         current.record.chat.id,
-        current.record.activeRun.runId,
+        runId,
         approvalId,
         decision,
         requestId(),

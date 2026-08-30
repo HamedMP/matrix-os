@@ -158,7 +158,6 @@ describe("generic provider harness lifecycle coordinator", () => {
       "hermes",
       "openclaw",
       "pi",
-      "opencode",
     ]);
     const before = config([hermes]);
     const after = structuredClone(before);

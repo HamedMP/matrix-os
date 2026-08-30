@@ -29,10 +29,15 @@ import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 import { Button } from "@/components/ui/button";
+import { ShellNotificationCard } from "@/components/ShellNotificationCard";
+import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useVoice } from "@/hooks/useVoice";
-import { executeCanonicalProviderSetupAction } from "@/lib/canonical-provider-setup";
+import {
+  CANONICAL_PROVIDER_SETUP_ERROR,
+  executeCanonicalProviderSetupAction,
+} from "@/lib/canonical-provider-setup";
 import {
   DEFAULT_HERMES_CHANNELS,
   createChannelConfiguredPrompt,
@@ -116,7 +121,11 @@ interface ChatAppProps {
     },
   ) => void;
   providerSelection?: CanonicalChatModelSelection;
-  onSubmitApproval?: (approvalId: string, decision: CanonicalChatApprovalDecision) => Promise<boolean>;
+  onSubmitApproval?: (
+    runId: string,
+    approvalId: string,
+    decision: CanonicalChatApprovalDecision,
+  ) => Promise<boolean>;
   composerDraftRequest?: { id: number; text: string } | null;
   onComposerDraftConsumed?: (id: number) => void;
   onProviderSetupAction?: (
@@ -174,6 +183,7 @@ export function ChatApp({
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
+  const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
   const getInitialHermesSetup = () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower the `??=` logical-assignment operator (BuildHIR Todo); this lazy one-time ref cache is a deliberate first-render localStorage read and rewriting it would not change behavior.
@@ -222,8 +232,36 @@ export function ChatApp({
 
   const isEmpty = messages.length === 0 && !busy;
 
+  const runProviderSetupAction = async (
+    instance: CanonicalProviderInstanceDescriptor,
+    action: CanonicalProviderSetupAction,
+  ) => {
+    setProviderSetupError(null);
+    if (onProviderSetupAction) {
+      onProviderSetupAction(instance, action);
+      return;
+    }
+    try {
+      const completed = await executeCanonicalProviderSetupAction({ instance, action });
+      if (!completed) setProviderSetupError(CANONICAL_PROVIDER_SETUP_ERROR);
+    } catch (error: unknown) {
+      console.warn("[chat] Provider setup dispatch failed:", error instanceof Error ? error.name : typeof error);
+      setProviderSetupError(CANONICAL_PROVIDER_SETUP_ERROR);
+    }
+  };
+
   return (
     <div className="relative flex h-full bg-background">
+      {providerSetupError && (
+        <ShellNotificationPortal>
+          <ShellNotificationCard
+            className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive shadow-[0_18px_60px_-24px_rgba(239,68,68,0.58),0_24px_60px_-30px_rgba(0,0,0,0.38)] backdrop-blur-md"
+            role="alert"
+          >
+            {providerSetupError}
+          </ShellNotificationCard>
+        </ShellNotificationPortal>
+      )}
       {/* Sidebar */}
       <aside
         className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
@@ -370,8 +408,7 @@ export function ChatApp({
             onPermissionModeChange={providerState.selectPermissionMode}
             onOptionChange={providerState.selectOption}
             onSetupAction={(instance, action) => {
-              if (onProviderSetupAction) onProviderSetupAction(instance, action);
-              else void executeCanonicalProviderSetupAction({ instance, action });
+              void runProviderSetupAction(instance, action);
             }}
             lockedInstanceId={providerSelection?.instanceId}
             showChannels={providerState.selected?.driverKind === "hermes"}
@@ -420,10 +457,15 @@ export function ChatApp({
                       ) : msg.role === "system" ? (
                         <CanonicalApprovalMessage
                           message={msg}
-                          submitting={submittingApprovalId === canonicalApproval(msg)?.approvalId}
-                          onSubmit={onSubmitApproval ? async (approvalId, decision) => {
-                            setSubmittingApprovalId(approvalId);
-                            try { await onSubmitApproval(approvalId, decision); }
+                          submitting={(() => {
+                            const approval = canonicalApproval(msg);
+                            return approval !== null
+                              && submittingApprovalId === `${approval.runId}\0${approval.approvalId}`;
+                          })()}
+                          onSubmit={onSubmitApproval ? async (runId, approvalId, decision) => {
+                            const submissionId = `${runId}\0${approvalId}`;
+                            setSubmittingApprovalId(submissionId);
+                            try { await onSubmitApproval(runId, approvalId, decision); }
                             finally { setSubmittingApprovalId(null); }
                           } : undefined}
                         />

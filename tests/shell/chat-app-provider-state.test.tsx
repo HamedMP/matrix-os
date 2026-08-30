@@ -240,7 +240,7 @@ describe("Chat canonical provider state", () => {
       messages={[{
         id: "msg_approval", role: "system", content: "Run command: Allow this command?", timestamp: Date.now(),
         metadata: { canonicalApproval: {
-          approvalId: "approval_1", title: "Run command", description: "Allow this command?",
+          runId: "run_original", approvalId: "approval_1", title: "Run command", description: "Allow this command?",
           risk: "medium", allowedDecisions: ["approve", "decline"], pending: true,
         } },
       }]}
@@ -250,8 +250,29 @@ describe("Chat canonical provider state", () => {
     />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(onSubmitApproval).toHaveBeenCalledWith("approval_1", "approve"));
+    await waitFor(() => expect(onSubmitApproval).toHaveBeenCalledWith("run_original", "approval_1", "approve"));
     expect(screen.getByRole("button", { name: "Decline" })).toBeVisible();
+  });
+
+  it("shows one safe shell notification when a canonical setup action fails", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("/api/chat-providers")) return Response.json(providerCatalog(false));
+      if (String(url).includes("/api/terminal/sessions") && init?.method === "POST") {
+        return Response.json({ error: "private terminal failure" }, { status: 503 });
+      }
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ChatApp
+      messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Connect OpenCode" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not open setup. Open Settings to continue.");
+    expect(screen.queryByText("private terminal failure")).toBeNull();
   });
 
   it("keeps Hermes channel controls and prompt instructions out of OpenClaw turns", async () => {
