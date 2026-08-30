@@ -2,7 +2,11 @@
 
 ## Feature checks
 
-- Focused Vitest matrix after restacking onto current main: 15 files, 295 tests passed.
+- Focused Vitest matrix: 16 files, 299 tests passed.
+
+  ```bash
+  pnpm vitest run tests/contracts/terminal-clipboard.test.ts tests/desktop/menu-template.test.ts tests/desktop/native-desktop-shell.test.tsx tests/desktop/terminal-link-actions.test.ts tests/desktop/terminal-link-context-menu.test.tsx tests/desktop/terminal-view.test.tsx tests/desktop/terminals-tab.test.tsx tests/shell/canvas-window-terminal-overlay.test.tsx tests/shell/terminal-link-actions.test.ts tests/shell/terminal-link-context-menu.test.tsx tests/shell/terminal-pane-privacy.test.tsx tests/shell/terminal-pane-scrolling.test.tsx tests/shell/terminal-pane-zoom-correction.test.ts tests/shell/terminal-pointer-interception.test.ts tests/shell/terminal-rich-paste.test.ts tests/shell/terminal-soft-grid.test.ts
+  ```
 - Packaged Electron Playwright journey after restacking: 1 test passed in 53.70 seconds.
 - Desktop production package build: passed.
 - TypeScript builds/typechecks for all workspace packages: passed.
