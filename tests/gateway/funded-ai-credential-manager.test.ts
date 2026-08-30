@@ -41,6 +41,7 @@ function issueResponse(expiresAt = new Date(NOW + 15 * 60_000).toISOString()) {
       globalRevision: 1,
       runtimeRevision: 1,
       allowedModelIds: ["anthropic/claude-sonnet-5"],
+      monthlyBudgetMicrousd: 5_000_000,
       checkedAt: new Date(NOW).toISOString(),
       staleAfter: new Date(NOW + 60_000).toISOString(),
     },
