@@ -11,6 +11,7 @@ import {
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalSubmitChatApprovalRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   CanonicalCreateChatRequestSchema,
@@ -24,6 +25,8 @@ import {
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalSubmitChatApprovalRequest,
+  type CanonicalChatApprovalSubmissionResponse,
   type CanonicalUpdateChatProjectRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
@@ -91,7 +94,7 @@ function decodeMessageCursor(value: string, chatId: string): number {
 export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
-    orchestrator?: Pick<CanonicalChatOrchestrator, "admitTurn" | "cancelRun" | "retryTurn">;
+    orchestrator?: Pick<CanonicalChatOrchestrator, "admitTurn" | "cancelRun" | "submitApproval" | "retryTurn">;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
   } = {},
 ): CanonicalChatRouteService {
@@ -250,6 +253,23 @@ export function createCanonicalChatService(
       );
     },
 
+    async submitApproval(
+      owner: ChatOwner,
+      chatId: string,
+      runId: string,
+      approvalId: string,
+      input: CanonicalSubmitChatApprovalRequest,
+    ): Promise<CanonicalChatApprovalSubmissionResponse> {
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return options.orchestrator.submitApproval(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        runId,
+        approvalId,
+        CanonicalSubmitChatApprovalRequestSchema.parse(input),
+      );
+    },
+
     async retryTurn(
       principal: RequestPrincipal,
       owner: ChatOwner,
@@ -285,6 +305,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     getDetail: unavailable,
     admitTurn: unavailable,
     cancelRun: unavailable,
+    submitApproval: unavailable,
     retryTurn: unavailable,
   };
 }

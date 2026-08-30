@@ -84,6 +84,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
   }));
   const getThread = vi.fn(async () => snapshot(initialEvents));
   const abortThread = vi.fn(async () => snapshot([]));
+  const submitApproval = vi.fn(async () => snapshot([]));
   const registerEventSink = vi.fn((candidate: Sink) => {
     sink = candidate;
     return { dispose: vi.fn() };
@@ -93,6 +94,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     acceptTurn,
     getThread,
     abortThread,
+    submitApproval,
     registerEventSink,
   } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
   return {
@@ -101,6 +103,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     acceptTurn,
     getThread,
     abortThread,
+    submitApproval,
     publish(events: AgentThreadEvent[]) {
       sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events });
     },
@@ -108,6 +111,42 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it.each([
+    ["supervised", "on_request", "workspace_write"],
+    ["auto", "on_failure", "workspace_write"],
+    ["full_access", "never", "full_access"],
+  ] as const)(
+    "passes %s permission mode to the Codex runtime as %s/%s",
+    async (permissionMode, approvalPolicy, sandboxMode) => {
+      const createThread = vi.fn(async () => ({
+        snapshot: snapshot([event({
+          type: "thread.completed",
+          eventId: `evt_complete_${permissionMode}`,
+          outcome: "completed",
+        })]),
+        existing: false,
+      }));
+      const store = {
+        createThread,
+        acceptTurn: vi.fn(),
+        getThread: vi.fn(),
+        abortThread: vi.fn(),
+        submitApproval: vi.fn(),
+        registerEventSink: vi.fn(() => ({ dispose: vi.fn() })),
+      } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+      const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store });
+
+      for await (const _event of adapter.start(input({ permissionMode }))) {
+        // Consume the completed Run.
+      }
+
+      expect(createThread).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: owner.ownerId }),
+        expect.objectContaining({ approvalPolicy, sandboxMode }),
+      );
+    },
+  );
+
   it("projects a typed Codex tool lifecycle through the provider-neutral activity seam", async () => {
     const fake = fakeStore([]);
     const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
@@ -196,6 +235,51 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(fake.createThread).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves the bounded approval decisions needed by canonical Chat controls", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+
+    queueMicrotask(() => fake.publish([
+      event({
+        type: "approval.requested",
+        eventId: "evt_approval",
+        approval: {
+          approvalId: "appr_command",
+          threadId: "thread_native",
+          title: "Run command",
+          safeDescription: "Run a medium-risk command.",
+          risk: "medium",
+          actionKind: "command",
+          allowedDecisions: ["approve", "approve_for_session", "decline"],
+          correlationId: "corr_command",
+        },
+      }),
+      event({
+        type: "approval.resolved",
+        eventId: "evt_approval_resolved",
+        approvalId: "appr_command",
+        decision: "approve_for_session",
+      }),
+      event({ type: "thread.completed", eventId: "evt_complete", outcome: "aborted" }),
+    ]));
+
+    const events = [];
+    for await (const candidate of adapter.start(input())) events.push(candidate);
+
+    expect(events).toContainEqual({
+      type: "approval.requested",
+      approvalId: "appr_command",
+      title: "Run command",
+      risk: "medium",
+      allowedDecisions: ["approve", "approve_for_session", "decline"],
+    });
+    expect(events).toContainEqual({
+      type: "approval.resolved",
+      approvalId: "appr_command",
+      decision: "approve_for_session",
+    });
+  });
+
   it("separates distinct Codex assistant message items for Markdown rendering", async () => {
     const fake = fakeStore([]);
     const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
@@ -271,6 +355,41 @@ describe("canonical coding Chat Provider adapter", () => {
       expect.objectContaining({ userId: owner.ownerId }),
       "thread_native",
       "req_coding",
+    );
+  });
+
+  it("submits canonical approval decisions through the same persisted coding thread", async () => {
+    const fake = fakeStore([event({
+      type: "approval.requested",
+      eventId: "evt_approval",
+      approval: {
+        approvalId: "appr_command",
+        threadId: "thread_native",
+        title: "Run command",
+        safeDescription: "The agent wants to run a workspace command.",
+        risk: "medium",
+        actionKind: "command",
+        allowedDecisions: ["approve_for_session", "decline"],
+        correlationId: "corr_command",
+      },
+    })]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+
+    await adapter.submitApproval!({
+      owner,
+      chatId: "chat_coding",
+      runId: "run_coding",
+      approvalId: "appr_command",
+      decision: "approve_for_session",
+      clientRequestId: "req_approval",
+      state: { conversationId: "thread_native" },
+    });
+
+    expect(fake.submitApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }),
+      "thread_native",
+      "appr_command",
+      { decision: "approve_for_session", clientRequestId: "req_approval", correlationId: "corr_command" },
     );
   });
 

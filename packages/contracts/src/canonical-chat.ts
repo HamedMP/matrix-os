@@ -246,6 +246,13 @@ export const CanonicalChatRunSchema = z.object({
   }
 });
 
+export const CanonicalChatApprovalDecisionSchema = z.enum([
+  "approve",
+  "approve_for_session",
+  "decline",
+  "cancel",
+]);
+
 export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text"),
@@ -280,14 +287,14 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     title: canonicalSafeLabel(160, 640),
     description: canonicalSafeLabel(1_000, 4_000),
     risk: z.enum(["low", "medium", "high"]),
-    allowedDecisions: z.array(z.enum(["approve", "approve_for_session", "decline", "cancel"]))
+    allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema)
       .min(1)
       .max(4),
   }).strict(),
   z.object({
     type: z.literal("approval_result"),
     approvalId: canonicalReferenceId(128),
-    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
+    decision: CanonicalChatApprovalDecisionSchema,
   }).strict(),
   z.object({
     type: z.literal("status"),
@@ -510,11 +517,12 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     approvalId: canonicalReferenceId(128),
     title: canonicalSafeLabel(160, 640),
     risk: z.enum(["low", "medium", "high"]),
+    allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("approval.resolved"),
     approvalId: canonicalReferenceId(128),
-    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
+    decision: CanonicalChatApprovalDecisionSchema,
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.requested"),
@@ -554,6 +562,7 @@ export type CanonicalChatRun = z.infer<typeof CanonicalChatRunSchema>;
 export type CanonicalChatMessagePart = z.infer<typeof CanonicalChatMessagePartSchema>;
 export type CanonicalChatMessage = z.infer<typeof CanonicalChatMessageSchema>;
 export type CanonicalChatRunActivity = z.infer<typeof CanonicalChatRunActivitySchema>;
+export type CanonicalChatApprovalDecision = z.infer<typeof CanonicalChatApprovalDecisionSchema>;
 export type CanonicalChatSafeError = z.infer<typeof CanonicalChatSafeErrorSchema>;
 export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentActivityKindSchema>;
 export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;

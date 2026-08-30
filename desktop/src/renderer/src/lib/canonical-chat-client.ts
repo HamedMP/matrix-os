@@ -5,6 +5,7 @@ import {
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
@@ -12,18 +13,21 @@ import {
   CanonicalChatTurnIdSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
+  type CanonicalChatApprovalSubmissionResponse,
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalUpdateChatProjectRequest,
   type CanonicalUpdateChatUserStateRequest,
@@ -68,6 +72,12 @@ export interface CanonicalChatClient {
     runId: string,
     input: CanonicalCancelChatRunRequest,
   ): Promise<CanonicalChatRunCancellationResponse>;
+  submitApproval(
+    chatId: string,
+    runId: string,
+    approvalId: string,
+    input: CanonicalSubmitChatApprovalRequest,
+  ): Promise<CanonicalChatApprovalSubmissionResponse>;
   retryTurn(
     chatId: string,
     turnId: string,
@@ -168,6 +178,19 @@ export function createCanonicalChatClient(
       const request = CanonicalCancelChatRunRequestSchema.parse(input);
       return CanonicalChatRunCancellationResponseSchema.parse(await api.post(
         `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/cancel`,
+        request,
+      ));
+    },
+
+    async submitApproval(chatId, runId, approvalId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const parsedApprovalId = z.string().trim().min(1).max(128)
+        .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/)
+        .parse(approvalId);
+      const request = CanonicalSubmitChatApprovalRequestSchema.parse(input);
+      return CanonicalChatApprovalSubmissionResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/approvals/${encodeURIComponent(parsedApprovalId)}`,
         request,
       ));
     },

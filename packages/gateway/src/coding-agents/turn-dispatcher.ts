@@ -48,6 +48,10 @@ export interface CodingAgentTurnDispatchInput {
     turnId: string;
     message: string;
     attachments?: CreateAgentTurnRequest["attachments"];
+    model?: CreateAgentTurnRequest["model"];
+    modelOptions?: CreateAgentTurnRequest["modelOptions"];
+    approvalPolicy?: CreateAgentTurnRequest["approvalPolicy"];
+    sandboxMode?: CreateAgentTurnRequest["sandboxMode"];
   };
 }
 

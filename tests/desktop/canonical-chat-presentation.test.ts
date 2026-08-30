@@ -61,6 +61,40 @@ describe("canonical Chat presentation adapter", () => {
     });
   });
 
+  it("projects live approval decisions into actionable transcript controls", () => {
+    const { snapshot } = createCanonicalChatFixture("approval_required");
+
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [...snapshot.activities, {
+        id: "activity_approval",
+        chatId: snapshot.chat.id,
+        runId: snapshot.runs[0]!.id,
+        occurredAt: snapshot.runs[0]!.updatedAt,
+        type: "approval.requested",
+        approvalId: "approval_fixture",
+        title: "Run command",
+        risk: "medium",
+        allowedDecisions: ["approve", "decline"],
+      }],
+    });
+
+    expect(presented?.work).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "request",
+        requestKind: "approval",
+        requestId: "approval_fixture",
+        state: "waiting",
+        actions: [
+          { kind: "approval", requestId: "approval_fixture", decision: "approve", label: "Approve" },
+          { kind: "approval", requestId: "approval_fixture", decision: "decline", label: "Decline" },
+        ],
+      }),
+    ]));
+  });
+
   it("reassembles adjacent durable text parts without changing assistant output", () => {
     const { snapshot } = createCanonicalChatFixture("completed");
     const [presented] = canonicalChatPresentation({

@@ -93,10 +93,13 @@ export function ProviderModelPicker({
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleModels = activeInstance?.availability === "available"
     ? activeInstance.models.filter((model) => (
-      normalizedQuery.length === 0
-      || model.displayName.toLocaleLowerCase().includes(normalizedQuery)
-      || activeInstance.displayName.toLocaleLowerCase().includes(normalizedQuery)
-      || DRIVER_LABEL[activeInstance.driverKind].toLocaleLowerCase().includes(normalizedQuery)
+      model.availability === "available"
+      && (
+        normalizedQuery.length === 0
+        || model.displayName.toLocaleLowerCase().includes(normalizedQuery)
+        || activeInstance.displayName.toLocaleLowerCase().includes(normalizedQuery)
+        || DRIVER_LABEL[activeInstance.driverKind].toLocaleLowerCase().includes(normalizedQuery)
+      )
     ))
     : [];
 

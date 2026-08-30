@@ -42,7 +42,16 @@ const TurnFrameSchema = z.object({
   modelOptions: z.array(AgentModelOptionSchema).max(32),
   clientRequestId: RequestIdSchema,
 }).strict();
-const ControlFrameSchema = z.discriminatedUnion("type", [TurnFrameSchema, ApprovalFrameSchema, InputFrameSchema]);
+const InterruptFrameSchema = z.object({
+  type: z.literal("interrupt"),
+  clientRequestId: RequestIdSchema,
+}).strict();
+const ControlFrameSchema = z.discriminatedUnion("type", [
+  TurnFrameSchema,
+  InterruptFrameSchema,
+  ApprovalFrameSchema,
+  InputFrameSchema,
+]);
 const ControlResponseSchema = z.union([
   z.object({ ok: z.literal(true), replayed: z.boolean().optional() }).strict(),
   z.object({ ok: z.literal(false) }).strict(),
@@ -60,6 +69,10 @@ export interface CodexControlClient {
     prompt: string;
     model?: string;
     modelOptions: z.infer<typeof AgentModelOptionSchema>[];
+  }): Promise<void>;
+  interruptTurn(input: {
+    sessionId: string;
+    clientRequestId: string;
   }): Promise<void>;
   submitApproval(input: {
     sessionId: string;
@@ -152,6 +165,12 @@ export function createCodexControlClient(options: {
         ...(input.model ? { model: input.model } : {}),
         modelOptions: input.modelOptions,
         clientRequestId: `req_${input.turnId.slice("turn_".length)}`,
+      });
+    },
+    interruptTurn(input) {
+      return send(input.sessionId, {
+        type: "interrupt",
+        clientRequestId: input.clientRequestId,
       });
     },
     submitApproval(input) {

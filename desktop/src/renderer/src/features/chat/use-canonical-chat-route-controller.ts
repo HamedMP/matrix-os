@@ -1,5 +1,6 @@
 import type {
   CanonicalChatDetailResponse,
+  CanonicalChatApprovalDecision,
   CanonicalChatRecord,
   CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
@@ -283,6 +284,32 @@ export function useCanonicalChatRouteController({
     }
   }, [client, detail, loadDetail]);
 
+  const submitApproval = useCallback(async (
+    approvalId: string,
+    decision: CanonicalChatApprovalDecision,
+  ) => {
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    if (!current || !activeRun) return false;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, {
+        clientRequestId: canonicalChatRequestId(),
+        decision,
+      });
+      if (!isCurrentScope()) return false;
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] approval failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return false;
+      setError("The approval could not be submitted. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return false;
+    }
+  }, [client, loadDetail]);
+
   const retryTurn = useCallback(async (turnId: string) => {
     const current = detailRef.current;
     if (!current || current.record.activeRun) return null;
@@ -350,6 +377,7 @@ export function useCanonicalChatRouteController({
     moveProject,
     submitTurn,
     cancelActiveRun,
+    submitApproval,
     retryTurn,
     deleteChat,
     startNewChat: () => selectChat(null),

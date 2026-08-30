@@ -590,6 +590,74 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
+  it("interrupts only the active native Turn and keeps the runner available for the next Turn", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-control-interrupt-"));
+    const fakeCodexPath = join(homePath, "fake-codex-control-interrupt.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_control_interrupt_1");
+    const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "let turn = 0;",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-interrupt' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    turn += 1;",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: `native-turn-${turn}` } } }));",
+      "    if (turn === 1) console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-1', itemId: 'native-message-1', delta: 'before-interrupt' } }));",
+      "    else if (turn === 2) {",
+      "      console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-2', itemId: 'native-message-2', delta: 'after-interrupt' } }));",
+      "      console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-2', status: 'completed', items: [] } } }));",
+      "    }",
+      "  } else if (message.method === 'turn/interrupt') {",
+      "    console.log(JSON.stringify({ id: message.id, result: {} }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: message.params.turnId, status: 'interrupted', items: [] } } }));",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "First turn.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await waitForTranscript(eventPath, /before-interrupt/);
+      await expect(sendControl(controlPath, {
+        type: "interrupt",
+        clientRequestId: "req_control_interrupt_1",
+      })).resolves.toEqual({ ok: true });
+      await expect(sendControl(controlPath, {
+        type: "turn",
+        prompt: "Second turn.",
+        modelOptions: [],
+        clientRequestId: "req_control_interrupt_2",
+      })).resolves.toEqual({ ok: true });
+      const transcript = await waitForTranscript(eventPath, /after-interrupt/);
+      expect(transcript).toContain('"type":"turn.aborted"');
+      expect(transcript).toContain('"type":"turn.completed"');
+      expect(child.exitCode).toBeNull();
+    } finally {
+      child.kill("SIGTERM");
+      await waitForExit(child).catch(() => undefined);
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("flushes assistant text in conversational chunks before the final completion", async () => {
     const homePath = await mkdtemp(join("/tmp", "codex-stream-"));
     const fakeCodexPath = join(homePath, "fake-codex-stream.mjs");

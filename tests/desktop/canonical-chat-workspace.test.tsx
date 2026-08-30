@@ -71,6 +71,7 @@ function client(): CanonicalChatClient {
     delete: vi.fn(),
     admitTurn: vi.fn(),
     cancelRun: vi.fn(),
+    submitApproval: vi.fn(),
     retryTurn: vi.fn(),
   } as CanonicalChatClient;
 }
@@ -109,6 +110,27 @@ describe("CanonicalChatWorkspace", () => {
     expect(surface.querySelector('[data-slot="shared-chat-composer"]')).toBeTruthy();
   });
 
+  it("uses the same content width for the transcript and canonical composer", async () => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const transcript = await screen.findByRole("log");
+    const composer = screen.getByRole("textbox", { name: "Reply to chat" })
+      .closest('[data-slot="shared-chat-composer"]');
+    expect(composer?.parentElement).toBeTruthy();
+    expect(transcript.className).toContain("max-w-[868px]");
+    expect(composer?.parentElement?.className).toContain("max-w-[868px]");
+  });
+
   it("renders Global Chat history beside the new-chat pane before a Chat is selected", async () => {
     render(
       <CanonicalChatWorkspace
@@ -127,6 +149,66 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
+  });
+
+  it("submits live approval actions from the canonical transcript", async () => {
+    const approval = createCanonicalChatFixture("approval_required").snapshot;
+    const approvalRecord = {
+      chat: {
+        ...approval.chat,
+        providerBinding: undefined,
+        activeRun: undefined,
+        project: undefined,
+      },
+      projectId: "matrix-os",
+      providerBinding: approval.chat.providerBinding,
+      activeRun: approval.chat.activeRun,
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [approvalRecord] });
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record: approvalRecord,
+      messages: approval.messages,
+      turns: approval.turns,
+      runs: approval.runs,
+      activities: [...approval.activities, {
+        id: "activity_approval_action",
+        chatId: approval.chat.id,
+        runId: approval.runs[0]!.id,
+        occurredAt: approval.runs[0]!.updatedAt,
+        type: "approval.requested",
+        approvalId: "appr_command",
+        title: "Run command",
+        risk: "medium",
+        allowedDecisions: ["approve", "decline"],
+      }],
+    });
+    vi.mocked(routeClient.submitApproval).mockResolvedValue({
+      approvalId: "appr_command",
+      decision: "approve",
+      submission: "accepted",
+    });
+
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={approval.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve Run command" }));
+
+    await waitFor(() => expect(routeClient.submitApproval).toHaveBeenCalledWith(
+      approval.chat.id,
+      approval.runs[0]!.id,
+      "appr_command",
+      { clientRequestId: expect.any(String), decision: "approve" },
+    ));
   });
 
   it.each([

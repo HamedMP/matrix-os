@@ -90,6 +90,7 @@ const CodexExecEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread.started"), thread_id: CodexProviderThreadIdSchema }).passthrough(),
   z.object({ type: z.literal("turn.started") }).passthrough(),
   z.object({ type: z.literal("turn.completed") }).passthrough(),
+  z.object({ type: z.literal("turn.aborted") }).passthrough(),
   z.object({ type: z.literal("turn.failed") }).passthrough(),
   z.object({ type: z.literal("item.started"), item: CodexItemSchema }).passthrough(),
   z.object({ type: z.literal("item.updated"), item: CodexItemSchema }).passthrough(),
@@ -157,7 +158,7 @@ export interface CodexEventContext {
 export interface CodexEventParseResult {
   events: AgentThreadEvent[];
   providerThreadId?: string;
-  outcome?: "completed" | "failed";
+  outcome?: "completed" | "failed" | "aborted";
 }
 
 function event(context: CodexEventContext, input: Record<string, unknown>): AgentThreadEvent {
@@ -415,6 +416,7 @@ export function parseCodexExecJsonLine(
     return { events: [event(context, { type: "thread.status", status: "running" })] };
   }
   if (codexEvent.type === "turn.completed") return { events: [], outcome: "completed" };
+  if (codexEvent.type === "turn.aborted") return { events: [], outcome: "aborted" };
   if (codexEvent.type === "turn.failed") return { events: [], outcome: "failed" };
   if (codexEvent.type === "item.started") {
     return { events: startedItemEvents(context, codexEvent.item) };

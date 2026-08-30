@@ -311,6 +311,10 @@ describe("Codex structured event normalization", () => {
       type: "turn.failed",
       error: { message: "provider failed in /home/matrix/private" },
     }), context)).toEqual({ events: [], outcome: "failed" });
+
+    expect(parseCodexExecJsonLine(JSON.stringify({
+      type: "turn.aborted",
+    }), context)).toEqual({ events: [], outcome: "aborted" });
   });
 
   it("ignores unknown events and rejects malformed or oversized external frames", () => {

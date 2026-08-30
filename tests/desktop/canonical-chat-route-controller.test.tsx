@@ -40,6 +40,7 @@ function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClie
     })),
     admitTurn: vi.fn(),
     cancelRun: vi.fn(),
+    submitApproval: vi.fn(),
     retryTurn: vi.fn(),
     ...overrides,
   } as CanonicalChatClient;
@@ -160,6 +161,46 @@ describe("canonical Chat route controller", () => {
     });
     expect(result.current.detail?.record.activeRun?.runId).toBe("run_retry");
     expect(result.current.detail?.runs.map((run) => run.id)).toEqual(["run_failed", "run_retry"]);
+  });
+
+  it("submits an approval decision for the active Run and refreshes its durable state", async () => {
+    const waitingRecord = {
+      ...globalRecord,
+      activeRun: { runId: "run_waiting", turnId: "cturn_waiting", status: "waiting_for_approval" as const },
+    };
+    const waitingDetail = { ...detail, record: waitingRecord };
+    const resolvedDetail = { ...detail, record: globalRecord };
+    const getDetail = vi.fn()
+      .mockResolvedValueOnce(waitingDetail)
+      .mockResolvedValueOnce(resolvedDetail);
+    const submitApproval = vi.fn(async () => ({
+      approvalId: "appr_command",
+      decision: "approve" as const,
+      submission: "accepted" as const,
+    }));
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [waitingRecord] })),
+      getDetail,
+      submitApproval,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.activeRun?.runId).toBe("run_waiting"));
+
+    await act(async () => {
+      await result.current.submitApproval("appr_command", "approve");
+    });
+
+    expect(submitApproval).toHaveBeenCalledWith("chat_global", "run_waiting", "appr_command", {
+      clientRequestId: expect.any(String),
+      decision: "approve",
+    });
+    expect(getDetail).toHaveBeenCalledTimes(2);
+    expect(result.current.detail?.record.activeRun).toBeUndefined();
   });
 
   it("uses one scoped search identity instead of a second Project index", async () => {

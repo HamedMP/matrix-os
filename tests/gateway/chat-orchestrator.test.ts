@@ -631,6 +631,81 @@ describe("CanonicalChatOrchestrator", () => {
     )).toBe(false);
   });
 
+  it("submits only a pending allowed approval decision through the active Provider Run", async () => {
+    await repository.create(owner, {
+      id: "chat_approval",
+      clientRequestId: "req_create_approval",
+      title: "Approval",
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const submitApproval = vi.fn(async () => {
+      release();
+    });
+    const provider = {
+      ...adapter(async function* () {
+        yield { type: "state.updated" as const, state: { sessionId: "native_approval" } };
+        yield {
+          type: "approval.requested" as const,
+          approvalId: "appr_command",
+          title: "Run command",
+          risk: "medium" as const,
+          allowedDecisions: ["approve" as const, "decline" as const],
+        };
+        await released;
+        yield {
+          type: "approval.resolved" as const,
+          approvalId: "appr_command",
+          decision: "approve" as const,
+        };
+        yield { type: "run.completed" as const, outcome: "completed" as const };
+      }),
+      submitApproval,
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+    });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_approval", {
+      clientRequestId: "req_approval_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "run it" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      expect((await repository.exportChat(owner, "chat_approval"))?.activities)
+        .toEqual(expect.arrayContaining([expect.objectContaining({
+          type: "approval.requested",
+          approvalId: "appr_command",
+        })]));
+    });
+
+    await expect(orchestrator.submitApproval(owner, "chat_approval", admitted.run.id, "appr_command", {
+      clientRequestId: "req_approval_decision",
+      decision: "approve",
+    })).resolves.toEqual({
+      approvalId: "appr_command",
+      decision: "approve",
+      submission: "accepted",
+    });
+    expect(submitApproval).toHaveBeenCalledWith(expect.objectContaining({
+      state: { sessionId: "native_approval" },
+      approvalId: "appr_command",
+      decision: "approve",
+      clientRequestId: "req_approval_decision",
+    }));
+    await expect(orchestrator.submitApproval(owner, "chat_approval", admitted.run.id, "appr_command", {
+      clientRequestId: "req_disallowed_decision",
+      decision: "approve_for_session",
+    })).rejects.toMatchObject({ status: 409 });
+    await orchestrator.drain();
+  });
+
   it("resumes later Turns only through the same adapter state schema and Instance", async () => {
     await repository.create(owner, {
       id: "chat_resumed",

@@ -9,6 +9,7 @@ import {
   CanonicalChatTurnSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalSubmitChatApprovalRequestSchema,
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
@@ -18,6 +19,8 @@ import {
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalSubmitChatApprovalRequest,
+  type CanonicalChatApprovalSubmissionResponse,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type {
@@ -167,6 +170,7 @@ export class CanonicalChatOrchestrator {
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
+      | "getPendingApproval"
       | "getLatestAdapterStateForChat"
       | "getTurnRunContext"
       | "admitRetry"
@@ -786,6 +790,57 @@ export class CanonicalChatOrchestrator {
     } catch (error: unknown) {
       return mapRepositoryError(error);
     }
+  }
+
+  async submitApproval(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    approvalId: string,
+    inputValue: CanonicalSubmitChatApprovalRequest,
+  ): Promise<CanonicalChatApprovalSubmissionResponse> {
+    const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
+    const active = this.active.get(runId);
+    if (!active || active.chatId !== chatId || active.owner.type !== owner.type
+      || active.owner.ownerId !== owner.ownerId || !active.adapter.submitApproval) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This approval is no longer available."),
+        409,
+      );
+    }
+    const pending = await this.options.repository.getPendingApproval(owner, { chatId, runId, approvalId });
+    if (!pending || !pending.allowedDecisions.includes(input.decision)) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This approval decision is no longer available."),
+        409,
+      );
+    }
+    const state = await this.options.repository.getAdapterState(owner, {
+      runId,
+      driverKind: active.adapter.driverKind,
+      instanceId: active.instanceId,
+    });
+    try {
+      await active.adapter.submitApproval({
+        owner,
+        chatId,
+        runId,
+        approvalId,
+        decision: input.decision,
+        clientRequestId: input.clientRequestId,
+        ...(state ? { state: active.adapter.parseState(state.state) } : {}),
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[chat/orchestrator] Provider approval callback failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The approval could not be submitted. Try again.", true, ["retry"]),
+        503,
+      );
+    }
+    return { approvalId, decision: input.decision, submission: "accepted" };
   }
 
   async reconcileActiveRuns(owner: ChatOwner): Promise<number> {

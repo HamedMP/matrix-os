@@ -58,6 +58,9 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     cancelRun: vi.fn(async () => {
       throw new Error("not configured");
     }),
+    submitApproval: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
     retryTurn: vi.fn(async () => {
       throw new Error("not configured");
     }),
@@ -504,6 +507,44 @@ describe("canonical Chat routes", () => {
       "chat_route_test",
       "cturn_route",
       { clientRequestId: "req_route_retry", baseRevision: 2 },
+    );
+  });
+
+  it("submits a bounded approval decision for the authenticated owner's active Run", async () => {
+    const submitApproval = vi.fn(async () => ({
+      approvalId: "appr_command",
+      decision: "approve_for_session" as const,
+      submission: "accepted" as const,
+    }));
+    const service = routeService() as CanonicalChatRouteService & {
+      submitApproval: typeof submitApproval;
+    };
+    service.submitApproval = submitApproval;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/runs/run_route/approvals/appr_command",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_approval",
+          decision: "approve_for_session",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      approvalId: "appr_command",
+      decision: "approve_for_session",
+      submission: "accepted",
+    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route",
+      "appr_command",
+      { clientRequestId: "req_route_approval", decision: "approve_for_session" },
     );
   });
 });

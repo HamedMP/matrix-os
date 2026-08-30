@@ -370,6 +370,14 @@ function runPresentation(
         label: activity.title,
         risk: activity.risk,
         timestamp: Date.parse(activity.occurredAt),
+        actions: activity.allowedDecisions.map((decision) => ({
+          kind: "approval" as const,
+          requestId: activity.approvalId,
+          decision,
+          label: decision === "approve_for_session"
+            ? "Approve for session"
+            : decision === "approve" ? "Approve" : decision === "decline" ? "Decline" : "Cancel",
+        })),
       }, MAX_RUN_ACTIVITY_PROJECTIONS) && isNew) requestOrder.push(key);
     } else if (activity.type === "approval.resolved") {
       const key = `approval:${activity.approvalId}`;

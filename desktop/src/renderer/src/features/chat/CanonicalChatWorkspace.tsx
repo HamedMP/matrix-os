@@ -11,6 +11,8 @@ import type {
 import { MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
+import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import type { ApiClient } from "../../lib/api";
@@ -258,13 +260,22 @@ export function CanonicalChatWorkspace({
     await navigator.clipboard.writeText(text);
   }, []);
   const retryTurn = controller.retryTurn;
+  const submitApproval = controller.submitApproval;
   const performTranscriptAction = useCallback(async (action: ConversationActionPresentation) => {
-    if (action.kind !== "retry") throw new Error("UnsupportedConversationAction");
-    const admitted = await retryTurn(action.turnId);
-    if (!admitted) throw new Error("RetryUnavailable");
-  }, [retryTurn]);
+    if (action.kind === "retry") {
+      const admitted = await retryTurn(action.turnId);
+      if (!admitted) throw new Error("RetryUnavailable");
+      return;
+    }
+    if (action.kind === "approval") {
+      const submitted = await submitApproval(action.requestId, action.decision);
+      if (!submitted) throw new Error("ApprovalUnavailable");
+      return;
+    }
+    throw new Error("UnsupportedConversationAction");
+  }, [retryTurn, submitApproval]);
   const canPerformTranscriptAction = useCallback((action: ConversationActionPresentation) => (
-    action.kind === "retry"
+    action.kind === "retry" || action.kind === "approval"
   ), []);
   const activeProjectSlug = projects.find((project) => (
     project.id === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
@@ -541,7 +552,7 @@ export function CanonicalChatWorkspace({
         {...attachments.paneProps}
       >
         {controller.error ? (
-          <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[868px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+          <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             {controller.error}
           </div>
         ) : null}
@@ -554,7 +565,7 @@ export function CanonicalChatWorkspace({
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
             }} />
-            <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">{composer}</div>
+            <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div
@@ -583,12 +594,12 @@ export function CanonicalChatWorkspace({
                 />
               </div>
             </div>
-            <div className={`mx-auto w-full max-w-[868px] shrink-0 ${workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5"}`}>
+            <div className={cn("mx-auto w-full shrink-0", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5")}>
               {composer}
             </div>
           </div>
         ) : (
-          <div className={`mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center ${workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8"}`}>
+          <div className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8")}>
             <div className="flex flex-col items-center gap-3 text-center">
               <MessageSquare size={28} aria-hidden style={{ color: "var(--text-tertiary)" }} />
               <h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>

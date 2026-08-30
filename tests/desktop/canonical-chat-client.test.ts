@@ -186,6 +186,13 @@ describe("canonical Chat client", () => {
       permissionMode: "supervised",
     };
     const post = vi.fn(async (path: string) => {
+      if (path.includes("/approvals/")) {
+        return {
+          approvalId: "appr_command",
+          decision: "approve_for_session",
+          submission: "accepted",
+        };
+      }
       if (path.endsWith("/cancel")) {
         return {
           run: {
@@ -229,6 +236,10 @@ describe("canonical Chat client", () => {
       clientRequestId: "req_client_retry",
       baseRevision: 2,
     });
+    await client.submitApproval(record.chat.id, "run_client", "appr_command", {
+      clientRequestId: "req_client_approval",
+      decision: "approve_for_session",
+    });
 
     expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns", turnInput);
     expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel", {
@@ -238,6 +249,11 @@ describe("canonical Chat client", () => {
       clientRequestId: "req_client_retry",
       baseRevision: 2,
     });
+    expect(post).toHaveBeenNthCalledWith(
+      4,
+      "/api/chats/chat_client_test/runs/run_client/approvals/appr_command",
+      { clientRequestId: "req_client_approval", decision: "approve_for_session" },
+    );
   });
 });
 

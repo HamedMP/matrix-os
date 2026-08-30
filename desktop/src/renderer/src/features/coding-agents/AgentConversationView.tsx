@@ -25,6 +25,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
 import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
 import {
@@ -762,7 +763,7 @@ function ConversationComposer({
     <div className="shrink-0 px-6 pb-5">
       {/* Floating composer card: same centered column as the transcript; the
           rounded/shadowed surface itself lives on PromptInput's prompt-card. */}
-      <div className="mx-auto w-full max-w-[46rem]" data-slot="conversation-composer">
+      <div className={cn("mx-auto w-full", CHAT_CONTENT_WIDTH_CLASS)} data-slot="conversation-composer">
         {turnThreadId === threadId && turnError ? (
           <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
         ) : null}

@@ -1,6 +1,8 @@
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
+import { cn } from "../../lib/cn";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
@@ -263,7 +265,7 @@ export function HermesPane() {
   );
 
   const loadErrorBanner = loadError ? (
-    <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[868px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+    <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
       {loadError}
     </div>
   ) : null;
@@ -276,7 +278,7 @@ export function HermesPane() {
     >
       {loadErrorBanner}
       {empty ? (
-        <div data-testid="chat-empty-content" className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center gap-[26px] px-5 py-8">
+        <div data-testid="chat-empty-content" className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center gap-[26px] px-5 py-8", CHAT_CONTENT_WIDTH_CLASS)}>
           <div className="flex shrink-0 flex-col items-center gap-[26px] text-center">
             <h1
               className="text-[32px] font-semibold leading-tight tracking-[-0.02em]"
@@ -291,7 +293,7 @@ export function HermesPane() {
       ) : (
         <>
           <ConversationTranscript turns={turns} callbacks={{ copyText, openFile: openFileInDesktopEditor }} />
-          <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
+          <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>
             {renderComposer("Reply to Hermes…")}
           </div>
         </>

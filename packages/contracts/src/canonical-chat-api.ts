@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import {
   CanonicalChatMessagePartSchema,
   CanonicalChatMessageSchema,
+  CanonicalChatApprovalDecisionSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatRequestIdSchema,
   CanonicalChatRunActivitySchema,
@@ -63,6 +64,11 @@ export const CanonicalCreateChatTurnRequestSchema = z.object({
 
 export const CanonicalCancelChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
+}).strict();
+
+export const CanonicalSubmitChatApprovalRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  decision: CanonicalChatApprovalDecisionSchema,
 }).strict();
 
 export const CanonicalRetryChatTurnRequestSchema = z.object({
@@ -140,6 +146,12 @@ export const CanonicalChatRunCancellationResponseSchema = z.object({
   cancellation: z.enum(["aborted", "already_terminal"]),
 }).strict();
 
+export const CanonicalChatApprovalSubmissionResponseSchema = z.object({
+  approvalId: canonicalReferenceId(128),
+  decision: CanonicalChatApprovalDecisionSchema,
+  submission: z.literal("accepted"),
+}).strict();
+
 export const CanonicalChatRunAdmissionResponseSchema = z.object({
   record: CanonicalChatRecordSchema,
   turn: CanonicalChatTurnSchema,
@@ -158,10 +170,12 @@ export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateCh
 export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdateChatUserStateRequestSchema>;
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
 export type CanonicalCancelChatRunRequest = z.infer<typeof CanonicalCancelChatRunRequestSchema>;
+export type CanonicalSubmitChatApprovalRequest = z.infer<typeof CanonicalSubmitChatApprovalRequestSchema>;
 export type CanonicalRetryChatTurnRequest = z.infer<typeof CanonicalRetryChatTurnRequestSchema>;
 export type CanonicalChatRecord = z.infer<typeof CanonicalChatRecordSchema>;
 export type CanonicalChatListResponse = z.infer<typeof CanonicalChatListResponseSchema>;
 export type CanonicalChatDetailResponse = z.infer<typeof CanonicalChatDetailResponseSchema>;
 export type CanonicalChatTurnAdmissionResponse = z.infer<typeof CanonicalChatTurnAdmissionResponseSchema>;
 export type CanonicalChatRunCancellationResponse = z.infer<typeof CanonicalChatRunCancellationResponseSchema>;
+export type CanonicalChatApprovalSubmissionResponse = z.infer<typeof CanonicalChatApprovalSubmissionResponseSchema>;
 export type CanonicalChatRunAdmissionResponse = z.infer<typeof CanonicalChatRunAdmissionResponseSchema>;

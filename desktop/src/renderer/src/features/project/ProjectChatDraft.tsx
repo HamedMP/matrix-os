@@ -9,6 +9,8 @@ import {
   type RuntimeSummary,
 } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
+import { cn } from "../../lib/cn";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useDraftChat } from "../../stores/draft-chat";
@@ -403,7 +405,7 @@ export function ProjectChatDraft({
         />
       ) : null}
       <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
-        <div className={`@container/project-composer mx-auto w-full ${presentation === "landing" ? "max-w-none" : "max-w-[46rem]"}`} data-slot="draft-composer">
+        <div className={cn("@container/project-composer mx-auto w-full", presentation === "landing" ? "max-w-none" : CHAT_CONTENT_WIDTH_CLASS)} data-slot="draft-composer">
           {canonicalError || createError ? (
             <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{canonicalError ?? createError}</p>
           ) : null}

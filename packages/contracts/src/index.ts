@@ -398,6 +398,8 @@ export const CreateAgentTurnRequestSchema = z.object({
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
   model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
+  approvalPolicy: ApprovalPolicySchema.optional(),
+  sandboxMode: SandboxModeSchema.optional(),
   clientRequestId: RequestIdSchema,
 }).strict();
 

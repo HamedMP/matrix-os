@@ -85,7 +85,7 @@ function eventId(sessionId: string, byteOffset: number, index: number): string {
 
 function completionEvents(input: {
   threadId: string;
-  outcome: "completed" | "failed";
+  outcome: "completed" | "failed" | "aborted";
   occurredAt: string;
   nextEventId: () => string;
 }): AgentThreadEvent[] {

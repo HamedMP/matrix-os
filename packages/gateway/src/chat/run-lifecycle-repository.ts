@@ -160,6 +160,38 @@ export class ChatRunLifecycleRepository {
     };
   }
 
+  async getPendingApproval(ownerInput: ChatOwner, input: {
+    chatId: string;
+    runId: string;
+    approvalId: string;
+  }): Promise<Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.runId, input.approvalId].forEach(requireSafeRef);
+    const rows = await this.kysely.selectFrom("chat_run_events")
+      .innerJoin("chat_runs", "chat_runs.id", "chat_run_events.run_id")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select(["chat_run_events.event"])
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId)
+      .where("chat_runs.id", "=", input.runId)
+      .where("chat_runs.status", "in", [...ACTIVE_RUNS])
+      .orderBy("chat_run_events.run_seq")
+      .limit(500)
+      .execute();
+    let pending: Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null = null;
+    for (const row of rows) {
+      const activity = CanonicalChatRunActivitySchema.safeParse(row.event);
+      if (!activity.success) continue;
+      if (activity.data.type !== "approval.requested" && activity.data.type !== "approval.resolved") continue;
+      if (activity.data.approvalId !== input.approvalId) continue;
+      if (activity.data.type === "approval.requested") pending = activity.data;
+      if (activity.data.type === "approval.resolved") pending = null;
+    }
+    return pending;
+  }
+
   async markRunRunning(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;
