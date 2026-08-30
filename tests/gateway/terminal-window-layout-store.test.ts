@@ -100,6 +100,13 @@ describe("terminal window layout store", () => {
     expect(saved.layout.tabs[0]?.paneTree).toMatchObject({ sessionId: "recover-me" });
   });
 
+  it("lists active session tombstones for visibility reconciliation", async () => {
+    const store = new TerminalWindowLayoutStore({ homePath });
+    await store.deleteSessionReferences("deleted-shell");
+
+    await expect(store.listSessionTombstones()).resolves.toEqual(["deleted-shell"]);
+  });
+
   it("deletes one shell through the gateway and reconciles every window layout", async () => {
     const store = new TerminalWindowLayoutStore({ homePath });
     await store.put(FIRST_LAYOUT_ID, 0, layoutWithSession("deleted-shell"));

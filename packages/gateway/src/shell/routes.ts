@@ -42,6 +42,7 @@ interface SessionRegistryRoutes {
 interface ShellSessionLifecycleRoutes {
   deleteSessionReferences(name: string): Promise<void>;
   clearSessionTombstone(name: string): Promise<void>;
+  listSessionTombstones(): Promise<string[]>;
 }
 
 interface ChatTerminalRoutes {
@@ -209,24 +210,34 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   });
 
   const rollbackCreatedSession = async (name: string, restoreTombstone: boolean): Promise<void> => {
+    let runtimeCleanupError: unknown;
     try {
       await deps.registry.delete(name, { force: true });
     } catch (cleanupError: unknown) {
+      runtimeCleanupError = cleanupError;
       console.error(
         "[shell] Created terminal session cleanup failed:",
         cleanupError instanceof Error ? cleanupError.name : "UnknownError",
       );
-      return;
     }
 
-    if (!restoreTombstone || !deps.sessionLifecycle) return;
-    try {
-      await deps.sessionLifecycle.deleteSessionReferences(name);
-    } catch (cleanupError: unknown) {
-      console.error(
-        "[shell] Terminal session tombstone restoration failed:",
-        cleanupError instanceof Error ? cleanupError.name : "UnknownError",
-      );
+    let tombstoneCleanupError: unknown;
+    if ((restoreTombstone || runtimeCleanupError !== undefined) && deps.sessionLifecycle) {
+      try {
+        await deps.sessionLifecycle.deleteSessionReferences(name);
+      } catch (cleanupError: unknown) {
+        tombstoneCleanupError = cleanupError;
+        console.error(
+          "[shell] Terminal session tombstone restoration failed:",
+          cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+        );
+      }
+    }
+
+    if (runtimeCleanupError !== undefined || tombstoneCleanupError !== undefined) {
+      throw new Error("Terminal session creation rollback failed", {
+        cause: tombstoneCleanupError ?? runtimeCleanupError,
+      });
     }
   };
 
@@ -235,7 +246,13 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     try {
       await deps.sessionLifecycle.clearSessionTombstone(name);
     } catch (error: unknown) {
-      await rollbackCreatedSession(name, false);
+      try {
+        await rollbackCreatedSession(name, false);
+      } catch (rollbackError: unknown) {
+        throw new Error("Terminal session creation could not be committed or rolled back", {
+          cause: rollbackError,
+        });
+      }
       throw error;
     }
   };
@@ -281,7 +298,15 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
 
   app.get("/sessions", async (c) => {
     try {
-      const sessions = await deps.registry.list();
+      let sessions = await deps.registry.list();
+      if (deps.sessionLifecycle) {
+        const tombstoned = await deps.sessionLifecycle.listSessionTombstones();
+        sessions = sessions.filter((session) => (
+          !session || typeof session !== "object" || !("name" in session)
+          || typeof (session as { name?: unknown }).name !== "string"
+          || !tombstoned.includes((session as { name: string }).name)
+        ));
+      }
       if (!deps.listChatBoundSessionIds) return c.json({ sessions });
       if (!deps.getPrincipal) throw new Error("Missing shell principal dependency");
       const visible: unknown[] = [];

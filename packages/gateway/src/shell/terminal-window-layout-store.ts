@@ -273,6 +273,14 @@ export class TerminalWindowLayoutStore {
     });
   }
 
+  async listSessionTombstones(): Promise<string[]> {
+    return this.withMutationLock(async () => {
+      const pruned = this.pruneTombstones(await this.read());
+      if (pruned.changed) await this.write(pruned.state);
+      return pruned.state.tombstones.map((entry) => entry.sessionName);
+    });
+  }
+
   private async withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
     const previous = this.mutationTail;
     let release!: () => void;
