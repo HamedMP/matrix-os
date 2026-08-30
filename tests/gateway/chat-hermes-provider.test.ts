@@ -375,6 +375,42 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/proc_preview|\.ssh|Preview ready/);
   });
 
+  it("preserves a safe Hermes process status that identifies the active model", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("status.update", {
+      kind: "process",
+      text: "Current model: gpt-5.6-luna",
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      {
+        type: "agent.activity",
+        activityId: "status_process",
+        kind: "phase",
+        label: "Working",
+        status: "running",
+        summary: "Current model: gpt-5.6-luna",
+      },
+      {
+        type: "agent.activity",
+        activityId: "status_process",
+        kind: "phase",
+        label: "Working",
+        status: "completed",
+        summary: "Current model: gpt-5.6-luna",
+      },
+      { type: "assistant.delta", delta: "Created the app." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+  });
+
   it("normalizes provider-native Hermes tool identifiers without ending the Run", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
