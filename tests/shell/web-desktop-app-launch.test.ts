@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveWebDesktopBuiltInLaunch } from "../../shell/src/lib/web-desktop-app-launch.js";
+import {
+  buildWebDesktopLauncherApps,
+  resolveWebDesktopBuiltInLaunch,
+} from "../../shell/src/lib/web-desktop-app-launch.js";
 
 describe("web Desktop built-in app launch routing", () => {
   it("routes the fallback Browser launcher to a public browser URL", () => {
@@ -22,6 +25,21 @@ describe("web Desktop built-in app launch routing", () => {
 
   it("does not hijack a user app that is merely named Browser", () => {
     expect(resolveWebDesktopBuiltInLaunch("apps/custom-browser/dist/index.html")).toBeNull();
+  });
+
+  it("keeps a dedicated Browser slot alongside a same-named custom app", () => {
+    const customBrowser = {
+      name: "Browser",
+      path: "apps/browser-clone/index.html",
+      iconUrl: "/icons/browser-clone.svg",
+    };
+
+    const launcherApps = buildWebDesktopLauncherApps([customBrowser]);
+
+    expect(launcherApps.filter((app) => app.name === "Browser")).toEqual([
+      { name: "Browser", path: "__browser__" },
+      customBrowser,
+    ]);
   });
 
   it("routes VS Code externally and Editor to Files", () => {

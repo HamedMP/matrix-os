@@ -49,7 +49,10 @@ import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
-import { resolveWebDesktopBuiltInLaunch } from "@/lib/web-desktop-app-launch";
+import {
+  buildWebDesktopLauncherApps,
+  resolveWebDesktopBuiltInLaunch,
+} from "@/lib/web-desktop-app-launch";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
@@ -1135,22 +1138,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     />
   ) : null;
 
-  const launcherApps = useMemo(() => {
-    const firstClass = [
-      apps.find((app) => app.path === "__chat__") ? { ...apps.find((app) => app.path === "__chat__")!, name: "Chat" } : { name: "Chat", path: "__chat__" },
-      apps.find((app) => app.path === "__terminal__") ?? { name: "Terminal", path: "__terminal__" },
-      apps.find((app) => app.path === "__file-browser__") ?? { name: "Files", path: "__file-browser__" },
-      { name: "Editor", path: "__editor__" },
-      { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
-      { name: "Settings", path: "__settings__" },
-      { name: "Plugins", path: "__plugins__" },
-      apps.find((app) => app.name.toLowerCase() === "browser") ?? { name: "Browser", path: "__browser__" },
-      apps.find((app) => app.name.toLowerCase() === "notes") ?? { name: "Notes", path: "apps/notes/index.html" },
-      apps.find((app) => app.name.toLowerCase() === "whiteboard") ?? { name: "Whiteboard", path: "apps/whiteboard/index.html" },
-    ];
-    const firstClassPaths = new Set(firstClass.map((app) => app.path));
-    return [...firstClass, ...apps.filter((app) => !firstClassPaths.has(app.path))];
-  }, [apps]);
+  const launcherApps = useMemo(() => buildWebDesktopLauncherApps(apps), [apps]);
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
     if (path === "__settings__" || path === "__plugins__") {
