@@ -243,6 +243,7 @@ import { AiProviderService } from "./ai-providers/service.js";
 import { createAiProviderRoutes } from "./ai-providers/routes.js";
 import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
 import { createProviderSettingsRoutes } from "./ai-providers/provider-settings-routes.js";
+import { createProviderGenericHarnessCoordinator } from "./ai-providers/provider-generic-harness-coordinator.js";
 import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
 import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
@@ -4184,12 +4185,21 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     enabledHarnesses: codingAgentWorkspaceAgents,
   });
+  const providerGenericHarnessCoordinator = createProviderGenericHarnessCoordinator({
+    homePath,
+    runtimeController: agentRuntimeServices.controller,
+    runtimeSource: agentRuntimeServices.source,
+    enabledCodingHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
+    ),
+  });
   const providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
+    runtimeCoordinator: providerGenericHarnessCoordinator,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,

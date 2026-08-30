@@ -409,6 +409,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         });
       }
       let attempt: ProviderConnectionAttempt | undefined;
+      const previousConfig = structuredClone(config);
       const handled = applyProviderConfigurationMutation({
         mutation,
         config,
@@ -421,6 +422,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           await this.#runtime!.applyConfiguration({
             mutation: mutation as ProviderConfigurationMutation,
             idempotencyKey: mutation.idempotencyKey,
+            before: previousConfig,
+            after: structuredClone(config),
+            canonical: structuredClone(canonical),
           });
           canonical = await this.#canonical(true);
         } catch (error) {

@@ -57,6 +57,12 @@ export function applyProviderConfigurationMutation(input: {
       });
       return true;
     }
+    case "remove_harness": {
+      if (!harness) throw new ProviderSettingsStoreError("not_found", 404);
+      if (harness.enabled) throw new ProviderSettingsStoreError("invalid_request", 400);
+      input.config.harnesses = input.config.harnesses.filter((candidate) => candidate.id !== harness.id);
+      return true;
+    }
     case "update_harness":
       if (!harness) throw new ProviderSettingsStoreError("not_found", 404);
       if (mutation.displayName !== undefined) harness.displayName = mutation.displayName;
