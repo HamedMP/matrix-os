@@ -359,7 +359,11 @@ export function createHermesChatProviderAdapter(options: {
       } else if (event.type === "message.interim") {
         const interim = HermesInterimSchema.parse(event.payload);
         if (interim.already_streamed) {
-          if (interim.text !== currentSegment) {
+          // Hermes derives this seal marker from its visible commentary projection,
+          // which trims surrounding whitespace after the raw deltas have streamed.
+          // Preserve strict content equality while accepting that documented
+          // normalization so a harmless newline cannot terminate a long Run.
+          if (interim.text.trim() !== currentSegment.trim()) {
             throw new Error("Hermes interim response did not match streamed output");
           }
         } else {
