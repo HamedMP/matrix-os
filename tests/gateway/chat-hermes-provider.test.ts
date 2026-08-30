@@ -436,6 +436,36 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/proc_preview|private process output/);
   });
 
+  it("falls back to a minimal activity when a Hermes tool projection is not canonical-safe", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    const providerToolId = "tool..preview";
+    gateway.event("tool.start", {
+      tool_id: providerToolId,
+      name: "terminal",
+      args: { command: "inspect .ssh/config" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: providerToolId,
+      name: "terminal",
+      result: { success: true, output: "private process output" },
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    const commandEvents = events.filter((event) => event.type === "agent.activity" && event.kind === "command");
+    expect(commandEvents).toHaveLength(2);
+    expect(commandEvents[0]).toMatchObject({ label: "Run command", status: "running" });
+    expect(commandEvents[1]).toMatchObject({ activityId: commandEvents[0]?.activityId, label: "Run command", status: "completed" });
+    expect(commandEvents[0]?.activityId).not.toBe(providerToolId);
+    expect(events).toContainEqual({ type: "run.completed", outcome: "completed" });
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toMatch(/\.ssh|private process output/);
+  });
+
   it("projects safe Hermes command, file, and published reasoning details without raw payloads", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
