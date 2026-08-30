@@ -12,6 +12,7 @@ import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import {
   drainExistingTerminalSessionQueueWithRetry,
+  hasQueuedExistingTerminalSession,
   PROVIDER_TERMINAL_SESSION_EVENT,
 } from "@/lib/provider-terminal-session";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
@@ -295,6 +296,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   sidebarOpenRef.current = sidebarOpen;
   const mountedRef = useRef(false);
   const providerDrainInflightRef = useRef<Promise<void> | null>(null);
+  const providerDrainRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingPaneSessionsRef = useRef<Map<string, string> | null>(null);
   if (pendingPaneSessionsRef.current === null) pendingPaneSessionsRef.current = new Map();
   const closingPaneIdsRef = useRef<Set<string> | null>(null);
@@ -654,6 +656,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
     if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return Promise.resolve();
     if (providerDrainInflightRef.current) return providerDrainInflightRef.current;
+    if (providerDrainRetryTimerRef.current) {
+      clearTimeout(providerDrainRetryTimerRef.current);
+      providerDrainRetryTimerRef.current = null;
+    }
     const operation = (async () => {
       const sessionIds = await drainExistingTerminalSessionQueueWithRetry(launchTargetId);
       if (!mountedRef.current) return;
@@ -670,6 +676,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     providerDrainInflightRef.current = operation;
     void operation.finally(() => {
       if (providerDrainInflightRef.current === operation) providerDrainInflightRef.current = null;
+      if (mountedRef.current && hasQueuedExistingTerminalSession(launchTargetId)
+        && providerDrainRetryTimerRef.current === null) {
+        providerDrainRetryTimerRef.current = setTimeout(() => {
+          providerDrainRetryTimerRef.current = null;
+          void drainProviderSessions();
+        }, 5_000);
+      }
     });
     return operation;
   });
@@ -681,7 +694,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
     void drainProviderSessions();
     window.addEventListener(PROVIDER_TERMINAL_SESSION_EVENT, handleProviderSession);
-    return () => window.removeEventListener(PROVIDER_TERMINAL_SESSION_EVENT, handleProviderSession);
+    return () => {
+      window.removeEventListener(PROVIDER_TERMINAL_SESSION_EVENT, handleProviderSession);
+      if (providerDrainRetryTimerRef.current) {
+        clearTimeout(providerDrainRetryTimerRef.current);
+        providerDrainRetryTimerRef.current = null;
+      }
+    };
   }, [initialized, launchTargetId]);
 
   const flushLayout = useEffectEvent(() => {
