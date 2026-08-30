@@ -809,7 +809,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
     await eventsPromise;
     expect(warn).toHaveBeenCalledWith(
       "[chat/hermes] Provider Run failed:",
-      "HermesGatewayProtocolError:event_invalid",
+      "HermesGatewayProtocolError:event_invalid:message.delta",
     );
     expect(JSON.stringify(warn.mock.calls)).not.toContain("42");
     warn.mockRestore();
