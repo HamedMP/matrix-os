@@ -1045,12 +1045,13 @@ ls /etc/cloudflared/credentials.json
 
 Split the incident by layer before changing runtime code: direct customer VPS
 health, local platform websocket upgrade, then public `app.matrix-os.com`
-websocket upgrade. Public `/ws` or `/ws/terminal/session` failures while direct
+websocket upgrade. Public `/ws` or `/ws/terminal/tab` failures while direct
 origin probes succeed usually mean the Cloudflare tunnel is wedged.
 
 The production platform compose runs `cloudflared-watchdog`, which polls
 `/vps/fleet`, selects a healthy running customer VPS, mints a short-lived
-websocket token, and probes public `/ws` plus `/ws/terminal/session`. After
+websocket token, resolves a real tab from `/api/terminal/workspaces`, and probes
+public `/ws` plus `/ws/terminal/tab`. After
 three consecutive public websocket failures it restarts only the Cloudflared
 container through the Docker socket, then resumes probing. Tune it with:
 

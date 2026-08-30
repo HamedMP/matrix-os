@@ -9,7 +9,7 @@ This guide documents the Matrix OS coding-agent shell architecture for gateway, 
 - Desktop main process owns bearer-authenticated gateway calls. Renderer code receives only Zod-validated, bounded data over typed IPC and must not receive bearer tokens or provider credentials.
 - Mobile uses the authenticated `GatewayClient` and may persist only bounded UI references such as selected IDs and timestamps. Do not persist transcripts, terminal output, file contents, diffs, raw approval payloads, credentials, or launch tokens.
 - Browser shell surfaces call authenticated gateway routes and validate shared contracts before rendering. Shell-only filtering is defensive; project and owner scoping must happen in the gateway before list bounds are applied.
-- Canonical terminals remain the existing Matrix terminal/session primitives under `/api/terminal/sessions`, `/ws/terminal`, and related compatibility routes. Do not create a separate coding-agent terminal model.
+- Canonical terminals are `TerminalRef` values under `/api/terminal/workspaces/:workspaceId/tabs/:tabId` and `/ws/terminal/tab`. Coding agents bind to that same owner-scoped model; legacy session routes are upgrade errors, not compatibility paths.
 
 ## Browser Shell
 
@@ -134,14 +134,14 @@ Coding-agent threads may point at a canonical terminal session using bounded ter
 
 Cross-surface input, presentation, and canonical-size ownership follow
 [Terminal session ownership](./terminal-session-ownership.md). In particular,
-local command-line handoff uses `mos shell attach <session>`; raw
+local command-line handoff uses `matrix shell connect --project <project> --tab <tab>`; raw
 `zellij attach` is not a coordinated Matrix client.
 
-- Workspace orchestration owns `/api/sessions`; canonical named terminal sessions use `/api/terminal/sessions`. The assembled gateway mounts the legacy terminal compatibility routes after workspace routes so task-session requests cannot be parsed as legacy terminal creates.
+- Workspace orchestration owns `/api/sessions`; terminal processes live in project-scoped terminal workspaces and tabs. The gateway reaches the separate host runtime over its protected Unix socket, while legacy terminal session routes return `426 client_upgrade_required`.
 
 - Thread snapshots can expose attachable terminal references, not raw PTY output.
-- Desktop should open the existing Terminal tab/model for a bound session.
-- Mobile should hand off to the existing Terminal route/client and preserve the existing Terminal tab.
+- Desktop should open the existing Terminal surface for the bound `TerminalRef`.
+- Mobile should hand off to the same `TerminalRef` while keeping its selected tab local to the device.
 - Detach must not end the underlying process.
 - Stale or ended terminal references should render recoverable UI and refresh summary state.
 
@@ -452,10 +452,10 @@ node scripts/coding-agents/real-runtime-smoke.mjs \
   --require-capability codingAgentsMobileWorkspace \
   --require-ready-provider \
   --min-active-threads 1 \
-  --min-terminal-sessions 1
+  --min-terminal-tabs 1
 ```
 
-Available assertion flags are `--require-capability <id>`, `--require-ready-provider`, `--require-thread-snapshot`, `--min-active-threads <count>`, `--min-terminal-sessions <count>`, `--min-preview-sessions <count>`, and `--min-reviews <count>`. The helper remains read-only; it follows review cursors only when a minimum review count is requested and validates a thread snapshot only when `--require-thread-snapshot` is passed.
+Available assertion flags are `--require-capability <id>`, `--require-ready-provider`, `--require-thread-snapshot`, `--min-active-threads <count>`, `--min-terminal-tabs <count>`, `--min-preview-sessions <count>`, and `--min-reviews <count>`. The helper remains read-only; it follows review cursors only when a minimum review count is requested and validates a thread snapshot only when `--require-thread-snapshot` is passed.
 
 Do not paste live token values, raw response bodies, transcripts, terminal output, file contents, diffs, provider errors, private hostnames, or VPS IPs into PR comments. Record only the command shape, pass/fail status, and sanitized recovery notes.
 
