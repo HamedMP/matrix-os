@@ -11,7 +11,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import {
-  drainExistingTerminalSessionQueue,
+  drainExistingTerminalSessionQueueWithRetry,
   PROVIDER_TERMINAL_SESSION_EVENT,
 } from "@/lib/provider-terminal-session";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
@@ -294,6 +294,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of `sidebarOpen`, read synchronously inside the layout-persistence callback that must not re-subscribe when the sidebar toggles
   sidebarOpenRef.current = sidebarOpen;
   const mountedRef = useRef(false);
+  const providerDrainInflightRef = useRef<Promise<void> | null>(null);
   const pendingPaneSessionsRef = useRef<Map<string, string> | null>(null);
   if (pendingPaneSessionsRef.current === null) pendingPaneSessionsRef.current = new Map();
   const closingPaneIdsRef = useRef<Set<string> | null>(null);
@@ -649,20 +650,28 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return () => window.removeEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
   }, [initialized, launchTargetId]);
 
-  const drainProviderSessions = useEffectEvent(async (event?: Event) => {
+  const drainProviderSessions = useEffectEvent((event?: Event): Promise<void> => {
     const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
-    if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return;
-    const sessionIds = await drainExistingTerminalSessionQueue(launchTargetId);
-    if (!mountedRef.current) return;
-    for (const sessionId of sessionIds) {
-      const existingTab = tabsRef.current.find((tab) => getSessionIds(tab.paneTree).includes(sessionId));
-      if (existingTab) {
-        setActiveTabId(existingTab.id);
-        requestPaneFocus(getPaneIdsForSession(existingTab.paneTree, sessionId)[0] ?? getFirstPaneId(existingTab.paneTree));
-      } else {
-        addSessionTab(formatShellDisplayName(sessionId), sessionId);
+    if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return Promise.resolve();
+    if (providerDrainInflightRef.current) return providerDrainInflightRef.current;
+    const operation = (async () => {
+      const sessionIds = await drainExistingTerminalSessionQueueWithRetry(launchTargetId);
+      if (!mountedRef.current) return;
+      for (const sessionId of sessionIds) {
+        const existingTab = tabsRef.current.find((tab) => getSessionIds(tab.paneTree).includes(sessionId));
+        if (existingTab) {
+          setActiveTabId(existingTab.id);
+          requestPaneFocus(getPaneIdsForSession(existingTab.paneTree, sessionId)[0] ?? getFirstPaneId(existingTab.paneTree));
+        } else {
+          addSessionTab(formatShellDisplayName(sessionId), sessionId);
+        }
       }
-    }
+    })();
+    providerDrainInflightRef.current = operation;
+    void operation.finally(() => {
+      if (providerDrainInflightRef.current === operation) providerDrainInflightRef.current = null;
+    });
+    return operation;
   });
 
   useEffect(() => {
