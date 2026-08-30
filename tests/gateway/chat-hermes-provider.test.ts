@@ -43,6 +43,8 @@ function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly st
             respond(request, { key: "model", value: request.params.value, confirm_required: false });
           } else if (request.method === "session.cwd.set") {
             respond(request, { cwd: request.params.cwd });
+          } else if (request.method === "approval.respond") {
+            respond(request, { resolved: true });
           } else {
             respond(request, {});
           }
@@ -322,6 +324,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       request_id: "approval_1",
       command: "deploy --token secret-value",
       description: "contains secret-value",
+      choices: ["once", "session", "always", "deny"],
     });
     gateway.event("clarify.request", {
       request_id: "input_1",
@@ -338,13 +341,84 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "agent.activity", activityId: "tool_search", kind: "web_search", label: "Search the web", status: "completed", summary: "Web search completed." },
       { type: "agent.activity", activityId: "subagent_worker_1", kind: "delegation", label: "Delegated task", status: "running" },
       { type: "agent.activity", activityId: "subagent_worker_1", kind: "delegation", label: "Delegated task", status: "completed", summary: "Delegated work completed." },
-      { type: "approval.requested", approvalId: "approval_1", title: "Command approval required", risk: "high" },
+      {
+        type: "approval.requested",
+        approvalId: "approval_1",
+        title: "Command approval required",
+        risk: "high",
+        allowedDecisions: ["approve", "approve_for_session", "decline"],
+      },
       { type: "input.requested", requestId: "input_1", title: "Hermes needs input" },
       { type: "agent.activity", activityId: "status_planning", kind: "plan", label: "Planning", status: "completed" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
     expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|API_TOKEN|Authorization|raw page|raw delegated|private query/);
+  });
+
+  it("submits one idempotent approval response to the owning live Hermes session", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const iterator = adapter.start(baseInput)[Symbol.asyncIterator]();
+    const approvalEvent = iterator.next();
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("approval.request", {
+      request_id: "approval_session",
+      command: "deploy --token secret-value",
+      choices: ["once", "session", "always", "deny"],
+    });
+
+    await expect(approvalEvent).resolves.toEqual({
+      done: false,
+      value: {
+        type: "approval.requested",
+        approvalId: "approval_session",
+        title: "Command approval required",
+        risk: "high",
+        allowedDecisions: ["approve", "approve_for_session", "decline"],
+      },
+    });
+
+    const submission = {
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      approvalId: "approval_session",
+      decision: "approve_for_session" as const,
+      clientRequestId: "request_approval_session",
+      state: { sessionId: "durable_session" },
+    };
+    await adapter.submitApproval?.(submission);
+    await adapter.submitApproval?.(submission);
+
+    expect(gateway.requests.filter(({ method }) => method === "approval.respond")).toEqual([
+      expect.objectContaining({
+        method: "approval.respond",
+        params: {
+          session_id: "live_session",
+          request_id: "approval_session",
+          choice: "session",
+        },
+      }),
+    ]);
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: {
+        type: "approval.resolved",
+        approvalId: "approval_session",
+        decision: "approve_for_session",
+      },
+    });
+
+    gateway.event("message.complete", { text: "Done.", status: "complete" });
+    const remaining = [];
+    for await (const event of { [Symbol.asyncIterator]: () => iterator }) remaining.push(event);
+    expect(remaining).toEqual([
+      { type: "assistant.delta", delta: "Done." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
   });
 
   it("keeps official Hermes process status advisory when its raw notification is unsafe", async () => {

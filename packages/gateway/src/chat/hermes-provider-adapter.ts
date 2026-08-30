@@ -18,6 +18,10 @@ import {
   type HermesGatewaySpawn,
 } from "./hermes-stdio-client.js";
 import {
+  createHermesApprovalController,
+  HermesApprovalRequestSchema,
+} from "./hermes-approval-control.js";
+import {
   safePublishedText,
   safeToolPreview,
   sanitizeAssistantText,
@@ -63,9 +67,6 @@ const HermesSubagentStartSchema = z.object({
 const HermesSubagentCompleteSchema = z.object({
   subagent_id: z.string().min(1).max(256).optional(),
   status: z.string().trim().min(1).max(80),
-}).passthrough();
-const HermesApprovalRequestSchema = z.object({
-  request_id: z.string().min(1).max(256).optional(),
 }).passthrough();
 const HermesClarifyRequestSchema = z.object({
   request_id: z.string().min(1).max(256),
@@ -283,6 +284,7 @@ export function createHermesChatProviderAdapter(options: {
   requestTimeoutMs?: number;
 }): CanonicalChatProviderAdapter<HermesChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const approvals = createHermesApprovalController();
 
   async function* execute(
     inputValue: CanonicalProviderRunInput<HermesChatState>,
@@ -313,6 +315,7 @@ export function createHermesChatProviderAdapter(options: {
     const toolActivities = new Map<string, Pick<HermesActivity, "kind" | "label" | "preview" | "previewKind" | "detail">>();
     const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label" | "summary">>();
     let activeDelegationId: string | undefined;
+    let releaseApprovalRun: (() => void) | undefined;
 
     const emitAgentActivity = (activity: Omit<HermesActivity, "type">) => {
       const canonical = CanonicalProviderRunEventSchema.safeParse({ type: "agent.activity", ...activity });
@@ -573,12 +576,7 @@ export function createHermesChatProviderAdapter(options: {
         const approvalId = parsed.request_id
           ? providerReference("", parsed.request_id)
           : providerReference("approval_", JSON.stringify(event.payload));
-        queue.push(CanonicalProviderRunEventSchema.parse({
-          type: "approval.requested",
-          approvalId,
-          title: "Command approval required",
-          risk: "high",
-        }));
+        queue.push(approvals.registerRequest(input.runId, approvalId, parsed));
       } else if (event.type === "clarify.request") {
         const parsed = HermesClarifyRequestSchema.parse(event.payload);
         queue.push(CanonicalProviderRunEventSchema.parse({
@@ -651,6 +649,14 @@ export function createHermesChatProviderAdapter(options: {
         liveSessionId = session.session_id;
         durableSessionId = session.stored_session_id ?? session.session_key ?? resumeState?.sessionId;
         if (!durableSessionId) throw new Error("Hermes did not return a durable session");
+        releaseApprovalRun = approvals.registerRun({
+          owner: input.owner,
+          chatId: input.chatId,
+          runId: input.runId,
+          client,
+          liveSessionId,
+          emit: (event) => queue.push(event),
+        });
         if (resumeState) {
           const modelConfig = HermesModelConfigResponseSchema.parse(await withinRun(client.request("config.set", {
             session_id: liveSessionId,
@@ -754,6 +760,7 @@ export function createHermesChatProviderAdapter(options: {
           }),
         }));
       } finally {
+        releaseApprovalRun?.();
         if (deltaFlushTimer) clearTimeout(deltaFlushTimer);
         if (totalTimer) clearTimeout(totalTimer);
         if (abortRun) input.signal.removeEventListener("abort", abortRun);
@@ -772,5 +779,6 @@ export function createHermesChatProviderAdapter(options: {
     serializeState: (value) => HermesChatStateSchema.parse(value),
     start: (input) => execute(input),
     resume: (input) => execute(input, HermesChatStateSchema.parse(input.resumeState)),
+    submitApproval: (input) => approvals.submit(input),
   };
 }
