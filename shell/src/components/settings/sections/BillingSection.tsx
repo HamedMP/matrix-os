@@ -30,30 +30,28 @@ export function BillingSection({
         <h2 className="font-[family-name:var(--font-bricolage)] text-xl font-semibold tracking-tight text-[#1F2D1D]">
           Billing
         </h2>
-        <Badge
-          variant="outline"
-          className={
-            startsNewSubscription
-              ? "border-[#D06E53]/35 bg-[#FAEEEB] text-[#6B3324]"
-              : active === true
-              ? "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]"
-              : accessIssue === "auth"
-                ? "border-sky-500/30 bg-sky-500/10 text-sky-700"
-              : active === false
+        {active !== false || startsNewSubscription ? (
+          <Badge
+            variant="outline"
+            className={
+              startsNewSubscription
                 ? "border-[#D06E53]/35 bg-[#FAEEEB] text-[#6B3324]"
-                : "border-border/30 bg-muted/30 text-muted-foreground"
-          }
-        >
-          {startsNewSubscription
-            ? "New subscription"
-            : active === true
-              ? "Active"
-              : accessIssue === "auth"
-                ? "Reconnecting"
-                : active === false
-                  ? "Not active"
+                : active === true
+                  ? "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]"
+                  : accessIssue === "auth"
+                    ? "border-sky-500/30 bg-sky-500/10 text-sky-700"
+                    : "border-border/30 bg-muted/30 text-muted-foreground"
+            }
+          >
+            {startsNewSubscription
+              ? "New subscription"
+              : active === true
+                ? "Active"
+                : accessIssue === "auth"
+                  ? "Reconnecting"
                   : "Checking"}
-        </Badge>
+          </Badge>
+        ) : null}
       </div>
 
       <BillingPanel

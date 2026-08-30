@@ -322,7 +322,8 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("heading", { name: "Choose your Matrix computer" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Change computer" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Change server location" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Advanced settings" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
   });
 
   it("reuses first-time strength, region, agents, and Checkout for another computer", async () => {
@@ -341,8 +342,9 @@ describe("RuntimeManager", () => {
     expect(screen.getByText("New subscription")).toBeTruthy();
     expect(screen.queryByText("Active")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.getByRole("button", { name: /Max.*CPX52/i })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Starter.*CPX22/i }));
+    expect(screen.getByRole("button", { name: /^Max\b/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
     fireEvent.click(screen.getByRole("button", { name: /Ashburn, Virginia.*ash/i }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
@@ -444,7 +446,7 @@ describe("RuntimeManager", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Change computer" }));
-    expect(screen.queryByRole("button", { name: /Max.*CPX52/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Max\b/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
 
     expect(await screen.findByRole("heading", { name: "Default installs" })).toBeTruthy();

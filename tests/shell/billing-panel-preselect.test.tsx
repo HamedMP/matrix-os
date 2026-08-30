@@ -43,16 +43,16 @@ describe("BillingPanel preselect from publicMetadata", () => {
 
     render(<BillingSection />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("billing-configurator-layout")).toBeTruthy());
 
     // Open the computer picker dropdown
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
 
-    // Max profile (CPX52) should be aria-pressed="true"
+    // Max should be aria-pressed="true".
     const maxButton = screen.getByRole("button", { name: /Max/ });
     expect(maxButton.getAttribute("aria-pressed")).toBe("true");
 
-    // Builder profile (CPX32) should NOT be selected
+    // Builder should not be selected.
     const builderButton = screen.getByRole("button", { name: /Builder/ });
     expect(builderButton.getAttribute("aria-pressed")).toBe("false");
   });
@@ -62,16 +62,16 @@ describe("BillingPanel preselect from publicMetadata", () => {
 
     render(<BillingSection />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("billing-configurator-layout")).toBeTruthy());
 
     // Open the computer picker dropdown
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
 
-    // Builder profile (CPX32, index 1) should be aria-pressed="true"
+    // Builder (index 1) should be aria-pressed="true".
     const builderButton = screen.getByRole("button", { name: /Builder/ });
     expect(builderButton.getAttribute("aria-pressed")).toBe("true");
 
-    // Max profile (CPX52) should NOT be selected
+    // Max should not be selected.
     const maxButton = screen.getByRole("button", { name: /Max/ });
     expect(maxButton.getAttribute("aria-pressed")).toBe("false");
   });

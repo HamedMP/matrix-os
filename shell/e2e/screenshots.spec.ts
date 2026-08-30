@@ -189,9 +189,22 @@ test.describe("Visual regression", () => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();
     await expect(page.getByRole("heading", { name: "Choose your Matrix computer" })).toBeVisible();
-    await expect(page.getByText("Start your 3-day free trial")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start 3-day trial" })).toBeVisible();
     await page.mouse.move(720, 450);
     await expect(page).toHaveScreenshot("billing-pricing.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
+  test("billing computer picker", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await page.getByRole("button", { name: "Change computer" }).click();
+    await expect(page.getByText("For everyday use")).toBeVisible();
+    await expect(page.getByText("For technical work and building")).toBeVisible();
+    await expect(page.getByText("For serious, demanding workloads")).toBeVisible();
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-computer-picker.png", {
       maxDiffPixelRatio: 0.001,
     });
   });
@@ -199,6 +212,7 @@ test.describe("Visual regression", () => {
   test("billing region picker", async ({ page }) => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();
+    await page.getByRole("button", { name: "Advanced settings" }).click();
     await page.getByRole("button", { name: "Change server location" }).click();
     await expect(page.getByText("Choose a server location")).toBeVisible();
     await page.getByText("Hillsboro, Oregon").evaluate((element) => {
@@ -236,7 +250,7 @@ test.describe("Visual regression", () => {
 
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();
-    await expect(page.getByText("Not active")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Choose your Matrix computer" })).toBeVisible();
     await page.getByRole("button", { name: "Continue to pay" }).click();
     await expect(
       page.getByText(

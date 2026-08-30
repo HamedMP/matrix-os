@@ -29,6 +29,10 @@ async function loadBillingSection() {
   return await import("../../shell/src/components/settings/sections/BillingSection.js");
 }
 
+async function waitForBillingConfigurator() {
+  await waitFor(() => expect(screen.getByTestId("billing-configurator-layout")).toBeTruthy());
+}
+
 describe("BillingSection", () => {
   beforeEach(async () => {
     vi.resetModules();
@@ -60,7 +64,7 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    expect(screen.getByText("Start your 3-day free trial")).toBeTruthy();
+    expect(screen.queryByText("Start your 3-day free trial")).toBeNull();
     expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
     vi.unstubAllEnvs();
   });
@@ -87,21 +91,26 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
+    expect(screen.queryByText("Not active")).toBeNull();
     expect(screen.getByText("Choose your Matrix computer")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.getByText("Secure Stripe checkout")).toBeTruthy();
     expect(screen.queryByText("Visa")).toBeNull();
     expect(screen.queryByText("Mastercard")).toBeNull();
-    expect(screen.getByText("Monthly plan")).toBeTruthy();
+    expect(screen.queryByText("Monthly plan")).toBeNull();
     expect(screen.queryByRole("button", { name: "Annual" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Install coding agents?" })).toBeTruthy();
+    const developerTools = screen.getByRole("heading", { name: "Developer tools" });
+    expect(developerTools).toBeTruthy();
+    expect(developerTools.closest("section")?.querySelectorAll("img")).toHaveLength(4);
+    expect(screen.queryByText("Power, agents, checkout. Your closest region is already selected.")).toBeNull();
+    expect(screen.queryByText("Falkenstein, Germany")).toBeNull();
     expect(screen.queryByText("Dedicated VPS prepared before checkout")).toBeNull();
     expect(screen.queryByText("Your files and data persist across restarts")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it.each([1, 7])("explains the card-required %i-day trial before opening Checkout", async (durationDays) => {
+  it.each([1, 7])("shows a concise %i-day trial summary before opening Checkout", async (durationDays) => {
     const trialEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
     const formattedTrialEnd = new Intl.DateTimeFormat(undefined, {
       month: "short",
@@ -121,11 +130,12 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText(`Start your ${durationDays}-day free trial`)).toBeTruthy());
-    expect(screen.getByText("Card required")).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy());
+    expect(screen.queryByText(`Start your ${durationDays}-day free trial`)).toBeNull();
+    expect(screen.queryByText("Card required")).toBeNull();
     expect(screen.getByText("$0 today").classList.contains("text-cream")).toBe(true);
     expect(screen.getByText(`Then $100/month on ${formattedTrialEnd}`)).toBeTruthy();
-    expect(screen.getByText(`Cancel before ${formattedTrialEnd}`)).toBeTruthy();
+    expect(screen.queryByText(`Cancel before ${formattedTrialEnd}`)).toBeNull();
     expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy();
   });
 
@@ -291,7 +301,7 @@ describe("BillingSection", () => {
 
     render(<BillingSection />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     expect(screen.queryByText("Reconnecting billing session")).toBeNull();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
@@ -317,7 +327,7 @@ describe("BillingSection", () => {
     expect(screen.queryByText("Not active")).toBeNull();
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5000 });
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
   });
 
   it("sends the selected US machine shape and preinstalled agents to monthly checkout", async () => {
@@ -333,10 +343,12 @@ describe("BillingSection", () => {
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
 
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
     fireEvent.click(screen.getByRole("button", { name: /Ashburn, Virginia/ }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
@@ -374,7 +386,7 @@ describe("BillingSection", () => {
 
     const onCheckoutNavigate = vi.fn();
     render(<BillingSection mode="provisioning" onCheckoutNavigate={onCheckoutNavigate} />);
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     expect(await screen.findByRole("button", { name: "Opening secure checkout" })).toBeTruthy();
@@ -394,7 +406,7 @@ describe("BillingSection", () => {
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
 
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     expect(screen.getByRole("button", { name: /Builder/ })).toBeTruthy();
@@ -431,7 +443,7 @@ describe("BillingSection", () => {
         checkoutReturnPath="/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK"
       />,
     );
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() =>
@@ -478,7 +490,7 @@ describe("BillingSection", () => {
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection mode="provisioning" />);
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     expect(
@@ -502,20 +514,26 @@ describe("BillingSection", () => {
     render(<BillingSection mode="provisioning" />);
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     expect(screen.getByText("Choose your Matrix computer")).toBeTruthy();
     expect(screen.getByText("Computer power")).toBeTruthy();
 
     // Computer options live in a click-to-open dropdown now.
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.getByRole("button", { name: /Starter.*CPX22/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Starter/i })).toBeTruthy();
     expect(screen.getByText("$20")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Builder.*CPX42/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Builder/i })).toBeTruthy();
     expect(screen.getAllByText("$100").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("button", { name: /Max.*CPX52/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Max/i })).toBeTruthy();
     expect(screen.getByText("$200")).toBeTruthy();
+    expect(screen.getByText("For everyday use")).toBeTruthy();
+    expect(screen.getByText("For technical work and building")).toBeTruthy();
+    expect(screen.getByText("For serious, demanding workloads")).toBeTruthy();
+    expect(screen.queryByText(/CPX22|CPX42|CPX52/)).toBeNull();
 
-    // Region options live in their own dropdown (opening it closes the computer one).
+    // Region options stay out of sight until Advanced settings is expanded.
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
     expect(screen.getAllByText("Region").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Closest available location is selected")).toBeTruthy();
@@ -528,7 +546,7 @@ describe("BillingSection", () => {
     expect(screen.getByText("ash")).toBeTruthy();
     expect(screen.getByText("hil")).toBeTruthy();
     expect(screen.queryByText("sin")).toBeNull();
-    expect(screen.getByRole("heading", { name: "Install coding agents?" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
@@ -545,7 +563,9 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     expect(screen.getByRole("button", { name: "Change server location" }).textContent).toContain(
       "Ashburn, Virginia",
     );
@@ -555,14 +575,21 @@ describe("BillingSection", () => {
     const { BillingSection } = await loadBillingSection();
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     const computer = screen.getByRole("button", { name: "Change computer" });
-    const agents = screen.getByRole("heading", { name: "Install coding agents?" });
-    const location = screen.getByRole("button", { name: "Change server location" });
+    const agents = screen.getByRole("heading", { name: "Developer tools" });
+    const advanced = screen.getByRole("button", { name: "Advanced settings" });
     const follows = Node.DOCUMENT_POSITION_FOLLOWING;
 
     expect(computer.compareDocumentPosition(agents) & follows).toBeTruthy();
-    expect(agents.compareDocumentPosition(location) & follows).toBeTruthy();
+    expect(agents.compareDocumentPosition(advanced) & follows).toBeTruthy();
+    expect(advanced.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
+
+    fireEvent.click(advanced);
+    const location = screen.getByRole("button", { name: "Change server location" });
+    expect(advanced.getAttribute("aria-expanded")).toBe("true");
+    expect(advanced.compareDocumentPosition(location) & follows).toBeTruthy();
     expect(location.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByRole("button", { name: /Ashburn, Virginia/ })).toBeNull();
   });
@@ -575,7 +602,7 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     const layout = screen.getByTestId("billing-configurator-layout");
     const mainColumn = screen.getByTestId("billing-configurator-main");
     const heading = screen.getByRole("heading", {
@@ -605,10 +632,10 @@ describe("BillingSection", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     expect(screen.queryByText(/returns to CLI device approval/)).toBeNull();
     expect(screen.getByText("Finish billing")).toBeTruthy();
-    expect(screen.getByText("Billing settings")).toBeTruthy();
+    expect(screen.queryByText("Billing settings")).toBeNull();
     expect(screen.queryByText(/Review your plan and region here/)).toBeNull();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
@@ -694,6 +721,7 @@ describe("BillingSection", () => {
 
     render(<BillingSection />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
+    expect(screen.queryByText("Not active")).toBeNull();
   });
 });

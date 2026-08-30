@@ -40,10 +40,10 @@ import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
 import {
   defaultDeveloperTools,
-  developerToolOptions,
   nextDeveloperToolsSelection,
   type DeveloperToolId,
 } from "@/components/onboarding/developer-tools";
+import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsStep";
 
 function preselectedFeatureSlug(selectedPlan: unknown): string | null {
   if (typeof selectedPlan !== "string") return null;
@@ -75,6 +75,11 @@ const billingPlanNames: Record<string, string> = {
   matrix_builder: "Builder",
   matrix_max: "Max",
   internal: "Internal",
+};
+const profileDescriptions: Record<string, string> = {
+  server_starter: "For everyday use",
+  server_builder: "For technical work and building",
+  server_max: "For serious, demanding workloads",
 };
 const billingDateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
@@ -130,7 +135,6 @@ function checkoutSelectionConflictMessage(value: unknown): string | null {
 }
 
 function CheckoutPanel({
-  mode,
   onCheckoutIntent,
   onCheckoutNavigate,
   checkoutReturnPath,
@@ -143,7 +147,6 @@ function CheckoutPanel({
   developerTools,
   trialDurationDays,
 }: {
-  mode: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
   checkoutReturnPath?: string;
@@ -270,18 +273,7 @@ function CheckoutPanel({
 
   return (
     <aside className="rounded-2xl bg-[#0E3422] p-5 text-[#FCFCF8] shadow-[0_12px_36px_rgba(31,45,29,0.12)] lg:sticky lg:top-2">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#C9E8D9]/65">
-        {checkoutBypassed
-          ? "Included"
-          : mode === "device-setup"
-          ? "Billing settings"
-          : mode === "add-computer"
-          ? "Monthly plan"
-          : trialDurationDays !== null
-          ? `Start your ${trialDurationDays}-day free trial`
-          : "Monthly plan"}
-      </p>
-      <div className="mt-3 flex items-end justify-between gap-4">
+      <div className="flex items-end justify-between gap-4">
         <span className="text-2xl font-semibold tracking-tight">
           {selectedProfile.label}
         </span>
@@ -292,18 +284,10 @@ function CheckoutPanel({
           </span>
         ) : null}
       </div>
-      <p className="mt-1 text-sm text-[#C9E8D9]/70">
-        <span aria-hidden="true">{selectedRegion.flag}</span> {selectedRegion.label}
-      </p>
-
       {trialDurationDays !== null && trialEnd && (
         <div className="mt-5 border-t border-[#C9E8D9]/15 pt-5">
           <p className="text-3xl font-semibold tracking-tight text-cream">$0 today</p>
           <p className="mt-1 text-sm text-[#FCFCF8]">Then ${price}/month on {trialEnd}</p>
-          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#C9E8D9]/65">
-            <span>Card required</span>
-            <span>Cancel before {trialEnd}</span>
-          </div>
         </div>
       )}
 
@@ -695,20 +679,21 @@ function ProfileOptionRows({
                 <CheckIcon className="size-3" aria-hidden="true" />
               </span>
             </span>
-            <span className="mt-2 flex items-baseline gap-1">
-              {showPrice ? (
+            {showPrice ? (
+              <span className="mt-2 flex items-baseline gap-1">
                 <>
                   <span className="text-xl font-semibold tracking-tight text-[#1F2D1D]">
                     ${profilePrice(resolvedProfile, billingInterval)}
                   </span>
                   <span className="text-[10px] text-[#635F5F]">/mo</span>
                 </>
-              ) : (
-                <span className="font-mono text-xs text-[#635F5F]">{resolvedProfile.hetznerType}</span>
-              )}
+              </span>
+            ) : null}
+            <span className="mt-2 text-xs leading-4 text-[#635F5F]">
+              {profileDescriptions[profile.featureSlug]}
             </span>
-            <span className="mt-2 font-mono text-[10px] leading-4 text-[#635F5F]">
-              {resolvedProfile.hetznerType} · {resolvedProfile.vcpus} CPU · {resolvedProfile.memoryGb} GB · {resolvedProfile.diskGb} GB
+            <span className="mt-1 font-mono text-[10px] leading-4 text-[#635F5F]">
+              {resolvedProfile.vcpus} CPU · {resolvedProfile.memoryGb} GB RAM · {resolvedProfile.diskGb} GB disk
             </span>
             {profile.planSlug === "matrix_builder" && (
               <span className="mt-2 w-fit rounded-full bg-[#FAEAD1] px-2 py-0.5 text-[10px] font-semibold text-[#4D3919]">
@@ -719,61 +704,6 @@ function ProfileOptionRows({
         );
       })}
     </div>
-  );
-}
-
-function BillingDeveloperToolsSelector({
-  selectedTools,
-  onToggle,
-}: {
-  selectedTools: DeveloperToolId[];
-  onToggle: (tool: DeveloperToolId) => void;
-}) {
-  const selectedToolIds = new Set(selectedTools);
-
-  return (
-    <section aria-labelledby="billing-coding-agents-heading">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h4 id="billing-coding-agents-heading" className="text-sm font-semibold text-[#1F2D1D]">
-          Install coding agents?
-        </h4>
-        <span className="text-xs text-[#635F5F]">{selectedTools.length} selected</span>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {developerToolOptions.map((tool) => {
-          const checked = selectedToolIds.has(tool.id);
-          return (
-            <label
-              key={tool.id}
-              className={`flex min-h-10 cursor-pointer items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
-                checked
-                  ? "border-[#0E3422] bg-[#EEF7F2] text-[#0E3422]"
-                  : "border-[#E0E1CA] bg-[#FCFCF8] text-[#635F5F] hover:border-[#97D8B9]"
-              }`}
-            >
-              <span className="truncate">{tool.label}</span>
-              <input
-                type="checkbox"
-                aria-label={tool.label}
-                checked={checked}
-                onChange={() => onToggle(tool.id)}
-                className="sr-only"
-              />
-              <span
-                className={`flex size-4 shrink-0 items-center justify-center rounded-full border ${
-                  checked
-                    ? "border-[#0E3422] bg-[#0E3422] text-[#FCFCF8]"
-                    : "border-[#C8C6C6]"
-                }`}
-                aria-hidden="true"
-              >
-                {checked ? <CheckIcon className="size-2.5" /> : null}
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 
@@ -861,14 +791,14 @@ function PickerDropdown({
   children,
 }: {
   title: string;
-  hint: string;
+  hint?: string;
   children: ReactNode;
 }) {
   return (
     <div className="absolute left-0 right-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-2.5rem)] origin-top overflow-hidden rounded-xl border border-[#E0E1CA] bg-white p-2 shadow-[0_12px_36px_rgba(31,45,29,0.12)]">
       <div className="flex items-baseline justify-between gap-3 border-b border-[#E0E1CA] px-1.5 pb-2">
         <p className="text-xs font-semibold text-[#1F2D1D]">{title}</p>
-        <p className="truncate text-[11px] text-[#635F5F]">{hint}</p>
+        {hint ? <p className="truncate text-[11px] text-[#635F5F]">{hint}</p> : null}
       </div>
       <div className="max-h-[clamp(160px,42vh,340px)] overflow-y-auto overflow-x-hidden pt-1.5">
         {children}
@@ -906,6 +836,7 @@ function SelectionTriggerCards({
 }) {
   const computerOpen = openPicker === "computer";
   const regionOpen = openPicker === "region";
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const onCloseEvent = useEffectEvent(onClose);
   const defaultRegionSlug = getDefaultRegionSlug();
@@ -934,6 +865,11 @@ function SelectionTriggerCards({
     };
   }, [openPicker]);
 
+  function toggleAdvancedSettings() {
+    if (advancedOpen && regionOpen) onClose();
+    setAdvancedOpen((current) => !current);
+  }
+
   return (
     <div ref={containerRef} className="space-y-4">
       <div className="relative">
@@ -956,9 +892,6 @@ function SelectionTriggerCards({
               <span className="flex items-center gap-2">
                 <span className="truncate text-sm font-semibold text-[#1F2D1D]">
                   {selectedProfile.label}
-                </span>
-                <span className="font-mono text-[11px] text-[#635F5F]">
-                  {selectedProfile.hetznerType}
                 </span>
               </span>
               <span className="truncate font-mono text-[11px] text-[#635F5F]">
@@ -984,10 +917,7 @@ function SelectionTriggerCards({
           </span>
         </button>
         {computerOpen && (
-          <PickerDropdown
-            title="Choose your computer"
-            hint={profiles.map((profile) => resolveMatrixServerProfile(profile, selectedRegion).hetznerType).join(" / ")}
-          >
+          <PickerDropdown title="Choose computer power">
             <ProfileOptionRows
               profiles={profiles}
               region={selectedRegion}
@@ -1001,48 +931,62 @@ function SelectionTriggerCards({
       </div>
 
       <div className="border-t border-[#E0E1CA] pt-4">
-        <BillingDeveloperToolsSelector
+        <DeveloperToolsSelector
           selectedTools={developerTools}
           onToggle={onToggleDeveloperTool}
         />
       </div>
 
-      <div className="relative border-t border-[#E0E1CA] pt-3">
+      <div className="border-t border-[#E0E1CA] pt-3">
         <button
           type="button"
-          aria-label="Change server location"
-          aria-haspopup="true"
-          aria-expanded={regionOpen}
-          onClick={() => onToggle("region")}
-          className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379] ${pickerFieldState(regionOpen)}`}
+          aria-expanded={advancedOpen}
+          onClick={toggleAdvancedSettings}
+          className="flex w-full items-center justify-between rounded-xl px-1 py-2 text-left text-sm font-semibold text-[#1F2D1D] transition-colors hover:text-[#0E3422] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379]"
         >
-          <span className="flex min-w-0 items-center gap-3">
-            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#EDF3F7] text-base leading-none">
-              <span aria-hidden="true">{selectedRegion.flag}</span>
-            </span>
-            <span className="flex min-w-0 flex-col">
-              <span className="text-xs font-semibold text-[#1F2D1D]">
-                <span>Region</span> · {selectedRegion.label}
-              </span>
-              <span className="text-[11px] text-[#635F5F]">
-                Closest available
-              </span>
-            </span>
-          </span>
+          <span>Advanced settings</span>
           <ChevronDownIcon
-            className={`size-4 shrink-0 text-[#635F5F] transition-transform ${regionOpen ? "rotate-180" : ""}`}
+            className={`size-4 shrink-0 text-[#635F5F] transition-transform ${advancedOpen ? "rotate-180" : ""}`}
             aria-hidden="true"
           />
         </button>
-        {regionOpen && (
-          <PickerDropdown title="Choose a server location" hint="Closest available location is selected">
-            <RegionOptionRows
-              selectedFeature={selectedRegion.featureSlug}
-              defaultFeature={defaultRegionSlug}
-              onSelect={onSelectRegion}
-            />
-          </PickerDropdown>
-        )}
+        {advancedOpen ? (
+          <div className="relative mt-2">
+            <button
+              type="button"
+              aria-label="Change server location"
+              aria-haspopup="true"
+              aria-expanded={regionOpen}
+              onClick={() => onToggle("region")}
+              className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379] ${pickerFieldState(regionOpen)}`}
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#EDF3F7] text-base leading-none">
+                  <span aria-hidden="true">{selectedRegion.flag}</span>
+                </span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-xs font-semibold text-[#1F2D1D]">
+                    <span>Region</span> · {selectedRegion.label}
+                  </span>
+                  <span className="text-[11px] text-[#635F5F]">Closest available</span>
+                </span>
+              </span>
+              <ChevronDownIcon
+                className={`size-4 shrink-0 text-[#635F5F] transition-transform ${regionOpen ? "rotate-180" : ""}`}
+                aria-hidden="true"
+              />
+            </button>
+            {regionOpen ? (
+              <PickerDropdown title="Choose a server location" hint="Closest available location is selected">
+                <RegionOptionRows
+                  selectedFeature={selectedRegion.featureSlug}
+                  defaultFeature={defaultRegionSlug}
+                  onSelect={onSelectRegion}
+                />
+              </PickerDropdown>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1295,9 +1239,6 @@ function BillingPanelInner({
               ? "Finish billing"
               : "Choose your Matrix computer"}
           </h3>
-          <p className="mt-1 max-w-xl text-sm text-[#635F5F]">
-            Power, agents, checkout. Your closest region is already selected.
-          </p>
         </div>
 
         <div className="rounded-2xl border border-[#E0E1CA] bg-[#FCFCF8] p-4 shadow-[0_2px_8px_rgba(31,45,29,0.07)] sm:p-5">
@@ -1321,7 +1262,6 @@ function BillingPanelInner({
         </div>
       </div>
       <CheckoutPanel
-        mode={mode}
         onCheckoutIntent={onCheckoutIntent}
         onCheckoutNavigate={onCheckoutNavigate}
         checkoutReturnPath={checkoutReturnPath}
