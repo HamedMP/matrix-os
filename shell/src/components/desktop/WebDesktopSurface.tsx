@@ -4,6 +4,7 @@ import { useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode 
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { buildWebDesktopLauncherApps } from "@/lib/web-desktop-app-launch";
 import {
   Blocks,
   BrushIcon,
@@ -259,28 +260,7 @@ export function WebDesktopSurface({
 }: WebDesktopSurfaceProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const primeDesktopIcons = useDesktopConfigStore((state) => state.primeDesktopIcons);
-  const desktopApps = useMemo(() => {
-    const preferred = [
-      apps.find((app) => app.path === "__chat__")
-        ? { ...apps.find((app) => app.path === "__chat__")!, name: "Chat" }
-        : undefined,
-      apps.find((app) => app.path === "__terminal__"),
-      apps.find((app) => app.path === "__file-browser__"),
-      { name: "Editor", path: "__editor__" },
-      { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
-      { name: "Settings", path: "__settings__" },
-      { name: "Plugins", path: "__plugins__" },
-      apps.find((app) => app.name.toLowerCase() === "browser") ?? { name: "Browser", path: "__browser__" },
-      apps.find((app) => app.name.toLowerCase() === "notes") ?? { name: "Notes", path: "apps/notes/index.html" },
-      apps.find((app) => app.name.toLowerCase() === "whiteboard") ?? { name: "Whiteboard", path: "apps/whiteboard/index.html" },
-    ];
-    const seen = new Set<string>();
-    return preferred.filter((app): app is AppEntry => {
-      if (!app || seen.has(app.path)) return false;
-      seen.add(app.path);
-      return true;
-    });
-  }, [apps]);
+  const desktopApps = useMemo(() => buildWebDesktopLauncherApps(apps).slice(0, 10), [apps]);
   const defaultPlacements = useMemo<DesktopIconPlacement[]>(() => desktopApps.map((app, index) => ({
     path: app.path,
     x: 20 + (index % 2) * 88,

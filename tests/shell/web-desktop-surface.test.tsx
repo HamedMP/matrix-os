@@ -150,6 +150,35 @@ describe("WebDesktopSurface", () => {
     expect(onOpenApp).toHaveBeenCalledWith("apps/notes/index.html", "Notes");
   });
 
+  it("keeps the dedicated Browser desktop icon when a custom app is also named Browser", () => {
+    const onOpenApp = vi.fn();
+    const customBrowser = {
+      name: "Browser",
+      path: "apps/browser-clone/index.html",
+      iconUrl: "/icons/browser-clone.svg",
+    };
+    render(
+      <WebDesktopSurface
+        apps={[...apps.filter((app) => app.path !== "apps/browser/index.html"), customBrowser]}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        onOpenApp={onOpenApp}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
+
+    expect(onOpenApp).toHaveBeenCalledWith("__browser__", "Browser");
+    expect(onOpenApp).not.toHaveBeenCalledWith(customBrowser.path, customBrowser.name);
+  });
+
   it("renders account, runtime, and support controls in the header action slot", () => {
     render(
       <WebDesktopSurface
