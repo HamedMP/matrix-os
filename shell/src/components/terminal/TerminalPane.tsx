@@ -10,10 +10,7 @@ import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
-import {
-  classifyTerminalClipboardShortcut,
-  classifyTerminalPointerEvent,
-} from "@matrix-os/contracts";
+import { classifyTerminalClipboardShortcut } from "@matrix-os/contracts";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -46,6 +43,10 @@ import {
   computeSoftGridLayout,
   correctTerminalPointerCoordinates,
 } from "./terminal-soft-grid";
+import {
+  installTerminalPointerInterception,
+  markTerminalZoomCorrected,
+} from "./terminal-pointer-interception";
 import {
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
@@ -284,8 +285,6 @@ export function TerminalPane({
     const container = containerRef.current;
     if (!container) return;
 
-    const MOUSE_EVENTS = ["mousedown", "mousemove", "mouseup"] as const;
-
     const correct = (e: MouseEvent) => {
       const visualScale = canvasZoomRef.current * softGridScaleRef.current;
       if (visualScale === 1) return;
@@ -336,42 +335,16 @@ export function TerminalPane({
         movementY: e.movementY,
       });
       // Mark the event so our own handler ignores it and does not re-correct.
-      Object.defineProperty(synthetic, "_xtermZoomCorrected", { value: true });
+      markTerminalZoomCorrected(synthetic);
       target.dispatchEvent(synthetic);
     };
 
-    const handler = (e: MouseEvent) => {
-      // Skip synthetic events we already corrected to avoid infinite loops.
-      if ((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected) return;
-      const terminal = termRef.current as Terminal | null;
-      if (terminal) {
-        const decision = classifyTerminalPointerEvent({
-          type: e.type as "mousedown" | "mousemove" | "mouseup",
-          button: e.button,
-          buttons: e.buttons,
-          hasSelection: terminal.hasSelection(),
-        });
-        if (decision === "shield-selection") {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          return;
-        }
-      }
-      const visualScale = canvasZoomRef.current * softGridScaleRef.current;
-      if (visualScale === 1) return;
-      correct(e);
-    };
-
-    for (const type of MOUSE_EVENTS) {
-      // Capture phase so we intercept before xterm's own listeners.
-      container.addEventListener(type, handler, { capture: true });
-    }
-
-    return () => {
-      for (const type of MOUSE_EVENTS) {
-        container.removeEventListener(type, handler, { capture: true });
-      }
-    };
+    return installTerminalPointerInterception({
+      container,
+      getTerminal: () => termRef.current,
+      getVisualScale: () => canvasZoomRef.current * softGridScaleRef.current,
+      correctPointer: correct,
+    });
   // Effect wires once and reads zoom through the ref — no dependency on
   // canvasZoom directly, which avoids tearing down/re-registering listeners
   // on every zoom change while the user is actively zooming the canvas.
