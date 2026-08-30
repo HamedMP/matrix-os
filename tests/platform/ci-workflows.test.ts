@@ -536,8 +536,8 @@ describe('CI workflows', () => {
     ]) {
       expect(production).toContain(`${name}=\${${name}}`);
     }
-    expect(production).toContain('Verify deployed prebilling contract');
-    expect(production).toContain('prebilling deployment contract is missing');
+    expect(production).toContain('Verify deployed provisioning contract');
+    expect(production).toContain('provisioning deployment contract is missing');
   });
 
   it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {
