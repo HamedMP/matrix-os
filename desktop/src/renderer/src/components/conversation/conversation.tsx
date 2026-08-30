@@ -188,11 +188,11 @@ export function ConversationContent({ children, className }: { children: ReactNo
   // Longer conversations scroll normally. The log
   // role marks the transcript as a live region whose streamed text mutations
   // are not announced token by token (aria-relevant=additions only).
-  // Stay close to the 868px Chat composer while leaving a little extra room
-  // for structured activity rows; the viewport itself stays full-width for fade.
+  // Match the shared readable Chat-panel width so maximized windows stay
+  // comfortably compact; the viewport itself stays full-width for fade.
   return (
     <div
-      className={cn("mx-auto flex min-h-full w-full max-w-[56rem] flex-col gap-3 px-4 py-6 sm:px-6 lg:px-8", className ?? "justify-end")}
+      className={cn("mx-auto flex min-h-full w-full max-w-[46rem] flex-col gap-3 px-4 py-6 sm:px-6 lg:px-8", className ?? "justify-end")}
       role="log"
       aria-relevant="additions"
       data-slot="message-scroller-content"

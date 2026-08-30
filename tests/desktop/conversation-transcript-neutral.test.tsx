@@ -241,7 +241,7 @@ describe("provider-neutral conversation transcript", () => {
     expect(failure.getAttribute("style") ?? "").not.toContain("background:");
   });
 
-  it("keeps expanded Work compact inside a transcript only slightly wider than Chat", () => {
+  it("keeps expanded Work compact inside the shared readable Chat width", () => {
     const turns: ConversationTurnPresentation[] = [{
       id: "turn-compact-work",
       startedAt: 1_000,
@@ -276,7 +276,7 @@ describe("provider-neutral conversation transcript", () => {
     render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
 
     const transcript = screen.getByRole("log");
-    expect(transcript.className).toContain("max-w-[56rem]");
+    expect(transcript.className).toContain("max-w-[46rem]");
     expect(transcript.className).not.toContain("max-w-[72rem]");
     expect(transcript.className).toContain("gap-3");
     const rows = transcript.querySelectorAll('[data-slot="message-scroller-item"]');
