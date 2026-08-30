@@ -1,7 +1,8 @@
 import { StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import AppWindowIcon from "@hugeicons/core-free-icons/AppWindowIcon";
 import { Stack, useLocalSearchParams } from "expo-router";
 
+import { Icon } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function AppPreviewScreen() {
@@ -13,7 +14,7 @@ export default function AppPreviewScreen() {
       <Stack.Screen options={{ title: app || "App" }} />
       <View style={styles.placeholder}>
         <View style={styles.icon}>
-          <Ionicons name="apps-outline" size={32} color={mockColors.blue} />
+          <Icon icon={AppWindowIcon} size={32} color={mockColors.blue} />
         </View>
         <Text style={styles.title}>{app || "Matrix app"}</Text>
         <Text style={styles.subtitle}>Authenticated app WebView mock</Text>

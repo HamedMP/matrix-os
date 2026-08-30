@@ -1,8 +1,11 @@
 import { useState } from "react";
-import { Ionicons } from "@expo/vector-icons";
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
+import ArrowUp01Icon from "@hugeicons/core-free-icons/ArrowUp01Icon";
+import SparklesIcon from "@hugeicons/core-free-icons/SparklesIcon";
+import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Icon, IconButton } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function MockHomeScreen() {
@@ -31,7 +34,7 @@ export default function MockHomeScreen() {
             </View>
             <View style={styles.matrixBubble}>
               <View style={styles.spark}>
-                <Ionicons name="sparkles" size={16} color={mockColors.blue} />
+                <Icon icon={SparklesIcon} size={16} color={mockColors.blue} />
               </View>
               <Text style={styles.matrixText}>This is a mock response from your Matrix computer.</Text>
             </View>
@@ -39,7 +42,7 @@ export default function MockHomeScreen() {
         ) : (
           <View style={styles.emptyState}>
             <View style={styles.orb}>
-              <Ionicons name="sparkles" size={26} color={mockColors.blue} />
+              <Icon icon={SparklesIcon} size={26} color={mockColors.blue} />
             </View>
             <Text style={styles.title}>What should we do?</Text>
             <Text style={styles.subtitle}>Ask Matrix, open the drawer, or continue something recent.</Text>
@@ -49,9 +52,12 @@ export default function MockHomeScreen() {
 
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
         <View style={styles.composer}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Attach" style={styles.iconButton}>
-            <Ionicons name="add" size={23} color={mockColors.ink} />
-          </Pressable>
+          <IconButton
+            accessibilityLabel="Attach"
+            icon={Add01Icon}
+            iconSize={23}
+            iconColor={mockColors.ink}
+          />
           <TextInput
             accessibilityLabel="Message Matrix"
             value={message}
@@ -62,14 +68,14 @@ export default function MockHomeScreen() {
             returnKeyType="send"
             style={styles.input}
           />
-          <Pressable
-            accessibilityRole="button"
+          <IconButton
             accessibilityLabel="Send message"
+            icon={ArrowUp01Icon}
+            iconSize={19}
+            iconColor={mockColors.surface}
+            backgroundColor={message.trim() ? mockColors.blue : "#B7BAB7"}
             onPress={send}
-            style={[styles.sendButton, !message.trim() && styles.sendButtonDisabled]}
-          >
-            <Ionicons name="arrow-up" size={19} color={mockColors.surface} />
-          </Pressable>
+          />
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -172,30 +178,11 @@ const styles = StyleSheet.create({
     backgroundColor: mockColors.surface,
     boxShadow: "0 8px 24px rgba(23, 25, 24, 0.08)",
   },
-  iconButton: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 15,
-    backgroundColor: mockColors.soft,
-  },
   input: {
     flex: 1,
     minHeight: 46,
     fontFamily: mockFonts.body,
     fontSize: 15,
     color: mockColors.ink,
-  },
-  sendButton: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 15,
-    backgroundColor: mockColors.blue,
-  },
-  sendButtonDisabled: {
-    backgroundColor: "#B7BAB7",
   },
 });

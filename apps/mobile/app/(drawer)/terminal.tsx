@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
 
 import { ListRow, MockSearchField } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
@@ -24,7 +25,7 @@ export default function TerminalScreen() {
             key={session.name}
             title={session.name}
             detail={session.detail}
-            icon="terminal-outline"
+            icon={ComputerTerminal01Icon}
             accent={session.accent}
             accessibilityLabel={`Open ${session.name} terminal`}
             onPress={() => router.push({

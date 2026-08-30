@@ -1,13 +1,17 @@
-import { Drawer, DrawerToggleButton, type DrawerContentComponentProps } from "expo-router/drawer";
+import Menu01Icon from "@hugeicons/core-free-icons/Menu01Icon";
+import { Pressable, StyleSheet } from "react-native";
+import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
 
+import { Icon } from "@/components/ui";
 import { MockDrawerContent } from "@/components/mock-shell/MockDrawerContent";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
+import { mockColors } from "@/components/mock-shell/theme";
+import { semanticColors } from "@/lib/theme";
 
 export default function DrawerLayout() {
   return (
     <Drawer
       drawerContent={(props: DrawerContentComponentProps) => <MockDrawerContent {...props} />}
-      screenOptions={{
+      screenOptions={({ navigation }: { navigation: DrawerContentComponentProps["navigation"] }) => ({
         drawerPosition: "left",
         drawerType: "slide",
         drawerStyle: { width: "84%", backgroundColor: mockColors.canvas },
@@ -17,23 +21,42 @@ export default function DrawerLayout() {
         headerShadowVisible: false,
         headerTitleAlign: "center",
         headerStyle: { backgroundColor: mockColors.canvas },
-        headerTitleStyle: {
-          fontFamily: mockFonts.semibold,
-          fontSize: 15,
-          color: mockColors.ink,
-        },
-        headerLeft: ({ tintColor }: { tintColor?: string }) => (
-          <DrawerToggleButton tintColor={tintColor ?? mockColors.ink} accessibilityLabel="Open navigation" />
+        headerTitleStyle: { fontSize: 16 },
+        headerLeft: () => (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open navigation"
+            hitSlop={10}
+            onPress={() => navigation.toggleDrawer()}
+            style={({ pressed }) => [styles.menuButton, pressed && styles.menuButtonPressed]}
+          >
+            <Icon
+              icon={Menu01Icon}
+              size={24}
+              color={semanticColors.textDefault}
+              testID="drawer-menu-icon"
+            />
+          </Pressable>
         ),
         sceneStyle: { backgroundColor: mockColors.canvas },
-      }}
+      })}
     >
       <Drawer.Screen name="index" options={{ title: "Matrix OS", drawerLabel: "Home" }} />
-      <Drawer.Screen name="search" options={{ title: "Search", drawerLabel: "Search" }} />
-      <Drawer.Screen name="files" options={{ title: "Files", drawerLabel: "Files" }} />
-      <Drawer.Screen name="terminal" options={{ title: "Terminal", drawerLabel: "Terminal" }} />
-      <Drawer.Screen name="integrations" options={{ title: "Integrations", drawerLabel: "Integrations" }} />
-      <Drawer.Screen name="apps" options={{ title: "Apps", drawerLabel: "Apps" }} />
+      <Drawer.Screen name="search" options={{ title: null, drawerLabel: "Search" }} />
+      <Drawer.Screen name="files" options={{ title: null, drawerLabel: "Files" }} />
+      <Drawer.Screen name="terminal" options={{ title: null, drawerLabel: "Terminal" }} />
+      <Drawer.Screen name="integrations" options={{ title: null, drawerLabel: "Integrations" }} />
+      <Drawer.Screen name="apps" options={{ title: null, drawerLabel: "Apps" }} />
+      <Drawer.Screen name="settings" options={{ title: null, drawerLabel: "Settings" }} />
     </Drawer>
   );
 }
+
+const styles = StyleSheet.create({
+  menuButton: {
+    marginLeft: 16,
+  },
+  menuButtonPressed: {
+    opacity: 0.65,
+  },
+});

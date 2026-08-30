@@ -1,10 +1,36 @@
-import { Pressable, Text } from "react-native";
+import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
+import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import { Stack, useRouter } from "expo-router";
 
+import { IconButton } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function FileBrowserLayout() {
   const router = useRouter();
+  const closeButton = () => (
+    <IconButton
+      accessibilityLabel="Close file browser"
+      icon={Cancel01Icon}
+      iconSize={22}
+      iconColor={mockColors.ink}
+      iconTestID="file-browser-close-icon"
+      buttonSize={32}
+      pressedOpacity={1}
+      onPress={() => router.dismiss()}
+    />
+  );
+  const backButton = () => (
+    <IconButton
+      accessibilityLabel="Back to previous folder"
+      icon={ArrowLeft01Icon}
+      iconSize={22}
+      iconColor={mockColors.ink}
+      iconTestID="file-browser-back-icon"
+      buttonSize={32}
+      pressedOpacity={1}
+      onPress={() => router.back()}
+    />
+  );
 
   return (
     <Stack
@@ -21,14 +47,27 @@ export default function FileBrowserLayout() {
         name="index"
         options={{
           title: "Files",
-          headerLeft: () => (
-            <Pressable accessibilityRole="button" accessibilityLabel="Close file browser" onPress={() => router.dismiss()}>
-              <Text style={{ fontFamily: mockFonts.medium, fontSize: 15, color: mockColors.blue }}>Close</Text>
-            </Pressable>
-          ),
+          headerBackVisible: false,
+          headerLeft: closeButton,
+          unstable_headerLeftItems: () => [{
+            type: "custom",
+            element: closeButton(),
+            hidesSharedBackground: true,
+          }],
         }}
       />
-      <Stack.Screen name="[...path]" />
+      <Stack.Screen
+        name="[...path]"
+        options={{
+          headerBackVisible: false,
+          headerLeft: backButton,
+          unstable_headerLeftItems: () => [{
+            type: "custom",
+            element: backButton(),
+            hidesSharedBackground: true,
+          }],
+        }}
+      />
     </Stack>
   );
 }

@@ -1,19 +1,28 @@
-import { StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
+import CalculatorIcon from "@hugeicons/core-free-icons/CalculatorIcon";
+import CheckmarkCircle02Icon from "@hugeicons/core-free-icons/CheckmarkCircle02Icon";
+import Clock01Icon from "@hugeicons/core-free-icons/Clock01Icon";
+import FileTextIcon from "@hugeicons/core-free-icons/FileTextIcon";
+import GameController03Icon from "@hugeicons/core-free-icons/GameController03Icon";
+import Image02Icon from "@hugeicons/core-free-icons/Image02Icon";
+import MusicNote01Icon from "@hugeicons/core-free-icons/MusicNote01Icon";
+import PaintBrush01Icon from "@hugeicons/core-free-icons/PaintBrush01Icon";
+import SunCloud02Icon from "@hugeicons/core-free-icons/SunCloud02Icon";
 
-import { GridTile, MockSearchField } from "@/components/mock-shell/MockControls";
+import { GridTile, GridTileGrid, MockSearchField } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
+import { Spacer } from "@/components/ui";
 
 const apps = [
-  { name: "Chess", icon: "game-controller-outline" as const },
-  { name: "Notes", icon: "document-text-outline" as const },
-  { name: "Tasks", icon: "checkmark-circle-outline" as const },
-  { name: "Weather", icon: "partly-sunny-outline" as const },
-  { name: "Whiteboard", icon: "brush-outline" as const },
-  { name: "Calculator", icon: "calculator-outline" as const },
-  { name: "Clock", icon: "time-outline" as const },
-  { name: "Music", icon: "musical-notes-outline" as const },
-  { name: "Gallery", icon: "images-outline" as const },
+  { name: "Chess", icon: GameController03Icon },
+  { name: "Notes", icon: FileTextIcon },
+  { name: "Tasks", icon: CheckmarkCircle02Icon },
+  { name: "Weather", icon: SunCloud02Icon },
+  { name: "Whiteboard", icon: PaintBrush01Icon },
+  { name: "Calculator", icon: CalculatorIcon },
+  { name: "Clock", icon: Clock01Icon },
+  { name: "Music", icon: MusicNote01Icon },
+  { name: "Gallery", icon: Image02Icon },
 ];
 
 export default function AppsScreen() {
@@ -22,26 +31,17 @@ export default function AppsScreen() {
   return (
     <MockPage title="Apps" subtitle="Experiences installed on solar-vale">
       <MockSearchField placeholder="Search apps" />
-      <View style={styles.grid}>
-        {apps.map((app, index) => (
+      <Spacer size="xl" />
+      <GridTileGrid>
+        {apps.map((app) => (
           <GridTile
             key={app.name}
             label={app.name}
             icon={app.icon}
-            accent={index === 0}
             onPress={() => router.push({ pathname: "/app-preview/[app]", params: { app: app.name } } as never)}
           />
         ))}
-      </View>
+      </GridTileGrid>
     </MockPage>
   );
 }
-
-const styles = StyleSheet.create({
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginTop: 24,
-  },
-});

@@ -1,8 +1,11 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
+import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
+import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
 import { useRouter } from "expo-router";
 
-import { ListRow } from "@/components/mock-shell/MockControls";
+import { Icon, Spacer } from "@/components/ui";
+import { ListRow, ListRowStack } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
@@ -24,49 +27,53 @@ export default function IntegrationsScreen() {
         onPress={() => router.push("/integrations-installed" as never)}
         style={({ pressed }) => [styles.installedCard, pressed && styles.pressed]}
       >
+        <Spacer size="lg" />
         <View>
           <Text style={styles.cardEyebrow}>INSTALLED</Text>
+          <Spacer size="xs" />
           <Text style={styles.cardTitle}>4 connected services</Text>
         </View>
+        <Spacer size="lg" />
         <View style={styles.installedRow}>
           <View style={styles.iconStack}>
             {installedColors.map((color, index) => (
               <View key={color} style={[styles.installedIcon, { backgroundColor: color, marginLeft: index === 0 ? 0 : -7 }]} />
             ))}
           </View>
-          <Ionicons name="arrow-forward" size={20} color={mockColors.ink} />
+          <Icon icon={ArrowRight01Icon} size={20} color={mockColors.ink} />
         </View>
+        <Spacer size="lg" />
       </Pressable>
 
+      <Spacer size="2xl" />
       <Text style={styles.sectionLabel}>AVAILABLE</Text>
-      <View style={styles.list}>
+      <Spacer size="md" />
+      <ListRowStack>
         {available.map((integration) => (
           <ListRow
             key={integration.name}
             title={integration.name}
             detail={integration.detail}
-            icon="extension-puzzle-outline"
+            icon={PuzzleIcon}
             accent={integration.color}
-            actionIcon="add"
+            actionIcon={Add01Icon}
             onPress={() => router.push({
               pathname: "/integration-detail/[integration]",
               params: { integration: integration.name },
             } as never)}
           />
         ))}
-      </View>
+      </ListRowStack>
     </MockPage>
   );
 }
 
 const styles = StyleSheet.create({
   installedCard: {
-    minHeight: 128,
-    justifyContent: "space-between",
     borderWidth: 1,
     borderColor: mockColors.line,
     borderRadius: 20,
-    padding: 17,
+    paddingHorizontal: 17,
     backgroundColor: mockColors.surface,
   },
   cardEyebrow: {
@@ -76,7 +83,6 @@ const styles = StyleSheet.create({
     color: mockColors.muted,
   },
   cardTitle: {
-    marginTop: 5,
     fontFamily: mockFonts.display,
     fontSize: 20,
     color: mockColors.ink,
@@ -97,15 +103,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   sectionLabel: {
-    marginTop: 28,
-    marginBottom: 10,
     fontFamily: mockFonts.semibold,
     fontSize: 11,
     letterSpacing: 1.1,
     color: mockColors.muted,
-  },
-  list: {
-    gap: 10,
   },
   pressed: {
     opacity: 0.7,

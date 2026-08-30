@@ -1,6 +1,6 @@
-import { StyleSheet, View } from "react-native";
+import CheckmarkCircle02Icon from "@hugeicons/core-free-icons/CheckmarkCircle02Icon";
 
-import { ListRow } from "@/components/mock-shell/MockControls";
+import { ListRow, ListRowStack } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
 
 const installed = [
@@ -13,21 +13,19 @@ const installed = [
 export default function InstalledIntegrationsScreen() {
   return (
     <MockPage title="Installed" subtitle="Services Matrix can currently access">
-      <View style={styles.list}>
+      <ListRowStack>
         {installed.map((item) => (
           <ListRow
             key={item.name}
             title={item.name}
             detail={item.detail}
-            icon="checkmark-circle-outline"
+            icon={CheckmarkCircle02Icon}
             accent={item.color}
-            actionIcon="checkmark-circle"
+            actionIcon={CheckmarkCircle02Icon}
             onPress={() => {}}
           />
         ))}
-      </View>
+      </ListRowStack>
     </MockPage>
   );
 }
-
-const styles = StyleSheet.create({ list: { gap: 10 } });

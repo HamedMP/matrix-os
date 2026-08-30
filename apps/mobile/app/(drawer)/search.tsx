@@ -1,5 +1,8 @@
 import { StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
+import FileTextIcon from "@hugeicons/core-free-icons/FileTextIcon";
+import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 
 import { ListRow, MockSearchField } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
@@ -13,9 +16,9 @@ export default function SearchScreen() {
       <MockSearchField placeholder="Files, sessions, apps, and chats" />
       <Text style={styles.sectionLabel}>SUGGESTED</Text>
       <View style={styles.list}>
-        <ListRow title="matrix-os" detail="Folder · Projects" icon="folder-outline" onPress={() => router.push({ pathname: "/file-browser", params: { folder: "Projects" } } as never)} />
-        <ListRow title="solar-vale" detail="Active terminal" icon="terminal-outline" accent={mockColors.blueSoft} onPress={() => router.push({ pathname: "/terminal-session/[session]", params: { session: "solar-vale" } } as never)} />
-        <ListRow title="Notes" detail="Installed app" icon="document-text-outline" accent="#FFF1DD" onPress={() => router.push({ pathname: "/app-preview/[app]", params: { app: "Notes" } } as never)} />
+        <ListRow title="matrix-os" detail="Folder · Projects" icon={Folder01Icon} onPress={() => router.push({ pathname: "/file-browser", params: { folder: "Projects" } } as never)} />
+        <ListRow title="solar-vale" detail="Active terminal" icon={ComputerTerminal01Icon} accent={mockColors.blueSoft} onPress={() => router.push({ pathname: "/terminal-session/[session]", params: { session: "solar-vale" } } as never)} />
+        <ListRow title="Notes" detail="Installed app" icon={FileTextIcon} accent="#FFF1DD" onPress={() => router.push({ pathname: "/app-preview/[app]", params: { app: "Notes" } } as never)} />
       </View>
     </MockPage>
   );

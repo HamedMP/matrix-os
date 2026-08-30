@@ -1,15 +1,16 @@
-import type { ComponentProps } from "react";
-import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Children, Fragment, type ReactNode } from "react";
+import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
+import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
+import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
+import { Pressable, StyleSheet, Text, TextInput, View, type ColorValue } from "react-native";
 
+import { Icon, Spacer, type IconData } from "@/components/ui";
 import { mockColors, mockFonts } from "./theme";
-
-type IconName = ComponentProps<typeof Ionicons>["name"];
 
 export function MockSearchField({ placeholder = "Search" }: { placeholder?: string }) {
   return (
     <View style={styles.search}>
-      <Ionicons name="search-outline" size={17} color={mockColors.muted} />
+      <Icon icon={Search01Icon} size={17} color={mockColors.muted} />
       <TextInput
         accessibilityLabel={placeholder}
         placeholder={placeholder}
@@ -22,13 +23,40 @@ export function MockSearchField({ placeholder = "Search" }: { placeholder?: stri
 
 interface GridTileProps {
   label: string;
-  icon: IconName;
+  icon: IconData;
   accent?: boolean;
+  iconBackgroundColor?: ColorValue;
   accessibilityLabel?: string;
   onPress: () => void;
 }
 
-export function GridTile({ label, icon, accent = false, accessibilityLabel, onPress }: GridTileProps) {
+export function GridTileGrid({ children }: { children: ReactNode }) {
+  const tiles = Children.toArray(children);
+  const rows = Array.from(
+    { length: Math.ceil(tiles.length / 3) },
+    (_, index) => tiles.slice(index * 3, index * 3 + 3),
+  );
+
+  return (
+    <View>
+      {rows.map((row, index) => (
+        <Fragment key={index}>
+          <View style={styles.tileRow}>{row}</View>
+          {index < rows.length - 1 ? <Spacer size="md" /> : null}
+        </Fragment>
+      ))}
+    </View>
+  );
+}
+
+export function GridTile({
+  label,
+  icon,
+  accent = false,
+  iconBackgroundColor = "transparent",
+  accessibilityLabel,
+  onPress,
+}: GridTileProps) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -40,10 +68,16 @@ export function GridTile({ label, icon, accent = false, accessibilityLabel, onPr
         pressed && styles.pressed,
       ]}
     >
-      <View style={[styles.tileGlyph, accent && styles.tileGlyphAccent]}>
-        <Ionicons name={icon} size={24} color={accent ? mockColors.blue : mockColors.ink} />
+      <Spacer size="md" />
+      <View
+        testID={`grid-tile-icon-${label}`}
+        style={[styles.tileGlyph, { backgroundColor: iconBackgroundColor }]}
+      >
+        <Icon icon={icon} size={24} color={accent ? mockColors.blue : mockColors.ink} />
       </View>
+      <Spacer size="xl" />
       <Text numberOfLines={1} style={[styles.tileLabel, accent && styles.tileLabelAccent]}>{label}</Text>
+      <Spacer size="md" />
     </Pressable>
   );
 }
@@ -51,19 +85,34 @@ export function GridTile({ label, icon, accent = false, accessibilityLabel, onPr
 interface ListRowProps {
   title: string;
   detail?: string;
-  icon?: IconName;
+  icon?: IconData;
   accent?: string;
-  actionIcon?: IconName;
+  actionIcon?: IconData;
   accessibilityLabel?: string;
   onPress: () => void;
+}
+
+export function ListRowStack({ children }: { children: ReactNode }) {
+  const rows = Children.toArray(children);
+
+  return (
+    <View>
+      {rows.map((row, index) => (
+        <Fragment key={index}>
+          {row}
+          {index < rows.length - 1 ? <Spacer size="md" /> : null}
+        </Fragment>
+      ))}
+    </View>
+  );
 }
 
 export function ListRow({
   title,
   detail,
-  icon = "cube-outline",
+  icon = CubeIcon,
   accent = mockColors.soft,
-  actionIcon = "chevron-forward",
+  actionIcon = ArrowRight01Icon,
   accessibilityLabel,
   onPress,
 }: ListRowProps) {
@@ -74,14 +123,23 @@ export function ListRow({
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
-      <View style={[styles.rowGlyph, { backgroundColor: accent }]}>
-        <Ionicons name={icon} size={20} color={mockColors.ink} />
+      <Spacer size="md" />
+      <View style={styles.rowContent}>
+        <View style={[styles.rowGlyph, { backgroundColor: accent }]}>
+          <Icon icon={icon} size={20} color={mockColors.ink} />
+        </View>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle}>{title}</Text>
+          {detail ? (
+            <>
+              <Spacer size="xs" />
+              <Text numberOfLines={1} style={styles.rowDetail}>{detail}</Text>
+            </>
+          ) : null}
+        </View>
+        <Icon icon={actionIcon} size={18} color={mockColors.muted} />
       </View>
-      <View style={styles.rowText}>
-        <Text style={styles.rowTitle}>{title}</Text>
-        {detail ? <Text numberOfLines={1} style={styles.rowDetail}>{detail}</Text> : null}
-      </View>
-      <Ionicons name={actionIcon} size={18} color={mockColors.muted} />
+      <Spacer size="md" />
     </Pressable>
   );
 }
@@ -100,7 +158,6 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    paddingVertical: 10,
     fontFamily: mockFonts.body,
     fontSize: 15,
     color: mockColors.ink,
@@ -108,12 +165,15 @@ const styles = StyleSheet.create({
   tile: {
     width: "31.5%",
     aspectRatio: 0.9,
-    justifyContent: "space-between",
     borderWidth: 1,
     borderColor: mockColors.line,
     borderRadius: 18,
-    padding: 12,
+    paddingHorizontal: 12,
     backgroundColor: mockColors.surface,
+  },
+  tileRow: {
+    flexDirection: "row",
+    columnGap: 10,
   },
   tileAccent: {
     borderColor: mockColors.blue,
@@ -125,10 +185,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 13,
-    backgroundColor: mockColors.soft,
-  },
-  tileGlyphAccent: {
-    backgroundColor: mockColors.surface,
   },
   tileLabel: {
     fontFamily: mockFonts.semibold,
@@ -139,16 +195,16 @@ const styles = StyleSheet.create({
     color: mockColors.blue,
   },
   row: {
-    minHeight: 68,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 13,
     borderWidth: 1,
     borderColor: mockColors.line,
     borderRadius: 16,
     paddingHorizontal: 13,
-    paddingVertical: 10,
     backgroundColor: mockColors.surface,
+  },
+  rowContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 13,
   },
   rowGlyph: {
     width: 42,
@@ -167,7 +223,6 @@ const styles = StyleSheet.create({
     color: mockColors.ink,
   },
   rowDetail: {
-    marginTop: 3,
     fontFamily: mockFonts.body,
     fontSize: 12,
     color: mockColors.muted,

@@ -7,8 +7,13 @@ jest.mock("expo-router", () => ({
 
 jest.mock("expo-router/drawer", () => {
   const React = require("react");
-  function Drawer({ children, screenOptions }: { children: React.ReactNode; screenOptions?: Record<string, unknown> }) {
-    drawerScreenOptions = screenOptions;
+  function Drawer({ children, screenOptions }: {
+    children: React.ReactNode;
+    screenOptions?: Record<string, unknown> | ((props: Record<string, unknown>) => Record<string, unknown>);
+  }) {
+    drawerScreenOptions = typeof screenOptions === "function"
+      ? screenOptions({ navigation: { toggleDrawer: jest.fn() } })
+      : screenOptions;
     return React.createElement(React.Fragment, null, children);
   }
   Drawer.Screen = ({ name, options }: { name: string; options?: Record<string, unknown> }) => {
@@ -34,7 +39,7 @@ describe("authenticated drawer layout", () => {
     drawerScreenOptions = undefined;
   });
 
-  it("uses chat as home and exposes the five mock shell domains", () => {
+  it("uses chat as home and exposes the mock shell routes", () => {
     render(<DrawerLayout />);
 
     expect(registeredScreens.map((screen) => screen.name)).toEqual([
@@ -44,8 +49,14 @@ describe("authenticated drawer layout", () => {
       "terminal",
       "integrations",
       "apps",
+      "settings",
     ]);
     expect(drawerScreenOptions?.drawerStyle).toMatchObject({ width: "84%" });
+
+    const HeaderLeft = drawerScreenOptions?.headerLeft as (() => React.ReactNode) | undefined;
+    render(<>{HeaderLeft?.()}</>);
+    expect(screen.getByLabelText("Open navigation")).toBeTruthy();
+    expect(screen.getByTestId("drawer-menu-icon").props.color).toBe("#242323");
   });
 
   it("organizes the drawer as identity, natural-height navigation, and recent chats", () => {
@@ -57,7 +68,7 @@ describe("authenticated drawer layout", () => {
         {...({
           state: {
             index: 0,
-            routeNames: ["index", "search", "files", "terminal", "integrations", "apps"],
+            routeNames: ["index", "search", "files", "terminal", "integrations", "apps", "settings"],
           },
           navigation: { navigate, closeDrawer },
           descriptors: {},
@@ -92,10 +103,27 @@ describe("authenticated drawer layout", () => {
       backgroundColor: "#2B3715",
       boxShadow: "0 8px 16px rgba(51, 46, 36, 0.10)",
     });
-    expect(screen.getByTestId("icon-pencil-outline")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-icon")).toBeTruthy();
+
+    const settingsStyle = NativeStyleSheet.flatten(screen.getByLabelText("Settings").props.style);
+    expect(settingsStyle).toMatchObject({
+      position: "absolute",
+      right: 16,
+      bottom: 26,
+      backgroundColor: "transparent",
+      borderWidth: 1,
+      borderRadius: 999,
+      width: 40,
+      height: 40,
+      boxShadow: "0 8px 16px rgba(51, 46, 36, 0.10)",
+    });
+    expect(screen.getByTestId("settings-icon")).toBeTruthy();
 
     fireEvent.press(screen.getByLabelText("Search"));
     expect(navigate).toHaveBeenCalledWith("search");
     expect(closeDrawer).toHaveBeenCalled();
+
+    fireEvent.press(screen.getByLabelText("Settings"));
+    expect(navigate).toHaveBeenCalledWith("settings");
   });
 });

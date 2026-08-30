@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Spacer } from "@/components/ui";
 import { mockColors, mockFonts } from "./theme";
 
 interface MockPageProps {
@@ -12,14 +12,21 @@ interface MockPageProps {
 }
 
 export function MockPage({ title, subtitle, children, scroll = true }: MockPageProps) {
-  const insets = useSafeAreaInsets();
   const content = (
-    <View style={[styles.content, { paddingBottom: Math.max(insets.bottom, 20) + 20 }]}>
-      <View style={styles.heading}>
+    <View testID="mock-page-content" style={styles.content}>
+      <Spacer size="lg" />
+      <View testID="mock-page-heading" style={styles.heading}>
         <Text style={styles.title}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        {subtitle ? (
+          <>
+            <Spacer size="xs" />
+            <Text style={styles.subtitle}>{subtitle}</Text>
+          </>
+        ) : null}
       </View>
+      <Spacer size="xl" />
       {children}
+      <Spacer size="3xl" />
     </View>
   );
 
@@ -45,11 +52,8 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 18,
   },
-  heading: {
-    marginBottom: 22,
-  },
+  heading: {},
   title: {
     fontFamily: mockFonts.display,
     fontSize: 28,
@@ -57,7 +61,6 @@ const styles = StyleSheet.create({
     color: mockColors.ink,
   },
   subtitle: {
-    marginTop: 5,
     fontFamily: mockFonts.body,
     fontSize: 14,
     lineHeight: 20,

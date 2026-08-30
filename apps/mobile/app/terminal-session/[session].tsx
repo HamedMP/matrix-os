@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import ArrowTurnBackwardIcon from "@hugeicons/core-free-icons/ArrowTurnBackwardIcon";
+import ClipboardIcon from "@hugeicons/core-free-icons/ClipboardIcon";
 
+import { Icon } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function TerminalSessionScreen() {
@@ -38,7 +40,7 @@ export default function TerminalSessionScreen() {
           <Pressable key={key} style={styles.key}><Text style={styles.keyText}>{key}</Text></Pressable>
         ))}
         <Pressable accessibilityRole="button" accessibilityLabel="Paste" style={styles.key}>
-          <Ionicons name="clipboard-outline" size={15} color={mockColors.surface} />
+          <Icon icon={ClipboardIcon} size={15} color={mockColors.surface} />
         </Pressable>
       </View>
       <View style={styles.commandBar}>
@@ -55,7 +57,7 @@ export default function TerminalSessionScreen() {
           style={styles.commandInput}
         />
         <Pressable accessibilityRole="button" accessibilityLabel="Run command" onPress={runCommand} style={styles.runButton}>
-          <Ionicons name="return-down-back" size={18} color={mockColors.terminal} />
+          <Icon icon={ArrowTurnBackwardIcon} size={18} color={mockColors.terminal} />
         </Pressable>
       </View>
     </KeyboardAvoidingView>

@@ -1,8 +1,10 @@
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { Stack, useRouter } from "expo-router";
+import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 
-import { GridTile } from "./MockControls";
-import { mockColors, mockFonts } from "./theme";
+import { Spacer } from "@/components/ui";
+import { GridTile, GridTileGrid } from "./MockControls";
+import { mockColors } from "./theme";
 
 const folderChildren: Record<string, string[]> = {
   Projects: ["matrix-os", "mobile-lab", "experiments"],
@@ -19,17 +21,13 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ title }} />
-      <View style={styles.location}>
-        <Text style={styles.eyebrow}>LOCATION</Text>
-        <Text numberOfLines={1} style={styles.path}>{currentPath}</Text>
-      </View>
-      <View style={styles.grid}>
-        {children.map((folder, index) => (
+      <Spacer size="lg" />
+      <GridTileGrid>
+        {children.map((folder) => (
           <GridTile
             key={folder}
             label={folder}
-            icon={index === 0 ? "folder-open-outline" : "folder-outline"}
-            accent={index === 0}
+            icon={Folder01Icon}
             accessibilityLabel={`Open ${folder} folder`}
             onPress={() => router.push({
               pathname: "/file-browser/[...path]",
@@ -37,7 +35,8 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
             } as never)}
           />
         ))}
-      </View>
+      </GridTileGrid>
+      <Spacer size="3xl" />
     </View>
   );
 }
@@ -46,27 +45,6 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 18,
     backgroundColor: mockColors.canvas,
-  },
-  location: {
-    marginBottom: 18,
-  },
-  eyebrow: {
-    fontFamily: mockFonts.semibold,
-    fontSize: 10,
-    letterSpacing: 1.1,
-    color: mockColors.muted,
-  },
-  path: {
-    marginTop: 5,
-    fontFamily: mockFonts.mono,
-    fontSize: 13,
-    color: mockColors.ink,
-  },
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
   },
 });
