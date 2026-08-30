@@ -111,6 +111,10 @@ export function createFundedAiFundingSummaryClient(
         return parsed.data.funding;
       } catch (error) {
         if (error instanceof FundedAiFundingSummaryClientError) throw error;
+        console.warn(
+          "[funded-ai-funding] Summary request failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
         throw new FundedAiFundingSummaryClientError();
       }
     },
