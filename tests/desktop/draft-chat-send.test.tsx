@@ -229,12 +229,6 @@ describe("draft chat implicit thread creation", () => {
     await waitFor(() => {
       expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_new_draft");
     });
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      conversationType: "coding-agent",
-      id: "thread_new_draft",
-      label: "Investigate the flaky desktop check",
-    });
     expect(useDraftChat.getState().draftFor("matrix-os")).toBeNull();
     expect(await screen.findByRole("region", { name: /Conversation/ })).toBeTruthy();
     expect(screen.queryByLabelText("Message new chat")).toBeNull();

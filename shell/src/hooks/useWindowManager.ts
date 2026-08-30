@@ -215,7 +215,7 @@ function computeDefaultWindowSize(path: string): { width: number; height: number
   };
 }
 
-// Float every fresh window at the exact center in dev/desktop modes. The dock
+// Float every fresh window at the exact center in Desktop mode. The dock
 // already exposes every running app, so offsetting later windows only produces
 // visibly asymmetric outer margins. Canvas keeps its separate spatial cascade.
 function centeredWindowPosition(path: string): { x: number; y: number } {
@@ -315,7 +315,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
         // Position the new window. Canvas pans to the window after it opens, so
         // a spatial cascade to the right of the rightmost window is fine there.
-        // Dev/desktop windows float in place, so center them on the viewport
+        // Desktop windows float in place, so center them on the viewport
         // instead of marching off to the right of the last one.
         const visible = zState.windows.filter((w) => !w.minimized);
         let fallbackX: number;

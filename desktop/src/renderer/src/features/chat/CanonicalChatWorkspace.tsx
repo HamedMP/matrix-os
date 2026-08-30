@@ -1,5 +1,6 @@
 import type {
   CanonicalChatClient,
+  CanonicalChatEventSource,
 } from "../../lib/canonical-chat-client";
 import type {
   AgentProviderSummary,
@@ -93,7 +94,7 @@ export function CanonicalChatWorkspace({
   inspectorExclusive = false,
   onProjectChanged,
   onActiveChatChanged,
-  onChatDeleted,
+  eventSource,
 }: {
   api?: ApiClient;
   client: CanonicalChatClient;
@@ -109,7 +110,7 @@ export function CanonicalChatWorkspace({
   inspectorExclusive?: boolean;
   onProjectChanged?: (chatId: string, projectId: string | null, title: string) => void;
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
-  onChatDeleted?: (chatId: string) => void;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const projects = useBoard((state) => state.projects);
   const fallbackCatalog = useMemo(
@@ -127,6 +128,7 @@ export function CanonicalChatWorkspace({
     active,
     initialChatId,
     autoSelectFirst: false,
+    eventSource,
   });
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -622,7 +624,6 @@ export function CanonicalChatWorkspace({
             setDeleting(true);
             void controller.deleteChat(deleteTarget.id).then((deleted) => {
               if (deleted) {
-                onChatDeleted?.(deleteTarget.id);
                 setDeleteTarget(null);
                 setDeleteError(null);
               } else {

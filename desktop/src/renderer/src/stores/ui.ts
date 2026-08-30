@@ -4,10 +4,6 @@ import { create } from "zustand";
 
 interface UiState {
   createProjectOpen: boolean;
-  createTaskOpen: boolean;
-  // The board column a new task should default to (set when opening the create
-  // dialog from a specific column's "+"). null → default ("todo").
-  createTaskStatus: string | null;
   composerOpen: boolean;
   paletteOpen: boolean;
   quickOpenOpen: boolean;
@@ -16,7 +12,6 @@ interface UiState {
   // surface that crosses into an embed must hold one overlay lease so the
   // active embed can detach until that surface closes.
   rendererOverlayCount: number;
-  sidebarCollapsed: boolean;
   homeRefreshRequest: number;
   desktopBackgroundRefreshRequest: number;
   // One-shot request for which Settings section the next Settings render
@@ -24,16 +19,12 @@ interface UiState {
   requestedSettingsSection: string | null;
   setCreateProjectOpen: (open: boolean) => void;
   openCreateProject: () => void;
-  setCreateTaskOpen: (open: boolean) => void;
-  openCreateTask: (status?: string) => void;
   setComposerOpen: (open: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   setQuickOpenOpen: (open: boolean) => void;
   setAppLauncherOpen: (open: boolean) => void;
   acquireRendererOverlay: () => void;
   releaseRendererOverlay: () => void;
-  toggleSidebar: () => void;
-  setSidebarCollapsed: (collapsed: boolean) => void;
   requestHomeRefresh: () => void;
   requestDesktopBackgroundRefresh: () => void;
   requestSettingsSection: (section: string) => void;
@@ -42,21 +33,16 @@ interface UiState {
 
 export const useUi = create<UiState>()((set) => ({
   createProjectOpen: false,
-  createTaskOpen: false,
-  createTaskStatus: null,
   composerOpen: false,
   paletteOpen: false,
   quickOpenOpen: false,
   appLauncherOpen: false,
   rendererOverlayCount: 0,
-  sidebarCollapsed: false,
   homeRefreshRequest: 0,
   desktopBackgroundRefreshRequest: 0,
   requestedSettingsSection: null,
   setCreateProjectOpen: (open) => set({ createProjectOpen: open }),
   openCreateProject: () => set({ createProjectOpen: true }),
-  setCreateTaskOpen: (open) => set({ createTaskOpen: open, createTaskStatus: null }),
-  openCreateTask: (status) => set({ createTaskOpen: true, createTaskStatus: status ?? null }),
   setComposerOpen: (open) => set({ composerOpen: open }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setQuickOpenOpen: (open) => set({ quickOpenOpen: open }),
@@ -67,8 +53,6 @@ export const useUi = create<UiState>()((set) => ({
   releaseRendererOverlay: () => set((state) => ({
     rendererOverlayCount: Math.max(0, state.rendererOverlayCount - 1),
   })),
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   requestHomeRefresh: () => set((state) => ({
     homeRefreshRequest: (state.homeRefreshRequest + 1) % 1_000_000,
   })),

@@ -2,7 +2,7 @@ import { Command } from "cmdk";
 import { Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
-import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Search, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
+import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Search, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -11,7 +11,7 @@ import { useShellSessions, type ShellSessionSummary } from "../../stores/shell-s
 import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
-import { CODING_AGENTS_DESKTOP_WORKSPACE, NATIVE_DESKTOP_WINDOW_SHELL } from "../../lib/feature-flags";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../lib/project-chat";
 import { openProjectOverview } from "../../lib/project-navigation";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
@@ -140,7 +140,6 @@ export default function CommandPalette() {
   const focusTab = useTabs((s) => s.focusTab);
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
-  const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const projects = useBoard((s) => s.projects);
@@ -302,7 +301,6 @@ export default function CommandPalette() {
             className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide"
             style={{ color: "var(--text-tertiary)" }}
           >
-            <PaletteItem icon={<Plus size={14} />} label="New task" shortcut="C" onSelect={() => run(() => setCreateTaskOpen(true))} />
             <PaletteItem
               icon={<Kanban size={14} />}
               label="Add project…"
@@ -350,8 +348,7 @@ export default function CommandPalette() {
               icon={<LayoutGrid size={14} />}
               label="Open Apps"
               onSelect={() => run(() => {
-                if (NATIVE_DESKTOP_WINDOW_SHELL) useUi.getState().setAppLauncherOpen(true);
-                else openTab({ kind: "apps", title: "Apps" });
+                useUi.getState().setAppLauncherOpen(true);
               })}
             />
           </Command.Group> : null}

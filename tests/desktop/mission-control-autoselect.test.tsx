@@ -7,30 +7,11 @@ import MissionControl from "../../desktop/src/renderer/src/features/mission-cont
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useBoard, type Project } from "../../desktop/src/renderer/src/stores/board";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
-
-vi.mock("../../desktop/src/renderer/src/features/mission-control/Sidebar", () => ({
-  default: () => <div data-testid="sidebar" />,
-}));
-vi.mock("../../desktop/src/renderer/src/features/mission-control/Titlebar", () => ({
-  default: () => <div data-testid="titlebar" />,
-}));
-vi.mock("../../desktop/src/renderer/src/features/board/Board", () => ({
-  default: () => <div data-testid="board" />,
-}));
 vi.mock("../../desktop/src/renderer/src/features/workspace/TaskWorkspace", () => ({
   default: () => <div data-testid="task-workspace" />,
 }));
-vi.mock("../../desktop/src/renderer/src/features/threads/ThreadView", () => ({
-  default: () => <div data-testid="thread-view" />,
-}));
-vi.mock("../../desktop/src/renderer/src/features/sessions/SessionsView", () => ({
-  default: () => <div data-testid="sessions-view" />,
-}));
 vi.mock("../../desktop/src/renderer/src/features/settings/SettingsView", () => ({
   default: () => <div data-testid="settings-view" />,
-}));
-vi.mock("../../desktop/src/renderer/src/features/sessions/StandaloneSession", () => ({
-  default: () => <div data-testid="standalone-session" />,
 }));
 vi.mock("../../desktop/src/renderer/src/features/threads/Composer", () => ({
   default: () => <div data-testid="composer" />,
@@ -68,7 +49,6 @@ describe("MissionControl initial project selection", () => {
     });
     useUi.setState({
       view: { kind: "board" },
-      createTaskOpen: false,
       composerOpen: false,
       paletteOpen: false,
     });

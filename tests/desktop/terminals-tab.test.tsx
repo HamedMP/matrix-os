@@ -412,8 +412,6 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
     act(() => useTabs.getState().requestTerminalSession("matrix-two"));
     act(() => useTabs.getState().requestTerminalSession("matrix-one"));
-
-    expect(useTabs.getState().recentViews).toEqual([]);
     expect(terminalMounts.get("matrix-one")).toBe(1);
     expect(terminalMounts.get("matrix-two")).toBe(1);
   });
@@ -893,7 +891,6 @@ describe("TerminalsTab", () => {
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
       deleteSession,
     });
-    useTabs.getState().recordRecentTerminal("matrix-main", "matrix-main");
 
     renderTab();
 
@@ -908,7 +905,6 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main"));
-    await waitFor(() => expect(useTabs.getState().recentViews).toEqual([]));
   });
 
   it("reconciles open terminal tabs after a successful desktop deletion", async () => {
@@ -937,23 +933,6 @@ describe("TerminalsTab", () => {
     await waitFor(() => expect(deleteSession).toHaveBeenCalledOnce());
     await waitFor(() => expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([home]));
     expect(useTabs.getState().activeTabId).toBe(home);
-  });
-
-  it("removes stale terminal Recents after an authoritative session load", async () => {
-    useTabs.getState().recordRecentTerminal("matrix-live", "matrix-live");
-    useTabs.getState().recordRecentTerminal("matrix-deleted", "matrix-deleted");
-    useShellSessions.setState({
-      sessions: [{ name: "matrix-live", status: "active", placement: "active" }],
-      loading: false,
-      error: null,
-      loadSequence: 1,
-      authoritativeRevision: 1,
-    });
-
-    renderTab();
-
-    await waitFor(() => expect(useTabs.getState().recentViews.map((recent) => recent.id))
-      .toEqual(["matrix-live"]));
   });
 
   it("never renders workspace-only records as terminal rows", () => {

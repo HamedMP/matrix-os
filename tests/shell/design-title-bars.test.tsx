@@ -34,10 +34,6 @@ vi.mock("../../shell/src/components/system-activity/ActivityMonitorApp.js", () =
   ActivityMonitorApp: () => null,
 }));
 
-vi.mock("../../shell/src/lib/open-app-tab.js", () => ({
-  openAppInStandaloneTab: vi.fn(),
-}));
-
 const appWindow: AppWindow = {
   id: "win-app",
   title: "Notes",

@@ -1,13 +1,13 @@
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import type { CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
-import { useTabs } from "../../stores/tabs";
 import { useProviderPreferences } from "../settings/provider-preferences";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
@@ -67,7 +67,6 @@ export function HermesPane() {
   const newChat = useHermesChat((state) => state.newChat);
   const abort = useHermesChat((state) => state.abort);
   const updateConversationContext = useHermesChat((state) => state.updateConversationContext);
-  const recordRecentHermesConversation = useTabs((state) => state.recordRecentHermesConversation);
   const setDefaultProvider = useProviderPreferences((state) => state.setDefaultProvider);
   const composerSelections = useProviderPreferences((state) => state.composerSelections);
   const setComposerSelection = useProviderPreferences((state) => state.setComposerSelection);
@@ -161,18 +160,7 @@ export function HermesPane() {
     try {
       const uploaded = await attachments.uploadAll();
       if (!uploaded.ok) return;
-      const submittedDraft = submission.text;
       send(appendHermesAttachmentPaths(submission.agentPrompt, uploaded.paths));
-      if (sessionId) {
-        const knownTitle = useHermesChat.getState().conversations
-          .find((conversation) => conversation.id === sessionId)?.title;
-        const label = submittedDraft.replace(/\s+/g, " ").slice(0, 80)
-          || submission.invocations[0]?.invocation
-          || submission.resources[0]?.label
-          || knownTitle
-          || "Shared files";
-        recordRecentHermesConversation(sessionId, label);
-      }
       setDraft("");
       setReferenceTokens([]);
       attachments.clear();
@@ -379,6 +367,7 @@ export default function ChatTab({
   renderInspector,
   inspectorExclusive = false,
   allowLegacyFallback = true,
+  eventSource,
 }: {
   active?: boolean;
   tabId?: string;
@@ -388,6 +377,7 @@ export default function ChatTab({
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
   allowLegacyFallback?: boolean;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const api = useConnection((state) => state.api);
   const [routeAttempt, setRouteAttempt] = useState(0);
@@ -400,6 +390,7 @@ export default function ChatTab({
       initialChatId={initialChatId}
       initialView={initialView}
       active={active}
+      eventSource={eventSource}
       externalNavigation={externalNavigation}
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}

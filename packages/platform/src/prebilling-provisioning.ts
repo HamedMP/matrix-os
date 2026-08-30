@@ -4,10 +4,7 @@ import type { PrebillingCheckoutCoordinator } from './billing-routes.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import type { PlatformDB } from './db.js';
 import type { PrebillingProvisioningConfig } from './prebilling-provisioning-config.js';
-import {
-  prebillingHourlyCostMicros,
-  prebillingRolloutIncludesUser,
-} from './prebilling-provisioning-config.js';
+import { prebillingRolloutIncludesUser } from './prebilling-provisioning-config.js';
 import {
   admitPrebillingIntent,
   authorizePrebillingIntent,
@@ -44,22 +41,15 @@ export function createPrebillingProvisioningCoordinator(options: {
   const startPreparation: PrebillingCheckoutCoordinator['startPreparation'] = async (input) => {
     const current = await getPrebillingIntent(options.db, input.intentId);
     if (!current) return false;
-    const cost = prebillingHourlyCostMicros(options.config, current.serverType);
-    if (cost === null) {
-      if (current.stripeSessionId) {
-        await markPrebillingPreparationFailed(options.db, {
-          intentId: current.id,
-          now: now().toISOString(),
-          errorCode: 'prebilling_cost_unavailable',
-        });
-      }
+    if (
+      current.paymentConfirmedAt === null
+      && !prebillingRolloutIncludesUser(options.config, current.clerkUserId)
+    ) {
       return false;
     }
     const admission = await admitPrebillingIntent(options.db, {
       ...input,
-      reservedHourlyCostMicros: cost,
       maxActive: options.config.maxActive,
-      maxHourlyCostMicros: options.config.maxHourlyCostMicros,
       now: now().toISOString(),
     });
     if (!admission.admitted) return false;
@@ -107,8 +97,6 @@ export function createPrebillingProvisioningCoordinator(options: {
   return {
     async createIntent(input) {
       if (!prebillingRolloutIncludesUser(options.config, input.clerkUserId)) return undefined;
-      const cost = prebillingHourlyCostMicros(options.config, input.serverType);
-      if (cost === null) return undefined;
       const result = await createPrebillingIntent(options.db, {
         id: intentIdFactory(),
         ...input,
@@ -140,6 +128,7 @@ export function createPrebillingProvisioningCoordinator(options: {
         return resumePreparation({ intentId: intent.id, clerkUserId: input.clerkUserId });
       }
       if (intent.state === 'preparing' || intent.state === 'ready_waiting_for_billing') return true;
+      if (!prebillingRolloutIncludesUser(options.config, intent.clerkUserId)) return false;
       if (!intent.stripeSessionId || !intent.stripeSessionExpiresAt) return false;
       const reset = await resetPrebillingPreparationForRetry(options.db, {
         intentId: intent.id,

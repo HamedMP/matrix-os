@@ -27,7 +27,6 @@ export type HandoffRequirement =
   | "dark-theme"
   | "default-window"
   | "narrow-window"
-  | "sidebar-collapse"
   | "resize"
   | "zoom"
   | "macos-titlebar"
@@ -39,8 +38,6 @@ export type HandoffRequirement =
   | "long-content"
   | "bounded-errors"
   | "canonical-navigation"
-  | "back-forward"
-  | "recents"
   | "mounted-resource"
   | "shutdown-drain"
   | "electron";
@@ -134,11 +131,8 @@ const GLOBAL_REQUIREMENTS: readonly HandoffRequirement[] = [
   "waiting",
   "completed",
   "stopped",
-  "sidebar-collapse",
   "macos-titlebar",
   "canonical-navigation",
-  "back-forward",
-  "recents",
   "mounted-resource",
   "shutdown-drain",
 ];
@@ -153,20 +147,11 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
     surface: "navigation",
     owner: "MAT-301",
     execution: "dependency",
-    verification: "automated",
-    evidence: [
-      testEvidence(
-        "tests/desktop/sidebar-navigation-shell.test.tsx",
-        "filters bounded Recents by conversation, terminal, and project type",
-      ),
-      testEvidence(
-        "tests/desktop/sidebar-navigation-shell.test.tsx",
-        "offers the approved account actions and routes them through current behavior",
-      ),
-    ],
+    verification: "manual",
+    note: "The permanent sidebar and its Recents filters were retired. Revalidate launcher and title-bar states in the packaged native desktop.",
     figmaNode: "67:4368",
     requirements: COMMON_STATE_REQUIREMENTS,
-    assertion: "Navigation, Recents filtering, account actions, and retry states use bounded generic copy.",
+    assertion: "Native desktop launcher, title-bar, and account states use bounded generic copy.",
   },
   {
     id: "navigation-accessibility",
@@ -182,7 +167,7 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
     ],
     figmaNode: "67:4368",
     requirements: ACCESSIBILITY_REQUIREMENTS,
-    assertion: "Sidebar, history, breadcrumbs, Recents, and account menu remain named and keyboard operable.",
+    assertion: "Native desktop navigation and account controls remain named and keyboard operable.",
   },
   {
     id: "navigation-identity",
@@ -196,19 +181,17 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
         "atomically removes identifiers and attachments owned by the previous computer",
       ),
       testEvidence(
-        "tests/desktop/sidebar-navigation-shell.test.tsx",
-        "opens a canonical Hermes recent through the Gateway-backed loader",
+        "tests/desktop/runtime-transition.test.ts",
+        "returns to the icon desktop without reopening the hosted web shell after a switch",
       ),
     ],
     requirements: [
       ...IDENTITY_REQUIREMENTS,
       "canonical-navigation",
-      "back-forward",
-      "recents",
       "mounted-resource",
       "shutdown-drain",
     ],
-    assertion: "History and Recents never retain prior-computer identities while cached resources follow lifecycle rules.",
+    assertion: "Tabs never retain prior-computer identities while cached resources follow lifecycle rules.",
   },
   {
     id: "navigation-visual-electron",
@@ -228,7 +211,6 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
     ],
     requirements: [
       ...VISUAL_REQUIREMENTS,
-      "sidebar-collapse",
       "macos-titlebar",
       "electron",
     ],

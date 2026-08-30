@@ -330,8 +330,6 @@ describe("native desktop shell", () => {
         },
       ],
       activeTabId: "project",
-      viewHistory: ["chat", "projects", "project"],
-      historyIndex: 2,
     });
 
     render(<NativeDesktopShell overlayOpen={false} />);
@@ -346,7 +344,6 @@ describe("native desktop shell", () => {
         chatId: "chat-42",
       }),
     ]);
-    expect(useTabs.getState().viewHistory).toEqual(["project"]);
   });
 
   it("offers Settings as a native app and maximizes it into tabs", () => {

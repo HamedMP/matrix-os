@@ -41,6 +41,7 @@ import {
   ChatConflictError,
   ChatNotFoundError,
   ChatProviderInstanceLockedError,
+  ChatRunNotAcknowledgeableError,
   ChatRunNotActiveError,
   type ChatRepository,
 } from "./repository.js";
@@ -142,6 +143,12 @@ export function mapRepositoryError(error: unknown): never {
       "This Chat is already bound to another Provider instance.",
       false,
       ["fork_chat", "start_new_chat"],
+    ), 409);
+  }
+  if (error instanceof ChatRunNotAcknowledgeableError) {
+    throw new CanonicalChatOrchestrationError(safeError(
+      "run_unavailable",
+      "Only a successful completed Run can be acknowledged.",
     ), 409);
   }
   if (error instanceof ChatConflictError) {

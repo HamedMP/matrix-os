@@ -5,6 +5,7 @@ import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatRequestIdSchema,
   CanonicalChatRunActivitySchema,
+  CanonicalChatRunIdSchema,
   CanonicalChatRunSchema,
   CanonicalChatSchema,
   CanonicalChatTurnSchema,
@@ -17,11 +18,68 @@ import {
   CanonicalChatActiveRunProjectionSchema,
   CanonicalChatProviderBindingSchema,
 } from "#canonical-chat-surface";
+import { IsoTimestampSchema } from "#contract-primitives";
+import { SafeClientErrorSchema } from "#safe-client-error";
 
 export const CanonicalChatApiCursorSchema = z.string()
   .min(9)
   .max(512)
   .regex(/^chatcur_[A-Za-z0-9_-]+$/);
+
+export const CanonicalChatEventCursorSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
+export const CanonicalChatOutboxEventTypeSchema = z.enum([
+  "chat.created",
+  "chat.updated",
+  "chat.user_state_updated",
+  "turn.accepted",
+  "run.activity",
+  "run.message",
+  "chat.terminal_bound",
+  "run.completed",
+  "run.failed",
+  "run.aborted",
+  "chat.deleted",
+  "migration.completed",
+]);
+
+export const CanonicalChatStreamEventSchema = z.object({
+  cursor: CanonicalChatEventCursorSchema,
+  chatId: CanonicalChatSchema.shape.id,
+  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  eventType: CanonicalChatOutboxEventTypeSchema,
+  createdAt: IsoTimestampSchema,
+}).strict();
+
+export const CanonicalChatStreamClientFrameSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("ping") }).strict(),
+  z.object({ type: z.literal("detach") }).strict(),
+]);
+
+export const CanonicalChatStreamServerFrameSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("chat.stream.attached") }).strict(),
+  z.object({
+    type: z.literal("chat.event"),
+    event: CanonicalChatStreamEventSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("chat.replay.end"),
+    nextCursor: CanonicalChatEventCursorSchema.optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("chat.replay.gap"),
+    reason: z.literal("cursor_unavailable"),
+  }).strict(),
+  z.object({
+    type: z.literal("chat.stream.error"),
+    error: SafeClientErrorSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("chat.stream.closing"),
+    reason: z.literal("server_shutdown"),
+  }).strict(),
+  z.object({ type: z.literal("pong") }).strict(),
+]);
 
 export const CanonicalCreateChatRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
@@ -70,11 +128,20 @@ export const CanonicalRetryChatTurnRequestSchema = z.object({
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 }).strict();
 
+export const CanonicalAcknowledgeChatCompletionRequestSchema = z.object({}).strict();
+
+export const CanonicalChatLatestSuccessfulCompletionSchema = z.object({
+  runId: CanonicalChatRunIdSchema,
+  completedAt: IsoTimestampSchema,
+  unacknowledged: z.boolean(),
+}).strict();
+
 export const CanonicalChatRecordSchema = z.object({
   chat: CanonicalChatSchema,
   projectId: canonicalReferenceId(160).optional(),
   providerBinding: CanonicalChatProviderBindingSchema.optional(),
   activeRun: CanonicalChatActiveRunProjectionSchema.optional(),
+  latestSuccessfulCompletion: CanonicalChatLatestSuccessfulCompletionSchema.optional(),
 }).strict().superRefine((record, ctx) => {
   if (record.providerBinding !== undefined
     && record.chat.currentSelection?.instanceId !== record.providerBinding.instanceId) {
@@ -154,11 +221,22 @@ export const CanonicalChatRunAdmissionResponseSchema = z.object({
 });
 
 export type CanonicalCreateChatRequest = z.infer<typeof CanonicalCreateChatRequestSchema>;
+export type CanonicalChatEventCursor = z.infer<typeof CanonicalChatEventCursorSchema>;
+export type CanonicalChatOutboxEventType = z.infer<typeof CanonicalChatOutboxEventTypeSchema>;
+export type CanonicalChatStreamEvent = z.infer<typeof CanonicalChatStreamEventSchema>;
+export type CanonicalChatStreamClientFrame = z.infer<typeof CanonicalChatStreamClientFrameSchema>;
+export type CanonicalChatStreamServerFrame = z.infer<typeof CanonicalChatStreamServerFrameSchema>;
 export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateChatProjectRequestSchema>;
 export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdateChatUserStateRequestSchema>;
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
 export type CanonicalCancelChatRunRequest = z.infer<typeof CanonicalCancelChatRunRequestSchema>;
 export type CanonicalRetryChatTurnRequest = z.infer<typeof CanonicalRetryChatTurnRequestSchema>;
+export type CanonicalAcknowledgeChatCompletionRequest = z.infer<
+  typeof CanonicalAcknowledgeChatCompletionRequestSchema
+>;
+export type CanonicalChatLatestSuccessfulCompletion = z.infer<
+  typeof CanonicalChatLatestSuccessfulCompletionSchema
+>;
 export type CanonicalChatRecord = z.infer<typeof CanonicalChatRecordSchema>;
 export type CanonicalChatListResponse = z.infer<typeof CanonicalChatListResponseSchema>;
 export type CanonicalChatDetailResponse = z.infer<typeof CanonicalChatDetailResponseSchema>;

@@ -38,7 +38,7 @@ Boundary rules:
 
 - Apply Hono `bodyLimit` before parsing; target maximum is 16 KiB.
 - Parse with a strict Zod 4 schema. Reject unknown keys, invalid slugs, excessive tool count, duplicates, unsupported tools, invalid plan/interval/server/region combinations, non-primary V1 slots, and unsafe return paths.
-- Derive acquisition and owner identity from trusted server context; never accept a Clerk user ID, provider ID, hourly cost, preparation ID, or activation state from the client.
+- Derive acquisition and owner identity from trusted server context; never accept a Clerk user ID, provider ID, preparation ID, or activation state from the client.
 - Canonicalize `developerTools` as a deduplicated sorted list before equality checks and persistence.
 - Every Stripe call has a bounded timeout and an idempotency key derived from the durable checkout attempt.
 
@@ -50,7 +50,7 @@ Boundary rules:
 }
 ```
 
-The URL is the existing Stripe-hosted destination. The client receives no preparation-intent, provider, machine, network, or cost identifier.
+The URL is the existing Stripe-hosted destination. The client receives no preparation-intent, provider, machine, or network identifier.
 
 Identical retries return the existing payable destination. A conflicting selection while a payable checkout exists returns a generic conflict telling the user to resume or wait for the existing checkout to expire.
 
@@ -101,4 +101,4 @@ Allowed client states are `preparing`, `ready_waiting_for_billing`, `payment_set
 - Stripe API and provider API calls use explicit abort timeouts; webhook verification occurs before JSON interpretation.
 - Provider selection values come only from server-side plan/region mappings.
 - Ambiguous Stripe creation is reconciled before a replacement attempt; ambiguous provider creation/deletion uses exact deterministic labels/IDs and reconciliation before retry.
-- User-controlled forwarded headers are never used for security or cost admission. Network-origin controls live at a trusted edge; if that trust boundary is unavailable, the feature launches with account/global limits only rather than a spoofable application check.
+- User-controlled forwarded headers are never used for security or admission. Network-origin controls live at a trusted edge; if that trust boundary is unavailable, the feature launches with account/global limits only rather than a spoofable application check.

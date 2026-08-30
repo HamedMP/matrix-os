@@ -7,7 +7,6 @@ import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
-import { useTabs } from "../../stores/tabs";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
@@ -32,7 +31,6 @@ import {
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
-const RECENT_ACTIVITY_THROTTLE_MS = 30_000;
 
 function proposedTerminalDimensions(fit: FitAddon | null, terminal: Terminal): { cols: number; rows: number } {
   // The production add-on exposes proposeDimensions(). Keep a safe fallback
@@ -278,13 +276,7 @@ export default function TerminalView({
       },
     }, { cols: terminal.cols, rows: terminal.rows }, chatId);
     attachmentRef.current = attachment;
-    let lastRecentActivityAt = 0;
     const dataDisposable = terminal.onData((data) => {
-      const now = Date.now();
-      if (!chatId && now - lastRecentActivityAt >= RECENT_ACTIVITY_THROTTLE_MS) {
-        lastRecentActivityAt = now;
-        useTabs.getState().recordRecentTerminal(sessionName, sessionName);
-      }
       attachment.write(data);
     });
     const proposed = proposedTerminalDimensions(fit, terminal);

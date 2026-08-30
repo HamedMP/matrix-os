@@ -518,26 +518,39 @@ describe('CI workflows', () => {
     }
   });
 
-  it('durably deploys fail-closed prebilling for every new primary signup', () => {
+  it('durably deploys count-only prebilling and removes legacy cost settings', () => {
     const root = process.cwd();
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'");
     expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100'");
-    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '1' }}");
-    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS || '254000' }}");
-    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_COSTS: ${{ vars.MATRIX_PREBILLING_PROVISIONING_COSTS || 'cpx22:92900;cpx32:169900;cpx52:254000' }}");
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '4' }}");
     for (const name of [
       'MATRIX_PREBILLING_PROVISIONING_ENABLED',
       'MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT',
       'MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE',
-      'MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS',
-      'MATRIX_PREBILLING_PROVISIONING_COSTS',
     ]) {
       expect(production).toContain(`${name}=\${${name}}`);
     }
+    expect(production).not.toContain('MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS=${MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS}');
+    expect(production).not.toContain('MATRIX_PREBILLING_PROVISIONING_COSTS=${MATRIX_PREBILLING_PROVISIONING_COSTS}');
+    expect(production).toContain('legacy_prebilling_env=(');
+    expect(production).toContain('deployed prebilling contract still contains legacy setting');
     expect(production).toContain('Verify deployed provisioning contract');
     expect(production).toContain('provisioning deployment contract is missing');
+  });
+
+  it('keeps count-only prebilling enabled without a prebuilt rollback drain path', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(production).not.toContain('prebilling_rollback_drain');
+    expect(production).not.toContain('PREBILLING_ROLLBACK_DRAIN');
+    expect(production).not.toContain('Rollback drain requires a promoted production deployment.');
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'");
+    expect(production).toContain('MATRIX_PREBILLING_PROVISIONING_ENABLED=true');
+    expect(production).toContain('MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=100');
+    expect(production).toContain('--to-revisions "$PRODUCTION_REVISION=100"');
   });
 
   it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {

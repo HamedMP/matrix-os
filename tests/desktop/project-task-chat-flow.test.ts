@@ -60,18 +60,19 @@ describe("project to task to chat flow", () => {
     useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true);
   });
 
-  it("creates canonical project/task routes, opens multiple task chats, and reopens either chat", async () => {
+  it("loads canonical project/task routes, opens multiple task chats, and reopens either chat", async () => {
     const api = {
       get: vi.fn(async (path: string) => path === "/api/workspace/projects"
         ? { projects: [{ slug: "desktop", name: "Desktop", localPath: "/home/matrix/home/projects/desktop" }] }
-        : { tasks: [], nextCursor: null }),
+        : { tasks: [{ id: "task_build", projectSlug: "desktop", title: "Build chat", status: "todo", priority: "normal", order: 0 }], nextCursor: null }),
       post: vi.fn(async (path: string) => path === "/api/projects"
         ? { project: { slug: "desktop", name: "Desktop", localPath: "/home/matrix/home/projects/desktop" } }
         : { task: { id: "task_build", projectSlug: "desktop", title: "Build chat", status: "todo", priority: "normal", order: 0, previewIds: [], tags: [] } }),
     } as never;
 
     const project = await useBoard.getState().createProject(api, { name: "Desktop", mode: "scratch" });
-    const task = await useBoard.getState().createTask(api, project!.slug, { title: "Build chat" });
+    await useBoard.getState().selectProject(api, project!.slug);
+    const task = useBoard.getState().cardsByProject[project!.slug]?.[0];
     expect(api.post).toHaveBeenCalledWith(
       "/api/projects",
       {
@@ -81,7 +82,7 @@ describe("project to task to chat flow", () => {
       },
       { timeoutMs: 30_000 },
     );
-    expect(api.post).toHaveBeenCalledWith("/api/projects/desktop/tasks", { title: "Build chat" });
+    expect(task?.id).toBe("task_build");
 
     const runtimeSummary = summary();
     useCodingAgentWorkspace.setState({ summary: runtimeSummary, status: "ready" });

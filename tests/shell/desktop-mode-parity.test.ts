@@ -15,12 +15,10 @@ describe("web desktop mode parity", () => {
       "canvas",
       "desktop",
     ]);
-    expect(useDesktopMode.getState().getModeConfig("desktop")).toMatchObject({
-      hidden: false,
-      showDock: true,
-      showWindows: true,
-      showLauncher: true,
-    });
+    expect(useDesktopMode.getState().allModes().map((mode) => mode.label)).toEqual([
+      "Canvas",
+      "Desktop",
+    ]);
   });
 
   it("preserves Canvas preferences while migrating removed modes into Desktop", () => {

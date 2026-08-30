@@ -11,7 +11,6 @@ import {
   XpWelcomeScreen,
 } from "./XpSessionOverlays";
 import { Win11LockScreen } from "./Win11LockScreen";
-import { MacLockScreen } from "./MacLockScreen";
 import "./os-session.css";
 
 /**
@@ -46,8 +45,7 @@ export function OsSessionHost() {
     };
   }, [overlayOpen]);
 
-  // Escape dismisses the dialog-style XP overlays (Win11/macOS lock screens
-  // use their OS-authentic dismissals instead: any key / password Enter).
+  // Escape dismisses the dialog-style XP overlays. Win11 uses its own dismissal.
   useEffect(() => {
     if (view !== "xp-logoff" && view !== "xp-shutdown" && view !== "xp-welcome") return;
     const onKey = (event: KeyboardEvent) => {
@@ -65,7 +63,6 @@ export function OsSessionHost() {
       {view === "xp-welcome" ? <XpWelcomeScreen /> : null}
       {view === "xp-safe-off" ? <XpSafeOffScreen /> : null}
       {view === "win11-lock" ? <Win11LockScreen /> : null}
-      {view === "macos-lock" ? <MacLockScreen /> : null}
     </>
   );
 }

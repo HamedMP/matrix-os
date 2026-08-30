@@ -1,8 +1,10 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import {
+  AlertCircle,
   ChevronDown,
   ChevronRight,
   Folder,
+  LoaderCircle,
   MessageSquare,
   PanelLeftOpenIcon,
   PinIcon,
@@ -12,12 +14,19 @@ import {
 } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ContextMenu } from "../../design/primitives";
-import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
+import type {
+  CanonicalChatClient,
+  CanonicalChatEventSource,
+} from "../../lib/canonical-chat-client";
 import type { Project } from "../../stores/board";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { DeleteConversationDialog } from "../chat/DeleteConversationDialog";
 import ProjectLifecycleDialog from "../mission-control/ProjectLifecycleDialog";
-import { buildWorkRailModel } from "./work-rail-model";
+import {
+  buildWorkRailModel,
+  resolveWorkRailAgentState,
+  type WorkRailAgentState,
+} from "./work-rail-model";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
@@ -36,6 +45,7 @@ async function loadWorkRailChats(client: CanonicalChatClient): Promise<Canonical
 
 export function WorkRail({
   client,
+  eventSource,
   projects,
   active,
   activeChatId,
@@ -50,6 +60,7 @@ export function WorkRail({
   className = "w-[260px]",
 }: {
   client: CanonicalChatClient | null;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
   projects: Project[];
   active: boolean;
   activeChatId?: string;
@@ -91,26 +102,46 @@ export function WorkRail({
   useEffect(() => {
     let current = true;
     if (!client || !active) return () => { current = false; };
+    let refreshInFlight = false;
+    let refreshPending = false;
     setPinError(null);
     setPinning({});
     setDeleteChatTarget(null);
     setDeletingChat(false);
     setDeleteChatError(null);
     setStatus("loading");
-    void loadWorkRailChats(client).then((loaded) => {
-      if (!current) return;
-      setRecords(loaded);
-      setStatus("ready");
-    }).catch((error: unknown) => {
-      if (!current) return;
-      console.warn(
-        "[work] Chat list load failed:",
-        error instanceof Error ? error.name : "UnknownError",
-      );
-      setStatus("error");
-    });
-    return () => { current = false; };
-  }, [active, activeChatId, activeProjectSlug, client]);
+    const refresh = async () => {
+      if (refreshInFlight) {
+        refreshPending = true;
+        return;
+      }
+      refreshInFlight = true;
+      do {
+        refreshPending = false;
+        try {
+          const loaded = await loadWorkRailChats(client);
+          if (!current) return;
+          setRecords(loaded);
+          setStatus("ready");
+        } catch (error: unknown) {
+          if (!current) return;
+          console.warn(
+            "[work] Chat list load failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          setStatus("error");
+        }
+      } while (current && refreshPending);
+      refreshInFlight = false;
+    };
+    const subscription = eventSource?.subscribe(() => void refresh());
+    void refresh();
+    return () => {
+      current = false;
+      refreshPending = false;
+      subscription?.dispose();
+    };
+  }, [active, activeChatId, activeProjectSlug, client, eventSource]);
 
   const toggleSection = (key: SectionKey) => {
     setSections((current) => ({ ...current, [key]: !current[key] }));
@@ -420,6 +451,7 @@ function ChatRow({
   onDelete: () => void;
 }) {
   const pinned = Boolean(record.chat.userState?.pinned);
+  const agentState = resolveWorkRailAgentState(record);
   return (
     <ContextMenu items={[
       {
@@ -447,6 +479,7 @@ function ChatRow({
         >
           <MessageSquare size={13} aria-hidden className="shrink-0" />
           <span className="truncate">{record.chat.title}</span>
+          <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
         </button>
         <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100">
           <button
@@ -471,5 +504,46 @@ function ChatRow({
         </div>
       </div>
     </ContextMenu>
+  );
+}
+
+function ChatAgentStateIndicator({
+  state,
+  title,
+}: {
+  state: WorkRailAgentState;
+  title: string;
+}) {
+  if (state === "idle") return null;
+  if (state === "unseen_completion") {
+    return (
+      <span
+        aria-label={`Unseen completion for ${title}`}
+        className="ml-auto size-2 shrink-0 rounded-full bg-[var(--accent)]"
+      />
+    );
+  }
+  if (state === "running") {
+    return (
+      <LoaderCircle
+        aria-label={`Agent running for ${title}`}
+        className="ml-auto shrink-0 animate-spin"
+        size={13}
+      />
+    );
+  }
+  const requiresApproval = state === "approval_required";
+  const label = requiresApproval
+    ? `Approval required for ${title}`
+    : state === "input_required"
+      ? `Input required for ${title}`
+      : `Agent failed for ${title}`;
+  return (
+    <AlertCircle
+      aria-label={label}
+      className="ml-auto shrink-0"
+      size={13}
+      style={{ color: state === "failed" ? "var(--danger)" : "var(--warning)" }}
+    />
   );
 }

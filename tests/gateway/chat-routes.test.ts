@@ -15,7 +15,11 @@ import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-import { ChatBusyError, ChatConflictError } from "../../packages/gateway/src/chat/errors.js";
+import {
+  ChatBusyError,
+  ChatConflictError,
+  ChatRunNotAcknowledgeableError,
+} from "../../packages/gateway/src/chat/errors.js";
 import {
   createCanonicalChatRoutes,
   type CanonicalChatRouteService,
@@ -42,6 +46,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
     updateUserState: vi.fn(async () => record),
+    acknowledgeCompletion: vi.fn(async () => record),
     delete: vi.fn(async () => ({ chatId: record.chat.id, deletedAt: record.chat.updatedAt })),
     list: vi.fn(async () => ({ items: [record] })),
     search: vi.fn(async () => ({ items: [record] })),
@@ -70,6 +75,18 @@ function appFor(service: CanonicalChatRouteService) {
     service,
     getPrincipal: () => ({ userId: "owner_1", source: "jwt" }),
   }));
+}
+
+function acknowledge(
+  app: ReturnType<typeof appFor>,
+  path = "/api/chats/chat_route_test/runs/run_route_completed/acknowledge",
+  body: unknown = {},
+) {
+  return app.request(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 describe("canonical Chat routes", () => {
@@ -187,6 +204,77 @@ describe("canonical Chat routes", () => {
       body: JSON.stringify({ pinned: true, padding: "x".repeat(5 * 1024) }),
     });
     expect(oversized.status).toBe(413);
+  });
+
+  it("acknowledges the authenticated principal's exact completed Run through a strict empty body", async () => {
+    const acknowledged = {
+      ...record,
+      latestSuccessfulCompletion: {
+        runId: "run_route_completed",
+        completedAt: "2026-08-25T12:02:00.000Z",
+        unacknowledged: false,
+      },
+    };
+    const acknowledgeCompletion = vi.fn(async () => acknowledged);
+    const response = await acknowledge(appFor(routeService({ acknowledgeCompletion })));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(acknowledged);
+    expect(acknowledgeCompletion).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route_completed",
+    );
+  });
+
+  it("rejects malformed acknowledgement paths, non-empty bodies, and oversized bodies", async () => {
+    const app = appFor(routeService());
+    const cases: Array<[string, unknown, number]> = [
+      ["/api/chats/not-a-chat/runs/run_route_completed/acknowledge", {}, 400],
+      ["/api/chats/chat_route_test/runs/not-a-run/acknowledge", {}, 400],
+      ["/api/chats/chat_route_test/runs/run_route_completed/acknowledge", { completedAt: "2026-08-25T12:02:00.000Z" }, 400],
+      ["/api/chats/chat_route_test/runs/run_route_completed/acknowledge", { padding: "x".repeat(5 * 1024) }, 413],
+    ];
+    for (const [path, body, status] of cases) {
+      expect((await acknowledge(app, path, body)).status).toBe(status);
+    }
+  });
+
+  it("returns a safe acknowledgement error without exposing repository details", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await acknowledge(appFor(routeService({
+        acknowledgeCompletion: vi.fn(async () => {
+          throw new Error("postgres://secret-host/private-owner");
+        }),
+      })));
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: {
+          code: "service_unavailable",
+          safeMessage: "Chat is temporarily unavailable.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        },
+      });
+
+      const rejected = await acknowledge(appFor(routeService({
+        acknowledgeCompletion: vi.fn(async () => {
+          throw new ChatRunNotAcknowledgeableError("chat_route_test", "run_route_completed");
+        }),
+      })));
+      expect(rejected.status).toBe(409);
+      expect(await rejected.json()).toEqual({
+        error: {
+          code: "run_unavailable",
+          safeMessage: "Only a successful completed Run can be acknowledged.",
+          retryable: false,
+        },
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   it("deletes an owned Chat with an idempotency key", async () => {
