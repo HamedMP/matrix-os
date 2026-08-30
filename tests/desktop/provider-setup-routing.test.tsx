@@ -93,12 +93,12 @@ describe("system harness setup routing", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["hermes", "openclaw"] as const)("routes %s configuration to Agent settings", (driverKind) => {
+  it.each(["hermes", "openclaw"] as const)("routes %s configuration to Agents & providers", (driverKind) => {
     render(<Harness driverKind={driverKind} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Configure" }));
 
-    expect(useUi.getState().requestedSettingsSection).toBe("agent");
+    expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
     expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
   });
 

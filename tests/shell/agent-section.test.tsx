@@ -5,6 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSection } from "../../shell/src/components/settings/sections/AgentSection.js";
+import { IdentityPersonalitySection } from "../../shell/src/components/settings/sections/IdentityPersonalitySection.js";
 
 vi.mock("../../shell/src/components/settings/sections/AgentRuntimePanel.js", () => ({
   AgentRuntimePanel: () => <div>Runtime settings</div>,
@@ -14,7 +15,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Canvas Agent section", () => {
+describe("Canvas settings sections", () => {
+  it("keeps the provider adapter separate from identity and personality", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(<AgentSection />);
+
+    const heading = screen.getByRole("heading", { name: "Agents & providers" });
+    expect(heading).toBeVisible();
+    expect(heading.closest("[data-provider-settings-adapter='legacy']")).toBeTruthy();
+    expect(screen.getByText("Runtime settings")).toBeVisible();
+    expect(screen.queryByText("SOUL (Personality)")).toBeNull();
+  });
+
   it("persists SOUL to its owner-controlled file", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => (
       String(input).endsWith("/files/system/soul.md")
@@ -22,7 +34,9 @@ describe("Canvas Agent section", () => {
         : Response.json({ displayName: "Matrix" })
     ));
     vi.stubGlobal("fetch", fetcher);
-    render(<AgentSection />);
+    render(<IdentityPersonalitySection />);
+
+    expect(screen.getByRole("heading", { name: "Identity & personality" })).toBeVisible();
 
     expect(await screen.findByText("Original soul")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
