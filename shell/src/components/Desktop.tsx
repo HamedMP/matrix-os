@@ -448,6 +448,27 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
   }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
+  // Keep every app entry point on one routing path. Some installed catalog
+  // apps (notably Browser) intentionally map to shell-owned behavior instead
+  // of AppViewer, so dock, command-palette, launcher, and deep-link launches
+  // must all resolve them before opening a window.
+  const openAppOrFocus = useCallback((path: string, name?: string) => {
+    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path, name);
+    if (builtInLaunch?.kind === "external") {
+      window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (builtInLaunch?.kind === "external-code") {
+      window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (builtInLaunch?.kind === "app") {
+      focusOrOpen(builtInLaunch.name, builtInLaunch.path);
+      return;
+    }
+    focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
+  }, [apps, focusOrOpen]);
+
   const openSetupTerminal = (action: TerminalLaunchAction) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
@@ -493,7 +514,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     const currentApps = useWindowManager.getState().apps;
     const match = findAppByName(currentApps, query);
     if (match) {
-      focusOrOpen(match.name, match.path);
+      openAppOrFocus(match.path, match.name);
       return { success: true, resolvedName: match.name };
     }
     return { success: false };
@@ -504,8 +525,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     const match = useWindowManager.getState().apps.find((app) => app.path === launchAppPath);
     if (!match) return;
     launchPathConsumedRef.current = launchAppPath;
-    focusOrOpen(match.name, match.path);
-  }, [apps, focusOrOpen, launchAppPath]);
+    openAppOrFocus(match.path, match.name);
+  }, [apps, launchAppPath, openAppOrFocus]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async (signal?: AbortSignal) => {
@@ -897,10 +918,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   };
 
   const toggleMcRef = useRef(() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); });
-  const openWindowRef = useRef(openWindow);
-  useEffect(() => {
-    openWindowRef.current = openWindow;
-  }, [openWindow]);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- false positive: the setState calls counted here (setDesktopMode, setSettingsOpen, setTaskBoardOpen) live inside command `execute` handlers that only fire on user invocation; this effect just registers/unregisters command-palette entries and runs no setState synchronously, so there is no render cascade
   useEffect(() => {
@@ -1096,11 +1113,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       group: "Apps" as const,
       icon: app.iconUrl,
       keywords: [app.path],
-      execute: () => openWindowRef.current(app.name, app.path),
+      execute: () => openAppOrFocus(app.path, app.name),
     }));
     if (appCommands.length > 0) register(appCommands);
     return () => unregister(apps.map((a) => `app:${a.path}`));
-  }, [apps, register, unregister]);
+  }, [apps, openAppOrFocus, register, unregister]);
 
   useEffect(() => {
     if (!fullscreenWindowId) return;
@@ -1117,25 +1134,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       onOpenGuide={() => setManualSetupVisible(true)}
     />
   ) : null;
-
-  // Shared by the Windows taskbar (start menu, quick launch) and the XP
-  // desktop icons: open the app window or focus the existing one.
-  const openAppOrFocus = (path: string, name?: string) => {
-    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path, name);
-    if (builtInLaunch?.kind === "external") {
-      window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
-      return;
-    }
-    if (builtInLaunch?.kind === "external-code") {
-      window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
-      return;
-    }
-    if (builtInLaunch?.kind === "app") {
-      focusOrOpen(builtInLaunch.name, builtInLaunch.path);
-      return;
-    }
-    focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path);
-  };
 
   const launcherApps = useMemo(() => {
     const firstClass = [
@@ -1162,24 +1160,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       setChatOpen(false);
       return;
     }
-    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path, name);
-    if (builtInLaunch?.kind === "external") {
-      window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
-      setTaskBoardOpen(false);
-      return;
-    }
-    if (builtInLaunch?.kind === "external-code") {
-      window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
-      setTaskBoardOpen(false);
-      return;
-    }
-    if (builtInLaunch?.kind === "app") {
-      focusOrOpen(builtInLaunch.name, builtInLaunch.path);
-      setTaskBoardOpen(false);
-      return;
-    }
-    focusOrOpen(name, path);
-  }, [focusOrOpen]);
+    openAppOrFocus(path, name);
+    setTaskBoardOpen(false);
+  }, [openAppOrFocus]);
 
   if (firstRunStatus === "checking") {
     return (
@@ -1304,7 +1287,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       <DockIcon
                         name={app.name}
                         active={hasAny}
-                        onClick={() => focusOrOpen(app.name, app.path)}
+                        onClick={() => openAppOrFocus(app.path, app.name)}
                         iconSize={dock.iconSize}
                         tooltipSide={tooltipSide}
                         iconUrl={app.iconUrl}
@@ -1411,7 +1394,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       key={app.path}
                       name={app.name}
                       active={hasAny}
-                      onClick={() => focusOrOpen(app.name, app.path)}
+                      onClick={() => openAppOrFocus(app.path, app.name)}
                       iconSize={dock.iconSize}
                       tooltipSide={tooltipSide}
                       iconUrl={app.iconUrl}

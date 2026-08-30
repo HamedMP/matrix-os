@@ -228,6 +228,43 @@ describe("Desktop launcher dock button by mode", () => {
       .toMatchObject({ title: "Chat", path: "__chat__" });
   });
 
+  it("routes an installed Browser command through the dedicated public browser launch", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) {
+        return jsonResponse({
+          layout: { windows: [] },
+          apps: [{
+            name: "Browser",
+            path: "/files/apps/browser/dist/index.html",
+            icon: "browser",
+            slug: "browser",
+          }],
+          modules: [],
+        });
+      }
+      return jsonResponse({});
+    }));
+    const openExternal = vi.spyOn(window, "open").mockImplementation(() => null);
+    const commandStore = (await import("../../shell/src/stores/commands.js")).useCommandStore;
+    resetShellMode("desktop", true);
+
+    render(<DesktopComponent />);
+
+    const browserCommand = await waitFor(() => {
+      const command = commandStore.getState().commands.get("app:apps/browser/dist/index.html");
+      expect(command).toBeDefined();
+      return command!;
+    });
+    act(() => browserCommand.execute());
+
+    expect(openExternal).toHaveBeenCalledWith("https://www.google.com", "_blank", "noopener,noreferrer");
+    expect(windowManagerStore.getState().windows.some(
+      (windowRecord) => windowRecord.path === "apps/browser/dist/index.html",
+    )).toBe(false);
+  });
+
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
