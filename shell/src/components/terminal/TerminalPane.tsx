@@ -164,7 +164,7 @@ export function TerminalPane({
   const { height: viewportHeight, offsetTop: viewportOffsetTop, keyboardOpen } = useVisualViewport();
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const termRef = useRef<unknown>(null);
+  const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<unknown>(null);
   const searchAddonRef = useRef<unknown>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
