@@ -1594,7 +1594,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 <button
                   type="button"
                   key={app.path}
-                  onClick={() => openWindow(app.name, app.path)}
+                  onClick={() => openAppOrFocus(app.path, app.name)}
                   className={`flex shrink-0 h-9 items-center gap-1.5 px-3 rounded-lg border transition-all active:scale-95 ${
                     win
                       ? "bg-primary/10 border-primary/30 text-foreground"

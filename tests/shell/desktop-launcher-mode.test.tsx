@@ -265,6 +265,44 @@ describe("Desktop launcher dock button by mode", () => {
     )).toBe(false);
   });
 
+  it("routes a mobile pinned Browser through the dedicated public browser launch", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) {
+        return jsonResponse({
+          layout: { windows: [] },
+          apps: [{
+            name: "Browser",
+            path: "/files/apps/browser/dist/index.html",
+            icon: "browser",
+            slug: "browser",
+          }],
+          modules: [],
+        });
+      }
+      return jsonResponse({});
+    }));
+    const openExternal = vi.spyOn(window, "open").mockImplementation(() => null);
+    resetShellMode("canvas", true);
+
+    render(<DesktopComponent />);
+
+    await waitFor(() => {
+      expect(windowManagerStore.getState().apps.some(
+        (app) => app.path === "apps/browser/dist/index.html",
+      )).toBe(true);
+    });
+    act(() => desktopConfigStore.setState({ pinnedApps: ["apps/browser/dist/index.html"] }));
+    const browserButtons = await screen.findAllByRole("button", { name: "Browser" });
+    fireEvent.click(browserButtons.at(-1)!);
+
+    expect(openExternal).toHaveBeenCalledWith("https://www.google.com", "_blank", "noopener,noreferrer");
+    expect(windowManagerStore.getState().windows.some(
+      (windowRecord) => windowRecord.path === "apps/browser/dist/index.html",
+    )).toBe(false);
+  });
+
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
