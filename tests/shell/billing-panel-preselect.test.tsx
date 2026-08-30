@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 function installClerkMock(selectedPlan?: string) {
@@ -45,9 +45,6 @@ describe("BillingPanel preselect from publicMetadata", () => {
 
     await waitFor(() => expect(screen.getByTestId("billing-configurator-layout")).toBeTruthy());
 
-    // Open the computer picker dropdown
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-
     // Max should be aria-pressed="true".
     const maxButton = screen.getByRole("button", { name: /Max/ });
     expect(maxButton.getAttribute("aria-pressed")).toBe("true");
@@ -63,9 +60,6 @@ describe("BillingPanel preselect from publicMetadata", () => {
     render(<BillingSection />);
 
     await waitFor(() => expect(screen.getByTestId("billing-configurator-layout")).toBeTruthy());
-
-    // Open the computer picker dropdown
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
 
     // Builder (index 1) should be aria-pressed="true".
     const builderButton = screen.getByRole("button", { name: /Builder/ });

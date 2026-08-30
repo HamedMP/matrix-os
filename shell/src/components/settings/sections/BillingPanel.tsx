@@ -13,7 +13,6 @@ import {
   ArrowUpRightIcon,
   CheckIcon,
   ChevronDownIcon,
-  CpuIcon,
   CreditCardIcon,
   ExternalLinkIcon,
   Loader2Icon,
@@ -274,7 +273,7 @@ function CheckoutPanel({
   return (
     <aside className="rounded-2xl bg-[#0E3422] p-5 text-[#FCFCF8] shadow-[0_12px_36px_rgba(31,45,29,0.12)] lg:sticky lg:top-2">
       <div className="flex items-end justify-between gap-4">
-        <span className="text-2xl font-semibold tracking-tight">
+        <span className="font-[family-name:var(--font-bricolage)] text-2xl font-semibold tracking-tight">
           {selectedProfile.label}
         </span>
         {!checkoutBypassed && trialDurationDays === null ? (
@@ -651,7 +650,7 @@ function ProfileOptionRows({
   onSelect: (featureSlug: string) => void;
 }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-3">
+    <div className="grid grid-cols-3 gap-2">
       {profiles.map((profile) => {
         const resolvedProfile = resolveMatrixServerProfile(profile, region);
         const selected = profile.featureSlug === selectedFeature;
@@ -668,11 +667,13 @@ function ProfileOptionRows({
             }`}
           >
             <span className="flex w-full items-start justify-between gap-2">
-              <span className="text-sm font-semibold text-[#1F2D1D]">{profile.label}</span>
+              <span className="font-[family-name:var(--font-bricolage)] text-sm font-semibold text-[#1F2D1D]">
+                {profile.label}
+              </span>
               <span
                 className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${
                   selected
-                    ? "border-[#0E3422] bg-[#0E3422] text-[#FCFCF8]"
+                    ? "border-[#0E3422] bg-[#BED77B] text-[#0E3422]"
                     : "border-[#C8C6C6] text-transparent"
                 }`}
               >
@@ -696,7 +697,7 @@ function ProfileOptionRows({
               {resolvedProfile.vcpus} CPU · {resolvedProfile.memoryGb} GB RAM · {resolvedProfile.diskGb} GB disk
             </span>
             {profile.planSlug === "matrix_builder" && (
-              <span className="mt-2 w-fit rounded-full bg-[#FAEAD1] px-2 py-0.5 text-[10px] font-semibold text-[#4D3919]">
+              <span className="mt-2 w-fit rounded-full bg-[#E4EDD4] px-2 py-0.5 text-[10px] font-semibold text-[#0E3422]">
                 Recommended
               </span>
             )}
@@ -744,7 +745,7 @@ function RegionOptionRows({
                 onClick={() => onSelect(region.featureSlug)}
                 className={`flex w-full items-center justify-between gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors ${
                   selected
-                    ? "border-[#D06E53] bg-[#FAEEEB]"
+                    ? "border-[#0E3422] bg-[#F4F7ED]"
                     : "border-transparent hover:bg-[#EEF7F2]"
                 }`}
               >
@@ -761,7 +762,7 @@ function RegionOptionRows({
                   )}
                 </span>
                 {selected ? (
-                  <CheckIcon className="size-4 shrink-0 text-[#D06E53]" aria-hidden="true" />
+                  <CheckIcon className="size-4 shrink-0 text-[#0E3422]" aria-hidden="true" />
                 ) : (
                   <MapPinIcon className="size-4 shrink-0 text-[#A8A4A4]" aria-hidden="true" />
                 )}
@@ -774,10 +775,7 @@ function RegionOptionRows({
   );
 }
 
-type PickerKey = "computer" | "region" | null;
-
-const pickerFieldBase =
-  "flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379]";
+type PickerKey = "region" | null;
 
 function pickerFieldState(open: boolean): string {
   return open
@@ -815,7 +813,7 @@ function SelectionTriggerCards({
   billingInterval,
   showPrice = true,
   openPicker,
-  onToggle,
+  onToggleRegion,
   onClose,
   onSelectProfile,
   onSelectRegion,
@@ -828,13 +826,12 @@ function SelectionTriggerCards({
   billingInterval: BillingInterval;
   showPrice?: boolean;
   openPicker: PickerKey;
-  onToggle: (picker: "computer" | "region") => void;
+  onToggleRegion: () => void;
   onClose: () => void;
   onSelectProfile: (featureSlug: string) => void;
   onSelectRegion: (featureSlug: string) => void;
   onToggleDeveloperTool: (tool: DeveloperToolId) => void;
 }) {
-  const computerOpen = openPicker === "computer";
   const regionOpen = openPicker === "region";
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -872,68 +869,22 @@ function SelectionTriggerCards({
 
   return (
     <div ref={containerRef} className="space-y-4">
-      <div className="relative">
-        <button
-          type="button"
-          aria-label="Change computer"
-          aria-haspopup="true"
-          aria-expanded={computerOpen}
-          onClick={() => onToggle("computer")}
-          className={`${pickerFieldBase} ${pickerFieldState(computerOpen)}`}
-        >
-          <span className="flex min-w-0 items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#E4EDD4] text-[#0E3422]">
-              <CpuIcon className="size-5" aria-hidden="true" />
-            </span>
-            <span className="flex min-w-0 flex-col">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#635F5F]">
-                Computer power
-              </span>
-              <span className="flex items-center gap-2">
-                <span className="truncate text-sm font-semibold text-[#1F2D1D]">
-                  {selectedProfile.label}
-                </span>
-              </span>
-              <span className="truncate font-mono text-[11px] text-[#635F5F]">
-                {profileSpec(selectedProfile)}
-              </span>
-            </span>
-          </span>
-          <span className="flex shrink-0 items-center gap-2.5">
-            {showPrice ? (
-              <span className="text-right">
-                <span className="text-sm font-semibold text-[#1F2D1D]">
-                  ${profilePrice(selectedProfile, billingInterval)}
-                </span>
-                <span className="block text-[10px] text-[#635F5F]">
-                  /mo
-                </span>
-              </span>
-            ) : null}
-            <ChevronDownIcon
-              className={`size-4 text-[#635F5F] transition-transform ${computerOpen ? "rotate-180" : ""}`}
-              aria-hidden="true"
-            />
-          </span>
-        </button>
-        {computerOpen && (
-          <PickerDropdown title="Choose computer power">
-            <ProfileOptionRows
-              profiles={profiles}
-              region={selectedRegion}
-              selectedFeature={selectedProfile.featureSlug}
-              billingInterval={billingInterval}
-              showPrice={showPrice}
-              onSelect={onSelectProfile}
-            />
-          </PickerDropdown>
-        )}
-      </div>
+      <fieldset aria-label="Choose your Matrix computer">
+        <ProfileOptionRows
+          profiles={profiles}
+          region={selectedRegion}
+          selectedFeature={selectedProfile.featureSlug}
+          billingInterval={billingInterval}
+          showPrice={showPrice}
+          onSelect={onSelectProfile}
+        />
+      </fieldset>
 
       <div className="border-t border-[#E0E1CA] pt-4">
         <DeveloperToolsSelector
           selectedTools={developerTools}
           onToggle={onToggleDeveloperTool}
+          variant="billing"
         />
       </div>
 
@@ -957,7 +908,7 @@ function SelectionTriggerCards({
               aria-label="Change server location"
               aria-haspopup="true"
               aria-expanded={regionOpen}
-              onClick={() => onToggle("region")}
+              onClick={onToggleRegion}
               className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379] ${pickerFieldState(regionOpen)}`}
             >
               <span className="flex min-w-0 items-center gap-3">
@@ -1249,8 +1200,8 @@ function BillingPanelInner({
             developerTools={developerTools}
             billingInterval={billingInterval}
             openPicker={openPicker}
-            onToggle={(picker) =>
-              setOpenPicker((current) => (current === picker ? null : picker))
+            onToggleRegion={() =>
+              setOpenPicker((current) => (current === "region" ? null : "region"))
             }
             onClose={() => setOpenPicker(null)}
             onSelectProfile={handleProfileSelect}

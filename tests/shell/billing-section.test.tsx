@@ -90,7 +90,11 @@ describe("BillingSection", () => {
 
     render(<BillingSection />);
 
-    expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
+    const billingHeading = screen.getByRole("heading", { name: "Billing" });
+    expect(billingHeading).toBeTruthy();
+    expect(billingHeading.parentElement?.parentElement?.className).toContain(
+      "font-[family-name:var(--font-geist-sans)]",
+    );
     await waitForBillingConfigurator();
     expect(screen.queryByText("Not active")).toBeNull();
     expect(screen.getByText("Choose your Matrix computer")).toBeTruthy();
@@ -345,7 +349,6 @@ describe("BillingSection", () => {
     render(<BillingSection />);
     await waitForBillingConfigurator();
 
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
     expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
@@ -408,8 +411,9 @@ describe("BillingSection", () => {
     render(<BillingSection />);
     await waitForBillingConfigurator();
 
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.getByRole("button", { name: /Builder/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+    expect(screen.getByText("Choose a server location")).toBeTruthy();
 
     // The Settings panel registers a window-level Escape handler; it must not
     // receive the event once the picker has handled and stopped it.
@@ -421,7 +425,7 @@ describe("BillingSection", () => {
       window.removeEventListener("keydown", settingsEscape);
     }
 
-    expect(screen.queryByRole("button", { name: /Builder/ })).toBeNull();
+    expect(screen.queryByText("Choose a server location")).toBeNull();
     expect(settingsEscape).not.toHaveBeenCalled();
   });
 
@@ -516,20 +520,42 @@ describe("BillingSection", () => {
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     await waitForBillingConfigurator();
     expect(screen.getByText("Choose your Matrix computer")).toBeTruthy();
-    expect(screen.getByText("Computer power")).toBeTruthy();
+    expect(screen.queryByText("Computer power")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change computer" })).toBeNull();
 
-    // Computer options live in a click-to-open dropdown now.
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.getByRole("button", { name: /Starter/i })).toBeTruthy();
+    // All plans remain visible in one horizontal choice row.
+    const starter = screen.getByRole("button", { name: /^Starter\b/i });
+    const builder = screen.getByRole("button", { name: /^Builder\b/i });
+    const max = screen.getByRole("button", { name: /^Max\b/i });
+    expect(starter).toBeTruthy();
     expect(screen.getByText("$20")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Builder/i })).toBeTruthy();
+    expect(builder).toBeTruthy();
     expect(screen.getAllByText("$100").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("button", { name: /Max/i })).toBeTruthy();
+    expect(max).toBeTruthy();
     expect(screen.getByText("$200")).toBeTruthy();
+    expect(starter.parentElement).toBe(builder.parentElement);
+    expect(builder.parentElement).toBe(max.parentElement);
+    expect(starter.parentElement?.className).toContain("grid-cols-3");
+    expect(builder.className).toContain("border-[#0E3422]");
+    expect(builder.className).toContain("bg-[#F4F7ED]");
+    expect(builder.className).not.toContain("ember");
     expect(screen.getByText("For everyday use")).toBeTruthy();
     expect(screen.getByText("For technical work and building")).toBeTruthy();
     expect(screen.getByText("For serious, demanding workloads")).toBeTruthy();
     expect(screen.queryByText(/CPX22|CPX42|CPX52/)).toBeNull();
+
+    const planLabels = screen.getAllByText("Builder");
+    expect(planLabels).toHaveLength(2);
+    for (const label of planLabels) {
+      expect(label.className).toContain("font-[family-name:var(--font-bricolage)]");
+    }
+
+    const codingAgents = screen.getByRole("list", { name: "Coding agents" });
+    expect(codingAgents.className).toContain("grid-cols-2");
+    const selectedAgent = screen.getByRole("checkbox", { name: "Codex" }).closest("label");
+    expect(selectedAgent?.className).toContain("border-[#0E3422]");
+    expect(selectedAgent?.className).toContain("bg-[#F4F7ED]");
+    expect(selectedAgent?.className).not.toContain("ember");
 
     // Region options stay out of sight until Advanced settings is expanded.
     expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
@@ -576,7 +602,7 @@ describe("BillingSection", () => {
     render(<BillingSection mode="provisioning" />);
 
     await waitForBillingConfigurator();
-    const computer = screen.getByRole("button", { name: "Change computer" });
+    const computer = screen.getByRole("group", { name: "Choose your Matrix computer" });
     const agents = screen.getByRole("heading", { name: "Developer tools" });
     const advanced = screen.getByRole("button", { name: "Advanced settings" });
     const follows = Node.DOCUMENT_POSITION_FOLLOWING;

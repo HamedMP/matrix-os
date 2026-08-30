@@ -149,6 +149,16 @@ test.describe("Visual regression", () => {
         body: JSON.stringify({ ok: true }),
       }),
     );
+    await page.route("**/billing/status**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          access: { runtimeProxyAllowed: false },
+          trialOffer: { eligible: true, durationDays: 3 },
+        }),
+      }),
+    );
     // Block WebSocket upgrade requests so they don't keep reconnecting
     await page.route("**/ws/**", (route) => route.abort());
 
@@ -196,13 +206,13 @@ test.describe("Visual regression", () => {
     });
   });
 
-  test("billing computer picker", async ({ page }) => {
+  test("billing computer plans", async ({ page }) => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();
-    await page.getByRole("button", { name: "Change computer" }).click();
     await expect(page.getByText("For everyday use")).toBeVisible();
     await expect(page.getByText("For technical work and building")).toBeVisible();
     await expect(page.getByText("For serious, demanding workloads")).toBeVisible();
+    await page.getByRole("button", { name: /^Max\b/ }).click();
     await page.mouse.move(720, 450);
     await expect(page).toHaveScreenshot("billing-computer-picker.png", {
       maxDiffPixelRatio: 0.001,

@@ -321,7 +321,7 @@ describe("RuntimeManager", () => {
     expect(screen.getByText("new-design-studio")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("heading", { name: "Choose your Matrix computer" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Change computer" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Choose your Matrix computer" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Advanced settings" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
   });
@@ -341,7 +341,6 @@ describe("RuntimeManager", () => {
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     expect(screen.getByText("New subscription")).toBeTruthy();
     expect(screen.queryByText("Active")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     expect(screen.getByRole("button", { name: /^Max\b/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
@@ -445,7 +444,7 @@ describe("RuntimeManager", () => {
       target: { value: "Research Lab" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Change computer" }));
+    await screen.findByRole("group", { name: "Choose your Matrix computer" });
     expect(screen.queryByRole("button", { name: /^Max\b/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
 

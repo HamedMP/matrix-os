@@ -25,7 +25,7 @@ export function BillingSection({
   const startsNewSubscription = mode === "add-computer" && entitlement?.source !== "override";
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-2 sm:p-4">
+    <div className="mx-auto max-w-5xl space-y-4 p-2 font-[family-name:var(--font-geist-sans)] sm:p-4">
       <div className="flex items-center justify-between gap-3 border-b border-[#E0E1CA] pb-3">
         <h2 className="font-[family-name:var(--font-bricolage)] text-xl font-semibold tracking-tight text-[#1F2D1D]">
           Billing
@@ -35,7 +35,7 @@ export function BillingSection({
             variant="outline"
             className={
               startsNewSubscription
-                ? "border-[#D06E53]/35 bg-[#FAEEEB] text-[#6B3324]"
+                ? "border-[#BED77B] bg-[#F4F7ED] text-[#0E3422]"
                 : active === true
                   ? "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]"
                   : accessIssue === "auth"
