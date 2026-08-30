@@ -99,44 +99,21 @@ function createWiring(input: {
 }
 
 describe("createGateway Chat terminal production wiring", () => {
-  it("keeps createGateway connected to all three tested production seams", () => {
+  it("keeps createGateway on the workspace/tab runtime without constructing a legacy Zellij registry", () => {
     const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
-    const adapter = source.indexOf("createUserSystemdZellijAdapter({");
-    const chatAdapter = source.indexOf("const chatZellijAdapter =", adapter);
-    const workspaceSessions = source.indexOf("includeWorkspaceSessions: true", chatAdapter);
-    const chatRegistry = source.indexOf("const chatZellijShellRegistry =", workspaceSessions);
-    const chatSocket = source.indexOf("const chatZellijShellWs =", chatRegistry);
-    const construct = source.indexOf("createGatewayChatTerminalWiring({");
-    const standaloneSocket = source.indexOf('"/ws/terminal",', construct);
-    const standaloneGuard = source.indexOf("authorizeStandaloneTerminalAttach({", standaloneSocket);
-    const shellDeps = source.indexOf("...chatTerminalWiring.shellRouteDeps", construct);
-    const canonicalMount = source.indexOf(
-      'app.route("/api/terminal", createShellRoutes(shellRouteDeps))',
-      shellDeps,
+    expect(source).toContain("new TerminalRuntimeSocketClient({");
+    expect(source).toContain('"/ws/terminal/tab"');
+    expect(source).toContain("chatBoundShellRouteDeps");
+    expect(source).toContain("chatBoundWorkspaceRouteDeps");
+    expect(source).toContain("getTerminalBinding(");
+    expect(source).toContain("listBoundTerminalSessionIds(");
+    expect(source).toContain("terminalRuntimeOwnerAccess(principal, terminalRuntimeOwnerIds)");
+    expect(source.indexOf("terminalRuntimeOwnerAccess(principal, terminalRuntimeOwnerIds)")).toBeLessThan(
+      source.indexOf("if (chatRepository)", source.indexOf('"/ws/terminal/tab"')),
     );
-    const socketMount = source.indexOf("chatTerminalWiring.registerSessionRoute(app, upgradeWebSocket)", canonicalMount);
-    const workspaceMount = source.indexOf("...chatTerminalWiring.workspaceRouteDeps", socketMount);
-    const compatibilityMount = source.indexOf(
-      'app.route("/api", createShellRoutes(shellRouteDeps))',
-      workspaceMount,
-    );
-
-    expect(adapter).toBeGreaterThan(-1);
-    expect(chatAdapter).toBeGreaterThan(adapter);
-    expect(workspaceSessions).toBeGreaterThan(chatAdapter);
-    expect(chatRegistry).toBeGreaterThan(workspaceSessions);
-    expect(chatSocket).toBeGreaterThan(chatRegistry);
-    expect(workspaceSessions).toBeLessThan(construct);
-    expect(construct).toBeGreaterThan(-1);
-    expect(source.slice(construct, construct + 500)).toContain("registry: chatZellijShellRegistry");
-    expect(source.slice(construct, construct + 500)).toContain("shellWs: chatZellijShellWs");
-    expect(standaloneSocket).toBeGreaterThan(construct);
-    expect(standaloneGuard).toBeGreaterThan(standaloneSocket);
-    expect(shellDeps).toBeGreaterThan(construct);
-    expect(canonicalMount).toBeGreaterThan(shellDeps);
-    expect(socketMount).toBeGreaterThan(canonicalMount);
-    expect(workspaceMount).toBeGreaterThan(socketMount);
-    expect(compatibilityMount).toBeGreaterThan(workspaceMount);
+    expect(source).not.toContain("createUserSystemdZellijAdapter({");
+    expect(source).not.toContain("new ZellijShellRegistry({");
+    expect(source).not.toContain("createGatewayChatTerminalWiring({");
   });
 
   it("allows the real chat query route only after current-principal authorization", async () => {
@@ -341,8 +318,21 @@ describe("createGateway Chat terminal production wiring", () => {
     })]);
   });
 
-  it("installs one principal-scoped Chat filter on both actual session mounts", async () => {
+  it("retires the legacy session mount and keeps the owner-scoped workspace projection filter", async () => {
     const repo = repository(true);
+    const boundRef = {
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    };
+    const manualRef = {
+      workspaceId: "tws_00000000000000000000000000000002",
+      tabId: "tt_00000000000000000000000000000002",
+    };
+    const boundRefKey = `${boundRef.workspaceId}:${boundRef.tabId}`;
+    const manualRefKey = `${manualRef.workspaceId}:${manualRef.tabId}`;
+    repo.listBoundTerminalSessionIds.mockImplementation(async (_owner, ids: readonly string[]) => (
+      ids.filter((id) => id === boundRefKey)
+    ));
     const registry = {
       list: vi.fn(async () => [
         { name: "terminal_bound", status: "active" },
@@ -375,8 +365,8 @@ describe("createGateway Chat terminal production wiring", () => {
         listSessions: vi.fn(async () => ({
           ok: true,
           sessions: [
-            { id: "sess_bound", terminalSessionId: "terminal_bound" },
-            { id: "sess_manual", terminalSessionId: "terminal_manual" },
+            { id: "sess_bound", terminalRef: boundRef },
+            { id: "sess_manual", terminalRef: manualRef },
           ],
         })),
       } as never,
@@ -391,22 +381,15 @@ describe("createGateway Chat terminal production wiring", () => {
       ...wiring.shellRouteDeps,
     }));
 
-    await expect((await app.request("/api/terminal/sessions")).json()).resolves.toEqual({
-      sessions: [{ name: "terminal_manual", status: "active" }],
-    });
+    expect((await app.request("/api/terminal/sessions")).status).toBe(426);
     await expect((await app.request("/api/sessions")).json()).resolves.toEqual({
-      sessions: [{ id: "sess_manual", terminalSessionId: "terminal_manual" }],
+      sessions: [{ id: "sess_manual", terminalRef: manualRef }],
     });
-    expect(repo.listBoundTerminalSessionIds).toHaveBeenCalledTimes(2);
+    expect(repo.listBoundTerminalSessionIds).toHaveBeenCalledTimes(1);
     expect(repo.listBoundTerminalSessionIds).toHaveBeenNthCalledWith(
       1,
       { type: "personal", ownerId: "user_mount_owner" },
-      ["terminal_bound", "terminal_manual"],
-    );
-    expect(repo.listBoundTerminalSessionIds).toHaveBeenNthCalledWith(
-      2,
-      { type: "personal", ownerId: "user_mount_owner" },
-      ["terminal_bound", "terminal_manual"],
+      [boundRefKey, manualRefKey],
     );
   });
 });
