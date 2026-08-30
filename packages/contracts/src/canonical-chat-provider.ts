@@ -142,6 +142,16 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
   driverKind: CanonicalProviderDriverKindSchema,
   displayName: canonicalSafeLabel(160, 640),
   availability: z.enum(["available", "setup_required", "auth_required", "unavailable"]),
+  unavailabilityReason: z.enum([
+    "disabled_in_settings",
+    "settings_unavailable",
+    "runtime_not_runnable",
+    "runtime_inactive",
+    "runtime_unavailable",
+    "not_installed",
+    "authentication_required",
+    "multiple_profiles_unsupported",
+  ]).optional(),
   workspaceRequirement: z.enum(["none", "project_optional", "project_required"]),
   catalogRevision: canonicalReferenceId(160),
   models: z.array(CanonicalModelDescriptorSchema).max(64),
@@ -152,6 +162,9 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
   supports: CanonicalProviderSupportSchema,
   defaultSelection: CanonicalChatModelSelectionSchema.optional(),
 }).strict().superRefine((instance, ctx) => {
+  if (instance.availability === "available" && instance.unavailabilityReason !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["unavailabilityReason"], message: "Available Instance cannot have an unavailable reason" });
+  }
   for (const [key, ids] of [
     ["models", instance.models.map((value) => value.id)],
     ["options", instance.options.map((value) => value.id)],

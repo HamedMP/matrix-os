@@ -19,6 +19,8 @@ import {
   type CanonicalChatSkillDescriptor,
   type CanonicalProviderSetupAction,
   type CanonicalProviderSupport,
+  type ProviderHarnessInstance,
+  type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { createHash } from "node:crypto";
 import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/service.js";
@@ -75,6 +77,10 @@ export interface CodingModelCatalogProjection {
 export interface ChatProviderCatalogService {
   getCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
   refresh(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
+}
+
+export interface HarnessSettingsSnapshotReader {
+  getSnapshot(): Promise<ProviderSettingsSnapshot>;
 }
 
 export class ProviderCatalogUnavailableError extends Error {
@@ -202,7 +208,9 @@ function codingSupports(
     worktrees: "optional",
     resources: ["file", "folder", "project", "task", "app", "terminal_session"],
     interactionModes: supportedModes,
-    permissionModes: ["supervised", "auto_accept_edits", "auto", "full_access"],
+    permissionModes: driverKind === "pi"
+      ? ["supervised"]
+      : ["supervised", "auto_accept_edits", "auto", "full_access"],
   };
 }
 
@@ -502,11 +510,169 @@ function catalogRevision(drivers: unknown, instances: unknown): string {
   return `catalog_${digest}`;
 }
 
+const GENERIC_DRIVERS = ["hermes", "openclaw", "pi", "opencode"] as const;
+type GenericDriverKind = typeof GENERIC_DRIVERS[number];
+
+function genericHarnessKind(kind: CanonicalProviderDriverKind): GenericDriverKind | null {
+  return GENERIC_DRIVERS.includes(kind as GenericDriverKind) ? kind as GenericDriverKind : null;
+}
+
+function unavailableReasonFor(
+  instance: InstanceDraft,
+): NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]> {
+  if (instance.availability === "setup_required") return "not_installed";
+  if (instance.availability === "auth_required") return "authentication_required";
+  return "runtime_unavailable";
+}
+
+function unavailableInstance(
+  instance: InstanceDraft,
+  reason: NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]>,
+): InstanceDraft {
+  return {
+    ...instance,
+    availability: "unavailable",
+    unavailabilityReason: reason,
+    models: [],
+    options: [],
+    defaultSelection: undefined,
+    ...(reason === "runtime_not_runnable" ? { setupActions: [] } : {}),
+  };
+}
+
+function configuredPiInstance(input: {
+  instance: InstanceDraft;
+  harness: ProviderHarnessInstance;
+  aiSnapshot?: AiProviderSnapshotV3;
+}): InstanceDraft {
+  if (input.instance.availability !== "available") {
+    return unavailableInstance(input.instance, unavailableReasonFor(input.instance));
+  }
+  const configured = input.aiSnapshot?.models.find((model) =>
+    model.vendor === input.harness.route.providerId && model.id === input.harness.route.modelId
+  );
+  if (!configured || configured.status === "unavailable" || configured.status === "retired") {
+    return unavailableInstance(input.instance, "runtime_unavailable");
+  }
+  const modelId = `${input.harness.route.providerId}:${input.harness.route.modelId}`;
+  const capabilities = configured.capabilities.filter((capability) =>
+    capability === "reasoning" || capability === "tools" || capability === "vision"
+  );
+  const model: CanonicalModelDescriptor = {
+    id: modelId,
+    displayName: configured.displayName,
+    availability: "available",
+    capabilities,
+    supportsVision: capabilities.includes("vision"),
+    supportsToolUse: capabilities.includes("tools"),
+  };
+  return {
+    ...input.instance,
+    models: [model],
+    options: [],
+    defaultSelection: { instanceId: input.instance.id, model: modelId },
+    unavailabilityReason: undefined,
+  };
+}
+
+function configuredSystemInstance(
+  instance: InstanceDraft,
+  harness: ProviderHarnessInstance,
+): InstanceDraft {
+  if (instance.availability !== "available") {
+    return unavailableInstance(instance, unavailableReasonFor(instance));
+  }
+  const modelId = `${harness.route.providerId}:${harness.route.modelId}`;
+  const model = instance.models.find((candidate) =>
+    candidate.id === modelId && candidate.availability === "available"
+  );
+  if (!model) return unavailableInstance(instance, "runtime_unavailable");
+  return {
+    ...instance,
+    models: [model],
+    defaultSelection: { instanceId: instance.id, model: model.id },
+    unavailabilityReason: undefined,
+  };
+}
+
+function applyHarnessSettings(input: {
+  instances: InstanceDraft[];
+  settings: ProviderSettingsSnapshot | null;
+  settingsRequired: boolean;
+  settingsAvailable: boolean;
+  executableDriverKinds?: readonly CanonicalProviderDriverKind[];
+  credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
+  aiSnapshot?: AiProviderSnapshotV3;
+}): InstanceDraft[] {
+  return input.instances.map((instance) => {
+    const generic = genericHarnessKind(instance.driverKind);
+    if (generic !== null && input.settingsRequired && (!input.settingsAvailable || input.settings === null)) {
+      return unavailableInstance(instance, "settings_unavailable");
+    }
+    // Runtime inventory is authoritative for whether a harness exists at all.
+    // Do not let a disabled preference disguise a missing binary as configured.
+    if (generic !== null && input.settingsRequired
+      && (instance.availability === "setup_required" || instance.availability === "auth_required")) {
+      return unavailableInstance(instance, unavailableReasonFor(instance));
+    }
+    const enabledHarnesses = generic !== null && input.settingsRequired
+      ? input.settings!.harnesses.filter((harness) => harness.harness === generic && harness.enabled)
+      : [];
+    if (enabledHarnesses.length > 1) {
+      return unavailableInstance(instance, "multiple_profiles_unsupported");
+    }
+    if (generic !== null && input.settingsRequired && enabledHarnesses.length === 0) {
+      return unavailableInstance(instance, "disabled_in_settings");
+    }
+    const enabledHarness = enabledHarnesses[0];
+    const configuredInstance = enabledHarness
+      ? { ...instance, displayName: enabledHarness.displayName }
+      : instance;
+    if (enabledHarness && (enabledHarness.authState !== "authenticated" || enabledHarness.accessSourceId === null)) {
+      return unavailableInstance(configuredInstance, "authentication_required");
+    }
+    if (enabledHarness && enabledHarness.connectivity !== "online") {
+      return unavailableInstance(configuredInstance, "runtime_unavailable");
+    }
+    const executable = input.executableDriverKinds === undefined
+      || input.executableDriverKinds.includes(instance.driverKind);
+    if (!executable) {
+      return unavailableInstance(configuredInstance, "runtime_not_runnable");
+    }
+    if (instance.availability !== "available") {
+      return generic !== null && input.settingsRequired
+        ? unavailableInstance(instance, unavailableReasonFor(instance))
+        : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
+    }
+    if (generic === "pi" && !input.credentialedDriverKinds?.includes("pi")) {
+      // Pi inherits process credentials. Until the selected settings access
+      // source is explicitly adapted into that child environment, advertising
+      // the route would make a successful catalog probe fail at execution.
+      return unavailableInstance(configuredInstance, "runtime_not_runnable");
+    }
+    if (generic === null || !input.settingsRequired) {
+      return instance.availability === "available"
+        ? { ...instance, unavailabilityReason: undefined }
+        : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
+    }
+    const harness = enabledHarness!;
+    if (generic === "pi") {
+      return configuredPiInstance({ instance: configuredInstance, harness, aiSnapshot: input.aiSnapshot });
+    }
+    if (generic === "hermes" || generic === "openclaw") {
+      return configuredSystemInstance(configuredInstance, harness);
+    }
+    return unavailableInstance(configuredInstance, "runtime_not_runnable");
+  });
+}
+
 export function createChatProviderCatalogService(options: {
   codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
   aiProviderSource?: AiProviderSnapshotReader;
+  harnessSettingsSource?: HarnessSettingsSnapshotReader;
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
+  credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
   runtimeTimeoutMs?: number;
   skillsSource?: () => Array<{ name: string; description: string }>;
   codingModelCatalogSource?: (
@@ -528,10 +694,11 @@ export function createChatProviderCatalogService(options: {
       return service.getCatalog(principal);
     },
     async getCatalog(principal) {
-      const [codingResult, runtimeResult, aiProviderResult] = await Promise.allSettled([
+      const [codingResult, runtimeResult, aiProviderResult, settingsResult] = await Promise.allSettled([
         options.codingProviders.listProviders(principal),
         readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs),
         options.aiProviderSource?.getSnapshot({ refresh: false }) ?? Promise.resolve(undefined),
+        options.harnessSettingsSource?.getSnapshot() ?? Promise.resolve(undefined),
       ]);
       if (codingResult.status === "rejected") {
         console.warn("[chat-providers] Coding Provider inventory unavailable");
@@ -541,6 +708,9 @@ export function createChatProviderCatalogService(options: {
       }
       if (aiProviderResult.status === "rejected") {
         console.warn("[chat-providers] AI Provider inventory unavailable");
+      }
+      if (settingsResult.status === "rejected") {
+        console.warn("[chat-providers] Harness settings unavailable");
       }
 
       const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
@@ -594,22 +764,19 @@ export function createChatProviderCatalogService(options: {
         : undefined;
       const projectedKernelInstances = kernelInstances(aiSnapshot, skills);
       const executableDriverKinds = options.executableDriverKinds;
-      const instances = [
+      const instances = applyHarnessSettings({
+        instances: [
         ...projectedKernelInstances,
         ...systemInstances,
         ...completeCodingInstances,
-      ].map((instance) => (
-        executableDriverKinds === undefined || executableDriverKinds.includes(instance.driverKind)
-          ? instance
-          : {
-              ...instance,
-              availability: "unavailable" as const,
-              models: [],
-              options: [],
-              setupActions: [],
-              defaultSelection: undefined,
-            }
-      ));
+        ],
+        settings: settingsResult.status === "fulfilled" ? settingsResult.value ?? null : null,
+        settingsRequired: options.harnessSettingsSource !== undefined,
+        settingsAvailable: settingsResult.status === "fulfilled",
+        executableDriverKinds,
+        credentialedDriverKinds: options.credentialedDriverKinds,
+        aiSnapshot,
+      });
       const driverKinds: CanonicalProviderDriverKind[] = [
         ...(options.aiProviderSource ? ["kernel" as const] : []),
         ...SYSTEM_DRIVERS,

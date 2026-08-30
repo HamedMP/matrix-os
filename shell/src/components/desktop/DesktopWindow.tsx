@@ -218,6 +218,8 @@ export function DesktopWindow({
                 onNewChat={chat.newChat}
                 onSwitchConversation={chat.switchConversation}
                 onSubmit={chat.submitMessage}
+                onSubmitApproval={chat.submitApproval}
+                providerSelection={chat.providerSelection}
                 composerDraftRequest={chat.composerDraftRequest}
                 onComposerDraftConsumed={chat.consumeComposerDraft}
               />
