@@ -7,8 +7,19 @@ import {
   AiProviderService,
   type AiProviderHealthProbe,
 } from "../../packages/gateway/src/ai-providers/service.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 
 const NOW = new Date("2026-08-29T21:00:00.000Z");
+
+function fundedProvider(): MatrixFundedCredentialProvider {
+  return {
+    enabled: true,
+    maxRunMs: 600_000,
+    getCredential: async () => { throw new Error("readiness must not acquire a credential"); },
+    invalidate: () => {},
+    close: () => {},
+  };
+}
 
 describe("AiProviderService", () => {
   let homePath: string;
@@ -35,6 +46,9 @@ describe("AiProviderService", () => {
         ANTHROPIC_API_KEY: options.platformKey,
         MATRIX_FUNDED_AI_ENABLED: options.fundedEnabled === false ? "0" : "1",
       } : {},
+      fundedCredentialProvider: options.platformKey && options.fundedEnabled !== false
+        ? fundedProvider()
+        : undefined,
       now: () => NOW,
       healthProbe: options.healthProbe,
       healthTimeoutMs: options.healthTimeoutMs,

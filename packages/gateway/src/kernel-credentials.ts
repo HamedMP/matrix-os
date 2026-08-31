@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
+import type {
+  FundedAiCredentialLease,
+  MatrixFundedCredentialProvider,
+} from "./funded-ai-credential-manager.js";
 
 export type KernelCredentialMode = "platform" | "api_key" | "claude_login";
 export const KernelCredentialAccessSourceIdSchema = z.enum([
@@ -29,6 +33,7 @@ interface KernelCredentialResolution {
   mode: KernelCredentialMode;
   env?: Record<string, string | undefined>;
   sources: KernelCredentialSources;
+  fundedRunTimeoutMs?: number;
 }
 
 function hasClaudeOauthConfig(value: unknown): boolean {
@@ -50,22 +55,29 @@ function observationForReadFailure(err: unknown): KernelCredentialObservationSta
   return err instanceof SyntaxError ? "invalid" : "unavailable";
 }
 
-function isFundedAccessEnabled(env: NodeJS.ProcessEnv): boolean {
-  const value = env.MATRIX_FUNDED_AI_ENABLED?.trim().toLowerCase();
-  return value === "1" || value === "true";
+function applyFundedCredential(
+  env: Record<string, string | undefined>,
+  lease: FundedAiCredentialLease,
+): void {
+  env.ANTHROPIC_API_KEY = lease.token;
+  env.ANTHROPIC_BASE_URL = lease.relayBaseUrl;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.MATRIX_AUTH_TOKEN;
+  delete env.UPGRADE_TOKEN;
+  delete env.MATRIX_CODE_PROXY_TOKEN;
+  delete env.AI_RELAY_CONTROL_TOKEN;
+  delete env.CF_AIG_AUTHORIZATION;
 }
 
 async function resolveKernelCredentials(
   homePath: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
   requestedAccessSourceId?: KernelCredentialAccessSourceId,
+  fundedProvider?: MatrixFundedCredentialProvider,
+  acquireFundedCredential = true,
 ): Promise<KernelCredentialResolution> {
   const env = { ...baseEnv };
-  const matrixState = isFundedAccessEnabled(baseEnv)
-    && typeof baseEnv.ANTHROPIC_API_KEY === "string"
-    && baseEnv.ANTHROPIC_API_KEY.trim().length > 0
-    ? "ready" as const
-    : "disabled" as const;
+  const matrixState = fundedProvider?.enabled ? "ready" as const : "disabled" as const;
   let apiKeyState: KernelCredentialObservationState = "setup_required";
   let profileState: KernelCredentialObservationState = "setup_required";
   let ownerApiKey: string | undefined;
@@ -118,8 +130,10 @@ async function resolveKernelCredentials(
   };
 
   if (requestedAccessSourceId === "matrix_included") {
-    if (matrixState !== "ready") throw new Error("Selected AI access is unavailable");
-    return { mode: "platform", env, sources };
+    if (!fundedProvider) throw new Error("Selected AI access is unavailable");
+    const lease = await fundedProvider.getCredential();
+    applyFundedCredential(env, lease);
+    return { mode: "platform", env, sources, fundedRunTimeoutMs: lease.maxRunMs };
   }
   if (requestedAccessSourceId === "owner_anthropic_key") {
     if (ownerApiKey === undefined) throw new Error("Selected AI access is unavailable");
@@ -146,15 +160,46 @@ async function resolveKernelCredentials(
     delete env.ANTHROPIC_BASE_URL;
     return { mode: selectedMode, env, sources };
   }
+  if (fundedProvider && acquireFundedCredential) {
+    const lease = await fundedProvider.getCredential();
+    applyFundedCredential(env, lease);
+    return { mode: selectedMode, env, sources, fundedRunTimeoutMs: lease.maxRunMs };
+  }
   return { mode: selectedMode, sources };
+}
+
+export interface KernelCredentialLaunch {
+  env?: Record<string, string | undefined>;
+  fundedRunTimeoutMs?: number;
+}
+
+export async function buildKernelCredentialLaunch(
+  homePath: string,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+  requestedAccessSourceId?: KernelCredentialAccessSourceId,
+  fundedProvider?: MatrixFundedCredentialProvider,
+): Promise<KernelCredentialLaunch> {
+  const resolved = await resolveKernelCredentials(
+    homePath,
+    baseEnv,
+    requestedAccessSourceId,
+    fundedProvider,
+  );
+  return { env: resolved.env, fundedRunTimeoutMs: resolved.fundedRunTimeoutMs };
 }
 
 export async function buildKernelEnv(
   homePath: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
   requestedAccessSourceId?: KernelCredentialAccessSourceId,
+  fundedProvider?: MatrixFundedCredentialProvider,
 ): Promise<Record<string, string | undefined> | undefined> {
-  return (await resolveKernelCredentials(homePath, baseEnv, requestedAccessSourceId)).env;
+  return (await buildKernelCredentialLaunch(
+    homePath,
+    baseEnv,
+    requestedAccessSourceId,
+    fundedProvider,
+  )).env;
 }
 
 export async function resolveKernelCredentialMode(homePath: string): Promise<KernelCredentialMode> {
@@ -164,6 +209,13 @@ export async function resolveKernelCredentialMode(homePath: string): Promise<Ker
 export async function resolveKernelCredentialSources(
   homePath: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
+  fundedProvider?: MatrixFundedCredentialProvider,
 ): Promise<KernelCredentialSources> {
-  return (await resolveKernelCredentials(homePath, baseEnv)).sources;
+  return (await resolveKernelCredentials(
+    homePath,
+    baseEnv,
+    undefined,
+    fundedProvider,
+    false,
+  )).sources;
 }

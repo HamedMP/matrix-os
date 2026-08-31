@@ -63,6 +63,8 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogHost: 'https://eu.i.posthog.com',
     posthogPublicHost: 'https://eu.posthog.com',
     posthogApiHost: '/relay',
+    fundedAiEnabled: 'true',
+    fundedAiRelayUrl: 'https://relay.matrix-os.com',
   };
 
   function runRestoreWithFakeMatrixctl(
@@ -225,6 +227,10 @@ exit 99
     expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=\n');
     expect(rendered).not.toContain('PLATFORM_INTERNAL_URL=\n');
+    expect(rendered).toContain('MATRIX_FUNDED_AI_ENABLED=true');
+    expect(rendered).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.matrix-os.com');
+    expect(rendered).not.toContain('AI_RELAY_CONTROL_TOKEN');
+    expect(rendered).not.toContain('CF_AIG_AUTHORIZATION');
   });
 
   it('never renders shared R2 credentials into customer cloud-init', () => {

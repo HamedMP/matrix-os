@@ -6,6 +6,17 @@ import { Hono } from "hono";
 import { createSettingsRoutes } from "../../packages/gateway/src/routes/settings.js";
 import { buildAgentSettingsView } from "../../packages/gateway/src/agent-config/service.js";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+
+function fundedProvider(): MatrixFundedCredentialProvider {
+  return {
+    enabled: true,
+    maxRunMs: 600_000,
+    getCredential: async () => { throw new Error("settings must not acquire a credential"); },
+    invalidate: () => {},
+    close: () => {},
+  };
+}
 
 function stubChannelManager() {
   return {
@@ -279,6 +290,7 @@ describe("current and legacy Anthropic models", () => {
         ANTHROPIC_API_KEY: "platform-secret",
         MATRIX_FUNDED_AI_ENABLED: "1",
       },
+      fundedCredentialProvider: fundedProvider(),
     });
     try {
       const providerSnapshot = await providerService.getSnapshot();

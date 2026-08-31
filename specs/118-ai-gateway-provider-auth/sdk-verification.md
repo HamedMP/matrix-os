@@ -64,6 +64,7 @@ times.
 | Cloudflare Anthropic streaming | Protocol pass; live Unified Billing blocked | The fake provider proves the Agent SDK's Anthropic streaming and required beta-header behavior through the Matrix-compatible boundary. No Cloudflare gateway credential was available for an external inference call. |
 | Cloudflare privacy / metadata | Contract pass | Funded requests must send `cf-aig-collect-log-payload: false` and `cf-aig-zdr: true`; metadata is allowlisted, content-free, and capped at Cloudflare's five-entry limit. |
 | Cloudflare spend controls | Documentation verified; live enforcement blocked | Gateway rules can scope budgets by model/provider/custom metadata, including split-by-user. They are eventually consistent and are not Matrix's hard customer balance. Matrix remains authoritative for eligibility, add-on credit, and hard admission. |
+| Runtime credential refresh (`0.3.240`) | Pass with bounded-run injection | A loopback Anthropic fixture returned `401` on the first Messages call. `settings.apiKeyHelper` ran again and the same V1 `query()` retried with the replacement token. The undocumented `getHostAuthToken` callback was not invoked for either a normal API-key environment or a host-managed custom environment. Matrix therefore acquires one short-lived runtime credential in the gateway, injects it only into a bounded Agent SDK/Claude CLI run, and reacquires for the next run when the cached credential is inside its safety window. This preserves one in-memory singleflight path instead of executing an external key-helper command with separate cache state. |
 
 ## Frozen provider contracts
 
@@ -104,3 +105,14 @@ times.
   models receive neither field.
 - Results normalize cumulative `modelUsage`, and no-fallback refusals reach the
   shell as a safe generic terminal error.
+- Matrix-funded runtime credentials are fetched from the authenticated,
+  handle-scoped platform endpoint with a five-second acquisition deadline,
+  bounded retry/backoff, response-size cap, exact returned-identity checks,
+  singleflight refresh, expiry jitter, and a near-expiry refusal. The opaque
+  credential is held only in gateway memory and is cleared on shutdown.
+- Funded kernel and Claude CLI runs are capped at ten minutes, which leaves a
+  one-minute safety margin inside the default fifteen-minute credential. There
+  is no fallback to a legacy static Anthropic key or indefinite HMAC relay key.
+- Customer hosts receive only the relay URL, enable flag, and their existing
+  scoped platform verification token in the protected host environment. Relay
+  service tokens and Cloudflare credentials are never provisioned to the VPS.
