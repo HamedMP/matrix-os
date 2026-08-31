@@ -1,4 +1,5 @@
 import { PostHog } from "posthog-node";
+import { instrument, type MCPAnalyticsOptions } from "@posthog/mcp";
 import type { Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 export { MATRIX_TELEMETRY_EVENTS, isMatrixTelemetryEvent, type MatrixTelemetryEvent } from "./events.js";
@@ -29,6 +30,11 @@ export interface CreatePostHogErrorTrackerOptions {
   flushTimeoutMs?: number;
   clientFactory?: (config: PostHogConfig) => PostHogCaptureClient;
   logger?: PostHogLogger;
+  mcpInstrumenter?: (
+    server: unknown,
+    posthog: PostHog,
+    options?: MCPAnalyticsOptions,
+  ) => unknown;
 }
 
 export interface CaptureExceptionOptions {
@@ -38,6 +44,7 @@ export interface CaptureExceptionOptions {
 
 export interface PostHogErrorTracker {
   enabled: boolean;
+  instrumentMcpServer(server: unknown): boolean;
   captureEvent(event: string, options?: CaptureExceptionOptions): Promise<boolean>;
   captureException(error: unknown, options?: CaptureExceptionOptions): Promise<boolean>;
   captureHonoException(error: unknown, c: Context, properties?: PostHogProperties): Promise<boolean>;
@@ -118,6 +125,33 @@ const HOST_ENV_KEYS = ["POSTHOG_HOST", "NEXT_PUBLIC_POSTHOG_HOST"];
 const DEFAULT_CLIENT_ERROR_MESSAGE = "Internal Server Error";
 const MAX_PROPERTY_LENGTH = 512;
 const DEFAULT_POSTHOG_FLUSH_TIMEOUT_MS = 5_000;
+const SAFE_MCP_PROPERTY_KEYS = new Set([
+  "$mcp_client_name",
+  "$mcp_client_version",
+  "$mcp_duration_ms",
+  "$mcp_error_type",
+  "$mcp_is_error",
+  "$mcp_protocol_version",
+  "$mcp_server_name",
+  "$mcp_server_version",
+  "$mcp_source",
+  "$mcp_tool_category",
+  "$mcp_tool_name",
+  "$session_id",
+  "service",
+]);
+
+export function sanitizePostHogMcpEvent<T extends {
+  properties?: Record<string, unknown>;
+}>(event: T): T {
+  const properties = event.properties ?? {};
+  return {
+    ...event,
+    properties: Object.fromEntries(
+      Object.entries(properties).filter(([key]) => SAFE_MCP_PROPERTY_KEYS.has(key)),
+    ),
+  };
+}
 
 export function getPostHogConfig(env: EnvSource = process.env): PostHogConfig | null {
   const token = firstEnv(env, TOKEN_ENV_KEYS);
@@ -181,6 +215,27 @@ export function createPostHogErrorTracker(
 
   return {
     enabled: Boolean(config),
+    instrumentMcpServer(server) {
+      const posthog = getClient();
+      if (!posthog) return false;
+      try {
+        const distinctId = resolveOwnerTelemetryDistinctId(options.env);
+        (options.mcpInstrumenter ?? instrument)(server, posthog as PostHog, {
+          context: false,
+          enableConversationId: false,
+          enableExceptionAutocapture: false,
+          reportMissing: false,
+          ...(distinctId ? { identify: { distinctId } } : {}),
+          eventProperties: () => ({ service: options.service }),
+          beforeSend: sanitizePostHogMcpEvent,
+          logger: () => undefined,
+        });
+        return true;
+      } catch (err: unknown) {
+        logger.warn(`[posthog] Failed to instrument MCP server for ${options.service}: ${errorKind(err)}`);
+        return false;
+      }
+    },
     async captureEvent(event, captureOptions = {}) {
       const posthog = getClient();
       if (!posthog?.capture) return false;

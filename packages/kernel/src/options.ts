@@ -228,6 +228,25 @@ export interface KernelConfig {
   effort?: string;
   maxTurns?: number;
   env?: Record<string, string | undefined>;
+  /** Gateway-owned telemetry hook. Receives MCP server instances, never tool payloads. */
+  instrumentMcpServer?: (server: unknown) => void;
+}
+
+function instrumentConfiguredMcpServer(
+  instrumentMcpServer: KernelConfig["instrumentMcpServer"],
+  configuredServer: unknown,
+): void {
+  if (!instrumentMcpServer || !configuredServer || typeof configuredServer !== "object") return;
+  const instance = (configuredServer as { instance?: unknown }).instance;
+  if (!instance) return;
+  try {
+    instrumentMcpServer(instance);
+  } catch (err: unknown) {
+    console.warn(
+      "[kernel-options] MCP instrumentation failed:",
+      err instanceof Error ? err.name : typeof err,
+    );
+  }
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -245,6 +264,7 @@ export async function kernelOptions(config: KernelConfig) {
   const controls = resolveKernelSdkControls(model, config.effort ?? fileKernel.effort);
 
   const ipcServer = await createIpcServer(db, homePath);
+  instrumentConfiguredMcpServer(config.instrumentMcpServer, ipcServer);
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
   const agents = { ...coreAgents, ...customAgents };
@@ -261,6 +281,7 @@ export async function kernelOptions(config: KernelConfig) {
   if (browserConfig) {
     const browserServer = await tryCreateBrowserServer(homePath, browserConfig);
     if (browserServer) {
+      instrumentConfiguredMcpServer(config.instrumentMcpServer, browserServer);
       mcpServers["matrix-os-browser"] = browserServer;
       browserToolNames.push(...BROWSER_TOOL_NAMES);
     }

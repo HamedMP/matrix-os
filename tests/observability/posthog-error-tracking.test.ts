@@ -16,6 +16,7 @@ import {
   extractPostHogDistinctId,
   installPostHogProcessErrorTracking,
   installPostHogHonoErrorTracking,
+  sanitizePostHogMcpEvent,
 } from "../../packages/observability/src/index.ts";
 
 describe("PostHog error tracking", () => {
@@ -115,6 +116,65 @@ describe("PostHog error tracking", () => {
     expect(tracker.enabled).toBe(false);
     await expect(tracker.captureException(new Error("boom"))).resolves.toBe(false);
     await expect(tracker.captureEvent("host_bundle_release_registered")).resolves.toBe(false);
+    expect(tracker.instrumentMcpServer({})).toBe(false);
+  });
+
+  it("instruments MCP servers without conversation context or exception payloads", () => {
+    const client = {
+      capture: vi.fn(),
+      captureException: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+    };
+    const mcpInstrumenter = vi.fn();
+    const tracker = createPostHogErrorTracker({
+      env: { POSTHOG_TOKEN: "phc_test", MATRIX_USER_ID: "user_123" },
+      service: "matrix-gateway",
+      clientFactory: () => client,
+      mcpInstrumenter,
+    });
+    const server = { name: "matrix-os-ipc" };
+
+    expect(tracker.instrumentMcpServer(server)).toBe(true);
+    expect(mcpInstrumenter).toHaveBeenCalledWith(
+      server,
+      client,
+      expect.objectContaining({
+        context: false,
+        enableConversationId: false,
+        enableExceptionAutocapture: false,
+        reportMissing: false,
+        identify: { distinctId: "user_123" },
+        beforeSend: sanitizePostHogMcpEvent,
+      }),
+    );
+  });
+
+  it("strips MCP parameters, responses, intent, and raw errors before capture", () => {
+    const event = sanitizePostHogMcpEvent({
+      event: "$mcp_tool_call",
+      properties: {
+        $mcp_server_name: "matrix-os-ipc",
+        $mcp_tool_name: "app_data",
+        $mcp_duration_ms: 42,
+        $mcp_is_error: true,
+        $mcp_parameters: { query: "private prompt" },
+        $mcp_response: { content: "owner data" },
+        $mcp_intent: "inspect secret project",
+        $mcp_error_message: "/home/matrix/private/file was not found",
+        $exception_list: [{ value: "private stack" }],
+      },
+    });
+
+    expect(event).toEqual({
+      event: "$mcp_tool_call",
+      properties: {
+        $mcp_server_name: "matrix-os-ipc",
+        $mcp_tool_name: "app_data",
+        $mcp_duration_ms: 42,
+        $mcp_is_error: true,
+      },
+    });
   });
 
   it("captures non-error PostHog events with sanitized properties", async () => {

@@ -548,6 +548,9 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     model: config.model,
     maxTurns: config.maxTurns,
+    instrumentMcpServer: (server) => {
+      posthogErrorTracker.instrumentMcpServer(server);
+    },
     spawnFn: config.spawnFn,
     onAiGeneration: recordAiGeneration,
   });

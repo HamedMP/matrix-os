@@ -39,6 +39,8 @@ export interface DispatchOptions {
       (trace/session id, model, latency, token counts, error category input).
       Never receives message content. Failures are swallowed. */
   onAiGeneration?: (input: AiGenerationInput) => void;
+  /** Shared PostHog wrapper for in-process MCP servers. */
+  instrumentMcpServer?: (server: unknown) => void;
 }
 
 export interface DispatchContext {
@@ -192,6 +194,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         workingDirectory: entry.kernelOverrides?.workingDirectory,
         maxTurns: opts.maxTurns,
         env: await buildKernelEnv(homePath),
+        instrumentMcpServer: opts.instrumentMcpServer,
       };
 
       for await (const event of spawnFn(message, config, entry.abortController)) {
@@ -326,6 +329,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             model: opts.model,
             maxTurns: opts.maxTurns,
             env: await buildKernelEnv(homePath),
+            instrumentMcpServer: opts.instrumentMcpServer,
           };
 
           try {
