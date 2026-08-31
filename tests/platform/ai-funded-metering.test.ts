@@ -866,7 +866,7 @@ describe("funded AI metering", () => {
       .toEqual({ status: "expired" });
   });
 
-  it("charges partial legacy backing after its unattributed promotion expires", async () => {
+  it("expires partially backed legacy usage without recording or debiting an unfunded settlement", async () => {
     const credential = await enableAndFund({ budget: 10, credit: 0 });
     await repo.grantCredit({
       entryId: "protected_addon_credit",
@@ -909,36 +909,28 @@ describe("funded AI metering", () => {
       reservationId: "legacy_settlement_without_backing",
       tokenId: credential.tokenId,
       actualCostMicrousd: 5,
-    })).resolves.toMatchObject({
-      actualCostMicrousd: 5,
-      funding: {
-        creditBalanceMicrousd: 5,
-        addonBalanceMicrousd: 5,
-        settledThisMonthMicrousd: 5,
-        reservedMicrousd: 5,
-        remainingBudgetMicrousd: 0,
-      },
-    });
+    })).rejects.toMatchObject({ code: "reservation_expired" });
 
     const legacy = await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd", "promotional_reserved_microusd", "addon_reserved_microusd"])
       .where("reservation_id", "=", "legacy_settlement_without_backing").executeTakeFirstOrThrow();
     expect(legacy).toEqual({
-      status: "settled",
-      actual_microusd: 5,
+      status: "expired",
+      actual_microusd: null,
       promotional_reserved_microusd: null,
       addon_reserved_microusd: null,
     });
     const legacyUsage = await db.executor.selectFrom("ai_funded_credit_ledger")
       .select(["kind", "amount_microusd"])
       .where("reservation_id", "=", "legacy_settlement_without_backing").execute();
-    expect(legacyUsage.map((row) => [row.kind, Number(row.amount_microusd)]))
-      .toEqual([["addon_debit", -2]]);
+    expect(legacyUsage).toEqual([]);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
-      creditBalanceMicrousd: 5,
+      creditBalanceMicrousd: 7,
       promotionalBalanceMicrousd: 0,
-      addonBalanceMicrousd: 5,
+      addonBalanceMicrousd: 7,
       reservedMicrousd: 5,
+      settledThisMonthMicrousd: 0,
+      remainingBudgetMicrousd: 5,
     });
 
     await repo.startReservation({
@@ -951,10 +943,64 @@ describe("funded AI metering", () => {
       actualCostMicrousd: 5,
     })).resolves.toMatchObject({
       funding: {
-        creditBalanceMicrousd: 0,
-        addonBalanceMicrousd: 0,
+        creditBalanceMicrousd: 2,
+        addonBalanceMicrousd: 2,
         reservedMicrousd: 0,
+        settledThisMonthMicrousd: 5,
+        remainingBudgetMicrousd: 5,
       },
+    });
+  });
+
+  it("expires partially backed legacy usage during cleanup without recording a partial charge", async () => {
+    const credential = await enableAndFund({ budget: 10, credit: 0 });
+    await repo.grantCredit({
+      entryId: "cleanup_protected_addon_credit",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 7,
+      sourceReference: "cleanup-protected-addon",
+    });
+    await repo.authorize({
+      credential: credential.token,
+      requestId: "cleanup_attributed_addon_request",
+      modelId,
+      maxCostMicrousd: 5,
+    });
+    await repo.grantCredit({
+      entryId: "cleanup_legacy_expiring_promotion",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 5,
+      sourceReference: "cleanup-legacy-expiring-promotion",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "cleanup_legacy_partial_backing",
+      requestId: "cleanup_legacy_partial_backing_request",
+      reservedMicrousd: 5,
+      status: "in_flight",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(1);
+
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "actual_microusd"])
+      .where("reservation_id", "=", "cleanup_legacy_partial_backing").executeTakeFirstOrThrow())
+      .toEqual({ status: "expired", actual_microusd: null });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select("kind").where("reservation_id", "=", "cleanup_legacy_partial_backing").execute())
+      .toEqual([]);
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      creditBalanceMicrousd: 7,
+      promotionalBalanceMicrousd: 0,
+      addonBalanceMicrousd: 7,
+      reservedMicrousd: 5,
+      settledThisMonthMicrousd: 0,
+      remainingBudgetMicrousd: 5,
     });
   });
 

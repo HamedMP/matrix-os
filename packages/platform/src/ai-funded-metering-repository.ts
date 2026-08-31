@@ -640,13 +640,11 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           checkedAt,
         );
       }
-      // Legacy rows charge every unprotected source still available; provider
-      // actuals continue to count in full against the monthly usage budget.
+      // Legacy rows have no trustworthy source allocation. If their complete
+      // provider actual is no longer backed, close the hold without recording
+      // usage or debiting only a misleading fraction of the charge.
       const chargedMicrousd = appliedPromotionalDebit + addonDebit;
-      if (!attributed && request.actualCostMicrousd > 0 && chargedMicrousd === 0) {
-        // The reservation predates source attribution and its inferred
-        // backing is entirely gone. Close the hold without charging a protected
-        // bucket or recording a debit for credit that does not exist.
+      if (!attributed && chargedMicrousd !== request.actualCostMicrousd) {
         await expireReservationHold(trx.executor, reservation, checkedAt);
         return null;
       }
@@ -832,6 +830,21 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .orderBy("expires_at").orderBy("reservation_id").limit(limit).forUpdate().skipLocked().execute();
       let cleaned = 0;
       for (const reservation of expired) {
+        const reservationIdentity = {
+          ownerId: reservation.owner_id,
+          machineId: reservation.machine_id,
+          runtimeSlot: reservation.runtime_slot,
+        };
+        if (reservation.status === "in_flight") {
+          // Preserve explicit grant allocations while the reservation remains
+          // active, but retire expired, unattributed legacy backing before
+          // choosing debit sources for conservative cleanup settlement.
+          await reconcileExpiredPromotionalCredit(
+            trx.executor,
+            reservationIdentity,
+            checkedAt,
+          );
+        }
         const claimedStatus = reservation.status === "in_flight" ? "settling" : "expired";
         const claimed = await trx.executor.updateTable("ai_funded_usage_reservations")
           .set({ status: claimedStatus }).where("reservation_id", "=", reservation.reservation_id)
@@ -846,11 +859,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           updated_at: checkedAt,
         }).where("machine_id", "=", reservation.machine_id).returningAll().executeTakeFirstOrThrow();
         if (reservation.status === "in_flight") {
-          const reservationIdentity = {
-            ownerId: reservation.owner_id,
-            machineId: reservation.machine_id,
-            runtimeSlot: reservation.runtime_slot,
-          };
           const { promotionalDebit, addonDebit, attributed } = await reservationDebitSplit(
             trx.executor,
             reservationIdentity,
@@ -874,9 +882,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
               checkedAt,
             );
           }
-          // Cleanup uses the same partial-backing rule as explicit settlement.
+          // Cleanup must preserve the same all-or-nothing funding invariant as
+          // explicit settlement for legacy reservations.
           const chargedMicrousd = appliedPromotionalDebit + addonDebit;
-          if (!attributed && chargedMicrousd === 0) {
+          if (!attributed && chargedMicrousd !== reserved) {
             await expireReservationHold(trx.executor, reservation, checkedAt);
             continue;
           }
