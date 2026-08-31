@@ -766,6 +766,48 @@ describe("funded AI metering", () => {
     ]);
   });
 
+  it("expires a legacy settlement whose unattributed promotion expired before debit selection", async () => {
+    const credential = await enableAndFund({ budget: 5, credit: 0 });
+    await repo.grantCredit({
+      entryId: "legacy_direct_expiring_credit",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 5,
+      sourceReference: "legacy-direct-expiring",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "legacy_direct_settlement",
+      requestId: "legacy_direct_settlement_request",
+      reservedMicrousd: 5,
+      status: "in_flight",
+      expiresAt: "2026-08-30T20:10:00.000Z",
+    });
+
+    // No summary, authorization, or cleanup call reconciles the grant first.
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    await expect(repo.settleReservation({
+      reservationId: "legacy_direct_settlement",
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 5,
+    })).rejects.toMatchObject({ code: "reservation_expired" });
+
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "actual_microusd"])
+      .where("reservation_id", "=", "legacy_direct_settlement").executeTakeFirstOrThrow())
+      .toEqual({ status: "expired", actual_microusd: null });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select("kind").where("reservation_id", "=", "legacy_direct_settlement").execute())
+      .toEqual([]);
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      creditBalanceMicrousd: 0,
+      promotionalBalanceMicrousd: 0,
+      reservedMicrousd: 0,
+      settledThisMonthMicrousd: 0,
+    });
+  });
+
   it("expires an unfunded legacy in-flight reservation without poisoning cleanup", async () => {
     const credential = await enableAndFund({ budget: 5, credit: 0 });
     await repo.grantCredit({

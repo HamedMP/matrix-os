@@ -583,6 +583,19 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       }
       const reserved = exactInteger(reservation.reserved_microusd);
       if (request.actualCostMicrousd > reserved) throw new AiFundedPolicyError("over_settlement");
+      const reservationIdentity = {
+        ownerId: reservation.owner_id,
+        machineId: reservation.machine_id,
+        runtimeSlot: reservation.runtime_slot,
+      };
+      // Reconcile while the locked reservation is still active so explicit
+      // per-grant allocations remain protected. Legacy NULL attribution has no
+      // such protection, making expired backing unavailable before debit split.
+      await reconcileExpiredPromotionalCredit(
+        trx.executor,
+        reservationIdentity,
+        checkedAt,
+      );
       const claimed = await trx.executor.updateTable("ai_funded_usage_reservations")
         .set({ status: "settling" }).where("reservation_id", "=", reservation.reservation_id)
         .where("status", "=", "in_flight").returning("reservation_id").executeTakeFirst();
@@ -604,11 +617,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
         updated_at: checkedAt,
       }).where("machine_id", "=", locator.machine_id).returningAll().executeTakeFirstOrThrow();
-      const reservationIdentity = {
-        ownerId: reservation.owner_id,
-        machineId: reservation.machine_id,
-        runtimeSlot: reservation.runtime_slot,
-      };
       const { promotionalDebit, addonDebit, attributed } = await reservationDebitSplit(
         trx.executor,
         reservationIdentity,
