@@ -14,7 +14,13 @@ function isStripeCheckoutUrl(value: unknown): value is string {
   try {
     const url = new URL(value);
     return url.protocol === "https:" && url.hostname === "checkout.stripe.com";
-  } catch {
+  } catch (error) {
+    if (!(error instanceof TypeError)) {
+      console.warn(
+        "[ai-credit] Checkout URL validation failed:",
+        error instanceof Error ? error.name : typeof error,
+      );
+    }
     return false;
   }
 }
@@ -51,7 +57,13 @@ async function readBoundedCheckoutResponse(response: Response): Promise<unknown>
   }
   try {
     return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-  } catch {
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn(
+        "[ai-credit] Checkout response decoding failed:",
+        error instanceof Error ? error.name : typeof error,
+      );
+    }
     throw new AiCreditCheckoutError();
   }
 }
