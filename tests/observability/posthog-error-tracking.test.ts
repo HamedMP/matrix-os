@@ -670,7 +670,7 @@ describe("PostHog error tracking", () => {
     expect(billingPanel).toContain('"checkout_intent"');
     expect(billingPanel).toContain('"checkout_stripe_available"');
     expect(billingPanel).toContain('"checkout_error"');
-    expect(billingPanel).toContain("selected_hetzner_type");
+    expect(billingPanel).not.toContain("selected_hetzner_type");
     expect(billingPanel).toContain("selected_region_slug");
     expect(billingPanel).not.toContain("cardNumber");
     expect(billingPanel).not.toContain("terminalData");

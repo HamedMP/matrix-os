@@ -1400,19 +1400,26 @@ describe('platform billing routes', () => {
     const res = await app.request('/billing/status', { method: 'GET' });
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({
+    const body = await res.json();
+    expect(body).toMatchObject({
       entitlement: {
         source: 'override',
         planSlug: 'internal',
         status: 'active',
         maxRuntimeSlots: 3,
-        defaultServerType: 'cpx52',
+        allowedPlanSlugs: ['matrix_starter', 'matrix_builder', 'matrix_max'],
+        portalAvailable: false,
       },
       access: {
         runtimeProxyAllowed: true,
         reason: 'active',
       },
     });
+    expect(body.entitlement).not.toHaveProperty('clerkUserId');
+    expect(body.entitlement).not.toHaveProperty('defaultServerType');
+    expect(body.entitlement).not.toHaveProperty('allowedServerTypes');
+    expect(body.entitlement).not.toHaveProperty('stripeSubscriptionId');
+    expect(body.entitlement).not.toHaveProperty('stripePriceId');
   });
 
   it('returns the generic unavailable code when billing status lookup fails', async () => {
@@ -1596,11 +1603,21 @@ describe('platform billing routes', () => {
     const studio = await statusApp.request('/billing/status?runtimeSlot=studio');
 
     await expect(primary.json()).resolves.toMatchObject({
-      entitlement: { stripeSubscriptionId: 'sub_primary', planSlug: 'matrix_starter', status: 'active' },
+      entitlement: {
+        planSlug: 'matrix_starter',
+        status: 'active',
+        allowedPlanSlugs: ['matrix_starter'],
+        portalAvailable: true,
+      },
       access: { runtimeProxyAllowed: true },
     });
     await expect(studio.json()).resolves.toMatchObject({
-      entitlement: { stripeSubscriptionId: 'sub_studio', planSlug: 'matrix_max', status: 'canceled' },
+      entitlement: {
+        planSlug: 'matrix_max',
+        status: 'canceled',
+        allowedPlanSlugs: ['matrix_starter', 'matrix_builder', 'matrix_max'],
+        portalAvailable: true,
+      },
       access: { runtimeProxyAllowed: false },
     });
     await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({ status: 'active' });

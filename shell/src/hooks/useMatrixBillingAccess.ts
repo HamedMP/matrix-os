@@ -1,6 +1,10 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
+import {
+  MatrixBillingPublicEntitlementSchema,
+  type MatrixBillingPublicEntitlement,
+} from "@matrix-os/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { hasMatrixBillingAccess } from "@/lib/billing";
 
@@ -36,27 +40,7 @@ export type BillingTrialOffer = {
   durationDays: number;
 };
 
-export type BillingEntitlementSummary = {
-  source: "stripe" | "override";
-  planSlug: "matrix_starter" | "matrix_builder" | "matrix_max" | "internal";
-  status: string;
-  maxRuntimeSlots: number;
-  includedRuntimeSlots: number;
-  addonRuntimeSlots: number;
-  defaultServerType: string;
-  allowedServerTypes: string[];
-  stripeSubscriptionId: string | null;
-  stripePriceId: string | null;
-  billingInterval?: "monthly" | "annual" | null;
-  gracePeriodEndsAt: string | null;
-  trialStartedAt?: string | null;
-  trialEndsAt?: string | null;
-  trialConvertedAt?: string | null;
-  firstTrialPaymentFailedAt?: string | null;
-  effectiveFrom: string;
-  effectiveUntil: string | null;
-  updatedAt: string;
-};
+export type BillingEntitlementSummary = MatrixBillingPublicEntitlement;
 
 type BillingAccessRemoteState = {
   active: boolean | null;
@@ -114,12 +98,14 @@ export function useMatrixBillingAccess(): BillingAccessState {
         maxRuntimeSlots: 1,
         includedRuntimeSlots: 1,
         addonRuntimeSlots: 0,
-        defaultServerType: "",
-        allowedServerTypes: [],
-        stripeSubscriptionId: "sub_e2e_active",
-        stripePriceId: "price_e2e_active",
+        allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+        portalAvailable: true,
         billingInterval: "monthly",
         gracePeriodEndsAt: null,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialConvertedAt: null,
+        firstTrialPaymentFailedAt: null,
         effectiveFrom: "2026-08-31T00:00:00.000Z",
         effectiveUntil: null,
         updatedAt: "2026-08-31T00:00:00.000Z",
@@ -292,12 +278,16 @@ function readRemoteBillingStatus(
       }
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
-        entitlement?: BillingEntitlementSummary | null;
+        entitlement?: unknown;
         trialOffer?: { eligible?: unknown; durationDays?: unknown };
       };
+      const parsedEntitlement = body.entitlement === null || body.entitlement === undefined
+        ? null
+        : MatrixBillingPublicEntitlementSchema.safeParse(body.entitlement);
+      if (parsedEntitlement && !parsedEntitlement.success) throw new Error("billing_status_invalid");
       return {
         active: body.access?.runtimeProxyAllowed === true,
-        entitlement: body.entitlement ?? null,
+        entitlement: parsedEntitlement?.data ?? null,
         trialOffer: parseBillingTrialOffer(body.trialOffer),
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
         accessIssue: null,

@@ -1,6 +1,7 @@
 import {
   MATRIX_HOSTED_BILLING_PLANS,
   MATRIX_HOSTED_MACHINE_PROFILES,
+  type MatrixBillingPublicEntitlement,
   type MatrixHostedBillingRegionSlug,
 } from '@matrix-os/contracts';
 
@@ -118,6 +119,44 @@ export interface RuntimeAccessDecision {
   runtimeProxyAllowed: boolean;
   reason: 'active' | 'grace_period' | 'payment_required' | 'no_entitlement';
   gracePeriodEndsAt?: string | null;
+}
+
+export function projectPublicBillingEntitlement(
+  entitlement: BillingEntitlement,
+  runtimeCatalog: RuntimeCatalog,
+): MatrixBillingPublicEntitlement {
+  const entitledPlan = entitlement.source === 'stripe' && entitlement.planSlug !== 'internal'
+    ? getPlanDefinition(entitlement.planSlug)
+    : undefined;
+  const allowedServerTypes = new Set(entitlement.allowedServerTypes.map((serverType) => serverType.toLowerCase()));
+  const allowedPlanSlugs = entitledPlan
+    ? DEFAULT_BILLING_PLAN_DEFINITIONS
+      .filter((plan) => plan.rank <= entitledPlan.rank)
+      .map((plan) => plan.slug)
+    : DEFAULT_BILLING_PLAN_DEFINITIONS
+      .filter((plan) => resolveServerTypes(runtimeCatalog, plan.defaultCatalogSku)
+        .some((serverType) => allowedServerTypes.has(serverType.toLowerCase())))
+      .map((plan) => plan.slug);
+
+  return {
+    source: entitlement.source,
+    planSlug: entitlement.planSlug,
+    status: entitlement.status,
+    maxRuntimeSlots: entitlement.maxRuntimeSlots,
+    includedRuntimeSlots: entitlement.includedRuntimeSlots,
+    addonRuntimeSlots: entitlement.addonRuntimeSlots,
+    allowedPlanSlugs,
+    portalAvailable: entitlement.source === 'stripe' && entitlement.stripeSubscriptionId !== null,
+    billingInterval: entitlement.billingInterval ?? null,
+    gracePeriodEndsAt: entitlement.gracePeriodEndsAt,
+    trialStartedAt: entitlement.trialStartedAt ?? null,
+    trialEndsAt: entitlement.trialEndsAt ?? null,
+    trialConvertedAt: entitlement.trialConvertedAt ?? null,
+    firstTrialPaymentFailedAt: entitlement.firstTrialPaymentFailedAt ?? null,
+    effectiveFrom: entitlement.effectiveFrom,
+    effectiveUntil: entitlement.effectiveUntil,
+    updatedAt: entitlement.updatedAt,
+  };
 }
 
 export const DEFAULT_BILLING_PLAN_DEFINITIONS: BillingPlanDefinition[] =

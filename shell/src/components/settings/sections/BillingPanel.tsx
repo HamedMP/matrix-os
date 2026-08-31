@@ -23,9 +23,12 @@ import {
   XCircleIcon,
 } from "@/lib/hugeicons";
 import { useUser } from "@clerk/nextjs";
+import type {
+  MatrixHostedBillingPlanSlug,
+  MatrixHostedBillingRegionSlug,
+} from "@matrix-os/contracts";
 import {
   getClosestMatrixRegionSlug,
-  MATRIX_BILLING_MACHINE_PROFILES,
   MATRIX_BILLING_REGIONS,
   MATRIX_BILLING_SERVER_PROFILES,
   resolveMatrixServerProfile,
@@ -55,8 +58,8 @@ function preselectedFeatureSlug(selectedPlan: unknown): string | null {
 
 export type BillingPanelMode = "settings" | "provisioning" | "device-setup" | "add-computer";
 export type ComputerSetupSelection = {
-  serverType: string;
-  location: string;
+  planSlug: MatrixHostedBillingPlanSlug;
+  regionSlug: MatrixHostedBillingRegionSlug;
   developerTools: DeveloperToolId[];
 };
 type BillingInterval = "monthly" | "annual";
@@ -90,13 +93,11 @@ type BillingTelemetryProperties = {
   mode: BillingPanelMode;
   billing_state: "active" | "inactive" | "checking";
   selected_profile_slug: string;
-  selected_hetzner_type: string;
   selected_billing_interval: BillingInterval;
   selected_monthly_price_usd?: string;
   selected_annual_price_usd?: string;
   selected_price_usd?: string;
   selected_region_slug: string;
-  selected_region_location: string;
   selected_region_zone: string;
 };
 
@@ -189,8 +190,8 @@ function CheckoutPanel({
 
   async function startCheckout() {
     const selection = {
-      serverType: selectedProfile.hetznerType.toLowerCase(),
-      location: selectedRegion.location,
+      planSlug: selectedProfile.planSlug,
+      regionSlug: selectedRegion.featureSlug,
       developerTools: [...developerTools],
     };
     const checkoutAllowed = onCheckoutIntent?.(selection) !== false;
@@ -218,19 +219,20 @@ function CheckoutPanel({
           planSlug,
           interval: billingInterval,
           regionSlug,
-          serverType: selection.serverType,
           developerTools,
           ...(checkoutRuntimeSlot ? { runtimeSlot: checkoutRuntimeSlot } : {}),
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),
       });
-      const body = (await response.json().catch((err: unknown) => {
-        captureBillingTelemetry("checkout_response_parse_error", {
-          ...telemetryPropertiesRef.current,
-          error_kind: err instanceof Error ? err.name : typeof err,
-        });
-        return null;
-      })) as { code?: unknown; selection?: unknown; url?: unknown } | null;
+      const body = response.ok || response.status === 409
+        ? (await response.json().catch((err: unknown) => {
+          captureBillingTelemetry("checkout_response_parse_error", {
+            ...telemetryPropertiesRef.current,
+            error_kind: err instanceof Error ? err.name : typeof err,
+          });
+          return null;
+        })) as { code?: unknown; selection?: unknown; url?: unknown } | null
+        : null;
       if (!response.ok) {
         if (response.status === 409 && body?.code === "checkout_selection_conflict") {
           const message = checkoutSelectionConflictMessage(body.selection);
@@ -332,7 +334,7 @@ function BillingPortalButton({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const portalAvailable = entitlement?.source === "stripe" && Boolean(entitlement.stripeSubscriptionId);
+  const portalAvailable = entitlement?.portalAvailable === true;
 
   async function openPortal() {
     if (!portalAvailable) return;
@@ -348,13 +350,15 @@ function BillingPortalButton({
         headers: { accept: "application/json" },
         signal: controller.signal,
       });
-      const body = (await response.json().catch((err: unknown) => {
-        capturePostHogLog("warn", "billing portal_response_parse_error", {
-          source: "settings-billing",
-          error_kind: err instanceof Error ? err.name : typeof err,
-        });
-        return null;
-      })) as { url?: string } | null;
+      const body = response.ok
+        ? (await response.json().catch((err: unknown) => {
+          capturePostHogLog("warn", "billing portal_response_parse_error", {
+            source: "settings-billing",
+            error_kind: err instanceof Error ? err.name : typeof err,
+          });
+          return null;
+        })) as { url?: string } | null
+        : null;
       if (!response.ok || !body?.url) {
         // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the throw inside try/catch; intentional control flow routing an unusable portal response into the catch handler. The code is correct.
         throw new Error("portal_unavailable");
@@ -407,12 +411,7 @@ function ActiveBillingPanel({
   const planName = entitlement ? billingPlanNames[entitlement.planSlug] ?? entitlement.planSlug : "Active";
   const status = entitlement?.status ? formatStatus(entitlement.status) : accessReason === "legacy_clerk_plan" ? "Legacy plan" : "Active";
   const allowedProfiles = MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>
-    (entitlement?.allowedServerTypes ?? []).some((serverType) =>
-      MATRIX_BILLING_MACHINE_PROFILES.some(
-        (machine) => machine.planSlug === profile.planSlug
-          && machine.serverType === serverType.toLowerCase(),
-      ),
-    ),
+    entitlement?.allowedPlanSlugs.includes(profile.planSlug) === true,
   );
   const totalComputers = entitlement?.maxRuntimeSlots ?? 1;
   const includedComputers = entitlement?.includedRuntimeSlots ?? 1;
@@ -1053,12 +1052,7 @@ function BillingPanelInner({
     : null;
   const allowedProfiles = checkoutBypassed
     ? MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>
-        entitlement.allowedServerTypes.some(
-          (serverType) => MATRIX_BILLING_MACHINE_PROFILES.some(
-            (machine) => machine.planSlug === profile.planSlug
-              && machine.serverType === serverType.toLowerCase(),
-          ),
-        ),
+        entitlement.allowedPlanSlugs.includes(profile.planSlug),
       )
     : MATRIX_BILLING_SERVER_PROFILES;
   const selectedRegion =
@@ -1079,13 +1073,11 @@ function BillingPanelInner({
       mode,
       billing_state: active === null ? "checking" : active ? "active" : "inactive",
       selected_profile_slug: selectedProfile.featureSlug,
-      selected_hetzner_type: selectedProfile.hetznerType,
       selected_billing_interval: billingInterval,
       selected_monthly_price_usd: selectedProfile.monthlyPriceUsd ?? undefined,
       selected_annual_price_usd: selectedProfile.annualPriceUsd ?? undefined,
       selected_price_usd: profilePrice(selectedProfile, billingInterval) || undefined,
       selected_region_slug: selectedRegion.featureSlug,
-      selected_region_location: selectedRegion.location,
       selected_region_zone: selectedRegion.networkZone,
     }),
     [active, billingInterval, mode, selectedProfile, selectedRegion],
@@ -1116,7 +1108,6 @@ function BillingPanelInner({
     captureBillingTelemetry("profile_select", {
       ...telemetryProperties,
       selected_profile_slug: nextProfile.featureSlug,
-      selected_hetzner_type: nextProfile.hetznerType,
       selected_monthly_price_usd: nextProfile.monthlyPriceUsd ?? undefined,
       selected_annual_price_usd: nextProfile.annualPriceUsd ?? undefined,
       selected_price_usd: profilePrice(nextProfile, billingInterval) || undefined,
@@ -1132,7 +1123,6 @@ function BillingPanelInner({
     captureBillingTelemetry("region_select", {
       ...telemetryProperties,
       selected_region_slug: nextRegion.featureSlug,
-      selected_region_location: nextRegion.location,
       selected_region_zone: nextRegion.networkZone,
     });
   };

@@ -189,10 +189,8 @@ describe("BillingSection", () => {
           maxRuntimeSlots: 1,
           includedRuntimeSlots: 1,
           addonRuntimeSlots: 0,
-          defaultServerType: "cpx32",
-          allowedServerTypes: ["cpx22", "cpx32"],
-          stripeSubscriptionId: "sub_trial",
-          stripePriceId: "price_builder_monthly",
+          allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+          portalAvailable: true,
           billingInterval: "monthly",
           gracePeriodEndsAt: null,
           trialStartedAt: "2026-08-19T00:00:00.000Z",
@@ -227,8 +225,7 @@ describe("BillingSection", () => {
         entitlement: {
           source: "stripe", planSlug: "matrix_builder", status: "past_due",
           maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
-          defaultServerType: "cpx32", allowedServerTypes: ["cpx22", "cpx32"],
-          stripeSubscriptionId: "sub_trial", stripePriceId: "price_builder_monthly",
+          allowedPlanSlugs: ["matrix_starter", "matrix_builder"], portalAvailable: true,
           billingInterval: "monthly", gracePeriodEndsAt: null,
           trialStartedAt: "2026-08-19T00:00:00.000Z", trialEndsAt: "2026-08-26T00:00:00.000Z",
           trialConvertedAt: null, firstTrialPaymentFailedAt: "2026-08-26T00:00:00.000Z",
@@ -350,7 +347,7 @@ describe("BillingSection", () => {
     await waitForBillingConfigurator();
   });
 
-  it("sends the selected US machine shape and preinstalled agents to monthly checkout", async () => {
+  it("sends only the selected Matrix plan, region, and agents to monthly checkout", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -380,7 +377,6 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_ash",
-            serverType: "cpx31",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
           }),
         }),
@@ -474,7 +470,6 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
-            serverType: "cpx42",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
           }),
@@ -713,14 +708,14 @@ describe("BillingSection", () => {
             maxRuntimeSlots: 3,
             includedRuntimeSlots: 2,
             addonRuntimeSlots: 1,
-            // Billing defaults are an internal admission/provisioning detail.
-            // They can differ from the customer's regional machine (US Builder
-            // is cpx31 while this entitlement default is the EU cpx42).
-            defaultServerType: "cpx42",
-            allowedServerTypes: ["cpx42", "cpx31"],
-            stripeSubscriptionId: "sub_123",
-            stripePriceId: "price_123",
+            allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+            portalAvailable: true,
+            billingInterval: "monthly",
             gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+            trialStartedAt: null,
+            trialEndsAt: null,
+            trialConvertedAt: null,
+            firstTrialPaymentFailedAt: null,
             effectiveFrom: "2026-05-30T00:00:00.000Z",
             effectiveUntil: null,
             updatedAt: "2026-05-30T00:00:00.000Z",

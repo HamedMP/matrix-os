@@ -41,6 +41,7 @@ import {
   loadStripePriceCatalog,
   parseBillingEntitlementRecord,
   parseBillingOverrideRecord,
+  projectPublicBillingEntitlement,
   resolveServerType,
   type BillingEntitlementStatus,
   type BillingEntitlement,
@@ -794,7 +795,13 @@ export function createBillingRoutes(options: {
         eligible: reservedTrialDays !== null || (offerEligible && !activeAttempt),
         durationDays: reservedTrialDays ?? cardTrialDays,
       };
-      return c.json({ entitlement, access, trialOffer }, 200);
+      return c.json({
+        entitlement: entitlement
+          ? projectPublicBillingEntitlement(entitlement, loadRuntimeCatalog(env))
+          : null,
+        access,
+        trialOffer,
+      }, 200);
     } catch (err: unknown) {
       console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);

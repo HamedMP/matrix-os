@@ -28,6 +28,7 @@ export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
 export * from "#ai-provider";
 export * from "#billing-catalog";
 export * from "#ai-provider";
+export * from "#billing-public";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";

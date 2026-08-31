@@ -1,5 +1,10 @@
 import { CreditCard, ExternalLink } from "@renderer/lib/hugeicons";
-import { closestMatrixRegionSlug } from "@matrix-os/contracts";
+import {
+  MatrixBillingStatusSchema,
+  closestMatrixRegionSlug,
+  type MatrixBillingPublicEntitlement,
+  type MatrixBillingStatus,
+} from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { z } from "zod/v4";
 import { Button } from "../../../design/primitives";
@@ -7,50 +12,14 @@ import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
 import { Card, Row, SettingsSectionHeader } from "./section-kit";
 
-const BillingEntitlementSchema = z
-  .object({
-    source: z.enum(["stripe", "override"]),
-    clerkUserId: z.string().min(1).max(128),
-    planSlug: z.string().min(1).max(64),
-    status: z.string().min(1).max(64),
-    maxRuntimeSlots: z.number().int().nonnegative(),
-    includedRuntimeSlots: z.number().int().nonnegative(),
-    addonRuntimeSlots: z.number().int().nonnegative(),
-    defaultServerType: z.string().min(1).max(64),
-    allowedServerTypes: z.array(z.string().min(1).max(64)).max(16),
-    stripeSubscriptionId: z.string().max(256).nullable(),
-    stripePriceId: z.string().max(256).nullable(),
-    gracePeriodEndsAt: z.string().max(64).nullable(),
-    effectiveFrom: z.string().max(64),
-    effectiveUntil: z.string().max(64).nullable(),
-    updatedAt: z.string().max(64),
-  })
-  .strict();
+const BillingRedirectSchema = z.strictObject({
+  url: z
+    .url()
+    .max(2048)
+    .refine((url) => new URL(url).protocol === "https:", "Billing redirects must use HTTPS"),
+});
 
-const BillingStatusSchema = z
-  .object({
-    entitlement: BillingEntitlementSchema.nullable(),
-    access: z
-      .object({
-        runtimeProxyAllowed: z.boolean(),
-        reason: z.string().max(128).optional(),
-      })
-      .passthrough(),
-  })
-  .passthrough();
-
-const BillingRedirectSchema = z
-  .object({
-    url: z
-      .string()
-      .url()
-      .max(2048)
-      .refine((url) => new URL(url).protocol === "https:", "Billing redirects must use HTTPS"),
-  })
-  .strict();
-
-type BillingEntitlement = z.infer<typeof BillingEntitlementSchema>;
-type BillingStatus = z.infer<typeof BillingStatusSchema>;
+type BillingEntitlement = MatrixBillingPublicEntitlement;
 type BillingInterval = "monthly";
 type BillingPlan = "matrix_starter" | "matrix_builder" | "matrix_max";
 type BillingRegion = "region_fsn1" | "region_nbg1" | "region_ash" | "region_hil";
@@ -142,7 +111,7 @@ async function openBillingUrl(url: string): Promise<void> {
 
 function useBillingStatus() {
   const api = useConnection((s) => s.api);
-  const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [status, setStatus] = useState<MatrixBillingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -157,7 +126,7 @@ function useBillingStatus() {
     setError(false);
     try {
       const raw = await api.get<unknown>("/billing/status");
-      const parsed = BillingStatusSchema.parse(raw);
+      const parsed = MatrixBillingStatusSchema.parse(raw);
       setStatus(parsed);
     } catch (err: unknown) {
       console.warn("[billing] status unavailable:", err instanceof Error ? err.message : String(err));
@@ -187,7 +156,7 @@ export default function BillingSection() {
 
   const active = status?.access.runtimeProxyAllowed === true;
   const entitlement = status?.entitlement ?? null;
-  const portalAvailable = entitlement?.source === "stripe" && Boolean(entitlement.stripeSubscriptionId);
+  const portalAvailable = entitlement?.portalAvailable === true;
   const settingsUrl = useMemo(() => {
     const base = platformHost.startsWith("https://") ? platformHost : "https://app.matrix-os.com";
     return `${base.replace(/\/$/, "")}/?billing=setup`;

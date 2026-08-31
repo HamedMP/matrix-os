@@ -1953,7 +1953,7 @@ describe("platform proxy routing", () => {
     });
   });
 
-  it("passes a directly selected empty developer tool list to hosted runtime provisioning", async () => {
+  it("resolves a public US Builder selection to the provider machine server-side", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -1993,8 +1993,8 @@ describe("platform proxy routing", () => {
       body: JSON.stringify({
         runtime: "research-lab",
         developerTools: [],
-        serverType: "cpx22",
-        location: "hil",
+        planSlug: "matrix_builder",
+        regionSlug: "region_ash",
       }),
     });
 
@@ -2004,8 +2004,8 @@ describe("platform proxy routing", () => {
       clerkUserId: "user_new_tools",
       runtimeSlot: "research-lab",
       developerTools: [],
-      serverType: "cpx22",
-      location: "hil",
+      serverType: "cpx31",
+      location: "ash",
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2125,8 +2125,8 @@ describe("platform proxy routing", () => {
       body: JSON.stringify({
         runtime: "research-lab",
         developerTools: ["codex"],
-        serverType: "cpx22",
-        location: "fsn1",
+        planSlug: "matrix_starter",
+        regionSlug: "region_fsn1",
       }),
     });
 
