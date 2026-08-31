@@ -1085,6 +1085,18 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     [apps, desktopMode],
   );
 
+  const reconcileLauncherApps = useCallback((apiApps: ApiAppEntry[]) => {
+    const { next, apiPaths } = reconcileDesignApps({
+      current: useWindowManager.getState().apps,
+      apiApps,
+      previousApiPaths: designApiPathsRef.current,
+      normalizePath: (path) => normalizeBuiltInAppPath(path.replace(/^\/files\//, "")),
+      iconUrlFor: (app) => iconUrlForSlug(app.icon ?? app.slug),
+    });
+    designApiPathsRef.current = apiPaths;
+    wmSetApps(next);
+  }, [wmSetApps]);
+
   const openLauncherDestination = useCallback((name: string, path: string) => {
     if (path === "__settings__" || path === "__plugins__") {
       setSettingsDefaultSection(path === "__plugins__" ? "integrations" : "appearance");
@@ -1611,6 +1623,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               chat?.requestComposerDraft("/matrix-app-builder ");
             }}
             onAddToDesktop={addDesktopIcon}
+            onAppsRefreshed={reconcileLauncherApps}
           />
 
           {desktopMode === "canvas" && (

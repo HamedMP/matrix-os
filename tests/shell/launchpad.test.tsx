@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MissionControl } from "../../shell/src/components/MissionControl.js";
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
@@ -9,6 +10,7 @@ import {
   computeLaunchpadRows,
 } from "../../shell/src/components/launchpad/launchpad-utils.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
+import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
 vi.mock("@/hooks/useTaskBoard", () => ({
   useTaskBoard: () => ({
@@ -42,6 +44,7 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
     onRemoveFromCanvas: vi.fn(),
     onCreateApp: vi.fn(),
     onAddToDesktop: vi.fn(),
+    onAppsRefreshed: vi.fn(),
   };
   const props = {
     apps: opts.apps ?? defaultApps,
@@ -50,12 +53,22 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
     ...handlers,
   };
   let result!: ReturnType<typeof render>;
+  const queryClient = createShellQueryClient();
+  queryClient.setDefaultOptions({ queries: { retry: false } });
   await act(async () => {
-    result = render(<MissionControl open={false} {...props} />);
+    result = render(
+      <QueryClientProvider client={queryClient}>
+        <MissionControl open={false} {...props} />
+      </QueryClientProvider>,
+    );
     await Promise.resolve();
   });
   await act(async () => {
-    result.rerender(<MissionControl open {...props} />);
+    result.rerender(
+      <QueryClientProvider client={queryClient}>
+        <MissionControl open {...props} />
+      </QueryClientProvider>,
+    );
     await Promise.resolve();
   });
   return { ...result, handlers };
@@ -83,12 +96,45 @@ describe("Launchpad (macos-glass launcher)", () => {
       cb(0);
       return 0;
     });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     document.body.style.overflow = "";
     act(() => useWindowManager.setState({ appLaunchTimes: {} }));
+  });
+
+  it("keeps current apps visible until the launcher refresh completes", async () => {
+    let resolveResponse!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(() => response));
+
+    const { handlers } = await renderLauncher();
+
+    expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
+    expect(handlers.onAppsRefreshed).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveResponse(new Response(JSON.stringify([{
+        name: "Fresh App",
+        path: "/files/apps/fresh/index.html",
+        slug: "fresh",
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+      await response;
+    });
+
+    await waitFor(() => expect(handlers.onAppsRefreshed).toHaveBeenCalledWith([{
+      name: "Fresh App",
+      path: "/files/apps/fresh/index.html",
+      slug: "fresh",
+    }]));
   });
 
   it.each(["flat", "macos-glass"])(

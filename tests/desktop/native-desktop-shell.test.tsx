@@ -14,6 +14,7 @@ import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { useDesktopAppDrawer } from "@desktop/renderer/src/stores/desktop-app-drawer";
 import { useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
+import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
 
 const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
@@ -71,6 +72,7 @@ beforeEach(() => {
   useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
   useDesktopAppDrawer.setState(useDesktopAppDrawer.getInitialState(), true);
   useDesktopIcons.setState(useDesktopIcons.getInitialState(), true);
+  desktopQueryClient.clear();
   useNativeDesktopMode.setState({ hydrated: true });
   window.operator = {
     invoke: vi.fn(async (channel: string) => channel === "state:get"
@@ -465,6 +467,48 @@ describe("native desktop shell", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
+  });
+
+  it("keeps cached apps visible while refreshing the catalog when the launcher opens", async () => {
+    let resolveApps!: (value: unknown) => void;
+    const appsResponse = new Promise<unknown>((resolve) => {
+      resolveApps = resolve;
+    });
+    const api = {
+      get: vi.fn((path: string) => path === "/api/apps"
+        ? appsResponse
+        : Promise.resolve({ background: { type: "solid", color: "#111111" } })),
+    };
+    useConnection.setState({
+      api: api as never,
+      platformHost: "https://runtime.example.com",
+      authGeneration: 1,
+      runtimeSlot: "primary",
+    });
+    useApps.setState({
+      apps: [{ slug: "cached", name: "Cached App" }],
+      loaded: true,
+      loading: false,
+      error: null,
+    });
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+
+    expect(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Cached App" })).toBeTruthy();
+    expect(api.get).toHaveBeenCalledWith("/api/apps", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+
+    await act(async () => {
+      resolveApps({ apps: [{ slug: "fresh", name: "Fresh App" }] });
+      await appsResponse;
+    });
+
+    await waitFor(() => {
+      const launcher = within(screen.getByRole("dialog", { name: "App launcher" }));
+      expect(launcher.getByRole("button", { name: "Fresh App" })).toBeTruthy();
+      expect(launcher.queryByRole("button", { name: "Cached App" })).toBeNull();
+    });
   });
 
   it("retains launcher icon elements after closing so reopening does not download them again", () => {
