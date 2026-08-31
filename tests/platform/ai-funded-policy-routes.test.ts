@@ -101,6 +101,10 @@ describe("funded AI policy routes", () => {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice", "machine_predecessor")}` },
     })).status).toBe(401);
+    expect((await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice", "machine_123", "staging")}` },
+    })).status).toBe(401);
   });
 
   it("rejects missing auth, malformed or oversized bodies, caller identity fields, and legacy-only handles", async () => {

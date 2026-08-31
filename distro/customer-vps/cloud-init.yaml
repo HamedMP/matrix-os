@@ -396,6 +396,7 @@ write_files:
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
+      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
       POSTHOG_TOKEN={{posthogToken}}

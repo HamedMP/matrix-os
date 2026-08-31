@@ -33,6 +33,10 @@ import {
   validateDbLatestPointer,
 } from '../../packages/platform/src/customer-vps-r2.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import {
+  buildPlatformRuntimeVerificationToken,
+  timingSafeTokenEquals,
+} from '../../packages/platform/src/platform-token.js';
 
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
@@ -1420,16 +1424,33 @@ describe('platform/customer-vps', () => {
     await expect(getRunningUserMachineByHandle(db, 'alice-staging', 'primary')).resolves.toBeUndefined();
   });
 
-  it('templates the platform verification token into provisioned customer hosts', async () => {
+  it('templates legacy and exact runtime-bound verification tokens into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 
     await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
     const expected = createHmac('sha256', 'platform-secret').update('alice').digest('hex');
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    const fundedRuntimeToken = createInput?.userData
+      .match(/^\s*MATRIX_FUNDED_AI_RUNTIME_TOKEN=([^\s]+)$/m)?.[1];
     expect(createInput?.userData).toContain(`UPGRADE_TOKEN=${expected}`);
     expect(createInput?.userData).toContain(`MATRIX_AUTH_TOKEN=${expected}`);
     expect(createInput?.userData).toContain(`MATRIX_CODE_PROXY_TOKEN=${expected}`);
+    expect(fundedRuntimeToken).toBe(buildPlatformRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      runtimeSlot: 'primary',
+    }, 'platform-secret'));
+    expect(timingSafeTokenEquals(fundedRuntimeToken, buildPlatformRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      runtimeSlot: 'staging',
+    }, 'platform-secret'))).toBe(false);
+    expect(timingSafeTokenEquals(fundedRuntimeToken, buildPlatformRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: 'machine_predecessor',
+      runtimeSlot: 'primary',
+    }, 'platform-secret'))).toBe(false);
     expect(createInput?.userData).toContain('PLATFORM_INTERNAL_URL=http://localhost:9000');
     expect(createInput?.userData).not.toContain('PIPEDREAM_CLIENT_SECRET');
   });
