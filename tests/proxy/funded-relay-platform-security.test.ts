@@ -32,7 +32,6 @@ function clientOptions(platformBaseUrl: string, fetchImpl = vi.fn() as unknown a
 describe("funded relay platform transport security", () => {
   it.each([
     ["remote HTTPS", "https://platform.matrix-os.com", "https://platform.matrix-os.com"],
-    ["localhost HTTP", "http://localhost:8787", "http://localhost:8787"],
     ["canonical IPv4 loopback HTTP", "http://127.0.0.1:8787/", "http://127.0.0.1:8787"],
     ["canonical IPv6 loopback HTTP", "http://[::1]:8787", "http://[::1]:8787"],
   ])("accepts %s", (_label, input, expected) => {
@@ -42,6 +41,7 @@ describe("funded relay platform transport security", () => {
 
   it.each([
     ["remote host", "http://platform.matrix-os.com"],
+    ["localhost hostname", "http://localhost:8787"],
     ["private IPv4", "http://10.0.0.1:8787"],
     ["adjacent IPv4", "http://127.0.0.2:8787"],
     ["localhost suffix", "http://localhost.example.com:8787"],

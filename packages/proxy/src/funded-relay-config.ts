@@ -117,8 +117,7 @@ export function normalizeFundedPlatformOrigin(raw: string): string {
   const rawHostname = rawAuthority.startsWith("[") && closingBracket >= 0
     ? rawAuthority.slice(0, closingBracket + 1).toLowerCase()
     : (rawAuthority.split(":", 1)[0] ?? "").toLowerCase();
-  const isExactLoopback = rawHostname === "localhost"
-    || rawHostname === "127.0.0.1"
+  const isExactLoopback = rawHostname === "127.0.0.1"
     || rawHostname === "[::1]";
   if (!exactOrigin
     || !(["http:", "https:"] as const).includes(url.protocol as "http:" | "https:")
@@ -126,7 +125,7 @@ export function normalizeFundedPlatformOrigin(raw: string): string {
     || (rawSuffix !== "" && rawSuffix !== "/")
     || (url.protocol === "http:" && !isExactLoopback)) {
     throw new Error(
-      "PLATFORM_INTERNAL_URL must be an HTTPS origin or an exact loopback HTTP origin without credentials or a path",
+      "PLATFORM_INTERNAL_URL must be an HTTPS origin or a literal loopback HTTP origin without credentials or a path",
     );
   }
   return url.origin;
