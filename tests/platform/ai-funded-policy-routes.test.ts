@@ -22,6 +22,10 @@ function bearerFor(handle: string, machineId = "machine_123", runtimeSlot = "pri
   return buildPlatformRuntimeVerificationToken({ handle, machineId, runtimeSlot }, platformSecret);
 }
 
+function fundedCredentialPath(handle = "alice", runtimeSlot = "primary"): string {
+  return `/internal/containers/${handle}/ai/funded-credential?runtimeSlot=${runtimeSlot}`;
+}
+
 function stubOrchestrator(): Orchestrator {
   return {
     provision: vi.fn(), start: vi.fn(), stop: vi.fn(), destroy: vi.fn(), upgrade: vi.fn(),
@@ -88,7 +92,7 @@ describe("funded AI policy routes", () => {
 
   it("issues a scoped credential from the authenticated running machine record", async () => {
     const { app } = await createTestApp();
-    const response = await app.request("/internal/containers/alice/ai/funded-credential", {
+    const response = await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: "{}",
@@ -97,28 +101,66 @@ describe("funded AI policy routes", () => {
     expect(response.headers.get("cache-control")).toContain("no-store");
     const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await response.json());
     expect(issued.identity).toEqual({ ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" });
-    expect((await app.request("/internal/containers/alice/ai/funded-credential", {
+    expect((await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice", "machine_predecessor")}` },
     })).status).toBe(401);
-    expect((await app.request("/internal/containers/alice/ai/funded-credential", {
+    expect((await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice", "machine_123", "staging")}` },
     })).status).toBe(401);
   });
 
+  it("resolves the requested runtime slot before verifying exact machine proof", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine_staging", clerkUserId: "user_alice", handle: "alice", runtimeSlot: "staging",
+      status: "running", imageVersion: "v1", provisionedAt: "2026-08-30T19:30:00.000Z",
+      activationState: "authorized",
+    });
+    const { app, repository } = await createTestApp();
+    await repository.setRuntimePolicy({
+      identity: { ownerId: "user_alice", machineId: "machine_staging", runtimeSlot: "staging" },
+      expectedRevision: 0, enabled: true, allowedModelIds: [modelId], expiresAt: null,
+    });
+
+    const response = await app.request(fundedCredentialPath("alice", "staging"), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "machine_staging", "staging")}`,
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await response.json());
+    expect(issued.identity).toEqual({
+      ownerId: "user_alice",
+      machineId: "machine_staging",
+      runtimeSlot: "staging",
+    });
+  });
+
   it("rejects missing auth, malformed or oversized bodies, caller identity fields, and legacy-only handles", async () => {
     const { app } = await createTestApp();
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    expect((await app.request("/internal/containers/alice/ai/funded-credential", { method: "POST" })).status).toBe(401);
-    const spoofed = await app.request("/internal/containers/alice/ai/funded-credential", {
+    expect((await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}` },
+    })).status).toBe(400);
+    expect((await app.request(fundedCredentialPath("alice", "invalid_slot"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}` },
+    })).status).toBe(400);
+    expect((await app.request(fundedCredentialPath(), { method: "POST" })).status).toBe(401);
+    const spoofed = await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: JSON.stringify({ ownerId: "user_bob", machineId: "machine_other" }),
     });
     expect(spoofed.status).toBe(400);
     const malformedSecret = "sk-provider-do-not-log";
-    const malformed = await app.request("/internal/containers/alice/ai/funded-credential", {
+    const malformed = await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: `{"credential":"${malformedSecret}"`,
@@ -127,7 +169,7 @@ describe("funded AI policy routes", () => {
     await expect(malformed.json()).resolves.toMatchObject({ error: { code: "invalid_request" } });
     expect(warning).toHaveBeenCalledWith("[ai-funded-policy] invalid JSON body (syntax_error)");
     expect(JSON.stringify(warning.mock.calls)).not.toContain(malformedSecret);
-    const oversized = await app.request("/internal/containers/alice/ai/funded-credential", {
+    const oversized = await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: JSON.stringify({ padding: "x".repeat(2_000) }),
@@ -137,7 +179,7 @@ describe("funded AI policy routes", () => {
     await insertContainer(db, {
       handle: "legacy", clerkUserId: "user_legacy", port: 5001, shellPort: 6001, status: "running",
     });
-    const legacy = await app.request("/internal/containers/legacy/ai/funded-credential", {
+    const legacy = await app.request(fundedCredentialPath("legacy"), {
       method: "POST", headers: { authorization: `Bearer ${bearerFor("legacy")}` },
     });
     expect(legacy.status).toBe(401);
@@ -145,7 +187,7 @@ describe("funded AI policy routes", () => {
 
   it("authorizes only through the dedicated timing-safe relay service credential", async () => {
     const { app } = await createTestApp();
-    const issuedResponse = await app.request("/internal/containers/alice/ai/funded-credential", {
+    const issuedResponse = await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: "{}",
