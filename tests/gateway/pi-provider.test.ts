@@ -1092,6 +1092,33 @@ describe("pi provider adapter — abort and timeout", () => {
     }
   });
 
+  it("keeps a timeout failed when cancellation races after the deadline", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true, ignoreKill: true });
+    const provider = providerFor(fake.spawnFn, { runTimeoutMs: 20, killGraceMs: 30 });
+
+    try {
+      const pending = provider.startThread({
+        principal: ownerPrincipal,
+        thread: threadSummary(),
+        request: createRequest("Say hi"),
+        signal: controller.signal,
+        now: () => baseNow,
+        nextEventId: nextEventIdFactory(),
+      });
+      await vi.advanceTimersByTimeAsync(21);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(30);
+
+      const result = parseCodingAgentProviderRunResult(await pending, threadSummary().id);
+      expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
+      expect(fake.kills).toEqual(["SIGTERM", "SIGKILL"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("times out a hung startThread run and fails the thread", async () => {
     const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true });
     const provider = providerFor(fake.spawnFn, { runTimeoutMs: 20 });
