@@ -24,6 +24,8 @@ import {
   TopBar,
 } from "./OSWindow";
 import { SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
+import { HostedWorkSidebar, HOSTED_WORK_SIDEBAR_WIDTH } from "../work/HostedWorkSidebar";
+import { WorkSurfaceRuntimeProvider } from "../work/WorkSurfaceRuntime";
 
 export function shouldActivateDesktopPane(input: {
   active: boolean;
@@ -109,12 +111,17 @@ export default function DesktopSurfaceFrame({
     : isDesktopHidden || isDesktopTransition || (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app" || tab.kind === "browser" || tab.kind === "vscode";
-  const sidebarOwnsChrome = tab.kind === "chat"
+  const isWorkSurface = tab.kind === "work"
+    || tab.kind === "chat"
+    || tab.kind === "projects"
+    || tab.kind === "project";
+  const sidebarOwnsChrome = isWorkSurface
     || tab.kind === "terminal"
     || tab.kind === "terminals"
     || tab.kind === "settings"
     || tab.kind === "notes";
-  const sidebarHidesTitle = tab.kind === "terminal"
+  const sidebarHidesTitle = isWorkSurface
+    || tab.kind === "terminal"
     || tab.kind === "terminals"
     || tab.kind === "settings"
     || tab.kind === "notes";
@@ -228,16 +235,18 @@ export default function DesktopSurfaceFrame({
     boxShadow: "none",
   };
 
-  return (
+  const frame = (
     <SurfaceChromeContext.Provider value={surfaceChromeHost}>
     <OSWindow
       surfaceId={tab.id}
-      sidebarWidth={tab.kind === "settings" ? 208 : undefined}
+      sidebarWidth={tab.kind === "settings" ? 208 : isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined}
       sidebar={tab.kind === "settings" ? (
         <SettingsSidebar section={settingsSection} onSectionChange={setSettingsSection} />
+      ) : isWorkSurface ? (
+        <HostedWorkSidebar tab={tab} active={paneActive} />
       ) : undefined}
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
-      topBar={isWindow || surfaceChrome ? (
+      topBar={isWindow || (surfaceChrome && !isWorkSurface) ? (
         <TopBar
           title={sidebarHidesTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title}
           leftActions={surfaceChrome?.leftActions}
@@ -302,4 +311,7 @@ export default function DesktopSurfaceFrame({
     </OSWindow>
     </SurfaceChromeContext.Provider>
   );
+  return isWorkSurface ? (
+    <WorkSurfaceRuntimeProvider active={paneActive}>{frame}</WorkSurfaceRuntimeProvider>
+  ) : frame;
 }

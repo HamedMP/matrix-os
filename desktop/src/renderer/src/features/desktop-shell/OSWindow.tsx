@@ -143,10 +143,9 @@ export function TopBar({
         <div
           data-os-window-chrome-placement={chromePlacement}
           data-testid="os-window-chrome-grid"
-          className="pointer-events-none absolute inset-0 z-30 grid border-b"
+          className="pointer-events-none absolute inset-0 z-30 grid"
           style={{
             gridTemplateColumns: `${alignedLeftWidth}px minmax(0, 1fr) ${alignedRightWidth}px`,
-            borderColor: "var(--border-subtle)",
           }}
         >
           <div

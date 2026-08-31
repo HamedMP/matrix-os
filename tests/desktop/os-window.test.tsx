@@ -83,7 +83,7 @@ describe("Electron OS window chrome", () => {
     expect(screen.getByRole("button", { name: "Toggle inspector" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Close Release planning" })).toBeNull();
     const chromeGrid = screen.getByTestId("os-window-chrome-grid");
-    expect(chromeGrid.className).toContain("border-b");
+    expect(chromeGrid.className).not.toContain("border-b");
     expect((chromeGrid as HTMLElement).style.gridTemplateColumns).toBe("260px minmax(0, 1fr) 640px");
     const title = screen.getByText("Release planning");
     expect(title.parentElement?.className).toContain("justify-start");

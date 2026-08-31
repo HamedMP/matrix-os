@@ -26,6 +26,7 @@ vi.mock("@desktop/renderer/src/features/notes/NotesWorkspace", () => ({ default:
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  workTabMock.mockImplementation(() => <div>Work</div>);
 });
 
 describe("current desktop tab panes", () => {
@@ -81,6 +82,40 @@ describe("current desktop tab panes", () => {
     expect(homeMock).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }), undefined);
     view.rerender(<DesktopSurfaceFrame {...props} overlayOpen={false} />);
     expect(homeMock).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }), undefined);
+  });
+
+  it("mounts hosted Chat navigation in the OS window sidebar safe area", () => {
+    const tab: Tab = { id: "chat", kind: "work", title: "Chat", closable: false, workRoute: "chat" };
+    const commonProps = {
+      tab,
+      active: true,
+      presentation: "desktop" as const,
+      onFocus: vi.fn(),
+      onClose: vi.fn(),
+      onMinimize: vi.fn(),
+      onMaximize: vi.fn(),
+      onBoundsChange: vi.fn(),
+    };
+    const windowSurface = { tabId: tab.id, mode: "window" as const, bounds: { x: 0, y: 0, width: 1_200, height: 800 }, zIndex: 1 };
+
+    const view = render(<DesktopSurfaceFrame {...commonProps} surface={windowSurface} tabWorkspaceActive={false} />);
+
+    const sidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
+    expect(sidebar).toBeTruthy();
+    expect(sidebar.style.width).toBe("240px");
+    expect(sidebar.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("48px");
+    expect(sidebar.querySelector('[aria-label="Chat navigation"]')).toBeTruthy();
+    expect(view.container.querySelector('[data-os-window-main] [aria-label="Chat navigation"]')).toBeNull();
+
+    view.rerender(<DesktopSurfaceFrame
+      {...commonProps}
+      surface={{ ...windowSurface, mode: "tab" }}
+      tabWorkspaceActive
+    />);
+
+    const tabSidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
+    expect(tabSidebar.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("");
+    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeNull();
   });
 
   it("renders apps through the current AppLauncher", () => {
