@@ -104,8 +104,6 @@ suite("packaged Electron terminal clipboard", () => {
     app = await _electron.launch({
       executablePath: ELECTRON_EXECUTABLE,
       args: [DESKTOP_MAIN],
-      artifactsDir: EVIDENCE_DIR,
-      recordVideo: { dir: EVIDENCE_DIR, size: { width: 1280, height: 720 } },
       env: {
         ...process.env,
         OPERATOR_GATEWAY_URL: gateway.url,
