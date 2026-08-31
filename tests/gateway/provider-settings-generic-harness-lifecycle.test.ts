@@ -269,6 +269,62 @@ describe("generic provider harness lifecycle coordinator", () => {
     }));
   });
 
+  it("gates recovery when persisting a displaced duplicate route fails", async () => {
+    let failReceiptWrites = false;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      if (failReceiptWrites) throw new Error("displaced receipt write failed");
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, update } = await makeCoordinator({ receiptWriter });
+    const input = systemRouteInput("claude-opus-5", "route_duplicate_repair_failure");
+
+    await coordinator.applyConfiguration(input);
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    });
+
+    failReceiptWrites = true;
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow(
+      "displaced receipt write failed",
+    );
+    expect(coordinator.isRecoveryReady()).toBe(false);
+    expect(update).toHaveBeenCalledTimes(2);
+
+    // A separate runtime writer can reach the receipt target while provider
+    // mutations are recovery-gated. Recovery must still remember that this
+    // retry displaced Haiku, rather than trusting the stale Sonnet receipt.
+    await update({
+      revision: 6,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-opus-5",
+    });
+    failReceiptWrites = false;
+    const nextInput = systemRouteInput("claude-haiku-5", "route_after_duplicate_repair_failure");
+    await coordinator.applyConfiguration(nextInput);
+
+    expect(update).toHaveBeenCalledTimes(4);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    }));
+    expect(update).not.toHaveBeenNthCalledWith(4, expect.objectContaining({
+      messagingModel: "claude-sonnet-5",
+    }));
+
+    await coordinator.reconcilePending();
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toEqual([]);
+    expect(coordinator.isRecoveryReady()).toBe(true);
+  });
+
   it("switches to another enabled system harness before disabling the active one", async () => {
     const { coordinator, update } = await makeCoordinator();
     const openclaw = {
