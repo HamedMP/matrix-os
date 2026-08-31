@@ -178,6 +178,50 @@ describe("ProjectChatDraft send failures", () => {
     expect(picker.getAttribute("data-model")).toBe("claude-sonnet-4.6");
   });
 
+  it("applies the global default to a restored draft without explicit picker intent", async () => {
+    const summaryWithModels: RuntimeSummary = {
+      ...summary,
+      providers: summary.providers.map((provider) => ({
+        ...provider,
+        defaultModel: provider.id === "claude" ? "claude-sonnet-4.6" : "gpt-5.6",
+      })),
+    };
+    useDraftChat.getState().setDraft("matrix-os", {
+      ...defaultAgentThreadComposerDraft(summaryWithModels),
+      providerId: "claude",
+      prompt: "Continue the untouched restored draft",
+    });
+    resetProviderPreferences({
+      hydrated: true,
+      lastComposerInstanceId: "codex_default",
+      composerSelections: {
+        codex_default: {
+          model: "gpt-5.6",
+          options: [{ id: "effort", value: "high" }],
+          permissionMode: "supervised",
+        },
+      },
+    });
+
+    render(
+      <ProjectChatDraft
+        summary={summaryWithModels}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        active={false}
+        seed={null}
+        focusRequestId={0}
+        typeToStartEnabled={false}
+        onCreated={vi.fn()}
+        canonicalClient={{} as never}
+      />,
+    );
+
+    const picker = await screen.findByRole("button", { name: "Choose model and provider" });
+    expect(picker.getAttribute("data-provider-instance")).toBe("codex_default");
+    expect(picker.getAttribute("data-model")).toBe("gpt-5.6");
+  });
+
   it("applies a remembered effort after preferences hydrate on a cold mount", async () => {
     resetProviderPreferences();
     let resolveStateGet!: (result: { value: unknown }) => void;
