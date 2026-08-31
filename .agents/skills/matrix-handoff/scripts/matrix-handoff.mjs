@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   copyFile,
   lstat,
@@ -162,6 +162,15 @@ function assertSafeGeneratedPath(value) {
   }
 }
 
+export function createHandoffUploadId({ stamp, scopeDigest }) {
+  if (!/^\d{12}$/.test(stamp) || !/^[a-f0-9]{64}$/.test(scopeDigest)) {
+    throw new Error("Expected a valid approved handoff scope");
+  }
+  const uploadId = `handoff-${stamp}-${scopeDigest.slice(0, 12)}-${randomBytes(16).toString("hex")}`;
+  assertSafeGeneratedPath(uploadId);
+  return uploadId;
+}
+
 export function buildRemoteExtractScript({ uploadId, projectDir }) {
   assertSafeGeneratedPath(uploadId);
   assertSafeGeneratedPath(projectDir);
@@ -169,12 +178,28 @@ export function buildRemoteExtractScript({ uploadId, projectDir }) {
     "set -eu",
     `upload_dir="$HOME/.matrix-handoff/${uploadId}"`,
     `destination="$HOME/${projectDir}"`,
-    'test ! -e "$destination"',
-    'mkdir -p "$destination"',
-    'cat "$upload_dir"/bundle.part-* | tar -xzf - -C "$destination"',
-    'rm -f "$upload_dir"/bundle.part-*',
-    'rmdir "$upload_dir"',
+    'staging="$upload_dir/staging"',
+    'cleanup_upload() { rm -rf "$staging"; rm -f "$upload_dir"/bundle.part-*; rmdir "$upload_dir" 2>/dev/null || true; }',
+    'abort_handoff() { cleanup_upload; trap - EXIT HUP INT TERM; exit 74; }',
+    'trap cleanup_upload EXIT',
+    'trap abort_handoff HUP INT TERM',
+    'mkdir "$staging"',
+    'if ! cat "$upload_dir"/bundle.part-* | tar -xzf - -C "$staging"; then printf "%s\\n" "Matrix handoff extraction failed. Retry the same project name." >&2; exit 74; fi',
+    'mkdir -p "$(dirname "$destination")"',
+    'if ! mv -T -n "$staging" "$destination"; then printf "%s\\n" "Matrix handoff publish failed. Retry the same project name." >&2; exit 74; fi',
+    'if [ -e "$staging" ]; then printf "%s\\n" "Matrix project already exists: $destination. Choose another --project-name." >&2; exit 73; fi',
+    'trap - EXIT HUP INT TERM',
+    'cleanup_upload',
     'printf "%s\\n" "$destination"',
+  ].join("; ");
+}
+
+export function buildRemoteDestinationCheckScript({ projectDir }) {
+  assertSafeGeneratedPath(projectDir);
+  return [
+    "set -eu",
+    `destination="$HOME/${projectDir}"`,
+    'if [ -e "$destination" ]; then printf "%s\\n" "Matrix project already exists: $destination. Choose another --project-name." >&2; exit 73; fi',
   ].join("; ");
 }
 
@@ -551,8 +576,8 @@ async function main() {
       throw new Error("Scope changed after preview. Run a new preview and approve its new token.");
     }
     const suffix = scopeDigest.slice(0, 12);
-    const uploadId = `handoff-${stamp}-${suffix}`;
-    const projectDir = `projects/${base}-handoff-${stamp}-${suffix}`;
+    const uploadId = createHandoffUploadId({ stamp, scopeDigest });
+    const projectDir = `projects/${base}`;
 
     console.log("Matrix handoff preview");
     console.log(`  Repository: ${root}`);
@@ -567,6 +592,11 @@ async function main() {
       console.log(`\nPreview only. Review the scope, then re-run with --approve ${approvalToken} to upload and continue.`);
       return;
     }
+
+    const matrix = process.env.MATRIX_CLI || "matrix";
+    const profileArgs = options.profile ? ["--profile", options.profile] : [];
+    const destinationCheckScript = buildRemoteDestinationCheckScript({ projectDir });
+    await run(matrix, ["run", ...profileArgs, "--", "sh", "-lc", destinationCheckScript]);
 
     await writeHandoffMetadata({
       root,
@@ -583,8 +613,6 @@ async function main() {
     const archive = join(temp, "handoff.tar.gz");
     await run("tar", ["-czf", archive, "-C", stage, "."], { timeout: 300_000 });
     const parts = await splitFile(archive, temp);
-    const matrix = process.env.MATRIX_CLI || "matrix";
-    const profileArgs = options.profile ? ["--profile", options.profile] : [];
     for (const [index, part] of parts.entries()) {
       console.log(`Uploading part ${index + 1}/${parts.length}...`);
       await run(matrix, ["upload", part, `~/.matrix-handoff/${uploadId}/`, "--force", ...profileArgs], { timeout: 180_000 });
