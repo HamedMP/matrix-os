@@ -475,6 +475,28 @@ describe("WorkTab rail integration", () => {
     expect(inspectorProps.active.at(-1)).toBe(false);
   });
 
+  it("shows only the inspector below 1000px and uses side-by-side panes at 1000px", async () => {
+    render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
+    await screen.findByRole("button", { name: "Global chat" });
+
+    resizeWork(999);
+    fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+
+    const exclusiveInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement as HTMLElement;
+    expect(screen.getByRole("main", { hidden: true }).getAttribute("aria-hidden")).toBe("true");
+    expect(exclusiveInspector.className).toContain("flex-1");
+    expect(exclusiveInspector.style.width).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide inspector" }));
+    resizeWork(1_000);
+    fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+
+    const sideBySideInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement as HTMLElement;
+    expect(screen.getByRole("main").getAttribute("aria-hidden")).toBeNull();
+    expect(sideBySideInspector.className).toContain("shrink-0");
+    expect(sideBySideInspector.style.width).toBe("640px");
+  });
+
   it.each([
     ["draft", { route: "chat" as const, initialChatId: undefined, initialChatView: "draft" as const }, true],
     ["index", { route: "chat" as const, initialChatId: undefined, initialChatView: "index" as const }, true],
@@ -514,6 +536,7 @@ describe("WorkTab rail integration", () => {
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
     expect(screen.queryByRole("separator", { name: "Resize Chat navigation" })).toBeNull();
     expect(screen.getByRole("navigation", { name: "Chat navigation" }).className).not.toContain("border-r-0");
+    expect(inspectorSeparator.getAttribute("aria-valuemin")).toBe("360");
     expect(inspectorSeparator.getAttribute("aria-valuenow")).toBe("640");
     expect(inspectorSeparator.querySelector("span")?.style.background).toBe("transparent");
 
@@ -545,7 +568,7 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
 
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
-    for (let step = 0; step < 12; step += 1) fireEvent.keyDown(inspectorSeparator, { key: "ArrowRight" });
+    for (let step = 0; step < 20; step += 1) fireEvent.keyDown(inspectorSeparator, { key: "ArrowRight" });
     expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();

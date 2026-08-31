@@ -523,7 +523,11 @@ export function CanonicalChatWorkspace({
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
         aria-hidden={inspectorExclusive || undefined}
         inert={inspectorExclusive || undefined}
-        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        hidden={inspectorExclusive}
+        className={cn(
+          "relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+          inspectorExclusive ? "hidden" : "flex",
+        )}
         {...attachments.paneProps}
       >
         {submissionError || controller.error ? (

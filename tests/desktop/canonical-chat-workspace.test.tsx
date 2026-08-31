@@ -631,6 +631,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(chat).toBeTruthy();
     expect(chat?.getAttribute("aria-hidden")).toBe("true");
     expect(chat?.hasAttribute("inert")).toBe(true);
+    expect(chat?.hidden).toBe(true);
     expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
   });
 

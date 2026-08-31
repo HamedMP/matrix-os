@@ -49,10 +49,11 @@ interface WorkResponsiveState {
 const WIDE_WORK_MIN_WIDTH = 1_280;
 const MEDIUM_WORK_MIN_WIDTH = 840;
 const NAVIGATION_WIDTH = 240;
-const MIN_INSPECTOR_WIDTH = 480;
+const MIN_INSPECTOR_WIDTH = 360;
 const MAX_INSPECTOR_WIDTH = 820;
 const MIN_CHAT_WIDTH = 360;
 const COLLAPSE_RESIZE_THRESHOLD = 48;
+const INSPECTOR_SIDE_BY_SIDE_MIN_WIDTH = 1_000;
 
 function workLayoutForWidth(width: number): WorkLayout {
   if (width >= WIDE_WORK_MIN_WIDTH) return "wide";
@@ -109,6 +110,7 @@ function ResponsiveWorkInspector({
   scope,
   projects,
   active,
+  exclusive,
   layout,
   onClose,
   onOpen,
@@ -127,6 +129,7 @@ function ResponsiveWorkInspector({
   scope?: WorkFilesScope;
   projects: Project[];
   active: boolean;
+  exclusive: boolean;
   layout: WorkLayout;
   onClose: () => void;
   onOpen: () => void;
@@ -165,10 +168,14 @@ function ResponsiveWorkInspector({
       id="work-inspector"
       aria-hidden={!active}
       hidden={!active}
-      className={layout === "narrow" ? "absolute inset-0 z-20 flex w-full" : "relative flex min-h-0 shrink-0"}
-      style={layout === "narrow" ? undefined : { width }}
+      className={layout === "narrow"
+        ? "absolute inset-0 z-20 flex w-full"
+        : exclusive
+          ? "relative flex min-h-0 min-w-0 flex-1"
+          : "relative flex min-h-0 shrink-0"}
+      style={layout === "narrow" || exclusive ? undefined : { width }}
     >
-      {layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={MAX_INSPECTOR_WIDTH} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} /> : null}
+      {layout !== "narrow" && !exclusive ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={MAX_INSPECTOR_WIDTH} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} /> : null}
       <WorkFilesInspector
         detail={detail}
         scope={scope}
@@ -231,6 +238,7 @@ export default function WorkTab({
     narrowPaneRouteKey: null,
   });
   const [inspectorWidth, setInspectorWidth] = useState(640);
+  const [surfaceWidth, setSurfaceWidth] = useState(0);
   const [draftTerminalLaunch, setDraftTerminalLaunch] = useState<{
     chatId: string;
     session: TerminalSessionSummary;
@@ -258,6 +266,11 @@ export default function WorkTab({
   const inspectorVisible = active && hasInspector && (
     ((layout === "wide" || layout === "medium") && inspectorOpen)
     || (layout === "narrow" && narrowPane === "inspector")
+  );
+  const inspectorExclusive = inspectorVisible && (
+    layout === "narrow"
+      ? narrowPane === "inspector"
+      : surfaceWidth > 0 && surfaceWidth < INSPECTOR_SIDE_BY_SIDE_MIN_WIDTH
   );
 
   useEffect(() => {
@@ -312,9 +325,13 @@ export default function WorkTab({
     const applyWidth = (width: number) => {
       const firstMeasurement = !measuredWidthRef.current;
       measuredWidthRef.current = true;
-      const measuredSurfaceWidth = width > 0
-        ? width + (hostedChrome ? NAVIGATION_WIDTH : 0)
-        : 0;
+      const osWindowWidth = node.closest<HTMLElement>("[data-os-window]")?.clientWidth ?? 0;
+      const measuredSurfaceWidth = osWindowWidth > 0
+        ? osWindowWidth
+        : width > 0
+          ? width + (hostedChrome ? NAVIGATION_WIDTH : 0)
+          : 0;
+      setSurfaceWidth(measuredSurfaceWidth);
       const nextLayout = measuredSurfaceWidth > 0 ? workLayoutForWidth(measuredSurfaceWidth) : "narrow";
       const inspectorFocused = Boolean(
         inspectorRegionRef.current?.contains(document.activeElement),
@@ -541,6 +558,7 @@ export default function WorkTab({
       detail={detail}
       projects={projects}
       active={inspectorVisible}
+      exclusive={inspectorExclusive}
       layout={layout}
       onClose={closeInspector}
       onOpen={openInspector}
@@ -566,6 +584,7 @@ export default function WorkTab({
       scope={draftScope}
       projects={projects}
       active={inspectorVisible}
+      exclusive={inspectorExclusive}
       layout={layout}
       onClose={closeInspector}
       onOpen={openInspector}
@@ -582,11 +601,11 @@ export default function WorkTab({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug
-        ? <ProjectChatsView projectId={projectSlug} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
+        ? <ProjectChatsView projectId={projectSlug} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
         : null;
 
   const navigationVisible = layout === "narrow" ? narrowPane === "rail" : navigationOpen;
@@ -614,7 +633,7 @@ export default function WorkTab({
   const chromeSpec = useMemo(() => ({
     title: chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
-    rightPaneWidth: layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
+    rightPaneWidth: layout !== "narrow" && inspectorVisible && !inspectorExclusive ? inspectorWidth : 0,
     rightActions: hasInspector ? (
       <PaneButton
         buttonRef={showToolsRef}
@@ -629,7 +648,7 @@ export default function WorkTab({
           : <PanelRightOpen size={15} aria-hidden />}
       </PaneButton>
     ) : undefined,
-  }), [chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+  }), [chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorExclusive, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;
@@ -642,7 +661,7 @@ export default function WorkTab({
       ref={workRef}
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       data-layout={layout}
-      data-pane={layout === "narrow" ? narrowPane : undefined}
+      data-pane={layout === "narrow" ? narrowPane : inspectorExclusive ? "inspector" : undefined}
     >
       {hostedChrome && initialChatId && initialChatTitle ? (
         <div

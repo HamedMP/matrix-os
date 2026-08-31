@@ -392,7 +392,27 @@ describe("WorkRail", () => {
 
     expect(screen.getByRole("dialog", { name: "Search chats" })).toBeTruthy();
     const search = screen.getByRole("searchbox", { name: "Search chats" });
+    const searchGroup = search.parentElement as HTMLElement;
     expect(document.activeElement).toBe(search);
+    expect(searchGroup.className).toContain("chat-search-field");
+    expect(searchGroup.className).not.toContain("focus-within:ring-2");
+    expect(searchGroup.className).not.toContain("focus-within:ring-[var(--accent)]");
+    expect(search.className).toContain("appearance-none");
+    expect(search.className).toContain("border-0");
+    expect(search.className).toContain("shadow-none");
+    expect(search.className).toContain("focus:ring-0");
+    expect((search as HTMLElement).style.borderStyle).toBe("none");
+    expect((search as HTMLElement).style.borderWidth).toBe("0px");
+    expect((search as HTMLElement).style.borderRadius).toBe("0px");
+    expect((search as HTMLElement).style.boxShadow).toBe("none");
+    expect((search as HTMLElement).style.outline).toBe("none");
+
+    fireEvent.change(search, { target: { value: "recent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear Chat search" }));
+
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(document.activeElement).toBe(search);
+    expect(screen.getByRole("dialog", { name: "Search chats" })).toBeTruthy();
   });
 
   it("navigates bounded canonical Chat search results without creating a thread", async () => {
