@@ -382,9 +382,16 @@ export function createProviderGenericHarnessCoordinator(options: {
       throw new ProviderSettingsStoreError("runtime_unavailable", 503);
     }
     if (duplicate) {
-      if (duplicate.state === "applied") return;
       const beforeRoute = duplicate.beforeRoute;
       const afterRoute = duplicate.afterRoute;
+      if (duplicate.state === "applied") {
+        if (!beforeRoute || !afterRoute) return;
+        const current = await currentRuntimeRoute();
+        if (!sameRuntimeRoute(current, afterRoute)) {
+          await applyRuntimeRoute(afterRoute);
+        }
+        return;
+      }
       if (!beforeRoute || !afterRoute) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       const current = await currentRuntimeRoute();
       if (sameRuntimeRoute(current, afterRoute)) {
