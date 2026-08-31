@@ -527,8 +527,8 @@ describe("generic provider harness lifecycle coordinator", () => {
       canonical: genericCanonical(),
       idempotencyKey: "route_receipt_failure_1",
     };
-
     await expect(coordinator.applyConfiguration(input)).rejects.toThrow("receipt disk failure");
+    expect(coordinator.isRecoveryReady()).toBe(true);
     expect(update).toHaveBeenCalledTimes(2);
     expect(update).toHaveBeenNthCalledWith(1, expect.objectContaining({ messagingModel: "claude-opus-5" }));
     expect(update).toHaveBeenNthCalledWith(2, expect.objectContaining({ messagingModel: "claude-sonnet-5" }));
@@ -697,10 +697,10 @@ describe("generic provider harness lifecycle coordinator", () => {
     await coordinator.applyConfiguration(appliedInput);
     update.mockRejectedValueOnce(new Error("rollback unavailable"));
     await expect(coordinator.rollbackConfiguration(appliedInput)).rejects.toThrow("rollback unavailable");
-
     const restarted = restart();
     update.mockRejectedValueOnce(new Error("startup compensation unavailable"));
     await expect(reconcileProviderRuntimeAtStartup(restarted)).resolves.toBeUndefined();
+    expect(restarted.isRecoveryReady()).toBe(false);
     const pending = JSON.parse(await readFile(
       join(homePath!, "system/ai-providers/runtime-receipts.json"),
       "utf8",
@@ -709,7 +709,6 @@ describe("generic provider harness lifecycle coordinator", () => {
       key: "route_startup_recovery_pending",
       state: "compensation_pending",
     }]);
-
     const retryAfter = structuredClone(before);
     retryAfter.harnesses[0]!.route.modelId = "claude-haiku-5";
     const retryInput = {
@@ -732,9 +731,10 @@ describe("generic provider harness lifecycle coordinator", () => {
       code: "runtime_unavailable",
       status: 503,
     });
+    expect(restarted.isRecoveryReady()).toBe(false);
     expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ messagingModel: "claude-haiku-5" }));
-
     await restarted.applyConfiguration(retryInput);
+    expect(restarted.isRecoveryReady()).toBe(true);
     expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
       messagingModel: "claude-haiku-5",
     }));

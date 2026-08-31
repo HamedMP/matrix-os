@@ -61,6 +61,8 @@ export interface ProviderSettingsRuntimeMutationInput {
 export interface ProviderSettingsRuntimeCoordinator {
   readonly supportedActions: readonly ProviderConfigurationMutation["type"][];
   readonly supportedHarnessKinds?: readonly ProviderHarnessKind[];
+  /** False gates read projections while mutations retain a chance to reconcile. */
+  isRecoveryReady(): boolean;
   reconcilePending(): Promise<void>;
   applyConfiguration(input: ProviderSettingsRuntimeMutationInput): Promise<void>;
   rollbackConfiguration(input: ProviderSettingsRuntimeMutationInput): Promise<void>;
