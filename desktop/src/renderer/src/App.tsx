@@ -4,7 +4,7 @@ import { Toaster } from "sonner";
 import SignIn from "./features/signin/SignIn";
 import MissionControl from "./features/mission-control/MissionControl";
 import DesktopUpdateExperience from "./features/updates/DesktopUpdateExperience";
-import DesktopSupportWidget from "./features/support/DesktopSupportWidget";
+import DesktopPostHogAnalytics from "./features/analytics/DesktopPostHogAnalytics";
 import { useAppearance } from "./stores/appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
 
@@ -36,7 +36,7 @@ export default function App() {
           <MissionControl />
         )}
       </div>
-      <DesktopSupportWidget />
+      <DesktopPostHogAnalytics />
       <DesktopUpdateExperience />
       <Toaster
         position="bottom-right"

@@ -118,7 +118,7 @@ describe("desktop release workflows", () => {
     expect(config).not.toContain("MATRIX_DESKTOP_UPDATE_CHANNEL ?? process.env.OPERATOR_UPDATE_CHANNEL");
   });
 
-  it("injects the public PostHog support configuration into every packaged Desktop build", () => {
+  it("injects the public PostHog analytics configuration into every packaged Desktop build", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
     expect(workflow.match(/^\s+VITE_POSTHOG_PROJECT_TOKEN: \$\{\{/gm)).toHaveLength(2);
@@ -127,12 +127,12 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain("vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com'");
   });
 
-  it("fails packaged Desktop builds before bundling when PostHog support is unconfigured", () => {
+  it("fails packaged Desktop builds before bundling when PostHog analytics is unconfigured", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
-    const validationName = "name: Validate PostHog support configuration";
+    const validationName = "name: Validate PostHog analytics configuration";
     const normalizeToken = "normalized_posthog_token=\"$(printf '%s' \"${VITE_POSTHOG_PROJECT_TOKEN:-}\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\"";
     const missingTokenCheck = 'if [ -z "$normalized_posthog_token" ]; then';
-    const missingTokenError = "Missing required public PostHog project token for Desktop Support";
+    const missingTokenError = "Missing required public PostHog project token for Desktop analytics";
 
     expect(workflow.match(new RegExp(validationName, "g"))).toHaveLength(2);
     expect(workflow.split(normalizeToken)).toHaveLength(3);

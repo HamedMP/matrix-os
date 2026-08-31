@@ -87,7 +87,6 @@ import {
   WebDesktopControls,
   type WebDesktopSettingsSection,
 } from "./desktop/WebDesktopControls";
-import { openShellSupport } from "@/lib/posthog-client";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -1494,7 +1493,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               headerActions={(
                 <WebDesktopControls
                   onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
-                  onOpenSupport={() => void openShellSupport()}
                   onOpenSettings={(section) => {
                     setSettingsDefaultSection(section);
                     setSettingsOpen(true);
