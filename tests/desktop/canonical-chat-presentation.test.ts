@@ -94,6 +94,42 @@ describe("canonical Chat presentation adapter", () => {
     expect(projectedActivities.at(-1)?.id).toContain("activity_bounded_500");
   });
 
+  it("retains a newest server update when it reuses the oldest activity id", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const occurredAt = run.startedAt ?? run.createdAt;
+    const activities = Array.from({ length: 500 }, (_, index) => ({
+      id: `activity_reused_${index}`,
+      chatId: snapshot.chat.id,
+      runId: run.id,
+      sequence: index + 1,
+      type: "agent.activity" as const,
+      activityId: `reused_${index}`,
+      kind: "phase" as const,
+      label: `Phase ${index}`,
+      status: "running" as const,
+      occurredAt,
+    }));
+
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [
+        ...activities,
+        { ...activities[0]!, sequence: 501, label: "Phase 0 updated" },
+      ],
+    });
+    const projectedActivities = presented?.work.filter((item) => item.kind === "activity-group") ?? [];
+
+    expect(projectedActivities).toHaveLength(500);
+    expect(projectedActivities.some((item) => item.id.endsWith("activity_reused_1"))).toBe(false);
+    expect(projectedActivities.at(-1)).toMatchObject({
+      id: expect.stringContaining("activity_reused_0"),
+      activities: [expect.objectContaining({ label: "Phase 0 updated" })],
+    });
+  });
+
   it("projects canonical messages into the shared provider-neutral transcript", () => {
     const { snapshot } = createCanonicalChatFixture("completed");
 
