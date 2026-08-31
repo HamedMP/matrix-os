@@ -4,6 +4,7 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
@@ -196,6 +197,32 @@ describe("mobile shell", () => {
     });
 
     expect(screen.getAllByLabelText("Close Terminal")).toHaveLength(5);
+  });
+
+  it("does not evict a durable terminal when setup is launched at capacity", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      for (let i = 0; i < 5; i += 1) {
+        fireEvent.click(screen.getByLabelText("Terminal"));
+      }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Install OpenClaw from Settings" }));
+
+    const terminals = screen.getAllByTestId("terminal-app");
+    expect(terminals).toHaveLength(5);
+    expect(terminals.every((terminal) => terminal.dataset.persistence === "durable")).toBe(true);
+    expect(window.sessionStorage.getItem("matrix:terminal-launch-queue") ?? "").not.toContain("openclaw-install");
+    expect(toast).toHaveBeenCalledWith("Close a Terminal before starting setup");
   });
 
   it("opens a launch shortcut target inside the mobile shell", async () => {

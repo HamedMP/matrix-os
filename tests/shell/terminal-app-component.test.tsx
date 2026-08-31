@@ -1261,6 +1261,68 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("stops retrying a failed durable layout flush after a bounded unmount window", async () => {
+    const layoutId = "term-layout_0123456789abcdef0123456789abcdef";
+    let layoutWrites = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`) && init?.method === "PUT") {
+        layoutWrites += 1;
+        return Promise.resolve(mockJsonResponse({
+          error: { code: "layout_save_failed", message: "Layout save failed" },
+        }, 503));
+      }
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`)) {
+        return Promise.resolve(mockJsonResponse({
+          layoutId,
+          revision: 4,
+          layout: {
+            activeTabId: "bench-tab",
+            sidebarOpen: true,
+            tabs: [{
+              id: "bench-tab",
+              label: "bench",
+              paneTree: { type: "pane", id: "bench-pane", cwd: "projects", sessionId: "bench" },
+            }],
+          },
+        }));
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve(mockJsonResponse({ sessions: [{ name: "bench", status: "active" }] }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    }));
+
+    const mounted = render(<TerminalApp layoutId={layoutId} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const paneProps = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+    act(() => paneProps.onSessionAttached(paneProps.paneTree.id, "bench-local"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(layoutWrites).toBe(1);
+
+    mounted.unmount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(layoutWrites).toBe(5);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(layoutWrites).toBe(5);
+  });
+
   it("does not read or save durable layouts for an ephemeral setup terminal", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(mockJsonResponse({ sessions: [] }))));
 

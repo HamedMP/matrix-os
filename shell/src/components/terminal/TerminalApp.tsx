@@ -58,6 +58,8 @@ import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./Deskt
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
 
+const MAX_UNMOUNTED_LAYOUT_SAVE_RETRIES = 3;
+
 function dispatchPaneInput(paneId: string | null, data: string): void {
   if (!paneId) return;
   if (typeof window === "undefined") return;
@@ -273,6 +275,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const terminalLayoutBaseRef = useRef<TerminalLayout | null>(null);
   const terminalLayoutSkipNextDirtyRef = useRef(false);
   const terminalLayoutRetryAttemptRef = useRef(0);
+  const terminalLayoutUnmountedRetryCountRef = useRef(0);
   const markTerminalLayoutDirty = () => {
     terminalLayoutDirtyRef.current = true;
     terminalLayoutChangeVersionRef.current += 1;
@@ -432,6 +435,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   useEffect(() => {
     mountedRef.current = true;
+    terminalLayoutUnmountedRetryCountRef.current = 0;
     return () => {
       mountedRef.current = false;
       if (persistence === "ephemeral") {
@@ -444,9 +448,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         layoutSaveTimerRef.current = null;
       }
       const changeVersion = terminalLayoutChangeVersionRef.current;
+      terminalLayoutUnmountedRetryCountRef.current = 0;
       void persistLayoutNow().then((saved) => settleLayoutSave(saved, changeVersion));
     };
-    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- persistence is a mount-time window policy; persistLayoutNow and settleLayoutSave read the latest layout exclusively through refs, and re-subscribing this cleanup would flush during ordinary renders. The retry continuation intentionally survives this component's unmount so a transient final-save failure cannot discard the window layout.
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- persistence is a mount-time window policy; persistLayoutNow and settleLayoutSave read the latest layout exclusively through refs, and re-subscribing this cleanup would flush during ordinary renders. A bounded retry continuation survives unmount so transient final-save failures get a limited recovery window.
   }, [persistence]);
 
   useEffect(() => {
@@ -800,12 +805,19 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const settleLayoutSave = useEffectEvent(function settle(saved: boolean, changeVersion: number) {
     if (saved) {
       terminalLayoutRetryAttemptRef.current = 0;
+      terminalLayoutUnmountedRetryCountRef.current = 0;
       if (terminalLayoutChangeVersionRef.current === changeVersion) {
         terminalLayoutDirtyRef.current = false;
         return;
       }
     }
     if (!terminalLayoutDirtyRef.current || layoutSaveTimerRef.current) return;
+    if (!mountedRef.current) {
+      if (terminalLayoutUnmountedRetryCountRef.current >= MAX_UNMOUNTED_LAYOUT_SAVE_RETRIES) {
+        return;
+      }
+      terminalLayoutUnmountedRetryCountRef.current += 1;
+    }
     const retryAttempt = Math.min(terminalLayoutRetryAttemptRef.current, 4);
     terminalLayoutRetryAttemptRef.current = retryAttempt + 1;
     const retryDelayMs = Math.min(500 * (2 ** retryAttempt), 5_000);
