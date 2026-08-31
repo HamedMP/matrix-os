@@ -52,6 +52,19 @@ type GenericHarness = z.infer<typeof GenericHarnessSchema>;
 type RuntimeRoute = z.infer<typeof RuntimeRouteSchema>;
 type RuntimeReceipt = z.infer<typeof ReceiptSchema>;
 
+export async function reconcileProviderRuntimeAtStartup(
+  coordinator: Pick<ProviderSettingsRuntimeCoordinator, "reconcilePending">,
+): Promise<void> {
+  try {
+    await coordinator.reconcilePending();
+  } catch (error) {
+    console.warn(
+      "[provider-settings] Generic harness startup recovery deferred:",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+  }
+}
+
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error
     && (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -133,6 +146,7 @@ export function createProviderGenericHarnessCoordinator(options: {
   const receiptPath = join(options.homePath, RECEIPT_PATH);
   const writeReceiptDocument = options.receiptWriter ?? writeProviderJsonAtomic;
   let tail: Promise<void> = Promise.resolve();
+  let recoveryBlocked = false;
 
   async function requireRuntimeSupport(
     harness: HarnessConfiguration & { harness: GenericHarness },
@@ -263,6 +277,25 @@ export function createProviderGenericHarnessCoordinator(options: {
     for (const receipt of pending) {
       await compensatePendingReceipt(receipts, receipt);
     }
+  }
+
+  async function recoverPendingReceipts(): Promise<void> {
+    try {
+      const receipts = await readReceipts(receiptPath);
+      await reconcilePendingReceipts(receipts);
+      recoveryBlocked = false;
+    } catch (error) {
+      recoveryBlocked = true;
+      console.warn(
+        "[provider-settings] Generic harness recovery remains pending:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
+  }
+
+  async function requireRecoveryReady(): Promise<void> {
+    if (recoveryBlocked) await recoverPendingReceipts();
   }
 
   async function runtimeTarget(
@@ -420,16 +453,19 @@ export function createProviderGenericHarnessCoordinator(options: {
       "set_route",
     ],
     reconcilePending() {
-      return serialize(async () => {
-        const receipts = await readReceipts(receiptPath);
-        await reconcilePendingReceipts(receipts);
-      });
+      return serialize(recoverPendingReceipts);
     },
     applyConfiguration(input) {
-      return serialize(() => coordinate(input));
+      return serialize(async () => {
+        await requireRecoveryReady();
+        await coordinate(input);
+      });
     },
     rollbackConfiguration(input) {
-      return serialize(() => rollback(input));
+      return serialize(async () => {
+        await requireRecoveryReady();
+        await rollback(input);
+      });
     },
   };
 }
