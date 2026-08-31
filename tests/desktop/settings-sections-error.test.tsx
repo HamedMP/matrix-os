@@ -2,9 +2,11 @@
 
 import React from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CronSection from "../../desktop/src/renderer/src/features/settings/sections/CronSection";
 import SystemSection from "../../desktop/src/renderer/src/features/settings/sections/SystemSection";
+import { createDesktopQueryClient } from "../../desktop/src/renderer/src/lib/query-client";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 function makeApi(response: unknown, reject = false) {
@@ -27,6 +29,15 @@ function makePendingApi() {
     delete: vi.fn(),
     putText: vi.fn(),
   } as never;
+}
+
+function renderSettingsSection(Component: React.ComponentType) {
+  const queryClient = createDesktopQueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <Component />
+    </QueryClientProvider>,
+  );
 }
 
 describe("settings data sections", () => {
@@ -62,11 +73,11 @@ describe("settings data sections", () => {
       visible: "1.0.0",
     },
   ])("clears stale $name errors after a successful retry", async ({ Component, unavailable, response, visible }) => {
-    render(<Component />);
+    renderSettingsSection(Component);
 
     await waitFor(() => {
       expect(screen.queryByText(unavailable)).not.toBeNull();
-    });
+    }, { timeout: 2_500 });
 
     await act(async () => {
       useConnection.setState({ api: makeApi(response) });
@@ -88,7 +99,7 @@ describe("settings data sections", () => {
   ])("shows loading instead of empty state while $name load is pending", ({ Component, loading, empty }) => {
     useConnection.setState({ api: makePendingApi() });
 
-    render(<Component />);
+    renderSettingsSection(Component);
 
     expect(screen.queryByText(loading)).not.toBeNull();
     expect(screen.queryByText(empty)).toBeNull();
@@ -102,7 +113,7 @@ describe("settings data sections", () => {
       }),
     });
 
-    render(<SystemSection />);
+    renderSettingsSection(SystemSection);
 
     expect(await screen.findByText("Installed version")).not.toBeNull();
     expect(screen.getByText("Running version")).not.toBeNull();
