@@ -879,6 +879,77 @@ describe("TerminalView session switching", () => {
     expect(screen.getByText("Clipboard copy failed. Try again.")).toBeTruthy();
   });
 
+  it("clears an older copy failure when a newer paste succeeds", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: vi.fn().mockResolvedValue("newer paste recovered"),
+        writeText: vi.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError")),
+      },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "older copy failure";
+    const shortcut = (key: "c" | "v") => terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    shortcut("c");
+    expect(await screen.findByText("Clipboard copy failed. Try again.")).toBeTruthy();
+
+    shortcut("v");
+    await waitFor(() => expect(attachmentWrite).toHaveBeenCalledWith("newer paste recovered"));
+    await waitFor(() => expect(screen.queryByText("Clipboard copy failed. Try again.")).toBeNull());
+  });
+
+  it("shows a newer paste failure instead of an older copy failure", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: vi.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError")),
+        writeText: vi.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError")),
+      },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "older copy failure";
+    const shortcut = (key: "c" | "v") => terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    shortcut("c");
+    expect(await screen.findByText("Clipboard copy failed. Try again.")).toBeTruthy();
+
+    shortcut("v");
+    expect(await screen.findByText("Clipboard paste failed. Try again.")).toBeTruthy();
+    expect(screen.queryByText("Clipboard copy failed. Try again.")).toBeNull();
+  });
+
   it("cancels delayed clipboard work on unmount and retries exactly once after denial", async () => {
     const unmountedRead = deferred<string>();
     const readText = vi.fn()

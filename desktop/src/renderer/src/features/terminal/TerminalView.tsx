@@ -66,6 +66,26 @@ interface TerminalViewProps {
   onRecreate?: () => void;
 }
 
+type ClipboardFeedback = {
+  sequence: number;
+  message: string;
+};
+
+function clipboardFailureFeedback(
+  current: ClipboardFeedback | null,
+  sequence: number,
+  message: string,
+): ClipboardFeedback {
+  return current && current.sequence > sequence ? current : { sequence, message };
+}
+
+function clipboardSuccessFeedback(
+  current: ClipboardFeedback | null,
+  sequence: number,
+): ClipboardFeedback | null {
+  return current && current.sequence > sequence ? current : null;
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component -- This component owns one xterm instance and its coupled attach, resize, link, paste, and teardown lifecycle. Splitting those effects across child components would obscure single-resource ownership; visual theme helpers and menus remain extracted.
 export default function TerminalView({
   sessionName,
@@ -88,6 +108,7 @@ export default function TerminalView({
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const copyOperationGenerationRef = useRef(0);
   const pasteOperationGenerationRef = useRef(0);
+  const clipboardOperationSequenceRef = useRef(0);
   const visualScaleRef = useRef(visualScale);
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
@@ -102,15 +123,25 @@ export default function TerminalView({
     setTerminalContextMenu(null);
     termRef.current?.focus();
   }, []);
-  const [copyError, setCopyError] = useState<string | null>(null);
-  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [clipboardFeedback, setClipboardFeedback] = useState<ClipboardFeedback | null>(null);
+  const reportClipboardFailure = useCallback((sequence: number, message: string) => {
+    setClipboardFeedback((current) => clipboardFailureFeedback(current, sequence, message));
+  }, []);
+  const reportClipboardSuccess = useCallback((sequence: number) => {
+    setClipboardFeedback((current) => clipboardSuccessFeedback(current, sequence));
+  }, []);
   const copyTerminalTextWithFeedback = useCallback(async (text: string) => {
     const operation = ++copyOperationGenerationRef.current;
+    const feedbackSequence = ++clipboardOperationSequenceRef.current;
     const result = await copyDesktopTerminalText(text);
     if (copyOperationGenerationRef.current !== operation) return result;
-    setCopyError(result === "success" ? null : "Clipboard copy failed. Try again.");
+    if (result === "success") {
+      reportClipboardSuccess(feedbackSequence);
+    } else {
+      reportClipboardFailure(feedbackSequence, "Clipboard copy failed. Try again.");
+    }
     return result;
-  }, []);
+  }, [reportClipboardFailure, reportClipboardSuccess]);
 
   useEffect(() => () => {
     copyOperationGenerationRef.current += 1;
@@ -404,16 +435,17 @@ export default function TerminalView({
       files: ReturnType<typeof terminalPasteFiles>,
       operation = ++pasteOperationGenerationRef.current,
       initiatingAttachment = attachmentRef.current,
+      feedbackSequence = ++clipboardOperationSequenceRef.current,
     ) => {
       if (files.some(({ file }) => file.size > MAX_TERMINAL_PASTE_FILE_BYTES)) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          setPasteError("Images are limited to 10 MB.");
+          reportClipboardFailure(feedbackSequence, "Images are limited to 10 MB.");
         }
         return;
       }
       if (!api || !initiatingAttachment) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          setPasteError("Image paste is unavailable. Reconnect and try again.");
+          reportClipboardFailure(feedbackSequence, "Image paste is unavailable. Reconnect and try again.");
         }
         return;
       }
@@ -441,24 +473,25 @@ export default function TerminalView({
         const payload = bracketTerminalPaths(paths);
         if (payload === "\x1b[200~\x1b[201~") throw new Error("invalid terminal paste paths");
         initiatingAttachment.write(payload);
-        setPasteError(null);
+        reportClipboardSuccess(feedbackSequence);
       } catch (err: unknown) {
         console.warn("[terminal] image paste failed", {
           category: err instanceof DOMException ? err.name : "terminal-paste-error",
         });
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          setPasteError("Image paste failed. Try again.");
+          reportClipboardFailure(feedbackSequence, "Image paste failed. Try again.");
         }
       }
     };
 
     const pasteFromClipboard = async () => {
       const operation = ++pasteOperationGenerationRef.current;
+      const feedbackSequence = ++clipboardOperationSequenceRef.current;
       const initiatingAttachment = attachmentRef.current;
       const clipboard = navigator.clipboard;
       if (!clipboard) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          setPasteError("Clipboard paste is unavailable. Try again.");
+          reportClipboardFailure(feedbackSequence, "Clipboard paste is unavailable. Try again.");
         }
         return;
       }
@@ -470,7 +503,7 @@ export default function TerminalView({
           const imageFiles = await readTerminalClipboardFiles(clipboardWithOptionalRead);
           if (imageFiles.length > 0) {
             if (!isCurrentOperation(operation, initiatingAttachment)) return;
-            await uploadAndPaste(imageFiles, operation, initiatingAttachment);
+            await uploadAndPaste(imageFiles, operation, initiatingAttachment, feedbackSequence);
             return;
           }
         } catch (error: unknown) {
@@ -481,7 +514,7 @@ export default function TerminalView({
       }
       if (!clipboard.readText) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          setPasteError("Clipboard paste is unavailable. Try again.");
+          reportClipboardFailure(feedbackSequence, "Clipboard paste is unavailable. Try again.");
         }
         return;
       }
@@ -491,13 +524,13 @@ export default function TerminalView({
         const terminal = termRef.current;
         if (!terminal) return;
         terminal.paste(text);
-        setPasteError(null);
+        reportClipboardSuccess(feedbackSequence);
       } catch (error: unknown) {
         console.warn("[terminal] clipboard text read unavailable", {
           category: error instanceof DOMException ? error.name : "clipboard-error",
         });
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          setPasteError("Clipboard paste failed. Try again.");
+          reportClipboardFailure(feedbackSequence, "Clipboard paste failed. Try again.");
         }
       }
     };
@@ -531,7 +564,7 @@ export default function TerminalView({
       host.removeEventListener("dragover", onDrag, { capture: true });
       host.removeEventListener("drop", onDrop, { capture: true });
     };
-  }, [active, api, sessionName]);
+  }, [active, api, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
     if (leaseRevoked) {
@@ -554,7 +587,7 @@ export default function TerminalView({
     if (socketState === "connection-lost") return { text: "Connection lost. Reconnecting…", action: null };
     return null;
   })();
-  const clipboardError = copyError ?? pasteError;
+  const clipboardError = clipboardFeedback?.message ?? null;
 
   return (
     <div
