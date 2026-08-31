@@ -85,6 +85,7 @@ describe("Electron OS window chrome", () => {
     const chromeGrid = screen.getByTestId("os-window-chrome-grid");
     expect(chromeGrid.className).not.toContain("border-b");
     expect((chromeGrid as HTMLElement).style.gridTemplateColumns).toBe("260px minmax(0, 1fr) 640px");
+    expect(chromeGrid.firstElementChild?.className).not.toContain("border-r");
     const title = screen.getByText("Release planning");
     expect(title.parentElement?.className).toContain("justify-start");
     expect(title.parentElement?.className).toContain("text-[15px]");

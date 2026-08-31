@@ -149,7 +149,7 @@ export function TopBar({
           }}
         >
           <div
-            className={`flex min-w-0 items-center gap-2 px-3 ${alignedLeftWidth > 0 ? "border-r" : "overflow-visible"}`}
+            className={`flex min-w-0 items-center gap-2 px-3 ${alignedLeftWidth === 0 ? "overflow-visible" : ""}`}
             style={{ borderColor: "var(--border-subtle)" }}
           >
             {alignedLeftWidth > 0 ? (

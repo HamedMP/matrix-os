@@ -642,12 +642,25 @@ describe("WorkTab rail integration", () => {
     render(<HostedWork />);
     await screen.findByText("Chat center");
 
-    expect(screen.getByText("Global chat", { selector: "header span" })).toBeTruthy();
+    const chromeTitle = screen.getByText("Global chat", { selector: "header span" });
+    expect(chromeTitle).toBeTruthy();
+    const hostedMain = within(screen.getByTestId("hosted-chat-main"));
+    expect(hostedMain.getByRole("heading", { name: "Global chat" })).toBeTruthy();
+    const sidebarToggle = hostedMain.getByRole("button", { name: "Toggle Chat sidebar" });
+    expect(sidebarToggle.className).toContain("size-7");
+    expect(sidebarToggle.className).toContain("pointer-events-auto");
+    expect(sidebarToggle.className).toContain("hover:bg-[var(--bg-hover)]");
+    expect(sidebarToggle.style.border).toBe("");
+    expect(sidebarToggle.querySelector("svg")?.getAttribute("width")).toBe("15");
+    const mainHeader = sidebarToggle.closest("header");
+    expect(mainHeader?.className).toContain("z-40");
+    expect(mainHeader?.className).toContain("px-1");
+    expect(mainHeader?.className).toContain("gap-1");
     expect(screen.getByTestId("left-pane-width").textContent).toBe("240");
     expect(screen.getByTestId("right-pane-width").textContent).toBe("640");
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     const hideInspector = screen.getByRole("button", { name: "Hide inspector" });
-    expect(within(screen.getByRole("banner")).queryByRole("button", { name: /Chat navigation/ })).toBeNull();
+    expect(within(chromeTitle.closest("header")!).queryByRole("button", { name: /Chat navigation/ })).toBeNull();
     expect(hideInspector.className).toContain("size-4");
     expect(hideInspector.className).toContain("rounded-[4.8px]");
     expect(hideInspector.querySelector("svg")?.getAttribute("width")).toBe("11.2");
@@ -696,6 +709,7 @@ describe("WorkTab rail integration", () => {
     await screen.findByText("Chat center");
 
     expect(screen.getByTestId("draft-chrome").textContent).toBe("");
+    expect(document.querySelector("[data-work-main-header]")).toBeNull();
   });
 
   it("returns a stale narrow inspector to Chat when Work becomes inactive", async () => {
