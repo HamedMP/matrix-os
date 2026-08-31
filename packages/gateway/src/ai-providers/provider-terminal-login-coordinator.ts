@@ -17,6 +17,7 @@ const EnabledHarnessSchema = z.enum(["codex", "claude"]);
 const ReceiptSchema = z.object({
   key: SafeRefSchema,
   payloadHash: z.string().length(64).regex(/^[a-f0-9]+$/),
+  recoveryHash: z.string().length(64).regex(/^[a-f0-9]+$/).optional(),
   attempt: ProviderConnectionAttemptSchema,
 }).strict();
 const ReceiptDocumentSchema = z.object({
@@ -68,9 +69,19 @@ function payloadHash(input: LoginInput): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
-function loginSessionName(idempotencyKey: string): string {
-  const keyHash = createHash("sha256").update(idempotencyKey).digest("hex");
-  return `provider-login-${keyHash.slice(0, 24)}`;
+function recoveryIdentityHash(input: LoginInput): string {
+  return createHash("sha256").update(JSON.stringify({
+    providerId: input.harness.providerId,
+    harness: input.harness.harness,
+    driverId: input.harness.driverId,
+    harnessInstanceId: input.mutation.harnessInstanceId,
+    accountId: input.mutation.accountId,
+    method: input.mutation.method,
+  })).digest("hex");
+}
+
+function loginSessionName(recoveryHash: string): string {
+  return `provider-login-${recoveryHash.slice(0, 24)}`;
 }
 
 function appendBoundedReceipt(document: ReceiptDocument, receipt: ReceiptDocument["receipts"][number]): void {
@@ -137,6 +148,7 @@ export function createProviderTerminalLoginCoordinator(options: {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
         const hash = payloadHash(input);
+        const recoveryHash = recoveryIdentityHash(input);
         const document = await readReceipts(receiptsPath);
         const recoveryDocument = await readReceipts(recoveryPath);
         const matchingReceipts = [...document.receipts, ...recoveryDocument.receipts]
@@ -168,8 +180,57 @@ export function createProviderTerminalLoginCoordinator(options: {
           return attempt;
         }
 
+        const activeRecoveryReceipts = recoveryDocument.receipts.filter((receipt) =>
+          receipt.recoveryHash === recoveryHash
+          && currentProviderConnectionAttempt(receipt.attempt, now()).state !== "expired");
+        const activeRecoveryAttempts = new Map(activeRecoveryReceipts.map((receipt) => [
+          JSON.stringify(receipt.attempt),
+          receipt.attempt,
+        ]));
+        if (activeRecoveryAttempts.size > 1) {
+          throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        }
+        const recoverable = activeRecoveryAttempts.values().next().value;
+        if (recoverable) {
+          const attempt = currentProviderConnectionAttempt(recoverable, now());
+          if (attempt.action.kind !== "open_terminal") {
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
+          appendBoundedReceipt(recoveryDocument, ReceiptSchema.parse({
+            key: input.mutation.idempotencyKey,
+            payloadHash: hash,
+            recoveryHash,
+            attempt: recoverable,
+          }));
+          try {
+            await writeProviderJsonAtomic(recoveryPath, ReceiptDocumentSchema.parse(recoveryDocument));
+          } catch (error) {
+            console.warn(
+              "[provider-login] Failed to persist login recovery alias:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
+          try {
+            await options.registry.get(attempt.action.terminalSessionId);
+          } catch (error) {
+            if (!isMissingSession(error)) throw error;
+            const recoveryCommand = LOGIN_COMMANDS[input.harness.harness];
+            await options.registry.create({
+              name: attempt.action.terminalSessionId,
+              cwd: "~",
+              cmd: recoveryCommand.command,
+              agent: recoveryCommand.agent,
+              exclusive: false,
+            });
+          }
+          return attempt;
+        }
+
+        recoveryDocument.receipts = recoveryDocument.receipts.filter((receipt) =>
+          receipt.recoveryHash !== recoveryHash);
         const command = LOGIN_COMMANDS[input.harness.harness];
-        const sessionName = loginSessionName(input.mutation.idempotencyKey);
+        const sessionName = loginSessionName(recoveryHash);
         const attempt = ProviderConnectionAttemptSchema.parse({
           id: `attempt_${hash.slice(0, 24)}`,
           harnessInstanceId: input.mutation.harnessInstanceId,
@@ -183,6 +244,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         const receipt = ReceiptSchema.parse({
           key: input.mutation.idempotencyKey,
           payloadHash: hash,
+          recoveryHash,
           attempt,
         });
         try {

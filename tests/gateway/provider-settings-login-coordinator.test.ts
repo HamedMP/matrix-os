@@ -297,4 +297,109 @@ describe("provider terminal login coordinator", () => {
     expect(registry.create).toHaveBeenCalledOnce();
     expect(sessions).toEqual(new Set([orphanName]));
   });
+
+  it("adopts an orphan on a fresh-key retry without launching another login", async () => {
+    const persistReceipt = vi.fn(async () => {
+      throw new Error("disk unavailable");
+    });
+    registry.delete.mockRejectedValueOnce(new Error("delete unavailable"));
+    const input = {
+      mutation: {
+        type: "start_login" as const,
+        expectedRevision: 0,
+        idempotencyKey: "login_fresh_key_original",
+        harnessInstanceId: "harness_claude",
+        accountId: "owner_anthropic",
+        method: "terminal" as const,
+      },
+      harness: {
+        id: "harness_claude",
+        driverId: "claude_code",
+        harness: "claude" as const,
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
+        installState: "installed" as const,
+      },
+    };
+    const failed = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => now,
+      persistReceipt,
+    });
+
+    await expect(failed.startLogin(input)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    const orphanName = [...sessions][0]!;
+    const recovered = await failed.startLogin({
+      ...input,
+      mutation: {
+        ...input.mutation,
+        expectedRevision: 1,
+        idempotencyKey: "login_fresh_key_retry",
+      },
+    });
+
+    expect(recovered.action).toEqual({ kind: "open_terminal", terminalSessionId: orphanName });
+    expect(registry.create).toHaveBeenCalledOnce();
+    expect(sessions).toEqual(new Set([orphanName]));
+  });
+
+  it("recovers a fresh-key orphan after restart and remembers its conflict hash", async () => {
+    const persistReceipt = vi.fn(async () => {
+      throw new Error("disk unavailable with secret-provider-token");
+    });
+    registry.delete.mockRejectedValueOnce(new Error("delete failed with secret-provider-token"));
+    const input = {
+      mutation: {
+        type: "start_login" as const,
+        expectedRevision: 0,
+        idempotencyKey: "login_restart_original",
+        harnessInstanceId: "harness_claude",
+        accountId: null,
+        method: "terminal" as const,
+      },
+      harness: {
+        id: "harness_claude",
+        driverId: "claude_code",
+        harness: "claude" as const,
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
+        installState: "installed" as const,
+      },
+    };
+    const failed = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => now,
+      persistReceipt,
+    });
+    await expect(failed.startLogin(input)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    const orphanName = [...sessions][0]!;
+
+    const restarted = coordinator(["claude"]);
+    const freshInput = {
+      ...input,
+      mutation: {
+        ...input.mutation,
+        expectedRevision: 2,
+        idempotencyKey: "login_restart_fresh_key",
+      },
+    };
+    const recovered = await restarted.startLogin(freshInput);
+    expect(recovered.action).toEqual({ kind: "open_terminal", terminalSessionId: orphanName });
+    expect(registry.create).toHaveBeenCalledOnce();
+    expect(sessions).toEqual(new Set([orphanName]));
+
+    await expect(restarted.startLogin({
+      ...freshInput,
+      harness: { ...freshInput.harness, modelId: "claude-opus-5" },
+    })).rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect(registry.create).toHaveBeenCalledOnce();
+
+    const recovery = await readFile(join(homePath, "system/ai-providers/login-recovery.json"), "utf8");
+    expect(recovery).toContain("login_restart_fresh_key");
+    expect(recovery).not.toMatch(/secret-provider-token|sh -lc|claude-sonnet-5/i);
+  });
 });
