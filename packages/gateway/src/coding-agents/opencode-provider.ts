@@ -127,8 +127,11 @@ function readOnlyConfig(baseUrl: string | undefined): string {
 function childEnvironment(
   base: Record<string, string> | undefined,
   credentialEnv: Record<string, string>,
+  homePath: string,
 ): Record<string, string> {
-  const env = addPortableProviderCredentials(buildPiChildEnvironment(base), credentialEnv);
+  const ownerEnvironment = buildPiChildEnvironment({ ...base, HOME: homePath });
+  ownerEnvironment.HOME = homePath;
+  const env = addPortableProviderCredentials(ownerEnvironment, credentialEnv);
   env.OPENCODE_DISABLE_PROJECT_CONFIG = "1";
   env.OPENCODE_DISABLE_AUTOUPDATE = "1";
   env.OPENCODE_CONFIG_CONTENT = readOnlyConfig(env.ANTHROPIC_BASE_URL);
@@ -345,7 +348,7 @@ export function createOpenCodeCodingAgentProvider(
     // yargs treats leading-dash prompt text as options unless it follows the
     // end-of-options marker. Keep all user text in the variadic message.
     args.push("--", input.prompt);
-    const env = childEnvironment(options.env, launch.env);
+    const env = childEnvironment(options.env, launch.env, options.homePath);
     const configuredTimeoutMs = launch.maxRunMs ? Math.min(runTimeoutMs, launch.maxRunMs) : runTimeoutMs;
     const timeoutMs = Math.max(1, Math.min(configuredTimeoutMs, runDeadline - Date.now()));
     return await new Promise((resolve) => {
@@ -509,7 +512,14 @@ export function createOpenCodeCodingAgentProvider(
     initialRunExecution: "background",
     async getSummary({ now }) {
       let installed = false;
-      try { await runCommand(command, ["--version"], { cwd: options.homePath, timeout: PROBE_TIMEOUT_MS, env: buildPiChildEnvironment(options.env) }); installed = true; }
+      try {
+        await runCommand(command, ["--version"], {
+          cwd: options.homePath,
+          timeout: PROBE_TIMEOUT_MS,
+          env: buildPiChildEnvironment({ ...options.env, HOME: options.homePath }),
+        });
+        installed = true;
+      }
       catch (error: unknown) { logCodingAgentWarning("OpenCode binary probe failed", error); }
       const authenticated = installed && await hasNativeHarnessAuth(options.homePath, "opencode");
       return AgentProviderSummarySchema.parse({

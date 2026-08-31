@@ -29,7 +29,6 @@ import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/se
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
-import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -166,6 +165,10 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
   const parsedModel = provider.defaultModel === undefined
     ? null
     : CanonicalChatModelSelectionSchema.shape.model.safeParse(provider.defaultModel);
+  if (parsedModel?.success !== true
+    && (codingDriverKind(provider) === "pi" || codingDriverKind(provider) === "opencode")) {
+    return [];
+  }
   const id = parsedModel?.success === true ? parsedModel.data : "provider-default";
   const availability = provider.availability === "available"
     ? "available" as const
@@ -375,6 +378,23 @@ function systemInstallAction(
     id: `${kind}_install`,
     kind: "foreground_terminal",
     label: `Install ${displayName}`,
+    command: visibleSetupCommand(
+      `/opt/matrix/bin/matrix-agent-runtime-control install ${kind}`,
+    ),
+  };
+}
+
+function systemRepairAction(
+  kind: typeof SYSTEM_DRIVERS[number],
+): CanonicalProviderSetupAction {
+  const displayName = driverDisplayName(kind);
+  return {
+    id: `${kind}_repair`,
+    kind: "foreground_terminal",
+    label: `Repair ${displayName}`,
+    // Host control's install operation is idempotent: it reruns the pinned
+    // installer when the expected executable is absent, which repairs an
+    // interrupted install without exposing a second privileged command.
     command: visibleSetupCommand(
       `/opt/matrix/bin/matrix-agent-runtime-control install ${kind}`,
     ),
@@ -610,9 +630,12 @@ function applyHarnessSettings(input: {
     if (!executable) {
       const unavailable = unavailableInstance(configuredInstance, "runtime_not_runnable");
       if (instance.driverKind === "hermes" || instance.driverKind === "openclaw") {
+        const installAction = instance.setupActions.find((action) => (
+          action.id === `${instance.driverKind}_install`
+        ));
         return {
           ...unavailable,
-          setupActions: [systemInstallAction(instance.driverKind)],
+          setupActions: [installAction ?? systemRepairAction(instance.driverKind)],
         };
       }
       return unavailable;
@@ -698,10 +721,6 @@ export function createChatProviderCatalogService(options: {
       }
       if (settingsResult.status === "rejected") {
         console.warn("[chat-providers] Harness settings unavailable");
-        if (settingsResult.reason instanceof ProviderSettingsStoreError
-          && settingsResult.reason.status === 503) {
-          throw new ProviderCatalogUnavailableError(true);
-        }
       }
 
       const coding = codingResult.status === "fulfilled" ? codingResult.value : [];

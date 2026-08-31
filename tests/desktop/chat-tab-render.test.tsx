@@ -72,6 +72,7 @@ describe("ChatTab", () => {
     useDesktopEditor.setState(useDesktopEditor.getInitialState(), true);
     useProviderPreferences.setState({
       defaultProviderId: null,
+      lastComposerInstanceId: null,
       composerSelections: {},
       hydrated: true,
     });
@@ -749,6 +750,7 @@ describe("ChatTab", () => {
     fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
 
     expect(useProviderPreferences.getState().composerSelections.hermes_default).toEqual({
+      model: "provider-default",
       options: [{ id: "effort", value: "high" }],
       permissionMode: "full_access",
     });

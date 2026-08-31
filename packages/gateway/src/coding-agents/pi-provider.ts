@@ -631,6 +631,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     const args = [
       "--mode", "json",
       "--print",
+      // Keep canonical runs independent from owner extensions, skills, prompt
+      // templates, context files, update checks, and telemetry. Native auth and
+      // the explicitly selected model still come from the owner-local HOME.
+      "--offline",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
       // Pi exposes no `--sandbox` flag, so confinement is enforced by scoping
       // the tool allowlist to the non-mutating `read` tool. Threads are refused
       // at start unless they asked for read_only, so every run that reaches
@@ -660,8 +668,13 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       return { events: [], outcome: "failed", sessionId: input.sessionId };
     }
     const credentialLaunch = credentialResolution.launch;
+    const ownerEnvironment = buildPiChildEnvironment({
+      ...options.env,
+      HOME: homePath,
+    });
+    ownerEnvironment.HOME = homePath;
     const env = addPortableProviderCredentials(
-      buildPiChildEnvironment(options.env),
+      ownerEnvironment,
       credentialLaunch?.env,
     );
     const effectiveRunTimeoutMs = credentialLaunch?.maxRunMs
@@ -909,7 +922,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       await runCommand(command, ["--version"], {
         cwd: homePath,
         timeout: PROBE_TIMEOUT_MS,
-        env: buildPiChildEnvironment(options.env),
+        env: buildPiChildEnvironment({ ...options.env, HOME: homePath }),
       });
       return true;
     } catch (err: unknown) {

@@ -145,6 +145,7 @@ import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
 import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
+import { createNativeCodingModelCatalogSource } from "./chat/native-coding-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import {
   closeCanonicalChatEventLifecycle,
@@ -4251,6 +4252,10 @@ export async function createGateway(config: GatewayConfig) {
       ? ["opencode" as const]
       : []),
   ];
+  const codexModelCatalogSource = codexExecutable
+    ? createCodexModelCatalogSource({ executable: codexExecutable, cwd: homePath })
+    : undefined;
+  const nativeCodingModelCatalogSource = createNativeCodingModelCatalogSource({ homePath });
   const canonicalChatProviderCatalog = createChatProviderCatalogService({
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
@@ -4259,12 +4264,10 @@ export async function createGateway(config: GatewayConfig) {
     executableDriverKinds: canonicalExecutableDriverKinds,
     credentialedDriverKinds: ["pi", "opencode"],
     skillsSource: () => loadSkills(homePath),
-    ...(codexExecutable ? {
-      codingModelCatalogSource: createCodexModelCatalogSource({
-        executable: codexExecutable,
-        cwd: homePath,
-      }),
-    } : {}),
+    codingModelCatalogSource: async (provider) => {
+      const codexModels = await codexModelCatalogSource?.(provider);
+      return codexModels ?? nativeCodingModelCatalogSource(provider);
+    },
   });
   if (chatRepository) {
     canonicalChatExecutionRoots = createChatExecutionRootResolver({

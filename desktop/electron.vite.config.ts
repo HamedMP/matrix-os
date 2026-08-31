@@ -55,6 +55,10 @@ export default defineConfig({
       allowedHosts: [DESKTOP_DEV_RENDERER_HOST],
     },
     resolve: {
+      // Workspace UI packages resolve peers from their own symlinked package
+      // roots under pnpm. Keep every renderer hook on Electron Desktop's React
+      // dispatcher instead of bundling a second React copy from packages/ui.
+      dedupe: ["react", "react-dom"],
       alias: {
         "@renderer": resolve(__dirname, "src/renderer/src"),
       },

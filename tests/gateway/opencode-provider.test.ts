@@ -11,7 +11,9 @@ import {
   createOpenCodeCodingAgentProvider,
   type OpenCodeSpawnFn,
 } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
+import { createCodingHarnessCredentialResolver } from "../../packages/gateway/src/coding-agents/harness-credentials.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const now = new Date("2026-08-31T00:00:00.000Z");
@@ -150,6 +152,49 @@ describe("OpenCode coding-agent provider", () => {
     });
 
     expect(fake.calls[0]!.args).not.toContain("--model");
+  });
+
+  it("runs an exact model through owner-local Terminal auth in the same HOME used for readiness", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "opencode-native-run-"));
+    const authDirectory = join(homePath, ".local", "share", "opencode");
+    await mkdir(authDirectory, { recursive: true });
+    await writeFile(join(authDirectory, "auth.json"), "{\"anthropic\":{}}\n", { mode: 0o600 });
+    const resolveCredentialLaunch = createCodingHarnessCredentialResolver({
+      harness: "opencode",
+      homePath,
+      settings: {
+        getSnapshot: async () => ({ ...providerSettingsCanonicalFixture(), harnesses: [] }),
+      },
+    });
+    const fake = fakeSpawn([
+      line("text", { part: { id: "part_text", type: "text", text: "Done", time: { end: 1 } } }),
+    ]);
+    try {
+      const adapter = provider(fake.spawnFn, {
+        homePath,
+        env: { HOME: "/wrong-service-home", PATH: "/runtime/bin" },
+        resolveCredentialLaunch,
+      });
+
+      const result = await adapter.startThread({
+        principal,
+        thread: thread(),
+        request: request({ model: "anthropic:claude-sonnet-5" }),
+        now: () => now,
+        nextEventId: ids(),
+      });
+
+      expect(fake.calls[0]!.env).toMatchObject({ HOME: homePath, PATH: "/runtime/bin" });
+      expect(fake.calls[0]!.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+      expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
+        "--pure", "--model", "anthropic/claude-sonnet-5",
+      ]));
+      expect(result.events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+      ]));
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 
   it("normalizes completed tool output and provider errors without leaking raw details", async () => {

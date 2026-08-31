@@ -20,6 +20,7 @@ import {
   validateChatProviderSelection,
 } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provider-routes.js";
+import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src/chat/native-coding-model-catalog.js";
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
@@ -290,9 +291,11 @@ describe("canonical Chat Provider catalog", () => {
         instance.id === `${kind}_default`
       ))).toMatchObject({
         availability: "available",
-        models: [{ id: "provider-default" }],
-        defaultSelection: { instanceId: `${kind}_default`, model: "provider-default" },
+        models: [],
       });
+      expect((await service.getCatalog(principal)).instances.find((instance) => (
+        instance.id === `${kind}_default`
+      ))).not.toHaveProperty("defaultSelection");
     },
   );
 
@@ -316,6 +319,49 @@ describe("canonical Chat Provider catalog", () => {
         .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
     },
   );
+
+  it("publishes native Pi and OpenCode model discovery instead of a synthetic default", async () => {
+    const runCommand = vi.fn(async (command: string) => ({
+      stdout: command === "pi"
+        ? [
+            "provider   model            context  max-out  thinking  images",
+            "anthropic  claude-sonnet-5  200K     64K      yes       yes",
+          ].join("\n")
+        : "opencode/big-pickle\n",
+      stderr: "",
+    }));
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider({
+          id: "pi", displayName: "Pi", kind: "pi", defaultModel: undefined,
+          supportedModes: ["default"], setupActions: [],
+        }),
+        codingProvider({
+          id: "opencode", displayName: "OpenCode", kind: "opencode", defaultModel: undefined,
+          supportedModes: ["default"], setupActions: [],
+        }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([]),
+      executableDriverKinds: ["pi", "opencode"],
+      credentialedDriverKinds: ["pi", "opencode"],
+      codingModelCatalogSource: createNativeCodingModelCatalogSource({
+        homePath: "/home/matrix/home",
+        runCommand,
+      }),
+    });
+
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "pi_default")).toMatchObject({
+      models: [{ id: "anthropic:claude-sonnet-5" }],
+      defaultSelection: { model: "anthropic:claude-sonnet-5" },
+    });
+    expect(catalog.instances.find((instance) => instance.id === "opencode_default")).toMatchObject({
+      models: [{ id: "opencode:big-pickle" }],
+      defaultSelection: { model: "opencode:big-pickle" },
+    });
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
 
   it.each(["pi", "opencode"] as const)(
     "keeps %s unavailable when an owner subscription is mislabeled as portable access",
@@ -743,7 +789,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(opencode.setupActions.some((action) => action.kind === "open_settings")).toBe(false);
   });
 
-  it("does not advertise an installed harness without a canonical execution adapter", async () => {
+  it("offers a host repair when an installed system harness is not runnable", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({
         id: "opencode",
@@ -771,12 +817,14 @@ describe("canonical Chat Provider catalog", () => {
       options: [],
       unavailabilityReason: "runtime_not_runnable",
       setupActions: [{
-        id: "openclaw_install",
+        id: "openclaw_repair",
         kind: "foreground_terminal",
-        label: "Install OpenClaw",
+        label: "Repair OpenClaw",
         command: expect.stringContaining("matrix-agent-runtime-control install openclaw"),
       }],
     });
+    expect(openclaw.setupActions.some((action) => action.id === "openclaw_connect")).toBe(false);
+    expect(openclaw.setupActions.some((action) => action.id === "openclaw_install")).toBe(false);
   });
 
   it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
@@ -1302,11 +1350,28 @@ describe("GET /api/chat-providers", () => {
     });
   });
 
-  it("propagates blocked provider-settings recovery as a retryable catalog outage", async () => {
+  it("keeps the model catalog available when foreground install inventory is transiently unavailable", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const source: AgentRuntimeSource = async () => {
+      const snapshot = await runtimeSource()();
+      return {
+        ...snapshot,
+        runtime: {
+          ...snapshot.runtime,
+          options: snapshot.runtime.options.map((runtime) => runtime.id === "openclaw"
+            ? {
+                ...runtime,
+                installState: "installing" as const,
+                selectionState: "unavailable" as const,
+                capabilities: ["install" as const],
+              }
+            : runtime),
+        },
+      };
+    };
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry(),
-      agentRuntimeSource: runtimeSource(),
+      agentRuntimeSource: source,
       harnessSettingsSource: {
         getSnapshot: async () => {
           throw new ProviderSettingsStoreError("runtime_unavailable", 503);
@@ -1320,15 +1385,19 @@ describe("GET /api/chat-providers", () => {
 
     const response = await app.request("/api/chat-providers");
 
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({
-      error: {
-        code: "service_unavailable",
-        safeMessage: "Provider catalog is temporarily unavailable.",
-        retryable: true,
-        recoveryActions: ["retry"],
-      },
-    });
+    expect(response.status).toBe(200);
+    const catalog = CanonicalProviderCatalogSchema.parse(await response.json());
+    expect(catalog.instances.find((instance) => instance.id === "hermes_default"))
+      .toMatchObject({ availability: "available" });
+    expect(catalog.instances.find((instance) => instance.id === "openclaw_default"))
+      .toMatchObject({
+        availability: "setup_required",
+        setupActions: [{ id: "openclaw_install", label: "Install OpenClaw" }],
+      });
+    expect(catalog.instances.filter((instance) => instance.driverKind === "pi"
+      || instance.driverKind === "opencode")
+      .every((instance) => instance.unavailabilityReason === "settings_unavailable"))
+      .toBe(true);
     warning.mockRestore();
   });
 

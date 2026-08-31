@@ -15,8 +15,10 @@ import {
   createPiCodingAgentProvider,
   type PiSpawnFn,
 } from "../../packages/gateway/src/coding-agents/pi-provider.js";
+import { createCodingHarnessCredentialResolver } from "../../packages/gateway/src/coding-agents/harness-credentials.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const baseNow = new Date("2026-07-23T12:00:00.000Z");
@@ -262,6 +264,11 @@ describe("pi provider adapter — spawn contract", () => {
     expect(call.args).toEqual([
       "--mode", "json",
       "--print",
+      "--offline",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
       "--tools", "read",
       "--no-approve",
       "--session-id", expect.stringMatching(/^[0-9a-f-]{36}$/),
@@ -337,6 +344,46 @@ describe("pi provider adapter — spawn contract", () => {
 
     expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
       "--provider", "anthropic", "--model", "claude-sonnet-5",
+    ]));
+  });
+
+  it("runs an exact model through owner-local Terminal auth in the same HOME used for readiness", async () => {
+    const authDirectory = join(homePath, ".pi", "agent");
+    await mkdir(authDirectory, { recursive: true });
+    await writeFile(join(authDirectory, "auth.json"), "{\"anthropic\":{}}\n", { mode: 0o600 });
+    const resolveCredentialLaunch = createCodingHarnessCredentialResolver({
+      harness: "pi",
+      homePath,
+      settings: {
+        getSnapshot: async () => ({ ...providerSettingsCanonicalFixture(), harnesses: [] }),
+      },
+    });
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn, {
+      env: { HOME: "/wrong-service-home", PATH: "/runtime/bin" },
+      resolveCredentialLaunch,
+    });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { model: "anthropic:claude-sonnet-5" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.env).toMatchObject({ HOME: homePath, PATH: "/runtime/bin" });
+    expect(fake.calls[0]!.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
+      "--offline",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
+      "--provider", "anthropic", "--model", "claude-sonnet-5",
+    ]));
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
     ]));
   });
 
