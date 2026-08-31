@@ -16,8 +16,25 @@ Matrix exposes one stable integration boundary with these operations:
 - describe supported service actions
 - execute a validated action for one selected account
 - disconnect an account
+- list and describe personal Custom MCP servers
+- call one selected Custom MCP tool through the Matrix broker
 
 Pipedream remains behind this boundary for OAuth and provider-token custody. It is never configured separately in an agent or customer VPS.
+
+The managed catalog contains 14 services. Google Docs, Notion, Figma, PostHog,
+Jira, and a customer-connected read-only Stripe account use the Pipedream
+lifecycle. Granola is a curated read-only Streamable HTTP preset backed by its
+public browser-OAuth MCP endpoint. Stripe, PostHog, and Granola expose no write
+actions; Stripe connections should use a restricted read-only key and are
+completely separate from Matrix billing.
+
+Personal Custom MCP supports remote HTTPS Streamable HTTP only. Users add it
+in Canvas **Settings > Integrations** or desktop **Settings > MCPs**, authorize
+on the platform, discover tools, explicitly select tools and approval policy,
+test, and enable. New tools are disabled and `always_ask` by default. The
+platform stores AES-256-GCM encrypted OAuth/static credentials; the VPS stores
+only the non-secret revisioned enforcement projection in
+`~/system/mcp-servers.json`. Calls require the intersection of both copies.
 
 The boundary is a local stdio MCP server at
 `/opt/matrix/bin/matrix-integrations-mcp`. The MCP process calls only the
@@ -71,6 +88,14 @@ gateway identity at execution time.
 ## Security invariants
 
 - OAuth tokens and Pipedream credentials stay platform-owned.
+- Custom MCP credentials stay encrypted in platform Postgres with a dedicated
+  key and owner/server-bound authenticated data; they never enter VPS files,
+  agent prompts, or logs.
+- Custom MCP URL validation, DNS pinning, no-redirect requests, bounds, and
+  timeouts apply at creation, discovery, and calls.
+- Custom MCP output and descriptions are treated as untrusted external content.
+- Managed writes and `always_ask` Custom MCP tools use the native Matrix
+  approval bridge. Custom subagents need an explicit `mcp` frontmatter grant.
 - Connection discovery returns labels, status, and email identity only; not provider data.
 - Every action resolves account ownership server-side and validates the service, action, and parameters.
 - Disconnect is explicitly marked destructive in MCP metadata and requires a Matrix connection ID.

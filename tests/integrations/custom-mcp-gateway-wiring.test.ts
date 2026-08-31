@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { registerCustomMcpGatewayRoutes } from "../../packages/gateway/src/integrations/custom-mcp/gateway-routes.js";
 
 describe("Custom MCP gateway route composition", () => {
@@ -34,5 +34,35 @@ describe("Custom MCP gateway route composition", () => {
     });
 
     expect(response.status).toBe(200);
+  });
+
+  it("owns Custom MCP platform-proxy composition outside the gateway entrypoint", async () => {
+    const app = new Hono();
+    const proxyRequest = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      headers: { "content-type": "application/json" },
+    }));
+    registerCustomMcpGatewayRoutes(app, {
+      homePath: "/tmp/matrix-custom-mcp-test",
+      platformProxy: {
+        internalPlatformUrl: "https://app.matrix-os.com",
+        handle: "owner",
+        token: "host-token",
+        request: proxyRequest,
+      },
+    });
+
+    const response = await app.request("/api/mcp-servers/server-id/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(proxyRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ req: expect.objectContaining({ path: "/api/mcp-servers/server-id/discover" }) }),
+      "https://app.matrix-os.com/internal/containers/owner/mcp-servers",
+      "/api/mcp-servers",
+      "host-token",
+    );
   });
 });

@@ -37,6 +37,7 @@ import {
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { buildPlatformVerificationToken } from './platform-token.js';
+import { buildCustomMcpProjectionUrl } from './custom-mcp-projection.js';
 import { backfillFirstRunRecords } from './journey.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
@@ -66,7 +67,9 @@ export function parseGoldenSnapshotReconciliationInterval(raw: string | undefine
 
 interface GatewayPlatformDb {
   migrate(): Promise<void>;
+  destroy(): Promise<void>;
   getUserByClerkId(clerkId: string): Promise<GatewayPlatformUser | null>;
+  getUserById(id: string): Promise<GatewayPlatformUser | null>;
   ensureUser(input: {
     clerkId: string;
     handle: string;
@@ -75,6 +78,32 @@ interface GatewayPlatformDb {
     containerId: string;
     pipedreamExternalId?: string;
   }): Promise<GatewayPlatformUser>;
+}
+
+interface GatewayCustomMcpModules {
+  broker: {
+    CustomMcpBroker: new (options: Record<string, unknown>) => {
+      sweepPending(): Promise<number>;
+      shutdown(): Promise<void>;
+      getPreset(userId: string, presetId: string): Promise<any>;
+      ensurePreset(input: { userId: string; presetId: string; name: string; url: string }): Promise<any>;
+      activatePreset(input: { userId: string; presetId: string; allowedTools: readonly string[]; requiredTools?: readonly string[] }): Promise<any>;
+      callSelectedTool(input: { userId: string; serverId: string; toolName: string; arguments?: Record<string, unknown>; approvalGranted: boolean }): Promise<unknown>;
+      remove(userId: string, serverId: string): Promise<void>;
+    };
+  };
+  oauth: {
+    CustomMcpOAuthManager: new (options: Record<string, unknown>) => {
+      start(userId: string, serverId: string): Promise<string>;
+      complete(userId: string, state: string, code: string): Promise<{ serverId: string }>;
+      resolveAuthorization(userId: string, row: unknown): Promise<string | undefined>;
+      revoke(credential: unknown): Promise<void>;
+    };
+  };
+  crypto: { parseCustomMcpEncryptionKey(value?: string): Buffer };
+  routes: {
+    createCustomMcpRoutes(options: Record<string, unknown>): Hono;
+  };
 }
 
 interface GatewayPlatformDbModule {
@@ -98,6 +127,7 @@ interface GatewayIntegrationRoutesModule {
     pipedream: unknown;
     webhookSecret: string;
     resolveUserId: (c: Context) => Promise<string | null>;
+    mcpPresetBroker?: unknown;
   }): Hono;
 }
 
@@ -155,6 +185,8 @@ type CreatePlatformApp = (deps: {
   matrixProvisioner?: MatrixProvisioner;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  customMcpRoutes?: Hono<any>;
+  internalCustomMcpRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -200,7 +232,10 @@ async function importRuntimeModule<T>(specifier: string): Promise<T> {
   return import(specifier) as Promise<T>;
 }
 
-export async function startPlatformServer(opts: StartPlatformServerOptions): Promise<void> {
+async function startPlatformServerWithCleanup(
+  opts: StartPlatformServerOptions,
+  registerCustomMcpStartupCleanup: (cleanup: () => Promise<void>) => void,
+): Promise<void> {
   const {
     port,
     platformSecret,
@@ -327,6 +362,28 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
 
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
+  let customMcpRoutes: Hono | undefined;
+  let internalCustomMcpRoutes: Hono | undefined;
+  let customMcpSweepInterval: NodeJS.Timeout | undefined;
+  let customMcpShutdown: (() => Promise<void>) | undefined;
+  let managedMcpPresetBroker: {
+    listConnections(userId: string): Promise<any[]>;
+    connect(userId: string, service: any): Promise<{ url: string }>;
+    call(input: { userId: string; service: any; actionId: string; params?: Record<string, unknown> }): Promise<unknown>;
+    disconnect(userId: string, connectionId: string): Promise<boolean>;
+  } | undefined;
+  const managedMcpPresetProxy = {
+    listConnections: (userId: string) => managedMcpPresetBroker?.listConnections(userId) ?? Promise.resolve([]),
+    connect: (userId: string, service: any) => {
+      if (!managedMcpPresetBroker) throw new Error('Managed MCP preset broker unavailable');
+      return managedMcpPresetBroker.connect(userId, service);
+    },
+    call: (input: { userId: string; service: any; actionId: string; params?: Record<string, unknown> }) => {
+      if (!managedMcpPresetBroker) throw new Error('Managed MCP preset broker unavailable');
+      return managedMcpPresetBroker.call(input);
+    },
+    disconnect: (userId: string, connectionId: string) => managedMcpPresetBroker?.disconnect(userId, connectionId) ?? Promise.resolve(false),
+  };
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
   if (integrationConfig) {
     const [
@@ -380,6 +437,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         const handle = c.get('platformHandle') as string | undefined;
         return await resolveIntegrationUserId(clerkUserId, handle);
       },
+      ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
     internalIntegrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
@@ -390,7 +448,241 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         const handle = c.get('internalContainerHandle') as string | undefined;
         return await resolveIntegrationUserId(clerkUserId, handle);
       },
+      ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
+  }
+
+  if (process.env.CUSTOM_MCP_ENABLED === 'true') {
+    const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
+    const oauthRedirectUri = process.env.MCP_OAUTH_CALLBACK_URL;
+    const encryptionKeyRaw = process.env.MCP_CREDENTIAL_ENCRYPTION_KEY;
+    if (!oauthClientId || !oauthRedirectUri || !platformSecret) {
+      throw new Error(
+        'Custom MCP requires MCP_OAUTH_CLIENT_ID, MCP_OAUTH_CALLBACK_URL, and PLATFORM_SECRET',
+      );
+    }
+    if (!encryptionKeyRaw || [
+      platformSecret,
+      process.env.PIPEDREAM_CLIENT_SECRET,
+      process.env.STRIPE_SECRET_KEY,
+      process.env.UPGRADE_TOKEN,
+      process.env.PLATFORM_JWT_SECRET,
+    ].some((secret) => Boolean(secret) && secret === encryptionKeyRaw)) {
+      throw new Error('MCP_CREDENTIAL_ENCRYPTION_KEY is required and must not reuse another platform secret');
+    }
+    const [brokerModule, oauthModule, cryptoModule, routesModule, dbModule] = await Promise.all([
+      importRuntimeModule<GatewayCustomMcpModules['broker']>('../../gateway/dist/integrations/custom-mcp/broker.js'),
+      importRuntimeModule<GatewayCustomMcpModules['oauth']>('../../gateway/dist/integrations/custom-mcp/oauth.js'),
+      importRuntimeModule<GatewayCustomMcpModules['crypto']>('../../gateway/dist/integrations/custom-mcp/crypto.js'),
+      importRuntimeModule<GatewayCustomMcpModules['routes']>('../../gateway/dist/integrations/custom-mcp/routes.js'),
+      importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
+    ]);
+    const encryptionKey = cryptoModule.parseCustomMcpEncryptionKey(encryptionKeyRaw);
+    const customDb = dbModule.createPlatformDb(runtimeConfig.platformDatabaseUrl);
+    let customDbClosed = false;
+    const closeCustomMcpDb = async () => {
+      if (customDbClosed) return;
+      customDbClosed = true;
+      await customDb.destroy();
+    };
+    // Register the owned pool before the first fallible operation so the
+    // outer startup guard can release it even when migration fails.
+    customMcpShutdown = closeCustomMcpDb;
+    registerCustomMcpStartupCleanup(closeCustomMcpDb);
+    await customDb.migrate();
+
+    const resolveCustomMcpUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
+      if (!clerkUserId || !handle) return null;
+      const existing = await customDb.getUserByClerkId(clerkUserId);
+      if (existing) return existing.id;
+      const owner = (await getRunningUserMachineByHandle(db, handle)) ?? (await getContainer(db, handle));
+      if (!owner || owner.clerkUserId !== clerkUserId) return null;
+      return (await customDb.ensureUser({
+        clerkId: clerkUserId,
+        handle,
+        displayName: handle,
+        email: `${handle}@matrix-os.local`,
+        containerId: `platform:${clerkUserId}`,
+      })).id;
+    };
+    const projectionRequest = async (
+      userId: string,
+      method: 'GET' | 'POST' | 'DELETE',
+      serverId?: string,
+      body?: unknown,
+    ): Promise<unknown> => {
+      const user = await customDb.getUserById(userId);
+      if (!user) throw new Error('Custom MCP owner is unavailable');
+      const machine = await getRunningUserMachineByHandle(db, user.handle);
+      if (!machine || machine.clerkUserId !== user.clerkId) {
+        throw new Error('Custom MCP owner runtime is unavailable');
+      }
+      const target = buildCustomMcpProjectionUrl(machine, serverId);
+      const response = await fetch(target, {
+        method,
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000),
+        headers: {
+          authorization: `Bearer ${buildPlatformVerificationToken(user.handle, platformSecret)}`,
+          'x-matrix-clerk-user-id': user.clerkId,
+          host: 'app.matrix-os.com',
+          'x-forwarded-host': 'app.matrix-os.com',
+          'x-forwarded-proto': 'https',
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        dispatcher: customerVpsProxyDispatcher,
+      } as RequestInit & { dispatcher: Agent });
+      if (!response.ok) throw new Error(`Custom MCP projection failed (${response.status})`);
+      return response.status === 204 ? undefined : response.json();
+    };
+    const projection = {
+      upsert: (userId: string, server: unknown) => projectionRequest(userId, 'POST', undefined, server).then(() => undefined),
+      remove: (userId: string, serverId: string) => projectionRequest(userId, 'DELETE', serverId).then(() => undefined),
+      read: (userId: string, serverId: string) => projectionRequest(userId, 'GET', serverId),
+    };
+    let oauthManager: InstanceType<GatewayCustomMcpModules['oauth']['CustomMcpOAuthManager']>;
+    const broker = new brokerModule.CustomMcpBroker({
+      db: customDb,
+      encryptionKey,
+      projection,
+      resolveOAuthAuthorization: (userId: string, row: unknown) => oauthManager.resolveAuthorization(userId, row),
+      revokeOAuth: (credential: unknown) => oauthManager.revoke(credential),
+    });
+    let customMcpClosed = false;
+    customMcpShutdown = async () => {
+      if (customMcpClosed) return;
+      customMcpClosed = true;
+      try {
+        await broker.shutdown();
+      } finally {
+        await closeCustomMcpDb();
+      }
+    };
+    registerCustomMcpStartupCleanup(customMcpShutdown);
+    oauthManager = new oauthModule.CustomMcpOAuthManager({
+      db: customDb,
+      encryptionKey,
+      clientId: oauthClientId,
+      redirectUri: oauthRedirectUri,
+    });
+    const GRANOLA_PRESET = {
+      id: 'granola',
+      name: 'Granola',
+      url: 'https://mcp.granola.ai/mcp',
+      tools: ['list_meetings', 'get_meetings', 'get_meeting_transcript'] as const,
+    };
+    managedMcpPresetBroker = {
+      listConnections: async (userId) => {
+        let row = await broker.getPreset(userId, GRANOLA_PRESET.id);
+        if (!row) return [];
+        if (row.status === 'disabled') {
+          try {
+            row = await broker.activatePreset({
+              userId,
+              presetId: GRANOLA_PRESET.id,
+              allowedTools: GRANOLA_PRESET.tools,
+              requiredTools: ['list_meetings', 'get_meetings'],
+            });
+          } catch (error: unknown) {
+            console.warn('[granola] preset activation pending:', error instanceof Error ? error.message : String(error));
+          }
+        }
+        return [{
+          id: row.id,
+          service: GRANOLA_PRESET.id,
+          account_label: GRANOLA_PRESET.name,
+          account_email: null,
+          scopes: [],
+          status: row.status === 'ready' ? 'active' : row.status,
+          connected_at: row.created_at,
+          last_used_at: null,
+        }];
+      },
+      connect: async (userId) => {
+        const row = await broker.ensurePreset({
+          userId,
+          presetId: GRANOLA_PRESET.id,
+          name: GRANOLA_PRESET.name,
+          url: GRANOLA_PRESET.url,
+        });
+        return { url: await oauthManager.start(userId, row.id) };
+      },
+      call: async ({ userId, actionId, params }) => {
+        const row = await broker.activatePreset({
+          userId,
+          presetId: GRANOLA_PRESET.id,
+          allowedTools: GRANOLA_PRESET.tools,
+          requiredTools: ['list_meetings', 'get_meetings'],
+        });
+        if (actionId === 'list_notes') {
+          return broker.callSelectedTool({
+            userId,
+            serverId: row.id,
+            toolName: 'list_meetings',
+            arguments: params,
+            approvalGranted: true,
+          });
+        }
+        if (actionId !== 'get_note' || typeof params?.noteId !== 'string') {
+          throw new Error('Unknown Granola action');
+        }
+        const argumentsFor = (toolName: string) => {
+          const tool = row.tools.find((candidate: any) => candidate.name === toolName);
+          const properties = tool?.inputSchema?.properties as Record<string, unknown> | undefined;
+          const single = ['meeting_id', 'meetingId', 'id'].find((key) => properties?.[key]);
+          if (single) return { [single]: params.noteId };
+          const plural = ['meeting_ids', 'meetingIds', 'ids'].find((key) => properties?.[key]);
+          if (plural) return { [plural]: [params.noteId] };
+          throw new Error(`Granola ${toolName} schema has no supported meeting identifier`);
+        };
+        const note = await broker.callSelectedTool({
+          userId,
+          serverId: row.id,
+          toolName: 'get_meetings',
+          arguments: argumentsFor('get_meetings'),
+          approvalGranted: true,
+        });
+        if (params.includeTranscript !== true) return note;
+        const transcript = await broker.callSelectedTool({
+          userId,
+          serverId: row.id,
+          toolName: 'get_meeting_transcript',
+          arguments: argumentsFor('get_meeting_transcript'),
+          approvalGranted: true,
+        });
+        return { note, transcript };
+      },
+      disconnect: async (userId, connectionId) => {
+        const row = await broker.getPreset(userId, GRANOLA_PRESET.id);
+        if (!row || row.id !== connectionId) return false;
+        await broker.remove(userId, connectionId);
+        return true;
+      },
+    };
+    customMcpRoutes = routesModule.createCustomMcpRoutes({
+      broker,
+      oauth: oauthManager,
+      resolveUserId: async (c: Context) => resolveCustomMcpUserId(
+        c.get('platformUserId') as string | undefined,
+        c.get('platformHandle') as string | undefined,
+      ),
+    });
+    internalCustomMcpRoutes = routesModule.createCustomMcpRoutes({
+      broker,
+      oauth: oauthManager,
+      allowToolCalls: true,
+      resolveUserId: async (c: Context) => resolveCustomMcpUserId(
+        c.get('internalContainerClerkUserId') as string | undefined,
+        c.get('internalContainerHandle') as string | undefined,
+      ),
+    });
+    const sweepPending = () => broker.sweepPending().catch((error: unknown) => {
+      console.error('[custom-mcp] pending sweep failed:', error instanceof Error ? error.message : String(error));
+    });
+    void sweepPending();
+    customMcpSweepInterval = setInterval(sweepPending, 60 * 60 * 1_000);
+    customMcpSweepInterval.unref();
   }
 
   let internalSyncRoutes: Hono | undefined;
@@ -734,6 +1026,8 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     matrixProvisioner,
     integrationRoutes,
     internalIntegrationRoutes,
+    customMcpRoutes,
+    internalCustomMcpRoutes,
     internalSyncRoutes,
     customerVpsService,
     goldenSnapshotService,
@@ -767,6 +1061,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
       clearInterval(customerVpsReconciliationInterval);
     }
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
+    if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);
@@ -787,6 +1082,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         await Promise.allSettled([
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
+          customMcpShutdown?.(),
         ]);
         posthogProcessErrors.dispose();
         await app.shutdownPostHog();
@@ -823,4 +1119,23 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
   });
+}
+
+export async function startPlatformServer(opts: StartPlatformServerOptions): Promise<void> {
+  let customMcpStartupCleanup: (() => Promise<void>) | undefined;
+  try {
+    await startPlatformServerWithCleanup(opts, (cleanup) => {
+      customMcpStartupCleanup = cleanup;
+    });
+  } catch (startupError: unknown) {
+    try {
+      await customMcpStartupCleanup?.();
+    } catch (cleanupError: unknown) {
+      console.error(
+        '[platform] Custom MCP startup cleanup failed:',
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      );
+    }
+    throw startupError;
+  }
 }

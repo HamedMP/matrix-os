@@ -10,7 +10,7 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
-import { getCoreAgents, loadCustomAgents } from "./agents.js";
+import { getCoreAgents, loadCustomAgents, loadCustomAgentMcpAllowlists } from "./agents.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { ensureSdkSkillsMirror } from "./skills.js";
 import {
@@ -22,6 +22,8 @@ import {
   onSubagentComplete,
   notifyShellHook,
   preCompactHook,
+  createIntegrationApprovalHook,
+  type RequestApprovalFn,
 } from "./hooks.js";
 import { createProtectedFilesHook } from "./evolution.js";
 
@@ -49,6 +51,9 @@ const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__list_connected_services",
   "mcp__matrix-os-ipc__sync_services",
   "mcp__matrix-os-ipc__disconnect_service",
+  "mcp__matrix-os-ipc__list_custom_mcp_servers",
+  "mcp__matrix-os-ipc__describe_custom_mcp_server",
+  "mcp__matrix-os-ipc__call_custom_mcp_tool",
 ];
 
 const BROWSER_TOOL_NAMES = [
@@ -199,6 +204,7 @@ export interface KernelConfig {
   effort?: string;
   maxTurns?: number;
   env?: Record<string, string | undefined>;
+  requestApproval?: RequestApprovalFn;
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -218,6 +224,7 @@ export async function kernelOptions(config: KernelConfig) {
   const ipcServer = await createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
+  const customAgentMcpAllowlists = loadCustomAgentMcpAllowlists(`${homePath}/agents/custom`);
   const agents = { ...coreAgents, ...customAgents };
   const systemPrompt = buildSystemPrompt(homePath, db);
   console.log("[kernel] System prompt length:", systemPrompt.length, "chars");
@@ -267,6 +274,14 @@ export async function kernelOptions(config: KernelConfig) {
     thinking: { type: "adaptive" as const },
     hooks: {
       PreToolUse: [
+        {
+          matcher: "mcp__matrix-os-ipc__call_service|mcp__matrix-os-ipc__call_custom_mcp_tool",
+          hooks: [createIntegrationApprovalHook(
+            homePath,
+            config.requestApproval ?? (async () => false),
+            customAgentMcpAllowlists,
+          ) as (...args: unknown[]) => Promise<unknown>],
+        },
         {
           matcher: "Bash|Write|Edit",
           hooks: [safetyGuardHook as (...args: unknown[]) => Promise<unknown>],

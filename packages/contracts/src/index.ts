@@ -21,7 +21,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.150.1";
+export const CODEX_VERIFIED_VERSION = "0.151.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
@@ -36,6 +36,7 @@ export type {
 export * from "#canonical-chat-compatibility-public";
 export * from "#canonical-chat-provider";
 export * from "#canonical-chat-surface";
+export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
