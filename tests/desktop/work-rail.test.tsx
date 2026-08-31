@@ -295,6 +295,28 @@ describe("WorkRail", () => {
     );
   });
 
+  it("keeps a pinned Chat action compact until hover or keyboard focus reveals Delete", async () => {
+    setup();
+    await screen.findByRole("button", { name: "Pinned global" });
+    const pin = screen.getByRole("button", { name: "Unpin Pinned global" });
+    const remove = screen.getByRole("button", { name: "Delete Pinned global" });
+    const actions = pin.parentElement as HTMLElement;
+
+    expect(actions.className).toContain("gap-0");
+    expect(actions.className).toContain("group-hover/chat:gap-0.5");
+    expect(actions.className).toContain("group-focus-within/chat:gap-0.5");
+    expect(remove.className).toContain("w-0");
+    expect(remove.className).toContain("group-hover/chat:w-6");
+    expect(remove.className).toContain("group-focus-within/chat:w-6");
+    expect(remove.className).toContain("opacity-0");
+    expect(remove.className).toContain("group-hover/chat:opacity-100");
+    expect(remove.className).toContain("group-focus-within/chat:opacity-100");
+    expect(remove.getAttribute("tabindex")).toBeNull();
+
+    remove.focus();
+    expect(document.activeElement).toBe(remove);
+  });
+
   it("scrolls only an overflowing Chat title while hover actions are visible", async () => {
     let resize!: ResizeObserverCallback;
     class TitleResizeObserver implements ResizeObserver {

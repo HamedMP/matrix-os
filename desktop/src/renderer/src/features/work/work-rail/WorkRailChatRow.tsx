@@ -64,7 +64,7 @@ export function WorkRailChatRow({
           <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
         </button>
         <div
-          className={`absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100 ${placement === "pinned" ? "opacity-100" : "opacity-0"}`}
+          className={`absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center rounded-md transition-[gap,opacity] group-hover/chat:opacity-100 group-focus-within/chat:opacity-100 ${placement === "pinned" ? "gap-0 opacity-100 group-hover/chat:gap-0.5 group-focus-within/chat:gap-0.5" : "gap-0.5 opacity-0"}`}
           style={{
             background: active
               ? "linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)"
@@ -89,7 +89,7 @@ export function WorkRailChatRow({
             type="button"
             aria-label={`Delete ${record.chat.title}`}
             title={`Delete ${record.chat.title}`}
-            className={`${placement === "pinned" ? "opacity-0 group-hover/chat:opacity-100 group-focus-within/chat:opacity-100" : ""} flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]`}
+            className={`${placement === "pinned" ? "w-0 overflow-hidden opacity-0 group-hover/chat:w-6 group-hover/chat:opacity-100 group-focus-within/chat:w-6 group-focus-within/chat:opacity-100" : "w-6"} flex h-6 shrink-0 items-center justify-center rounded-md outline-none transition-[width,opacity] hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:w-6 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]`}
             onClick={onDelete}
           >
             <Trash2 size={13} aria-hidden />
