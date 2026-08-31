@@ -15,13 +15,16 @@ import type { ProviderSettingsRuntimeCoordinator } from "./provider-settings-coo
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import {
   MAX_PROVIDER_SETTINGS_RECEIPTS,
+  ProviderSettingsConfigurationSchema,
   writeProviderJsonAtomic,
   type HarnessConfiguration,
   type ProviderSettingsConfiguration,
 } from "./provider-settings-persistence.js";
 
 const MAX_RECEIPT_FILE_BYTES = 256 * 1024;
+const MAX_OWNER_SETTINGS_FILE_BYTES = 1024 * 1024;
 const RECEIPT_PATH = "system/ai-providers/runtime-receipts.json";
+const OWNER_SETTINGS_PATH = "system/ai-providers/settings.json";
 const GenericHarnessSchema = z.enum(["hermes", "openclaw", "pi", "opencode"]);
 const CodingHarnessSchema = z.enum(["pi", "opencode"]);
 const SystemHarnessSchema = z.enum(["hermes", "openclaw"]);
@@ -79,6 +82,25 @@ async function readReceipts(path: string): Promise<z.infer<typeof ReceiptDocumen
     return ReceiptDocumentSchema.parse(JSON.parse(await readFile(path, "utf8")));
   } catch (error) {
     if (isMissing(error)) return { version: 1, receipts: [] };
+    throw error;
+  }
+}
+
+async function readOwnerReceiptCommitments(path: string): Promise<Array<{
+  key: string;
+  payloadHash: string;
+}>> {
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink()
+      || metadata.size > MAX_OWNER_SETTINGS_FILE_BYTES) {
+      throw new Error("Unsafe owner provider settings file");
+    }
+    return ProviderSettingsConfigurationSchema.parse(
+      JSON.parse(await readFile(path, "utf8")),
+    ).receipts.map(({ key, payloadHash }) => ({ key, payloadHash }));
+  } catch (error) {
+    if (isMissing(error)) return [];
     throw error;
   }
 }
@@ -144,6 +166,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     CodingHarnessSchema.array().max(2).parse([...options.enabledCodingHarnesses]),
   );
   const receiptPath = join(options.homePath, RECEIPT_PATH);
+  const ownerSettingsPath = join(options.homePath, OWNER_SETTINGS_PATH);
   const writeReceiptDocument = options.receiptWriter ?? writeProviderJsonAtomic;
   let tail: Promise<void> = Promise.resolve();
   let recoveryBlocked = false;
@@ -271,8 +294,21 @@ export function createProviderGenericHarnessCoordinator(options: {
     receipts: z.infer<typeof ReceiptDocumentSchema>,
     excludedKey?: string,
   ): Promise<void> {
+    const ownerCommitments = await readOwnerReceiptCommitments(ownerSettingsPath);
+    const retained = receipts.receipts.filter((receipt) => {
+      if (receipt.key === excludedKey || receipt.state !== "applied") return true;
+      const ownerCommitted = ownerCommitments.some((commitment) =>
+        commitment.key === receipt.key && commitment.payloadHash === receipt.payloadHash,
+      );
+      return receipt.beforeRoute !== undefined && !ownerCommitted;
+    });
+    if (retained.length !== receipts.receipts.length) {
+      receipts.receipts = retained;
+      await writeReceipts(receipts);
+    }
     const pending = receipts.receipts
-      .filter((receipt) => receipt.state !== "applied" && receipt.key !== excludedKey)
+      .filter((receipt) => receipt.key !== excludedKey
+        && (receipt.state !== "applied" || receipt.beforeRoute !== undefined))
       .reverse();
     for (const receipt of pending) {
       await compensatePendingReceipt(receipts, receipt);
@@ -417,15 +453,61 @@ export function createProviderGenericHarnessCoordinator(options: {
       return;
     }
     receipt.state = "compensation_pending";
-    await writeReceipts(receipts);
-    const current = await currentRuntimeRoute();
-    if (sameRuntimeRoute(current, receipt.afterRoute)) {
-      await applyRuntimeRoute(receipt.beforeRoute);
-    } else if (!sameRuntimeRoute(current, receipt.beforeRoute)) {
-      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    let markerDurable = false;
+    try {
+      await writeReceipts(receipts);
+      markerDurable = true;
+    } catch (error) {
+      console.warn(
+        "[provider-settings] Generic harness compensation marker unavailable:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
     }
+
+    let compensationError: unknown;
+    try {
+      const current = await currentRuntimeRoute();
+      if (sameRuntimeRoute(current, receipt.afterRoute)) {
+        await applyRuntimeRoute(receipt.beforeRoute);
+      } else if (!sameRuntimeRoute(current, receipt.beforeRoute)) {
+        throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      }
+    } catch (error) {
+      compensationError = error;
+    }
+
+    if (compensationError !== undefined) {
+      if (!markerDurable) {
+        try {
+          await writeReceipts(receipts);
+          markerDurable = true;
+        } catch (error) {
+          console.warn(
+            "[provider-settings] Generic harness compensation recovery marker unavailable:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      }
+      if (!markerDurable) recoveryBlocked = true;
+      throw compensationError;
+    }
+
     receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
-    await writeReceipts(receipts);
+    try {
+      await writeReceipts(receipts);
+    } catch (error) {
+      replaceReceipt(receipts, receipt);
+      try {
+        await writeReceipts(receipts);
+      } catch (markerError) {
+        recoveryBlocked = true;
+        console.warn(
+          "[provider-settings] Generic harness compensated receipt remains uncertain:",
+          markerError instanceof Error ? markerError.name : "UnknownError",
+        );
+      }
+      throw error;
+    }
   }
 
   function serialize(operation: () => Promise<void>): Promise<void> {
