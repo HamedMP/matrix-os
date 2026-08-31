@@ -17,9 +17,11 @@ interface PaneGridProps {
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
   canvasZoom?: number;
+  unavailableSessionIds?: string[];
+  onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
 }
 
-export function PaneGrid({ paneTree, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: PaneGridProps) {
+export function PaneGrid({ paneTree, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds = [], onRecoverSession }: PaneGridProps) {
   return (
     <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
       <PaneNodeRenderer
@@ -34,6 +36,8 @@ export function PaneGrid({ paneTree, theme, focusedPaneId, focusRequestId = 0, o
         allowRemoteResize={allowRemoteResize}
         suppressNativeKeyboard={suppressNativeKeyboard}
         canvasZoom={canvasZoom}
+        unavailableSessionIds={unavailableSessionIds}
+        onRecoverSession={onRecoverSession}
       />
     </div>
   );
@@ -51,9 +55,11 @@ interface PaneNodeRendererProps {
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
   canvasZoom?: number;
+  unavailableSessionIds: string[];
+  onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
 }
 
-function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: PaneNodeRendererProps) {
+function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds, onRecoverSession }: PaneNodeRendererProps) {
   if (node.type === "pane") {
     const focused = focusedPaneId === node.id;
     return (
@@ -67,25 +73,33 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFo
           position: "relative",
         }}
       >
-        <TerminalPane
-          key={node.id}
-          paneId={node.id}
-          cwd={node.cwd}
-          theme={theme}
-          isFocused={focused}
-          focusRequestId={focusRequestId}
-          sessionId={node.sessionId}
-          claudeMode={node.claudeMode === true}
-          startupCommand={node.startupCommand}
-          compatMode={node.compatMode}
-          onFocus={onFocusPane}
-          onSessionAttached={onSessionAttached}
-          shouldCacheOnUnmount={shouldCachePane}
-          shouldDestroyOnUnmount={shouldDestroyPane}
-          allowRemoteResize={allowRemoteResize}
-          suppressNativeKeyboard={suppressNativeKeyboard}
-          canvasZoom={canvasZoom}
-        />
+        {node.sessionId && unavailableSessionIds.includes(node.sessionId) ? (
+          <RecoverableSessionPane
+            sessionId={node.sessionId}
+            cwd={node.cwd}
+            onRecoverSession={onRecoverSession}
+          />
+        ) : (
+          <TerminalPane
+            key={node.id}
+            paneId={node.id}
+            cwd={node.cwd}
+            theme={theme}
+            isFocused={focused}
+            focusRequestId={focusRequestId}
+            sessionId={node.sessionId}
+            claudeMode={node.claudeMode === true}
+            startupCommand={node.startupCommand}
+            compatMode={node.compatMode}
+            onFocus={onFocusPane}
+            onSessionAttached={onSessionAttached}
+            shouldCacheOnUnmount={shouldCachePane}
+            shouldDestroyOnUnmount={shouldDestroyPane}
+            allowRemoteResize={allowRemoteResize}
+            suppressNativeKeyboard={suppressNativeKeyboard}
+            canvasZoom={canvasZoom}
+          />
+        )}
       </div>
     );
   }
@@ -106,6 +120,8 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFo
       allowRemoteResize={allowRemoteResize}
       suppressNativeKeyboard={suppressNativeKeyboard}
       canvasZoom={canvasZoom}
+      unavailableSessionIds={unavailableSessionIds}
+      onRecoverSession={onRecoverSession}
     />
   );
 }
@@ -125,9 +141,11 @@ interface SplitContainerProps {
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
   canvasZoom?: number;
+  unavailableSessionIds: string[];
+  onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
 }
 
-function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: SplitContainerProps) {
+function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds, onRecoverSession }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // react-doctor-disable-next-line react-doctor/no-derived-useState -- local drag buffer, not a mirror of `ratio`: it is seeded from the prop, then diverges live as the user drags the split divider (setCurrentRatio in onMouseMove). It must NOT stay in sync with `ratio` or the divider would snap back mid-drag; it holds uncommitted pointer-driven layout state.
   const [currentRatio, setCurrentRatio] = useState(ratio);
@@ -183,6 +201,8 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, f
           allowRemoteResize={allowRemoteResize}
           suppressNativeKeyboard={suppressNativeKeyboard}
           canvasZoom={canvasZoom}
+          unavailableSessionIds={unavailableSessionIds}
+          onRecoverSession={onRecoverSession}
         />
       </div>
       {/* react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational pointer-only resize affordance: the 4px gutter starts a mouse/pointer drag to repan the split. It carries no control semantics, has no keyboard equivalent (panes auto-fit on resize), and adding an interactive role would require a non-trivial keyboard-resize behavior change out of scope for this pass. */}
@@ -204,7 +224,54 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, f
           allowRemoteResize={allowRemoteResize}
           suppressNativeKeyboard={suppressNativeKeyboard}
           canvasZoom={canvasZoom}
+          unavailableSessionIds={unavailableSessionIds}
+          onRecoverSession={onRecoverSession}
         />
+      </div>
+    </div>
+  );
+}
+
+function RecoverableSessionPane({
+  sessionId,
+  cwd,
+  onRecoverSession,
+}: {
+  sessionId: string;
+  cwd: string;
+  onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
+}) {
+  const [recovering, setRecovering] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const recover = async () => {
+    if (recovering || !onRecoverSession) return;
+    setRecovering(true);
+    setFailed(false);
+    const recovered = await onRecoverSession(sessionId, cwd);
+    if (!recovered) {
+      setFailed(true);
+      setRecovering(false);
+    }
+  };
+
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background p-6 text-foreground">
+      <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+        <div className="text-sm font-semibold">Session is unavailable</div>
+        <p className="m-0 text-xs text-muted-foreground">
+          {sessionId} stopped unexpectedly. Matrix will not recreate it without your permission.
+        </p>
+        <button
+          type="button"
+          className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-60"
+          disabled={recovering || !onRecoverSession}
+          onClick={() => void recover()}
+          aria-label={`Recover ${sessionId}`}
+        >
+          {recovering ? "Recovering..." : "Recover session"}
+        </button>
+        {failed ? <div role="alert" className="text-xs text-destructive">Recovery failed. Try again.</div> : null}
       </div>
     </div>
   );

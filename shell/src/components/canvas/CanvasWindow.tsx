@@ -494,6 +494,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         <TerminalApp
           mobile={isMobile}
           launchTargetId={win.id}
+          layoutId={win.terminalLayoutId}
+          persistence={win.terminalPersistence ?? "durable"}
           embeddedChrome
           canvasZoom={isFullscreen ? 1 : zoom}
           suspended={hidden || isPreview}
