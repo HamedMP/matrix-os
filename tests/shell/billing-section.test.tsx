@@ -760,6 +760,40 @@ describe("BillingSection", () => {
     );
   });
 
+  it("does not label the monthly catalog price as an annual charge", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: true, reason: "active" },
+        entitlement: {
+          source: "stripe",
+          planSlug: "matrix_builder",
+          status: "active",
+          maxRuntimeSlots: 1,
+          includedRuntimeSlots: 1,
+          addonRuntimeSlots: 0,
+          defaultServerType: "cpx42",
+          allowedServerTypes: ["cpx42", "cpx31"],
+          stripeSubscriptionId: "sub_annual",
+          stripePriceId: "price_builder_annual",
+          billingInterval: "annual",
+          gracePeriodEndsAt: null,
+          effectiveFrom: "2026-05-30T00:00:00.000Z",
+          effectiveUntil: null,
+          updatedAt: "2026-05-30T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Annual")).toBeTruthy());
+    expect(screen.queryByText("$100")).toBeNull();
+    expect(screen.queryByText("per year")).toBeNull();
+  });
+
   it("does not mark billing active for the legacy Clerk early_adopter plan", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = "early_adopter";
