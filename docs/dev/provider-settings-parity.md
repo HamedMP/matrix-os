@@ -141,8 +141,9 @@ These actions are distinct:
 Generic lifecycle mutations are admitted only for exact runtime support. Hermes
 and OpenClaw reuse the bounded messaging-runtime controller. Pi and OpenCode must
 be registered coding runtimes at gateway startup in addition to appearing in
-binary inventory; their current installation probe does not claim authenticated
-health. Codex and Claude remain specialized model-specific drivers;
+binary inventory. Their binary probes establish installation only; owner
+Settings establish authentication, connectivity, exact access source, provider,
+and model readiness. Codex and Claude remain specialized model-specific drivers;
 their existing login/logout commands are not routed through the generic
 coordinator. Multiple account rows are a forward-compatible data shape, not a
 claim that a CLI can run concurrent profiles today; generic runtimes do not
@@ -158,6 +159,23 @@ the Chat catalog with an explanatory state rather than choosing one silently.
 Disabled instance removal and non-active disable remain local cleanup operations,
 so an unavailable or uninstalled runtime cannot strand stale owner Settings rows.
 Operations that enable, route, or switch an active runtime still fail closed.
+
+Pi and OpenCode currently execute only supervised, read-only turns. Pi receives
+only its non-mutating `read` tool; OpenCode receives an explicit deny-by-default
+permission document with only read/search tools enabled, ignores project-local
+configuration, and disables external plugins. Both run as bounded structured
+child processes with cancellation, timeout, output, event, and active-process
+limits. A request for workspace-write or full access is rejected rather than
+run without confinement.
+
+Each Pi or OpenCode turn resolves the one enabled owner harness instance and its
+selected access source immediately before spawn. Only portable credentials for
+that exact source are copied into the child environment. Matrix-included access
+and owner Anthropic API keys are portable; a Claude OAuth profile is intentionally
+not reused by another CLI. Missing binaries, duplicate enabled instances,
+unavailable credentials, offline routes, unsupported model vendors, and stale
+models all remain non-runnable. Resume state retains only the provider session ID
+and the validated working directory; it never persists a credential.
 
 Multiple accounts are first-class. Account IDs are stable and owner-scoped;
 labels are safe display metadata, not secret suffixes. Adding an account must

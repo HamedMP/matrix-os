@@ -340,6 +340,58 @@ describe("pi provider adapter — spawn contract", () => {
     ]));
   });
 
+  it("resolves fresh selected credentials per turn without inheriting gateway secrets", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const resolveCredentialLaunch = vi.fn(async () => ({
+      env: {
+        ANTHROPIC_API_KEY: "selected-key",
+        ANTHROPIC_BASE_URL: "https://relay.example.test",
+      },
+      maxRunMs: 120_000,
+    }));
+    const provider = providerFor(fake.spawnFn, {
+      env: { PATH: "/runtime/bin", UPGRADE_TOKEN: "gateway-secret" },
+      resolveCredentialLaunch,
+    });
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(resolveCredentialLaunch).toHaveBeenCalledOnce();
+    expect(fake.calls[0]!.env).toMatchObject({
+      PATH: "/runtime/bin",
+      ANTHROPIC_API_KEY: "selected-key",
+      ANTHROPIC_BASE_URL: "https://relay.example.test",
+    });
+    expect(fake.calls[0]!.env).not.toHaveProperty("UPGRADE_TOKEN");
+  });
+
+  it("fails closed before spawn when selected credentials are unavailable", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => { throw new Error("private credential detail"); },
+    });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error", error: expect.objectContaining({ code: "provider_run_failed" }) }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("private credential detail");
+  });
+
   it.each([
     ["- list three colors", " - list three colors"],
     ["@hamed thanks", " @hamed thanks"],
@@ -1078,7 +1130,7 @@ describe("pi provider adapter — availability and summary", () => {
     }]);
   });
 
-  it("reports installed and authenticated when the binary answers --version", async () => {
+  it("reports installation without inventing authentication when the binary answers --version", async () => {
     const provider = createPiCodingAgentProvider({
       homePath,
       spawnFn: fakeSpawn({ lines: [] }).spawnFn,
@@ -1095,9 +1147,9 @@ describe("pi provider adapter — availability and summary", () => {
       id: "pi",
       displayName: "Pi",
       kind: "pi",
-      availability: "available",
+      availability: "auth_required",
       installStatus: "installed",
-      authStatus: "authenticated",
+      authStatus: "unknown",
       supportedModes: ["default"],
       defaultMode: "default",
     });

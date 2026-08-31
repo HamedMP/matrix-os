@@ -730,7 +730,7 @@ exit 99
     expect(gateway).toContain('Requires=matrix-restore.service');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/bin/matrix-gateway');
-    expect(gateway).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex');
+    expect(gateway).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode');
     expect(gateway).not.toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(shell).toContain('After=matrix-gateway.service');
     expect(shell).toContain('ConditionPathExists=/opt/matrix/bin/matrix-shell');

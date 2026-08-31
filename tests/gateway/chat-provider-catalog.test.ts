@@ -198,28 +198,52 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
   });
 
-  it("projects Pi's exact route only when credential wiring is explicit", async () => {
-    const piWork = { ...configuredHarness("pi", true), displayName: "Pi work" };
+  it.each([
+    ["pi", "Pi work"],
+    ["opencode", "OpenCode work"],
+  ] as const)("projects %s's exact route only when credential wiring is explicit", async (kind, displayName) => {
+    const configured = { ...configuredHarness(kind, true), displayName };
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({
-        id: "pi", displayName: "Pi", kind: "pi", supportedModes: ["default"],
+        id: kind, displayName, kind, supportedModes: ["default"],
         defaultModel: undefined, setupActions: [],
       })]),
       agentRuntimeSource: runtimeSource(),
       aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
-      harnessSettingsSource: harnessSettings([piWork]),
-      executableDriverKinds: ["pi"],
-      credentialedDriverKinds: ["pi"],
+      harnessSettingsSource: harnessSettings([configured]),
+      executableDriverKinds: [kind],
+      credentialedDriverKinds: [kind],
     });
 
-    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "pi_default"))
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === `${kind}_default`))
       .toMatchObject({
         availability: "available",
-        displayName: "Pi work",
+        displayName,
         models: [{ id: "anthropic:claude-sonnet-5", displayName: "Claude Sonnet 5" }],
-        defaultSelection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" },
+        defaultSelection: { instanceId: `${kind}_default`, model: "anthropic:claude-sonnet-5" },
       });
   });
+
+  it.each(["pi", "opencode"] as const)(
+    "keeps %s unavailable when its selected Claude OAuth profile is not portable",
+    async (kind) => {
+      const configured = { ...configuredHarness(kind, true), accessSourceId: "owner_anthropic_profile" };
+      const service = createChatProviderCatalogService({
+        codingProviders: codingRegistry([codingProvider({
+          id: kind, displayName: configured.displayName, kind, supportedModes: ["default"],
+          defaultModel: undefined, setupActions: [],
+        })]),
+        agentRuntimeSource: runtimeSource(),
+        aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+        harnessSettingsSource: harnessSettings([configured]),
+        executableDriverKinds: [kind],
+        credentialedDriverKinds: [kind],
+      });
+
+      expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === `${kind}_default`))
+        .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
+    },
+  );
 
   it("fails a credentialed Pi route closed when its exact model leaves the canonical inventory", async () => {
     const service = createChatProviderCatalogService({

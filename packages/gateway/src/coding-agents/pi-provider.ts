@@ -14,7 +14,12 @@ import {
 import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
-import { buildPiChildEnvironment, resolvePiCommand } from "./pi-process-environment.js";
+import {
+  addPortableProviderCredentials,
+  buildPiChildEnvironment,
+  resolvePiCommand,
+} from "./pi-process-environment.js";
+import type { CodingHarnessCredentialResolver } from "./harness-credentials.js";
 import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
 
 /**
@@ -89,6 +94,7 @@ export interface PiCodingAgentProviderOptions {
   runTimeoutMs?: number;
   killGraceMs?: number;
   maxEvents?: number;
+  resolveCredentialLaunch?: CodingHarnessCredentialResolver;
 }
 
 const execFileAsync = promisify(execFile);
@@ -574,7 +580,20 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       "--session-id", input.sessionId,
       promptArg(input.prompt),
     ];
-    const env = buildPiChildEnvironment(options.env);
+    let credentialLaunch: Awaited<ReturnType<NonNullable<typeof options.resolveCredentialLaunch>>> | undefined;
+    try {
+      credentialLaunch = await options.resolveCredentialLaunch?.(input.signal);
+    } catch (err: unknown) {
+      logCodingAgentWarning("pi provider credential resolution failed", err);
+      return { events: [], outcome: "failed", sessionId: input.sessionId };
+    }
+    const env = addPortableProviderCredentials(
+      buildPiChildEnvironment(options.env),
+      credentialLaunch?.env,
+    );
+    const effectiveRunTimeoutMs = credentialLaunch?.maxRunMs
+      ? Math.min(runTimeoutMs, credentialLaunch.maxRunMs)
+      : runTimeoutMs;
 
     return await new Promise<PiRunResult>((resolve) => {
       let proc: PiChildProcess;
@@ -596,7 +615,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       const timeoutTimer = setTimeout(() => {
         timedOut = true;
         requestTermination();
-      }, runTimeoutMs);
+      }, effectiveRunTimeoutMs);
       timeoutTimer.unref?.();
 
       const onAbort = () => {
@@ -625,7 +644,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         const collected = collector.finish();
         const sessionId = collected.sessionId ?? input.sessionId;
         if (timedOut) {
-          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${runTimeoutMs}ms`));
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
         }
         settle({
           events: collected.events,
@@ -679,7 +698,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           return;
         }
         if (timedOut) {
-          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${runTimeoutMs}ms`));
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
@@ -832,11 +851,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         id: providerId,
         displayName: "Pi",
         kind: "pi",
-        availability: installed ? "available" : "unavailable",
+        availability: installed ? "auth_required" : "unavailable",
         installStatus: installed ? "installed" : "missing",
         // pi has no non-interactive auth probe (`pi auth status` is a prompt,
-        // not a subcommand); binary presence is the configured signal.
-        authStatus: installed ? "authenticated" : "unknown",
+        // not a subcommand). Owner harness settings remain authoritative.
+        authStatus: "unknown",
         supportedModes: ["default"],
         defaultMode: "default",
         setupActions: [],
