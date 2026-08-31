@@ -66,7 +66,13 @@ export type SetRuntimePolicyInput = z.infer<typeof RuntimePolicyUpdateSchema>;
 function parseModels(value: string): string[] {
   try {
     return ModelIdsSchema.parse(JSON.parse(value));
-  } catch (error) {
+  } catch (error: unknown) {
+    const category = error instanceof SyntaxError
+      ? "syntax_error"
+      : error instanceof z.ZodError
+        ? "schema_error"
+        : "unexpected_error";
+    console.error(`[ai-funded-policy] invalid stored model configuration (${category})`);
     throw new Error("Invalid funded AI policy model configuration", { cause: error });
   }
 }
