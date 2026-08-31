@@ -490,6 +490,18 @@ describe('CI workflows', () => {
     }
   });
 
+  it('wires the isolated legacy Stripe catalog into platform previews', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(workflow).toContain(
+      'STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest',
+    );
+    expect(workflow).not.toContain(
+      'STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest',
+    );
+  });
+
   it('deploys the card-trial rollout flag and verifies every trial lifecycle webhook', () => {
     const root = process.cwd();
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
