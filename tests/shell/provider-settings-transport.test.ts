@@ -98,7 +98,7 @@ describe("provider settings shell transport", () => {
 
     await expect(transport.getSnapshot()).resolves.toEqual(snapshot);
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings`,
+      `${window.location.origin}/api/ai/provider-settings?refresh=true`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
   });

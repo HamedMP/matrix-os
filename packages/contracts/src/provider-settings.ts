@@ -194,7 +194,9 @@ export const ProviderFundingKindSchema = z.enum([
 ]);
 export const ProviderAccessSourceSchema = z.object({
   id: ReferenceIdSchema,
-  kind: z.enum(["matrix_gateway", "provider_account"]),
+  kind: z.enum(["matrix_gateway", "provider_account", "harness_profile"]),
+  /** Present only when credentials are owned by one generic harness runtime. */
+  harness: ProviderGenericHarnessKindSchema.optional(),
   fundingKind: ProviderFundingKindSchema,
   providerId: ProviderIdSchema,
   accountId: ReferenceIdSchema.nullable(),
@@ -212,6 +214,14 @@ export const ProviderAccessSourceSchema = z.object({
   }
   if (source.kind === "provider_account" && (matrixFunded || source.accountId === null)) {
     ctx.addIssue({ code: "custom", message: "Provider account sources require owner funding and an account" });
+  }
+  if (source.kind === "harness_profile"
+    && (matrixFunded || source.accountId !== null
+      || (source.harness !== "pi" && source.harness !== "opencode"))) {
+    ctx.addIssue({ code: "custom", message: "Harness profiles require one coding harness and no Matrix or account funding" });
+  }
+  if (source.kind !== "harness_profile" && source.harness !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["harness"], message: "Only harness profiles can name a harness" });
   }
   if (source.kind === "matrix_gateway"
     && source.usage.kind !== "managed_credit" && source.usage.kind !== "unavailable") {
@@ -251,6 +261,7 @@ export const ProviderHarnessInstanceSchema = z.object({
   selectedAccountId: ReferenceIdSchema.nullable(),
   accessSourceId: ReferenceIdSchema.nullable(),
   route: ProviderHarnessRouteSchema,
+  routeAvailability: z.enum(["available", "catalog_unavailable"]).optional(),
   activeChatCount: DependencyCountSchema,
 }).strict().superRefine((harness, ctx) => {
   if (!unique(harness.accountIds) || !unique(harness.loginMethods)) {
@@ -269,6 +280,11 @@ export const ProviderHarnessInstanceSchema = z.object({
   }
   if (harness.installState !== "installed" && (harness.enabled || harness.version !== null)) {
     ctx.addIssue({ code: "custom", message: "Only installed harnesses can expose a version or be enabled" });
+  }
+  if (harness.routeAvailability === "catalog_unavailable"
+    && (harness.enabled || harness.connectivity !== "offline"
+      || harness.accessSourceId !== null || harness.selectedAccountId !== null)) {
+    ctx.addIssue({ code: "custom", path: ["routeAvailability"], message: "Unavailable catalog routes must fail closed" });
   }
 });
 
@@ -435,6 +451,9 @@ export const ProviderSettingsSnapshotSchema = z.object({
         ctx.addIssue({ code: "custom", path: ["accessSources", index, "accountId"], message: "Provider account source must be reciprocal" });
       }
     }
+    if (source.kind === "harness_profile" && source.harness === undefined) {
+      ctx.addIssue({ code: "custom", path: ["accessSources", index, "harness"], message: "Harness profile is incomplete" });
+    }
   });
   snapshot.accounts.forEach((account, index) => {
     const source = sources.get(account.accessSourceId);
@@ -448,7 +467,12 @@ export const ProviderSettingsSnapshotSchema = z.object({
       if (!accounts.has(accountId)) ctx.addIssue({ code: "custom", path: ["harnesses", index, "accountIds", accountIndex], message: "Unknown account" });
     });
     const model = models.get(harness.route.modelId);
-    if (model === undefined || model.providerId !== harness.route.providerId || !model.enabled) {
+    const routeAvailable = model !== undefined
+      && model.providerId === harness.route.providerId
+      && model.enabled;
+    const catalogUnavailable = harness.routeAvailability === "catalog_unavailable";
+    const routePointsAtWrongProvider = model !== undefined && model.providerId !== harness.route.providerId;
+    if (routePointsAtWrongProvider || (!catalogUnavailable && !routeAvailable)) {
       ctx.addIssue({ code: "custom", path: ["harnesses", index, "route"], message: "Route model is not enabled for this provider" });
     }
     if (harness.accessSourceId === null) {
@@ -466,6 +490,10 @@ export const ProviderSettingsSnapshotSchema = z.object({
     }
     if (source.kind === "provider_account" && harness.selectedAccountId !== source.accountId) {
       ctx.addIssue({ code: "custom", path: ["harnesses", index, "selectedAccountId"], message: "Selected account must match the provider access source" });
+    }
+    if (source.kind === "harness_profile"
+      && (harness.selectedAccountId !== null || source.harness !== harness.harness)) {
+      ctx.addIssue({ code: "custom", path: ["harnesses", index, "accessSourceId"], message: "Harness profile must belong to the selected harness" });
     }
   });
   if (snapshot.gatewayPolicy !== null) {
@@ -618,4 +646,34 @@ export function isPortableGenericHarnessCredentialRoute(
     && source.id === "owner_anthropic_key"
     && source.accountId !== null
     && source.fundingKind === "owner_api_key";
+}
+
+/** Returns whether the selected model is authenticated by Pi/OpenCode itself. */
+export function isNativeGenericHarnessCredentialRoute(
+  harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
+  source: Pick<
+    ProviderAccessSource,
+    "id" | "kind" | "providerId" | "accountId" | "harness"
+  > | null | undefined,
+): boolean {
+  return (harness.harness === "pi" || harness.harness === "opencode")
+    && harness.route.kind === "configurable"
+    && harness.accessSourceId !== null
+    && source?.kind === "harness_profile"
+    && source.id === harness.accessSourceId
+    && source.providerId === harness.route.providerId
+    && source.accountId === null
+    && source.harness === harness.harness;
+}
+
+/** Shared execution gate for generic coding-harness Settings and Chat routes. */
+export function isRunnableGenericHarnessCredentialRoute(
+  harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
+  source: Pick<
+    ProviderAccessSource,
+    "id" | "kind" | "fundingKind" | "providerId" | "accountId" | "harness"
+  > | null | undefined,
+): boolean {
+  return isPortableGenericHarnessCredentialRoute(harness, source)
+    || isNativeGenericHarnessCredentialRoute(harness, source);
 }

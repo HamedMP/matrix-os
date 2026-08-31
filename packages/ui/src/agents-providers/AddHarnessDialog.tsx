@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  isPortableGenericHarnessCredentialRoute,
+  isRunnableGenericHarnessCredentialRoute,
   type ProviderAccessSource,
   type ProviderGenericHarnessKind,
   type ProviderHarnessCatalogEntry,
@@ -63,7 +63,7 @@ function sourceSupportsRoute(
       && snapshot.gatewayPolicy.allowedModelIds.includes(modelId));
   if (!gatewayAllowed) return false;
   if (harness !== "pi" && harness !== "opencode") return true;
-  return isPortableGenericHarnessCredentialRoute({
+  return isRunnableGenericHarnessCredentialRoute({
     harness,
     accessSourceId: source.id,
     route: { kind: "configurable", providerId, modelId },
@@ -203,10 +203,13 @@ export function AddHarnessDialog({
         <span>Display name</span>
         <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={120} />
       </label>
+      <div className="matrix-ap-panel-head">
+        <div><span className="matrix-ap-eyebrow">Model</span><h3>Choose the model</h3></div>
+      </div>
       <div className="matrix-ap-form-grid">
         <label className="matrix-ap-field">
-          <span>Model provider</span>
-          <select value={provider?.id ?? ""} onChange={(event) => selectProvider(event.target.value)} disabled={!selectedCatalog.runnable}>
+          <span>Provider</span>
+          <select aria-label="Model provider" value={provider?.id ?? ""} onChange={(event) => selectProvider(event.target.value)} disabled={!selectedCatalog.runnable}>
             {eligibleProviders.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
           </select>
         </label>
@@ -217,9 +220,12 @@ export function AddHarnessDialog({
           </select>
         </label>
       </div>
+      <div className="matrix-ap-panel-head">
+        <div><span className="matrix-ap-eyebrow">Access &amp; billing</span><h3>Choose how this route is funded</h3></div>
+      </div>
       <label className="matrix-ap-field">
-        <span>Access source</span>
-        <select value={selectedSource?.id ?? ""} onChange={(event) => setSourceId(event.target.value)} disabled={!selectedCatalog.runnable}>
+        <span>Paid through</span>
+        <select aria-label="Paid through" value={selectedSource?.id ?? ""} onChange={(event) => setSourceId(event.target.value)} disabled={!selectedCatalog.runnable}>
           {eligibleSources.map((source) => (
             <option key={source.id} value={source.id}>
               {source.displayName}{source.readiness.state === "ready" ? "" : " · authentication required"}
@@ -228,7 +234,9 @@ export function AddHarnessDialog({
         </select>
       </label>
       <p className="matrix-ap-help">
-        {selectedSource && selectedSource.readiness.state !== "ready"
+        {selectedSource?.kind === "harness_profile"
+          ? `${selectedCatalog.displayName} manages authentication for this route. Add or switch accounts from its visible Terminal flow.`
+          : selectedSource && selectedSource.readiness.state !== "ready"
           ? "After adding the harness, continue authentication from Accounts in a visible Terminal, browser, or secure credential prompt."
           : "Authentication always continues in a visible Terminal, browser, or secure credential prompt."}
       </p>

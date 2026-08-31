@@ -282,6 +282,7 @@ import {
 import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
 import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
+import { createGenericHarnessModelCatalogReader } from "./ai-providers/generic-harness-model-catalog.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
@@ -4208,6 +4209,12 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
+  const genericHarnessModelCatalog = createGenericHarnessModelCatalogReader({
+    homePath,
+    enabledHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
+    ),
+  });
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
@@ -4215,6 +4222,7 @@ export async function createGateway(config: GatewayConfig) {
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
+    genericModelCatalogReader: genericHarnessModelCatalog,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,

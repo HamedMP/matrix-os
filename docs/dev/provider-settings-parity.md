@@ -189,11 +189,28 @@ unavailable credentials, offline routes, unsupported model vendors, and stale
 explicit models all remain non-runnable. Resume state retains only the provider
 session ID and validated working directory; it never persists a credential.
 
-The portable-credential predicate is one shared contract. The add-harness UI
+Pi and OpenCode model choices come from bounded live CLI discovery
+(`pi --list-models` and `opencode models`) rather than a copied static list.
+Discovery runs with an allowlisted environment, a five-second timeout, a 256 KiB
+output limit, provider/model caps, safe identifiers, and a one-minute cache.
+Explicit Settings refresh bypasses the cache. One CLI failing or returning no
+authenticated models does not erase the other CLI's catalog. A configured
+harness whose catalog fails remains visible and offline so the owner can
+refresh, disable, or repair it, even when its saved provider cannot be inserted
+into the bounded selectable catalog. The projection marks that fail-closed
+state as `routeAvailability: "catalog_unavailable"`; Chat and execution still
+reject it.
+
+The runnable-credential predicate is one shared contract. The add-harness UI
 filters provider, model, and source choices with it, configuration mutations
 revalidate it at the gateway boundary, and the Chat catalog plus child-process
 credential resolver enforce it again. Renderer state can therefore never make
 an otherwise unsupported owner subscription or model vendor executable.
+
+Settings presents the route as `Harness → Model → Paid through`. The model
+provider supplies the model; Matrix AI, an owner key, or a harness-owned profile
+appears only under **Paid through**. Matrix AI must never be inserted into the
+model-provider selector.
 
 Multiple accounts are first-class. Account IDs are stable and owner-scoped;
 labels are safe display metadata, not secret suffixes. Adding an account must
