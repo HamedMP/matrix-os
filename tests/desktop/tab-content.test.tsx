@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TabPane, TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
 import DesktopSurfaceFrame from "@desktop/renderer/src/features/desktop-shell/DesktopSurfaceFrame";
@@ -116,6 +116,64 @@ describe("current desktop tab panes", () => {
     const tabSidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
     expect(tabSidebar.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("");
     expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeNull();
+  });
+
+  it("collapses and restores an active Chat sidebar through OSWindow", () => {
+    const tab: Tab = {
+      id: "chat-active",
+      kind: "work",
+      title: "Chat",
+      closable: false,
+      workRoute: "chat",
+      chatId: "chat-global",
+      chatTitle: "Global chat",
+      chatView: "conversation",
+    };
+    const view = render(<DesktopSurfaceFrame
+      tab={tab}
+      surface={{ tabId: tab.id, mode: "window", bounds: { x: 0, y: 0, width: 1_200, height: 800 }, zIndex: 1 }}
+      active
+      tabWorkspaceActive={false}
+      overlayOpen={false}
+      presentation="desktop"
+      onFocus={vi.fn()}
+      onClose={vi.fn()}
+      onMinimize={vi.fn()}
+      onMaximize={vi.fn()}
+      onBoundsChange={vi.fn()}
+    />);
+
+    const osWindow = view.container.querySelector("[data-os-window]") as HTMLElement;
+    const sidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
+    const trigger = screen.getByRole("button", { name: "Toggle Chat sidebar" });
+    expect(trigger.parentElement?.textContent).toContain("Global chat");
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("true");
+
+    fireEvent.click(trigger);
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("false");
+    expect(sidebar.hidden).toBe(true);
+
+    fireEvent.click(trigger);
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("true");
+    expect(sidebar.hidden).toBe(false);
+
+    view.rerender(<DesktopSurfaceFrame
+      tab={tab}
+      surface={{ tabId: tab.id, mode: "tab", bounds: { x: 0, y: 0, width: 1_200, height: 800 }, zIndex: 1 }}
+      active
+      tabWorkspaceActive
+      overlayOpen={false}
+      presentation="desktop"
+      onFocus={vi.fn()}
+      onClose={vi.fn()}
+      onMinimize={vi.fn()}
+      onMaximize={vi.fn()}
+      onBoundsChange={vi.fn()}
+    />);
+
+    expect(screen.getByRole("button", { name: "Toggle Chat sidebar" })).toBeTruthy();
+    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
+    expect(view.container.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("");
   });
 
   it("renders apps through the current AppLauncher", () => {

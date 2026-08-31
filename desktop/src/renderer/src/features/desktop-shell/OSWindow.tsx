@@ -1,4 +1,4 @@
-import { ArrowExpand01, Minus, X } from "@renderer/lib/hugeicons";
+import { ArrowExpand01, Minus, PanelLeftCloseIcon, PanelLeftOpenIcon, X } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,
@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useContext,
+  useState,
 } from "react";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
@@ -19,6 +20,53 @@ const OSWindowSafeAreaContext = createContext({
   layout: "pane" as OSWindowSafeArea,
   topInset: 0,
 });
+
+interface OSWindowSidebarContextValue {
+  available: boolean;
+  sidebarId: string;
+  sidebarShown: boolean;
+  setSidebarShown: (shown: boolean) => void;
+}
+
+const OSWindowSidebarContext = createContext<OSWindowSidebarContextValue | null>(null);
+
+/** Shared trigger for sidebars whose visibility is owned by OSWindow. */
+export function OSWindowSidebarTrigger({
+  label = "Toggle sidebar",
+  className,
+  onClick,
+  onPointerDown,
+  style,
+  ...props
+}: Omit<ComponentProps<"button">, "children" | "aria-label"> & { label?: string }) {
+  const sidebar = useContext(OSWindowSidebarContext);
+  if (!sidebar?.available) return null;
+  const Icon = sidebar.sidebarShown ? PanelLeftCloseIcon : PanelLeftOpenIcon;
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-controls={sidebar.sidebarId}
+      aria-expanded={sidebar.sidebarShown}
+      data-os-window-sidebar-trigger=""
+      title={label}
+      className={`no-drag pointer-events-auto flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${className ?? ""}`}
+      style={{ color: "var(--text-secondary)", ...style }}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        onPointerDown?.(event);
+      }}
+      onClick={(event) => {
+        sidebar.setSidebarShown(!sidebar.sidebarShown);
+        onClick?.(event);
+      }}
+      {...props}
+    >
+      <Icon size={15} aria-hidden />
+    </button>
+  );
+}
 
 /** Reserves OS chrome space for the matching area of an OS window. */
 export function OSWindowSafeView({
@@ -99,6 +147,8 @@ export function TopBar({
   sidebarWidth = OS_WINDOW_SIDEBAR_WIDTH,
   leftPaneWidth,
   rightPaneWidth,
+  showSidebarTrigger = false,
+  sidebarTriggerLabel,
   onClose,
   onMinimize,
   onMaximize,
@@ -113,15 +163,19 @@ export function TopBar({
   sidebarWidth?: number;
   leftPaneWidth?: number;
   rightPaneWidth?: number;
+  showSidebarTrigger?: boolean;
+  sidebarTriggerLabel?: string;
   onClose?: () => void;
   onMinimize?: () => void;
   onMaximize?: () => void;
   onDragStart?: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
+  const sidebar = useContext(OSWindowSidebarContext);
   const controlsWidth = chromePlacement === "sidebar" ? `${sidebarWidth}px` : "100%";
   const paneAligned = leftPaneWidth !== undefined || rightPaneWidth !== undefined;
-  const alignedLeftWidth = Math.max(0, leftPaneWidth ?? 0);
+  const alignedLeftWidth = Math.max(0, showSidebarTrigger && sidebar?.available && !sidebar.sidebarShown ? 0 : leftPaneWidth ?? 0);
   const alignedRightWidth = Math.max(0, rightPaneWidth ?? 0);
+  const hasWindowControls = showWindowControls && onClose && onMinimize && onMaximize;
   const handleDoubleClick = (event: ReactPointerEvent<HTMLDivElement>) => {
     const target = event.target;
     if (target instanceof Element && target.closest("button,[role='button'],input,a")) return;
@@ -140,57 +194,54 @@ export function TopBar({
         />
       ) : null}
       {paneAligned ? (
-        <div
-          data-os-window-chrome-placement={chromePlacement}
-          data-testid="os-window-chrome-grid"
-          className="pointer-events-none absolute inset-0 z-30 grid"
-          style={{
-            gridTemplateColumns: `${alignedLeftWidth}px minmax(0, 1fr) ${alignedRightWidth}px`,
-          }}
-        >
-          <div
-            className={`flex min-w-0 items-center gap-2 px-3 ${alignedLeftWidth === 0 ? "overflow-visible" : ""}`}
-            style={{ borderColor: "var(--border-subtle)" }}
-          >
-            {alignedLeftWidth > 0 ? (
-              <>
-                {showWindowControls && onClose && onMinimize && onMaximize ? (
-                  <div data-os-window-traffic-lights className="pointer-events-auto z-30 flex shrink-0 items-center px-1">
-                    <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
-                  </div>
-                ) : null}
-                <div className="pointer-events-auto ml-auto flex items-center gap-1">{leftActions}</div>
-              </>
-            ) : null}
-          </div>
-          <div className="flex min-w-0 items-center justify-start gap-1.5 px-3 text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>
-            {alignedLeftWidth === 0 ? (
-              <div className="pointer-events-auto flex shrink-0 items-center gap-2">
-                {showWindowControls && onClose && onMinimize && onMaximize ? (
-                  <div data-os-window-traffic-lights className="z-30 flex items-center px-1">
-                    <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
-                  </div>
-                ) : null}
-                {leftActions}
+        <>
+          {hasWindowControls ? (
+            <div className="pointer-events-none absolute inset-y-0 left-0 z-40 flex items-center px-4">
+              <div data-os-window-traffic-lights className="pointer-events-auto z-30 flex shrink-0 items-center">
+                <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
               </div>
-            ) : null}
-            {title ? (
-              <div className="flex min-w-0 items-center justify-start gap-1.5 text-[15px] font-medium">
-                {icon}
-                <span className="truncate">{title}</span>
-              </div>
-            ) : null}
-            {alignedRightWidth === 0 ? (
-              <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1">{rightActions}</div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
           <div
-            className={alignedRightWidth > 0 ? "flex min-w-0 items-center justify-start border-l px-3" : "min-w-0"}
-            style={{ borderColor: "var(--border-subtle)" }}
+            data-os-window-chrome-placement={chromePlacement}
+            data-testid="os-window-chrome-grid"
+            className="pointer-events-none absolute inset-0 z-30 grid"
+            style={{
+              gridTemplateColumns: `${alignedLeftWidth}px minmax(0, 1fr) ${alignedRightWidth}px`,
+            }}
           >
-            {alignedRightWidth > 0 ? <div className="pointer-events-auto flex items-center gap-1">{rightActions}</div> : null}
+            <div
+              className={`flex min-w-0 items-center gap-2 px-3 ${alignedLeftWidth === 0 ? "overflow-visible" : ""}`}
+              style={{ borderColor: "var(--border-subtle)" }}
+            >
+              {alignedLeftWidth > 0 ? <div className="pointer-events-auto ml-auto flex items-center gap-1">{leftActions}</div> : null}
+            </div>
+            <div className={`flex min-w-0 items-center justify-start gap-1.5 text-[15px] font-medium ${showSidebarTrigger ? "px-1" : "px-3"}`} style={{ color: "var(--text-primary)" }}>
+              {alignedLeftWidth === 0 ? (
+                <div className="pointer-events-auto flex shrink-0 items-center gap-2">
+                  {hasWindowControls ? <div className="w-16 shrink-0" aria-hidden="true" /> : null}
+                  {leftActions}
+                </div>
+              ) : null}
+              {title ? (
+                <div className={`flex min-w-0 items-center justify-start text-[15px] font-medium ${showSidebarTrigger ? "gap-1" : "gap-1.5"}`}>
+                  {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
+                  {icon}
+                  <span className="truncate">{title}</span>
+                </div>
+              ) : null}
+              {alignedRightWidth === 0 ? (
+                <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1">{rightActions}</div>
+              ) : null}
+            </div>
+            <div
+              className={alignedRightWidth > 0 ? "flex min-w-0 items-center justify-start border-l px-3" : "min-w-0"}
+              style={{ borderColor: "var(--border-subtle)" }}
+            >
+              {alignedRightWidth > 0 ? <div className="pointer-events-auto flex items-center gap-1">{rightActions}</div> : null}
+            </div>
           </div>
-        </div>
+        </>
       ) : (
         <>
           <div
@@ -202,6 +253,7 @@ export function TopBar({
               <>
                 <div className="w-28 shrink-0" aria-hidden="true" />
                 <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+                  {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
                   {icon}
                   <span className="truncate">{title}</span>
                 </div>
@@ -232,6 +284,7 @@ export function OSWindow({
   sidebarWidth,
   sidebar,
   topBar,
+  topBarReservesSafeArea = true,
   safeAreaLayout = "pane",
   className,
   style,
@@ -242,8 +295,12 @@ export function OSWindow({
   sidebarWidth?: number;
   sidebar?: ReactNode;
   topBar?: ReactNode;
+  topBarReservesSafeArea?: boolean;
   safeAreaLayout?: OSWindowSafeArea;
 }) {
+  const [sidebarShown, setSidebarShown] = useState(true);
+  const sidebarAvailable = Boolean(sidebarWidth);
+  const sidebarId = `os-window-sidebar-${surfaceId}`;
   const paneSurface = {
     background: SURFACE_BASE_BACKGROUND,
     "--bg-app": SURFACE_BASE_BACKGROUND,
@@ -254,14 +311,21 @@ export function OSWindow({
 
   const safeArea = {
     layout: safeAreaLayout,
-    topInset: topBar ? OS_WINDOW_GESTURE_HEIGHT : 0,
+    topInset: topBar && topBarReservesSafeArea ? OS_WINDOW_GESTURE_HEIGHT : 0,
   };
 
   return (
+    <OSWindowSidebarContext.Provider value={{
+      available: sidebarAvailable,
+      sidebarId,
+      sidebarShown,
+      setSidebarShown,
+    }}>
     <OSWindowSafeAreaContext.Provider value={safeArea}>
     <section
       data-os-window
       data-desktop-surface={surfaceId}
+      data-sidebar-shown={sidebarAvailable ? sidebarShown : undefined}
       className={`flex flex-col ${className ?? ""}`}
       style={{ ...paneSurface, ...style }}
       {...props}
@@ -269,9 +333,11 @@ export function OSWindow({
       <div data-os-window-body className="absolute inset-0 flex min-h-0">
         {sidebarWidth ? (
           <aside
+            id={sidebarId}
             data-os-window-sidebar
             data-os-window-sidebar-divider
-            className="flex shrink-0 flex-col overflow-hidden"
+            hidden={!sidebarShown}
+            className={`${sidebarShown ? "flex" : "hidden"} shrink-0 flex-col overflow-hidden`}
             style={{
               width: sidebarWidth,
               minWidth: OS_WINDOW_SIDEBAR_MIN_WIDTH,
@@ -299,5 +365,6 @@ export function OSWindow({
       ) : null}
     </section>
     </OSWindowSafeAreaContext.Provider>
+    </OSWindowSidebarContext.Provider>
   );
 }

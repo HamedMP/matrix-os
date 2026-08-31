@@ -613,7 +613,7 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
   });
 
-  it("omits the sidebar toggle while registering the Chat title and inspector in shared surface chrome", async () => {
+  it("leaves the sidebar trigger to OSWindow while registering shared Chat chrome", async () => {
     function HostedWork() {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
       const host = React.useMemo(() => ({ setChrome }), []);
@@ -644,18 +644,11 @@ describe("WorkTab rail integration", () => {
 
     const chromeTitle = screen.getByText("Global chat", { selector: "header span" });
     expect(chromeTitle).toBeTruthy();
-    const hostedMain = within(screen.getByTestId("hosted-chat-main"));
-    expect(hostedMain.getByRole("heading", { name: "Global chat" })).toBeTruthy();
-    const sidebarToggle = hostedMain.getByRole("button", { name: "Toggle Chat sidebar" });
-    expect(sidebarToggle.className).toContain("size-7");
-    expect(sidebarToggle.className).toContain("pointer-events-auto");
-    expect(sidebarToggle.className).toContain("hover:bg-[var(--bg-hover)]");
-    expect(sidebarToggle.style.border).toBe("");
-    expect(sidebarToggle.querySelector("svg")?.getAttribute("width")).toBe("15");
-    const mainHeader = sidebarToggle.closest("header");
-    expect(mainHeader?.className).toContain("z-40");
-    expect(mainHeader?.className).toContain("px-1");
-    expect(mainHeader?.className).toContain("gap-1");
+    const hostedMainElement = screen.getByTestId("hosted-chat-main");
+    const hostedMain = within(hostedMainElement);
+    expect(hostedMain.queryByRole("heading", { name: "Global chat" })).toBeNull();
+    expect(hostedMain.queryByRole("button", { name: "Toggle Chat sidebar" })).toBeNull();
+    expect(hostedMainElement.querySelector("[data-work-main-header]")?.className).toContain("h-12");
     expect(screen.getByTestId("left-pane-width").textContent).toBe("240");
     expect(screen.getByTestId("right-pane-width").textContent).toBe("640");
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();

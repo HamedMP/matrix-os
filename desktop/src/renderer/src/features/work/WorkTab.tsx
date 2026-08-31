@@ -644,25 +644,11 @@ export default function WorkTab({
       data-pane={layout === "narrow" ? narrowPane : undefined}
     >
       {hostedChrome && initialChatId && initialChatTitle ? (
-        <header
+        <div
           data-work-main-header
-          className="pointer-events-none relative z-40 flex h-12 shrink-0 items-center gap-1 px-1"
-        >
-          <button
-            type="button"
-            aria-label="Toggle Chat sidebar"
-            title="Toggle Chat sidebar"
-            className="no-drag pointer-events-auto flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-            style={{ color: "var(--text-secondary)" }}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => undefined}
-          >
-            <PanelLeftCloseIcon size={15} aria-hidden />
-          </button>
-          <h1 className="min-w-0 truncate text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>
-            {initialChatTitle}
-          </h1>
-        </header>
+          aria-hidden="true"
+          className="h-12 shrink-0"
+        />
       ) : null}
       {!hostedChrome && layout === "narrow" && narrowPane === "chat" ? (
         <header

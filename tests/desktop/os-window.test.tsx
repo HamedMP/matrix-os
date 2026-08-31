@@ -6,6 +6,59 @@ import { describe, expect, it, vi } from "vitest";
 import { OSWindow, OSWindowSafeView, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow.js";
 
 describe("Electron OS window chrome", () => {
+  it("owns sidebar visibility and toggles it from the reusable title trigger", () => {
+    const { container } = render(
+      <OSWindow
+        surfaceId="chat-window"
+        sidebarWidth={240}
+        sidebar={<nav aria-label="Chat navigation" />}
+        topBar={(
+          <TopBar
+            title="Release planning"
+            leftPaneWidth={240}
+            showSidebarTrigger
+            sidebarTriggerLabel="Toggle Chat sidebar"
+            onClose={vi.fn()}
+            onMinimize={vi.fn()}
+            onMaximize={vi.fn()}
+          />
+        )}
+      />,
+    );
+
+    const osWindow = container.querySelector("[data-os-window]") as HTMLElement;
+    const sidebar = container.querySelector("[data-os-window-sidebar]") as HTMLElement;
+    const trigger = screen.getByRole("button", { name: "Toggle Chat sidebar" });
+    const trafficLights = container.querySelector("[data-os-window-traffic-lights]") as HTMLElement;
+    const trafficLightsParent = trafficLights.parentElement;
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("true");
+    expect(sidebar.hidden).toBe(false);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.getAttribute("data-os-window-sidebar-trigger")).toBe("");
+    expect(trigger.className).toContain("size-7");
+    expect(trigger.className).toContain("hover:bg-[var(--bg-hover)]");
+    expect(trigger.querySelector("svg")?.getAttribute("width")).toBe("15");
+    expect(trigger.parentElement?.textContent).toContain("Release planning");
+    expect(trigger.parentElement?.className).toContain("gap-1");
+    expect(trigger.parentElement?.parentElement?.className).toContain("px-1");
+    expect(trafficLightsParent?.className).toContain("absolute");
+    expect(trafficLightsParent?.className).toContain("left-0");
+    expect((screen.getByTestId("os-window-chrome-grid") as HTMLElement).style.gridTemplateColumns).toBe("240px minmax(0, 1fr) 0px");
+
+    fireEvent.click(trigger);
+
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("false");
+    expect(sidebar.hidden).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector("[data-os-window-traffic-lights]")).toBe(trafficLights);
+    expect(trafficLights.parentElement).toBe(trafficLightsParent);
+    expect((screen.getByTestId("os-window-chrome-grid") as HTMLElement).style.gridTemplateColumns).toBe("0px minmax(0, 1fr) 0px");
+
+    fireEvent.click(trigger);
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("true");
+    expect(sidebar.hidden).toBe(false);
+  });
+
   it("uses the shared base surface for every OS window", () => {
     const { container } = render(
       <OSWindow surfaceId="terminal-window" sidebarWidth={280} topBar={<div data-test-top-bar />} className="absolute" />,
