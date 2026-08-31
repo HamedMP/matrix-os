@@ -19,6 +19,10 @@ function isActive(shell: ShellSessionSummary): boolean {
   return shell.status === "active" || shell.visualStatus === "running";
 }
 
+function displayName(shell: ShellSessionSummary): string {
+  return shell.subtitle?.trim() || shell.tabId || shell.name;
+}
+
 function agentMetadata(shell: ShellSessionSummary): string | null {
   if (!shell.agent) return null;
   return [terminalAgentLabel(shell.agent), shell.model, shell.strength, shell.lastAction ?? shell.subtitle]
@@ -87,6 +91,7 @@ export function TerminalSessionSidebar({
         </div>
         <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {sessions.map((session) => {
+            const label = displayName(session);
             const selected = selectedName === session.name;
             const metadata = agentMetadata(session);
             const renaming = renamingName === session.name;
@@ -121,7 +126,7 @@ export function TerminalSessionSidebar({
                   <>
                     <button
                       type="button"
-                      aria-label={`Open ${session.name}`}
+                      aria-label={`Open ${label}`}
                       aria-current={selected || undefined}
                       className="flex min-h-16 w-full min-w-0 items-start gap-2 px-4 py-3 pr-10 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
                       style={{ background: selected ? "var(--bg-hover)" : "transparent" }}
@@ -134,7 +139,7 @@ export function TerminalSessionSidebar({
                       />
                       <span className="min-w-0 flex-1">
                         <span className="flex min-w-0 items-center justify-between gap-2">
-                          <span className="truncate text-sm leading-5" style={{ color: "var(--text-primary)" }}>{session.name}</span>
+                          <span className="truncate text-sm leading-5" style={{ color: "var(--text-primary)" }}>{label}</span>
                           <span className="shrink-0 text-[10px]" style={{ color: "var(--text-tertiary)" }}>{relativeSessionActivity(session.updatedAt)}</span>
                         </span>
                         {metadata ? <span className="mt-0.5 block truncate text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>{metadata}</span> : null}
@@ -149,7 +154,7 @@ export function TerminalSessionSidebar({
                     />
                     <button
                       type="button"
-                      aria-label={`Delete ${session.name}`}
+                      aria-label={`Delete ${label}`}
                       disabled={disabled}
                       className="absolute right-9 top-3 z-10 flex size-7 items-center justify-center rounded-md bg-[var(--bg-surface)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--danger)] focus-visible:opacity-100 group-hover/session:opacity-100"
                       onClick={() => onDelete(session)}
@@ -179,7 +184,7 @@ function SessionActions({ session, disabled, onRename, onCopy, onDelete }: {
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          aria-label={`More actions for ${session.name}`}
+          aria-label={`More actions for ${displayName(session)}`}
           disabled={disabled}
           className="absolute right-2 top-3 z-10 flex size-7 items-center justify-center rounded-md bg-[var(--bg-surface)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-active)] focus-visible:opacity-100 group-hover/session:opacity-100"
         >
@@ -188,7 +193,7 @@ function SessionActions({ session, disabled, onRename, onCopy, onDelete }: {
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          aria-label={`Actions for ${session.name}`}
+          aria-label={`Actions for ${displayName(session)}`}
           align="end"
           sideOffset={5}
           className="fade-in min-w-[200px] rounded-lg border p-1"

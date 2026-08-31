@@ -16,6 +16,14 @@ const installAction = {
   label: "Install Codex",
   command: "npm install -g @openai/codex",
 };
+const TERMINAL_WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TERMINAL_TAB_ID = `tt_${"b".repeat(32)}`;
+
+function terminalPostResponse(path: string): unknown {
+  if (path === "/api/terminal/workspaces/ensure") return { workspace: { id: TERMINAL_WORKSPACE_ID } };
+  if (path === `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`) return { tab: { id: TERMINAL_TAB_ID } };
+  return {};
+}
 
 const provider: AgentProviderSummary = {
   id: "codex",
@@ -46,7 +54,7 @@ describe("ProviderReadinessNotice", () => {
   let api: { post: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
-    api = { post: vi.fn().mockResolvedValue({ name: "matrix-setup-codex" }) };
+    api = { post: vi.fn((path: string) => Promise.resolve(terminalPostResponse(path))) };
     useConnection.setState({ status: "signed-in", api: api as never });
     useTabs.setState(useTabs.getInitialState(), true);
     useUi.setState({ requestedSettingsSection: null });
@@ -160,13 +168,15 @@ describe("ProviderReadinessNotice", () => {
     fireEvent.click(screen.getByRole("button", { name: "Install Codex" }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
-      expect.objectContaining({ cmd: installAction.command, cwd: "projects" }),
+      `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`,
+      expect.objectContaining({ command: ["sh", "-lc", installAction.command], cwd: "projects" }),
     ));
     expect(useTabs.getState().tabs).toEqual([
       expect.objectContaining({ kind: "terminals", title: "Terminal" }),
     ]);
-    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-codex");
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(
+      `${TERMINAL_WORKSPACE_ID}:${TERMINAL_TAB_ID}`,
+    );
   });
 
   it("refuses a renderer-supplied Claude action when the Gateway omits setup actions", async () => {
@@ -244,7 +254,7 @@ describe("ProviderReadinessNotice", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
     await act(async () => { await Promise.resolve(); });
-    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(api.post).toHaveBeenCalledTimes(2);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
     expect(onRefresh).toHaveBeenCalledTimes(1);
@@ -322,25 +332,24 @@ describe("ProviderReadinessNotice", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Install Codex" }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
     const retryButton = screen.getByRole("button", { name: "Install Codex" });
     await waitFor(() => expect((retryButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(retryButton);
-    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(4));
 
-    const firstRequest = api.post.mock.calls[0]?.[1];
-    const retryRequest = api.post.mock.calls[1]?.[1];
+    const firstRequest = api.post.mock.calls[1]?.[1];
+    const retryRequest = api.post.mock.calls[3]?.[1];
     expect(firstRequest).toEqual(expect.objectContaining({
-      cmd: installAction.command,
+      command: ["sh", "-lc", installAction.command],
       cwd: "projects",
-      name: expect.stringMatching(/^matrix-setup-[a-z0-9-]{1,18}$/),
+      name: "Install Codex",
     }));
     expect(retryRequest).toEqual(expect.objectContaining({
-      cmd: installAction.command,
+      command: ["sh", "-lc", installAction.command],
       cwd: "projects",
-      name: expect.stringMatching(/^matrix-setup-[a-z0-9-]{1,18}$/),
+      name: "Install Codex",
     }));
-    expect(retryRequest.name).not.toBe(firstRequest.name);
   });
 
   it("refreshes once and exposes pending state", async () => {
