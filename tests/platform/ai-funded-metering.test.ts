@@ -824,7 +824,7 @@ describe("funded AI metering", () => {
       .toEqual({ status: "expired" });
   });
 
-  it("closes legacy settlement when expired promotion leaves insufficient add-on backing", async () => {
+  it("charges partial legacy backing after its unattributed promotion expires", async () => {
     const credential = await enableAndFund({ budget: 10, credit: 0 });
     await repo.grantCredit({
       entryId: "protected_addon_credit",
@@ -867,23 +867,35 @@ describe("funded AI metering", () => {
       reservationId: "legacy_settlement_without_backing",
       tokenId: credential.tokenId,
       actualCostMicrousd: 5,
-    })).rejects.toMatchObject({ code: "reservation_expired" });
+    })).resolves.toMatchObject({
+      actualCostMicrousd: 5,
+      funding: {
+        creditBalanceMicrousd: 5,
+        addonBalanceMicrousd: 5,
+        settledThisMonthMicrousd: 5,
+        reservedMicrousd: 5,
+        remainingBudgetMicrousd: 0,
+      },
+    });
 
     const legacy = await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd", "promotional_reserved_microusd", "addon_reserved_microusd"])
       .where("reservation_id", "=", "legacy_settlement_without_backing").executeTakeFirstOrThrow();
     expect(legacy).toEqual({
-      status: "expired",
-      actual_microusd: null,
+      status: "settled",
+      actual_microusd: 5,
       promotional_reserved_microusd: null,
       addon_reserved_microusd: null,
     });
-    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
-      .select("kind").where("reservation_id", "=", "legacy_settlement_without_backing").execute()).toEqual([]);
+    const legacyUsage = await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select(["kind", "amount_microusd"])
+      .where("reservation_id", "=", "legacy_settlement_without_backing").execute();
+    expect(legacyUsage.map((row) => [row.kind, Number(row.amount_microusd)]))
+      .toEqual([["addon_debit", -2]]);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
-      creditBalanceMicrousd: 7,
+      creditBalanceMicrousd: 5,
       promotionalBalanceMicrousd: 0,
-      addonBalanceMicrousd: 7,
+      addonBalanceMicrousd: 5,
       reservedMicrousd: 5,
     });
 
@@ -897,8 +909,8 @@ describe("funded AI metering", () => {
       actualCostMicrousd: 5,
     })).resolves.toMatchObject({
       funding: {
-        creditBalanceMicrousd: 2,
-        addonBalanceMicrousd: 2,
+        creditBalanceMicrousd: 0,
+        addonBalanceMicrousd: 0,
         reservedMicrousd: 0,
       },
     });

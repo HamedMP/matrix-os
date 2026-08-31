@@ -236,8 +236,8 @@ export async function debitPromotionalGrants(
   identity: FundedAiRuntimeIdentity,
   amountMicrousd: number,
   checkedAt: string,
-): Promise<boolean> {
-  if (amountMicrousd === 0) return true;
+): Promise<number> {
+  if (amountMicrousd === 0) return 0;
   const protection = await activePromotionalProtection(executor, identity);
   const grants = await executor.selectFrom("ai_funded_promotional_grant_balances")
     .selectAll()
@@ -261,9 +261,9 @@ export async function debitPromotionalGrants(
   });
   let totalAvailable = 0;
   for (const { available } of debitableGrants) totalAvailable = exactInteger(totalAvailable + available);
-  if (totalAvailable < amountMicrousd) return false;
+  const debitTarget = Math.min(totalAvailable, amountMicrousd);
 
-  let remainingDebit = amountMicrousd;
+  let remainingDebit = debitTarget;
   for (const { grant, remaining, available } of debitableGrants) {
     if (remainingDebit === 0) break;
     const debit = Math.min(available, remainingDebit);
@@ -279,7 +279,7 @@ export async function debitPromotionalGrants(
     remainingDebit -= debit;
   }
   if (remainingDebit !== 0) throw new Error("Funded AI promotional grant balance invariant violated");
-  return true;
+  return debitTarget;
 }
 
 export async function debitAttributedPromotionalGrants(
