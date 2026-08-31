@@ -138,6 +138,7 @@ export interface AiFundedUsageReservationsTable {
   payload_hash: string;
   authorization_response: string;
   settlement_response: string | null;
+  finalization_mode: string | null;
   start_response: string | null;
   release_response: string | null;
   release_reason: string | null;
@@ -1376,6 +1377,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       payload_hash TEXT NOT NULL CHECK (length(payload_hash) = 64),
       authorization_response TEXT NOT NULL,
       settlement_response TEXT,
+      finalization_mode TEXT CHECK (finalization_mode IN ('exact', 'conservative')),
       start_response TEXT,
       release_response TEXT,
       release_reason TEXT,
@@ -1427,6 +1429,11 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       EXCEPTION WHEN duplicate_object THEN NULL;
       END;
     END $$
+  `.execute(db);
+  await sql`
+    ALTER TABLE ai_funded_usage_reservations
+    ADD COLUMN IF NOT EXISTS finalization_mode TEXT
+    CHECK (finalization_mode IN ('exact', 'conservative'))
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_ai_funded_reservations_runtime_status

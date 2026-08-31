@@ -5,6 +5,8 @@ import {
   FundedAiOperatorRuntimePolicyResponseSchema,
   FundedAiOperatorRuntimePolicyUpdateRequestSchema,
   FundedAiPromotionalGrantResponseSchema,
+  FundedAiFinalizationRequestSchema,
+  FundedAiPolicyCheckRequestSchema,
   FundedAiSafeErrorSchema,
   FundedAiReleaseRequestSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
@@ -403,11 +405,29 @@ export function createAiFundedRelayRoutes(options: {
       return policyErrorResponse(c, error);
     }
   });
+  app.post("/check", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const request = FundedAiPolicyCheckRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      return c.json(await options.repository.checkPolicy(request.data), 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
   app.post("/settle", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
     const request = FundedAiSettlementRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
       return c.json(await options.repository.settleReservation(request.data), 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
+  app.post("/finalize", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const request = FundedAiFinalizationRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      return c.json(await options.repository.finalizeReservation(request.data), 200);
     } catch (error) {
       return policyErrorResponse(c, error);
     }

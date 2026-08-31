@@ -5,6 +5,10 @@ import {
   FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
   FundedAiFundingSummarySchema,
+  FundedAiFinalizationRequestSchema,
+  FundedAiFinalizationResponseSchema,
+  FundedAiPolicyCheckRequestSchema,
+  FundedAiPolicyCheckResponseSchema,
   FundedAiReleaseRequestSchema,
   FundedAiReleaseResponseSchema,
   FundedAiSettlementRequestSchema,
@@ -14,6 +18,8 @@ import {
   IsoTimestampSchema,
   type FundedAiAuthorizationResponse,
   type FundedAiFundingSummary,
+  type FundedAiFinalizationResponse,
+  type FundedAiPolicyCheckResponse,
   type FundedAiReleaseResponse,
   type FundedAiSettlementResponse,
   type FundedAiStartResponse,
@@ -374,6 +380,73 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     });
   }
 
+  async function checkPolicy(
+    input: z.input<typeof FundedAiPolicyCheckRequestSchema>,
+  ): Promise<FundedAiPolicyCheckResponse> {
+    const request = FundedAiPolicyCheckRequestSchema.parse(input);
+    const tokenMatch = TOKEN_PATTERN.exec(request.credential);
+    if (!tokenMatch) throw new AiFundedPolicyError("unauthorized");
+    const checked = options.now();
+    const checkedAt = checked.toISOString();
+    await options.db.ready;
+    const row = await options.db.executor.selectFrom("ai_runtime_credentials as credential")
+      .innerJoin("ai_funded_runtime_policies as runtime", "runtime.machine_id", "credential.machine_id")
+      .innerJoin("user_machines as machine", "machine.machine_id", "credential.machine_id")
+      .innerJoin("ai_funded_global_policy as global_policy", (join) => (
+        join.on("global_policy.policy_id", "=", "default")
+      ))
+      .select([
+        "credential.token_id", "credential.token_hash", "credential.owner_id", "credential.machine_id",
+        "credential.runtime_slot", "credential.audience", "credential.scope", "credential.expires_at",
+        "credential.revoked_at", "runtime.owner_id as runtime_owner_id",
+        "runtime.runtime_slot as policy_runtime_slot", "runtime.enabled as runtime_enabled",
+        "runtime.expires_at as runtime_expires_at", "runtime.revision as runtime_revision",
+        "runtime.allowed_model_ids as runtime_models", "runtime.monthly_budget_microusd",
+        "machine.clerk_user_id", "machine.runtime_slot as machine_runtime_slot", "machine.status",
+        "machine.activation_state", "machine.deleted_at", "global_policy.enabled as global_enabled",
+        "global_policy.revision as global_revision", "global_policy.allowed_model_ids as global_models",
+      ])
+      .where("credential.token_id", "=", tokenMatch[1])
+      .where("global_policy.policy_id", "=", "default")
+      .executeTakeFirst();
+    if (!row || !hashesEqual(row.token_hash, hashCredential(request.credential))
+      || row.revoked_at !== null || Date.parse(row.expires_at) <= checked.getTime()
+      || row.audience !== FUNDED_AI_AUDIENCE || row.scope !== FUNDED_AI_SCOPE
+      || row.clerk_user_id !== row.owner_id || row.machine_runtime_slot !== row.runtime_slot
+      || row.status !== "running" || row.activation_state !== "authorized" || row.deleted_at !== null
+      || row.runtime_owner_id !== row.owner_id || row.policy_runtime_slot !== row.runtime_slot) {
+      throw new AiFundedPolicyError("unauthorized");
+    }
+    if (!row.global_enabled || !row.runtime_enabled
+      || (row.runtime_expires_at !== null && Date.parse(row.runtime_expires_at) <= checked.getTime())) {
+      throw new AiFundedPolicyError("access_disabled");
+    }
+    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models));
+    if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
+    return FundedAiPolicyCheckResponseSchema.parse({
+      contractVersion: 1,
+      authorized: true,
+      identity: {
+        tokenId: row.token_id,
+        ownerId: row.owner_id,
+        machineId: row.machine_id,
+        runtimeSlot: row.runtime_slot,
+        audience: FUNDED_AI_AUDIENCE,
+        scope: FUNDED_AI_SCOPE,
+        expiresAt: row.expires_at,
+      },
+      policy: {
+        enabled: true,
+        globalRevision: row.global_revision,
+        runtimeRevision: row.runtime_revision,
+        allowedModelIds,
+        monthlyBudgetMicrousd: exactInteger(row.monthly_budget_microusd),
+        checkedAt,
+        staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
+      },
+    });
+  }
+
   async function authorize(input: z.input<typeof FundedAiAuthorizationRequestSchema>): Promise<FundedAiAuthorizationResponse> {
     const request = FundedAiAuthorizationRequestSchema.parse(input);
     const tokenMatch = TOKEN_PATTERN.exec(request.credential);
@@ -514,6 +587,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         payload_hash: payloadHash,
         authorization_response: JSON.stringify(response),
         settlement_response: null,
+        finalization_mode: null,
         start_response: null,
         release_response: null,
         release_reason: null,
@@ -617,6 +691,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     input: z.input<typeof FundedAiSettlementRequestSchema>,
   ): Promise<FundedAiSettlementResponse> {
     const request = FundedAiSettlementRequestSchema.parse(input);
+    return (await settleReservationInternal(request, "exact")).response;
+  }
+
+  async function settleReservationInternal(request: {
+    reservationId: string;
+    tokenId: string;
+    actualCostMicrousd: number | null;
+  }, finalizationMode: "exact" | "conservative"): Promise<{
+    response: FundedAiSettlementResponse;
+    finalizationMode: "exact" | "conservative";
+  }> {
     const checked = options.now();
     const checkedAt = checked.toISOString();
     await options.db.ready;
@@ -631,12 +716,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirstOrThrow();
+      const reserved = exactInteger(reservation.reserved_microusd);
+      const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
       if (reservation.status === "settled") {
-        if (exactInteger(reservation.actual_microusd) !== request.actualCostMicrousd) {
+        if (exactInteger(reservation.actual_microusd) !== actualCostMicrousd) {
           throw new AiFundedPolicyError("idempotency_conflict");
         }
         if (reservation.settlement_response === null) throw new Error("Settled reservation is missing its response");
-        return FundedAiSettlementResponseSchema.parse(JSON.parse(reservation.settlement_response));
+        return {
+          response: FundedAiSettlementResponseSchema.parse(JSON.parse(reservation.settlement_response)),
+          finalizationMode: reservation.finalization_mode === "conservative" ? "conservative" : "exact",
+        } as const;
       }
       if (reservation.status !== "in_flight" && reservation.status !== "expired") {
         throw new AiFundedPolicyError("reservation_closed");
@@ -644,8 +734,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       if (reservation.status === "expired" || Date.parse(reservation.expires_at) <= checked.getTime()) {
         throw new AiFundedPolicyError("reservation_expired");
       }
-      const reserved = exactInteger(reservation.reserved_microusd);
-      if (request.actualCostMicrousd > reserved) throw new AiFundedPolicyError("over_settlement");
+      if (actualCostMicrousd > reserved) throw new AiFundedPolicyError("over_settlement");
       const reservationIdentity = {
         ownerId: reservation.owner_id,
         machineId: reservation.machine_id,
@@ -665,9 +754,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       if (!claimed) {
         const latest = await trx.executor.selectFrom("ai_funded_usage_reservations").selectAll()
           .where("reservation_id", "=", reservation.reservation_id).executeTakeFirstOrThrow();
-        if (latest.status === "settled" && exactInteger(latest.actual_microusd) === request.actualCostMicrousd
+        if (latest.status === "settled" && exactInteger(latest.actual_microusd) === actualCostMicrousd
           && latest.settlement_response !== null) {
-          return FundedAiSettlementResponseSchema.parse(JSON.parse(latest.settlement_response));
+          return {
+            response: FundedAiSettlementResponseSchema.parse(JSON.parse(latest.settlement_response)),
+            finalizationMode: latest.finalization_mode === "conservative" ? "conservative" : "exact",
+          } as const;
         }
         if (latest.status === "settled") throw new AiFundedPolicyError("idempotency_conflict");
         if (latest.status === "settling") throw new AiFundedPolicyError("rate_limited");
@@ -684,7 +776,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         trx.executor,
         reservationIdentity,
         reservation,
-        request.actualCostMicrousd,
+        actualCostMicrousd,
         currentBalance,
       );
       let appliedPromotionalDebit = promotionalDebit;
@@ -704,7 +796,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         );
       }
       const chargedMicrousd = appliedPromotionalDebit + addonDebit;
-      if (attributed && chargedMicrousd !== request.actualCostMicrousd) {
+      if (attributed && chargedMicrousd !== actualCostMicrousd) {
         throw new Error("Funded AI attributed reservation debit invariant violated");
       }
       // A migrated reservation may lack source attribution. Charge every live,
@@ -713,15 +805,16 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       await recordUsageFunding(
         trx.executor,
         reservation,
-        request.actualCostMicrousd,
+        actualCostMicrousd,
         appliedPromotionalDebit,
         addonDebit,
         checkedAt,
       );
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations").set({
         status: "settled",
-        actual_microusd: request.actualCostMicrousd,
+        actual_microusd: actualCostMicrousd,
         settled_at: checkedAt,
+        finalization_mode: finalizationMode,
       }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")
         .returningAll().executeTakeFirstOrThrow();
       const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
@@ -736,8 +829,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         reservationId: updated.reservation_id,
         requestId: updated.request_id,
         tokenId: updated.token_id,
-        actualCostMicrousd: request.actualCostMicrousd,
-        releasedMicrousd: reserved - request.actualCostMicrousd,
+        actualCostMicrousd,
+        releasedMicrousd: reserved - actualCostMicrousd,
         remainingBalanceMicrousd: funding.remainingBalanceMicrousd,
         remainingBudgetMicrousd: funding.remainingBudgetMicrousd,
         funding,
@@ -747,9 +840,24 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       await trx.executor.updateTable("ai_funded_usage_reservations")
         .set({ settlement_response: JSON.stringify(response) })
         .where("reservation_id", "=", reservation.reservation_id).execute();
-      return response;
+      return { response, finalizationMode } as const;
     });
     return result;
+  }
+
+  async function finalizeReservation(
+    input: z.input<typeof FundedAiFinalizationRequestSchema>,
+  ): Promise<FundedAiFinalizationResponse> {
+    const request = FundedAiFinalizationRequestSchema.parse(input);
+    const settlement = await settleReservationInternal({
+      reservationId: request.reservationId,
+      tokenId: request.tokenId,
+      actualCostMicrousd: request.mode === "exact" ? request.actualCostMicrousd : null,
+    }, request.mode);
+    return FundedAiFinalizationResponseSchema.parse({
+      ...settlement.response,
+      finalizationMode: settlement.finalizationMode,
+    });
   }
 
   async function releaseReservation(
@@ -944,6 +1052,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           });
           const settled = await trx.executor.updateTable("ai_funded_usage_reservations").set({
             status: "settled", actual_microusd: reserved, settled_at: checkedAt,
+            finalization_mode: "conservative",
             settlement_response: JSON.stringify(response),
           }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")
             .returning("reservation_id").executeTakeFirst();
@@ -971,9 +1080,11 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   return {
     getFundingSummary,
     getRuntimeFundingSummary,
+    checkPolicy,
     authorize,
     startReservation,
     settleReservation,
+    finalizeReservation,
     releaseReservation,
     cleanupExpiredReservations,
     grantCredit,

@@ -195,6 +195,9 @@ describe("funded AI metering", () => {
     };
     const settlement = await repo.settleReservation(settlementRequest);
     expect(settlement).toMatchObject({ actualCostMicrousd: 60, releasedMicrousd: 40, remainingBalanceMicrousd: 140 });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("finalization_mode")
+      .where("reservation_id", "=", authorization.reservation.reservationId).executeTakeFirstOrThrow())
+      .toEqual({ finalization_mode: "exact" });
     await expect(repo.settleReservation(settlementRequest)).resolves.toEqual(settlement);
     await expect(repo.settleReservation({
       reservationId: authorization.reservation.reservationId,
@@ -221,6 +224,26 @@ describe("funded AI metering", () => {
       tokenId: credential.tokenId,
       actualCostMicrousd: 51,
     })).rejects.toMatchObject({ code: "over_settlement" });
+  });
+
+  it("finalizes ambiguous post-start usage at the full reservation", async () => {
+    const credential = await enableAndFund({ budget: 200, credit: 200 });
+    const authorization = await repo.authorize({
+      credential: credential.token, requestId: "request_ambiguous", modelId, maxCostMicrousd: 100,
+    });
+    const locator = {
+      reservationId: authorization.reservation.reservationId,
+      tokenId: credential.tokenId,
+    };
+    await repo.startReservation(locator);
+    const finalized = await repo.finalizeReservation({ ...locator, mode: "conservative" });
+    expect(finalized).toMatchObject({ actualCostMicrousd: 100, releasedMicrousd: 0, status: "settled" });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("finalization_mode")
+      .where("reservation_id", "=", locator.reservationId).executeTakeFirstOrThrow())
+      .toEqual({ finalization_mode: "conservative" });
+    await expect(repo.finalizeReservation({ ...locator, mode: "conservative" })).resolves.toEqual(finalized);
+    await expect(repo.finalizeReservation({ ...locator, mode: "exact", actualCostMicrousd: 60 }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
   });
 
   it("enforces zero balance, model allowlist, monthly budget, and the global kill switch before reservation", async () => {
@@ -308,7 +331,9 @@ describe("funded AI metering", () => {
     const reservation = await db.executor.selectFrom("ai_funded_usage_reservations")
       .selectAll().where("reservation_id", "=", authorization.reservation.reservationId)
       .executeTakeFirstOrThrow();
-    expect(reservation).toMatchObject({ status: "settled", actual_microusd: 100 });
+    expect(reservation).toMatchObject({
+      status: "settled", actual_microusd: 100, finalization_mode: "conservative",
+    });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger").select("amount_microusd")
       .where("reservation_id", "=", reservation.reservation_id).execute())
       .toEqual([{ amount_microusd: -100 }]);
@@ -970,10 +995,6 @@ describe("funded AI metering", () => {
       promotionalBalanceMicrousd: 0,
       addonBalanceMicrousd: 5,
       reservedMicrousd: 5,
-      settledThisMonthMicrousd: 5,
-      fundingShortfallMicrousd: 3,
-      remainingBalanceMicrousd: 0,
-      remainingBudgetMicrousd: 10,
     });
 
     await repo.startReservation({

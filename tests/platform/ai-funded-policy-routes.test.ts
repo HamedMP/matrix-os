@@ -4,6 +4,8 @@ import {
   FundedAiOperatorGlobalPolicyResponseSchema,
   FundedAiOperatorRuntimePolicyResponseSchema,
   FundedAiPromotionalGrantResponseSchema,
+  FundedAiFinalizationResponseSchema,
+  FundedAiPolicyCheckResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiSettlementResponseSchema,
@@ -538,5 +540,75 @@ describe("funded AI policy routes", () => {
       body: JSON.stringify({ ...lifecycleBody, reason: "ambiguous_upstream_failure" }),
     });
     expect(invalidRelease.status).toBe(400);
+  });
+
+  it("finalizes ambiguous post-start usage at the reserved amount", async () => {
+    const { app } = await createTestApp();
+    const issuedResponse = await app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await issuedResponse.json());
+    const authorizationResponse = await app.request("/internal/ai/funded/authorize", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        credential: issued.credential.token, requestId: "request_finalize", modelId, maxCostMicrousd: 100,
+      }),
+    });
+    const authorization = FundedAiAuthorizationResponseSchema.parse(await authorizationResponse.json());
+    const locator = { reservationId: authorization.reservation.reservationId, tokenId: issued.credential.tokenId };
+    await app.request("/internal/ai/funded/start", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify(locator),
+    });
+    const finalized = await app.request("/internal/ai/funded/finalize", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ ...locator, mode: "conservative" }),
+    });
+    expect(finalized.status).toBe(200);
+    expect(FundedAiFinalizationResponseSchema.parse(await finalized.json()))
+      .toMatchObject({ finalizationMode: "conservative", actualCostMicrousd: 100, releasedMicrousd: 0 });
+  });
+
+  it("checks policy through service auth without reserving credit", async () => {
+    const { app } = await createTestApp();
+    const issuedResponse = await app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await issuedResponse.json());
+    const body = JSON.stringify({ credential: issued.credential.token, modelId });
+
+    expect((await app.request("/internal/ai/funded/check", {
+      method: "POST", headers: { "content-type": "application/json" }, body,
+    })).status).toBe(401);
+    const checked = await app.request("/internal/ai/funded/check", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body,
+    });
+    expect(checked.status).toBe(200);
+    expect(FundedAiPolicyCheckResponseSchema.parse(await checked.json())).toMatchObject({
+      authorized: true,
+      identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+    });
+    const extraField = await app.request("/internal/ai/funded/check", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, modelId, maxCostMicrousd: 1 }),
+    });
+    expect(extraField.status).toBe(400);
+    const oversized = await app.request("/internal/ai/funded/check", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, modelId, padding: "x".repeat(5_000) }),
+    });
+    expect(oversized.status).toBe(413);
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("reservation_id").execute()).toEqual([]);
   });
 });
