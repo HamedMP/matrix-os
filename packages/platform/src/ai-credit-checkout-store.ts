@@ -176,7 +176,25 @@ export async function reverseClaimCredit(
   at: string,
   freeze: boolean,
 ) {
-  if (Number(claim.granted_microusd) <= 0 || Number(claim.reversed_microusd) > 0) return claim;
+  if (Number(claim.granted_microusd) <= 0) return claim;
+  if (Number(claim.reversed_microusd) > 0) {
+    if (freeze) {
+      // A refund may have already reversed the grant without freezing the
+      // runtime. A later dispute must still apply its restriction atomically.
+      await trx.executor.insertInto("ai_funded_credit_restrictions").values({
+        machine_id: claim.machine_id,
+        owner_id: claim.owner_id,
+        runtime_slot: claim.runtime_slot,
+        debt_microusd: 0,
+        frozen: true,
+        updated_at: at,
+      }).onConflict((conflict) => conflict.column("machine_id").doUpdateSet({
+        frozen: true,
+        updated_at: at,
+      })).execute();
+    }
+    return claim;
+  }
   const balance = await trx.executor.selectFrom("ai_funded_runtime_balances").selectAll()
     .where("machine_id", "=", claim.machine_id).forUpdate().executeTakeFirstOrThrow();
   const removable = Math.min(
