@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FundedAiCredentialError,
+  FundedAiCredentialUnexpectedError,
   FundedAiRuntimeConfigError,
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
@@ -164,6 +165,32 @@ describe("funded AI runtime credential manager", () => {
     const error = await denied.getCredential().catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(FundedAiCredentialError);
     expect(String(error)).not.toContain("owner details");
+  });
+
+  it("does not disguise unexpected response-processing failures as transient service errors", async () => {
+    const unexpected = new RangeError("private response reader invariant");
+    const fetchFn = vi.fn(async () => new Response(new ReadableStream({
+      pull() {
+        throw unexpected;
+      },
+    }), { status: 200 }));
+    const sleep = vi.fn(async () => {});
+    const manager = createFundedAiCredentialManager(loadFundedAiRuntimeConfig(runtimeEnv())!, {
+      fetchFn,
+      now: () => NOW,
+      random: () => 0,
+      sleep,
+    });
+
+    const error = await manager.getCredential().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FundedAiCredentialUnexpectedError);
+    expect(error).toMatchObject({
+      message: "Matrix AI credential processing failed",
+      cause: unexpected,
+    });
+    expect(String(error)).not.toContain("private response reader invariant");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("uses a request deadline and refuses use after close", async () => {
