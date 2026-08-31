@@ -69,6 +69,21 @@ describe("BillingSection", () => {
     vi.unstubAllEnvs();
   });
 
+  it("uses a provider-neutral active fixture in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    window.history.replaceState({}, "", "/?e2e_billing_state=active");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    expect(screen.getByRole("heading", { name: "Builder" })).toBeTruthy();
+    expect(screen.getByText("Monthly")).toBeTruthy();
+    expect(screen.queryByText(/\$100/)).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllEnvs();
+  });
+
   it("waits for Clerk before rendering a subscription state", async () => {
     clerkState.isLoaded = false;
     clerkState.activePlan = "matrix_starter";

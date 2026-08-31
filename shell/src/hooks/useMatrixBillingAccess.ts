@@ -103,6 +103,32 @@ export function useMatrixBillingAccess(): BillingAccessState {
       accessIssue: null,
     };
   }
+  if (e2eBillingScenario === "active") {
+    return {
+      active: true,
+      checking: false,
+      entitlement: {
+        source: "stripe",
+        planSlug: "matrix_builder",
+        status: "active",
+        maxRuntimeSlots: 1,
+        includedRuntimeSlots: 1,
+        addonRuntimeSlots: 0,
+        defaultServerType: "",
+        allowedServerTypes: [],
+        stripeSubscriptionId: "sub_e2e_active",
+        stripePriceId: "price_e2e_active",
+        billingInterval: "monthly",
+        gracePeriodEndsAt: null,
+        effectiveFrom: "2026-08-31T00:00:00.000Z",
+        effectiveUntil: null,
+        updatedAt: "2026-08-31T00:00:00.000Z",
+      },
+      trialOffer: null,
+      accessReason: "e2e_test_bypass",
+      accessIssue: null,
+    };
+  }
   return {
     active: false,
     checking: false,
