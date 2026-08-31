@@ -1,11 +1,11 @@
 ---
 name: matrix-dev-vps
 description: Work on Matrix OS from inside a Matrix user VPS with near-realtime development, hot reload, previews, and safe separation between customer code and platform secrets.
-version: 1.0.0
-author: Matrix OS
 license: MIT
-platforms: [linux]
 metadata:
+  version: 1.0.0
+  author: Matrix OS
+  platforms: [linux]
   agent:
     tags: [Matrix OS, VPS, development, HMR, devops]
     related_skills: [matrix-app-builder, matrix-debug-app, matrix-integrations]
@@ -64,7 +64,21 @@ pnpm build
 ## Preview Rules
 
 - Prefer Matrix app windows for user-facing preview.
-- For raw dev servers, use SSH forwarding or the configured tunnel.
+- When a dev server prints a loopback URL such as `http://localhost:4173`, register it against the current
+  project and task so it appears in Project Preview:
+
+  ```bash
+  matrix preview add \
+    --project <project-slug> \
+    --task <task-id> \
+    --label "Dev preview" \
+    --url http://localhost:4173
+  ```
+
+- Open registered previews from Project Preview in Matrix Browser. Do not send localhost preview URLs to
+  the host operating system's external browser.
+- Matrix Browser resolves the Matrix-computer loopback URL through the authenticated runtime tunnel; do not
+  replace it with a public URL merely to make the preview reachable from the user's desktop.
 - Do not expose unauthenticated dev servers publicly.
 - `dev.matrix-os.com` should require auth.
 

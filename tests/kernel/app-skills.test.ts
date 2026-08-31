@@ -6,10 +6,27 @@ const SKILLS_DIR = join(__dirname, "../../skills/matrix");
 
 const APP_SKILLS = [
   { dir: "app-builder", name: "matrix-app-builder" },
+  { dir: "app-ui-patterns", name: "matrix-app-ui-patterns" },
   { dir: "design-system", name: "matrix-design-system" },
   { dir: "integrations", name: "matrix-integrations" },
   { dir: "dev-vps", name: "matrix-dev-vps" },
   { dir: "debug-app", name: "matrix-debug-app" },
+];
+
+const ANIMATION_SKILLS = [
+  "animate",
+  "animation-accessibility",
+  "animation-performance",
+  "animation-vocabulary",
+  "css-animations",
+  "debug-animation",
+  "find-animation-opportunities",
+  "gesture-ui",
+  "improve-animations",
+  "motion-react",
+  "pick-ui-library",
+  "review-animations",
+  "scroll-animations",
 ];
 
 function skillPath(dir: string): string {
@@ -17,6 +34,12 @@ function skillPath(dir: string): string {
 }
 
 describe("T1440-T1445: AI skills for app building", () => {
+  it("ships the approved 19-skill Matrix computer bundle without landing-design", () => {
+    expect(APP_SKILLS).toHaveLength(6);
+    expect(ANIMATION_SKILLS).toHaveLength(13);
+    expect(existsSync(skillPath("landing-design"))).toBe(false);
+  });
+
   for (const skill of APP_SKILLS) {
     describe(`${skill.dir}/SKILL.md`, () => {
       it("exists", () => {
@@ -79,6 +102,44 @@ describe("T1440-T1445: AI skills for app building", () => {
       expect(content).toContain("matrix-design-system");
       expect(content).toContain("matrix-integrations");
     });
+
+    it("uses the current brand as a system frame while adapting apps to user taste", () => {
+      const content = readFileSync(skillPath("app-builder"), "utf-8");
+      expect(content).toContain("Bricolage Grotesque");
+      expect(content).toContain("Geist Mono");
+      expect(content).toContain("#0E3422");
+      expect(content).toContain("taste brief");
+      expect(content).toContain("user's taste");
+      expect(content).not.toContain("Orbitron");
+    });
+
+    it("routes motion work through the bundled animation skills", () => {
+      const content = readFileSync(skillPath("app-builder"), "utf-8");
+      expect(content).toContain("find-animation-opportunities");
+      expect(content).toContain("animation-accessibility");
+      expect(content).toContain("animation-performance");
+      expect(content).toContain("motion-react");
+      expect(content).toContain("css-animations");
+    });
+  });
+
+  describe("bundled animations.dev skills", () => {
+    it("records source archive provenance for future update checks", () => {
+      const provenance = JSON.parse(
+        readFileSync(join(SKILLS_DIR, "animations-dev-pack.json"), "utf-8"),
+      );
+      expect(provenance.archiveSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(provenance.skills).toEqual(ANIMATION_SKILLS);
+    });
+
+    for (const dir of ANIMATION_SKILLS) {
+      it(`ships ${dir} with agent metadata`, () => {
+        const path = skillPath(dir);
+        expect(existsSync(path)).toBe(true);
+        expect(readFileSync(path, "utf-8")).toContain(`name: ${dir}`);
+        expect(existsSync(join(SKILLS_DIR, dir, "agents", "openai.yaml"))).toBe(true);
+      });
+    }
   });
 
   describe("matrix-design-system skill content", () => {
@@ -105,6 +166,25 @@ describe("T1440-T1445: AI skills for app building", () => {
     it("documents shadcn-style primitives", () => {
       const content = readFileSync(skillPath("design-system"), "utf-8");
       expect(content).toContain("shadcn-style");
+    });
+  });
+
+  describe("matrix-app-ui-patterns skill content", () => {
+    it("keeps app navigation away from the OS-owned bottom edge", () => {
+      const content = readFileSync(skillPath("app-ui-patterns"), "utf-8");
+      expect(content).toContain("hamburger drawer or top tabs");
+      expect(content).not.toContain("bottom tabs");
+      expect(content).toContain("Never bottom");
+    });
+  });
+
+  describe("matrix-dev-vps skill content", () => {
+    it("registers localhost dev servers for Matrix Browser previews", () => {
+      const content = readFileSync(skillPath("dev-vps"), "utf-8");
+      expect(content).toContain("matrix preview add");
+      expect(content).toContain("http://localhost:4173");
+      expect(content).toContain("Project Preview");
+      expect(content).toContain("Matrix Browser");
     });
   });
 

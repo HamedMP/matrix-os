@@ -1,11 +1,11 @@
 ---
 name: matrix-debug-app
 description: Debug Matrix OS app failures including needs_build responses, missing dist bundles, broken matrix.json manifests, icon 404s, console errors, and integration proxy issues.
-version: 1.0.0
-author: Matrix OS
 license: MIT
-platforms: [linux, macos]
 metadata:
+  version: 1.0.0
+  author: Matrix OS
+  platforms: [linux, macos]
   agent:
     tags: [Matrix OS, debugging, apps, Vite, console]
     related_skills: [matrix-app-builder, matrix-integrations]

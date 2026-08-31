@@ -1,11 +1,11 @@
 ---
 name: matrix-integrations
 description: Use Matrix OS platform-owned integrations from apps or agents without exposing provider secrets on customer VPSes or inside Agent.
-version: 1.0.0
-author: Matrix OS
 license: MIT
-platforms: [linux, macos]
 metadata:
+  version: 1.0.0
+  author: Matrix OS
+  platforms: [linux, macos]
   agent:
     tags: [Matrix OS, integrations, Pipedream, OAuth, platform]
     related_skills: [matrix-app-builder]

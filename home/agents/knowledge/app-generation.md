@@ -146,7 +146,7 @@ New app logos should match the shipped Matrix OS icon family: light premium iOS/
 app icon artwork, refined Apple-like product rendering, bright warm off-white or pale pastel
 background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows,
 and one large tactile 3D object or symbol that clearly represents the app. Keep the family aligned
-with Matrix OS forest, cream, ember, and deep accents. Do not include text,
+with the current Matrix teal, coral, gold, green, and blue family. Do not include text,
 logos, watermarks, transparent backgrounds, black/dark dock backgrounds, empty padding, or a
 separate visible icon frame; the Matrix shell owns the final corner radius.
 
@@ -157,52 +157,50 @@ Use explicit app branding only when requested or when the app's domain requires 
 
 ```css
 :root {
-  --bg: var(--matrix-bg, #FAFAF9);
-  --fg: var(--matrix-fg, #32352E);
-  --primary: var(--matrix-primary, #434E3F);
-  --primary-fg: var(--matrix-primary-fg, #FAFAF5);
-  --accent: var(--matrix-accent, #D06F25);
-  --accent-fg: var(--matrix-accent-fg, #FAFAF5);
-  --secondary: var(--matrix-secondary, #F1F0E3);
-  --muted: var(--matrix-muted, #E1E1D0);
-  --muted-fg: var(--matrix-muted-fg, #747668);
-  --card: var(--matrix-card, #FCFCF8);
-  --border: var(--matrix-border, #D8D6C7);
-  --sand-light: #F7F1E7;
-  --sand-mid: #F3EAE0;
-  --sand-warm: #D6AB8B;
+  --bg: var(--matrix-bg, #F7F4EC);
+  --fg: var(--matrix-fg, #0E3422);
+  --primary: var(--matrix-primary, #0E3422);
+  --primary-fg: var(--matrix-primary-fg, #FFFFFF);
+  --accent: var(--matrix-accent, #D06E53);
+  --accent-fg: var(--matrix-accent-fg, #FFFFFF);
+  --secondary: var(--matrix-secondary, #F1C379);
+  --muted: var(--matrix-muted, #C5D6E2);
+  --muted-fg: var(--matrix-muted-fg, #52645B);
+  --card: var(--matrix-card, #FFFFFF);
+  --border: var(--matrix-border, #D6D9D1);
+  --radius: 12px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-  background: linear-gradient(170deg, var(--sand-light) 0%, var(--sand-mid) 30%, #F7F3ED 60%, var(--sand-light) 100%);
+  background: var(--bg);
   color: var(--fg);
-  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
+  font-family: var(--matrix-font-sans, Geist, system-ui, sans-serif);
 }
 
-h1, h2 { font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif); }
-h3, h4, h5, h6 { font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif); font-weight: 600; }
+h1, h2 { font-family: var(--matrix-font-display, "Bricolage Grotesque", sans-serif); }
+h3, h4, h5, h6 { font-family: var(--matrix-font-sans, Geist, system-ui, sans-serif); font-weight: 600; }
 
 button {
   background: var(--primary);
   color: var(--primary-fg);
   border: none;
   padding: 10px 24px;
-  border-radius: 50px;
-  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
+  border-radius: var(--radius);
+  font-family: var(--matrix-font-sans, Geist, system-ui, sans-serif);
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
 }
 
 input, textarea, select {
-  background: rgba(255,255,255,0.8);
+  background: var(--card);
   color: var(--fg);
   border: 1.5px solid var(--border);
   padding: 12px 20px;
-  border-radius: 50px;
-  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
+  border-radius: var(--radius);
+  font-family: var(--matrix-font-sans, Geist, system-ui, sans-serif);
 }
 ```
 
