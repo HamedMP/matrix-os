@@ -423,6 +423,55 @@ describe("funded AI add-on checkout", () => {
     expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst())
       .toMatchObject({ frozen: false, debt_microusd: 0 });
   });
+
+  it.each(["won", "lost"] as const)(
+    "freezes an already-refunded runtime for a later dispute, then settles %s monotonically and idempotently",
+    async (resolution) => {
+      await purchaseCredit();
+      expect((await deliver(refundedEvent())).status).toBe(200);
+      expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst())
+        .toMatchObject({ frozen: false, debt_microusd: 0 });
+
+      const created = disputeEvent(
+        "charge.dispute.created",
+        "under_review",
+        `evt_refund_first_${resolution}_created`,
+      );
+      expect((await deliver(created)).status).toBe(200);
+      expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst())
+        .toMatchObject({ frozen: true, debt_microusd: 0 });
+      await expect((await deliver(created)).json()).resolves.toEqual({ received: true, duplicate: true });
+      expect((await deliver(disputeEvent(
+        "charge.dispute.created",
+        "needs_response",
+        `evt_refund_first_${resolution}_created_retry`,
+      ))).status).toBe(200);
+
+      expect((await deliver(disputeEvent(
+        "charge.dispute.closed",
+        resolution,
+        `evt_refund_first_${resolution}_closed`,
+      ))).status).toBe(200);
+      expect((await deliver(disputeEvent(
+        "charge.dispute.created",
+        "needs_response",
+        `evt_refund_first_${resolution}_late_created`,
+      ))).status).toBe(200);
+
+      expect(await db.executor.selectFrom("ai_credit_checkout_claims")
+        .select(["dispute_status", "refunded_at", "reversed_microusd", "reversal_debt_microusd"])
+        .executeTakeFirst()).toEqual({
+        dispute_status: resolution,
+        refunded_at: "2026-08-31T10:00:00.000Z",
+        reversed_microusd: 5_000_000,
+        reversal_debt_microusd: 0,
+      });
+      await expect(repository.getFundingSummary(identity)).resolves.toMatchObject({ creditBalanceMicrousd: 0 });
+      expect(await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().executeTakeFirst())
+        .toMatchObject({ frozen: resolution === "lost", debt_microusd: 0 });
+      expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toHaveLength(2);
+    },
+  );
 });
 
 function completedMetadata() {
