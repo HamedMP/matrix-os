@@ -11,6 +11,7 @@ import type { ApiClient } from "./api";
 
 let cached: { api: ApiClient; state: OsViewStateResponse } | null = null;
 let mutationQueue: Promise<void> = Promise.resolve();
+const MAX_CONFLICT_REBASE_ATTEMPTS = 3;
 
 function mutationId(): string {
   return `osvm_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -54,6 +55,7 @@ export function patchNativeOsViewState(api: ApiClient, patch: OsViewStatePatch):
       updatedAt: new Date(0).toISOString(),
     };
     let pendingPatch = patch;
+    let conflictRebaseAttempts = 0;
     while (true) {
       try {
         cached = { api, state: await sendPatch(api, base, pendingPatch, id) };
@@ -61,6 +63,10 @@ export function patchNativeOsViewState(api: ApiClient, patch: OsViewStatePatch):
       } catch (error: unknown) {
         if (!(error instanceof AppError && error.detail === "os_view_state_conflict")) throw error;
       }
+      if (conflictRebaseAttempts >= MAX_CONFLICT_REBASE_ATTEMPTS) {
+        throw new Error("OS-view state conflicted repeatedly");
+      }
+      conflictRebaseAttempts += 1;
       const conflictedBase = base;
       base = await loadNativeOsViewState(api);
       pendingPatch = rebaseOsViewStatePatch(

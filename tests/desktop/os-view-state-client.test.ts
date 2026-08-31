@@ -97,4 +97,27 @@ describe("Electron Desktop OS-view state client", () => {
       pinnedApps: ["__terminal__", "__file-browser__", "__chat__"],
     });
   });
+
+  it("bounds conflict retries so a contended mutation cannot block the queue", async () => {
+    const conflict = new AppError("server", { detail: "os_view_state_conflict" });
+    const revisions = [6, 7, 8].map((revision) => ({ ...latest, revision }));
+    const api = {
+      get: vi.fn()
+        .mockResolvedValueOnce(revisions[0])
+        .mockResolvedValueOnce(revisions[1])
+        .mockResolvedValueOnce(revisions[2]),
+      patch: vi.fn()
+        .mockRejectedValueOnce(conflict)
+        .mockRejectedValueOnce(conflict)
+        .mockRejectedValueOnce(conflict)
+        .mockRejectedValueOnce(conflict)
+        .mockResolvedValueOnce({ ...latest, revision: 9 }),
+    };
+
+    await expect(patchNativeOsViewState(api as never, { pinnedApps: ["__chat__"] }))
+      .rejects.toThrow("conflicted repeatedly");
+    await patchNativeOsViewState(api as never, { desktop: { icons: [] } });
+
+    expect(api.patch.mock.calls[4][1].baseRevision).toBe(8);
+  });
 });

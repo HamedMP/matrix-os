@@ -32,6 +32,27 @@ describe("Web OS-view state client", () => {
     ]);
   });
 
+  it("converts fallback geometry into the selected presentation coordinate space", () => {
+    const document = createDefaultOsViewDocument();
+    document.apps = [{ path: "__chat__", title: "Chat", state: "open" }];
+    document.desktop.windows = [
+      { path: "__chat__", x: 40, y: 60, width: 900, height: 640 },
+    ];
+    document.canvas.transform = { panX: -100, panY: 50, zoom: 0.5 };
+
+    expect(layoutWindowsFromOsViewState({ ...latest, document }, "canvas")).toEqual([
+      { path: "__chat__", title: "Chat", state: "open", x: 180, y: 70, width: 1800, height: 1280 },
+    ]);
+
+    document.desktop.windows = [];
+    document.canvas.windows = [
+      { path: "__chat__", x: 180, y: 70, width: 1800, height: 1280 },
+    ];
+    expect(layoutWindowsFromOsViewState({ ...latest, document }, "desktop")).toEqual([
+      { path: "__chat__", title: "Chat", state: "open", x: 40, y: 60, width: 900, height: 640 },
+    ]);
+  });
+
   it("reloads and retries the same mutation after a revision conflict", async () => {
     const latestAfterConflict = {
       ...latest,
@@ -97,5 +118,28 @@ describe("Web OS-view state client", () => {
     expect(secondRetry.patch).toEqual({
       pinnedApps: ["__terminal__", "__file-browser__", "__chat__"],
     });
+  });
+
+  it("bounds conflict retries so a contended mutation cannot block the queue", async () => {
+    const revisions = [4, 5, 6].map((revision) => ({ ...latest, revision }));
+    const fetchMock = vi.fn();
+    for (const revision of revisions) {
+      fetchMock
+        .mockResolvedValueOnce({ ok: false, status: 409 })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => revision });
+    }
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 409 });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...latest, revision: 8 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(patchWebOsViewState("http://gateway.test", { pinnedApps: ["__chat__"] }))
+      .rejects.toThrow("conflicted repeatedly");
+    await patchWebOsViewState("http://gateway.test", { desktop: { icons: [] } });
+
+    expect(JSON.parse(fetchMock.mock.calls[7][1].body).baseRevision).toBe(6);
   });
 });

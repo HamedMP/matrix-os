@@ -10,6 +10,7 @@ import {
 import type { LayoutWindow } from "@/hooks/useWindowManager";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const MAX_CONFLICT_REBASE_ATTEMPTS = 3;
 
 let cached: { gatewayUrl: string; state: OsViewStateResponse } | null = null;
 let mutationQueue: Promise<void> = Promise.resolve();
@@ -76,14 +77,20 @@ export function patchWebOsViewState(
       updatedAt: new Date(0).toISOString(),
     };
     let pendingPatch = patch;
+    let conflictRebaseAttempts = 0;
     while (true) {
       const result = await sendPatch(gatewayUrl, base, pendingPatch, id);
       if (result.state) {
         cached = { gatewayUrl, state: result.state };
         return;
       }
+      if (conflictRebaseAttempts >= MAX_CONFLICT_REBASE_ATTEMPTS) {
+        throw new Error("OS-view state conflicted repeatedly");
+      }
+      conflictRebaseAttempts += 1;
       const conflictedBase = base;
       base = await requestState(gatewayUrl);
+      cached = { gatewayUrl, state: base };
       pendingPatch = rebaseOsViewStatePatch(
         conflictedBase.document,
         base.document,
@@ -115,11 +122,30 @@ export function layoutWindowsFromOsViewState(
     : state.document.canvas.windows;
   const selectedByPath = new Map(selectedGeometry.map((window) => [window.path, window]));
   const counterpartByPath = new Map(counterpartGeometry.map((window) => [window.path, window]));
+  const { panX, panY, zoom } = state.document.canvas.transform;
   return state.document.apps.flatMap((app) => {
     // App state is shared, while geometry is presentation-specific. A newly
     // selected presentation may not have written geometry yet, so seed it from
     // the other presentation instead of hiding an app that is durably open.
-    const bounds = selectedByPath.get(app.path) ?? counterpartByPath.get(app.path);
+    const selectedBounds = selectedByPath.get(app.path);
+    const counterpartBounds = counterpartByPath.get(app.path);
+    const bounds = selectedBounds ?? (counterpartBounds
+      ? mode === "canvas"
+        ? {
+            ...counterpartBounds,
+            x: counterpartBounds.x / zoom - panX,
+            y: counterpartBounds.y / zoom - panY,
+            width: counterpartBounds.width / zoom,
+            height: counterpartBounds.height / zoom,
+          }
+        : {
+            ...counterpartBounds,
+            x: (counterpartBounds.x + panX) * zoom,
+            y: (counterpartBounds.y + panY) * zoom,
+            width: counterpartBounds.width * zoom,
+            height: counterpartBounds.height * zoom,
+          }
+      : undefined);
     if (!bounds) return [];
     return [{ ...bounds, title: app.title, state: app.state }];
   });
