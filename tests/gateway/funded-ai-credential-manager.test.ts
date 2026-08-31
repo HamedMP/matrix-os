@@ -74,11 +74,17 @@ describe("funded AI runtime credential manager", () => {
   it("derives the issue endpoint from the validated local handle", () => {
     const config = loadFundedAiRuntimeConfig(runtimeEnv());
     expect(config).toMatchObject({
-      issueUrl: "https://platform.matrix-os.com/internal/containers/alice/ai/funded-credential",
+      issueUrl: "https://platform.matrix-os.com/internal/containers/alice/ai/funded-credential?runtimeSlot=primary",
       relayBaseUrl: "https://relay.matrix-os.com",
       identity: { ownerId: "user_123", machineId: "machine_123", runtimeSlot: "primary" },
       maxRunMs: 600_000,
     });
+
+    expect(loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_RUNTIME_SLOT: "staging" })))
+      .toMatchObject({
+        issueUrl: "https://platform.matrix-os.com/internal/containers/alice/ai/funded-credential?runtimeSlot=staging",
+        identity: { runtimeSlot: "staging" },
+      });
   });
 
   it("singleflights acquisition, caches only a sufficiently fresh token, and can invalidate it", async () => {

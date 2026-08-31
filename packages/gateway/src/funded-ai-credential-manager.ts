@@ -110,11 +110,13 @@ export function loadFundedAiRuntimeConfig(
     machineId: parseConfigValue(IdentityValueSchema, env.MATRIX_MACHINE_ID),
     runtimeSlot: parseConfigValue(RuntimeSlotSchema, env.MATRIX_RUNTIME_SLOT),
   };
+  const issueUrl = new URL(
+    `/internal/containers/${encodeURIComponent(handle)}/ai/funded-credential`,
+    platform,
+  );
+  issueUrl.searchParams.set("runtimeSlot", identity.runtimeSlot);
   return {
-    issueUrl: new URL(
-      `/internal/containers/${encodeURIComponent(handle)}/ai/funded-credential`,
-      platform,
-    ).toString(),
+    issueUrl: issueUrl.toString(),
     relayBaseUrl: relay.toString().replace(/\/$/, ""),
     runtimeAuthToken,
     identity,
