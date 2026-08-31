@@ -1177,7 +1177,20 @@ describe("CanonicalChatWorkspace", () => {
     ));
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Second queued turn" }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move Second queued turn up" }));
+    expect(await screen.findByRole("menuitem", { name: "Edit Second queued turn" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /Move .* (up|down)/ })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    const firstDragHandle = screen.getByRole("button", { name: "Reorder First queued turn" });
+    const secondRow = screen.getByText("Second queued turn").closest("li");
+    if (!secondRow) throw new Error("Second queued turn row not found");
+    const dataTransfer = {
+      dropEffect: "none",
+      effectAllowed: "none",
+      setData: vi.fn(),
+    } as unknown as DataTransfer;
+    fireEvent.dragStart(firstDragHandle, { dataTransfer });
+    fireEvent.dragOver(secondRow, { dataTransfer });
+    fireEvent.drop(secondRow, { dataTransfer });
     await waitFor(() => expect(routeClient.reorderQueuedTurns).toHaveBeenCalledWith(
       running.chat.id,
       expect.objectContaining({ queuedTurnIds: [second.id, first.id] }),

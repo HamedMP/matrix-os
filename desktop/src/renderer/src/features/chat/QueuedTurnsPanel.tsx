@@ -1,14 +1,12 @@
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
-  ChevronDown,
-  ChevronUp,
-  CornerDownLeft,
+  GripVerticalIcon,
   MoreHorizontal,
   PencilIcon,
   Trash2,
 } from "@renderer/lib/hugeicons";
-import type { ReactNode } from "react";
+import { useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
@@ -61,7 +59,7 @@ export function QueuedTurnsPanel({
   editingQueuedTurnId = null,
   onSteer,
   onEdit,
-  onMove,
+  onReorder,
   onCancel,
 }: {
   turns: CanonicalChatQueuedTurn[];
@@ -71,11 +69,37 @@ export function QueuedTurnsPanel({
   editingQueuedTurnId?: string | null;
   onSteer: (queuedTurnId: string) => void;
   onEdit: (queuedTurnId: string) => void;
-  onMove: (queuedTurnId: string, direction: -1 | 1) => void;
+  onReorder: (queuedTurnIds: string[], movedQueuedTurnId: string) => void;
   onCancel: (queuedTurnId: string) => void;
 }) {
+  const [draggedTurnId, setDraggedTurnId] = useState<string | null>(null);
+  const [dragTargetId, setDragTargetId] = useState<string | null>(null);
   if (turns.length === 0) return null;
   const ordered = [...turns].sort((left, right) => left.position - right.position);
+
+  const reorder = (queuedTurnId: string, targetTurnId: string) => {
+    const currentIndex = ordered.findIndex((turn) => turn.id === queuedTurnId);
+    const targetIndex = ordered.findIndex((turn) => turn.id === targetTurnId);
+    if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) return;
+    const next = [...ordered];
+    const [moved] = next.splice(currentIndex, 1);
+    if (!moved) return;
+    next.splice(targetIndex, 0, moved);
+    onReorder(next.map((turn) => turn.id), queuedTurnId);
+  };
+
+  const keyboardReorder = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    queuedTurnId: string,
+    index: number,
+  ) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    const target = ordered[index + (event.key === "ArrowUp" ? -1 : 1)];
+    if (!target) return;
+    event.preventDefault();
+    reorder(queuedTurnId, target.id);
+  };
+
   return (
     <section
       role="region"
@@ -93,17 +117,46 @@ export function QueuedTurnsPanel({
       <ol className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>
         {ordered.map((turn, index) => {
           const label = queuedTurnLabel(turn);
-          const rowPending = pendingAction?.queuedTurnId === turn.id;
           const editing = editingQueuedTurnId === turn.id;
-          const rowDisabled = disabled || rowPending || editing;
+          const rowDisabled = disabled || pendingAction !== null || editing;
           return (
-            <li key={turn.id} className="flex min-h-10 min-w-0 items-center gap-2 px-4 py-1.5">
-              <CornerDownLeft
-                size={16}
-                aria-hidden
-                className="shrink-0 -rotate-90"
+            <li
+              key={turn.id}
+              data-drag-target={dragTargetId === turn.id ? "true" : undefined}
+              className="flex min-h-10 min-w-0 items-center gap-2 px-3 py-1.5 transition-colors data-[drag-target=true]:bg-[var(--bg-hover)]"
+              onDragOver={(event: DragEvent<HTMLLIElement>) => {
+                if (!draggedTurnId || draggedTurnId === turn.id || rowDisabled) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                setDragTargetId(turn.id);
+              }}
+              onDrop={(event: DragEvent<HTMLLIElement>) => {
+                event.preventDefault();
+                if (draggedTurnId && !rowDisabled) reorder(draggedTurnId, turn.id);
+                setDraggedTurnId(null);
+                setDragTargetId(null);
+              }}
+            >
+              <button
+                type="button"
+                draggable={!rowDisabled}
+                aria-label={`Reorder ${label}`}
+                disabled={rowDisabled}
+                className="flex size-7 shrink-0 cursor-grab items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] active:cursor-grabbing disabled:cursor-default disabled:opacity-35"
                 style={{ color: "var(--text-tertiary)" }}
-              />
+                onKeyDown={(event) => keyboardReorder(event, turn.id, index)}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", turn.id);
+                  setDraggedTurnId(turn.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedTurnId(null);
+                  setDragTargetId(null);
+                }}
+              >
+                <GripVerticalIcon size={16} aria-hidden />
+              </button>
               <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-5" style={{ color: "var(--text-primary)" }}>
                 {label}
               </span>
@@ -160,20 +213,6 @@ export function QueuedTurnsPanel({
                         label="Edit"
                         accessibleLabel={`Edit ${label}`}
                         onSelect={() => onEdit(turn.id)}
-                      />
-                      <QueueMenuItem
-                        icon={<ChevronUp size={15} aria-hidden />}
-                        label="Move up"
-                        accessibleLabel={`Move ${label} up`}
-                        disabled={index === 0}
-                        onSelect={() => onMove(turn.id, -1)}
-                      />
-                      <QueueMenuItem
-                        icon={<ChevronDown size={15} aria-hidden />}
-                        label="Move down"
-                        accessibleLabel={`Move ${label} down`}
-                        disabled={index === ordered.length - 1}
-                        onSelect={() => onMove(turn.id, 1)}
                       />
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>

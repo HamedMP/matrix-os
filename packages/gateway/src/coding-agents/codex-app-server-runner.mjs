@@ -31,7 +31,8 @@ const MAX_TURN_FRAME_BYTES = 128 * 1024;
 const ASSISTANT_DELTA_FLUSH_CHARS = 16;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const RPC_TIMEOUT_MS = 30 * 1000;
-const CONTROL_SOCKET_TIMEOUT_MS = 10_000;
+const STEER_RPC_TIMEOUT_MS = 60 * 1000;
+const CONTROL_SOCKET_TIMEOUT_MS = 60 * 1000;
 const PROVIDER_STOP_TIMEOUT_MS = 5_000;
 const SHUTDOWN_REPLAY_GRACE_MS = 250;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
@@ -496,7 +497,7 @@ function sendProvider(value) {
   child.stdin.write(`${JSON.stringify(value)}\n`);
 }
 
-function request(method, params) {
+function request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
   if (pendingRpc.size >= MAX_PENDING_REQUESTS) {
     return Promise.reject(new Error("provider_request_limit"));
   }
@@ -505,7 +506,7 @@ function request(method, params) {
     const timeout = setTimeout(() => {
       pendingRpc.delete(id);
       reject(new Error("provider_request_timeout"));
-    }, RPC_TIMEOUT_MS);
+    }, timeoutMs);
     timeout.unref();
     pendingRpc.set(id, { resolve, reject, timeout });
     sendProvider({ id, method, params });
@@ -814,8 +815,9 @@ async function applyControl(control) {
     await request("turn/steer", {
       threadId: nativeThreadId,
       expectedTurnId: activeNativeTurnId,
+      clientUserMessageId: control.clientRequestId,
       input: [{ type: "text", text: control.prompt, text_elements: [] }],
-    });
+    }, STEER_RPC_TIMEOUT_MS);
   } else if (control.type === "interrupt") {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });

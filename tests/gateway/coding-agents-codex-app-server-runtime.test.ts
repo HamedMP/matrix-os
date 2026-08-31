@@ -727,7 +727,7 @@ describe("Codex app-server control runtime", () => {
       "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-steer' } } }));",
       "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-steer', itemId: 'native-message-steer', delta: 'before-steer-' + 'x'.repeat(200) } }));",
       "  } else if (message.method === 'turn/steer') {",
-      "    const exact = message.params.threadId === 'native-thread-steer' && message.params.expectedTurnId === 'native-turn-steer' && message.params.input?.[0]?.text === 'Focus on the failing test.' && turnStarts === 1;",
+      "    const exact = message.params.threadId === 'native-thread-steer' && message.params.expectedTurnId === 'native-turn-steer' && message.params.clientUserMessageId === 'req_control_steer_1' && message.params.input?.[0]?.text === 'Focus on the failing test.' && turnStarts === 1;",
       "    if (!exact) console.log(JSON.stringify({ id: message.id, error: { code: -32600, message: 'mismatch' } }));",
       "    else {",
       "      console.log(JSON.stringify({ id: message.id, result: { turnId: 'native-turn-steer' } }));",

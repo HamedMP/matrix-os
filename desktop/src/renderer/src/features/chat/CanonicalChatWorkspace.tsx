@@ -472,16 +472,14 @@ export function CanonicalChatWorkspace({
     }
   };
 
-  const moveQueuedTurn = async (queuedTurnId: string, direction: -1 | 1) => {
+  const reorderQueuedTurns = async (queuedTurnIds: string[], movedQueuedTurnId: string) => {
     if (queuePendingAction || editingQueuedTurn) return;
     const ordered = [...queuedTurns].sort((left, right) => left.position - right.position);
-    const index = ordered.findIndex((turn) => turn.id === queuedTurnId);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= ordered.length) return;
-    [ordered[index], ordered[target]] = [ordered[target]!, ordered[index]!];
-    setQueuePendingAction({ queuedTurnId, action: "move" });
+    if (queuedTurnIds.length !== ordered.length
+      || queuedTurnIds.some((queuedTurnId) => !ordered.some((turn) => turn.id === queuedTurnId))) return;
+    setQueuePendingAction({ queuedTurnId: movedQueuedTurnId, action: "move" });
     try {
-      await controller.reorderQueuedTurns(ordered.map((turn) => turn.id));
+      await controller.reorderQueuedTurns(queuedTurnIds);
     } finally {
       setQueuePendingAction(null);
     }
@@ -585,7 +583,7 @@ export function CanonicalChatWorkspace({
         editingQueuedTurnId={editingQueuedTurn?.id ?? null}
         onSteer={(queuedTurnId) => void steerQueuedTurn(queuedTurnId)}
         onEdit={editQueuedTurn}
-        onMove={(queuedTurnId, direction) => void moveQueuedTurn(queuedTurnId, direction)}
+        onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
         onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
       />
       <SharedChatComposer

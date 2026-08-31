@@ -48,10 +48,10 @@ async function listen(homePath: string, sessionId: string, reply?: string, reply
 }
 
 describe("Codex control client", () => {
-  it("allows a loaded Codex app-server more than two seconds to acknowledge steer", async () => {
+  it("allows a loaded Codex app-server more than ten seconds to acknowledge steer", async () => {
     const homePath = await mkdtemp(join(socketTempRoot, "mx-control-delayed-steer-"));
     const sessionId = "sess_delayed_steer";
-    await listen(homePath, sessionId, '{"ok":true}\n', 2_100);
+    await listen(homePath, sessionId, '{"ok":true}\n', 10_100);
     const client = createCodexControlClient({ homePath });
 
     await expect(client.steerTurn({
