@@ -1,3 +1,10 @@
+export {
+  buildAppIconUrl,
+  createAppSession,
+  fetchInstalledApps,
+  type AppSession,
+  type InstalledApp,
+} from "./apps";
 export { fetchActiveComputer, fetchComputers } from "./computers";
 export { fetchConversations, type ConversationSummary } from "./conversations";
 export {
@@ -7,6 +14,17 @@ export {
   type FileListResponse,
   type FilePreview,
 } from "./files";
+export {
+  createIntegrationConnectUrl,
+  deleteIntegrationConnection,
+  fetchAvailableIntegrations,
+  fetchConnectedIntegrations,
+  refreshIntegrationConnection,
+  syncIntegrationConnections,
+  MOBILE_INTEGRATIONS_REDIRECT_URI,
+  type ConnectedIntegration,
+  type IntegrationService,
+} from "./integrations";
 export {
   deleteTerminalSession,
   fetchTerminalSessions,

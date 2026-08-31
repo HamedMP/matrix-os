@@ -1,40 +1,59 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
-import AppWindowIcon from "@hugeicons/core-free-icons/AppWindowIcon";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
 
-import { Icon } from "@/components/ui";
+import AppRuntimeFrame from "@/components/AppRuntimeFrame";
+import { Spacer } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
+import { useComputerAppSession } from "@/lib/queries/use-computer-apps";
 
 export default function AppPreviewScreen() {
-  const params = useLocalSearchParams<{ app?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    app?: string | string[];
+    name?: string | string[];
+  }>();
   const app = Array.isArray(params.app) ? params.app[0] : params.app;
+  const name = Array.isArray(params.name) ? params.name[0] : params.name;
+  const title = name || app || "App";
+  const { launchUrl, isPending, isError } = useComputerAppSession(app ?? "");
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Stack.Screen options={{ title: app || "App" }} />
-      <View style={styles.placeholder}>
-        <View style={styles.icon}>
-          <Icon icon={AppWindowIcon} size={32} color={mockColors.blue} />
+    <View testID="app-preview-runtime" style={styles.screen}>
+      <Stack.Screen options={{ title }} />
+      {isPending ? (
+        <View style={styles.centered}>
+          <ActivityIndicator color={mockColors.ink} />
         </View>
-        <Text style={styles.title}>{app || "Matrix app"}</Text>
-        <Text style={styles.subtitle}>Authenticated app WebView mock</Text>
-      </View>
-    </ScrollView>
+      ) : launchUrl ? (
+        <AppRuntimeFrame url={launchUrl} title={title} />
+      ) : (
+        <View style={styles.centered}>
+          <Text style={styles.title}>{isError ? "App session unavailable" : "App unavailable"}</Text>
+          <Spacer size="sm" />
+          <Text style={styles.subtitle}>Close the app and try opening it again.</Text>
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: mockColors.surface },
-  content: { flexGrow: 1 },
-  placeholder: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  icon: {
-    width: 68,
-    height: 68,
+  screen: {
+    flex: 1,
+    backgroundColor: mockColors.surface,
+  },
+  centered: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 20,
-    backgroundColor: mockColors.blueSoft,
   },
-  title: { marginTop: 18, fontFamily: mockFonts.display, fontSize: 25, color: mockColors.ink },
-  subtitle: { marginTop: 7, fontFamily: mockFonts.body, fontSize: 14, color: mockColors.muted },
+  title: {
+    fontFamily: mockFonts.display,
+    fontSize: 20,
+    color: mockColors.ink,
+  },
+  subtitle: {
+    fontFamily: mockFonts.body,
+    fontSize: 14,
+    color: mockColors.muted,
+  },
 });

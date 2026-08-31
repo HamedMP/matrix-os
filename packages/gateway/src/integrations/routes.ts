@@ -19,10 +19,12 @@ import type { PlatformDb } from "../platform-db.js";
 // label the patch endpoint would later reject. trim() strips whitespace
 // padding so a value of "    " (100 spaces) still counts as empty.
 const LabelField = z.string().trim().min(1).max(100);
+const MOBILE_INTEGRATIONS_REDIRECT_URI = "matrixos://integrations";
 
 const ConnectBodySchema = z.object({
   service: z.string().min(1),
   label: LabelField.optional(),
+  redirectUri: z.literal(MOBILE_INTEGRATIONS_REDIRECT_URI).optional(),
 });
 
 const LabelPatchSchema = z.object({
@@ -649,7 +651,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, label } = parsed.data;
+    const { service, label, redirectUri } = parsed.data;
     const def = getService(service);
     if (!def) {
       return c.json({ error: `Unknown service: ${service}` }, 400);
@@ -659,7 +661,12 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     let connectLinkUrl: string;
     try {
-      ({ connectLinkUrl } = await pipedream.createConnectToken(externalId));
+      ({ connectLinkUrl } = await pipedream.createConnectToken(
+        externalId,
+        redirectUri
+          ? { successRedirectUri: redirectUri, errorRedirectUri: redirectUri }
+          : undefined,
+      ));
     } catch (err) {
       console.error("[integrations] createConnectToken error:", err instanceof Error ? err.message : err);
       return c.json({ error: "Failed to initiate connection. Please try again." }, 502);

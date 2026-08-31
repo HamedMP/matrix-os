@@ -6,18 +6,23 @@ import { Icon, Spacer } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function IntegrationDetailScreen() {
-  const params = useLocalSearchParams<{ integration?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    integration?: string | string[];
+    name?: string | string[];
+  }>();
   const integration = Array.isArray(params.integration) ? params.integration[0] : params.integration;
+  const name = Array.isArray(params.name) ? params.name[0] : params.name;
+  const displayName = name || integration || "integration";
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Stack.Screen options={{ title: integration || "Integration" }} />
+      <Stack.Screen options={{ title: displayName }} />
       <Spacer size="3xl" />
       <View style={styles.icon}>
         <Icon icon={PuzzleIcon} size={34} color={mockColors.blue} />
       </View>
       <Spacer size="xl" />
-      <Text style={styles.title}>Connect {integration || "integration"}</Text>
+      <Text style={styles.title}>Connect {displayName}</Text>
       <Spacer size="sm" />
       <Text style={styles.body}>This mock will become the permission and account connection flow for this service.</Text>
       <Spacer size="2xl" />

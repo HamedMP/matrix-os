@@ -35,7 +35,8 @@ export function MockSearchField({
 
 interface GridTileProps {
   label: string;
-  icon: IconData;
+  icon?: IconData;
+  leading?: ReactNode;
   accent?: boolean;
   iconBackgroundColor?: ColorValue;
   accessibilityLabel?: string;
@@ -62,13 +63,17 @@ export function GridTileGrid({ children }: { children: ReactNode }) {
 }
 
 export function FileTileSkeletonGrid() {
+  return <GridTileSkeletonGrid testID="file-tile-skeleton" />;
+}
+
+export function GridTileSkeletonGrid({ testID = "grid-tile-skeleton" }: { testID?: string }) {
   return (
     <View style={styles.tileRow}>
       {Array.from({ length: 3 }, (_, index) => (
         <Skeleton
           key={index}
-          testID="file-tile-skeleton"
-          shimmerTestID="file-tile-skeleton-shimmer"
+          testID={testID}
+          shimmerTestID={`${testID}-shimmer`}
           style={styles.skeletonTile}
         />
       ))}
@@ -78,7 +83,8 @@ export function FileTileSkeletonGrid() {
 
 export function GridTile({
   label,
-  icon,
+  icon = CubeIcon,
+  leading,
   accent = false,
   iconBackgroundColor = "transparent",
   accessibilityLabel,
@@ -98,12 +104,14 @@ export function GridTile({
       ]}
     >
       <Spacer size="md" />
-      <View
-        testID={`grid-tile-icon-${label}`}
-        style={[styles.tileGlyph, { backgroundColor: iconBackgroundColor }]}
-      >
-        <Icon icon={icon} size={24} color={accent ? mockColors.blue : mockColors.ink} />
-      </View>
+      {leading ?? (
+        <View
+          testID={`grid-tile-icon-${label}`}
+          style={[styles.tileGlyph, { backgroundColor: iconBackgroundColor }]}
+        >
+          <Icon icon={icon} size={24} color={accent ? mockColors.blue : mockColors.ink} />
+        </View>
+      )}
       <Spacer size="xl" />
       <Text numberOfLines={1} style={[styles.tileLabel, accent && styles.tileLabelAccent]}>{label}</Text>
       <Spacer size="md" />
@@ -115,11 +123,13 @@ interface ListRowProps {
   title: string;
   detail?: string;
   detailLeading?: ReactNode;
+  leading?: ReactNode;
   icon?: IconData;
   accent?: string;
   actionIcon?: IconData;
+  action?: ReactNode;
   accessibilityLabel?: string;
-  onPress: () => void;
+  onPress?: () => void;
 }
 
 export function ListRowStack({ children }: { children: ReactNode }) {
@@ -162,24 +172,23 @@ export function ListRow({
   title,
   detail,
   detailLeading,
+  leading,
   icon = CubeIcon,
   accent = mockColors.soft,
   actionIcon = ArrowRight01Icon,
+  action,
   accessibilityLabel,
   onPress,
 }: ListRowProps) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
-      onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-    >
+  const content = (
+    <>
       <Spacer size="md" />
       <View style={styles.rowContent}>
-      <View testID={`list-row-icon-${title}`} style={[styles.rowGlyph, { backgroundColor: accent }]}>
-          <Icon icon={icon} size={20} color={mockColors.ink} />
-        </View>
+        {leading ?? (
+          <View testID={`list-row-icon-${title}`} style={[styles.rowGlyph, { backgroundColor: accent }]}> 
+            <Icon icon={icon} size={20} color={mockColors.ink} />
+          </View>
+        )}
         <View style={styles.rowText}>
           <Text style={styles.rowTitle}>{title}</Text>
           {detail ? (
@@ -202,9 +211,24 @@ export function ListRow({
             </>
           ) : null}
         </View>
-        <Icon icon={actionIcon} size={18} color={mockColors.muted} />
+        {action ?? <Icon icon={actionIcon} size={18} color={mockColors.muted} />}
       </View>
       <Spacer size="md" />
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.row}>{content}</View>;
+  }
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+    >
+      {content}
     </Pressable>
   );
 }

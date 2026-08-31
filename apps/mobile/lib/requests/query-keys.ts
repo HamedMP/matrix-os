@@ -27,4 +27,24 @@ export const mobileQueryKeys = {
     userId,
     computerKey,
   ] as const,
+  integrations: (userId: string, computerKey: string) => [
+    "mobile",
+    "integrations",
+    userId,
+    computerKey,
+  ] as const,
+  apps: (userId: string, computerKey: string) => [
+    "mobile",
+    "apps",
+    userId,
+    computerKey,
+  ] as const,
+  appSession: (userId: string, computerKey: string, slug: string) => [
+    "mobile",
+    "apps",
+    "session",
+    userId,
+    computerKey,
+    slug,
+  ] as const,
 };
