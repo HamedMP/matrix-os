@@ -220,7 +220,7 @@ describe("generic provider harness lifecycle coordinator", () => {
     });
   });
 
-  it("reapplies an applied duplicate after the legacy agent route changes independently", async () => {
+  it("reapplies an applied duplicate and restores the displaced legacy route on rollback", async () => {
     const { coordinator, update } = await makeCoordinator();
     const input = systemRouteInput("claude-opus-5", "route_duplicate_after_legacy_put");
 
@@ -239,6 +239,33 @@ describe("generic provider harness lifecycle coordinator", () => {
       runtime: "hermes",
       provider: "anthropic",
       messagingModel: "claude-opus-5",
+    }));
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toMatchObject([{
+      key: input.idempotencyKey,
+      state: "applied",
+      beforeRoute: {
+        harness: "hermes",
+        providerId: "anthropic",
+        modelId: "claude-haiku-5",
+      },
+      afterRoute: {
+        harness: "hermes",
+        providerId: "anthropic",
+        modelId: "claude-opus-5",
+      },
+    }]);
+
+    await coordinator.rollbackConfiguration(input);
+
+    expect(update).toHaveBeenCalledTimes(4);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
     }));
   });
 

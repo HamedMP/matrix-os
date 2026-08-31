@@ -388,6 +388,10 @@ export function createProviderGenericHarnessCoordinator(options: {
         if (!beforeRoute || !afterRoute) return;
         const current = await currentRuntimeRoute();
         if (!sameRuntimeRoute(current, afterRoute)) {
+          duplicate.beforeRoute = current;
+          replaceReceipt(receipts, duplicate);
+          await writeReceipts(receipts);
+          recoveryBlocked = true;
           await applyRuntimeRoute(afterRoute);
         }
         return;
