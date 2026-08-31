@@ -28,12 +28,13 @@ describe("web app catalog query", () => {
     expect(loader).toHaveBeenCalledWith({ signal: controller.signal });
   });
 
-  it("keeps a regenerated icon URL when a catalog refetch omits icon metadata", async () => {
+  it("keeps a regenerated icon URL only while the icon identity is unchanged", async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(appKeys.list(), [{
       name: "Notes",
       path: "/files/apps/notes/index.html",
       slug: "notes",
+      icon: "notes",
       iconUrl: "/icons/notes.png?v=generated",
     }]);
 
@@ -41,12 +42,14 @@ describe("web app catalog query", () => {
       name: "Fresh Notes",
       path: "/files/apps/notes/index.html",
       slug: "notes",
+      icon: "notes",
     }]));
 
     expect(queryClient.getQueryData(appKeys.list())).toEqual([{
       name: "Fresh Notes",
       path: "/files/apps/notes/index.html",
       slug: "notes",
+      icon: "notes",
       iconUrl: "/icons/notes.png?v=generated",
     }]);
 
@@ -54,6 +57,21 @@ describe("web app catalog query", () => {
       name: "Fresh Notes",
       path: "/files/apps/notes/index.html",
       slug: "notes",
+      icon: "notes-redesign",
+    }]));
+
+    expect(queryClient.getQueryData(appKeys.list())).toEqual([{
+      name: "Fresh Notes",
+      path: "/files/apps/notes/index.html",
+      slug: "notes",
+      icon: "notes-redesign",
+    }]);
+
+    await queryClient.fetchQuery(appsQueryOptions(async () => [{
+      name: "Fresh Notes",
+      path: "/files/apps/notes/index.html",
+      slug: "notes",
+      icon: "notes-redesign",
       iconUrl: "/icons/notes.png?v=server",
     }]));
 

@@ -17,6 +17,8 @@ type AppIconSnapshots = Record<string, AppIconSnapshot>;
 
 type AppsLoader = (options?: RequestOptions) => Promise<ApiAppEntry[]>;
 
+const MAX_ICON_URL_PRESERVATION_LOOKUPS = 1_000;
+
 export const appKeys = {
   all: () => ["apps"] as const,
   list: () => ["apps", "list"] as const,
@@ -48,6 +50,20 @@ export function hydrateAppIconUrls(
   });
 }
 
+function setBoundedIconLookup(
+  lookup: Map<string, ApiAppEntry>,
+  key: string,
+  app: ApiAppEntry,
+): void {
+  if (lookup.has(key)) {
+    lookup.delete(key);
+  } else if (lookup.size >= MAX_ICON_URL_PRESERVATION_LOOKUPS) {
+    const oldestKey = lookup.keys().next().value;
+    if (oldestKey !== undefined) lookup.delete(oldestKey);
+  }
+  lookup.set(key, app);
+}
+
 function preserveAppIconUrls(
   previous: unknown,
   incoming: unknown,
@@ -56,16 +72,24 @@ function preserveAppIconUrls(
   const incomingApps = incoming as ApiAppEntry[];
   if (!Array.isArray(previous) || previous.length === 0) return incomingApps;
   const previousApps = previous as ApiAppEntry[];
-  const previousBySlug = new Map(
-    previousApps.flatMap((app) => app.slug ? [[app.slug, app] as const] : []),
-  );
-  const previousByPath = new Map(previousApps.map((app) => [app.path, app] as const));
+  const previousByIdentity = new Map<string, ApiAppEntry>();
+  for (const app of previousApps) {
+    if (!app.iconUrl) continue;
+    if (app.slug) setBoundedIconLookup(previousByIdentity, `slug:${app.slug}`, app);
+    setBoundedIconLookup(previousByIdentity, `path:${app.path}`, app);
+  }
   return incomingApps.map((app) => {
     // A future server-provided URL is authoritative. Until then, keep the
-    // versioned snapshot or regenerated URL stored only in the query cache.
+    // versioned snapshot or regenerated URL stored only in the query cache,
+    // provided the catalog still identifies the same icon.
     if (app.iconUrl) return app;
-    const prior = (app.slug ? previousBySlug.get(app.slug) : undefined) ?? previousByPath.get(app.path);
-    return prior?.iconUrl ? { ...app, iconUrl: prior.iconUrl } : app;
+    const prior = (app.slug ? previousByIdentity.get(`slug:${app.slug}`) : undefined)
+      ?? previousByIdentity.get(`path:${app.path}`);
+    const priorIconIdentity = prior ? (prior.icon ?? prior.slug) : undefined;
+    const incomingIconIdentity = app.icon ?? app.slug;
+    return prior?.iconUrl && priorIconIdentity === incomingIconIdentity
+      ? { ...app, iconUrl: prior.iconUrl }
+      : app;
   });
 }
 
