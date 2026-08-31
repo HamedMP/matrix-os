@@ -15,6 +15,7 @@ import { useDesktopAppDrawer } from "@desktop/renderer/src/stores/desktop-app-dr
 import { useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
 import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
 import { seedDesktopApps } from "./apps-query-test-utils";
+import { createDefaultOsViewDocument } from "@matrix-os/contracts";
 
 const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
@@ -214,12 +215,18 @@ describe("native desktop shell", () => {
     const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const backgrounds = [
+      { background: { type: "wallpaper", name: "moraine-lake.jpg" } },
+      { background: { type: "solid", color: "#123456" } },
+    ];
     const api = {
-      get: vi.fn((path: string) => path === "/api/apps"
-        ? Promise.resolve({ apps: [] })
-        : api.get.mock.calls.filter(([calledPath]) => calledPath === "/api/settings/desktop").length === 1
-          ? Promise.resolve({ background: { type: "wallpaper", name: "moraine-lake.jpg" } })
-          : Promise.resolve({ background: { type: "solid", color: "#123456" } })),
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/apps") return { apps: [] };
+        if (path === "/api/os-view-state") {
+          return { revision: 1, document: createDefaultOsViewDocument(), updatedAt: "2026-08-30T12:00:00.000Z" };
+        }
+        return backgrounds.shift();
+      }),
       getBlob: vi.fn(async () => new Blob(["wallpaper"], { type: "image/jpeg" })),
     };
     useConnection.setState({ api: api as never });
@@ -239,12 +246,18 @@ describe("native desktop shell", () => {
   });
 
   it("refreshes the background after returning from the hosted Browser to Desktop", async () => {
+    const backgrounds = [
+      { background: { type: "solid", color: "#111111" } },
+      { background: { type: "solid", color: "#223344" } },
+    ];
     const api = {
-      get: vi.fn((path: string) => path === "/api/apps"
-        ? Promise.resolve({ apps: [] })
-        : api.get.mock.calls.filter(([calledPath]) => calledPath === "/api/settings/desktop").length === 1
-          ? Promise.resolve({ background: { type: "solid", color: "#111111" } })
-          : Promise.resolve({ background: { type: "solid", color: "#223344" } })),
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/apps") return { apps: [] };
+        if (path === "/api/os-view-state") {
+          return { revision: 1, document: createDefaultOsViewDocument(), updatedAt: "2026-08-30T12:00:00.000Z" };
+        }
+        return backgrounds.shift();
+      }),
     };
     useConnection.setState({ api: api as never });
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);

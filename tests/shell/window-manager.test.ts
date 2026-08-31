@@ -327,13 +327,14 @@ describe("Window Manager Store", () => {
   });
 
   describe("layout persistence", () => {
-    it("saves layout via PUT /api/layout after 500ms debounce", () => {
+    it("saves layout through the revisioned OS-view state after 500ms debounce", async () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       expect(fetchSpy).not.toHaveBeenCalled();
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
       expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining("/api/layout"),
-        expect.objectContaining({ method: "PUT" }),
+        expect.stringContaining("/api/os-view-state"),
+        expect.objectContaining({ method: "PATCH" }),
       );
     });
 
@@ -347,17 +348,18 @@ describe("Window Manager Store", () => {
       window.history.pushState(null, "", "/");
     });
 
-    it("includes closed paths in layout save", () => {
+    it("includes closed paths in layout save", async () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;
       useWindowManager.getState().closeWindow(winId);
       fetchSpy.mockClear();
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
       const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-      expect(body.windows.some((w: LayoutWindow) => w.path === "apps/notes.html" && w.state === "closed")).toBe(true);
+      expect(body.patch.apps.some((app: LayoutWindow) => app.path === "apps/notes.html" && app.state === "closed")).toBe(true);
     });
 
-    it("debounces rapid changes into a single save", () => {
+    it("debounces rapid changes into a single save", async () => {
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
       vi.advanceTimersByTime(200);
@@ -365,11 +367,29 @@ describe("Window Manager Store", () => {
       vi.advanceTimersByTime(200);
       openWindow("App3", "apps/app3.html", 80);
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
       // Only the final debounced call should fire
       const putCalls = fetchSpy.mock.calls.filter(
-        (c: [string, RequestInit]) => c[1]?.method === "PUT",
+        (c: [string, RequestInit]) => c[1]?.method === "PATCH",
       );
       expect(putCalls).toHaveLength(1);
+    });
+
+    it("retries the latest layout after a bounded persistence failure", async () => {
+      fetchSpy
+        .mockResolvedValueOnce({ ok: false, status: 503 })
+        .mockResolvedValueOnce({ ok: true, status: 200 });
+      useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
+      const initial = useWindowManager.getState().windows[0];
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const retried = JSON.parse(fetchSpy.mock.calls[1][1].body);
+      expect(retried.patch.desktop.windows[0]).toMatchObject({ x: initial.x, y: initial.y });
     });
   });
 
