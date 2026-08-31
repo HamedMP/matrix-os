@@ -66,7 +66,7 @@ describe("BootSequence", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it("renders children immediately when a platform session is already verified", () => {
@@ -258,6 +258,60 @@ describe("BootSequence", () => {
     expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
     expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 8_000)).toBe(false);
     expect(screen.queryByText(/Starting|Preparing|Loading your Matrix computer/i)).toBeNull();
+  });
+
+  it("creates a web app session only after an accepted build becomes ready", async () => {
+    let provisioningAccepted = false;
+    let postAcceptJourneyAttempts = 0;
+    let appSessionAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        if (!provisioningAccepted) {
+          return Response.json({
+            phase: "install_choices_required",
+            detail: "Choose default installs before building your Matrix computer.",
+            nextAction: { kind: "choose_default_installs" },
+          } satisfies JourneyState);
+        }
+        postAcceptJourneyAttempts += 1;
+        return Response.json(postAcceptJourneyAttempts === 1
+          ? {
+              phase: "provisioning",
+              detail: "Building your Matrix computer…",
+              nextAction: { kind: "wait" },
+            } satisfies JourneyState
+          : {
+              phase: "ready",
+              detail: "Your Matrix computer is ready.",
+              nextAction: { kind: "open_shell" },
+            } satisfies JourneyState);
+      }
+      if (url === "/api/auth/provision-runtime") {
+        provisioningAccepted = true;
+        return Response.json({ status: "provisioning" }, { status: 202 });
+      }
+      if (url === "/api/auth/app-session") {
+        appSessionAttempts += 1;
+        return appSessionAttempts === 1
+          ? Response.json({ code: "no_runtime" }, { status: 404 })
+          : Response.json({ redirectTo: "/" });
+      }
+      return Response.json({}, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
+      nativeSetTimeout(handler, delay === 4_000 ? 0 : delay, ...args)) as typeof window.setTimeout);
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    await answerAcquisitionSource();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+
+    await waitFor(() => expect(appSessionAttempts).toBe(2));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/auth/provision-runtime")).toHaveLength(1);
+    expect(onboardingNavigation.navigate).toHaveBeenCalledWith("/");
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
   });
 
   it("reconciles journey state instead of reporting failure after an ambiguous provisioning timeout", async () => {

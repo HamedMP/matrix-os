@@ -259,6 +259,7 @@ function BootSequenceInner({
 }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [provisioningOutcomeAmbiguous, setProvisioningOutcomeAmbiguous] = useState(false);
+  const [sessionHandoffRequired, setSessionHandoffRequired] = useState(false);
   const { state, status, refreshJourney } = useJourney({
     enabled: isLoaded && isSignedIn,
     keepPolling: provisioningOutcomeAmbiguous || passivePostCheckout,
@@ -311,11 +312,13 @@ function BootSequenceInner({
       }
       // 202 means provisioning was accepted, not that a runtime is ready for
       // an app session. Reconcile through the journey until authorization.
+      setSessionHandoffRequired(true);
       setProvisioningOutcomeAmbiguous(true);
       refreshJourney();
     } catch (err: unknown) {
       console.warn("[boot] provision start failed", err instanceof Error ? err.name : typeof err);
       if (isAmbiguousProvisioningTimeout(err)) {
+        setSessionHandoffRequired(true);
         setProvisioningOutcomeAmbiguous(true);
         refreshJourney();
         return;
@@ -374,10 +377,14 @@ function BootSequenceInner({
     );
   }
 
-  if (state && PASSTHROUGH_PHASES.has(state.phase) && completionRedirect) {
+  if (
+    state &&
+    PASSTHROUGH_PHASES.has(state.phase) &&
+    (completionRedirect || passivePostCheckout || sessionHandoffRequired)
+  ) {
     return (
       <AppSessionHandoff
-        completionRedirect={completionRedirect}
+        completionRedirect={completionRedirect ?? "/"}
         runtimeSlot={runtimeSlot}
         getToken={getToken}
       />
