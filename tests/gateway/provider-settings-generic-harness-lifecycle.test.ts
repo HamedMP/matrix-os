@@ -110,8 +110,9 @@ describe("generic provider harness lifecycle coordinator", () => {
   } = {}) {
     homePath = await mkdtemp(join(tmpdir(), "provider-generic-harness-"));
     await mkdir(join(homePath, "system"), { recursive: true });
+    let runtimeRevision = 4;
     await writeFile(join(homePath, "system/config.json"), JSON.stringify({
-      agent: { messagingRuntime: options.selected ?? "hermes", revision: 4 },
+      agent: { messagingRuntime: options.selected ?? "hermes", revision: runtimeRevision },
     }));
     let selected = options.selected ?? "hermes";
     let selectedProvider = "anthropic";
@@ -120,8 +121,12 @@ describe("generic provider harness lifecycle coordinator", () => {
       selected = input.runtime ?? selected;
       selectedProvider = input.provider ?? selectedProvider;
       selectedModel = input.messagingModel ?? selectedModel;
+      runtimeRevision += 1;
+      await writeFile(join(homePath!, "system/config.json"), JSON.stringify({
+        agent: { messagingRuntime: selected, revision: runtimeRevision },
+      }));
       return {
-        revision: 5,
+        revision: runtimeRevision,
         runtime: selected,
         selection: {
           runtime: selected,
@@ -416,6 +421,53 @@ describe("generic provider harness lifecycle coordinator", () => {
     ));
     expect(receipts.receipts).toEqual([]);
     expect(restarted.isRecoveryReady()).toBe(true);
+  });
+
+  it("does not revive a historical rollback after a failed repair and newer same-route write", async () => {
+    let failRepairWrite = false;
+    let failed = false;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      if (failRepairWrite && !failed && path.endsWith("runtime-repair.json")) {
+        failed = true;
+        throw new Error("repair journal failed before multiple restarts");
+      }
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, restart, update } = await makeCoordinator({ receiptWriter });
+    const input = systemRouteInput("claude-opus-5", "route_duplicate_multi_restart");
+
+    await coordinator.applyConfiguration(input);
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    });
+    failRepairWrite = true;
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow(
+      "repair journal failed before multiple restarts",
+    );
+
+    restart();
+    await update({
+      revision: 6,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-opus-5",
+    });
+    const finalRestart = restart();
+    await finalRestart.reconcilePending();
+
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).not.toHaveBeenCalledWith(expect.objectContaining({
+      messagingModel: "claude-sonnet-5",
+    }));
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toEqual([]);
+    expect(finalRestart.isRecoveryReady()).toBe(true);
   });
 
   it("switches to another enabled system harness before disabling the active one", async () => {

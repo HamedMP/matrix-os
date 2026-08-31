@@ -40,12 +40,17 @@ const ReceiptSchema = z.object({
   state: z.enum(["prepared", "applied", "compensation_pending"]).default("applied"),
   beforeRoute: RuntimeRouteSchema.optional(),
   afterRoute: RuntimeRouteSchema.optional(),
+  beforeRevision: z.number().int().min(0).optional(),
+  afterRevision: z.number().int().min(0).optional(),
 }).strict().superRefine((receipt, context) => {
   if ((receipt.beforeRoute === undefined) !== (receipt.afterRoute === undefined)) {
     context.addIssue({ code: "custom", message: "Incomplete provider runtime receipt route" });
   }
   if (receipt.state !== "applied" && !receipt.beforeRoute) {
     context.addIssue({ code: "custom", message: "Recoverable provider runtime receipt is missing routes" });
+  }
+  if (receipt.afterRevision !== undefined && receipt.beforeRevision === undefined) {
+    context.addIssue({ code: "custom", message: "Incomplete provider runtime receipt revision" });
   }
 });
 const ReceiptDocumentSchema = z.object({
@@ -59,6 +64,7 @@ const RepairDocumentSchema = z.object({
 type GenericHarness = z.infer<typeof GenericHarnessSchema>;
 type RuntimeRoute = z.infer<typeof RuntimeRouteSchema>;
 type RuntimeReceipt = z.infer<typeof ReceiptSchema>;
+type RuntimeState = { route: RuntimeRoute; revision: number };
 
 export async function reconcileProviderRuntimeAtStartup(
   coordinator: Pick<ProviderSettingsRuntimeCoordinator, "reconcilePending">,
@@ -217,7 +223,7 @@ export function createProviderGenericHarnessCoordinator(options: {
 
   async function applySystemRoute(harness: HarnessConfiguration & {
     harness: "hermes" | "openclaw";
-  }): Promise<void> {
+  }): Promise<number> {
     const config = await readConfig(join(options.homePath, "system/config.json"));
     const revision = readAgentConfig(config).value.revision ?? 0;
     const update = AgentSettingsUpdateSchema.safeParse({
@@ -227,16 +233,21 @@ export function createProviderGenericHarnessCoordinator(options: {
       messagingModel: harness.route.modelId,
     });
     if (!update.success) throw new ProviderSettingsStoreError("invalid_route", 400);
-    await options.runtimeController.update(update.data);
+    return (await options.runtimeController.update(update.data)).revision;
   }
 
-  async function currentRuntimeRoute(): Promise<RuntimeRoute> {
+  async function currentRuntimeState(): Promise<RuntimeState> {
+    const config = await readConfig(join(options.homePath, "system/config.json"));
+    const revision = readAgentConfig(config).value.revision ?? 0;
     const snapshot = await readRuntimeSnapshot(options.runtimeSource);
-    return RuntimeRouteSchema.parse({
-      harness: snapshot.runtime.selected,
-      providerId: snapshot.messaging.provider,
-      modelId: snapshot.messaging.model,
-    });
+    return {
+      route: RuntimeRouteSchema.parse({
+        harness: snapshot.runtime.selected,
+        providerId: snapshot.messaging.provider,
+        modelId: snapshot.messaging.model,
+      }),
+      revision,
+    };
   }
 
   function configuredRuntimeRoute(harness: HarnessConfiguration & {
@@ -249,8 +260,8 @@ export function createProviderGenericHarnessCoordinator(options: {
     });
   }
 
-  async function applyRuntimeRoute(route: RuntimeRoute): Promise<void> {
-    await applySystemRoute({
+  async function applyRuntimeRoute(route: RuntimeRoute): Promise<number> {
+    return await applySystemRoute({
       id: `recovery_${route.harness}`,
       driverId: route.harness,
       harness: route.harness,
@@ -296,8 +307,13 @@ export function createProviderGenericHarnessCoordinator(options: {
     if (!beforeRoute || !afterRoute) {
       throw new ProviderSettingsStoreError("runtime_unavailable", 503);
     }
-    const current = await currentRuntimeRoute();
-    if (sameRuntimeRoute(current, afterRoute)) {
+    const current = await currentRuntimeState();
+    if (sameRuntimeRoute(current.route, beforeRoute)) {
+      // The compensation target is already active.
+    } else if (sameRuntimeRoute(current.route, afterRoute)
+      && !(receipt.state === "applied"
+        && receipt.afterRevision !== undefined
+        && current.revision !== receipt.afterRevision)) {
       try {
         await applyRuntimeRoute(beforeRoute);
       } catch (error) {
@@ -307,7 +323,7 @@ export function createProviderGenericHarnessCoordinator(options: {
         );
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
-    } else if (!sameRuntimeRoute(current, beforeRoute)) {
+    } else {
       if (receipt.state !== "applied") {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
@@ -315,7 +331,11 @@ export function createProviderGenericHarnessCoordinator(options: {
       // has been displaced by a newer runtime writer. Persist that exact live
       // route before clearing the stale receipt so a crash cannot later revive
       // its historical rollback target.
-      replaceReceipt(receipts, ReceiptSchema.parse({ ...receipt, beforeRoute: current }));
+      replaceReceipt(receipts, ReceiptSchema.parse({
+        ...receipt,
+        beforeRoute: current.route,
+        beforeRevision: current.revision,
+      }));
       await writeReceipts(receipts);
     }
     receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
@@ -433,9 +453,15 @@ export function createProviderGenericHarnessCoordinator(options: {
       const afterRoute = duplicate.afterRoute;
       if (duplicate.state === "applied") {
         if (!beforeRoute || !afterRoute) return;
-        const current = await currentRuntimeRoute();
-        if (!sameRuntimeRoute(current, afterRoute)) {
-          const repaired = ReceiptSchema.parse({ ...duplicate, beforeRoute: current });
+        const current = await currentRuntimeState();
+        if (!sameRuntimeRoute(current.route, afterRoute)) {
+          const repaired = ReceiptSchema.parse({
+            ...duplicate,
+            state: "prepared",
+            beforeRoute: current.route,
+            beforeRevision: current.revision,
+            afterRevision: undefined,
+          });
           replaceReceipt(receipts, repaired);
           recoveryBlocked = true;
           pendingReceiptRepair = repaired;
@@ -443,18 +469,24 @@ export function createProviderGenericHarnessCoordinator(options: {
           await writeReceipts(receipts);
           await writeRepair(null);
           pendingReceiptRepair = undefined;
-          await applyRuntimeRoute(afterRoute);
+          repaired.afterRevision = await applyRuntimeRoute(afterRoute);
+          repaired.state = "applied";
+          replaceReceipt(receipts, repaired);
+          await writeReceipts(receipts);
         }
         return;
       }
       if (!beforeRoute || !afterRoute) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
-      const current = await currentRuntimeRoute();
-      if (sameRuntimeRoute(current, afterRoute)) {
+      const current = await currentRuntimeState();
+      if (sameRuntimeRoute(current.route, afterRoute)) {
         duplicate.state = "applied";
+        duplicate.afterRevision = duplicate.beforeRevision === undefined
+          ? undefined
+          : current.revision;
         await writeReceipts(receipts);
         return;
       }
-      if (!sameRuntimeRoute(current, beforeRoute)) {
+      if (!sameRuntimeRoute(current.route, beforeRoute)) {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
       receipts.receipts = receipts.receipts.filter((receipt) => receipt.key !== duplicate.key);
@@ -479,14 +511,22 @@ export function createProviderGenericHarnessCoordinator(options: {
       await writeReceipts(receipts);
       return;
     }
-    const beforeRoute = await currentRuntimeRoute();
+    const before = await currentRuntimeState();
+    const beforeRoute = before.route;
     const receipt: RuntimeReceipt = {
-      key: input.idempotencyKey, payloadHash, state: "prepared", beforeRoute, afterRoute,
+      key: input.idempotencyKey,
+      payloadHash,
+      state: "prepared",
+      beforeRoute,
+      afterRoute,
+      beforeRevision: before.revision,
     };
     replaceReceipt(receipts, receipt);
     await writeReceipts(receipts);
     recoveryBlocked = true;
-    if (!sameRuntimeRoute(beforeRoute, afterRoute)) await applyRuntimeRoute(afterRoute);
+    receipt.afterRevision = sameRuntimeRoute(beforeRoute, afterRoute)
+      ? before.revision
+      : await applyRuntimeRoute(afterRoute);
     receipt.state = "applied";
     replaceReceipt(receipts, receipt);
     try {
@@ -537,10 +577,10 @@ export function createProviderGenericHarnessCoordinator(options: {
 
     let compensationError: unknown;
     try {
-      const current = await currentRuntimeRoute();
-      if (sameRuntimeRoute(current, receipt.afterRoute)) {
+      const current = await currentRuntimeState();
+      if (sameRuntimeRoute(current.route, receipt.afterRoute)) {
         await applyRuntimeRoute(receipt.beforeRoute);
-      } else if (!sameRuntimeRoute(current, receipt.beforeRoute)) {
+      } else if (!sameRuntimeRoute(current.route, receipt.beforeRoute)) {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
     } catch (error) {
