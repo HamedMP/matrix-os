@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeSource } from "../../packages/gateway/src/agent-config/service.js";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
+import { ProviderSettingsStoreError } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 import {
   ProviderCatalogUnavailableError,
@@ -1111,6 +1112,36 @@ describe("GET /api/chat-providers", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "service_unavailable", retryable: true },
     });
+  });
+
+  it("propagates blocked provider-settings recovery as a retryable catalog outage", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: {
+        getSnapshot: async () => {
+          throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        },
+      },
+    });
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: service,
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers");
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "service_unavailable",
+        safeMessage: "Provider catalog is temporarily unavailable.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    warning.mockRestore();
   });
 
   it("does not recommend retrying a deterministic projection failure", async () => {

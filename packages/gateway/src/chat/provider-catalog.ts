@@ -28,6 +28,7 @@ import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/se
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
+import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -722,6 +723,10 @@ export function createChatProviderCatalogService(options: {
       }
       if (settingsResult.status === "rejected") {
         console.warn("[chat-providers] Harness settings unavailable");
+        if (settingsResult.reason instanceof ProviderSettingsStoreError
+          && settingsResult.reason.status === 503) {
+          throw new ProviderCatalogUnavailableError(true);
+        }
       }
 
       const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
