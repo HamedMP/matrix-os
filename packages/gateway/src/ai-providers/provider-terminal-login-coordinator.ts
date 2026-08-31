@@ -30,7 +30,7 @@ const ReceiptDocumentSchema = z.object({
 
 type LoginHarness = Parameters<ProviderLoginCoordinator["supportedMethods"]>[0];
 type LoginInput = Parameters<ProviderLoginCoordinator["startLogin"]>[0];
-type LoginRegistry = Pick<ShellRegistry, "create" | "get" | "delete">;
+type LoginRegistry = Pick<ShellRegistry, "create" | "get" | "delete" | "rename">;
 type ReceiptDocument = z.infer<typeof ReceiptDocumentSchema>;
 type ReceiptWriter = (path: string, value: ReceiptDocument) => Promise<void>;
 
@@ -84,7 +84,11 @@ function recoveryIdentityHash(input: LoginInput): string {
 }
 
 function loginSessionName(recoveryHash: string): string {
-  return `provider-login-${recoveryHash.slice(0, 24)}`;
+  // The complete recovery digest makes the live terminal name a durable,
+  // exact identity marker. That lets retries recover it even after the
+  // bounded receipt documents evict older entries, without another growing
+  // index or adopting a terminal from a merely truncated-name collision.
+  return `provider-login-${recoveryHash}`;
 }
 
 interface RecoverySession {
@@ -184,7 +188,8 @@ export function createProviderTerminalLoginCoordinator(options: {
   persistReceipt?: ReceiptWriter;
 }): ProviderLoginCoordinator {
   if (!options.homePath) throw new Error("Provider login home path is required");
-  if (!options.registry?.create || !options.registry.get || !options.registry.delete) {
+  if (!options.registry?.create || !options.registry.get || !options.registry.delete
+    || !options.registry.rename) {
     throw new Error("Provider login shell registry is required");
   }
   const enabledHarnesses = new Set(EnabledHarnessSchema.array().max(2).parse(options.enabledHarnesses));
@@ -284,15 +289,41 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         const legacyReceipt = liveLegacyReceipts[0];
         if (legacyReceipt) {
+          if (legacyReceipt.attempt.action.kind !== "open_terminal") {
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
+          const legacySessionName = legacyReceipt.attempt.action.terminalSessionId;
+          const canonicalSessionName = loginSessionName(recoveryHash);
+          try {
+            await options.registry.rename(legacySessionName, canonicalSessionName);
+          } catch (error) {
+            console.warn(
+              "[provider-login] Failed to canonicalize legacy login session:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
           const legacyIndex = document.receipts.indexOf(legacyReceipt);
           document.receipts[legacyIndex] = ReceiptSchema.parse({
             ...legacyReceipt,
             recoveryHash,
             legacyPayloadHash: legacyReceipt.payloadHash,
+            attempt: {
+              ...legacyReceipt.attempt,
+              action: { kind: "open_terminal", terminalSessionId: canonicalSessionName },
+            },
           });
           try {
             await persistReceipt(receiptsPath, ReceiptDocumentSchema.parse(document));
           } catch (error) {
+            try {
+              await options.registry.rename(canonicalSessionName, legacySessionName);
+            } catch (rollbackError) {
+              console.warn(
+                "[provider-login] Failed to roll back canonicalized login session:",
+                rollbackError instanceof Error ? rollbackError.name : "UnknownError",
+              );
+            }
             console.warn(
               "[provider-login] Failed to upgrade legacy login receipt:",
               error instanceof Error ? error.name : "UnknownError",
@@ -388,20 +419,14 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         if (!adoptedExpiredSession) {
           try {
-            await options.registry.get(canonicalSessionName);
-            if (expiredSession?.name === canonicalSessionName) {
-              adoptedExpiredSession = true;
-            } else {
-              try {
-                await options.registry.delete(canonicalSessionName, { force: true });
-              } catch (error) {
-                console.warn(
-                  "[provider-login] Failed to reconcile unrecorded login session:",
-                  error instanceof Error ? error.name : "UnknownError",
-                );
-                throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
-              }
+            const canonicalSession = await options.registry.get(canonicalSessionName);
+            if (canonicalSession.name !== canonicalSessionName) {
+              throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
             }
+            // A full-digest canonical name is itself the durable exact identity
+            // marker. It is safe to adopt when bounded receipts have expired or
+            // been evicted; unrelated/legacy names are never accepted here.
+            adoptedExpiredSession = true;
           } catch (error) {
             if (!isMissingSession(error)) throw error;
           }

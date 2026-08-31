@@ -249,6 +249,27 @@ describe("ProviderSettingsStore", () => {
         installState: "installed",
       }),
     }));
+
+    await expect(store.mutate({
+      type: "set_harness_enabled",
+      expectedRevision: 1,
+      idempotencyKey: "legacy_claude_disable_1",
+      harnessInstanceId: "harness_legacy_claude",
+      enabled: false,
+    })).resolves.toMatchObject({
+      kind: "snapshot",
+      snapshot: { harnesses: [expect.objectContaining({ enabled: false })] },
+    });
+    await expect(store.mutate({
+      type: "set_harness_enabled",
+      expectedRevision: 2,
+      idempotencyKey: "legacy_claude_enable_1",
+      harnessInstanceId: "harness_legacy_claude",
+      enabled: true,
+    })).resolves.toMatchObject({
+      kind: "snapshot",
+      snapshot: { harnesses: [expect.objectContaining({ enabled: true })] },
+    });
   });
 
   it("is read-only and rejects cosmetic mutations without a runtime coordinator", async () => {

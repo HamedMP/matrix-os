@@ -8,6 +8,7 @@ import {
   providerDriverId,
   type ProviderSettingsConfiguration,
 } from "./provider-settings-persistence.js";
+import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
 
 export type ProviderConfigurationMutation = Exclude<ProviderSettingsMutation,
   | { type: "start_login" }
@@ -63,7 +64,12 @@ export function applyProviderConfigurationMutation(input: {
       return true;
     case "set_harness_enabled": {
       if (!harness) throw new ProviderSettingsStoreError("not_found", 404);
-      const driver = input.canonical.drivers.find((candidate) => candidate.id === harness.driverId);
+      const driverId = resolveProviderSettingsDriverId({
+        driverId: harness.driverId,
+        harness: harness.harness,
+        canonical: input.canonical,
+      });
+      const driver = input.canonical.drivers.find((candidate) => candidate.id === driverId);
       if (mutation.enabled && driver?.installState !== "installed") {
         throw new ProviderSettingsStoreError("invalid_request", 400);
       }
