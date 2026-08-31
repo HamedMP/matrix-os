@@ -39,7 +39,7 @@ Package the current working tree and a continuation brief, upload them through t
 - `--brief PATH`: agent-written continuation summary.
 - `--history-file PATH`: explicit raw JSONL transcript. Use only when the preview names it and the user approves it.
 - `--no-history`: summary-only handoff. Recommend this when transcript discovery is ambiguous or the conversation contains sensitive content.
-- `--project-name NAME`: base for the new, unique `~/projects/...-handoff-...` directory.
+- `--project-name NAME`: exact slug basis for `~/projects/<name>`. By default, reuse the source repository name.
 - `--profile NAME`: target a non-default Matrix CLI profile.
 - `--attach`: attach the local terminal after the remote session is created.
 - `--approve TOKEN`: upload only when the newly staged scope exactly matches the preview token.
@@ -50,6 +50,6 @@ Package the current working tree and a continuation brief, upload them through t
 - Never upload a transcript discovered only by modification time when its metadata does not match the repository.
 - Never add secret files to bypass the built-in exclusion list. Authentication must happen again inside Matrix.
 - Never bypass the approval token. If repository files, the continuation brief, transcript content, agent, profile, or destination basis changes, run a new preview and ask for approval again.
-- The destination is always a new unique directory. Do not overwrite an existing Matrix project.
+- Use the same project name by default; never append `-handoff`. If that destination already exists, do not overwrite it. Ask the user for a different project name and rerun the preview with `--project-name`.
 - If automatic transcript discovery finds nothing, continue with the brief only unless the user explicitly supplies a transcript path.
 - Do not claim that Matrix resumes the original provider session ID. This is a context handoff into a new remote agent session.
