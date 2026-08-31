@@ -29,6 +29,52 @@ export const FundedAiGlobalPolicySchema = z.object({
   updatedAt: IsoTimestampSchema,
 }).strict();
 
+export const FundedAiOperatorGlobalPolicyUpdateRequestSchema = z.object({
+  expectedRevision: RevisionSchema.max(Number.MAX_SAFE_INTEGER - 1),
+  enabled: z.boolean(),
+  allowedModelIds: UniqueModelIdsSchema,
+}).strict();
+
+export const FundedAiOperatorGlobalPolicyResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  policy: FundedAiGlobalPolicySchema,
+}).strict();
+
+export const FundedAiOperatorRuntimePolicyUpdateRequestSchema = z.object({
+  expectedRevision: RevisionSchema.max(Number.MAX_SAFE_INTEGER - 1),
+  enabled: z.boolean(),
+  allowedModelIds: UniqueModelIdsSchema,
+  monthlyBudgetMicrousd: MicrousdSchema,
+  expiresAt: IsoTimestampSchema.nullable(),
+}).strict();
+
+export const FundedAiOperatorRuntimePolicyResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  policy: z.object({
+    enabled: z.boolean(),
+    revision: RevisionSchema,
+    allowedModelIds: UniqueModelIdsSchema,
+    monthlyBudgetMicrousd: MicrousdSchema,
+    expiresAt: IsoTimestampSchema.nullable(),
+    updatedAt: IsoTimestampSchema,
+  }).strict(),
+}).strict();
+
+export const FundedAiPromotionalGrantResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  grant: z.object({
+    kind: z.literal("promotional"),
+    amountMicrousd: MicrousdSchema.min(1),
+    expiresAt: IsoTimestampSchema,
+    createdAt: IsoTimestampSchema,
+    status: z.literal("active"),
+  }).strict(),
+}).strict().superRefine((value, ctx) => {
+  if (Date.parse(value.grant.expiresAt) <= Date.parse(value.grant.createdAt)) {
+    ctx.addIssue({ code: "custom", path: ["grant", "expiresAt"], message: "Promotional grant must expire after creation" });
+  }
+});
+
 export const FundedAiEffectivePolicySchema = z.object({
   enabled: z.boolean(),
   globalRevision: RevisionSchema,
@@ -91,13 +137,18 @@ export const FundedAiFundingSummarySchema = z.object({
   promotionalBalanceMicrousd: MicrousdSchema,
   addonBalanceMicrousd: MicrousdSchema,
   creditBalanceMicrousd: MicrousdSchema,
+  fundingShortfallMicrousd: MicrousdSchema.optional(),
   remainingBalanceMicrousd: MicrousdSchema,
   remainingBudgetMicrousd: MicrousdSchema,
 }).strict().superRefine((value, ctx) => {
-  if (value.creditBalanceMicrousd !== value.promotionalBalanceMicrousd + value.addonBalanceMicrousd) {
+  const creditTotal = value.promotionalBalanceMicrousd + value.addonBalanceMicrousd;
+  if (!Number.isSafeInteger(creditTotal) || value.creditBalanceMicrousd !== creditTotal) {
     ctx.addIssue({ code: "custom", path: ["creditBalanceMicrousd"], message: "Credit buckets must equal total credit" });
   }
-  if (value.remainingBalanceMicrousd !== Math.max(0, value.creditBalanceMicrousd - value.reservedMicrousd)) {
+  if (value.remainingBalanceMicrousd !== Math.max(
+    0,
+    value.creditBalanceMicrousd - value.reservedMicrousd - (value.fundingShortfallMicrousd ?? 0),
+  )) {
     ctx.addIssue({ code: "custom", path: ["remainingBalanceMicrousd"], message: "Remaining credit is inconsistent" });
   }
   const expectedBudget = Math.max(
@@ -106,6 +157,28 @@ export const FundedAiFundingSummarySchema = z.object({
   );
   if (value.remainingBudgetMicrousd !== expectedBudget) {
     ctx.addIssue({ code: "custom", path: ["remainingBudgetMicrousd"], message: "Remaining budget is inconsistent" });
+  }
+  if (value.reservedThisMonthMicrousd > value.reservedMicrousd) {
+    ctx.addIssue({ code: "custom", path: ["reservedThisMonthMicrousd"], message: "Monthly reservations cannot exceed all reservations" });
+  }
+  const period = new Date(value.periodStart);
+  const canonicalPeriod = new Date(Date.UTC(period.getUTCFullYear(), period.getUTCMonth(), 1)).toISOString();
+  if (value.periodStart !== canonicalPeriod) {
+    ctx.addIssue({ code: "custom", path: ["periodStart"], message: "Funding period must start at a UTC month boundary" });
+  }
+});
+
+/** Shell-safe metering projection for one server-derived runtime identity. */
+export const FundedAiRuntimeFundingSummaryResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  funding: FundedAiFundingSummarySchema,
+  policy: FundedAiEffectivePolicySchema,
+}).strict().superRefine((value, ctx) => {
+  if (value.funding.monthlyBudgetMicrousd !== value.policy.monthlyBudgetMicrousd) {
+    ctx.addIssue({ code: "custom", path: ["policy", "monthlyBudgetMicrousd"], message: "Policy and funding budgets must match" });
+  }
+  if (value.funding.asOf !== value.policy.checkedAt) {
+    ctx.addIssue({ code: "custom", path: ["policy", "checkedAt"], message: "Policy and funding timestamps must match" });
   }
 });
 
@@ -207,6 +280,11 @@ export const FundedAiSafeErrorSchema = z.object({ error: SafeErrorSchema }).stri
 
 export type FundedAiIdentity = z.infer<typeof FundedAiIdentitySchema>;
 export type FundedAiGlobalPolicy = z.infer<typeof FundedAiGlobalPolicySchema>;
+export type FundedAiOperatorGlobalPolicyUpdateRequest = z.infer<typeof FundedAiOperatorGlobalPolicyUpdateRequestSchema>;
+export type FundedAiOperatorGlobalPolicyResponse = z.infer<typeof FundedAiOperatorGlobalPolicyResponseSchema>;
+export type FundedAiOperatorRuntimePolicyUpdateRequest = z.infer<typeof FundedAiOperatorRuntimePolicyUpdateRequestSchema>;
+export type FundedAiOperatorRuntimePolicyResponse = z.infer<typeof FundedAiOperatorRuntimePolicyResponseSchema>;
+export type FundedAiPromotionalGrantResponse = z.infer<typeof FundedAiPromotionalGrantResponseSchema>;
 export type FundedAiEffectivePolicy = z.infer<typeof FundedAiEffectivePolicySchema>;
 export type FundedAiRuntimeCredentialIssueResponse = z.infer<typeof FundedAiRuntimeCredentialIssueResponseSchema>;
 export type FundedAiAuthorizationRequest = z.infer<typeof FundedAiAuthorizationRequestSchema>;
@@ -218,4 +296,5 @@ export type FundedAiStartResponse = z.infer<typeof FundedAiStartResponseSchema>;
 export type FundedAiReleaseRequest = z.infer<typeof FundedAiReleaseRequestSchema>;
 export type FundedAiReleaseResponse = z.infer<typeof FundedAiReleaseResponseSchema>;
 export type FundedAiFundingSummary = z.infer<typeof FundedAiFundingSummarySchema>;
+export type FundedAiRuntimeFundingSummaryResponse = z.infer<typeof FundedAiRuntimeFundingSummaryResponseSchema>;
 export type FundedAiSafeError = z.infer<typeof FundedAiSafeErrorSchema>;

@@ -63,12 +63,25 @@ function makeSnapshot(): ProviderSettingsSnapshot {
           state: "current",
           scope: "owner_entitlement",
           currency: "USD",
-          usedMicrousd: 250_000,
+          usedMicrousd: 200_000,
           remainingMicrousd: 750_000,
           limitMicrousd: 1_000_000,
           periodStartedAt: now,
           resetsAt: later,
           asOf: now,
+          credit: {
+            promotionalBalanceMicrousd: 500_000,
+            addonBalanceMicrousd: 500_000,
+            creditBalanceMicrousd: 1_000_000,
+            reservedMicrousd: 250_000,
+            remainingBalanceMicrousd: 750_000,
+          },
+          budget: {
+            monthlyBudgetMicrousd: 1_000_000,
+            settledThisMonthMicrousd: 200_000,
+            reservedThisMonthMicrousd: 50_000,
+            remainingBudgetMicrousd: 750_000,
+          },
         },
       },
       {
@@ -181,6 +194,15 @@ describe("provider settings contracts", () => {
     const usage = makeSnapshot().accessSources[0]!.usage;
     expect(ProviderUsageSchema.parse(usage).kind).toBe("managed_credit");
     expect(ProviderUsageSchema.safeParse({ ...usage, remainingMicrousd: 750_001 }).success).toBe(false);
+    if (usage.kind !== "managed_credit") throw new Error("Expected managed credit fixture");
+    expect(ProviderUsageSchema.safeParse({
+      ...usage,
+      credit: { ...usage.credit, addonBalanceMicrousd: 400_000 },
+    }).success).toBe(false);
+    expect(ProviderUsageSchema.safeParse({
+      ...usage,
+      budget: { ...usage.budget, remainingBudgetMicrousd: 700_000 },
+    }).success).toBe(false);
     expect(ProviderUsageSchema.safeParse({ ...usage, remainingCents: 75 }).success).toBe(false);
   });
 

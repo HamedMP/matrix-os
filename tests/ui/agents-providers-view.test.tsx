@@ -59,12 +59,25 @@ function snapshot(): ProviderSettingsSnapshot {
           state: "current",
           scope: "owner_entitlement",
           currency: "USD",
-          usedMicrousd: 250_000,
+          usedMicrousd: 200_000,
           remainingMicrousd: 750_000,
           limitMicrousd: 1_000_000,
           periodStartedAt: now,
           resetsAt: later,
           asOf: now,
+          credit: {
+            promotionalBalanceMicrousd: 500_000,
+            addonBalanceMicrousd: 500_000,
+            creditBalanceMicrousd: 1_000_000,
+            reservedMicrousd: 250_000,
+            remainingBalanceMicrousd: 750_000,
+          },
+          budget: {
+            monthlyBudgetMicrousd: 1_000_000,
+            settledThisMonthMicrousd: 200_000,
+            reservedThisMonthMicrousd: 50_000,
+            remainingBudgetMicrousd: 750_000,
+          },
         },
       },
       {
@@ -325,7 +338,7 @@ describe("AgentsProvidersView", () => {
     const current = snapshot();
     const { rerender } = setup({ snapshot: current });
     expect(screen.getByText("$0.75 remaining")).toBeVisible();
-    expect(screen.getByText("$0.25 used of $1.00")).toBeVisible();
+    expect(screen.getByText("$0.20 used of $1.00")).toBeVisible();
 
     const stale = structuredClone(current);
     stale.accessSources[0]!.usage = { ...stale.accessSources[0]!.usage, state: "stale" } as typeof stale.accessSources[0]["usage"];
@@ -492,6 +505,19 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByRole("button", { name: "Remove Personal" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add credit" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add credit" })).toHaveAttribute("title", "Adding credit is not available yet");
+  });
+
+  it("renders platform-authoritative gateway policy as read-only", () => {
+    const authoritative = snapshot();
+    authoritative.supportedActions = authoritative.supportedActions.filter((action) =>
+      action !== "set_gateway_budget" && action !== "set_gateway_allowlist");
+    const { onMutate } = setup({ snapshot: authoritative });
+
+    expect(screen.getByLabelText("Monthly budget in USD")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save budget" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Allow Claude Sonnet 5" })).toBeDisabled();
+    expect(screen.getByText("Some gateway controls are unavailable in this runtime.")).toBeVisible();
+    expect(onMutate).not.toHaveBeenCalled();
   });
 
   it("adds a harness from the top-rail flow without collecting credentials", () => {

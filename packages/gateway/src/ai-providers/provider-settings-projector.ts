@@ -2,6 +2,8 @@ import {
   ProviderSettingsSnapshotSchema,
   type AiProviderReadiness,
   type AiProviderSnapshotV3,
+  type FundedAiEffectivePolicy,
+  type FundedAiFundingSummary,
   type ProviderAccount,
   type ProviderDependencyCounts,
   type ProviderHarnessInstance,
@@ -71,11 +73,38 @@ function selectedCanonicalSources(
 function projectAccessSources(
   canonical: AiProviderSnapshotV3,
   config: ProviderSettingsConfiguration,
+  fundingSummary?: FundedAiFundingSummary,
+  fundedPolicy?: FundedAiEffectivePolicy,
+  fundedPolicyAuthoritative = false,
+  now = new Date(),
 ) {
   const { sourceByAccount, sourceIds } = selectedCanonicalSources(canonical, config);
   const accountBySource = new Map([...sourceByAccount].map(([accountId, sourceId]) => [sourceId, accountId]));
   const sources = canonical.accessSources.filter((source) => sourceIds.has(source.id)).map((source) => {
     const matrix = source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon";
+    // Platform policy replaces the bundled Matrix allowlist. The canonical
+    // catalog still bounds projection to runnable models assigned to this
+    // exact access source; vendor membership alone is not route eligibility.
+    const availableModelIds = matrix && fundedPolicyAuthoritative
+      ? new Set(canonical.models
+        .filter((model) => model.vendor === source.vendor
+          && model.status !== "retired" && model.status !== "unavailable"
+          && source.eligibleModelIds.includes(model.id)
+          && model.eligibleAccessSourceIds.includes(source.id))
+        .map((model) => model.id))
+      : null;
+    const fundedModelIds = availableModelIds
+      ? (fundedPolicy?.allowedModelIds ?? []).flatMap((policyModelId) => {
+        if (availableModelIds.has(policyModelId)) return [policyModelId];
+        const vendorPrefix = `${source.vendor}/`;
+        const canonicalModelId = policyModelId.startsWith(vendorPrefix)
+          ? policyModelId.slice(vendorPrefix.length)
+          : null;
+        return canonicalModelId && availableModelIds.has(canonicalModelId)
+          ? [canonicalModelId]
+          : [];
+      })
+      : null;
     return {
       id: source.id,
       kind: matrix ? "matrix_gateway" as const : "provider_account" as const,
@@ -90,8 +119,41 @@ function projectAccessSources(
         action: source.action,
         safeReason: source.safeReason,
       },
-      eligibleModelIds: [...source.eligibleModelIds],
-      usage: {
+      eligibleModelIds: fundedModelIds
+        ? [...new Set(fundedModelIds)]
+        : [...source.eligibleModelIds],
+      usage: matrix && fundingSummary ? {
+        kind: "managed_credit" as const,
+        authority: "matrix_ledger" as const,
+        state: fundingState(fundingSummary.asOf, now),
+        scope: "owner_entitlement" as const,
+        currency: "USD",
+        usedMicrousd: fundingSummary.settledThisMonthMicrousd,
+        remainingMicrousd: Math.min(
+          fundingSummary.remainingBalanceMicrousd,
+          fundingSummary.remainingBudgetMicrousd,
+        ),
+        limitMicrousd: fundingSummary.monthlyBudgetMicrousd,
+        periodStartedAt: fundingSummary.periodStart,
+        resetsAt: nextUtcMonth(fundingSummary.periodStart),
+        asOf: fundingSummary.asOf,
+        credit: {
+          promotionalBalanceMicrousd: fundingSummary.promotionalBalanceMicrousd,
+          addonBalanceMicrousd: fundingSummary.addonBalanceMicrousd,
+          creditBalanceMicrousd: fundingSummary.creditBalanceMicrousd,
+          reservedMicrousd: fundingSummary.reservedMicrousd,
+          ...(fundingSummary.fundingShortfallMicrousd === undefined
+            ? {}
+            : { fundingShortfallMicrousd: fundingSummary.fundingShortfallMicrousd }),
+          remainingBalanceMicrousd: fundingSummary.remainingBalanceMicrousd,
+        },
+        budget: {
+          monthlyBudgetMicrousd: fundingSummary.monthlyBudgetMicrousd,
+          settledThisMonthMicrousd: fundingSummary.settledThisMonthMicrousd,
+          reservedThisMonthMicrousd: fundingSummary.reservedThisMonthMicrousd,
+          remainingBudgetMicrousd: fundingSummary.remainingBudgetMicrousd,
+        },
+      } : {
         kind: "unavailable" as const,
         authority: "unavailable" as const,
         state: "unavailable" as const,
@@ -103,6 +165,16 @@ function projectAccessSources(
     };
   });
   return { sources, sourceByAccount };
+}
+
+function nextUtcMonth(periodStart: string): string {
+  const start = new Date(periodStart);
+  return new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1)).toISOString();
+}
+
+function fundingState(asOf: string, now: Date): "current" | "stale" {
+  const age = now.getTime() - Date.parse(asOf);
+  return Number.isFinite(age) && age >= -60_000 && age <= 5 * 60_000 ? "current" : "stale";
 }
 
 async function projectAccounts(input: {
@@ -203,9 +275,19 @@ export async function projectProviderSettings(input: {
   now: Date;
   dependencies?: ProviderSettingsDependencyReader;
   supportedActions: ProviderSettingsSupportedAction[];
+  fundingSummary?: FundedAiFundingSummary;
+  fundedPolicy?: FundedAiEffectivePolicy;
+  fundedPolicyAuthoritative?: boolean;
   loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): Promise<ProviderSettingsSnapshot> {
-  const { sources, sourceByAccount } = projectAccessSources(input.canonical, input.config);
+  const { sources, sourceByAccount } = projectAccessSources(
+    input.canonical,
+    input.config,
+    input.fundingSummary,
+    input.fundedPolicy,
+    input.fundedPolicyAuthoritative,
+    input.now,
+  );
   const accounts = await projectAccounts({
     canonical: input.canonical,
     config: input.config,
@@ -228,7 +310,18 @@ export async function projectProviderSettings(input: {
   }));
   const gatewayPolicy = input.config.gatewayPolicy
     && sources.some((source) => source.id === input.config.gatewayPolicy?.accessSourceId && source.kind === "matrix_gateway")
-    ? input.config.gatewayPolicy : null;
+    ? {
+        ...input.config.gatewayPolicy,
+        allowedModelIds: input.fundedPolicyAuthoritative
+          ? sources.find((source) => source.id === input.config.gatewayPolicy?.accessSourceId)!
+            .eligibleModelIds
+          : input.config.gatewayPolicy.allowedModelIds,
+        monthlyBudgetMicrousd: input.fundedPolicyAuthoritative
+          ? input.fundingSummary?.monthlyBudgetMicrousd ?? null
+          : input.config.gatewayPolicy.monthlyBudgetMicrousd,
+        // Stripe top-ups are not wired yet; schemas alone never advertise purchase capability.
+        topUpEnabled: false,
+      } : null;
   const allowedGatewayModels = new Set(gatewayPolicy?.allowedModelIds ?? []);
   const harnesses = input.config.harnesses.flatMap((stored) => {
     const harness = projectHarness({

@@ -147,6 +147,8 @@ export interface AiFundedUsageReservationsTable {
   runtime_slot: string;
   model_id: string;
   reserved_microusd: number;
+  promotional_reserved_microusd: number | null;
+  addon_reserved_microusd: number | null;
   actual_microusd: number | null;
   period_start: string;
   status: string;
@@ -157,6 +159,13 @@ export interface AiFundedUsageReservationsTable {
   released_at: string | null;
 }
 
+export interface AiFundedReservationPromotionalAllocationsTable {
+  reservation_id: string;
+  grant_entry_id: string;
+  amount_microusd: number;
+  created_at: string;
+}
+
 export interface AiFundedRuntimeBalancesTable {
   machine_id: string;
   owner_id: string;
@@ -165,6 +174,7 @@ export interface AiFundedRuntimeBalancesTable {
   promotional_balance_microusd: number;
   addon_balance_microusd: number;
   reserved_microusd: number;
+  funding_shortfall_microusd: number;
   month_period_start: string;
   month_spent_microusd: number;
   month_reserved_microusd: number;
@@ -181,7 +191,20 @@ export interface AiFundedCreditLedgerTable {
   source_reference: string;
   reservation_id: string | null;
   period_start: string | null;
+  expires_at: string | null;
   created_at: string;
+}
+
+export interface AiFundedPromotionalGrantBalancesTable {
+  grant_entry_id: string;
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  remaining_microusd: number;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+  revision: number;
 }
 
 export interface ProvisioningJobsTable {
@@ -667,7 +690,9 @@ export interface PlatformDatabase {
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
   ai_funded_usage_reservations: AiFundedUsageReservationsTable;
+  ai_funded_reservation_promotional_allocations: AiFundedReservationPromotionalAllocationsTable;
   ai_funded_credit_ledger: AiFundedCreditLedgerTable;
+  ai_funded_promotional_grant_balances: AiFundedPromotionalGrantBalancesTable;
   ai_funded_runtime_balances: AiFundedRuntimeBalancesTable;
   provisioning_jobs: ProvisioningJobsTable;
   billing_checkout_attempts: BillingCheckoutAttemptsTable;
@@ -1314,11 +1339,17 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       promotional_balance_microusd BIGINT NOT NULL DEFAULT 0 CHECK (promotional_balance_microusd >= 0),
       addon_balance_microusd BIGINT NOT NULL DEFAULT 0 CHECK (addon_balance_microusd >= 0),
       reserved_microusd BIGINT NOT NULL DEFAULT 0 CHECK (reserved_microusd >= 0),
+      funding_shortfall_microusd BIGINT NOT NULL DEFAULT 0 CHECK (funding_shortfall_microusd >= 0),
       month_period_start TEXT NOT NULL,
       month_spent_microusd BIGINT NOT NULL DEFAULT 0 CHECK (month_spent_microusd >= 0),
       month_reserved_microusd BIGINT NOT NULL DEFAULT 0 CHECK (month_reserved_microusd >= 0),
       updated_at TEXT NOT NULL
     )
+  `.execute(db);
+  await sql`
+    ALTER TABLE ai_funded_runtime_balances
+    ADD COLUMN IF NOT EXISTS funding_shortfall_microusd BIGINT NOT NULL DEFAULT 0
+      CHECK (funding_shortfall_microusd >= 0)
   `.execute(db);
   const fundedAiMigrationTime = new Date();
   const fundedAiMigrationAt = fundedAiMigrationTime.toISOString();
@@ -1354,6 +1385,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       runtime_slot TEXT NOT NULL,
       model_id TEXT NOT NULL,
       reserved_microusd BIGINT NOT NULL CHECK (reserved_microusd > 0),
+      promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0),
+      addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0),
       actual_microusd BIGINT CHECK (actual_microusd >= 0),
       period_start TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('reserved', 'starting', 'in_flight', 'settling', 'releasing', 'settled', 'released', 'expired')),
@@ -1362,8 +1395,38 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       expires_at TEXT NOT NULL,
       settled_at TEXT,
       released_at TEXT,
+      CONSTRAINT ai_funded_reservation_sources_check CHECK (
+        (promotional_reserved_microusd IS NULL AND addon_reserved_microusd IS NULL)
+        OR (
+          promotional_reserved_microusd IS NOT NULL
+          AND addon_reserved_microusd IS NOT NULL
+          AND promotional_reserved_microusd + addon_reserved_microusd = reserved_microusd
+        )
+      ),
       UNIQUE (token_id, request_id)
     )
+  `.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0)`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0)`.execute(db);
+  // Existing reservations intentionally remain NULL/NULL: historical rows do
+  // not contain evidence of which funding source paid for them. Runtime expiry
+  // reconciliation protects promotion only through explicit allocation rows.
+  await sql`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE ai_funded_usage_reservations
+          ADD CONSTRAINT ai_funded_reservation_sources_check CHECK (
+            (promotional_reserved_microusd IS NULL AND addon_reserved_microusd IS NULL)
+            OR (
+              promotional_reserved_microusd IS NOT NULL
+              AND addon_reserved_microusd IS NOT NULL
+              AND promotional_reserved_microusd + addon_reserved_microusd = reserved_microusd
+            )
+          );
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+    END $$
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_ai_funded_reservations_runtime_status
@@ -1375,20 +1438,122 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       owner_id TEXT NOT NULL,
       machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
       runtime_slot TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit')),
+      kind TEXT NOT NULL CONSTRAINT ai_funded_credit_ledger_kind_v3_check
+        CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry', 'usage_shortfall')),
       amount_microusd BIGINT NOT NULL,
       source_reference TEXT NOT NULL,
       reservation_id TEXT REFERENCES ai_funded_usage_reservations(reservation_id) ON UPDATE CASCADE ON DELETE CASCADE,
       period_start TEXT,
+      expires_at TEXT,
       created_at TEXT NOT NULL,
-      CHECK (
+      CONSTRAINT ai_funded_credit_ledger_shape_v3_check CHECK (
         (kind IN ('promotional_grant', 'addon_grant') AND amount_microusd > 0 AND reservation_id IS NULL AND period_start IS NULL)
         OR (kind IN ('promotional_debit', 'addon_debit') AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL)
+        OR (kind = 'usage_shortfall' AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL AND expires_at IS NULL)
+        OR (kind = 'promotional_expiry' AND amount_microusd < 0 AND reservation_id IS NULL AND period_start IS NULL AND expires_at IS NULL)
       )
     )
   `.execute(db);
+  await sql`ALTER TABLE ai_funded_credit_ledger ADD COLUMN IF NOT EXISTS expires_at TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_credit_ledger DROP CONSTRAINT IF EXISTS ai_funded_credit_ledger_kind_check`.execute(db);
+  await sql`ALTER TABLE ai_funded_credit_ledger DROP CONSTRAINT IF EXISTS ai_funded_credit_ledger_check`.execute(db);
+  await sql`ALTER TABLE ai_funded_credit_ledger DROP CONSTRAINT IF EXISTS ai_funded_credit_ledger_kind_v2_check`.execute(db);
+  await sql`ALTER TABLE ai_funded_credit_ledger DROP CONSTRAINT IF EXISTS ai_funded_credit_ledger_shape_v2_check`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE ai_funded_credit_ledger
+          ADD CONSTRAINT ai_funded_credit_ledger_kind_v3_check
+          CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry', 'usage_shortfall'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE ai_funded_credit_ledger
+          ADD CONSTRAINT ai_funded_credit_ledger_shape_v3_check CHECK (
+            (kind IN ('promotional_grant', 'addon_grant') AND amount_microusd > 0 AND reservation_id IS NULL AND period_start IS NULL)
+            OR (kind IN ('promotional_debit', 'addon_debit') AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL)
+            OR (kind = 'usage_shortfall' AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL AND expires_at IS NULL)
+            OR (kind = 'promotional_expiry' AND amount_microusd < 0 AND reservation_id IS NULL AND period_start IS NULL AND expires_at IS NULL)
+          );
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+    END $$
+  `.execute(db);
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_funded_ledger_reservation_kind ON ai_funded_credit_ledger(reservation_id, kind) WHERE reservation_id IS NOT NULL`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_ledger_runtime ON ai_funded_credit_ledger(machine_id, runtime_slot, created_at)`.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ai_funded_ledger_promotional_expiry
+    ON ai_funded_credit_ledger(machine_id, runtime_slot, expires_at)
+    WHERE kind = 'promotional_grant' AND expires_at IS NOT NULL
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_promotional_grant_balances (
+      grant_entry_id TEXT PRIMARY KEY REFERENCES ai_funded_credit_ledger(entry_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      runtime_slot TEXT NOT NULL,
+      remaining_microusd BIGINT NOT NULL CHECK (remaining_microusd >= 0),
+      expires_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
+    )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_reservation_promotional_allocations (
+      reservation_id TEXT NOT NULL REFERENCES ai_funded_usage_reservations(reservation_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      grant_entry_id TEXT NOT NULL REFERENCES ai_funded_promotional_grant_balances(grant_entry_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+      amount_microusd BIGINT NOT NULL CHECK (amount_microusd > 0),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (reservation_id, grant_entry_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ai_funded_reservation_promo_grant
+    ON ai_funded_reservation_promotional_allocations(grant_entry_id, reservation_id)
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ai_funded_promotional_grant_expiry
+    ON ai_funded_promotional_grant_balances(machine_id, runtime_slot, expires_at, grant_entry_id)
+    WHERE remaining_microusd > 0 AND expires_at IS NOT NULL
+  `.execute(db);
+  await sql`
+    WITH promotional_usage AS (
+      SELECT owner_id, machine_id, runtime_slot,
+        COALESCE(SUM(-amount_microusd), 0)::BIGINT AS used_microusd
+      FROM ai_funded_credit_ledger
+      WHERE kind = 'promotional_debit'
+      GROUP BY owner_id, machine_id, runtime_slot
+    ), ordered_grants AS (
+      SELECT
+        entry_id, owner_id, machine_id, runtime_slot, amount_microusd, expires_at, created_at,
+        COALESCE(SUM(amount_microusd) OVER (
+          PARTITION BY owner_id, machine_id, runtime_slot
+          ORDER BY created_at, entry_id
+          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+        ), 0)::BIGINT AS prior_grants_microusd
+      FROM ai_funded_credit_ledger
+      WHERE kind = 'promotional_grant'
+    )
+    INSERT INTO ai_funded_promotional_grant_balances (
+      grant_entry_id, owner_id, machine_id, runtime_slot, remaining_microusd,
+      expires_at, created_at, updated_at, revision
+    )
+    SELECT
+      promo.entry_id, promo.owner_id, promo.machine_id, promo.runtime_slot,
+      promo.amount_microusd - LEAST(
+        promo.amount_microusd,
+        GREATEST(0, COALESCE(usage.used_microusd, 0) - promo.prior_grants_microusd)
+      ),
+      promo.expires_at, promo.created_at, promo.created_at, 0
+    FROM ordered_grants promo
+    LEFT JOIN promotional_usage usage
+      ON usage.owner_id = promo.owner_id
+      AND usage.machine_id = promo.machine_id
+      AND usage.runtime_slot = promo.runtime_slot
+    ON CONFLICT (grant_entry_id) DO NOTHING
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS provisioning_jobs (

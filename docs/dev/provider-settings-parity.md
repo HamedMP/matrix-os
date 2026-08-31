@@ -139,21 +139,46 @@ an owner-funded route where possible.
 Cloudflare AI Gateway provides Unified Billing and a coarse operator spend
 fuse. It does not own Matrix user identity, per-user balances, model entitlement,
 or add-on credit. Cloudflare spend rules are defense in depth because accounting
-can be eventually consistent and rule counts are bounded. Matrix must own the
-authoritative Kysely/Postgres ledger, reserve spend atomically before a funded
-call, and reconcile provider usage afterward before exposing per-user limits or
-add-on credit.
+can be eventually consistent and rule counts are bounded. Matrix owns the
+authoritative Kysely/Postgres ledger, reserves spend atomically before a funded
+call, and reconciles provider usage afterward. Provider settings reads the
+resulting promotional balance, add-on balance, held reservations, settled
+monthly use, and remaining monthly budget through a machine-authenticated
+platform summary. The response is identity-free and is never persisted on the
+VPS. If the summary is unavailable, the card says usage is unavailable; it does
+not reuse local configuration as a balance.
+
+Budget and model-policy controls become operator-owned as soon as that platform
+summary is configured. The gateway then omits `set_gateway_budget` and
+`set_gateway_allowlist` from `supportedActions`; web and Electron render the
+same values read-only and cannot write cosmetic owner JSON that the relay would
+ignore. Operators use the authenticated platform policy routes with optimistic
+revisions. Owner self-service may later narrow an operator ceiling, but it must
+be a machine-authenticated platform mutation before either shell advertises it.
+
+First-launch promotional credit is also platform-owned. It is disabled unless
+an operator explicitly configures one bounded campaign ID, positive microusd
+amount, and ISO expiry. Grant creation derives the exact owner, machine, and
+runtime slot from the running handle and uses one `ON CONFLICT`-guarded ledger
+entry per campaign/runtime. Retries cannot double-credit. Once remaining
+promotional credit expires, new funded admission and usage summaries fail
+closed; an expired local value is never treated as spendable credit.
 
 Usage displays must state their authority:
 
-- Matrix credit may show exact used and remaining amounts only after the Matrix
-  ledger is implemented and reconciled;
+- Matrix credit shows exact used and spendable amounts only from the reconciled
+  Matrix ledger; the spendable figure is the smaller of remaining credit and
+  remaining monthly budget;
 - metered owner APIs may show Matrix-observed usage and a provider balance only
   when a supported provider API returns it;
 - subscriptions show provider-reported allowance/reset information, not an
   invented dollar balance;
 - unknown or stale values are labeled unavailable or stale, never estimated as
   exact.
+
+Add Credit remains unavailable until Stripe checkout can atomically create an
+idempotent add-on grant. The current snapshot therefore keeps
+`gatewayPolicy.topUpEnabled` false and never advertises `add_credit`.
 
 ## Security and failure requirements
 

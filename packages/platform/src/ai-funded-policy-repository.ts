@@ -4,6 +4,7 @@ import {
   FUNDED_AI_SCOPE,
   FundedAiGlobalPolicySchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
+  IsoTimestampSchema,
   type FundedAiGlobalPolicy,
   type FundedAiIdentity,
   type FundedAiRuntimeCredentialIssueResponse,
@@ -34,7 +35,7 @@ const RuntimePolicyUpdateSchema = z.object({
   enabled: z.boolean(),
   allowedModelIds: ModelIdsSchema,
   monthlyBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  expiresAt: z.string().datetime({ offset: true }).nullable(),
+  expiresAt: IsoTimestampSchema.nullable(),
 }).strict();
 const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A-Za-z0-9_-]{43})$/;
 
@@ -110,6 +111,40 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     });
   }
 
+  async function getRuntimePolicy(identityInput: FundedAiIdentity) {
+    const identity = IdentitySchema.parse(identityInput);
+    await options.db.ready;
+    const row = await options.db.executor.selectFrom("ai_funded_runtime_policies as runtime")
+      .innerJoin("user_machines as machine", "machine.machine_id", "runtime.machine_id")
+      .select([
+        "runtime.enabled",
+        "runtime.revision",
+        "runtime.allowed_model_ids",
+        "runtime.monthly_budget_microusd",
+        "runtime.expires_at",
+        "runtime.updated_at",
+      ])
+      .where("runtime.machine_id", "=", identity.machineId)
+      .where("runtime.owner_id", "=", identity.ownerId)
+      .where("runtime.runtime_slot", "=", identity.runtimeSlot)
+      .where("machine.clerk_user_id", "=", identity.ownerId)
+      .where("machine.runtime_slot", "=", identity.runtimeSlot)
+      .where("machine.status", "=", "running")
+      .where("machine.activation_state", "=", "authorized")
+      .where("machine.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!row) throw new AiFundedPolicyError("identity_mismatch");
+    return {
+      identity,
+      enabled: row.enabled,
+      revision: row.revision,
+      allowedModelIds: parseModels(row.allowed_model_ids),
+      monthlyBudgetMicrousd: Number(row.monthly_budget_microusd),
+      expiresAt: row.expires_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   async function updateGlobalPolicy(input: {
     expectedRevision: number;
     enabled: boolean;
@@ -170,6 +205,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         promotional_balance_microusd: 0,
         addon_balance_microusd: 0,
         reserved_microusd: 0,
+        funding_shortfall_microusd: 0,
         month_period_start: utcMonthStart(policyTime),
         month_spent_microusd: 0,
         month_reserved_microusd: 0,
@@ -316,7 +352,15 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     inFlightTtlMs,
     reservationIdFactory: options.reservationIdFactory,
   });
-  return { getGlobalPolicy, updateGlobalPolicy, setRuntimePolicy, issueRuntimeCredential, revokeRuntimeCredential, ...metering };
+  return {
+    getGlobalPolicy,
+    getRuntimePolicy,
+    updateGlobalPolicy,
+    setRuntimePolicy,
+    issueRuntimeCredential,
+    revokeRuntimeCredential,
+    ...metering,
+  };
 }
 
 export type AiFundedPolicyRepository = ReturnType<typeof createAiFundedPolicyRepository>;

@@ -6,6 +6,8 @@ import {
   AiProviderSnapshotV3Schema,
   ProviderSettingsSnapshotSchema,
   type AiProviderSnapshotV3,
+  type FundedAiEffectivePolicy,
+  type FundedAiFundingSummary,
   type ProviderDependencyCounts,
 } from "@matrix-os/contracts";
 import {
@@ -122,6 +124,7 @@ describe("ProviderSettingsStore", () => {
     withLogin?: boolean;
     withRuntime?: boolean;
     snapshot?: () => AiProviderSnapshotV3;
+    fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
   } = {}) {
     let nextId = 0;
     return new ProviderSettingsStore({
@@ -134,6 +137,12 @@ describe("ProviderSettingsStore", () => {
       accountLifecycle: options.withLifecycle === false ? undefined : lifecycle,
       loginCoordinator: options.withLogin === false ? undefined : login,
       runtimeCoordinator: options.withRuntime === false ? undefined : runtime,
+      fundingSummaryReader: options.fundingSummary === undefined ? undefined : {
+        getFundingSummary: vi.fn(async () => {
+          if (options.fundingSummary instanceof Error) throw options.fundingSummary;
+          return options.fundingSummary!;
+        }),
+      },
       now: () => NOW,
       idGenerator: () => `generated_${++nextId}`,
     });
@@ -260,6 +269,140 @@ describe("ProviderSettingsStore", () => {
     })).resolves.toMatchObject({
       kind: "snapshot",
       snapshot: { harnesses: [expect.objectContaining({ enabled: true })] },
+    });
+  });
+
+  it("projects authoritative promotional, add-on, reserved, and monthly budget truth without enabling top-ups", async () => {
+    const fundingSummary: FundedAiFundingSummary = {
+      asOf: NOW.toISOString(),
+      periodStart: "2026-08-01T00:00:00.000Z",
+      monthlyBudgetMicrousd: 5_000_000,
+      settledThisMonthMicrousd: 1_000_000,
+      reservedMicrousd: 250_000,
+      reservedThisMonthMicrousd: 250_000,
+      promotionalBalanceMicrousd: 2_000_000,
+      addonBalanceMicrousd: 1_000_000,
+      creditBalanceMicrousd: 3_000_000,
+      fundingShortfallMicrousd: 500_000,
+      remainingBalanceMicrousd: 2_250_000,
+      remainingBudgetMicrousd: 3_750_000,
+    };
+    const policy: FundedAiEffectivePolicy = {
+      enabled: true,
+      globalRevision: 4,
+      runtimeRevision: 2,
+      allowedModelIds: ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
+      monthlyBudgetMicrousd: fundingSummary.monthlyBudgetMicrousd,
+      checkedAt: NOW.toISOString(),
+      staleAfter: "2026-08-30T10:01:00.000Z",
+    };
+    const store = createStore({ fundingSummary: { funding: fundingSummary, policy } });
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.usage).toEqual({
+      kind: "managed_credit",
+      authority: "matrix_ledger",
+      state: "current",
+      scope: "owner_entitlement",
+      currency: "USD",
+      usedMicrousd: 1_000_000,
+      remainingMicrousd: 2_250_000,
+      limitMicrousd: 5_000_000,
+      periodStartedAt: "2026-08-01T00:00:00.000Z",
+      resetsAt: "2026-09-01T00:00:00.000Z",
+      asOf: NOW.toISOString(),
+      credit: {
+        promotionalBalanceMicrousd: 2_000_000,
+        addonBalanceMicrousd: 1_000_000,
+        creditBalanceMicrousd: 3_000_000,
+        reservedMicrousd: 250_000,
+        fundingShortfallMicrousd: 500_000,
+        remainingBalanceMicrousd: 2_250_000,
+      },
+      budget: {
+        monthlyBudgetMicrousd: 5_000_000,
+        settledThisMonthMicrousd: 1_000_000,
+        reservedThisMonthMicrousd: 250_000,
+        remainingBudgetMicrousd: 3_750_000,
+      },
+    });
+    expect(snapshot.gatewayPolicy).toMatchObject({
+      monthlyBudgetMicrousd: 5_000_000,
+      allowedModelIds: ["claude-sonnet-5"],
+      topUpEnabled: false,
+    });
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
+      .toEqual(["claude-sonnet-5"]);
+    await expect(store.mutate({
+      type: "add_harness",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "reject_owner_only_funded_model",
+      harness: "opencode",
+      displayName: "OpenCode owner-only route",
+      route: { kind: "configurable", providerId: "anthropic", modelId: "claude-opus-5" },
+      accessSourceId: "matrix_included",
+      accountId: null,
+    })).rejects.toMatchObject({ code: "invalid_route" });
+    expect(snapshot.supportedActions).not.toContain("add_credit");
+    expect(snapshot.supportedActions).not.toContain("set_gateway_budget");
+    expect(snapshot.supportedActions).not.toContain("set_gateway_allowlist");
+    await expect(store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "platform_budget_is_read_only",
+      monthlyBudgetMicrousd: 4_000_000,
+    })).rejects.toMatchObject({ code: "runtime_unavailable" });
+    await expect(store.mutate({
+      type: "set_gateway_allowlist",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "platform_allowlist_is_read_only",
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+    })).rejects.toMatchObject({ code: "runtime_unavailable" });
+
+    const stale = await createStore({
+      fundingSummary: {
+        funding: { ...fundingSummary, asOf: "2026-08-30T09:50:00.000Z" },
+        policy,
+      },
+    }).getSnapshot();
+    expect(stale.accessSources.find((source) => source.id === "matrix_included")?.usage)
+      .toMatchObject({ kind: "managed_credit", state: "stale" });
+  });
+
+  it("shows ledger usage as unavailable instead of falling back to local estimates", async () => {
+    const localStore = createStore();
+    const localSnapshot = await localStore.getSnapshot();
+    await localStore.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: localSnapshot.revision,
+      idempotencyKey: "stale_local_budget_1",
+      monthlyBudgetMicrousd: 9_000_000,
+    });
+
+    const store = createStore({ fundingSummary: new Error("postgresql://secret@db.internal") });
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.usage).toMatchObject({
+      kind: "unavailable",
+      authority: "unavailable",
+      reason: "ledger_not_available",
+    });
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
+      .toEqual([]);
+    expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual([]);
+    expect(snapshot.gatewayPolicy?.monthlyBudgetMicrousd).toBeNull();
+    expect(snapshot.harnesses.some((harness) => harness.accessSourceId === "matrix_included"))
+      .toBe(false);
+
+    const malformedSnapshot = await createStore({
+      fundingSummary: { funding: {}, policy: {} } as unknown as {
+        funding: FundedAiFundingSummary;
+        policy: FundedAiEffectivePolicy;
+      },
+    }).getSnapshot();
+    expect(malformedSnapshot.accessSources.find((source) => source.id === "matrix_included")?.usage)
+      .toMatchObject({ kind: "unavailable", reason: "ledger_not_available" });
+    expect(malformedSnapshot.gatewayPolicy).toMatchObject({
+      allowedModelIds: [],
+      monthlyBudgetMicrousd: null,
     });
   });
 
