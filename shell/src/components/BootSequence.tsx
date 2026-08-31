@@ -27,6 +27,7 @@ import { navigateForOnboarding } from "@/lib/onboarding-navigation";
 // ready is the running shell. BootSequence only renders the billing/build steps.
 const PASSTHROUGH_PHASES = new Set<JourneyState["phase"]>(["first_run", "ready"]);
 const AMBIGUOUS_PROVISIONING_WINDOW_MS = 30_000;
+const APP_SESSION_POLL_MS = 4_000;
 
 const STAGE_LABEL: Record<string, string> = {
   creating_server: "Creating your server",
@@ -119,36 +120,149 @@ function Spinner() {
   return <Loader2Icon className="size-5 animate-spin text-ember" aria-hidden="true" />;
 }
 
+function AppSessionHandoff({
+  completionRedirect,
+  runtimeSlot,
+  getToken,
+}: {
+  completionRedirect: string;
+  runtimeSlot: string | null;
+  getToken: () => Promise<string | null>;
+}) {
+  const [authenticationExpired, setAuthenticationExpired] = useState(false);
+
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect is the app-session readiness poller. It is gated by an authoritative ready journey phase, runs one request at a time, retries only after settlement, and cleans up its timer on unmount/redirect.
+  useEffect(() => {
+    let disposed = false;
+    let retryTimer: number | undefined;
+
+    function scheduleRetry(): void {
+      if (disposed) return;
+      retryTimer = window.setTimeout(() => {
+        void exchangeSession();
+      }, APP_SESSION_POLL_MS);
+    }
+
+    async function exchangeSession(): Promise<void> {
+      try {
+        const token = await getToken();
+        if (disposed) return;
+        if (!token) {
+          setAuthenticationExpired(true);
+          return;
+        }
+        const response = await fetch("/api/auth/app-session", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            redirectTo: completionRedirect,
+            ...(runtimeSlot ? { runtime: runtimeSlot } : {}),
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (disposed) return;
+        if (response.ok) {
+          navigateForOnboarding(completionRedirect);
+          return;
+        }
+        if (response.status === 401 || response.status === 403) {
+          setAuthenticationExpired(true);
+          return;
+        }
+        // A 404 means the selected machine is not authorized for an app
+        // session yet. Billing propagation and transient platform failures are
+        // also passive states here: the journey already owns provisioning.
+        scheduleRetry();
+      } catch (error: unknown) {
+        if (disposed) return;
+        console.warn(
+          "[boot] app-session handoff pending",
+          error instanceof Error ? error.name : typeof error,
+        );
+        scheduleRetry();
+      }
+    }
+
+    void exchangeSession();
+    return () => {
+      disposed = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [completionRedirect, getToken, runtimeSlot]);
+
+  if (authenticationExpired) return <RedirectToSignIn />;
+
+  return (
+    <BootShell activeStep="computer">
+      <Spinner />
+      <h1 className="text-lg font-medium text-forest">Finishing your Matrix computer</h1>
+      <p className="max-w-sm text-sm">
+        Your computer is starting. Matrix will continue automatically when it is ready.
+      </p>
+    </BootShell>
+  );
+}
+
 /**
  * Unified signup-to-ready boot sequence (spec 092 Phase C). Renders one
  * continuous flow driven by GET /api/journey: plan selection, payment settling,
  * machine build progress, and retry — then hands off to the shell once the
  * journey reaches first_run/ready. Replaces the billing wall + provisioning
- * poll. The device-flow (`device_return`) and platform-session short-circuits
- * remain the caller's responsibility during the page.tsx cutover.
+ * poll. Callers may provide a validated device completion target; the sequence
+ * preserves it through readiness and app-session exchange.
  */
 export function BootSequence({
   children,
   platformSessionActive = false,
   e2eBypass = false,
+  completionRedirect,
+  runtimeSlot = null,
+  passivePostCheckout = false,
 }: {
   children: ReactNode;
   platformSessionActive?: boolean;
   e2eBypass?: boolean;
+  completionRedirect?: string;
+  runtimeSlot?: string | null;
+  passivePostCheckout?: boolean;
 }) {
   // Server-verified session or e2e bypass: the journey is already past billing.
   if (platformSessionActive || e2eBypass) {
     return <>{children}</>;
   }
-  return <BootSequenceInner>{children}</BootSequenceInner>;
+  return (
+    <BootSequenceInner
+      completionRedirect={completionRedirect}
+      runtimeSlot={runtimeSlot}
+      passivePostCheckout={passivePostCheckout}
+    >
+      {children}
+    </BootSequenceInner>
+  );
 }
 
-function BootSequenceInner({ children }: { children: ReactNode }) {
+function BootSequenceInner({
+  children,
+  completionRedirect,
+  runtimeSlot,
+  passivePostCheckout,
+}: {
+  children: ReactNode;
+  completionRedirect?: string;
+  runtimeSlot: string | null;
+  passivePostCheckout: boolean;
+}) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [provisioningOutcomeAmbiguous, setProvisioningOutcomeAmbiguous] = useState(false);
   const { state, status, refreshJourney } = useJourney({
     enabled: isLoaded && isSignedIn,
-    keepPolling: provisioningOutcomeAmbiguous,
+    keepPolling: provisioningOutcomeAmbiguous || passivePostCheckout,
+    runtimeSlot,
   });
   const [working, setWorking] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
@@ -195,19 +309,10 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
         finishProvision(PROVISIONING_RETRY_ERROR);
         return;
       }
-      const sessionResponse = await fetch("/api/auth/app-session", {
-        method: "POST",
-        credentials: "include",
-        headers: await authHeaders(getToken),
-        body: JSON.stringify({ redirectTo: "/" }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!sessionResponse.ok) {
-        finishProvision(PROVISIONING_RETRY_ERROR);
-        return;
-      }
-      navigateForOnboarding("/");
-      finishProvision();
+      // 202 means provisioning was accepted, not that a runtime is ready for
+      // an app session. Reconcile through the journey until authorization.
+      setProvisioningOutcomeAmbiguous(true);
+      refreshJourney();
     } catch (err: unknown) {
       console.warn("[boot] provision start failed", err instanceof Error ? err.name : typeof err);
       if (isAmbiguousProvisioningTimeout(err)) {
@@ -269,6 +374,16 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
     );
   }
 
+  if (state && PASSTHROUGH_PHASES.has(state.phase) && completionRedirect) {
+    return (
+      <AppSessionHandoff
+        completionRedirect={completionRedirect}
+        runtimeSlot={runtimeSlot}
+        getToken={getToken}
+      />
+    );
+  }
+
   if (!state || PASSTHROUGH_PHASES.has(state.phase)) {
     // first_run/ready (or, defensively, no state): hand off to the shell, which
     // owns the first-run experience and the running desktop.
@@ -310,6 +425,17 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
         </BootShell>
       );
     case "install_choices_required":
+      if (passivePostCheckout || provisioningOutcomeAmbiguous) {
+        return (
+          <BootShell activeStep="computer">
+            <Spinner />
+            <h1 className="text-lg font-medium text-forest">Finishing your Matrix computer</h1>
+            <p className="max-w-sm text-sm">
+              Your setup is already in progress. Matrix will continue automatically when it is ready.
+            </p>
+          </BootShell>
+        );
+      }
       return (
         <Settings
           open

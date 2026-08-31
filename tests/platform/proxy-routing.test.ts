@@ -2883,6 +2883,11 @@ describe("platform proxy routing", () => {
     expect(html).toContain("method: 'DELETE'");
     expect(html).not.toContain("Loading your Matrix computer");
     expect(html).not.toContain("function pollProvisioningSession()");
+    expect(html).toContain("showLoadingState('Finishing your Matrix computer...');");
+    expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
+    expect(html).toContain("var passiveRuntimeContinuation = passiveCheckoutContinuation || Boolean(deviceReturnTarget);");
+    expect(html).toContain("waitForAppSession(provisioningAccepted);");
+    expect(html).not.toContain("if (checkoutJustCompleted) {\n              showDefaultInstallsState();");
     expect(html).toContain("continueWithClerkSession(true);");
     expect(html).toContain("if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {");
     expect(html).toContain("billingConfirmationPolls = 0;\n            continueWithClerkSession(true);\n            return;");
@@ -2909,7 +2914,8 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("if (res.status === 402) {\n            if (afterProvision) showProvisionRetryError();\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("if (res.status === 402) {\n            if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
@@ -3370,7 +3376,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var billingSetupTarget = ");
     expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
-    expect(html).toContain("window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
+    expect(html).toContain("window.location.replace(provisioningAccepted ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toBe("auth shell");

@@ -615,6 +615,8 @@ export function getAuthPage(
     var billingConfirmationPolls = 0;
     var maxBillingConfirmationPolls = 60;
     var billingRetryTimeoutId = null;
+    var appSessionRetryTimeoutId = null;
+    var appSessionRetryDelayMs = 4000;
     var provisioningRetryError = 'Matrix could not start building this VPS. Try again.';
     var activeProvisionButton = null;
     var activeProvisionInputs = [];
@@ -1046,6 +1048,14 @@ export function getAuthPage(
       checkoutJustCompleted = false;
       setProvisionControls(false, provisioningRetryError);
     }
+    function waitForAppSession(afterProvision) {
+      showLoadingState('Finishing your Matrix computer...');
+      if (appSessionRetryTimeoutId !== null) return;
+      appSessionRetryTimeoutId = window.setTimeout(function() {
+        appSessionRetryTimeoutId = null;
+        continueWithClerkSession(afterProvision);
+      }, appSessionRetryDelayMs);
+    }
     function retryProvisioningAfterBillingDelay(developerTools) {
       billingConfirmationPolls += 1;
       if (billingConfirmationPolls > maxBillingConfirmationPolls) {
@@ -1137,19 +1147,22 @@ export function getAuthPage(
         });
     }
     function continueWithClerkSession(afterProvision) {
+      var provisioningAccepted = afterProvision === true;
+      var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;
+      var passiveRuntimeContinuation = passiveCheckoutContinuation || Boolean(deviceReturnTarget);
       if (!window.Clerk.session) {
-        if (afterProvision) showProvisionRetryError();
+        if (provisioningAccepted) showProvisionRetryError();
         else showSignedInRecoveryState();
         return;
       }
       window.Clerk.session.getToken()
         .then(function(token) {
           if (!token) {
-            if (afterProvision) showProvisionRetryError();
+            if (provisioningAccepted) showProvisionRetryError();
             else showSignedInRecoveryState();
             return null;
           }
-          var sessionRedirectTarget = afterProvision ? provisionHandoffTarget : redirectTarget;
+          var sessionRedirectTarget = provisioningAccepted ? provisionHandoffTarget : redirectTarget;
           return fetch('/api/auth/app-session', {
             method: 'POST',
             headers: {
@@ -1165,33 +1178,33 @@ export function getAuthPage(
           if (!res) return null;
           if (res.ok) return res.json();
           if (res.status === 404) {
-            if (afterProvision) {
-              showProvisionRetryError();
-              return null;
-            }
-            if (checkoutJustCompleted) {
-              showDefaultInstallsState();
+            if (passiveRuntimeContinuation) {
+              waitForAppSession(provisioningAccepted);
               return null;
             }
             showNoRuntimeState();
             return null;
           }
           if (res.status === 402) {
-            if (afterProvision) showProvisionRetryError();
+            if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);
             else openBillingSettingsFromClerkSession();
             return null;
           }
-          if (afterProvision) showProvisionRetryError();
+          if (passiveRuntimeContinuation) waitForAppSession(provisioningAccepted);
           else showSignedInRecoveryState();
           return null;
         })
         .then(function(payload) {
           if (!payload) return;
-          window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));
+          if (appSessionRetryTimeoutId !== null) {
+            window.clearTimeout(appSessionRetryTimeoutId);
+            appSessionRetryTimeoutId = null;
+          }
+          window.location.replace(provisioningAccepted ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));
         })
         .catch(function(err) {
           console.error('[matrix] Clerk session exchange failed', err instanceof Error ? err.name : String(typeof err));
-          if (afterProvision) showProvisionRetryError();
+          if (passiveRuntimeContinuation) waitForAppSession(provisioningAccepted);
           else showSignedInRecoveryState();
         });
     }
