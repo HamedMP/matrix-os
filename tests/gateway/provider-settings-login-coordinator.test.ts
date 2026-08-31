@@ -257,6 +257,65 @@ describe("provider terminal login coordinator", () => {
     expect(registry.delete).not.toHaveBeenCalled();
   });
 
+  it("renews an expired same-key recovery receipt after the initial terminal create fails", async () => {
+    let checkedAt = new Date(now);
+    const login = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => new Date(checkedAt),
+    });
+    const input = {
+      mutation: {
+        type: "start_login" as const,
+        expectedRevision: 0,
+        idempotencyKey: "login_create_failure_retry",
+        harnessInstanceId: "harness_claude",
+        accountId: "owner_anthropic",
+        method: "terminal" as const,
+      },
+      harness: {
+        id: "harness_claude",
+        driverId: "claude_code",
+        harness: "claude" as const,
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
+        installState: "installed" as const,
+      },
+    };
+    registry.create.mockRejectedValueOnce(new Error("terminal create unavailable"));
+
+    await expect(login.startLogin(input)).rejects.toThrow("terminal create unavailable");
+    checkedAt = new Date(now.getTime() + 10 * 60_000 + 1);
+
+    const retried = await login.startLogin(input);
+
+    expect(retried).toMatchObject({
+      state: "pending",
+      harnessInstanceId: input.mutation.harnessInstanceId,
+      accountId: input.mutation.accountId,
+      method: input.mutation.method,
+      action: { kind: "open_terminal" },
+    });
+    expect(Date.parse(retried.expiresAt) - checkedAt.getTime()).toBe(10 * 60_000);
+    expect(registry.create).toHaveBeenCalledTimes(2);
+    expect(sessions).toEqual(new Set([
+      retried.action.kind === "open_terminal" ? retried.action.terminalSessionId : "",
+    ]));
+
+    for (const file of ["login-recovery.json", "login-receipts.json"]) {
+      const document = JSON.parse(await readFile(
+        join(homePath, "system/ai-providers", file),
+        "utf8",
+      )) as { receipts: Array<{ key: string; attempt: unknown }> };
+      expect(document.receipts).toHaveLength(1);
+      expect(document.receipts).toContainEqual(expect.objectContaining({
+        key: input.mutation.idempotencyKey,
+        attempt: retried,
+      }));
+    }
+  });
+
   it("rejects unsupported methods and idempotency-key payload conflicts before launch", async () => {
     const login = coordinator();
     const base = {
