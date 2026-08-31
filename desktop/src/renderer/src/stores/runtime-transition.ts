@@ -29,13 +29,18 @@ interface RuntimeChangeOptions {
   disposeRuntimeAttachments?: () => void;
 }
 
+/** Dispose credential-bound sockets and buffers without resetting desktop layout state. */
+export function disposeDesktopRuntimeAttachments(): void {
+  resetAttachManager();
+}
+
 /**
  * Synchronously removes every renderer reference owned by the previous
  * computer before the selected runtime becomes observable to the UI.
  */
 export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}): void {
   advanceRuntimeGeneration();
-  (options.disposeRuntimeAttachments ?? resetAttachManager)();
+  (options.disposeRuntimeAttachments ?? disposeDesktopRuntimeAttachments)();
   resetKernel();
   useBoard.setState({
     projects: [],

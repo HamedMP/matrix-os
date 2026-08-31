@@ -2,10 +2,11 @@ import { ExternalLink, Globe2, Plus, SlidersHorizontalIcon, X } from "@renderer/
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { resolveBrowserAddress } from "../../../../shared/runtime-browser-url";
 import { invoke } from "../../lib/operator";
-import { useBrowserNavigation } from "../../stores/browser-navigation";
+import { browserRuntimeScope, useBrowserNavigation } from "../../stores/browser-navigation";
+import { useConnection } from "../../stores/connection";
 import EmbedHost from "../embeds/EmbedHost";
 
-const BROWSER_SESSION_KEY = "matrix.desktop.browser.session.v1";
+const BROWSER_SESSION_KEY_PREFIX = "matrix.desktop.browser.session.v2";
 const BROWSER_SETTINGS_KEY = "matrix.desktop.browser.settings.v1";
 const MAX_BROWSER_TABS = 8;
 
@@ -43,11 +44,15 @@ function restorePreviousTabsEnabled(): boolean {
   }
 }
 
-function readBrowserSession(): BrowserSession {
+function browserSessionKey(runtimeScope: string): string {
+  return `${BROWSER_SESSION_KEY_PREFIX}:${encodeURIComponent(runtimeScope)}`;
+}
+
+function readBrowserSession(runtimeScope: string): BrowserSession {
   const fallback = createBrowserPage();
   if (!restorePreviousTabsEnabled()) return { tabs: [fallback], activeId: fallback.id };
   try {
-    const stored = window.localStorage.getItem(BROWSER_SESSION_KEY);
+    const stored = window.sessionStorage.getItem(browserSessionKey(runtimeScope));
     if (!stored) return { tabs: [fallback], activeId: fallback.id };
     const parsed = JSON.parse(stored) as Partial<BrowserSession>;
     if (!Array.isArray(parsed.tabs)) return { tabs: [fallback], activeId: fallback.id };
@@ -95,13 +100,47 @@ export default function BrowserTab({
   layoutRevision?: string;
   visualScale?: number;
 }) {
-  const [session, setSession] = useState<BrowserSession>(readBrowserSession);
+  const platformHost = useConnection((state) => state.platformHost);
+  const handle = useConnection((state) => state.handle);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  const runtimeScope = browserRuntimeScope({ platformHost, handle, runtimeSlot, authGeneration });
+
+  return (
+    <RuntimeScopedBrowserTab
+      key={runtimeScope}
+      active={active}
+      layoutRevision={layoutRevision}
+      visualScale={visualScale}
+      runtimeScope={runtimeScope}
+    />
+  );
+}
+
+function RuntimeScopedBrowserTab({
+  active,
+  layoutRevision,
+  visualScale,
+  runtimeScope,
+}: {
+  active: boolean;
+  layoutRevision?: string;
+  visualScale: number;
+  runtimeScope: string;
+}) {
+  const [session, setSession] = useState<BrowserSession>(() => readBrowserSession(runtimeScope));
   const [restorePreviousTabs, setRestorePreviousTabs] = useState(restorePreviousTabsEnabled);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const pendingNavigation = useBrowserNavigation((state) => state.pending);
+  const queuedNavigations = useBrowserNavigation((state) => state.queued);
   const consumeNavigation = useBrowserNavigation((state) => state.consume);
   const handledNavigationId = useRef<number | null>(null);
+  const requestedNavigation = useMemo(
+    () => queuedNavigations.find((request) => request.runtimeScope === runtimeScope)
+      ?? (pendingNavigation?.runtimeScope === runtimeScope ? pendingNavigation : null),
+    [pendingNavigation, queuedNavigations, runtimeScope],
+  );
   const activeTab = useMemo(
     () => session.tabs.find((tab) => tab.id === session.activeId) ?? session.tabs[0]!,
     [session],
@@ -109,14 +148,15 @@ export default function BrowserTab({
 
   useEffect(() => {
     window.localStorage.setItem(BROWSER_SETTINGS_KEY, JSON.stringify({ restorePreviousTabs }));
-    if (restorePreviousTabs) window.localStorage.setItem(BROWSER_SESSION_KEY, JSON.stringify(session));
-    else window.localStorage.removeItem(BROWSER_SESSION_KEY);
-  }, [restorePreviousTabs, session]);
+    const sessionKey = browserSessionKey(runtimeScope);
+    if (restorePreviousTabs) window.sessionStorage.setItem(sessionKey, JSON.stringify(session));
+    else window.sessionStorage.removeItem(sessionKey);
+  }, [restorePreviousTabs, runtimeScope, session]);
 
   useEffect(() => {
-    if (!pendingNavigation || handledNavigationId.current === pendingNavigation.id) return;
-    handledNavigationId.current = pendingNavigation.id;
-    consumeNavigation(pendingNavigation.id);
+    if (!requestedNavigation || handledNavigationId.current === requestedNavigation.id) return;
+    handledNavigationId.current = requestedNavigation.id;
+    consumeNavigation(requestedNavigation.id);
     setSettingsOpen(false);
     setMessage(null);
     setSession((current) => {
@@ -128,8 +168,8 @@ export default function BrowserTab({
           : activePage ?? current.tabs[0]!;
       const nextPage: BrowserPage = {
         ...target,
-        address: pendingNavigation.url,
-        url: pendingNavigation.url,
+        address: requestedNavigation.url,
+        url: requestedNavigation.url,
         navigationRevision: target.navigationRevision + 1,
       };
       const replacing = current.tabs.some((tab) => tab.id === target.id);
@@ -140,7 +180,7 @@ export default function BrowserTab({
         activeId: target.id,
       };
     });
-  }, [consumeNavigation, pendingNavigation]);
+  }, [consumeNavigation, requestedNavigation]);
 
   const updateActiveTab = (update: (tab: BrowserPage) => BrowserPage) => {
     setSession((current) => ({

@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PreviewSessionSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { InspectorPreviewPanel } from "../../desktop/src/renderer/src/features/panels/InspectorPreviewPanel";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useBrowserNavigation } from "../../desktop/src/renderer/src/stores/browser-navigation";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 
@@ -40,6 +42,8 @@ describe("InspectorPreviewPanel", () => {
   let originalRefresh: () => Promise<void>;
 
   beforeEach(() => {
+    useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
+    useTabs.setState(useTabs.getInitialState(), true);
     Object.defineProperty(window, "operator", {
       configurable: true,
       value: {
@@ -100,7 +104,7 @@ describe("InspectorPreviewPanel", () => {
     expect(refreshSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("opens HTTPS previews externally through the bridge and blocks others", () => {
+  it("opens HTTPS and localhost previews in Matrix Browser", () => {
     renderPanel(summaryWith([
       preview({ id: "pv_1", label: "Web app" }),
       preview({ id: "pv_2", label: "Local only", origin: "http://localhost:8080" }),
@@ -108,13 +112,16 @@ describe("InspectorPreviewPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Inspect preview Web app" }));
     fireEvent.click(screen.getByRole("button", { name: "Open preview in browser" }));
-    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://preview.example.com" });
+    expect(useBrowserNavigation.getState().pending?.url).toBe("https://preview.example.com/");
+    expect(useTabs.getState().tabs.at(-1)).toMatchObject({ kind: "browser" });
 
     fireEvent.click(screen.getByRole("button", { name: "Inspect preview Local only" }));
 
-    const blocked = screen.getByRole("button", { name: "Open preview in browser" });
-    expect(blocked.hasAttribute("disabled")).toBe(true);
-    expect(window.operator.invoke).toHaveBeenCalledTimes(1);
+    const localButton = screen.getByRole("button", { name: "Open preview in browser" });
+    expect(localButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(localButton);
+    expect(useBrowserNavigation.getState().pending?.url).toBe("http://localhost:8080/");
+    expect(window.operator.invoke).not.toHaveBeenCalledWith("shell:open-external", expect.anything());
   });
 
   it("clears the chrome when the inspected preview disappears", () => {

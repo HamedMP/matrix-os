@@ -10,11 +10,17 @@ import { useBoard } from "@desktop/renderer/src/stores/board";
 import { clearDraftChats, useDraftChat } from "@desktop/renderer/src/stores/draft-chat";
 import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
 import { registerActiveNotesController } from "@desktop/renderer/src/features/notes/notes-controller";
+import { resetAttachManager } from "@desktop/renderer/src/features/terminal/terminal-runtime";
 import { seedDesktopApps } from "./apps-query-test-utils";
+
+vi.mock("@desktop/renderer/src/features/terminal/terminal-runtime", () => ({
+  resetAttachManager: vi.fn(),
+}));
 
 type Listener = (payload: unknown) => void;
 
 beforeEach(() => {
+  vi.mocked(resetAttachManager).mockReset();
   clearDraftChats();
   useConnection.setState({
     status: "loading",
@@ -32,6 +38,34 @@ afterEach(() => {
 });
 
 describe("connection event wiring", () => {
+  it("disposes terminal attachments before publishing replacement credentials", async () => {
+    useConnection.setState({
+      status: "signed-in",
+      handle: "neo",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      authGeneration: 1,
+    });
+    window.operator = {
+      invoke: vi.fn(async () => ({
+        signedIn: true,
+        handle: "neo",
+        platformHost: "https://platform.test",
+        runtimeSlot: "primary",
+        authGeneration: 2,
+      })),
+      on: vi.fn(),
+    };
+    vi.mocked(resetAttachManager).mockImplementation(() => {
+      expect(useConnection.getState().authGeneration).toBe(1);
+    });
+
+    await useConnection.getState().refresh();
+
+    expect(resetAttachManager).toHaveBeenCalledTimes(1);
+    expect(useConnection.getState().authGeneration).toBe(2);
+  });
+
   it("flushes dirty native Notes before replacing the selected runtime credential", async () => {
     const order: string[] = [];
     const unregister = registerActiveNotesController({
@@ -316,6 +350,7 @@ describe("connection event wiring", () => {
     await useConnection.getState().refresh();
 
     expect(desktopQueryClient.getQueryCache().getAll()).toEqual([]);
+    expect(resetAttachManager).toHaveBeenCalledTimes(1);
   });
 
   it("unwires auth and runtime listeners so tests can reinitialize the bridge", async () => {

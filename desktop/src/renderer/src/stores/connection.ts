@@ -5,7 +5,10 @@ import { invoke, onEvent } from "../lib/operator";
 import { createApiClient, type ApiClient } from "../lib/api";
 import { clearDraftChats } from "./draft-chat";
 import { advanceRuntimeGeneration } from "./runtime-generation";
-import { reconcileDesktopRuntimeChange } from "./runtime-transition";
+import {
+  disposeDesktopRuntimeAttachments,
+  reconcileDesktopRuntimeChange,
+} from "./runtime-transition";
 import { clearPreloadedAppIcons } from "../features/apps/app-icons";
 import { flushActiveNotesBeforeIdentityChange } from "../features/notes/notes-controller";
 import { clearDesktopQueryCache } from "../lib/query-client";
@@ -57,6 +60,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       // Advance BEFORE publishing the new identity so a response settling in
       // between is already considered stale.
       if (identityChanged) {
+        disposeDesktopRuntimeAttachments();
         clearDesktopQueryCache();
         advanceRuntimeGeneration();
         clearDraftChats();
@@ -87,6 +91,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       console.warn("[connection] failed to refresh auth status:", err instanceof Error ? err.message : String(err));
       // Dropping to signed-out is an identity change too.
       if (get().status !== "signed-out") {
+        disposeDesktopRuntimeAttachments();
         clearDesktopQueryCache();
         advanceRuntimeGeneration();
         clearDraftChats();

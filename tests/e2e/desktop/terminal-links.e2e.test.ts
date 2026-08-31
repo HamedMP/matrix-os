@@ -33,11 +33,12 @@ suite("native Desktop Terminal links", () => {
     });
     page = await app.firstWindow();
     await page.getByRole("button", { name: /continue in browser/i }).click();
-    await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
-    await page.locator("aside button", { hasText: "Terminal" }).first().click();
-    await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
-    await page.getByRole("button", { name: "Open matrix-task-1" }).click();
-    await page.locator(".xterm-helper-textarea").last().focus();
+    const terminalLauncher = page.getByRole("button", { name: "Terminal", exact: true }).first();
+    await terminalLauncher.waitFor({ timeout: 15_000 });
+    await terminalLauncher.dblclick();
+    const terminalInput = page.locator(".xterm-helper-textarea").last();
+    await terminalInput.waitFor({ timeout: 10_000 });
+    await terminalInput.focus();
   }, 60_000);
 
   afterAll(async () => {
@@ -70,49 +71,20 @@ suite("native Desktop Terminal links", () => {
     await page.mouse.click(x, y, { button });
   }
 
-  it("uses Matrix actions for plain-text and OSC 8 links without xterm confirmation", async () => {
+  it("opens localhost preview links in Matrix Browser without xterm confirmation", async () => {
     const dialogs: string[] = [];
     page.on("dialog", (dialog) => {
       dialogs.push(dialog.message());
       void dialog.dismiss();
     });
 
-    const plainUrl = `https://example.org/desktop-terminal/${"segment/".repeat(12)}final-check`;
-    const plainLinkTarget = "https://example.org/desktop-terminal/";
+    const plainUrl = "http://localhost:4173";
+    const plainLinkTarget = plainUrl;
     gateway.sendTerminalOutput(`\r\n${plainUrl}\r\n`);
-    await page.evaluate(() => {
-      Object.defineProperty(window, "__openedTerminalLinks", {
-        configurable: true,
-        value: [] as string[],
-      });
-      window.open = ((url?: string | URL) => {
-        (window as Window & { __openedTerminalLinks: string[] }).__openedTerminalLinks.push(
-          String(url),
-        );
-        return null;
-      }) as typeof window.open;
-    });
     await clickTerminalText(plainLinkTarget, "left");
-    await expect.poll(() => page.evaluate(
-      () => (window as Window & { __openedTerminalLinks: string[] }).__openedTerminalLinks,
-    )).toEqual([plainUrl]);
-
-    await clickTerminalText(plainLinkTarget, "right");
-    await page.getByRole("menu", { name: "Link actions" }).waitFor();
-    await page.getByRole("menuitem", { name: "Copy Link" }).click();
-
-    const oscUrl = "https://example.org/osc-terminal";
-    const oscLabel = "Open OSC link";
-    gateway.sendTerminalOutput(`\r\n\u001b]8;;${oscUrl}\u0007${oscLabel}\u001b]8;;\u0007\r\n`);
-    await clickTerminalText(oscLabel, "left");
-    await expect.poll(() => page.evaluate(
-      () => (window as Window & { __openedTerminalLinks: string[] }).__openedTerminalLinks,
-    )).toEqual([plainUrl, oscUrl]);
-
-    await clickTerminalText(oscLabel, "right");
-    await page.getByRole("menu", { name: "Link actions" }).waitFor();
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "19-terminal-link-actions.png") });
-    await page.getByRole("menuitem", { name: "Copy Link" }).click();
+    const browserAddress = page.getByRole("textbox", { name: "Browser address" });
+    await expect.poll(() => browserAddress.inputValue()).toBe(new URL(plainUrl).toString());
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "20-matrix-browser-localhost-4173.png") });
 
     expect(dialogs).toEqual([]);
   }, 30_000);

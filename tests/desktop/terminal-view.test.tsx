@@ -4,8 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
+import { getAttachManager } from "@desktop/renderer/src/features/terminal/terminal-runtime";
 import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { browserRuntimeScope, useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
 import { useTerminalAppearance } from "@desktop/renderer/src/stores/terminal-appearance";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import {
@@ -140,13 +142,13 @@ vi.mock("@xterm/addon-webgl", () => ({
 }));
 
 vi.mock("@desktop/renderer/src/features/terminal/terminal-runtime", () => ({
-  getAttachManager: () => ({
+  getAttachManager: vi.fn(() => ({
     activeSessionName: null,
     attach: attachMock,
     cacheBuffer: vi.fn(),
     detachActive: vi.fn(),
     getCachedBuffer: vi.fn(() => null),
-  }),
+  })),
 }));
 
 describe("TerminalView session switching", () => {
@@ -176,6 +178,8 @@ describe("TerminalView session switching", () => {
       api: null,
     });
     useTabs.setState(useTabs.getInitialState(), true);
+    useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
+    vi.mocked(getAttachManager).mockClear();
     vi.stubGlobal(
       "ResizeObserver",
       class FakeResizeObserver {
@@ -444,12 +448,41 @@ describe("TerminalView session switching", () => {
 
     expect(primaryAllowed).toBe(false);
     expect(secondaryAllowed).toBe(false);
-    expect(open).toHaveBeenCalledOnce();
-    expect(open).toHaveBeenCalledWith(
-      "https://example.org/desktop-terminal",
-      "_blank",
-      "noopener,noreferrer",
+    expect(open).not.toHaveBeenCalled();
+    expect(useBrowserNavigation.getState().pending?.url).toBe("https://example.org/desktop-terminal");
+  });
+
+  it("keeps a mounted terminal link bound to the runtime that created it", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const sourceTerminal = createdTerminals.at(-1)!;
+    const sourceRuntimeScope = browserRuntimeScope({
+      platformHost: "https://platform.test",
+      handle: "operator",
+      runtimeSlot: "primary",
+      authGeneration: 1,
+    });
+
+    act(() => useConnection.setState({ runtimeSlot: "secondary" }));
+    expect(createdTerminals).toHaveLength(2);
+    expect(attachMock).toHaveBeenCalledTimes(2);
+    sourceTerminal.initialOptions.linkHandler?.activate(
+      { button: 0 },
+      "http://localhost:4173",
     );
+
+    expect(useBrowserNavigation.getState().pending).toMatchObject({
+      url: "http://localhost:4173/",
+      runtimeScope: sourceRuntimeScope,
+    });
+  });
+
+  it("does not cache an old runtime buffer into a replacement attach manager", () => {
+    const view = render(<TerminalView sessionName="alpha" />);
+    const callsBeforeUnmount = vi.mocked(getAttachManager).mock.calls.length;
+
+    view.unmount();
+
+    expect(vi.mocked(getAttachManager)).toHaveBeenCalledTimes(callsBeforeUnmount);
   });
 
   it("copies the xterm selection with the desktop copy shortcut", () => {

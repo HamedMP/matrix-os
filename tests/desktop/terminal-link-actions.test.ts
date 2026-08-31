@@ -8,8 +8,11 @@ import {
   copyDesktopTerminalLink,
   findDesktopTerminalLinkAtCell,
   findDesktopTerminalLinkAtPointer,
+  openDesktopTerminalLink,
   resolveDesktopTerminalLink,
 } from "@desktop/renderer/src/features/terminal/terminal-link-actions";
+import { browserRuntimeScope, useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
+import { useTabs } from "@desktop/renderer/src/stores/tabs";
 
 const LINK = {
   url: "https://example.org/final-check",
@@ -19,7 +22,11 @@ const LINK = {
 };
 
 describe("desktop terminal link actions", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
+    useTabs.setState(useTabs.getInitialState(), true);
+    vi.restoreAllMocks();
+  });
 
   it("keeps a secondary-button OSC activation inert", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
@@ -29,16 +36,39 @@ describe("desktop terminal link actions", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("opens a validated generic URL from a primary-button activation", () => {
+  it("opens a validated generic URL in Matrix Browser from a primary-button activation", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
 
     activateDesktopTerminalLink({ button: 0 }, LINK.url);
 
-    expect(open).toHaveBeenCalledWith(
-      LINK.url,
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(open).not.toHaveBeenCalled();
+    expect(useBrowserNavigation.getState().pending?.url).toBe(LINK.url);
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "browser", title: "Browser" }),
+    ]));
+  });
+
+  it("routes localhost dev previews through Matrix Browser", () => {
+    activateDesktopTerminalLink({ button: 0 }, "http://localhost:4173");
+
+    expect(useBrowserNavigation.getState().pending?.url).toBe("http://localhost:4173/");
+    expect(useTabs.getState().tabs.at(-1)).toMatchObject({ kind: "browser" });
+  });
+
+  it("uses the source terminal runtime when the selected runtime has changed", () => {
+    const sourceRuntimeScope = browserRuntimeScope({
+      platformHost: "https://matrix.example",
+      handle: "alice",
+      runtimeSlot: "primary",
+      authGeneration: 7,
+    });
+
+    openDesktopTerminalLink(LINK, sourceRuntimeScope);
+
+    expect(useBrowserNavigation.getState().pending).toMatchObject({
+      url: LINK.url,
+      runtimeScope: sourceRuntimeScope,
+    });
   });
 
   it("keeps credential-bearing and rejected provider-shaped URLs inert", () => {

@@ -21,7 +21,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
     const onSelectAll = vi.fn();
     render(
       <TerminalLinkContextMenu
-        menu={{ x: 120, y: 140, link: LINK, selection: "selected output" }}
+        menu={{ x: 120, y: 140, link: LINK, selection: "selected output", runtimeScope: "runtime-a" }}
         onClose={vi.fn()}
         onOpen={onOpen}
         onCopy={onCopy}
@@ -39,7 +39,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
 
     expect(onCopySelection).toHaveBeenCalledWith("selected output");
     expect(onSelectAll).toHaveBeenCalledOnce();
-    expect(onOpen).toHaveBeenCalledWith(LINK);
+    expect(onOpen).toHaveBeenCalledWith(LINK, "runtime-a");
     expect(onCopy).toHaveBeenCalledWith(LINK);
   });
 
@@ -50,6 +50,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
           x: 120,
           y: 140,
           selection: "",
+          runtimeScope: "runtime-a",
           link: {
             url: "https://auth.openai.com/codex/device",
             hostname: "auth.openai.com",
@@ -73,7 +74,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
     const onClose = vi.fn();
     render(
       <TerminalLinkContextMenu
-        menu={{ x: 120, y: 140, link: LINK, selection: "" }}
+        menu={{ x: 120, y: 140, link: LINK, selection: "", runtimeScope: "runtime-a" }}
         onClose={onClose}
         onOpen={vi.fn()}
         onCopy={vi.fn()}

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BrowserTab from "@desktop/renderer/src/features/browser/BrowserTab";
 import { invoke } from "@desktop/renderer/src/lib/operator";
 import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
 
 const mocks = vi.hoisted(() => ({ embedRender: vi.fn() }));
 
@@ -20,9 +21,11 @@ vi.mock("@desktop/renderer/src/features/embeds/EmbedHost", () => ({
 describe("BrowserTab", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     vi.mocked(invoke).mockReset();
     mocks.embedRender.mockReset();
     useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
+    useConnection.setState(useConnection.getInitialState(), true);
   });
 
   it("keeps loopback navigation inside the selected runtime embed", () => {
@@ -98,6 +101,147 @@ describe("BrowserTab", () => {
     expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
       .toBe("https://example.com/previous");
     expect(screen.getByTestId("embed").textContent).toBe("browser:https://example.com/previous");
+  });
+
+  it("does not restore a Browser session after the renderer session ends", () => {
+    const first = render(<BrowserTab active />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Browser address" }), {
+      target: { value: "http://localhost:4173" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    first.unmount();
+    window.sessionStorage.clear();
+
+    render(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("");
+    expect(screen.queryByTestId("embed")).toBeNull();
+  });
+
+  it("keeps persisted localhost sessions scoped to their Matrix runtime", () => {
+    useConnection.setState({
+      status: "signed-in",
+      handle: "alice",
+      platformHost: "https://matrix.example",
+      runtimeSlot: "primary",
+    });
+    useBrowserNavigation.getState().request("http://localhost:4173");
+    const view = render(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("http://localhost:4173/");
+
+    act(() => useConnection.setState({ runtimeSlot: "secondary" }));
+    view.rerender(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("");
+    expect(screen.queryByTestId("embed")).toBeNull();
+
+    act(() => useConnection.setState({ runtimeSlot: "primary" }));
+    view.rerender(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("http://localhost:4173/");
+
+    act(() => useConnection.setState({ authGeneration: 1 }));
+    view.rerender(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("");
+    expect(screen.queryByTestId("embed")).toBeNull();
+  });
+
+  it("keeps queued navigation for the runtime that requested it", () => {
+    useConnection.setState({
+      status: "signed-in",
+      handle: "alice",
+      platformHost: "https://matrix.example",
+      runtimeSlot: "primary",
+      authGeneration: 4,
+    });
+    useBrowserNavigation.getState().request("http://localhost:4173");
+    useConnection.setState({ runtimeSlot: "secondary" });
+    const view = render(<BrowserTab active />);
+
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("");
+    expect(useBrowserNavigation.getState().pending?.url).toBe("http://localhost:4173/");
+
+    act(() => useConnection.setState({ runtimeSlot: "primary" }));
+    view.rerender(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("http://localhost:4173/");
+    expect(useBrowserNavigation.getState().pending).toBeNull();
+  });
+
+  it("queues launches from multiple runtimes without overwriting either one", () => {
+    useConnection.setState({
+      status: "signed-in",
+      handle: "alice",
+      platformHost: "https://matrix.example",
+      runtimeSlot: "primary",
+      authGeneration: 4,
+    });
+    useBrowserNavigation.getState().request("http://localhost:4173");
+    useConnection.setState({ runtimeSlot: "secondary" });
+    useBrowserNavigation.getState().request("http://localhost:8080");
+    const view = render(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("http://localhost:8080/");
+
+    act(() => useConnection.setState({ runtimeSlot: "primary" }));
+    view.rerender(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("http://localhost:4173/");
+    expect(useBrowserNavigation.getState().pending).toBeNull();
+  });
+
+  it("takes a queued launch for the active runtime even when another runtime is pending", () => {
+    useConnection.setState({
+      status: "signed-in",
+      handle: "alice",
+      platformHost: "https://matrix.example",
+      runtimeSlot: "primary",
+      authGeneration: 4,
+    });
+    useBrowserNavigation.getState().request("http://localhost:4173");
+    useConnection.setState({ runtimeSlot: "secondary" });
+    useBrowserNavigation.getState().request("http://localhost:8080");
+    useConnection.setState({ runtimeSlot: "primary" });
+    const view = render(<BrowserTab active />);
+
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("http://localhost:4173/");
+
+    act(() => useConnection.setState({ runtimeSlot: "secondary" }));
+    view.rerender(<BrowserTab active />);
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Browser address" }).value)
+      .toBe("http://localhost:8080/");
+    expect(useBrowserNavigation.getState().pending).toBeNull();
+  });
+
+  it("retains two accepted launches queued from the same runtime", () => {
+    useBrowserNavigation.getState().request("https://example.com/first");
+    useBrowserNavigation.getState().request("https://example.com/second");
+
+    expect([
+      ...useBrowserNavigation.getState().queued,
+      useBrowserNavigation.getState().pending,
+    ].filter(Boolean).map((request) => request?.url)).toEqual([
+      "https://example.com/first",
+      "https://example.com/second",
+    ]);
+  });
+
+  it("rejects queue overflow without discarding an accepted launch", () => {
+    const requests = Array.from({ length: 8 }, (_, index) =>
+      useBrowserNavigation.getState().request(`https://example.com/${index}`));
+
+    expect(requests.every((requestId) => requestId !== null)).toBe(true);
+    expect(useBrowserNavigation.getState().request("https://example.com/overflow")).toBeNull();
+    expect([
+      ...useBrowserNavigation.getState().queued,
+      useBrowserNavigation.getState().pending,
+    ].filter(Boolean).map((request) => request?.url)).toEqual(
+      Array.from({ length: 8 }, (_, index) => `https://example.com/${index}`),
+    );
   });
 
   it("offers browser session settings and explains password-vault safety", () => {

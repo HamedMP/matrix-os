@@ -4,6 +4,7 @@ import {
   resolveTerminalLink,
   type TerminalLinkEntry,
 } from "@matrix-os/contracts";
+import { openInMatrixBrowser } from "../browser/open-in-matrix-browser";
 
 export type { TerminalLinkEntry } from "@matrix-os/contracts";
 
@@ -87,8 +88,8 @@ export function resolveDesktopTerminalLink(rawUrl: string): TerminalLinkEntry | 
   return resolveTerminalLink(rawUrl);
 }
 
-export function openDesktopTerminalLink(link: TerminalLinkEntry): void {
-  window.open(link.url, "_blank", "noopener,noreferrer");
+export function openDesktopTerminalLink(link: TerminalLinkEntry, runtimeScope?: string): void {
+  openInMatrixBrowser(link.url, runtimeScope);
 }
 
 function fallbackCopy(text: string): void {
@@ -137,10 +138,11 @@ export function copyDesktopTerminalLink(link: TerminalLinkEntry): void {
 export function activateDesktopTerminalLink(
   event: Pick<MouseEvent, "button">,
   rawUrl: string,
+  runtimeScope?: string,
 ): void {
   if (event.button !== 0) return;
   const link = resolveDesktopTerminalLink(rawUrl);
-  if (link) openDesktopTerminalLink(link);
+  if (link) openDesktopTerminalLink(link, runtimeScope);
 }
 
 export function desktopTerminalCellFromPointer(

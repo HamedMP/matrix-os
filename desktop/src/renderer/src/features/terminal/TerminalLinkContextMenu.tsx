@@ -8,12 +8,13 @@ export interface DesktopTerminalMenuState {
   y: number;
   link: TerminalLinkEntry | null;
   selection: string;
+  runtimeScope: string;
 }
 
 interface TerminalLinkContextMenuProps {
   menu: DesktopTerminalMenuState | null;
   onClose: () => void;
-  onOpen: (link: TerminalLinkEntry) => void;
+  onOpen: (link: TerminalLinkEntry, runtimeScope: string) => void;
   onCopy: (link: TerminalLinkEntry) => void;
   onCopySelection: (selection: string) => void;
   onSelectAll: () => void;
@@ -128,7 +129,10 @@ export default function TerminalLinkContextMenu({
             type="button"
             role="menuitem"
             aria-label={openLabel(menu.link)}
-            onClick={() => perform(onOpen)}
+            onClick={() => {
+              if (menu.link) onOpen(menu.link, menu.runtimeScope);
+              onClose();
+            }}
             className={itemClass}
           >
             <ExternalLink aria-hidden="true" className="size-4" style={{ color: "var(--text-tertiary)" }} />

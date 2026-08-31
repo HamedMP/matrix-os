@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
+import { browserRuntimeScope } from "../../stores/browser-navigation";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
@@ -69,6 +70,11 @@ export default function TerminalView({
   onRecreate,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
+  const platformHost = useConnection((state) => state.platformHost);
+  const handle = useConnection((state) => state.handle);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  const terminalRuntimeScope = browserRuntimeScope({ platformHost, handle, runtimeSlot, authGeneration });
   const terminalThemeId = useTerminalAppearance((state) => state.themeId);
   const terminalTheme = getDesktopTerminalXtermTheme(terminalThemeId);
   const latestTerminalThemeIdRef = useRef(terminalThemeId);
@@ -114,7 +120,7 @@ export default function TerminalView({
       scrollback: 5000,
       theme,
       linkHandler: {
-        activate: activateDesktopTerminalLink,
+        activate: (event, text) => activateDesktopTerminalLink(event, text, terminalRuntimeScope),
         hover: (_event, text) => {
           hoveredLinkRef.current = resolveDesktopTerminalLink(text);
         },
@@ -166,7 +172,7 @@ export default function TerminalView({
       if (!link) return;
       event.preventDefault();
       event.stopPropagation();
-      if (event.button === 0) openDesktopTerminalLink(link);
+      if (event.button === 0) openDesktopTerminalLink(link, terminalRuntimeScope);
     };
     const onTerminalContextMenu = (event: MouseEvent) => {
       const link = linkAtPointer(event);
@@ -177,6 +183,7 @@ export default function TerminalView({
         y: event.clientY,
         link,
         selection: terminal.getSelection(),
+        runtimeScope: terminalRuntimeScope,
       });
     };
     host.addEventListener("mouseup", onLinkMouseUp, true);
@@ -187,7 +194,8 @@ export default function TerminalView({
       console.warn("[terminal] webgl unavailable:", err instanceof Error ? err.message : String(err));
     }
     fit.fit();
-    const cached = getAttachManager().getCachedBuffer(sessionName);
+    const manager = getAttachManager();
+    const cached = manager.getCachedBuffer(sessionName);
     if (cached) terminal.write(cached);
     termRef.current = terminal;
     fitRef.current = fit;
@@ -215,7 +223,6 @@ export default function TerminalView({
         cancelAnimationFrame(rafId);
         rafId = null;
       }
-      const manager = getAttachManager();
       try {
         manager.cacheBuffer(sessionName, serialize.serialize());
       } catch (err: unknown) {
@@ -225,7 +232,7 @@ export default function TerminalView({
       terminal.dispose();
       termRef.current = null;
     };
-  }, [closeTerminalContextMenu, sessionName]);
+  }, [closeTerminalContextMenu, sessionName, terminalRuntimeScope]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -288,7 +295,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, closeTerminalContextMenu, leaseAttempt]);
+  }, [sessionName, chatId, active, closeTerminalContextMenu, leaseAttempt, terminalRuntimeScope]);
 
   useEffect(() => {
     const host = hostRef.current;
