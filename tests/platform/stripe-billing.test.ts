@@ -272,7 +272,7 @@ describe('platform/stripe-billing', () => {
   });
 
   it('uses the newest mature Stripe API version allowed by package policy', () => {
-    expect(MATRIX_STRIPE_API_VERSION).toBe('2026-04-22.dahlia');
+    expect(MATRIX_STRIPE_API_VERSION).toBe('2026-07-29.dahlia');
   });
 
   it('bounds Stripe API calls to the platform API timeout budget', () => {
