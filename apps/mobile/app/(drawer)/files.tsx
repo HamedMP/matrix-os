@@ -15,10 +15,12 @@ import { MockPage } from "@/components/mock-shell/MockPage";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { Spacer } from "@/components/ui";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export default function FilesScreen() {
   const router = useRouter();
-  const { computer, entries, isPending, isError } = useComputerDirectory("");
+  const { computer, entries, isPending, isError, refresh } = useComputerDirectory("");
+  const pullToRefresh = usePullToRefresh(refresh);
   const sectionMeta = isPending
     ? "Loading…"
     : isError
@@ -27,7 +29,12 @@ export default function FilesScreen() {
 
   return (
     <View style={styles.screen}>
-      <MockPage title="Files" subtitle={`Everything on ${computer?.handle ?? "your computer"}`}>
+      <MockPage
+        title="Files"
+        subtitle={`Everything on ${computer?.handle ?? "your computer"}`}
+        refreshing={pullToRefresh.refreshing}
+        onRefresh={pullToRefresh.onRefresh}
+      >
         <MockSearchField placeholder="Search files" />
         <Spacer size="2xl" />
         <View testID="files-section-heading" style={styles.sectionHeading}>

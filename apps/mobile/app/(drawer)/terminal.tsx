@@ -29,6 +29,7 @@ import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { TerminalAgentLogo, type MobileTerminalAgent } from "@/components/terminal/TerminalAgentLogo";
 import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components/ui";
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { isValidEditableTerminalSessionName, type TerminalSession } from "@/lib/requests";
 import { fonts, palette, semanticColors } from "@/lib/theme";
 
@@ -57,7 +58,9 @@ export default function TerminalScreen() {
     renameSession,
     deleteSession,
     isMutating = false,
+    refresh,
   } = useComputerTerminals();
+  const pullToRefresh = usePullToRefresh(refresh);
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredSessions = normalizedQuery
     ? sessions.filter((session) => session.name.toLowerCase().includes(normalizedQuery))
@@ -154,7 +157,12 @@ export default function TerminalScreen() {
 
   return (
     <View style={styles.screen}>
-      <MockPage title="Terminal" subtitle="Persistent sessions on this computer">
+      <MockPage
+        title="Terminal"
+        subtitle="Persistent sessions on this computer"
+        refreshing={pullToRefresh.refreshing}
+        onRefresh={pullToRefresh.onRefresh}
+      >
         <MockSearchField
           placeholder="Search sessions"
           value={searchQuery}

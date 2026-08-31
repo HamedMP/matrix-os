@@ -79,5 +79,11 @@ export function useComputerDirectory(path: string) {
     createFolder: (name: string) => createEntryMutation.mutateAsync({ name, type: "directory" }),
     createFile: (name: string) => createEntryMutation.mutateAsync({ name, type: "file" }),
     isCreating: createEntryMutation.isPending,
+    refresh: async () => {
+      await Promise.all([
+        activeComputer.refetch(),
+        ...(computer ? [directory.refetch()] : []),
+      ]);
+    },
   };
 }

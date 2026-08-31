@@ -105,5 +105,11 @@ export function useComputerTerminals() {
     ),
     deleteSession: (name: string) => deleteMutation.mutateAsync(name),
     isMutating: createMutation.isPending || renameMutation.isPending || deleteMutation.isPending,
+    refresh: async () => {
+      await Promise.all([
+        activeComputer.refetch(),
+        ...(computer ? [terminals.refetch()] : []),
+      ]);
+    },
   };
 }

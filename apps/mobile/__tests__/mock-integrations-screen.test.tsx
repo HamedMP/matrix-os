@@ -4,6 +4,7 @@ const mockRefreshConnection = jest.fn();
 const mockDeleteConnection = jest.fn();
 const mockStartConnection = jest.fn();
 const mockSyncConnections = jest.fn();
+const mockRefreshIntegrations = jest.fn();
 const mockSwipeableClose = jest.fn();
 
 jest.mock("react-native-gesture-handler", () => {
@@ -68,10 +69,27 @@ describe("mock integrations screen", () => {
       deleteConnection: mockDeleteConnection,
       startConnection: mockStartConnection,
       syncConnections: mockSyncConnections,
+      refresh: mockRefreshIntegrations,
       isMutating: false,
       refreshingConnectionId: null,
       deletingConnectionId: null,
     });
+  });
+
+  it("holds the native refresh control open until integrations finish refreshing", async () => {
+    let resolveRefresh: (() => void) | undefined;
+    mockRefreshIntegrations.mockReturnValue(new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    render(<IntegrationsScreen />);
+
+    act(() => screen.getByTestId("mock-page-refresh-control").props.onRefresh());
+
+    expect(mockRefreshIntegrations).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("mock-page-refresh-control").props.refreshing).toBe(true);
+
+    await act(async () => resolveRefresh?.());
+    expect(screen.getByTestId("mock-page-refresh-control").props.refreshing).toBe(false);
   });
 
   it("uses spacers instead of vertical padding or margins", () => {

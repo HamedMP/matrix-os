@@ -40,5 +40,11 @@ export function useComputerFilePreview(path: string) {
       || (Boolean(computer) && preview.isPending)
     ),
     isError: activeComputer.isError || preview.isError,
+    refresh: async () => {
+      await Promise.all([
+        activeComputer.refetch(),
+        ...(computer && path ? [preview.refetch()] : []),
+      ]);
+    },
   };
 }

@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Text } from "react-native";
+import { RefreshControl, ScrollView, StyleSheet, Text } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import File01Icon from "@hugeicons/core-free-icons/File01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
@@ -8,18 +8,31 @@ import { Spacer } from "@/components/ui";
 import { FileTileSkeletonGrid, GridTile, GridTileGrid } from "./MockControls";
 import { mockColors, mockFonts } from "./theme";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export function FolderWorkspace({ segments }: { segments: string[] }) {
   const router = useRouter();
   const currentPath = segments.join("/");
   const title = segments.at(-1) ?? "Files";
-  const { entries, isPending, isError } = useComputerDirectory(currentPath);
+  const { entries, isPending, isError, refresh } = useComputerDirectory(currentPath);
+  const pullToRefresh = usePullToRefresh(refresh);
 
   return (
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
+      alwaysBounceVertical
+      refreshControl={(
+        <RefreshControl
+          testID="file-browser-refresh-control"
+          refreshing={pullToRefresh.refreshing}
+          onRefresh={pullToRefresh.onRefresh}
+          tintColor={mockColors.ink}
+          colors={[mockColors.ink]}
+          progressBackgroundColor={mockColors.canvas}
+        />
+      )}
     >
       <Stack.Screen options={{ title }} />
       <Spacer size="lg" />

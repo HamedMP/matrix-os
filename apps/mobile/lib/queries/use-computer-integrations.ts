@@ -117,5 +117,11 @@ export function useComputerIntegrations() {
       ? startConnectionMutation.variables
       : null,
     isSyncing: syncMutation.isPending,
+    refresh: async () => {
+      await Promise.all([
+        activeComputer.refetch(),
+        ...(computer ? [integrations.refetch()] : []),
+      ]);
+    },
   };
 }

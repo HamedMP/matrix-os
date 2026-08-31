@@ -24,6 +24,7 @@ import { Icon, Spacer } from "@/components/ui";
 import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations";
 import type { IntegrationService } from "@/lib/requests";
 import { palette } from "@/lib/theme";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export default function IntegrationsScreen() {
   const router = useRouter();
@@ -35,7 +36,9 @@ export default function IntegrationsScreen() {
     startConnection,
     syncConnections,
     connectingServiceId: startingServiceId,
+    refresh,
   } = useComputerIntegrations();
+  const pullToRefresh = usePullToRefresh(refresh);
   const [connectingServiceId, setConnectingServiceId] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const previousConnectionIds = useRef(new Set<string>());
@@ -119,7 +122,12 @@ export default function IntegrationsScreen() {
   }, [connectingServiceId]);
 
   return (
-    <MockPage title="Integrations" subtitle="Capabilities Matrix can use on your behalf">
+    <MockPage
+      title="Integrations"
+      subtitle="Capabilities Matrix can use on your behalf"
+      refreshing={pullToRefresh.refreshing}
+      onRefresh={pullToRefresh.onRefresh}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="View installed integrations"

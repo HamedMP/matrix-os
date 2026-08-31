@@ -11,6 +11,8 @@ const mockParams = {
 const mockStackScreens: Array<{ name?: string; options?: Record<string, unknown> }> = [];
 const mockUseComputerDirectory = jest.fn();
 const mockUseComputerFilePreview = jest.fn();
+const mockRefreshDirectory = jest.fn();
+const mockRefreshFilePreview = jest.fn();
 
 jest.mock("expo-image", () => {
   const React = require("react");
@@ -83,12 +85,48 @@ describe("file browser modal stack", () => {
       ],
       isPending: false,
       isError: false,
+      refresh: mockRefreshDirectory,
     });
     mockUseComputerFilePreview.mockReturnValue({
       preview: { kind: "text", content: "Hello from the real file" },
       isPending: false,
       isError: false,
+      refresh: mockRefreshFilePreview,
     });
+  });
+
+  it("holds folder modal pull-to-refresh until the directory refresh completes", async () => {
+    let resolveRefresh: (() => void) | undefined;
+    mockRefreshDirectory.mockReturnValue(new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    render(<FileBrowserScreen />);
+
+    React.act(() => screen.getByTestId("file-browser-refresh-control").props.onRefresh());
+
+    expect(mockRefreshDirectory).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("file-browser-refresh-control").props.refreshing).toBe(true);
+
+    await React.act(async () => resolveRefresh?.());
+    expect(screen.getByTestId("file-browser-refresh-control").props.refreshing).toBe(false);
+  });
+
+  it("holds file preview pull-to-refresh until the preview refresh completes", async () => {
+    let resolveRefresh: (() => void) | undefined;
+    mockParams.name = "notes.md";
+    mockParams.path = "Projects/notes.md";
+    mockRefreshFilePreview.mockReturnValue(new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    render(<FileDetailScreen />);
+
+    React.act(() => screen.getByTestId("file-preview-refresh-control").props.onRefresh());
+
+    expect(mockRefreshFilePreview).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("file-preview-refresh-control").props.refreshing).toBe(true);
+
+    await React.act(async () => resolveRefresh?.());
+    expect(screen.getByTestId("file-preview-refresh-control").props.refreshing).toBe(false);
   });
 
   it("pushes deeper folders inside the existing modal stack", () => {

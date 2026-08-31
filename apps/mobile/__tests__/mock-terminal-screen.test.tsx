@@ -5,6 +5,7 @@ const mockUseComputerTerminals = jest.fn();
 const mockCreateSession = jest.fn();
 const mockRenameSession = jest.fn();
 const mockDeleteSession = jest.fn();
+const mockRefreshTerminals = jest.fn();
 
 jest.mock("react-native-gesture-handler", () => {
   const React = require("react");
@@ -60,11 +61,28 @@ describe("drawer terminal screen", () => {
       renameSession: mockRenameSession,
       deleteSession: mockDeleteSession,
       createSession: mockCreateSession,
+      refresh: mockRefreshTerminals,
     });
   });
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it("holds the native refresh control open until terminals finish refreshing", async () => {
+    let resolveRefresh: (() => void) | undefined;
+    mockRefreshTerminals.mockReturnValue(new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    render(<TerminalScreen />);
+
+    React.act(() => screen.getByTestId("mock-page-refresh-control").props.onRefresh());
+
+    expect(mockRefreshTerminals).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("mock-page-refresh-control").props.refreshing).toBe(true);
+
+    await React.act(async () => resolveRefresh?.());
+    expect(screen.getByTestId("mock-page-refresh-control").props.refreshing).toBe(false);
   });
 
   it("renders VPS sessions and uses semantic status colors", () => {

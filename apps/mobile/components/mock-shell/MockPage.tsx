@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Spacer } from "@/components/ui";
 import { mockColors, mockFonts } from "./theme";
@@ -9,6 +9,8 @@ interface MockPageProps {
   subtitle?: string;
   children: ReactNode;
   scroll?: boolean;
+  refreshing?: boolean;
+  onRefresh?: () => void;
 }
 
 export function MockPage({
@@ -16,6 +18,8 @@ export function MockPage({
   subtitle,
   children,
   scroll = true,
+  refreshing = false,
+  onRefresh,
 }: MockPageProps) {
   const content = (
     <View testID="mock-page-content" style={styles.content}>
@@ -38,7 +42,21 @@ export function MockPage({
   return (
     <View style={styles.screen}>
       {scroll ? (
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          alwaysBounceVertical={Boolean(onRefresh)}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={onRefresh ? (
+            <RefreshControl
+              testID="mock-page-refresh-control"
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={mockColors.ink}
+              colors={[mockColors.ink]}
+              progressBackgroundColor={mockColors.canvas}
+            />
+          ) : undefined}
+        >
           {content}
         </ScrollView>
       ) : content}

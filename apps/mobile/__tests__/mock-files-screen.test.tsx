@@ -4,6 +4,7 @@ const mockPush = jest.fn();
 const mockUseComputerDirectory = jest.fn();
 const mockCreateFolder = jest.fn();
 const mockCreateFile = jest.fn();
+const mockRefreshDirectory = jest.fn();
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -60,7 +61,24 @@ describe("mock files screen", () => {
       isError: false,
       createFolder: mockCreateFolder,
       createFile: mockCreateFile,
+      refresh: mockRefreshDirectory,
     });
+  });
+
+  it("holds the native refresh control open until files finish refreshing", async () => {
+    let resolveRefresh: (() => void) | undefined;
+    mockRefreshDirectory.mockReturnValue(new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    render(<FilesScreen />);
+
+    React.act(() => screen.getByTestId("mock-page-refresh-control").props.onRefresh());
+
+    expect(mockRefreshDirectory).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("mock-page-refresh-control").props.refreshing).toBe(true);
+
+    await React.act(async () => resolveRefresh?.());
+    expect(screen.getByTestId("mock-page-refresh-control").props.refreshing).toBe(false);
   });
 
   it("opens a folder as one modal workspace", () => {
