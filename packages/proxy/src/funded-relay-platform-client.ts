@@ -12,7 +12,10 @@ import {
   type FundedAiStartResponse,
 } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
-import type { FundedRelayConfig } from "./funded-relay-config.js";
+import {
+  normalizeFundedPlatformOrigin,
+  type FundedRelayConfig,
+} from "./funded-relay-config.js";
 
 export class FundedControlPlaneError extends Error {
   constructor(readonly status: number) {
@@ -71,23 +74,29 @@ export function createFundedPlatformClient(options: Pick<
   FundedRelayConfig,
   "platformBaseUrl" | "relayControlToken" | "platformTimeoutMs" | "maxControlResponseBytes"
 > & { fetch: typeof fetch }): FundedPlatformClient {
+  const platformBaseUrl = normalizeFundedPlatformOrigin(options.platformBaseUrl);
+  const relayControlToken = options.relayControlToken;
+  const platformTimeoutMs = options.platformTimeoutMs;
+  const maxControlResponseBytes = options.maxControlResponseBytes;
+  const fetchImpl = options.fetch;
+
   async function call<T>(
     action: "authorize" | "check" | "finalize" | "release" | "start",
     body: unknown,
     schema: z.ZodType<T>,
     lifetimeSignal: AbortSignal,
   ): Promise<T> {
-    const response = await options.fetch(`${options.platformBaseUrl}/internal/ai/funded/${action}`, {
+    const response = await fetchImpl(`${platformBaseUrl}/internal/ai/funded/${action}`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${options.relayControlToken}`,
+        authorization: `Bearer ${relayControlToken}`,
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
       redirect: "error",
-      signal: AbortSignal.any([lifetimeSignal, AbortSignal.timeout(options.platformTimeoutMs)]),
+      signal: AbortSignal.any([lifetimeSignal, AbortSignal.timeout(platformTimeoutMs)]),
     });
-    const text = await readBoundedText(response, options.maxControlResponseBytes);
+    const text = await readBoundedText(response, maxControlResponseBytes);
     if (!response.ok) throw new FundedControlPlaneError(response.status);
     let parsed: unknown;
     try {
