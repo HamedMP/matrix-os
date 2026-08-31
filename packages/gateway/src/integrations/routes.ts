@@ -1016,20 +1016,29 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // DELETE /:id -- disconnect service
   // -----------------------------------------------------------------------
 
-  app.delete("/:id", async (c) => {
+  app.delete("/:id", bodyLimit({ maxSize: 1024 }), async (c) => {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
 
     const id = c.req.param("id");
     if (!UUID_RE.test(id)) return c.json({ error: "Invalid ID" }, 400);
-    if (mcpPresetBroker && await mcpPresetBroker.disconnect(uid, id)) {
-      emit({ type: "integration:disconnected", service: "granola", id });
-      return c.json({ ok: true });
-    }
     const result = await requireOwnedService(c, id, uid);
     if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
-    if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
+
+    if (result === null) {
+      if (!mcpPresetBroker) return c.json({ error: "Not found" }, 404);
+      try {
+        if (await mcpPresetBroker.disconnect(uid, id)) {
+          emit({ type: "integration:disconnected", service: "granola", id });
+          return c.json({ ok: true });
+        }
+      } catch (err: unknown) {
+        console.error("[integrations] MCP preset disconnect error:", err);
+        return c.json({ error: "Integration service unavailable" }, 503);
+      }
+      return c.json({ error: "Not found" }, 404);
+    }
 
     try {
       await pipedream.revokeAccount(result.pipedream_account_id);

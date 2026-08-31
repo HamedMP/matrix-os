@@ -647,6 +647,95 @@ describe("Integration Routes", () => {
   // -----------------------------------------------------------------------
 
   describe("DELETE /:id", () => {
+    it("rejects oversized DELETE bodies before probing either connector", async () => {
+      const disconnect = vi.fn().mockResolvedValue(false);
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect,
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request(
+        "/api/integrations/00000000-0000-0000-0000-000000000000",
+        {
+          method: "DELETE",
+          headers: { "content-length": "2048" },
+          body: "x".repeat(2048),
+        },
+      );
+
+      expect(res.status).toBe(413);
+      expect(disconnect).not.toHaveBeenCalled();
+      expect(pipedream.revokeAccount).not.toHaveBeenCalled();
+    });
+
+    it("does not probe the MCP broker when disconnecting a Pipedream account", async () => {
+      const svc = await db.connectService({
+        userId,
+        service: "github",
+        pipedreamAccountId: "pd_acc_broker_independent",
+        accountLabel: "Broker Independent",
+        scopes: ["repo"],
+      });
+      const disconnect = vi.fn().mockRejectedValue(new Error("custom MCP database unavailable"));
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect,
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request(`/api/integrations/${svc.id}`, { method: "DELETE" });
+
+      expect(res.status).toBe(200);
+      expect(disconnect).not.toHaveBeenCalled();
+      expect(pipedream.revokeAccount).toHaveBeenCalledWith("pd_acc_broker_independent");
+    });
+
+    it("maps MCP broker disconnect failures to a generic service error", async () => {
+      const disconnect = vi.fn().mockRejectedValue(new Error("custom MCP database unavailable"));
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect,
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request(
+        "/api/integrations/00000000-0000-0000-0000-000000000000",
+        { method: "DELETE" },
+      );
+
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: "Integration service unavailable" });
+      expect(disconnect).toHaveBeenCalledWith(userId, "00000000-0000-0000-0000-000000000000");
+    });
+
     it("disconnects a service and revokes Pipedream credentials", async () => {
       const svc = await db.connectService({
         userId,

@@ -1,8 +1,4 @@
-import type {
-  IntegrationActionRisk,
-  ServiceAction,
-  ServiceDefinition,
-} from "./types.js";
+import type { ServiceAction, ServiceDefinition } from "./types.js";
 import { EXPANSION_SERVICE_REGISTRY } from "./registry-expansion.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 
@@ -88,27 +84,11 @@ function linearGraphqlBody(query: string, variables?: Record<string, unknown>): 
   return variables ? { query, variables } : { query };
 }
 
-type RegistryActionInput = Omit<ServiceAction, "risk"> & { risk?: IntegrationActionRisk };
 type RegistryServiceInput = Omit<ServiceDefinition, "actions" | "connectorKind"> & {
   connectorKind?: ServiceDefinition["connectorKind"];
-  actions: Record<string, RegistryActionInput>;
+  actions: ServiceDefinition["actions"];
 };
 
-const WRITE_ACTIONS = new Set([
-  "gmail.send_email",
-  "google_calendar.create_event",
-  "google_calendar.update_event",
-  "google_drive.upload_file",
-  "google_drive.share_file",
-  "github.create_issue",
-  "linear.create_issue",
-  "linear.update_issue",
-  "linear.comment_issue",
-  "linear.create_workflow_state",
-  "slack.send_message",
-  "slack.react",
-  "discord.send_message",
-]);
 function defineServiceRegistry(
   input: Record<string, RegistryServiceInput>,
 ): Record<string, ServiceDefinition> {
@@ -117,12 +97,6 @@ function defineServiceRegistry(
     {
       ...service,
       connectorKind: service.connectorKind ?? "pipedream",
-      actions: Object.fromEntries(Object.entries(service.actions).map(([actionId, action]) => {
-        const key = `${serviceId}.${actionId}`;
-        const risk = action.risk
-          ?? (WRITE_ACTIONS.has(key) ? "write" : "read");
-        return [actionId, { ...action, risk }];
-      })),
     },
   ])) as Record<string, ServiceDefinition>;
 }
@@ -138,6 +112,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     actions: {
       list_messages: {
         description: "List recent email messages",
+        risk: "read",
         params: {
           query: { type: "string" },
           maxResults: { type: "number" },
@@ -153,6 +128,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       get_message: {
         description: "Get a specific email message by ID",
+        risk: "read",
         params: {
           messageId: { type: "string", required: true },
         },
@@ -175,6 +151,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // CR/LF in the body is legitimate message content.
       send_email: {
         description: "Send an email",
+        risk: "write",
         params: {
           to: { type: "string", required: true },
           subject: { type: "string", required: true },
@@ -199,6 +176,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       search: {
         description: "Search emails by query",
+        risk: "read",
         params: {
           query: { type: "string", required: true },
           maxResults: { type: "number" },
@@ -214,6 +192,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       list_labels: {
         description: "List all email labels",
+        risk: "read",
         params: {},
         directApi: {
           method: "GET",
@@ -236,6 +215,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // and a /calendars/list call to enumerate.
       list_events: {
         description: "List calendar events",
+        risk: "read",
         params: {
           timeMin: { type: "string" },
           timeMax: { type: "string" },
@@ -259,6 +239,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // and remap to {date: ...} all-day events here.
       create_event: {
         description: "Create a new calendar event",
+        risk: "write",
         params: {
           summary: { type: "string", required: true },
           start: { type: "string", required: true },
@@ -283,6 +264,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // forwarded.
       update_event: {
         description: "Update an existing calendar event",
+        risk: "write",
         params: {
           eventId: { type: "string", required: true },
           summary: { type: "string" },
@@ -316,6 +298,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // language. If both are absent, returns the user's recent files.
       list_files: {
         description: "List files in Google Drive",
+        risk: "read",
         params: {
           query: { type: "string" },
           maxResults: { type: "number" },
@@ -341,6 +324,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // would need a separate `download_file` action we haven't shipped.
       get_file: {
         description: "Get file metadata by ID",
+        risk: "read",
         params: {
           fileId: { type: "string", required: true },
         },
@@ -366,6 +350,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // integrations skill at home/.agents/skills/matrix-integrations/SKILL.md.
       upload_file: {
         description: "Upload a file to Google Drive (requires paid Pipedream plan)",
+        risk: "write",
         params: {
           name: { type: "string", required: true },
           content: { type: "string", required: true },
@@ -379,6 +364,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // want a notification, they can paste the link manually.
       share_file: {
         description: "Share a file with another user",
+        risk: "write",
         params: {
           fileId: { type: "string", required: true },
           email: { type: "string", required: true },
@@ -417,6 +403,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // active repos surface first; matches what `gh repo list` does.
       list_repos: {
         description: "List repositories",
+        risk: "read",
         params: {
           sort: { type: "string" },
           per_page: { type: "number" },
@@ -435,6 +422,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // issues should filter on `pull_request === null` client-side.
       list_issues: {
         description: "List issues for a repository (use owner/repo format)",
+        risk: "read",
         params: {
           repo: { type: "string", required: true },
           state: { type: "string" },
@@ -452,6 +440,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // split here. Empty string -> no labels, not a single empty label.
       create_issue: {
         description: "Create a new issue (use owner/repo format)",
+        risk: "write",
         params: {
           repo: { type: "string", required: true },
           title: { type: "string", required: true },
@@ -473,6 +462,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // GitHub API: GET /repos/{owner}/{repo}/pulls.
       list_prs: {
         description: "List pull requests for a repository (use owner/repo format)",
+        risk: "read",
         params: {
           repo: { type: "string", required: true },
           state: { type: "string" },
@@ -489,6 +479,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // default is unread only.
       get_notifications: {
         description: "Get notifications",
+        risk: "read",
         params: {
           all: { type: "boolean" },
         },
@@ -513,6 +504,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     actions: {
       viewer: {
         description: "Get the connected Linear user",
+        risk: "read",
         params: {},
         directApi: {
           method: "POST",
@@ -526,6 +518,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       list_teams: {
         description: "List Linear teams",
+        risk: "read",
         params: {
           first: { type: "number" },
         },
@@ -543,6 +536,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       list_projects: {
         description: "List Linear projects",
+        risk: "read",
         params: {
           first: { type: "number" },
           after: { type: "string" },
@@ -572,6 +566,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       list_workflow_states: {
         description: "List workflow states for a Linear team",
+        risk: "read",
         params: {
           teamId: { type: "string", required: true },
           first: { type: "number" },
@@ -593,6 +588,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       list_issues: {
         description: "List Linear issues, optionally filtered by team, project, or state name",
+        risk: "read",
         params: {
           first: { type: "number" },
           teamId: { type: "string" },
@@ -670,6 +666,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       create_issue: {
         description: "Create a Linear issue",
+        risk: "write",
         params: {
           teamId: { type: "string", required: true },
           title: { type: "string", required: true },
@@ -709,6 +706,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       update_issue: {
         description: "Update a Linear issue",
+        risk: "write",
         params: {
           issueId: { type: "string", required: true },
           title: { type: "string" },
@@ -743,6 +741,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       comment_issue: {
         description: "Add a comment to a Linear issue",
+        risk: "write",
         params: {
           issueId: { type: "string", required: true },
           body: { type: "string", required: true },
@@ -767,6 +766,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       create_workflow_state: {
         description: "Create a Linear workflow state for Symphony",
+        risk: "write",
         params: {
           teamId: { type: "string", required: true },
           name: { type: "string", required: true },
@@ -817,6 +817,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // channel name like "#general" -- Slack resolves both.
       send_message: {
         description: "Send a message to a channel",
+        risk: "write",
         params: {
           channel: { type: "string", required: true },
           text: { type: "string", required: true },
@@ -832,6 +833,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       list_channels: {
         description: "List available channels",
+        risk: "read",
         params: {
           limit: { type: "number" },
         },
@@ -847,6 +849,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
       list_messages: {
         description: "List messages in a channel",
+        risk: "read",
         params: {
           channel: { type: "string", required: true },
           limit: { type: "number" },
@@ -866,6 +869,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // they need to reconnect with `search:read` user-scope.
       search: {
         description: "Search messages",
+        risk: "read",
         params: {
           query: { type: "string", required: true },
         },
@@ -881,6 +885,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // colons -- ":thumbsup:" should be passed as "thumbsup".
       react: {
         description: "Add a reaction to a message (emoji name without colons)",
+        risk: "write",
         params: {
           channel: { type: "string", required: true },
           timestamp: { type: "string", required: true },
@@ -920,6 +925,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // strictly validated before interpolation.
       send_message: {
         description: "Send a message to a channel",
+        risk: "write",
         params: {
           channelId: { type: "string", required: true },
           content: { type: "string", required: true },
@@ -936,6 +942,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // OAuth scope.
       list_servers: {
         description: "List servers the bot is in",
+        risk: "read",
         params: {},
         directApi: {
           method: "GET",
@@ -946,6 +953,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // VIEW_CHANNEL permission.
       list_channels: {
         description: "List channels in a server",
+        risk: "read",
         params: {
           serverId: { type: "string", required: true },
         },
@@ -958,6 +966,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       // GET /channels/{channel.id}/messages. Returns most recent first.
       list_messages: {
         description: "List messages in a channel",
+        risk: "read",
         params: {
           channelId: { type: "string", required: true },
           limit: { type: "number" },

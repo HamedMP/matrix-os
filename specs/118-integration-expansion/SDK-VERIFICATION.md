@@ -6,7 +6,7 @@ Date: 2026-08-29
 
 The live Pipedream development-environment spike is **blocked** in this checkout. `PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, `PIPEDREAM_PROJECT_ID`, a development external-user ID, and connected provider test accounts are not present. No successful provider read, granted-scope capture, or SDK component key is claimed here.
 
-Run `node --import tsx scripts/verify-pipedream-integration-expansion.ts` with `PIPEDREAM_ENVIRONMENT=development` and the documented `PIPEDREAM_VERIFICATION_CASES` input. Paste its JSONL output and the Pipedream connection metadata below before release. The script rejects production projects and invokes one real read through Matrix's action boundary for each provider.
+Run `node --import tsx scripts/verify-pipedream-integration-expansion.ts` with `PIPEDREAM_ENVIRONMENT=development` and `PIPEDREAM_VERIFICATION_CASES` containing an account, read action, parameters, and the exact live-discovered `componentKey` for each component-backed case (currently PostHog and Jira). Direct-API cases omit `componentKey`. Paste its JSONL output and the Pipedream connection metadata below before release. The script rejects production projects, confirms each supplied component key appears in `discoverActions()`, and invokes one real read through Matrix's action boundary for each provider.
 
 | Provider | Documented app slug/auth evidence | Paid-plan evidence | Live app/auth/scopes/read | Component keys |
 | --- | --- | --- | --- | --- |

@@ -2,13 +2,14 @@
  * Live development-project gate for spec 118.
  *
  * PIPEDREAM_VERIFICATION_CASES is a JSON object keyed by Matrix service id:
- * {"figma":{"accountId":"apn_...","action":"list_comments","params":{"fileKey":"..."}}}
+ * {"posthog":{"accountId":"apn_...","action":"list_projects","componentKey":"posthog-list-projects"}}
  * The script intentionally requires real connected accounts and invokes the
  * production execution boundary; it never fabricates component keys.
  */
 import { createPipedreamClient } from "../packages/gateway/src/integrations/pipedream.js";
 import { executeIntegrationAction } from "../packages/gateway/src/integrations/routes.js";
 import { getAction, getService } from "../packages/gateway/src/integrations/registry.js";
+import { bindDiscoveredComponentKey } from "./lib/pipedream-integration-verification.js";
 
 const REQUIRED = ["google_docs", "notion", "figma", "posthog", "jira", "stripe"] as const;
 const clientId = process.env.PIPEDREAM_CLIENT_ID;
@@ -27,6 +28,7 @@ if ((process.env.PIPEDREAM_ENVIRONMENT ?? "development") !== "development") {
 const cases = JSON.parse(casesRaw) as Record<string, {
   accountId: string;
   action: string;
+  componentKey?: string;
   params?: Record<string, unknown>;
 }>;
 const pipedream = await createPipedreamClient({
@@ -45,12 +47,19 @@ for (const serviceId of REQUIRED) {
   const discovered = await pipedream.discoverActions(service.pipedreamApp);
   const action = getAction(serviceId, verification.action);
   if (!action || action.risk !== "read") throw new Error(`${serviceId} verification action must be read-only`);
+  const verifiedAction = bindDiscoveredComponentKey({
+    serviceId,
+    actionId: verification.action,
+    action,
+    discovered,
+    componentKey: verification.componentKey,
+  });
   const result = await executeIntegrationAction({
     pipedream,
     externalUserId,
     connection: { pipedream_account_id: verification.accountId },
     def: service,
-    actionDef: action,
+    actionDef: verifiedAction,
     serviceId,
     actionId: verification.action,
     params: verification.params,
@@ -60,6 +69,7 @@ for (const serviceId of REQUIRED) {
     appSlug: service.pipedreamApp,
     appName: app.name,
     discoveredComponentKeys: discovered.map((item) => item.key),
+    verifiedComponentKey: verifiedAction.componentKey ?? null,
     readAction: verification.action,
     readSucceeded: result.data !== undefined,
   })}\n`);

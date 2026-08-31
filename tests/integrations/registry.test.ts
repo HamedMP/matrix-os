@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   SERVICE_REGISTRY,
   getService,
@@ -79,6 +80,16 @@ describe("Service Registry", () => {
         expect(["read", "write", "destructive"]).toContain(action.risk);
       }
     }
+  });
+
+  it("requires explicit risk metadata at the registry definition boundary", () => {
+    const source = readFileSync(new URL(
+      "../../packages/gateway/src/integrations/registry.ts",
+      import.meta.url,
+    ), "utf8");
+
+    expect(source).not.toContain("risk?: IntegrationActionRisk");
+    expect(source).not.toContain("WRITE_ACTIONS");
   });
 
   it("contains the seven expansion services with stable action contracts", () => {
