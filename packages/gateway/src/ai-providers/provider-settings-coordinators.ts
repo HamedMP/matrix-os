@@ -61,6 +61,7 @@ export interface ProviderSettingsRuntimeMutationInput {
 export interface ProviderSettingsRuntimeCoordinator {
   readonly supportedActions: readonly ProviderConfigurationMutation["type"][];
   readonly supportedHarnessKinds?: readonly ProviderHarnessKind[];
+  reconcilePending(): Promise<void>;
   applyConfiguration(input: ProviderSettingsRuntimeMutationInput): Promise<void>;
   rollbackConfiguration(input: ProviderSettingsRuntimeMutationInput): Promise<void>;
 }

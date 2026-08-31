@@ -112,50 +112,51 @@ describe("generic provider harness lifecycle coordinator", () => {
         },
       };
     });
-    const coordinator = createProviderGenericHarnessCoordinator({
-      homePath,
+    const runtimeSource = async () => ({
+      runtime: {
+        selected,
+        options: [
+          {
+            id: "hermes",
+            displayName: "Hermes",
+            installState: "installed",
+            health: "healthy",
+            selectionState: selected === "openclaw" ? "available" : "active",
+            configured: true,
+            capabilities: ["provider_catalog", "model_selection"],
+          },
+          {
+            id: "openclaw",
+            displayName: "OpenClaw",
+            installState: selected === "openclaw"
+              ? "installed"
+              : options.inactiveOpenClawInstallState ?? "installed",
+            health: selected === "openclaw"
+              ? "healthy"
+              : options.inactiveOpenClawHealth ?? "healthy",
+            selectionState: selected === "openclaw" ? "active" : "available",
+            configured: true,
+            capabilities: ["provider_catalog", "model_selection"],
+          },
+        ],
+        transition: null,
+      },
+      providers: [],
+      messaging: {
+        runtime: selected,
+        provider: selectedProvider,
+        model: selectedModel,
+        configured: true,
+      },
+    });
+    const restart = () => createProviderGenericHarnessCoordinator({
+      homePath: homePath!,
       runtimeController: { update },
-      runtimeSource: async () => ({
-        runtime: {
-          selected,
-          options: [
-            {
-              id: "hermes",
-              displayName: "Hermes",
-              installState: "installed",
-              health: "healthy",
-              selectionState: selected === "openclaw" ? "available" : "active",
-              configured: true,
-              capabilities: ["provider_catalog", "model_selection"],
-            },
-            {
-              id: "openclaw",
-              displayName: "OpenClaw",
-              installState: selected === "openclaw"
-                ? "installed"
-                : options.inactiveOpenClawInstallState ?? "installed",
-              health: selected === "openclaw"
-                ? "healthy"
-                : options.inactiveOpenClawHealth ?? "healthy",
-              selectionState: selected === "openclaw" ? "active" : "available",
-              configured: true,
-              capabilities: ["provider_catalog", "model_selection"],
-            },
-          ],
-          transition: null,
-        },
-        providers: [],
-        messaging: {
-          runtime: selected,
-          provider: selectedProvider,
-          model: selectedModel,
-          configured: true,
-        },
-      }),
+      runtimeSource,
       enabledCodingHarnesses: options.codingHarnesses ?? ["pi"],
       receiptWriter: options.receiptWriter,
     });
-    return { coordinator, update };
+    return { coordinator: restart(), restart, update };
   }
 
   it("configures an enabled Hermes route through the existing runtime controller", async () => {
@@ -555,6 +556,198 @@ describe("generic provider harness lifecycle coordinator", () => {
     await coordinator.applyConfiguration(input);
     await coordinator.applyConfiguration(input);
     expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it("reconciles an older prepared receipt before applying a fresh-key mutation", async () => {
+    let writes = 0;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      writes += 1;
+      if (writes === 2) throw new Error("receipt finalize failed");
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, update } = await makeCoordinator({ receiptWriter });
+    const updateImplementation = update.getMockImplementation()!;
+    update.mockImplementationOnce(updateImplementation);
+    update.mockImplementationOnce(async () => { throw new Error("rollback unavailable"); });
+    const before = config([hermes]);
+    const failedAfter = structuredClone(before);
+    failedAfter.harnesses[0]!.route.modelId = "claude-opus-5";
+
+    await expect(coordinator.applyConfiguration({
+      mutation: {
+        type: "set_route",
+        expectedRevision: 0,
+        idempotencyKey: "route_prepared_old_key",
+        harnessInstanceId: hermes.id,
+        route: failedAfter.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after: failedAfter,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_prepared_old_key",
+    })).rejects.toThrow("receipt finalize failed");
+
+    const freshAfter = structuredClone(before);
+    freshAfter.harnesses[0]!.route.modelId = "claude-haiku-5";
+    await coordinator.applyConfiguration({
+      mutation: {
+        type: "set_route",
+        expectedRevision: 0,
+        idempotencyKey: "route_fresh_key",
+        harnessInstanceId: hermes.id,
+        route: freshAfter.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after: freshAfter,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_fresh_key",
+    });
+
+    expect(update).toHaveBeenCalledTimes(4);
+    expect(update).toHaveBeenNthCalledWith(3, expect.objectContaining({ messagingModel: "claude-sonnet-5" }));
+    expect(update).toHaveBeenNthCalledWith(4, expect.objectContaining({ messagingModel: "claude-haiku-5" }));
+  });
+
+  it("sweeps a prepared receipt after gateway coordinator restart", async () => {
+    let writes = 0;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      writes += 1;
+      if (writes === 2) throw new Error("receipt finalize failed");
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, restart, update } = await makeCoordinator({ receiptWriter });
+    const updateImplementation = update.getMockImplementation()!;
+    update.mockImplementationOnce(updateImplementation);
+    update.mockImplementationOnce(async () => { throw new Error("rollback unavailable"); });
+    const before = config([hermes]);
+    const after = structuredClone(before);
+    after.harnesses[0]!.route.modelId = "claude-opus-5";
+
+    await expect(coordinator.applyConfiguration({
+      mutation: {
+        type: "set_route",
+        expectedRevision: 0,
+        idempotencyKey: "route_restart_pending",
+        harnessInstanceId: hermes.id,
+        route: after.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_restart_pending",
+    })).rejects.toThrow("receipt finalize failed");
+
+    const restarted = restart();
+    await restarted.reconcilePending();
+    await restarted.reconcilePending();
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).toHaveBeenNthCalledWith(3, expect.objectContaining({ messagingModel: "claude-sonnet-5" }));
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toEqual([]);
+  });
+
+  it("reconciles compensation pending under an older key before a fresh mutation", async () => {
+    const { coordinator, update } = await makeCoordinator();
+    const before = config([hermes]);
+    const failedAfter = structuredClone(before);
+    failedAfter.harnesses[0]!.route.modelId = "claude-opus-5";
+    const failedInput = {
+      mutation: {
+        type: "set_route" as const,
+        expectedRevision: 0,
+        idempotencyKey: "route_compensation_old_key",
+        harnessInstanceId: hermes.id,
+        route: failedAfter.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after: failedAfter,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_compensation_old_key",
+    };
+
+    await coordinator.applyConfiguration(failedInput);
+    update.mockRejectedValueOnce(new Error("rollback runtime unavailable"));
+    await expect(coordinator.rollbackConfiguration(failedInput)).rejects.toThrow("rollback runtime unavailable");
+
+    const freshAfter = structuredClone(before);
+    freshAfter.harnesses[0]!.route.modelId = "claude-haiku-5";
+    await coordinator.applyConfiguration({
+      mutation: {
+        type: "set_route",
+        expectedRevision: 0,
+        idempotencyKey: "route_after_compensation_fresh_key",
+        harnessInstanceId: hermes.id,
+        route: freshAfter.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after: freshAfter,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_after_compensation_fresh_key",
+    });
+
+    expect(update).toHaveBeenCalledTimes(4);
+    expect(update).toHaveBeenNthCalledWith(3, expect.objectContaining({ messagingModel: "claude-sonnet-5" }));
+    expect(update).toHaveBeenNthCalledWith(4, expect.objectContaining({ messagingModel: "claude-haiku-5" }));
+  });
+
+  it("preserves a pending receipt when its key is reused with a conflicting payload", async () => {
+    let writes = 0;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      writes += 1;
+      if (writes === 2) throw new Error("receipt finalize failed");
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, update } = await makeCoordinator({ receiptWriter });
+    const updateImplementation = update.getMockImplementation()!;
+    update.mockImplementationOnce(updateImplementation);
+    update.mockImplementationOnce(async () => { throw new Error("rollback unavailable"); });
+    const before = config([hermes]);
+    const after = structuredClone(before);
+    after.harnesses[0]!.route.modelId = "claude-opus-5";
+    const input = {
+      mutation: {
+        type: "set_route" as const,
+        expectedRevision: 0,
+        idempotencyKey: "route_pending_conflict",
+        harnessInstanceId: hermes.id,
+        route: after.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_pending_conflict",
+    };
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow("receipt finalize failed");
+
+    const conflictingAfter = structuredClone(before);
+    conflictingAfter.harnesses[0]!.route.modelId = "claude-haiku-5";
+    await expect(coordinator.applyConfiguration({
+      ...input,
+      mutation: { ...input.mutation, route: conflictingAfter.harnesses[0]!.route },
+      after: conflictingAfter,
+    })).rejects.toMatchObject({ code: "idempotency_conflict" });
+
+    expect(update).toHaveBeenCalledTimes(2);
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toMatchObject([{ key: "route_pending_conflict", state: "prepared" }]);
   });
 
   it("recovers a failed store-requested rollback without replaying the applied runtime mutation", async () => {

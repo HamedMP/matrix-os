@@ -226,6 +226,45 @@ export function createProviderGenericHarnessCoordinator(options: {
     }
   }
 
+  async function compensatePendingReceipt(
+    receipts: z.infer<typeof ReceiptDocumentSchema>,
+    receipt: RuntimeReceipt,
+  ): Promise<void> {
+    const beforeRoute = receipt.beforeRoute;
+    const afterRoute = receipt.afterRoute;
+    if (!beforeRoute || !afterRoute) {
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
+    const current = await currentRuntimeRoute();
+    if (sameRuntimeRoute(current, afterRoute)) {
+      try {
+        await applyRuntimeRoute(beforeRoute);
+      } catch (error) {
+        console.warn(
+          "[provider-settings] Pending generic harness compensation failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      }
+    } else if (!sameRuntimeRoute(current, beforeRoute)) {
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
+    receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
+    await writeReceipts(receipts);
+  }
+
+  async function reconcilePendingReceipts(
+    receipts: z.infer<typeof ReceiptDocumentSchema>,
+    excludedKey?: string,
+  ): Promise<void> {
+    const pending = receipts.receipts
+      .filter((receipt) => receipt.state !== "applied" && receipt.key !== excludedKey)
+      .reverse();
+    for (const receipt of pending) {
+      await compensatePendingReceipt(receipts, receipt);
+    }
+  }
+
   async function runtimeTarget(
     input: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0],
     mutation: z.infer<typeof ProviderSettingsMutationSchema>,
@@ -265,6 +304,9 @@ export function createProviderGenericHarnessCoordinator(options: {
       if (duplicate.payloadHash !== payloadHash) {
         throw new ProviderSettingsStoreError("idempotency_conflict", 409);
       }
+    }
+    await reconcilePendingReceipts(receipts, duplicate?.key);
+    if (duplicate) {
       if (duplicate.state === "applied") return;
       const beforeRoute = duplicate.beforeRoute;
       const afterRoute = duplicate.afterRoute;
@@ -377,6 +419,12 @@ export function createProviderGenericHarnessCoordinator(options: {
       "set_harness_enabled",
       "set_route",
     ],
+    reconcilePending() {
+      return serialize(async () => {
+        const receipts = await readReceipts(receiptPath);
+        await reconcilePendingReceipts(receipts);
+      });
+    },
     applyConfiguration(input) {
       return serialize(() => coordinate(input));
     },
