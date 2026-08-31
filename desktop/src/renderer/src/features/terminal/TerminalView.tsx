@@ -124,7 +124,7 @@ export default function TerminalView({
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
   const closeTerminalContextMenu = useCallback(() => {
     setTerminalContextMenu(null);
-    termRef.current?.focus();
+    window.requestAnimationFrame(() => termRef.current?.focus());
   }, []);
   const [clipboardFeedback, setClipboardFeedback] = useState<ClipboardFeedback | null>(null);
   const reportClipboardFailure = useCallback((sequence: number, message: string) => {

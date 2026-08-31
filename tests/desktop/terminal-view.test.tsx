@@ -1017,7 +1017,7 @@ describe("TerminalView session switching", () => {
     expect(writeText).toHaveBeenCalledWith("content-type: application/json");
   });
 
-  it("captures the immutable multiline selection before an inner xterm context listener", () => {
+  it("captures the immutable multiline selection before an inner xterm context listener", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -1041,7 +1041,7 @@ describe("TerminalView session switching", () => {
     expect(writeText).toHaveBeenCalledOnce();
     expect(writeText).toHaveBeenCalledWith("first row\nλ second row 👩🏽‍💻");
     expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
-    expect(terminal.focus).toHaveBeenCalledOnce();
+    await waitFor(() => expect(terminal.focus).toHaveBeenCalledOnce());
     expect(container.querySelector("[role=menu]")).toBeNull();
   });
 
@@ -1128,10 +1128,11 @@ describe("TerminalView session switching", () => {
     expect(createdTerminals[0]).toBe(terminal);
   });
 
-  it("opens terminal actions without a selection and can select the buffer", () => {
+  it("opens terminal actions without a selection and can select the buffer", async () => {
     const { container } = render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;
     const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    terminal.focus.mockClear();
 
     expect(fireEvent.contextMenu(host, { clientX: 120, clientY: 80 })).toBe(false);
     expect((screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement).disabled).toBe(true);
@@ -1139,6 +1140,7 @@ describe("TerminalView session switching", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Select All" }));
 
     expect(terminal.selectAll).toHaveBeenCalledOnce();
+    await waitFor(() => expect(terminal.focus).toHaveBeenCalledOnce());
   });
 
   it("selects xterm scrollback with Command+A and preserves Copy parity", () => {

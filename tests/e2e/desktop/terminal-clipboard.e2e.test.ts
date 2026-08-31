@@ -60,6 +60,12 @@ suite("packaged Electron terminal clipboard", () => {
     if (!rowText || !rowBox || !screenBox) throw new Error("terminal row geometry is unavailable");
     const start = rowText.indexOf(text);
     if (start < 0) throw new Error("synthetic text is absent from the terminal row");
+    await expect.poll(
+      () => gateway.state.terminalResizeEvents.some(
+        (event) => event.session === activeSessionName,
+      ),
+      { timeout: 10_000, message: "terminal column count is unavailable" },
+    ).toBe(true);
     const resize = gateway.state.terminalResizeEvents.findLast(
       (event) => event.session === activeSessionName,
     );
@@ -208,6 +214,10 @@ suite("packaged Electron terminal clipboard", () => {
       await page.mouse.click(screenBox.x + 30, screenBox.y + 30, { button: "right" });
       await page.getByRole("menuitem", { name: "Select All", exact: true }).click();
     }
+    await expect.poll(
+      () => terminalSurface().locator(".xterm-selection div").count(),
+      { timeout: 10_000, message: "terminal selection is unavailable after Select All" },
+    ).toBeGreaterThan(0);
     await page.keyboard.press(copyShortcut);
     await expect.poll(clipboardText).toContain(firstLine);
     const selectAllSnapshot = await clipboardText();
