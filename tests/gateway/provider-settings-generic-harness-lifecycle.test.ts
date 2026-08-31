@@ -998,6 +998,37 @@ describe("generic provider harness lifecycle coordinator", () => {
     }]);
   });
 
+  it("preserves a newer same-route write over compensation pending recovery", async () => {
+    const { coordinator, restart, update } = await makeCoordinator();
+    const input = systemRouteInput("claude-opus-5", "route_compensation_newer_same_route");
+
+    await coordinator.applyConfiguration(input);
+    update.mockRejectedValueOnce(new Error("compensation unavailable before newer write"));
+    await expect(coordinator.rollbackConfiguration(input)).rejects.toThrow(
+      "compensation unavailable before newer write",
+    );
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-opus-5",
+    });
+
+    const restarted = restart();
+    await restarted.reconcilePending();
+
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      messagingModel: "claude-opus-5",
+    }));
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toEqual([]);
+    expect(restarted.isRecoveryReady()).toBe(true);
+  });
+
   it("reconciles compensation pending under an older key before a fresh mutation", async () => {
     const { coordinator, update } = await makeCoordinator();
     const before = config([hermes]);

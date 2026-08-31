@@ -308,12 +308,11 @@ export function createProviderGenericHarnessCoordinator(options: {
       throw new ProviderSettingsStoreError("runtime_unavailable", 503);
     }
     const current = await currentRuntimeState();
+    const displacedGeneration = receipt.afterRevision !== undefined
+      && current.revision !== receipt.afterRevision;
     if (sameRuntimeRoute(current.route, beforeRoute)) {
       // The compensation target is already active.
-    } else if (sameRuntimeRoute(current.route, afterRoute)
-      && !(receipt.state === "applied"
-        && receipt.afterRevision !== undefined
-        && current.revision !== receipt.afterRevision)) {
+    } else if (sameRuntimeRoute(current.route, afterRoute) && !displacedGeneration) {
       try {
         await applyRuntimeRoute(beforeRoute);
       } catch (error) {
@@ -324,13 +323,14 @@ export function createProviderGenericHarnessCoordinator(options: {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
     } else {
-      if (receipt.state !== "applied") {
+      if (receipt.state !== "applied" && !displacedGeneration) {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
-      // An applied receipt whose live route matches neither recorded endpoint
-      // has been displaced by a newer runtime writer. Persist that exact live
-      // route before clearing the stale receipt so a crash cannot later revive
-      // its historical rollback target.
+      // An applied receipt on a different route, or any receipt whose live
+      // generation no longer matches its applied generation, has been
+      // displaced by a newer runtime writer. Persist that exact live state
+      // before clearing the stale receipt so a crash cannot later revive its
+      // historical rollback target.
       replaceReceipt(receipts, ReceiptSchema.parse({
         ...receipt,
         beforeRoute: current.route,
