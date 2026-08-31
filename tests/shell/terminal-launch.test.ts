@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   drainTerminalLaunchQueue,
   enqueueTerminalLaunch,
+  requeueTerminalLaunch,
   terminalLaunchConfig,
 } from "../../shell/src/lib/terminal-launch.js";
 
@@ -65,6 +66,19 @@ describe("terminal launch paths", () => {
       "codex-login",
     ]);
     expect(drainTerminalLaunchQueue()).toEqual([]);
+  });
+
+  it("requeues failed launches without dispatching an immediate retry event", () => {
+    const launchListener = vi.fn();
+    window.addEventListener("matrix:terminal-launch", launchListener);
+
+    requeueTerminalLaunch("claude-login", "terminal-a");
+
+    expect(launchListener).not.toHaveBeenCalled();
+    expect(drainTerminalLaunchQueue("terminal-a")).toEqual([
+      expect.objectContaining({ action: "claude-login", targetId: "terminal-a" }),
+    ]);
+    window.removeEventListener("matrix:terminal-launch", launchListener);
   });
 
   it("drains only launches targeted at the active terminal window", () => {

@@ -6,6 +6,7 @@ import { useTheme } from "@/hooks/useTheme";
 import type { WorkspaceCanvasNode as WorkspaceCanvasNodeModel } from "@/stores/workspace-canvas-store";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { WorkspaceCanvasFallbackNode } from "./WorkspaceCanvasFallbackNode";
+import { terminalRefKey } from "@/components/terminal/terminal-session-id";
 
 function titleForNode(node: WorkspaceCanvasNodeModel): string {
   return String(node.metadata.title ?? node.metadata.label ?? node.type.replaceAll("_", " "));
@@ -29,7 +30,8 @@ export function WorkspaceCanvasNode({ node }: { node: WorkspaceCanvasNodeModel }
   const setFocusedNode = useWorkspaceCanvasStore((s) => s.setFocusedNode);
   const executeAction = useWorkspaceCanvasStore((s) => s.executeAction);
   const isFocused = focusedNodeId === node.id;
-  const terminalSessionId = node.type === "terminal" && node.sourceRef?.id !== "unattached" ? node.sourceRef?.id : undefined;
+  const terminalRef = node.type === "terminal" ? node.sourceRef?.terminalRef : undefined;
+  const terminalKey = terminalRef ? terminalRefKey(terminalRef) : undefined;
 
   if (node.type === "fallback" || node.displayState === "recoverable" || node.displayState === "missing") {
     return <WorkspaceCanvasFallbackNode node={node} />;
@@ -58,14 +60,13 @@ export function WorkspaceCanvasNode({ node }: { node: WorkspaceCanvasNodeModel }
         <span className="min-w-0 flex-1 truncate font-medium">{titleForNode(node)}</span>
         <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase text-zinc-300">{node.displayState}</span>
       </div>
-      {node.type === "terminal" && isFocused && terminalSessionId ? (
+      {node.type === "terminal" && isFocused && terminalKey ? (
         <TerminalPane
           paneId={`canvas-${node.id}`}
           cwd="projects"
           theme={theme}
           isFocused
-          sessionId={terminalSessionId}
-          compatMode={terminalSessionId?.startsWith("codex-") ? "codex-tui" : undefined}
+          sessionId={terminalKey}
           shouldCacheOnUnmount={() => true}
           shouldDestroyOnUnmount={() => false}
         />
@@ -75,9 +76,9 @@ export function WorkspaceCanvasNode({ node }: { node: WorkspaceCanvasNodeModel }
             <button
               type="button"
               className="rounded bg-emerald-500 px-2 py-1 text-xs font-medium text-emerald-950"
-              onClick={() => void executeAction(node.id, terminalSessionId ? "terminal.attach" : "terminal.create", terminalSessionId ? { sessionId: terminalSessionId } : { cwd: "projects" })}
+              onClick={() => void executeAction(node.id, terminalRef ? "terminal.attach" : "terminal.create", terminalRef ? { terminalRef } : { cwd: "projects", projectId: node.sourceRef?.projectId })}
             >
-              {terminalSessionId ? "Attach" : "Create terminal"}
+              {terminalRef ? "Attach" : "Create terminal"}
             </button>
           )}
           {node.type === "review_loop" && (

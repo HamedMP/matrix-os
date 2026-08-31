@@ -17,7 +17,7 @@ describe("DeveloperModeDashboard", () => {
 
     render(
       <DeveloperModeDashboard
-        setupPrompt="Install Matrix CLI, run matrix login, then matrix run -it --session setup -- gh auth login."
+        setupPrompt="Install Matrix CLI, run matrix login, then matrix run -it --project main -- gh auth login."
         onOpenTerminal={onOpenTerminal}
         onSwitchCanvas={onSwitchCanvas}
       />,
@@ -28,7 +28,7 @@ describe("DeveloperModeDashboard", () => {
     expect(screen.queryByText(/Symphony/i)).toBeNull();
     expect(screen.getAllByText(/Matrix-managed SSH key/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Do not upload local private keys/i)).toBeTruthy();
-    expect(screen.getByDisplayValue(/matrix run -it --session setup -- gh auth login/i)).toBeTruthy();
+    expect(screen.getByDisplayValue(/matrix run -it --project main -- gh auth login/i)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /open terminal/i }));
     fireEvent.click(screen.getByRole("button", { name: /switch to canvas/i }));

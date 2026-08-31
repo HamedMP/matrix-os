@@ -1,6 +1,5 @@
-import { getGatewayUrl } from "@/lib/gateway";
 import type { PaneNode } from "@/stores/terminal-store";
-import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
+import { isCanonicalShellSessionId } from "./terminal-session-id";
 import { twoWordSessionName } from "./terminal-session-names";
 
 export const DEFAULT_CWD = "projects";
@@ -310,32 +309,4 @@ export function applyCompatModeToPaneTree(node: PaneNode): PaneNode {
 
 export function applyCompatModeToTabs(tabs: Tab[]): Tab[] {
   return tabs.map((tab) => ({ ...tab, paneTree: applyCompatModeToPaneTree(tab.paneTree) }));
-}
-
-export function destroyTerminalSessions(sessionIds: string[]) {
-  const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
-  for (const sessionId of uniqueIds) {
-    const isCanonical = isCanonicalShellSessionId(sessionId);
-    const isLegacyPty = isLegacyPtySessionId(sessionId);
-    if (!isCanonical && !isLegacyPty) {
-      continue;
-    }
-    const path = isCanonical
-      ? `/api/terminal/sessions/${encodeURIComponent(sessionId)}?force=1`
-      : `/api/terminal/pty-sessions/${encodeURIComponent(sessionId)}`;
-    void fetch(`${getGatewayUrl()}${path}`, {
-      method: "DELETE",
-      keepalive: true,
-      signal: AbortSignal.timeout(5_000),
-    }).then((res) => {
-      if (!res.ok && res.status !== 404) {
-        console.warn(`Failed to destroy terminal session "${sessionId}" on explicit close: ${res.status}`);
-      }
-    }).catch((err: unknown) => {
-      console.warn(
-        `Failed to destroy terminal session "${sessionId}" on explicit close:`,
-        err instanceof Error ? err.message : err,
-      );
-    });
-  }
 }

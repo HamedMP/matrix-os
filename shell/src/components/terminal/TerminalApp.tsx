@@ -9,7 +9,7 @@ import { applyTerminalDesignTheme, resolveTerminalDesign } from "./terminal-desi
 import { TerminalDesignTabStrip } from "./TerminalDesignTabStrip";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
-import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
+import { drainTerminalLaunchQueue, requeueTerminalLaunch, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { isShellThemeId } from "@/stores/terminal-defaults";
 import { getTerminalThemePreset } from "./terminal-themes";
@@ -19,7 +19,8 @@ import { TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChro
 import { MobileCommandComposer, MobileTerminalActions } from "./MobileTerminalControls";
 import { DEFAULT_TERMINAL_SIDEBAR_WIDTH, LocalTerminalSidebar } from "./TerminalSidebar";
 import { TerminalKeyBar } from "./TerminalKeyBar";
-import { isCanonicalShellSessionId } from "./terminal-session-id";
+import { isCanonicalShellSessionId, parseTerminalRefKey, terminalRefKey } from "./terminal-session-id";
+import type { TerminalWorkspace } from "@matrix-os/contracts";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetail } from "./mobile-terminal-events";
 import {
@@ -27,7 +28,6 @@ import {
   applyCompatModeToTabs,
   closePaneInTree,
   compatModeForShellSession,
-  destroyTerminalSessions,
   getCanonicalShellSessionIds,
   getFirstPaneId,
   getPaneIdsForSession,
@@ -46,7 +46,6 @@ import {
   type TerminalLayout,
 } from "./terminal-layout";
 import { formatShellDisplayName } from "./TerminalSidebarItems";
-import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./DesktopTerminalWorkspace";
 
@@ -65,27 +64,18 @@ function dispatchPaneInput(paneId: string | null, data: string): void {
   );
 }
 
-async function readShellErrorCode(res: Response): Promise<string | null> {
-  try {
-    const data = await res.clone().json() as { error?: { code?: unknown } };
-    return typeof data.error?.code === "string" ? data.error.code : null;
-  } catch (err: unknown) {
-    console.warn("Failed to parse shell error response:", err instanceof Error ? err.message : String(err));
-    return null;
-  }
-}
-
-async function isShellSessionExistsResponse(res: Response): Promise<boolean> {
-  return res.status === 409 && await readShellErrorCode(res) === "session_exists";
-}
-
 interface ShellSessionSummary {
-  name?: unknown;
-  status?: unknown;
+  name: string;
+  workspaceId: string;
+  tabId: string;
+  revision: number;
+  cwd: string;
+  status: string;
+  projectId?: string;
 }
 
 // In-flight dedupe for the sessions list: the mount bootstrap needs the same
-// /api/terminal/sessions payload as the ensure step that follows it, so both
+// /api/terminal/workspaces payload as the ensure step that follows it, so both
 // join one fetch instead of paying two serial roundtrips. Keyed by gateway
 // URL so navigating between machines (/vm/A -> /vm/B) never joins a fetch
 // started for the previous machine.
@@ -98,12 +88,21 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
   }
   const promise = (async () => {
     try {
-      const res = await fetch(`${key}/api/terminal/sessions`, {
+      const res = await fetch(`${key}/api/terminal/workspaces`, {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) return null;
-      const data = await res.json() as { sessions?: ShellSessionSummary[] };
-      return Array.isArray(data.sessions) ? data.sessions : [];
+      const data = await res.json() as { workspaces?: TerminalWorkspace[] };
+      if (!Array.isArray(data.workspaces)) return [];
+      return data.workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({
+        name: terminalRefKey({ workspaceId: workspace.id, tabId: tab.id }),
+        workspaceId: workspace.id,
+        tabId: tab.id,
+        revision: tab.revision,
+        cwd: tab.cwd,
+        status: tab.status,
+        ...(workspace.scope === "project" ? { projectId: workspace.projectId } : {}),
+      })));
     } catch (err: unknown) {
       console.warn("Failed to list shell sessions:", err instanceof Error ? err.message : String(err));
       return null;
@@ -127,7 +126,78 @@ async function getFirstOrderedShellSessionName(): Promise<string | null> {
       return session.name;
     }
   }
-  return null;
+  const workspace = await ensureWorkspaceForCwd(DEFAULT_CWD);
+  if (!workspace) return null;
+  const existing = workspace.tabs.find((tab) => tab.status !== "exited" && tab.status !== "failed");
+  if (existing) return terminalRefKey({ workspaceId: workspace.id, tabId: existing.id });
+  const response = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${workspace.id}/tabs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Terminal", cwd: DEFAULT_CWD }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return null;
+  const payload = await response.json() as { tab?: { id?: unknown } };
+  return typeof payload.tab?.id === "string"
+    ? terminalRefKey({ workspaceId: workspace.id, tabId: payload.tab.id })
+    : null;
+}
+
+async function destroyTerminalTab(sessionId: string): Promise<boolean> {
+  const ref = parseTerminalRefKey(sessionId);
+  if (!ref) return false;
+  try {
+    const response = await fetch(
+      `${getGatewayUrl()}/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`,
+      {
+        method: "DELETE",
+        keepalive: true,
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!response.ok) console.warn("Failed to delete ephemeral terminal tab:", response.status);
+    return response.ok;
+  } catch (error: unknown) {
+    console.warn("Failed to delete ephemeral terminal tab:", error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+function destroyTerminalTabs(sessionIds: string[]): void {
+  const seenRefs: Record<string, true> = Object.create(null) as Record<string, true>;
+  for (const sessionId of sessionIds) {
+    if (seenRefs[sessionId]) continue;
+    seenRefs[sessionId] = true;
+    void destroyTerminalTab(sessionId);
+  }
+}
+
+async function ensureWorkspaceForCwd(cwd: string): Promise<TerminalWorkspace | null> {
+  let projectId: string | undefined;
+  const slug = cwd.split("/").filter(Boolean)[1];
+  if (cwd.startsWith("projects/") && slug) {
+    try {
+      const projectsResponse = await fetch(`${getGatewayUrl()}/api/projects?root=projects`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (projectsResponse.ok) {
+        const projects = await projectsResponse.json() as { projects?: Array<{ id?: unknown; slug?: unknown }> };
+        const project = projects.projects?.find((candidate) => candidate.slug === slug);
+        if (typeof project?.id === "string") projectId = project.id;
+      }
+    } catch (error) {
+      console.warn("Failed to resolve terminal project workspace:", error);
+    }
+  }
+  const response = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/ensure`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(projectId ? { projectId } : {}),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return null;
+  const payload = await response.json() as { workspace?: TerminalWorkspace };
+  return payload.workspace ?? null;
 }
 
 let globalShellThemePreferenceLoadStarted = false;
@@ -404,17 +474,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     }
   };
 
-  const getPendingSessionIds = (paneIds: string[]) => {
-    const seen = new Set<string>();
-    for (const paneId of paneIds) {
-      const sessionId = pendingPaneSessionsRef.current!.get(paneId);
-      if (sessionId) {
-        seen.add(sessionId);
-      }
-    }
-    return Array.from(seen);
-  };
-
   const markPanesClosing = (paneIds: string[]) => {
     for (const paneId of paneIds) {
       closingPaneIdsRef.current!.add(paneId);
@@ -432,7 +491,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return () => {
       mountedRef.current = false;
       if (persistence === "ephemeral") {
-        destroyTerminalSessions(tabsRef.current.flatMap((tab) => getSessionIds(tab.paneTree)));
+        destroyTerminalTabs(tabsRef.current.flatMap((tab) => getSessionIds(tab.paneTree)));
         return;
       }
       if (!terminalLayoutDirtyRef.current) return;
@@ -519,57 +578,37 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     cwd = DEFAULT_CWD,
     options: CreateShellSessionTabOptions = {},
   ) => {
-    let requestedCwd = cwd || "~";
-    let retriedHomeCwd = false;
-    for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
-      const name = terminalSessionName();
-      try {
-        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
-        const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            cwd: requestedCwd,
-            ...(options.cmd ? { cmd: options.cmd } : {}),
-            ...(options.agent ? { agent: options.agent } : {}),
-          }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (await isShellSessionExistsResponse(res)) {
-          continue;
-        }
-        if (!res.ok) {
-          if (!retriedHomeCwd && res.status === 400 && await readShellErrorCode(res) === "invalid_cwd") {
-            retriedHomeCwd = true;
-            requestedCwd = "~";
-            attempt -= 1;
-            continue;
-          }
-          console.warn(`Failed to create shell session "${name}": ${res.status}`);
-          return null;
-        }
-        if (!mountedRef.current) {
-          destroyTerminalSessions([name]);
-          return null;
-        }
-        const data = await res.json() as { name?: unknown };
-        const sessionName = typeof data.name === "string" ? data.name : name;
-        addSessionTab(label, sessionName, requestedCwd, { compatMode: options.compatMode, legacyCompat: false });
-        return sessionName;
-      } catch (err: unknown) {
-        console.warn(
-          "Failed to create shell session:",
-          err instanceof Error ? err.message : String(err),
-        );
-        if (err instanceof Error && err.name === "AbortError") {
-          continue;
-        }
-        return null;
+    const requestedCwd = cwd === "~" ? "" : cwd;
+    try {
+      const workspace = await ensureWorkspaceForCwd(requestedCwd);
+      if (!workspace) return null;
+      const name = label.trim() || terminalSessionName();
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${workspace.id}/tabs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          cwd: requestedCwd,
+          ...(options.cmd ? { command: ["sh", "-lc", options.cmd] } : {}),
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as { tab?: { id?: unknown } };
+      if (typeof data.tab?.id !== "string") return null;
+      const terminalKey = terminalRefKey({ workspaceId: workspace.id, tabId: data.tab.id });
+      if (!mountedRef.current) {
+        const removed = await destroyTerminalTab(terminalKey);
+        // A failed delete leaves the canonical tab discoverable on the next
+        // mount; report success so the launch is not executed a second time.
+        return removed ? null : terminalKey;
       }
+      addSessionTab(label, terminalKey, requestedCwd, { compatMode: options.compatMode, legacyCompat: false });
+      return terminalKey;
+    } catch (err: unknown) {
+      console.warn("Failed to create terminal tab:", err instanceof Error ? err.message : String(err));
+      return null;
     }
-    console.warn("Failed to create shell session: name collision");
-    return null;
   };
 
   const backgroundShellSession = (sessionId: string) => {
@@ -618,7 +657,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
     async function initLayout() {
       if (initialCommand) {
-        addTab(DEFAULT_CWD, initialLabel ?? "Terminal", initialClaudeMode, initialCommand);
+        await createShellSessionTab(initialLabel ?? "Terminal", DEFAULT_CWD, {
+          cmd: initialCommand,
+          compatMode: initialCommand === "codex" ? "codex-tui" : undefined,
+        });
         if (!cancelled) setInitialized(true);
         return;
       }
@@ -719,7 +761,16 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
     if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return;
     for (const launch of drainTerminalLaunchQueue(launchTargetId)) {
-      addTab(DEFAULT_CWD, launch.label, launch.claudeMode, launch.command);
+      void createShellSessionTab(launch.label, DEFAULT_CWD, {
+        cmd: launch.command,
+        compatMode: launch.command === "codex" ? "codex-tui" : undefined,
+      }).then((terminalKey) => {
+        if (!terminalKey) {
+          // Persist for the next launch event or mount without dispatching an
+          // immediate retry loop against a temporarily unavailable runtime.
+          requeueTerminalLaunch(launch.action, launch.targetId);
+        }
+      });
     }
   });
 
@@ -842,10 +893,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const closingTab = tabsRef.current.find((tab) => tab.id === tabId);
     if (closingTab) {
       const paneIds = getAllPaneIds(closingTab.paneTree);
-      destroyTerminalSessions([
-        ...getSessionIds(closingTab.paneTree),
-        ...getPendingSessionIds(paneIds),
-      ]);
       markPanesClosing(paneIds);
     }
     log("close-tab", {
@@ -871,13 +918,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const closePane = (paneId: string) => {
-    const activeTabRecord = tabsRef.current.find((tab) => tab.id === activeTabId);
-    const closingSessionIds = new Set<string>();
-    const closingSessionId = activeTabRecord ? getPaneSessionId(activeTabRecord.paneTree, paneId) : null;
-    if (closingSessionId) closingSessionIds.add(closingSessionId);
-    const pendingSessionId = pendingPaneSessionsRef.current!.get(paneId);
-    if (pendingSessionId) closingSessionIds.add(pendingSessionId);
-    destroyTerminalSessions(Array.from(closingSessionIds));
     markPanesClosing([paneId]);
     log("close-pane", { paneId });
     setTabs(prev => {
@@ -959,18 +999,25 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const recoverShellSession = async (sessionId: string, cwd: string): Promise<boolean> => {
-    if (!isCanonicalShellSessionId(sessionId)) return false;
+    const ref = parseTerminalRefKey(sessionId);
+    if (!ref) return false;
     try {
-      const res = await fetch(
-        `${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/recover`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cwd }),
-          signal: AbortSignal.timeout(10_000),
-        },
-      );
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Recovered terminal", cwd: cwd === "~" ? "" : cwd }),
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!res.ok) return false;
+      const data = await res.json() as { tab?: { id?: unknown } };
+      if (typeof data.tab?.id !== "string") return false;
+      const replacementId = terminalRefKey({ workspaceId: ref.workspaceId, tabId: data.tab.id });
+      const nextTabs = tabsRef.current.map((tab) => ({
+        ...tab,
+        paneTree: renameSessionInTree(tab.paneTree, sessionId, replacementId),
+      }));
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
       setUnavailableSessionIds((current) => current.filter((name) => name !== sessionId));
       return true;
     } catch (err: unknown) {
