@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AiFundedPolicyError,
   createAiFundedPolicyRepository,
@@ -33,6 +33,7 @@ describe("funded AI policy repository", () => {
 
   afterEach(async () => {
     await destroyTestPlatformDb(db);
+    vi.restoreAllMocks();
   });
 
   function repository(at = now) {
@@ -73,6 +74,45 @@ describe("funded AI policy repository", () => {
     const rejection = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
     expect(rejection.reason).toMatchObject({ code: "revision_conflict" });
     expect(await repo.getGlobalPolicy()).toMatchObject({ enabled: true, revision: 1 });
+  });
+
+  it("logs coarse diagnostics and preserves causes for corrupt stored model policy", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const repo = repository();
+    const corruptValue = '{"sk-provider-secret-do-not-log"';
+    await db.executor.updateTable("ai_funded_global_policy")
+      .set({ allowed_model_ids: corruptValue })
+      .where("policy_id", "=", "default").execute();
+
+    const syntaxFailure = await repo.getGlobalPolicy().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(syntaxFailure).toMatchObject({
+      message: "Invalid funded AI policy model configuration",
+      cause: expect.any(SyntaxError),
+    });
+    expect(errorLog).toHaveBeenCalledWith(
+      "[ai-funded-policy] invalid stored model configuration (syntax_error)",
+    );
+
+    await db.executor.updateTable("ai_funded_global_policy")
+      .set({ allowed_model_ids: JSON.stringify(["model value must not be logged"]) })
+      .where("policy_id", "=", "default").execute();
+    const schemaFailure = await repo.getGlobalPolicy().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(schemaFailure).toMatchObject({
+      message: "Invalid funded AI policy model configuration",
+      cause: expect.objectContaining({ name: "ZodError" }),
+    });
+    expect(errorLog).toHaveBeenCalledWith(
+      "[ai-funded-policy] invalid stored model configuration (schema_error)",
+    );
+    expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(
+      /sk-provider-secret-do-not-log|model value must not be logged/,
+    );
   });
 
   it("binds runtime eligibility to the canonical machine identity", async () => {
