@@ -24,6 +24,7 @@ import {
 const MAX_RECEIPT_FILE_BYTES = 256 * 1024;
 const MAX_OWNER_SETTINGS_FILE_BYTES = 1024 * 1024;
 const RECEIPT_PATH = "system/ai-providers/runtime-receipts.json";
+const REPAIR_PATH = "system/ai-providers/runtime-repair.json";
 const OWNER_SETTINGS_PATH = "system/ai-providers/settings.json";
 const GenericHarnessSchema = z.enum(["hermes", "openclaw", "pi", "opencode"]);
 const CodingHarnessSchema = z.enum(["pi", "opencode"]);
@@ -50,6 +51,10 @@ const ReceiptSchema = z.object({
 const ReceiptDocumentSchema = z.object({
   version: z.literal(1),
   receipts: z.array(ReceiptSchema).max(MAX_PROVIDER_SETTINGS_RECEIPTS),
+}).strict();
+const RepairDocumentSchema = z.object({
+  version: z.literal(1),
+  repair: ReceiptSchema.nullable(),
 }).strict();
 type GenericHarness = z.infer<typeof GenericHarnessSchema>;
 type RuntimeRoute = z.infer<typeof RuntimeRouteSchema>;
@@ -82,6 +87,19 @@ async function readReceipts(path: string): Promise<z.infer<typeof ReceiptDocumen
     return ReceiptDocumentSchema.parse(JSON.parse(await readFile(path, "utf8")));
   } catch (error) {
     if (isMissing(error)) return { version: 1, receipts: [] };
+    throw error;
+  }
+}
+
+async function readRepair(path: string): Promise<z.infer<typeof RepairDocumentSchema>> {
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_RECEIPT_FILE_BYTES) {
+      throw new Error("Unsafe provider runtime repair file");
+    }
+    return RepairDocumentSchema.parse(JSON.parse(await readFile(path, "utf8")));
+  } catch (error) {
+    if (isMissing(error)) return { version: 1, repair: null };
     throw error;
   }
 }
@@ -166,6 +184,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     CodingHarnessSchema.array().max(2).parse([...options.enabledCodingHarnesses]),
   );
   const receiptPath = join(options.homePath, RECEIPT_PATH);
+  const repairPath = join(options.homePath, REPAIR_PATH);
   const ownerSettingsPath = join(options.homePath, OWNER_SETTINGS_PATH);
   const writeReceiptDocument = options.receiptWriter ?? writeProviderJsonAtomic;
   let tail: Promise<void> = Promise.resolve();
@@ -253,6 +272,10 @@ export function createProviderGenericHarnessCoordinator(options: {
     await writeReceiptDocument(receiptPath, ReceiptDocumentSchema.parse(receipts));
   }
 
+  async function writeRepair(repair: RuntimeReceipt | null): Promise<void> {
+    await writeReceiptDocument(repairPath, RepairDocumentSchema.parse({ version: 1, repair }));
+  }
+
   function replaceReceipt(
     receipts: z.infer<typeof ReceiptDocumentSchema>,
     receipt: RuntimeReceipt,
@@ -285,7 +308,15 @@ export function createProviderGenericHarnessCoordinator(options: {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
     } else if (!sameRuntimeRoute(current, beforeRoute)) {
-      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      if (receipt.state !== "applied") {
+        throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      }
+      // An applied receipt whose live route matches neither recorded endpoint
+      // has been displaced by a newer runtime writer. Persist that exact live
+      // route before clearing the stale receipt so a crash cannot later revive
+      // its historical rollback target.
+      replaceReceipt(receipts, ReceiptSchema.parse({ ...receipt, beforeRoute: current }));
+      await writeReceipts(receipts);
     }
     receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
     await writeReceipts(receipts);
@@ -319,14 +350,18 @@ export function createProviderGenericHarnessCoordinator(options: {
   async function recoverPendingReceipts(): Promise<void> {
     try {
       const receipts = await readReceipts(receiptPath);
-      if (pendingReceiptRepair) {
-        const repair = pendingReceiptRepair;
+      const durableRepair = await readRepair(repairPath);
+      const repair = pendingReceiptRepair ?? durableRepair.repair ?? undefined;
+      if (repair) {
         const durable = receipts.receipts.find((receipt) => receipt.key === repair.key);
-        if (!durable || durable.payloadHash !== repair.payloadHash) {
+        if (durable && durable.payloadHash !== repair.payloadHash) {
           throw new ProviderSettingsStoreError("runtime_unavailable", 503);
         }
-        replaceReceipt(receipts, repair);
-        await writeReceipts(receipts);
+        if (durable) {
+          replaceReceipt(receipts, repair);
+          await writeReceipts(receipts);
+        }
+        await writeRepair(null);
         pendingReceiptRepair = undefined;
       }
       await reconcilePendingReceipts(receipts);
@@ -404,7 +439,9 @@ export function createProviderGenericHarnessCoordinator(options: {
           replaceReceipt(receipts, repaired);
           recoveryBlocked = true;
           pendingReceiptRepair = repaired;
+          await writeRepair(repaired);
           await writeReceipts(receipts);
+          await writeRepair(null);
           pendingReceiptRepair = undefined;
           await applyRuntimeRoute(afterRoute);
         }
