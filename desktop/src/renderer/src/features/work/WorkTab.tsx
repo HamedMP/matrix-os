@@ -19,6 +19,7 @@ import {
 } from "../../lib/canonical-chat-client";
 import { useBoard, type Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useProjectView } from "../../stores/project-view";
 import type { WorkRoute } from "../../stores/tabs";
 import { useTabs } from "../../stores/tabs";
@@ -456,6 +457,7 @@ export default function WorkTab({
     }));
   }, [routeKey]);
   const openGlobalDraft = useCallback(() => {
+    useCodingAgentWorkspace.getState().requestComposerFocus();
     showChat(layout === "narrow");
     useTabs.getState().openTab({
       kind: "work",

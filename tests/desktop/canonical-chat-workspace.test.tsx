@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import {
@@ -389,6 +390,22 @@ describe("CanonicalChatWorkspace", () => {
     expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
     expect(existingChat.getAttribute("aria-current")).toBe("true");
     expect(existingChat.style.background).toBe("var(--bg-selected)");
+  });
+
+  it("focuses the prompt when the surrounding Chat shell requests it", async () => {
+    act(() => useCodingAgentWorkspace.getState().requestComposerFocus());
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId={null}
+        initialView="draft"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+    const prompt = await screen.findByRole("textbox", { name: "Start a chat" });
+
+    await waitFor(() => expect(document.activeElement).toBe(prompt));
   });
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {

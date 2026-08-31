@@ -7,6 +7,7 @@ import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { SurfaceChromeContext, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 import { useBoard, type Project } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
@@ -331,6 +332,7 @@ describe("WorkTab rail integration", () => {
     render(<WorkTab route="projects" active />);
     await screen.findByRole("button", { name: "Global chat" });
 
+    const previousFocusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(activeWorkTab()).toMatchObject({
       kind: "work",
@@ -339,6 +341,7 @@ describe("WorkTab rail integration", () => {
       chatId: undefined,
       projectSlug: undefined,
     });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(previousFocusRequestId + 1);
 
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
     expect(useUi.getState().createProjectOpen).toBe(true);
