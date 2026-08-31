@@ -1142,5 +1142,5 @@ export {
   isOsViewDestinationPath,
   normalizeOsViewMode,
   otherOsViewMode,
-} from "./os-view.js";
-export type { OsViewMode } from "./os-view.js";
+} from "#os-view";
+export type { OsViewMode } from "#os-view";

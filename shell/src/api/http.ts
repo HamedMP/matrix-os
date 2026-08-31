@@ -36,7 +36,10 @@ export interface ShellApiClient {
 
 export function createShellApiClient(options: ShellApiClientOptions = {}): ShellApiClient {
   const resolveGatewayUrl = options.getGatewayUrl ?? getGatewayUrl;
-  const fetchFn = options.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+  const fetchFn = options.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, {
+    ...init,
+    signal: init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  }));
 
   async function request<T>(path: string, init: RequestInit, requestOptions?: RequestOptions): Promise<T> {
     const timeout = AbortSignal.timeout(requestOptions?.timeoutMs ?? DEFAULT_TIMEOUT_MS);

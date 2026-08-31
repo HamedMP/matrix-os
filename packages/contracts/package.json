@@ -22,6 +22,7 @@
     "#kernel-result": "./src/kernel-result.ts",
     "#legacy-contract-primitives": "./src/legacy-contract-primitives.ts",
     "#kernel-conversations": "./src/kernel-conversations.ts",
+    "#os-view": "./src/os-view.ts",
     "#safe-client-error": "./src/safe-client-error.ts",
     "#terminal-links": "./src/terminal-links.ts"
   },
