@@ -95,7 +95,7 @@ export const CanonicalProviderOptionDescriptorSchema = z.object({
 const CanonicalSlashDescriptorSchema = z.object({
   id: canonicalReferenceId(80),
   displayName: canonicalSafeLabel(120, 480),
-  description: canonicalSafeLabel(400, 1_600),
+  description: canonicalSafeLabel(1_600, 1_600),
   invocation: z.string().min(2).max(81).regex(/^\/[a-z][a-z0-9_-]{0,79}$/),
 }).strict();
 
