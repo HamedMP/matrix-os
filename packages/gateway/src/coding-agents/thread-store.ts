@@ -1115,9 +1115,21 @@ export function createCodingAgentThreadStore(
       return;
     }
     const controller = new AbortController();
+    const deadlineSignal = AbortSignal.timeout(initialRunTimeoutMs);
+    let terminationSource: "explicit_abort" | "deadline" | undefined;
+    const captureExplicitAbort = () => {
+      terminationSource ??= "explicit_abort";
+    };
+    const captureDeadline = () => {
+      terminationSource ??= "deadline";
+    };
+    controller.signal.addEventListener("abort", captureExplicitAbort, { once: true });
+    deadlineSignal.addEventListener("abort", captureDeadline, { once: true });
+    if (controller.signal.aborted) captureExplicitAbort();
+    else if (deadlineSignal.aborted) captureDeadline();
     const combinedSignal = AbortSignal.any([
       controller.signal,
-      AbortSignal.timeout(initialRunTimeoutMs),
+      deadlineSignal,
     ]);
     const providerPromise = Promise.resolve().then(() => input.provider.startThread({
       principal: input.principal,
@@ -1141,25 +1153,35 @@ export function createCodingAgentThreadStore(
           });
         });
         const parsed = parseCodingAgentProviderRunResult(providerResult, input.thread.id);
+        const sourceAwareEvents = terminationSource === "explicit_abort"
+          ? defaultAbortEvents(input.thread.id, now, nextEventId)
+          : terminationSource === "deadline"
+          ? safeProviderRunFailureEvents(input.thread.id, now, nextEventId)
+          : parsed.events;
         await finalizeInitialRun({
           ownerId: input.principal.userId,
           threadId: input.thread.id,
-          providerEvents: parsed.events,
-          providerResumeState: parsed.resumeState,
+          providerEvents: sourceAwareEvents,
+          ...(terminationSource === undefined && parsed.resumeState
+            ? { providerResumeState: parsed.resumeState }
+            : {}),
         });
       } catch (err: unknown) {
-        const explicitlyAborted = controller.signal.aborted;
-        if (!explicitlyAborted) logCodingAgentWarning("provider start failed", err);
+        if (terminationSource === undefined) logCodingAgentWarning("provider start failed", err);
         await finalizeInitialRun({
           ownerId: input.principal.userId,
           threadId: input.thread.id,
-          providerEvents: explicitlyAborted
+          providerEvents: terminationSource === "explicit_abort"
             ? defaultAbortEvents(input.thread.id, now, nextEventId)
             : safeProviderRunFailureEvents(input.thread.id, now, nextEventId),
         });
       }
     })().catch((err: unknown) => logCodingAgentWarning("initial run finalization failed", err))
-      .finally(() => activeInitialRuns.delete(input.thread.id));
+      .finally(() => {
+        controller.signal.removeEventListener("abort", captureExplicitAbort);
+        deadlineSignal.removeEventListener("abort", captureDeadline);
+        activeInitialRuns.delete(input.thread.id);
+      });
     activeInitialRuns.set(input.thread.id, { controller, promise });
   }
 
