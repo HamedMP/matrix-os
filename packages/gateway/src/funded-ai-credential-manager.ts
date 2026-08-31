@@ -55,6 +55,13 @@ export class FundedAiCredentialError extends Error {
   }
 }
 
+export class FundedAiCredentialUnexpectedError extends Error {
+  constructor(cause: unknown) {
+    super("Matrix AI credential processing failed", { cause });
+    this.name = "FundedAiCredentialUnexpectedError";
+  }
+}
+
 export class FundedAiRuntimeConfigError extends Error {
   constructor(cause?: unknown) {
     super("Funded AI runtime is misconfigured", cause === undefined ? undefined : { cause });
@@ -272,12 +279,24 @@ export function createFundedAiCredentialManager(
           lastTransient = [429, 502, 503, 504].includes(response.status);
           if (!lastTransient) throw new FundedAiCredentialError();
         } else {
-          const parsed = FundedAiRuntimeCredentialIssueResponseSchema.safeParse(await readBoundedJson(response));
+          let payload: unknown;
+          try {
+            payload = await readBoundedJson(response);
+          } catch (error) {
+            if (error instanceof FundedAiCredentialError) throw error;
+            console.error(
+              "[funded-ai-credentials] unexpected response processing failure:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+            throw new FundedAiCredentialUnexpectedError(error);
+          }
+          const parsed = FundedAiRuntimeCredentialIssueResponseSchema.safeParse(payload);
           if (!parsed.success) throw new FundedAiCredentialError();
           return validateIssued(parsed.data, minValidityMs);
         }
       } catch (error) {
-        if (error instanceof FundedAiCredentialError) throw error;
+        if (error instanceof FundedAiCredentialError
+          || error instanceof FundedAiCredentialUnexpectedError) throw error;
         lastTransient = !signal.aborted;
       }
       if (!lastTransient || attempt === MAX_ATTEMPTS - 1) break;
