@@ -2,12 +2,17 @@ import { useAuth } from "@clerk/clerk-expo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  createTerminalSession as requestTerminalSessionCreation,
   deleteTerminalSession,
   fetchActiveComputer,
   fetchTerminalSessions,
   mobileQueryKeys,
   renameTerminalSession,
 } from "@/lib/requests";
+import {
+  SHELL_SESSION_CREATE_ATTEMPTS,
+  twoWordShellSessionName,
+} from "@/lib/shell-session-names";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
 export function useComputerTerminals() {
@@ -36,6 +41,30 @@ export function useComputerTerminals() {
     },
   });
   const terminalQueryKey = mobileQueryKeys.terminals(userId ?? "signed-out", computerKey);
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const token = await getToken();
+      if (!token || !computer) throw new Error("Could not create terminal. Try again.");
+      const existingNames = new Set((terminals.data ?? []).map((session) => session.name));
+      let name: string | null = null;
+      for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
+        const candidate = twoWordShellSessionName();
+        if (!existingNames.has(candidate)) {
+          name = candidate;
+          break;
+        }
+      }
+      if (!name) throw new Error("Could not create terminal. Try again.");
+      return requestTerminalSessionCreation(
+        token,
+        `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
+        name,
+      );
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: terminalQueryKey });
+    },
+  });
   const renameMutation = useMutation({
     mutationFn: async ({ currentName, nextName }: { currentName: string; nextName: string }) => {
       const token = await getToken();
@@ -70,10 +99,11 @@ export function useComputerTerminals() {
       || (Boolean(computer) && terminals.isPending)
     ),
     isError: activeComputer.isError || terminals.isError,
+    createSession: () => createMutation.mutateAsync(),
     renameSession: (currentName: string, nextName: string) => (
       renameMutation.mutateAsync({ currentName, nextName })
     ),
     deleteSession: (name: string) => deleteMutation.mutateAsync(name),
-    isMutating: renameMutation.isPending || deleteMutation.isPending,
+    isMutating: createMutation.isPending || renameMutation.isPending || deleteMutation.isPending,
   };
 }

@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -11,6 +12,8 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
+import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
+import ChevronRightIcon from "@hugeicons/core-free-icons/ChevronRightIcon";
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
 import PencilEdit02Icon from "@hugeicons/core-free-icons/PencilEdit02Icon";
 import { Swipeable } from "react-native-gesture-handler";
@@ -24,15 +27,17 @@ import {
 import { MockPage } from "@/components/mock-shell/MockPage";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { TerminalAgentLogo, type MobileTerminalAgent } from "@/components/terminal/TerminalAgentLogo";
-import { Icon, Spacer } from "@/components/ui";
+import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components/ui";
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
 import { isValidEditableTerminalSessionName, type TerminalSession } from "@/lib/requests";
-import { palette } from "@/lib/theme";
+import { fonts, palette, semanticColors } from "@/lib/theme";
 
 type TerminalAction = {
   type: "rename" | "delete";
   session: TerminalSession;
 } | null;
+
+const SHEET_DISMISS_NAVIGATION_DELAY_MS = 500;
 
 export default function TerminalScreen() {
   const router = useRouter();
@@ -40,13 +45,29 @@ export default function TerminalScreen() {
   const [terminalAction, setTerminalAction] = useState<TerminalAction>(null);
   const [nextName, setNextName] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
-  const { sessions, isPending, isError, renameSession, deleteSession, isMutating = false } = useComputerTerminals();
+  const [manageSheetVisible, setManageSheetVisible] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [createSessionError, setCreateSessionError] = useState<string | null>(null);
+  const sessionNavigationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const {
+    sessions,
+    isPending,
+    isError,
+    createSession,
+    renameSession,
+    deleteSession,
+    isMutating = false,
+  } = useComputerTerminals();
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredSessions = normalizedQuery
     ? sessions.filter((session) => session.name.toLowerCase().includes(normalizedQuery))
     : sessions;
   const activeSessions = filteredSessions.filter((session) => session.status !== "exited");
   const closedSessions = filteredSessions.filter((session) => session.status === "exited");
+
+  useEffect(() => () => {
+    if (sessionNavigationTimer.current) clearTimeout(sessionNavigationTimer.current);
+  }, []);
 
   const closeAction = () => {
     if (isMutating) return;
@@ -109,46 +130,131 @@ export default function TerminalScreen() {
     />
   );
 
+  const submitCreateSession = async () => {
+    if (creatingSession) return;
+    setCreateSessionError(null);
+    setCreatingSession(true);
+    try {
+      const sessionName = await createSession();
+      setManageSheetVisible(false);
+      if (sessionNavigationTimer.current) clearTimeout(sessionNavigationTimer.current);
+      sessionNavigationTimer.current = setTimeout(() => {
+        sessionNavigationTimer.current = null;
+        router.push({
+          pathname: "/terminal-session/[session]",
+          params: { session: sessionName },
+        } as never);
+      }, SHEET_DISMISS_NAVIGATION_DELAY_MS);
+    } catch {
+      setCreateSessionError("Could not create terminal. Try again.");
+    } finally {
+      setCreatingSession(false);
+    }
+  };
+
   return (
-    <MockPage title="Terminal" subtitle="Persistent sessions on this computer">
-      <MockSearchField
-        placeholder="Search sessions"
-        value={searchQuery}
-        onChangeText={setSearchQuery}
+    <View style={styles.screen}>
+      <MockPage title="Terminal" subtitle="Persistent sessions on this computer">
+        <MockSearchField
+          placeholder="Search sessions"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        <Spacer size="2xl" />
+        <Text style={styles.sectionLabel}>ACTIVE SESSIONS</Text>
+        <Spacer size="md" />
+
+        {isPending ? <ListRowSkeletonStack testID="terminal-row-skeleton" /> : null}
+        {isError ? <Text style={styles.statusText}>Terminals unavailable. Try again.</Text> : null}
+        {!isPending && !isError && activeSessions.length === 0
+          ? <Text style={styles.statusText}>No active terminal sessions.</Text>
+          : null}
+        {!isPending && !isError && activeSessions.length > 0 ? (
+          <ListRowStack>{activeSessions.map(renderSession)}</ListRowStack>
+        ) : null}
+
+        {closedSessions.length > 0 ? (
+          <>
+            <Spacer size="2xl" />
+            <Text style={styles.sectionLabel}>CLOSED SESSIONS</Text>
+            <Spacer size="md" />
+            <ListRowStack>{closedSessions.map(renderSession)}</ListRowStack>
+          </>
+        ) : null}
+
+        <TerminalActionPopup
+          action={terminalAction}
+          nextName={nextName}
+          error={actionError}
+          isSubmitting={isMutating}
+          onChangeName={setNextName}
+          onClose={closeAction}
+          onRename={() => void submitRename()}
+          onDelete={() => void submitDelete()}
+        />
+      </MockPage>
+      <FloatingActionButton
+        accessibilityLabel="Manage terminals"
+        icon={Add01Icon}
+        iconTestID="manage-terminals-icon"
+        onPress={() => {
+          setCreateSessionError(null);
+          setManageSheetVisible(true);
+        }}
       />
-      <Spacer size="2xl" />
-      <Text style={styles.sectionLabel}>ACTIVE SESSIONS</Text>
-      <Spacer size="md" />
-
-      {isPending ? <ListRowSkeletonStack testID="terminal-row-skeleton" /> : null}
-      {isError ? <Text style={styles.statusText}>Terminals unavailable. Try again.</Text> : null}
-      {!isPending && !isError && activeSessions.length === 0
-        ? <Text style={styles.statusText}>No active terminal sessions.</Text>
-        : null}
-      {!isPending && !isError && activeSessions.length > 0 ? (
-        <ListRowStack>{activeSessions.map(renderSession)}</ListRowStack>
-      ) : null}
-
-      {closedSessions.length > 0 ? (
-        <>
-          <Spacer size="2xl" />
-          <Text style={styles.sectionLabel}>CLOSED SESSIONS</Text>
-          <Spacer size="md" />
-          <ListRowStack>{closedSessions.map(renderSession)}</ListRowStack>
-        </>
-      ) : null}
-
-      <TerminalActionPopup
-        action={terminalAction}
-        nextName={nextName}
-        error={actionError}
-        isSubmitting={isMutating}
-        onChangeName={setNextName}
-        onClose={closeAction}
-        onRename={() => void submitRename()}
-        onDelete={() => void submitDelete()}
-      />
-    </MockPage>
+      <Sheet
+        visible={manageSheetVisible}
+        onClose={() => {
+          if (creatingSession) return;
+          setManageSheetVisible(false);
+          setCreateSessionError(null);
+        }}
+        testID="terminal-manage-sheet"
+      >
+        <View style={styles.sheetHeader}>
+          <View accessibilityElementsHidden style={styles.sheetHeaderBalance} />
+          <Text style={styles.sheetTitle}>Manage terminals</Text>
+          <View accessibilityElementsHidden style={styles.sheetHeaderBalance} />
+        </View>
+        <Spacer size="xl" />
+        <Divider testID="terminal-manage-divider" />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="New session"
+          accessibilityState={{ busy: creatingSession, disabled: creatingSession }}
+          disabled={creatingSession}
+          onPress={() => void submitCreateSession()}
+          style={({ pressed }) => [styles.manageOption, pressed && styles.pressed]}
+        >
+          <Spacer size="lg" />
+          <View style={styles.manageOptionContent}>
+            <Text style={styles.manageOptionLabel}>New session</Text>
+            {creatingSession ? (
+              <ActivityIndicator
+                testID="new-terminal-session-loading"
+                size="small"
+                color={semanticColors.textDefault}
+              />
+            ) : (
+              <Icon
+                icon={ChevronRightIcon}
+                size={22}
+                color={semanticColors.textDefault}
+                testID="new-terminal-session-chevron"
+              />
+            )}
+          </View>
+          <Spacer size="lg" />
+        </Pressable>
+        {createSessionError ? (
+          <>
+            <Spacer size="sm" />
+            <Text style={styles.createSessionError}>{createSessionError}</Text>
+          </>
+        ) : null}
+        <Spacer size="4xl" />
+      </Sheet>
+    </View>
   );
 }
 
@@ -351,6 +457,44 @@ function sessionDetail(session: TerminalSession): string {
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  sheetHeaderBalance: {
+    width: 32,
+    height: 32,
+  },
+  sheetTitle: {
+    flex: 1,
+    fontFamily: fonts.productMedium,
+    fontSize: 18,
+    color: semanticColors.textDefault,
+    textAlign: "center",
+  },
+  manageOption: {
+    alignSelf: "stretch",
+  },
+  manageOptionContent: {
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  manageOptionLabel: {
+    fontFamily: fonts.productMedium,
+    fontSize: 18,
+    color: semanticColors.textDefault,
+  },
+  createSessionError: {
+    paddingHorizontal: 16,
+    fontFamily: mockFonts.body,
+    fontSize: 13,
+    color: palette.coral[600],
+  },
   sectionLabel: {
     fontFamily: mockFonts.semibold,
     fontSize: 11,

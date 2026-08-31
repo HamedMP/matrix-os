@@ -1,5 +1,8 @@
+import type { ReactNode } from "react";
+
 const mockPush = jest.fn();
 const mockUseComputerTerminals = jest.fn();
+const mockCreateSession = jest.fn();
 const mockRenameSession = jest.fn();
 const mockDeleteSession = jest.fn();
 
@@ -24,6 +27,17 @@ jest.mock("@/lib/queries/use-computer-terminals", () => ({
   useComputerTerminals: () => mockUseComputerTerminals(),
 }));
 
+jest.mock("@expo/ui", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  const { View } = jest.requireActual("react-native") as typeof import("react-native");
+  return {
+    BottomSheet: ({ children, isPresented }: { children: ReactNode; isPresented: boolean }) => (
+      isPresented ? <View testID="terminal-manage-sheet">{children}</View> : null
+    ),
+    RNHostView: ({ children }: { children: ReactNode }) => children,
+  };
+});
+
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet } from "react-native";
@@ -45,7 +59,12 @@ describe("drawer terminal screen", () => {
       isError: false,
       renameSession: mockRenameSession,
       deleteSession: mockDeleteSession,
+      createSession: mockCreateSession,
     });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it("renders VPS sessions and uses semantic status colors", () => {
@@ -141,5 +160,33 @@ describe("drawer terminal screen", () => {
     expect(style.width).toBeUndefined();
     expect(style.alignSelf).toBe("stretch");
     expect(style.aspectRatio).toBe(1);
+  });
+
+  it("creates a session from the manage sheet and opens the new terminal", async () => {
+    jest.useFakeTimers();
+    let resolveCreate: ((name: string) => void) | undefined;
+    mockCreateSession.mockImplementation(() => new Promise<string>((resolve) => {
+      resolveCreate = resolve;
+    }));
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Manage terminals"));
+    expect(screen.getByText("Manage terminals")).toBeTruthy();
+    expect(screen.getByTestId("new-terminal-session-chevron")).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText("New session"));
+    expect(screen.queryByTestId("new-terminal-session-chevron")).toBeNull();
+    expect(screen.getByTestId("new-terminal-session-loading")).toBeTruthy();
+
+    await React.act(async () => resolveCreate?.("swift-falcon"));
+
+    expect(screen.queryByTestId("terminal-manage-sheet")).toBeNull();
+    await React.act(async () => {
+      jest.advanceTimersByTime(500);
+    });
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/terminal-session/[session]",
+      params: { session: "swift-falcon" },
+    });
   });
 });

@@ -29,6 +29,7 @@ export {
   type IntegrationService,
 } from "./integrations";
 export {
+  createTerminalSession,
   deleteTerminalSession,
   fetchTerminalSessions,
   isValidEditableTerminalSessionName,

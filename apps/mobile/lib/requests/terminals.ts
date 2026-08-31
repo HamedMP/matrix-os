@@ -6,6 +6,7 @@ import {
 } from "@/lib/requests/http";
 
 const TERMINALS_UNAVAILABLE_ERROR = "Terminals unavailable. Try again.";
+const TERMINAL_CREATE_ERROR = "Could not create terminal. Try again.";
 const TERMINAL_RENAME_ERROR = "Could not rename terminal. Try again.";
 const TERMINAL_DELETE_ERROR = "Could not delete terminal. Try again.";
 const MAX_TERMINAL_SESSIONS = 1_000;
@@ -38,6 +39,10 @@ const TerminalRenameResponseSchema = z.object({
 });
 
 const TerminalDeleteResponseSchema = z.object({ ok: z.literal(true) });
+const TerminalCreateResponseSchema = z.object({
+  name: z.string().regex(EDITABLE_TERMINAL_SESSION_NAME),
+  created: z.literal(true),
+});
 
 export type TerminalSession = z.infer<typeof TerminalSessionSchema>;
 
@@ -62,6 +67,30 @@ export function fetchTerminalSessions(
 
 export function isValidEditableTerminalSessionName(value: string): boolean {
   return EDITABLE_TERMINAL_SESSION_NAME.test(value);
+}
+
+export async function createTerminalSession(
+  clerkToken: string,
+  computerGatewayUrl: string,
+  name: string,
+): Promise<string> {
+  if (!isValidEditableTerminalSessionName(name)) throw new Error(TERMINAL_CREATE_ERROR);
+  let url: string;
+  try {
+    url = buildGatewayRequestUrl(computerGatewayUrl, "/api/terminal/sessions");
+  } catch {
+    throw new Error(TERMINAL_CREATE_ERROR);
+  }
+  const response = await fetchAuthenticatedJson({
+    url,
+    token: clerkToken,
+    schema: TerminalCreateResponseSchema,
+    errorMessage: TERMINAL_CREATE_ERROR,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, cwd: "projects" }),
+  });
+  return response.name;
 }
 
 export async function renameTerminalSession(
