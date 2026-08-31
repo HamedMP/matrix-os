@@ -2,17 +2,15 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("dock icon resolution", () => {
-  it("boots Desktop from shell bootstrap while allowing one design-switch app refresh", async () => {
+  it("uses React Query as the sole Web Desktop app catalog", async () => {
     const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
+    const windowManagerSource = await readFile("shell/src/hooks/useWindowManager.ts", "utf8");
 
-    expect(source).toContain("/api/shell/bootstrap");
-    expect(source).not.toContain("/api/layout`,");
-    expect(source.match(/fetch\(`\$\{GATEWAY_URL\}\/api\/apps`,/g)).toHaveLength(1);
-    expect(source).toContain(
-      "fetch(`${GATEWAY_URL}/api/apps`, { signal: AbortSignal.timeout(10_000) })",
-    );
-    expect(source).toContain("reconcileDesignApps");
-    expect(source).not.toContain("/files/system/modules.json");
+    expect(source).toContain("useQuery({");
+    expect(source).toContain("...appsQueryOptions()");
+    expect(source).not.toContain("reconcileDesignApps");
+    expect(windowManagerSource).not.toContain("apps: AppEntry[]");
+    expect(windowManagerSource).not.toContain("setApps:");
   });
 
   it("uses the shared icon resolver in Desktop instead of a PNG-only local helper", async () => {
@@ -22,7 +20,7 @@ describe("dock icon resolution", () => {
     expect(source).not.toContain("function iconUrlForSlug");
     expect(source).not.toContain("/icons/${encodeURIComponent(slug)}.png");
     expect(source).not.toContain("const iconPath = `/icons/${slug}.png`");
-    expect(source).toContain("gatewayAssetUrl(bootstrap.icons?.[slug]?.versionedUrl) ?? iconUrlForSlug(slug)");
+    expect(source).toContain("app.iconUrl ?? iconUrlForSlug(app.icon ?? app.slug)");
     expect(source).not.toContain("method: \"HEAD\"");
   });
 
@@ -32,25 +30,17 @@ describe("dock icon resolution", () => {
       readFile("shell/src/lib/builtin-apps.ts", "utf8"),
     ]);
 
-    expect(desktopSource).toContain("addApp(\"Terminal\", \"__terminal__\", \"terminal\", iconForSlug(\"terminal\"))");
+    expect(desktopSource).toContain("buildWebDesktopIconApps(installedApps)");
     expect(builtInSource).toContain('new Set(["__workspace__"])');
     expect(builtInSource).not.toContain('"__workspace__",\n  "__terminal__"');
-    expect(desktopSource).toContain("addApp(\"Files\", \"__file-browser__\", \"files\", iconForSlug(\"files\"))");
-    expect(desktopSource).toContain("addApp(\"Hermes\", \"__chat__\", \"chat\", iconForSlug(\"chat\"))");
+    expect(desktopSource).toContain("buildWebDesktopLauncherApps(installedApps, desktopMode)");
   });
 
-  it("preserves versioned desktop icon URLs when app registration refreshes", async () => {
-    const [source, helperSource] = await Promise.all([
-      readFile("shell/src/components/Desktop.tsx", "utf8"),
-      readFile("shell/src/components/desktop/desktop-app-routing.ts", "utf8"),
-    ]);
+  it("writes regenerated icons into the React Query catalog", async () => {
+    const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
 
-    expect(helperSource).toContain("function iconAssetPath");
-    expect(helperSource).toContain("export function sameIconAsset");
-    expect(source).toContain("const nextIconUrl = iconUrl === undefined");
-    expect(source).toContain("? existing.iconUrl");
-    expect(source).toContain(": sameIconAsset(existing.iconUrl, iconUrl) ? existing.iconUrl : iconUrl");
-    expect(source).toContain("{ ...app, name, iconUrl: nextIconUrl }");
+    expect(source).toContain("queryClient.setQueryData<ApiAppEntry[]>(appKeys.list()");
+    expect(source).toContain("versionedIconUrl");
   });
 
   it("uses the shared icon resolver for mobile dock icons", async () => {

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { appKeys, appsQueryOptions, type ApiAppEntry } from "@/api/apps";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -28,19 +30,19 @@ import { useThemeStyle } from "./window/useThemeStyle";
 import { OsSessionHost } from "./os-session/OsSessionHost";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
-import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
+import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { ChatPopover } from "./ChatPopover";
 import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
-import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
-import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh";
+import { versionedIconUrl } from "@/lib/icon-url";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import {
   buildWebDesktopLauncherApps,
+  buildWebDesktopIconApps,
   resolveWebDesktopBuiltInLaunch,
 } from "@/lib/web-desktop-app-launch";
 import {
@@ -71,7 +73,6 @@ import {
   findAppByName,
   gatewayFetchSignal,
   registryPathToRelativePath,
-  sameIconAsset,
   type ModuleMeta,
   type ShellBootstrap,
 } from "./desktop/desktop-app-routing";
@@ -104,7 +105,6 @@ interface DesktopProps {
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
-  const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
   const wmMinimizeWindow = useWindowManager((s) => s.minimizeWindow);
   const wmRestoreAndFocusWindow = useWindowManager((s) => s.restoreAndFocusWindow);
@@ -114,12 +114,30 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const wmResizeWindow = useWindowManager((s) => s.resizeWindow);
   const wmReconcileWindowsToViewport = useWindowManager((s) => s.reconcileWindowsToViewport);
   const wmGetWindow = useWindowManager((s) => s.getWindow);
-  const wmSetApps = useWindowManager((s) => s.setApps);
   const wmSetWindows = useWindowManager((s) => s.setWindows);
   const wmLoadLayout = useWindowManager((s) => s.loadLayout);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
   const wmToggleFullscreen = useWindowManager((s) => s.toggleFullscreen);
   const wmExitFullscreen = useWindowManager((s) => s.exitFullscreen);
+  const queryClient = useQueryClient();
+  const cachedApps = useMemo(
+    () => loadShellSnapshot(cacheScope)?.bootstrap?.apps,
+    [cacheScope],
+  );
+  const { data: apiApps = [], refetch: refetchApps } = useQuery({
+    ...appsQueryOptions(),
+    initialData: cachedApps,
+    initialDataUpdatedAt: 0,
+  });
+  const installedApps = useMemo(
+    () => apiApps.map((app) => ({
+      name: app.name,
+      path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")),
+      iconUrl: app.iconUrl ?? iconUrlForSlug(app.icon ?? app.slug),
+    })),
+    [apiApps],
+  );
+  const apps = useMemo(() => buildWebDesktopIconApps(installedApps), [installedApps]);
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -136,7 +154,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // OS boot screens are reserved for actual OS-session transitions so this
   // account → journey → Desktop handoff cannot visually swap designs.
   const launchPathConsumedRef = useRef<string | null>(null);
-  const designApiPathsRef = useRef<Set<string>>(new Set());
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
@@ -269,18 +286,18 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           return;
         }
         return r.json().then((data: { iconUrl: string; etag?: string }) => {
-          wmSetApps((prev) =>
-            prev.map((a) =>
-              nameToSlug(a.name) === slug
-                ? { ...a, iconUrl: versionedIconUrl(`${GATEWAY_URL}${data.iconUrl}`, data.etag) }
-                : a,
+          queryClient.setQueryData<ApiAppEntry[]>(appKeys.list(), (current = []) =>
+            current.map((app) =>
+              (app.slug ?? nameToSlug(app.name)) === slug
+                ? { ...app, iconUrl: versionedIconUrl(`${GATEWAY_URL}${data.iconUrl}`, data.etag) }
+                : app,
             ),
           );
         });
       })
       .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
       .finally(() => generatingRef.current!.delete(slug));
-  }, [wmSetApps]);
+  }, [queryClient]);
 
   const renameAppOnServer = (slug: string, newName: string) => {
     fetch(`${GATEWAY_URL}/api/apps/${slug}/rename`, {
@@ -300,23 +317,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           if (data.newSlug) {
             const oldSlug = slug;
             const ns = data.newSlug;
-            wmSetApps((prev) =>
-              prev.map((a) => {
-                const aSlug = nameToSlug(a.name);
-                if (aSlug === oldSlug) {
-                  const newPath = a.path.includes("/")
-                    ? `apps/${ns}/index.html`
-                    : `apps/${ns}.html`;
-                  return {
-                    ...a,
-                    name: newName,
-                    path: newPath,
-                    iconUrl: iconUrlForSlug(ns),
-                  };
-                }
-                return a;
-              }),
-            );
             // Update open windows
             wmSetWindows((prev) =>
               prev.map((w) => {
@@ -331,6 +331,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               }),
             );
           }
+          void queryClient.invalidateQueries({ queryKey: appKeys.all() });
         });
       })
       .catch((err) => console.warn(`Rename request failed for "${slug}":`, err));
@@ -339,24 +340,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const removeFromCanvas = (appPath: string) => {
     wmSetWindows((prev) => prev.filter((w) => w.path !== appPath && !w.path.startsWith(appPath + ":")));
   };
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds loadModules' deps, and loadModules is a useEffect dependency (L~1070); a fresh function each render would re-fire the module-load effect every render
-  const addApp = useCallback((name: string, path: string, iconSlug?: string, iconUrlOverride?: string) => {
-    if (isRetiredBuiltInAppPath(path)) return;
-    const iconUrl = iconUrlOverride ?? iconUrlForSlug(iconSlug);
-    wmSetApps((prev) => {
-      const existing = prev.find((a) => a.path === path);
-      if (existing) {
-        const nextIconUrl = iconUrl === undefined
-          ? existing.iconUrl
-          : sameIconAsset(existing.iconUrl, iconUrl) ? existing.iconUrl : iconUrl;
-        if (existing.name === name && existing.iconUrl === nextIconUrl) return prev;
-        return prev.map((app) => app.path === path ? { ...app, name, iconUrl: nextIconUrl } : app);
-      }
-      return [...prev, { name, path, iconUrl }];
-    });
-  }, [wmSetApps]);
-
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435) and feeds loadModules' deps (also a useEffect dependency); a fresh function each render would re-fire both effects every render
   const openWindow = useCallback((name: string, path: string) => {
@@ -478,8 +461,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // (or opens) the best match. Returns the result so the caller can
   // report success/failure back to Gemini for accurate narration.
   const openAppByName = (query: string): { success: boolean; resolvedName?: string } => {
-    const currentApps = useWindowManager.getState().apps;
-    const match = findAppByName(currentApps, query);
+    const match = findAppByName(apps, query);
     if (match) {
       openAppOrFocus(match.path, match.name);
       return { success: true, resolvedName: match.name };
@@ -489,7 +471,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   useEffect(() => {
     if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
-    const match = useWindowManager.getState().apps.find((app) => app.path === launchAppPath);
+    const match = apps.find((app) => app.path === launchAppPath);
     if (!match) return;
     launchPathConsumedRef.current = launchAppPath;
     openAppOrFocus(match.path, match.name);
@@ -516,11 +498,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     ) => {
       if (isLoadAborted()) return;
 
-      const iconForSlug = (slug: string | undefined): string | undefined => {
-        if (!slug) return undefined;
-        return gatewayAssetUrl(bootstrap.icons?.[slug]?.versionedUrl) ?? iconUrlForSlug(slug);
-      };
-
       const savedLayout: { windows?: LayoutWindow[] } =
         !isPreVpsBillingSetupRoute() ? bootstrap.layout ?? {} : {};
       const savedWindows = (savedLayout.windows ?? []).map(normalizeBuiltInLayoutWindow);
@@ -534,12 +511,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         layoutToLoad.push(saved);
       };
 
-      // Register built-in apps
-      addApp("Terminal", "__terminal__", "terminal", iconForSlug("terminal"));
-      addApp("Files", "__file-browser__", "files", iconForSlug("files"));
-      if (!HERMES_CHAT_HIDDEN) {
-        addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
-      }
       const savedBuiltIns = savedWindows.filter((w) => isRestorableBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
@@ -547,31 +518,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
       // Load pre-installed apps from /api/apps (apps/ directory)
       if (Array.isArray(bootstrap.apps)) {
-        const appsList = bootstrap.apps;
-        const nextApiPaths = new Set(
-          appsList.map((app) => normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""))),
-        );
-        const previousApiPaths = designApiPathsRef.current;
-        // A cached bootstrap is applied before the authoritative network
-        // bootstrap. Remove API-owned entries that disappeared from the fresh
-        // list before adding its apps, otherwise an app from the cached OS
-        // design survives a reload alongside the active design's apps.
-        if (previousApiPaths.size > 0) {
-          wmSetApps((current) => current.filter(
-            (entry) => !previousApiPaths.has(entry.path) || nextApiPaths.has(entry.path),
-          ));
-        }
-        // Baseline for the design-switch reconcile effect: removals only ever
-        // apply to entries that came from /api/apps.
-        designApiPathsRef.current = nextApiPaths;
-        for (const app of appsList) {
+        for (const app of bootstrap.apps) {
           if (isLoadAborted()) return;
-          // path from API is like "/files/apps/calculator/index.html"
-          // strip leading "/files/" to get relative path for AppViewer
           const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
-          const iconSlug = app.icon ?? app.slug;
-          addApp(app.name, relativePath, iconSlug, iconForSlug(iconSlug));
-
           const saved = layoutMap.get(relativePath);
           queueSavedLayout(saved);
           // Don't auto-open pre-installed apps - let users open from dock/store
@@ -590,7 +539,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             if (!relativeBasePath) continue;
             const defaultEntryFile = mod.type === "react-app" ? "dist/index.html" : "index.html";
             const path = normalizeBuiltInAppPath(`${relativeBasePath}/${defaultEntryFile}`);
-            addApp(mod.name, path, nameToSlug(mod.name));
             const saved = layoutMap.get(path);
             queueSavedLayout(saved);
             continue;
@@ -630,7 +578,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
             if (!metaRes?.ok) {
               path = normalizeBuiltInAppPath(path);
-              addApp(appName, path, nameToSlug(appName));
               const saved = layoutMap.get(path);
               queueSavedLayout(saved);
               continue;
@@ -641,8 +588,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
             path = normalizeBuiltInAppPath(`${relativeBasePath}/${entryFile}`);
             appName = meta.name ?? mod.name;
-
-            addApp(appName, path, meta.icon ?? nameToSlug(appName));
 
             const saved = layoutMap.get(path);
             if (saved) {
@@ -683,7 +628,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (isLoadAborted()) return;
       console.warn("[desktop] Failed to load desktop modules:", err);
     }
-  }, [addApp, cacheScope, openWindow, wmLoadLayout]);
+  }, [cacheScope, openWindow, wmLoadLayout]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -694,6 +639,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   useFileWatcher((path: string, event: string) => {
     if (path === "system/modules.json" && event !== "unlink") {
       loadModules();
+      void queryClient.invalidateQueries({ queryKey: appKeys.all() });
       return;
     }
 
@@ -703,12 +649,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       const isAppIndex = path.match(/^apps\/[^/]+\/(index\.html|dist\/index\.html)$/);
       if (!isRootHtml && !isAppIndex) return;
 
-      const name = path.replace("apps/", "").replace(/\/(dist\/)?index\.html$/, "").replace(".html", "");
+      void queryClient.invalidateQueries({ queryKey: appKeys.all() });
       if (event === "unlink") {
-        wmSetApps((prev) => prev.filter((a) => a.path !== path));
         wmSetWindows((prev) => prev.filter((w) => w.path !== path));
-      } else {
-        addApp(name, path, nameToSlug(name));
       }
     }
   });
@@ -785,10 +728,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // Windows designs replace the mac menu bar + dock with a bottom taskbar.
   const isWindowsDesign = themeStyle === "winxp" || themeStyle === "win11";
 
-  // The gateway re-filters design-scoped apps on every /api/apps call, but
-  // the shell only bootstraps its list once. Refetch on mid-session design
-  // switches so scoped apps (XP Minesweeper, Widgets, Stickies…) appear and
-  // disappear live without a reload.
+  // Design changes can alter the server-filtered catalog. React Query owns
+  // that catalog, so a refetch is sufficient—there is no second list to
+  // reconcile with window-manager state.
   const designStyleRef = useRef<string | null>(null);
   useEffect(() => {
     if (!themeStyle) return;
@@ -798,30 +740,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
     if (designStyleRef.current === themeStyle) return;
     designStyleRef.current = themeStyle;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`${GATEWAY_URL}/api/apps`, { signal: AbortSignal.timeout(10_000) });
-        if (!res.ok || cancelled) return;
-        const apiApps = (await res.json()) as ApiAppEntry[];
-        if (cancelled) return;
-        const { next, apiPaths } = reconcileDesignApps({
-          current: useWindowManager.getState().apps,
-          apiApps,
-          previousApiPaths: designApiPathsRef.current,
-          normalizePath: (path) => normalizeBuiltInAppPath(path.replace(/^\/files\//, "")),
-          iconUrlFor: (app) => iconUrlForSlug(app.icon ?? app.slug),
-        });
-        designApiPathsRef.current = apiPaths;
-        wmSetApps(next);
-      } catch (err) {
-        if (!cancelled) {
-          console.warn("[desktop] design app refresh failed:", err instanceof Error ? err.message : String(err));
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [themeStyle, wmSetApps]);
+    void refetchApps();
+  }, [refetchApps, themeStyle]);
   // Geometry belongs to the presentation namespace. Switching OS views keeps
   // canonical windows and sessions alive while restoring each view's last
   // in-memory geometry. Durable namespaced geometry follows in the persistence
@@ -1081,8 +1001,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   ) : null;
 
   const launcherApps = useMemo(
-    () => buildWebDesktopLauncherApps(apps, desktopMode),
-    [apps, desktopMode],
+    () => buildWebDesktopLauncherApps(installedApps, desktopMode),
+    [installedApps, desktopMode],
   );
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
@@ -1614,7 +1534,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           />
 
           {desktopMode === "canvas" && (
-            <CanvasRenderer>
+            <CanvasRenderer apps={apps}>
               {manualSetupVisible && (
                 <SetupChecklist onOpenTerminal={openSetupTerminal} />
               )}

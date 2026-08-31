@@ -19,7 +19,8 @@ import { useThreads } from "./threads";
 import { useUi } from "./ui";
 import { useWorkspace } from "./workspace";
 import { advanceRuntimeGeneration } from "./runtime-generation";
-import { resetAppsRuntime } from "./apps";
+import { clearPreloadedAppIcons } from "../features/apps/app-icons";
+import { clearDesktopQueryCache } from "../lib/query-client";
 import { useDesktopSurfaces } from "./desktop-surfaces";
 import { resetDesktopIconsRuntime } from "./desktop-icons";
 import { useCreateAppRequest } from "./create-app-request";
@@ -103,7 +104,8 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     loadingPaths: {},
   });
   useThreads.setState({ threads: [], activeThreadId: null });
-  resetAppsRuntime();
+  clearDesktopQueryCache();
+  clearPreloadedAppIcons();
   clearCodingAgentRuntimeSelection();
   clearDraftChats();
   clearProjectWorkspaces();

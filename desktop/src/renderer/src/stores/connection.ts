@@ -6,7 +6,7 @@ import { createApiClient, type ApiClient } from "../lib/api";
 import { clearDraftChats } from "./draft-chat";
 import { advanceRuntimeGeneration } from "./runtime-generation";
 import { reconcileDesktopRuntimeChange } from "./runtime-transition";
-import { resetAppsRuntime } from "./apps";
+import { clearPreloadedAppIcons } from "../features/apps/app-icons";
 import { flushActiveNotesBeforeIdentityChange } from "../features/notes/notes-controller";
 import { clearDesktopQueryCache } from "../lib/query-client";
 
@@ -60,7 +60,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         clearDesktopQueryCache();
         advanceRuntimeGeneration();
         clearDraftChats();
-        resetAppsRuntime();
+        clearPreloadedAppIcons();
       }
       const api = status.signedIn
         ? createApiClient({
@@ -90,7 +90,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         clearDesktopQueryCache();
         advanceRuntimeGeneration();
         clearDraftChats();
-        resetAppsRuntime();
+        clearPreloadedAppIcons();
       }
       set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
     }

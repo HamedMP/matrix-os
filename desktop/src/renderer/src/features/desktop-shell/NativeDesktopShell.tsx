@@ -23,7 +23,7 @@ import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import { useConnection } from "../../stores/connection";
 import { defaultDesktopIcons, useDesktopIcons } from "../../stores/desktop-icons";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
-import { appIconUrl, useApps } from "../../stores/apps";
+import { appIconUrl, useAppsQuery } from "../apps/apps.api";
 import { LayoutGrid } from "@renderer/lib/hugeicons";
 import { useCreateAppRequest } from "../../stores/create-app-request";
 import {
@@ -77,7 +77,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const api = useConnection((state) => state.api);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
-  const installedApps = useApps((state) => state.apps);
+  const { data: installedApps = [], refetch: refetchInstalledApps } = useAppsQuery();
   const desktopIcons = useDesktopIcons((state) => state.icons);
   const primeDesktopIcons = useDesktopIcons((state) => state.prime);
   const moveDesktopIcon = useDesktopIcons((state) => state.move);
@@ -112,6 +112,11 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   useEffect(() => {
     if (launcherOpen) setLauncherMounted(true);
   }, [launcherOpen]);
+
+  useEffect(() => {
+    if (!launcherOpen || !api) return;
+    void refetchInstalledApps();
+  }, [api, launcherOpen, refetchInstalledApps]);
 
   useEffect(() => {
     normalizeLegacyTabs();

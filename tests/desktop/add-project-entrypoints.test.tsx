@@ -5,7 +5,6 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
 import ProjectsIndex from "../../desktop/src/renderer/src/features/project/ProjectsIndex";
-import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -13,6 +12,7 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { clearDesktopApps } from "./apps-query-test-utils";
 
 describe("add-project entry points", () => {
   beforeEach(() => {
@@ -29,7 +29,7 @@ describe("add-project entry points", () => {
     useTabs.setState({ tabs: [], activeTabId: null });
     useThreads.setState({ threads: [], activeThreadId: null });
     useCodingAgentWorkspace.setState({ summary: null, activeThreadId: null, reviews: null });
-    useApps.setState({ apps: [], error: null });
+    clearDesktopApps();
     useUi.setState({ createProjectOpen: false, paletteOpen: false });
   });
 

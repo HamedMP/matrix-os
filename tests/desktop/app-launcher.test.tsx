@@ -4,9 +4,9 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLauncher from "../../desktop/src/renderer/src/features/embeds/AppLauncher";
-import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
 
 describe("AppLauncher", () => {
   beforeEach(() => {
@@ -17,16 +17,12 @@ describe("AppLauncher", () => {
       runtimeSlot: "primary",
       api: null,
     });
-    useApps.setState({
-      apps: [
-        { slug: "alpha", name: "Alpha", appIdentity: "utilities/alpha" },
-        { slug: "beta", name: "Beta" },
-        { slug: "bravo", name: "Bravo" },
-      ],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    clearDesktopApps();
+    seedDesktopApps([
+      { slug: "alpha", name: "Alpha", appIdentity: "utilities/alpha" },
+      { slug: "beta", name: "Beta" },
+      { slug: "bravo", name: "Bravo" },
+    ]);
     useTabs.setState({ tabs: [], activeTabId: null });
   });
 
@@ -52,7 +48,7 @@ describe("AppLauncher", () => {
         }),
       } as never,
     });
-    useApps.setState({ apps: [], loaded: false, loading: false, error: null });
+    clearDesktopApps();
 
     render(<AppLauncher />);
 
@@ -167,11 +163,9 @@ describe("AppLauncher", () => {
   });
 
   it("does not show a no-match state before the app catalog loads", () => {
-    useApps.setState({
-      apps: [],
-      loaded: false,
-      loading: true,
-      error: null,
+    clearDesktopApps();
+    useConnection.setState({
+      api: { get: vi.fn(() => new Promise(() => undefined)) } as never,
     });
 
     render(<AppLauncher />);

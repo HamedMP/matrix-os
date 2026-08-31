@@ -86,7 +86,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 1,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
       focusWindow: originalFocusWindow,
@@ -124,7 +123,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -159,7 +157,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -186,7 +183,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });
@@ -239,7 +235,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -284,7 +279,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });
@@ -318,7 +312,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });

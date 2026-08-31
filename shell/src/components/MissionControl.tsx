@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { appsQueryOptions } from "@/api/apps";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { groupLauncherApps } from "@/lib/dock-sections";
@@ -59,6 +61,14 @@ export function MissionControl({
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const closingRef = useRef(false);
+  const { refetch: refreshApps } = useQuery({
+    ...appsQueryOptions(),
+    enabled: false,
+  });
+
+  useEffect(() => {
+    if (open) void refreshApps();
+  }, [open, refreshApps]);
 
   const prevOpenRef = useRef(open);
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- enter/exit animation orchestration, not derived state: the `open` prop drives requestAnimationFrame double-buffering (mount now, set visible next frame) and a 300ms setTimeout-delayed unmount. These are side effects that must run in an effect, and `mounted`/`visible` cannot be computed in render without dropping the transition.

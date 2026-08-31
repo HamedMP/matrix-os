@@ -16,7 +16,7 @@ import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { useShellSessionSync } from "../../lib/shell-session-sync";
-import { preloadAppIcons, useApps } from "../../stores/apps";
+import { preloadAppIcons, useAppsQuery } from "../apps/apps.api";
 import NativeDesktopShell from "../desktop-shell/NativeDesktopShell";
 import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
 
@@ -27,7 +27,7 @@ export default function MissionControl() {
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const authGeneration = useConnection((s) => s.authGeneration);
   const loadProjects = useBoard((s) => s.loadProjects);
-  const loadApps = useApps((s) => s.load);
+  const { data: apps = [] } = useAppsQuery();
   const loadNativeDesktopMode = useNativeDesktopMode((s) => s.load);
   const createProjectOpen = useUi((s) => s.createProjectOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
@@ -111,17 +111,8 @@ export default function MissionControl() {
   // Warm the catalog and icon cache as soon as this computer is connected,
   // rather than making the first Apps-tab visit wait for both request stages.
   useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
-    void loadApps(api).then(() => {
-      if (!cancelled) {
-        preloadAppIcons(platformHost, runtimeSlot, useApps.getState().apps);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, loadApps, platformHost, runtimeSlot]);
+    if (apps.length > 0) preloadAppIcons(platformHost, runtimeSlot, apps);
+  }, [apps, platformHost, runtimeSlot]);
 
   useEffect(() => {
     if (!api) return;
