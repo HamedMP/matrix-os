@@ -22,6 +22,17 @@ describe("provider terminal login coordinator", () => {
     delete: vi.fn(async (name: string) => {
       sessions.delete(name);
     }),
+    rename: vi.fn(async (name: string, nextName: string) => {
+      if (!sessions.delete(name)) {
+        throw Object.assign(new Error("missing"), { code: "session_not_found" });
+      }
+      if (sessions.has(nextName)) {
+        sessions.add(name);
+        throw Object.assign(new Error("exists"), { code: "session_exists" });
+      }
+      sessions.add(nextName);
+      return { name: nextName };
+    }),
   };
 
   beforeEach(async () => {
@@ -30,6 +41,7 @@ describe("provider terminal login coordinator", () => {
     registry.get.mockClear();
     registry.create.mockClear();
     registry.delete.mockClear();
+    registry.rename.mockClear();
   });
 
   afterEach(async () => {
@@ -378,7 +390,7 @@ describe("provider terminal login coordinator", () => {
         installState: "installed",
       },
     })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
-    expect(registry.delete).toHaveBeenCalledWith(expect.stringMatching(/^provider-login-[a-f0-9]{24}$/), { force: true });
+    expect(registry.delete).toHaveBeenCalledWith(expect.stringMatching(/^provider-login-[a-f0-9]{64}$/), { force: true });
     expect(sessions.size).toBe(0);
   });
 
@@ -418,7 +430,7 @@ describe("provider terminal login coordinator", () => {
     expect(sessions.size).toBe(1);
     expect(registry.create).toHaveBeenCalledOnce();
     const orphanName = [...sessions][0];
-    expect(orphanName).toMatch(/^provider-login-[a-f0-9]{24}$/);
+    expect(orphanName).toMatch(/^provider-login-[a-f0-9]{64}$/);
 
     const recovery = await readFile(join(homePath, "system/ai-providers/login-recovery.json"), "utf8");
     expect(recovery).toContain("login_orphan_recovery_1");

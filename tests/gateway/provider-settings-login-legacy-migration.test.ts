@@ -23,6 +23,17 @@ describe("provider terminal login legacy migration", () => {
     delete: vi.fn(async (name: string) => {
       sessions.delete(name);
     }),
+    rename: vi.fn(async (name: string, nextName: string) => {
+      if (!sessions.delete(name)) {
+        throw Object.assign(new Error("missing"), { code: "session_not_found" });
+      }
+      if (sessions.has(nextName)) {
+        sessions.add(name);
+        throw Object.assign(new Error("exists"), { code: "session_exists" });
+      }
+      sessions.add(nextName);
+      return { name: nextName };
+    }),
   };
   const legacyInput = {
     mutation: {
@@ -49,6 +60,7 @@ describe("provider terminal login legacy migration", () => {
     registry.get.mockClear();
     registry.create.mockClear();
     registry.delete.mockClear();
+    registry.rename.mockClear();
   });
 
   afterEach(async () => {
@@ -102,12 +114,16 @@ describe("provider terminal login legacy migration", () => {
       },
     });
 
-    expect(recovered.action).toEqual({
+    expect(recovered.action).toMatchObject({
       kind: "open_terminal",
-      terminalSessionId: legacy.sessionName,
+      terminalSessionId: expect.stringMatching(/^provider-login-[a-f0-9]{64}$/),
     });
+    const recoveredSessionName = recovered.action.kind === "open_terminal"
+      ? recovered.action.terminalSessionId
+      : "";
     expect(registry.create).not.toHaveBeenCalled();
-    expect(sessions).toEqual(new Set([legacy.sessionName]));
+    expect(registry.rename).toHaveBeenCalledWith(legacy.sessionName, recoveredSessionName);
+    expect(sessions).toEqual(new Set([recoveredSessionName]));
 
     const receipts = JSON.parse(await readFile(
       join(homePath, "system/ai-providers/login-receipts.json"),
@@ -138,12 +154,16 @@ describe("provider terminal login legacy migration", () => {
       },
     });
 
-    expect(recovered.action).toEqual({
+    expect(recovered.action).toMatchObject({
       kind: "open_terminal",
-      terminalSessionId: legacy.sessionName,
+      terminalSessionId: expect.stringMatching(/^provider-login-[a-f0-9]{64}$/),
     });
+    const recoveredSessionName = recovered.action.kind === "open_terminal"
+      ? recovered.action.terminalSessionId
+      : "";
     expect(registry.create).not.toHaveBeenCalled();
-    expect(sessions).toEqual(new Set([legacy.sessionName]));
+    expect(registry.rename).toHaveBeenCalledWith(legacy.sessionName, recoveredSessionName);
+    expect(sessions).toEqual(new Set([recoveredSessionName]));
   });
 
   it("renews an expired migrated legacy session without creating a canonical duplicate", async () => {
@@ -163,10 +183,13 @@ describe("provider terminal login legacy migration", () => {
         idempotencyKey: "login_legacy_migrated_key",
       },
     });
-    expect(migrated.action).toEqual({
+    expect(migrated.action).toMatchObject({
       kind: "open_terminal",
-      terminalSessionId: legacy.sessionName,
+      terminalSessionId: expect.stringMatching(/^provider-login-[a-f0-9]{64}$/),
     });
+    const migratedSessionName = migrated.action.kind === "open_terminal"
+      ? migrated.action.terminalSessionId
+      : "";
 
     checkedAt = new Date(Date.parse(migrated.expiresAt) + 1);
     const renewed = await login.startLogin({
@@ -180,7 +203,7 @@ describe("provider terminal login legacy migration", () => {
 
     expect(renewed).toMatchObject({
       state: "pending",
-      action: { kind: "open_terminal", terminalSessionId: legacy.sessionName },
+      action: { kind: "open_terminal", terminalSessionId: migratedSessionName },
     });
     expect(Date.parse(renewed.expiresAt) - checkedAt.getTime()).toBe(10 * 60_000);
 
@@ -195,7 +218,7 @@ describe("provider terminal login legacy migration", () => {
     });
     expect(sameKeyRenewal.action).toEqual({
       kind: "open_terminal",
-      terminalSessionId: legacy.sessionName,
+      terminalSessionId: migratedSessionName,
     });
 
     let latest = sameKeyRenewal;
@@ -211,7 +234,7 @@ describe("provider terminal login legacy migration", () => {
       });
       expect(latest.action).toEqual({
         kind: "open_terminal",
-        terminalSessionId: legacy.sessionName,
+        terminalSessionId: migratedSessionName,
       });
     }
 
@@ -227,7 +250,81 @@ describe("provider terminal login legacy migration", () => {
     expect(recovery.receipts).toHaveLength(1);
     expect(registry.create).not.toHaveBeenCalled();
     expect(registry.delete).not.toHaveBeenCalled();
-    expect(sessions).toEqual(new Set([legacy.sessionName]));
+    expect(registry.rename).toHaveBeenCalledOnce();
+    expect(sessions).toEqual(new Set([migratedSessionName]));
+  });
+
+  it("keeps a migrated legacy identity recoverable after both bounded receipt documents evict it", async () => {
+    const legacy = await seedLegacyLoginReceipt();
+    let checkedAt = new Date(now);
+    const login = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => new Date(checkedAt),
+    });
+    const migrated = await login.startLogin({
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 1,
+        idempotencyKey: "login_legacy_migrated_durable",
+      },
+    });
+    expect(migrated.action).toMatchObject({
+      kind: "open_terminal",
+      terminalSessionId: expect.stringMatching(/^provider-login-[a-f0-9]{64}$/),
+    });
+    const migratedSessionName = migrated.action.kind === "open_terminal"
+      ? migrated.action.terminalSessionId
+      : "";
+    expect(migratedSessionName).not.toBe(legacy.sessionName);
+    expect(registry.rename).toHaveBeenCalledWith(legacy.sessionName, migratedSessionName);
+    expect(sessions).toContain(migratedSessionName);
+    expect(sessions).not.toContain(legacy.sessionName);
+
+    for (let index = 0; index < 65; index += 1) {
+      await login.startLogin({
+        ...legacyInput,
+        mutation: {
+          ...legacyInput.mutation,
+          expectedRevision: index + 2,
+          idempotencyKey: `login_eviction_${index}`,
+          accountId: `owner_other_${index}`,
+        },
+      });
+    }
+
+    const receipts = await readFile(
+      join(homePath, "system/ai-providers/login-receipts.json"),
+      "utf8",
+    );
+    const recovery = await readFile(
+      join(homePath, "system/ai-providers/login-recovery.json"),
+      "utf8",
+    );
+    expect(receipts).not.toContain(migratedSessionName);
+    expect(recovery).not.toContain(migratedSessionName);
+
+    checkedAt = new Date(Date.parse(migrated.expiresAt) + 1);
+    const createCountBeforeRetry = registry.create.mock.calls.length;
+    const deleteCountBeforeRetry = registry.delete.mock.calls.length;
+    const recovered = await login.startLogin({
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 67,
+        idempotencyKey: "login_legacy_after_document_eviction",
+      },
+    });
+
+    expect(recovered.action).toEqual({
+      kind: "open_terminal",
+      terminalSessionId: migratedSessionName,
+    });
+    expect(registry.create).toHaveBeenCalledTimes(createCountBeforeRetry);
+    expect(registry.delete).toHaveBeenCalledTimes(deleteCountBeforeRetry);
+    expect(sessions).toContain(migratedSessionName);
   });
 
   it.each([
