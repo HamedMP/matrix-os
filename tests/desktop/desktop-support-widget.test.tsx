@@ -9,6 +9,7 @@ import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
+import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 
 const operatorEventListeners = vi.hoisted(() => ({
   analyticsCapture: null as null | ((payload: unknown) => void),
@@ -135,6 +136,7 @@ describe("Desktop support widget", () => {
     useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
     useTabs.setState(useTabs.getInitialState(), true);
     useUi.setState(useUi.getInitialState(), true);
+    useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
   });
 
   afterEach(async () => {
@@ -366,6 +368,8 @@ describe("Desktop support widget", () => {
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
       .toEqual([
+        "Desktop mode",
+        "Canvas mode",
         "Search",
         "Support",
         "Join Discord",

@@ -159,13 +159,14 @@ test("a tall light desktop terminal grows real rows without a black gap", async 
   await mockShellApis(page);
   await page.setViewportSize({ width: 1_440, height: 1_200 });
   await page.goto("/");
-  await page.waitForSelector("[data-testid='dock-settings']", { timeout: 15_000 });
+  await page.getByRole("button", { name: "Settings" }).waitFor();
 
-  const canvasMode = page.getByRole("button", { name: "Canvas mode" });
-  if ((await canvasMode.getAttribute("aria-pressed")) !== "true") {
-    await canvasMode.click();
-  }
-  await page.keyboard.press("Meta+k");
+  const commandPaletteShortcut = process.platform === "darwin" ? "Meta+k" : "Control+k";
+  await page.keyboard.press(commandPaletteShortcut);
+  await page.getByPlaceholder("Type a command or search…").fill("Mode: Canvas");
+  await page.getByText("Mode: Canvas", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "Zoom out" })).toBeVisible();
+  await page.keyboard.press(commandPaletteShortcut);
   await page.keyboard.type("Terminal");
   await page.keyboard.press("Enter");
 

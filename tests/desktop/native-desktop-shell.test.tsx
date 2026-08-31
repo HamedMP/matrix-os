@@ -163,6 +163,47 @@ describe("native desktop shell", () => {
     expect(background.style.zIndex).toBe(String(DESKTOP_Z_INDEX.nativeDesktopBackground));
   });
 
+  it("switches between Desktop and Canvas from visible header controls and keeps Settings reachable", async () => {
+    render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
+
+    const desktopMode = screen.getByRole("button", { name: "Desktop mode" });
+    const canvasMode = screen.getByRole("button", { name: "Canvas mode" });
+    expect(desktopMode.getAttribute("aria-pressed")).toBe("true");
+    expect(canvasMode.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
+    const settingsTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "settings");
+    expect(settingsTab).toBeTruthy();
+    const settingsContent = await screen.findByText("Settings content");
+    fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+    expect(settingsContent.getAttribute("data-settings-section")).toBe("agents-providers");
+    const desktopBounds = useDesktopSurfaces.getState().surfaces[settingsTab!.id]!.bounds;
+
+    fireEvent.click(canvasMode);
+
+    expect(useNativeDesktopMode.getState().mode).toBe("canvas");
+    expect(canvasMode.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("native-desktop-canvas")).toBeTruthy();
+    expect(settingsContent.getAttribute("data-settings-section")).toBe("agents-providers");
+    expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]?.mode).toBe("window");
+    act(() => useDesktopSurfaces.getState().setSurfaceBounds(
+      settingsTab!.id,
+      { x: 2_000, y: -600, width: 900, height: 700 },
+      { width: 1_200, height: 720 },
+      false,
+    ));
+    const canvasBounds = useDesktopSurfaces.getState().surfaces[settingsTab!.id]!.bounds;
+
+    fireEvent.click(desktopMode);
+    expect(useNativeDesktopMode.getState().mode).toBe("desktop");
+    expect(desktopMode.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("native-desktop-workspace")).toBeTruthy();
+    expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]!.bounds).toEqual(desktopBounds);
+
+    fireEvent.click(canvasMode);
+    expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]!.bounds).toEqual(canvasBounds);
+  });
+
   it("opens the background menu from an empty desktop right-click", async () => {
     render(<NativeDesktopShell overlayOpen={false} />);
 
