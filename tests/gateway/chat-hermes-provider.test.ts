@@ -144,6 +144,31 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toContain("/home/matrix/home/private/screenshot.png");
   });
 
+  it("reports an oversized Hermes response as a Run failure instead of a connection failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.complete", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      result: { success: true, output: "oversized-private-sentinel".repeat(25_000) },
+    });
+
+    expect(await eventsPromise).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "run_failed",
+        safeMessage: "The agent returned a response that was too large to process.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }]);
+    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("projects official Hermes tool frames without leaking provider payloads", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });

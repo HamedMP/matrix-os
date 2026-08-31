@@ -737,7 +737,12 @@ export function createHermesChatProviderAdapter(options: {
             ? `${error.name}:${error.reason}${error.eventType ? `:${error.eventType}` : ""}`
             : error instanceof Error ? error.name : "UnknownError",
         );
-        const safeFailure = error instanceof HermesRunFailure
+        const safeFailure = error instanceof HermesGatewayProtocolError && error.reason === "frame_too_large"
+          ? {
+              code: "run_failed" as const,
+              safeMessage: "The agent returned a response that was too large to process.",
+            }
+          : error instanceof HermesRunFailure
           ? {
               code: "run_failed" as const,
               safeMessage: error.reason === "interrupted"

@@ -237,6 +237,43 @@ function isActiveRun(run: CanonicalChatRun | undefined): boolean {
   ].includes(run.status);
 }
 
+function selectedModelDisplayName(run: CanonicalChatRun): string {
+  const namespaceSeparator = run.selection.model.indexOf(":");
+  return namespaceSeparator >= 0
+    ? run.selection.model.slice(namespaceSeparator + 1)
+    : run.selection.model;
+}
+
+function activeModelStatus(run: CanonicalChatRun | undefined): ConversationWorkPresentation | undefined {
+  if (!run || !isActiveRun(run)) return undefined;
+  const model = selectedModelDisplayName(run);
+  const id = `${run.id}:selected-model`;
+  return {
+    kind: "activity-group",
+    id,
+    timestamp: Date.parse(run.startedAt ?? run.createdAt),
+    sequence: 0,
+    activities: [{
+      id,
+      kind: "phase",
+      state: "running",
+      label: "Working",
+      preview: `Current model: ${model}`,
+      previewKind: "text",
+    }],
+  };
+}
+
+function isDuplicateProviderModelStatus(
+  run: CanonicalChatRun,
+  activity: Extract<CanonicalChatRunActivity, { type: "agent.activity" }>,
+): boolean {
+  const expected = `Current model: ${selectedModelDisplayName(run)}`.toLowerCase();
+  return activity.kind === "phase"
+    && activity.label === "Working"
+    && [activity.summary, activity.preview].some((value) => value?.trim().toLowerCase() === expected);
+}
+
 function activityState(
   status:
     | Extract<CanonicalChatRunActivity, { type: "tool.progress" }>["status"]
@@ -336,6 +373,7 @@ function runPresentation(
       }
       setBounded(toolProgress, activity.toolCallId, activity, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "agent.activity") {
+      if (isDuplicateProviderModelStatus(run, activity)) continue;
       if (!agentActivities.has(activity.activityId)) {
         activityOrder.push({
           type: "agent",
@@ -447,8 +485,12 @@ function runPresentation(
       }],
     });
   }
+  const active = isActiveRun(run);
+  const projectedActivityGroups = active
+    ? activityGroups.slice(0, MAX_RUN_ACTIVITY_PROJECTIONS - 1)
+    : activityGroups;
   const work: ConversationWorkPresentation[] = [
-    ...activityGroups,
+    ...projectedActivityGroups,
     ...requestOrder.flatMap((key) => {
       const request = requests.get(key);
       return request ? [request] : [];
@@ -456,7 +498,6 @@ function runPresentation(
   ];
   const failed = run.status === "failed" || run.outcome === "failed";
   const stopped = run.status === "aborted" || run.outcome === "aborted";
-  const active = isActiveRun(run);
   const streamedMessages = [...streamed.entries()].map(([messageId, value]) => ({
     kind: "message" as const,
     id: messageId,
@@ -517,7 +558,9 @@ export function canonicalChatPresentation(input: {
       || run?.outcome === "failed" || run?.outcome === "aborted";
     const finalMessage = terminalFailure || isActiveRun(run) ? undefined : assistantMessages.at(-1);
     const live = runPresentation(run, input.activities, Boolean(finalMessage), turn.id);
+    const modelStatus = activeModelStatus(run);
     const unsortedWork = [
+      ...(modelStatus ? [modelStatus] : []),
       ...assistantMessages.filter((message) => message.id !== finalMessage?.id).flatMap((message) => [
         ...messageWork(message),
         ...(messageText(message) ? [messagePresentation(message, "commentary")] : []),
