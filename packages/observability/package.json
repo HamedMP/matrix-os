@@ -29,6 +29,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@posthog/mcp": "0.11.7",
     "hono": "^4.11.9",
     "posthog-node": "^5.24.15"
   },

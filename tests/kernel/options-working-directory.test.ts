@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MatrixDB } from "../../packages/kernel/src/db.js";
+import { createIpcServer } from "../../packages/kernel/src/ipc-server.js";
 
 vi.mock("../../packages/kernel/src/ipc-server.js", () => ({
   createIpcServer: vi.fn(async () => ({ name: "matrix-os-ipc" })),
@@ -62,5 +63,22 @@ describe("kernel working directory", () => {
     const options = await kernelOptions(config);
 
     expect(options.cwd).toBe(config.homePath);
+  });
+
+  it("offers each in-process MCP server to the gateway instrumentation hook", async () => {
+    const instance = { server: "matrix-os-ipc" };
+    vi.mocked(createIpcServer).mockResolvedValueOnce({
+      name: "matrix-os-ipc",
+      instance,
+    } as never);
+    const instrumentMcpServer = vi.fn();
+
+    await kernelOptions({
+      db,
+      homePath: "/home/matrix/home",
+      instrumentMcpServer,
+    });
+
+    expect(instrumentMcpServer).toHaveBeenCalledWith(instance);
   });
 });
