@@ -2,6 +2,7 @@ import {
   ProviderSettingsSnapshotSchema,
   type AiProviderReadiness,
   type AiProviderSnapshotV3,
+  type FundedAiEffectivePolicy,
   type FundedAiFundingSummary,
   type ProviderAccount,
   type ProviderDependencyCounts,
@@ -73,12 +74,26 @@ function projectAccessSources(
   canonical: AiProviderSnapshotV3,
   config: ProviderSettingsConfiguration,
   fundingSummary?: FundedAiFundingSummary,
+  fundedPolicy?: FundedAiEffectivePolicy,
+  fundedPolicyAuthoritative = false,
   now = new Date(),
 ) {
   const { sourceByAccount, sourceIds } = selectedCanonicalSources(canonical, config);
   const accountBySource = new Map([...sourceByAccount].map(([accountId, sourceId]) => [sourceId, accountId]));
   const sources = canonical.accessSources.filter((source) => sourceIds.has(source.id)).map((source) => {
     const matrix = source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon";
+    const fundedModelIds = matrix && fundedPolicyAuthoritative
+      ? (fundedPolicy?.allowedModelIds ?? []).flatMap((policyModelId) => {
+        if (source.eligibleModelIds.includes(policyModelId)) return [policyModelId];
+        const vendorPrefix = `${source.vendor}/`;
+        const canonicalModelId = policyModelId.startsWith(vendorPrefix)
+          ? policyModelId.slice(vendorPrefix.length)
+          : null;
+        return canonicalModelId && source.eligibleModelIds.includes(canonicalModelId)
+          ? [canonicalModelId]
+          : [];
+      })
+      : null;
     return {
       id: source.id,
       kind: matrix ? "matrix_gateway" as const : "provider_account" as const,
@@ -93,7 +108,9 @@ function projectAccessSources(
         action: source.action,
         safeReason: source.safeReason,
       },
-      eligibleModelIds: [...source.eligibleModelIds],
+      eligibleModelIds: fundedModelIds
+        ? [...new Set(fundedModelIds)]
+        : [...source.eligibleModelIds],
       usage: matrix && fundingSummary ? {
         kind: "managed_credit" as const,
         authority: "matrix_ledger" as const,
@@ -245,12 +262,16 @@ export async function projectProviderSettings(input: {
   dependencies?: ProviderSettingsDependencyReader;
   supportedActions: ProviderSettingsSupportedAction[];
   fundingSummary?: FundedAiFundingSummary;
+  fundedPolicy?: FundedAiEffectivePolicy;
+  fundedPolicyAuthoritative?: boolean;
   loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): Promise<ProviderSettingsSnapshot> {
   const { sources, sourceByAccount } = projectAccessSources(
     input.canonical,
     input.config,
     input.fundingSummary,
+    input.fundedPolicy,
+    input.fundedPolicyAuthoritative,
     input.now,
   );
   const accounts = await projectAccounts({
@@ -277,6 +298,10 @@ export async function projectProviderSettings(input: {
     && sources.some((source) => source.id === input.config.gatewayPolicy?.accessSourceId && source.kind === "matrix_gateway")
     ? {
         ...input.config.gatewayPolicy,
+        allowedModelIds: input.fundedPolicyAuthoritative
+          ? sources.find((source) => source.id === input.config.gatewayPolicy?.accessSourceId)!
+            .eligibleModelIds
+          : input.config.gatewayPolicy.allowedModelIds,
         monthlyBudgetMicrousd: input.fundingSummary?.monthlyBudgetMicrousd
           ?? input.config.gatewayPolicy.monthlyBudgetMicrousd,
         // Stripe top-ups are not wired yet; schemas alone never advertise purchase capability.

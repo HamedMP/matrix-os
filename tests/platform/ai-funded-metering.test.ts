@@ -432,6 +432,224 @@ describe("funded AI metering", () => {
       .toEqual([-80, -20]);
   });
 
+  it("settles each reservation against the exact promotional or add-on credit it reserved", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    await repo.setRuntimePolicy({
+      identity,
+      expectedRevision: 0,
+      enabled: true,
+      allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000,
+      expiresAt: null,
+    });
+    await repo.grantCredit({
+      entryId: "attributed_expiring_promo",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 100,
+      sourceReference: "attributed-campaign",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await repo.grantCredit({
+      entryId: "attributed_addon",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 100,
+      sourceReference: "attributed-invoice",
+    });
+    const credential = (await repo.issueRuntimeCredential(identity)).credential;
+    const promotionalReservation = await repo.authorize({
+      credential: credential.token,
+      requestId: "attributed_promotional_request",
+      modelId,
+      maxCostMicrousd: 100,
+    });
+    const addonReservation = await repo.authorize({
+      credential: credential.token,
+      requestId: "attributed_addon_request",
+      modelId,
+      maxCostMicrousd: 100,
+    });
+
+    const stored = await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["request_id", "promotional_reserved_microusd", "addon_reserved_microusd"])
+      .orderBy("request_id").execute();
+    expect(stored.map((row) => ({
+      requestId: row.request_id,
+      promotional: Number(row.promotional_reserved_microusd),
+      addon: Number(row.addon_reserved_microusd),
+    }))).toEqual([
+      { requestId: "attributed_addon_request", promotional: 0, addon: 100 },
+      { requestId: "attributed_promotional_request", promotional: 100, addon: 0 },
+    ]);
+
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    await repo.startReservation({
+      reservationId: addonReservation.reservation.reservationId,
+      tokenId: credential.tokenId,
+    });
+    const addonSettlement = await repo.settleReservation({
+      reservationId: addonReservation.reservation.reservationId,
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 50,
+    });
+    expect(addonSettlement.funding).toMatchObject({
+      promotionalBalanceMicrousd: 100,
+      addonBalanceMicrousd: 50,
+      reservedMicrousd: 100,
+    });
+
+    await repo.startReservation({
+      reservationId: promotionalReservation.reservation.reservationId,
+      tokenId: credential.tokenId,
+    });
+    const promotionalSettlement = await repo.settleReservation({
+      reservationId: promotionalReservation.reservation.reservationId,
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 100,
+    });
+    expect(promotionalSettlement.funding).toMatchObject({
+      promotionalBalanceMicrousd: 0,
+      addonBalanceMicrousd: 50,
+      creditBalanceMicrousd: 50,
+      reservedMicrousd: 0,
+    });
+    const allocations = await db.executor.selectFrom("ai_funded_reservation_promotional_allocations")
+      .selectAll().execute();
+    expect(allocations).toEqual([expect.objectContaining({
+      reservation_id: promotionalReservation.reservation.reservationId,
+      grant_entry_id: "attributed_expiring_promo",
+      amount_microusd: 100,
+    })]);
+  });
+
+  it("debits a partial promotional settlement in the same expiry-first order it reserved", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    await repo.setRuntimePolicy({
+      identity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000, expiresAt: null,
+    });
+    await repo.grantCredit({
+      entryId: "zzz_soon_expiry",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 50,
+      sourceReference: "soon-campaign",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await repo.grantCredit({
+      entryId: "aaa_later_expiry",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 50,
+      sourceReference: "later-campaign",
+      expiresAt: "2026-08-30T20:10:00.000Z",
+    });
+    const credential = (await repo.issueRuntimeCredential(identity)).credential;
+    const authorization = await repo.authorize({
+      credential: credential.token,
+      requestId: "partial_expiry_order",
+      modelId,
+      maxCostMicrousd: 100,
+    });
+    await repo.startReservation({
+      reservationId: authorization.reservation.reservationId,
+      tokenId: credential.tokenId,
+    });
+    await repo.settleReservation({
+      reservationId: authorization.reservation.reservationId,
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 50,
+    });
+
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      promotionalBalanceMicrousd: 50,
+      creditBalanceMicrousd: 50,
+    });
+    const grants = await db.executor.selectFrom("ai_funded_promotional_grant_balances")
+      .select(["grant_entry_id", "remaining_microusd"]).orderBy("grant_entry_id").execute();
+    expect(grants.map((grant) => [grant.grant_entry_id, Number(grant.remaining_microusd)])).toEqual([
+      ["aaa_later_expiry", 50],
+      ["zzz_soon_expiry", 0],
+    ]);
+  });
+
+  it("does not double-protect legacy reservations across expired and live promotional grants", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    await repo.setRuntimePolicy({
+      identity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000, expiresAt: null,
+    });
+    await repo.grantCredit({
+      entryId: "legacy_expired_backing",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 5,
+      sourceReference: "legacy-expired",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await repo.grantCredit({
+      entryId: "legacy_live_credit",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 5,
+      sourceReference: "legacy-live",
+      expiresAt: "2026-08-30T20:10:00.000Z",
+    });
+    const credential = (await repo.issueRuntimeCredential(identity)).credential;
+    await db.transaction(async (trx) => {
+      await trx.executor.updateTable("ai_funded_runtime_balances").set({
+        reserved_microusd: 5,
+        month_reserved_microusd: 5,
+      }).where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+      await trx.executor.insertInto("ai_funded_usage_reservations").values({
+        reservation_id: "legacy_reservation",
+        request_id: "legacy_request",
+        payload_hash: "a".repeat(64),
+        authorization_response: "{}",
+        settlement_response: null,
+        start_response: null,
+        release_response: null,
+        release_reason: null,
+        token_id: credential.tokenId,
+        owner_id: identity.ownerId,
+        machine_id: identity.machineId,
+        runtime_slot: identity.runtimeSlot,
+        model_id: modelId,
+        reserved_microusd: 5,
+        promotional_reserved_microusd: null,
+        addon_reserved_microusd: null,
+        actual_microusd: null,
+        period_start: "2026-08-01T00:00:00.000Z",
+        status: "reserved",
+        created_at: clock.toISOString(),
+        started_at: null,
+        expires_at: "2026-08-30T20:05:00.000Z",
+        settled_at: null,
+        released_at: null,
+      }).execute();
+    });
+
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    const authorization = await repo.authorize({
+      credential: credential.token,
+      requestId: "post_migration_request",
+      modelId,
+      maxCostMicrousd: 5,
+    });
+    expect(authorization.funding).toMatchObject({
+      promotionalBalanceMicrousd: 10,
+      addonBalanceMicrousd: 0,
+      reservedMicrousd: 10,
+      remainingBalanceMicrousd: 0,
+    });
+    const allocation = await db.executor.selectFrom("ai_funded_reservation_promotional_allocations")
+      .selectAll().where("reservation_id", "=", authorization.reservation.reservationId)
+      .executeTakeFirstOrThrow();
+    expect(allocation).toMatchObject({ grant_entry_id: "legacy_live_credit", amount_microusd: 5 });
+  });
+
   it("charges an in-flight reservation before retiring its expired promotional backing", async () => {
     await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
     await repo.setRuntimePolicy({

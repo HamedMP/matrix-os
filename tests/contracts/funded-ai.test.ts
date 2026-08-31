@@ -145,8 +145,8 @@ describe("funded AI control-plane contracts", () => {
     }).success).toBe(false);
   });
 
-  it("returns an identity-free runtime funding summary", () => {
-    const response = { contractVersion: 1, funding } as const;
+  it("returns an identity-free runtime funding summary with authoritative effective policy", () => {
+    const response = { contractVersion: 1, funding, policy } as const;
     expect(FundedAiRuntimeFundingSummaryResponseSchema.parse(response)).toEqual(response);
     expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
       ...response,
@@ -163,6 +163,18 @@ describe("funded AI control-plane contracts", () => {
     expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
       ...response,
       funding: { ...funding, reservedThisMonthMicrousd: 200_001 },
+    }).success).toBe(false);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
+      ...response,
+      policy: { ...policy, allowedModelIds: ["anthropic/claude-opus-5"] },
+    }).success).toBe(true);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
+      ...response,
+      policy: { ...policy, monthlyBudgetMicrousd: policy.monthlyBudgetMicrousd + 1 },
+    }).success).toBe(false);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
+      ...response,
+      policy: { ...policy, checkedAt: "2026-08-30T20:00:01.000Z" },
     }).success).toBe(false);
   });
 

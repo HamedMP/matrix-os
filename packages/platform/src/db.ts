@@ -147,6 +147,8 @@ export interface AiFundedUsageReservationsTable {
   runtime_slot: string;
   model_id: string;
   reserved_microusd: number;
+  promotional_reserved_microusd: number | null;
+  addon_reserved_microusd: number | null;
   actual_microusd: number | null;
   period_start: string;
   status: string;
@@ -155,6 +157,13 @@ export interface AiFundedUsageReservationsTable {
   expires_at: string;
   settled_at: string | null;
   released_at: string | null;
+}
+
+export interface AiFundedReservationPromotionalAllocationsTable {
+  reservation_id: string;
+  grant_entry_id: string;
+  amount_microusd: number;
+  created_at: string;
 }
 
 export interface AiFundedRuntimeBalancesTable {
@@ -680,6 +689,7 @@ export interface PlatformDatabase {
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
   ai_funded_usage_reservations: AiFundedUsageReservationsTable;
+  ai_funded_reservation_promotional_allocations: AiFundedReservationPromotionalAllocationsTable;
   ai_funded_credit_ledger: AiFundedCreditLedgerTable;
   ai_funded_promotional_grant_balances: AiFundedPromotionalGrantBalancesTable;
   ai_funded_runtime_balances: AiFundedRuntimeBalancesTable;
@@ -1368,6 +1378,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       runtime_slot TEXT NOT NULL,
       model_id TEXT NOT NULL,
       reserved_microusd BIGINT NOT NULL CHECK (reserved_microusd > 0),
+      promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0),
+      addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0),
       actual_microusd BIGINT CHECK (actual_microusd >= 0),
       period_start TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('reserved', 'starting', 'in_flight', 'settling', 'releasing', 'settled', 'released', 'expired')),
@@ -1376,8 +1388,35 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       expires_at TEXT NOT NULL,
       settled_at TEXT,
       released_at TEXT,
+      CONSTRAINT ai_funded_reservation_sources_check CHECK (
+        (promotional_reserved_microusd IS NULL AND addon_reserved_microusd IS NULL)
+        OR (
+          promotional_reserved_microusd IS NOT NULL
+          AND addon_reserved_microusd IS NOT NULL
+          AND promotional_reserved_microusd + addon_reserved_microusd = reserved_microusd
+        )
+      ),
       UNIQUE (token_id, request_id)
     )
+  `.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0)`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0)`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE ai_funded_usage_reservations
+          ADD CONSTRAINT ai_funded_reservation_sources_check CHECK (
+            (promotional_reserved_microusd IS NULL AND addon_reserved_microusd IS NULL)
+            OR (
+              promotional_reserved_microusd IS NOT NULL
+              AND addon_reserved_microusd IS NOT NULL
+              AND promotional_reserved_microusd + addon_reserved_microusd = reserved_microusd
+            )
+          );
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+    END $$
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_ai_funded_reservations_runtime_status
@@ -1446,6 +1485,19 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       updated_at TEXT NOT NULL,
       revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
     )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_reservation_promotional_allocations (
+      reservation_id TEXT NOT NULL REFERENCES ai_funded_usage_reservations(reservation_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      grant_entry_id TEXT NOT NULL REFERENCES ai_funded_promotional_grant_balances(grant_entry_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+      amount_microusd BIGINT NOT NULL CHECK (amount_microusd > 0),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (reservation_id, grant_entry_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ai_funded_reservation_promo_grant
+    ON ai_funded_reservation_promotional_allocations(grant_entry_id, reservation_id)
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_ai_funded_promotional_grant_expiry
