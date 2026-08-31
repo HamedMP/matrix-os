@@ -6,6 +6,7 @@ import {
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { RuntimeSlotSchema } from "./customer-vps-schema.js";
 import { getRunningUserMachineByHandle, type PlatformDB } from "./db.js";
 import { AiFundedPolicyError, type AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from "./platform-token.js";
@@ -14,6 +15,7 @@ const RUNTIME_BODY_LIMIT = 1024;
 const RELAY_BODY_LIMIT = 4 * 1024;
 const HandleSchema = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
 const EmptyBodySchema = z.object({}).strict();
+const RuntimeQuerySchema = z.object({ runtimeSlot: RuntimeSlotSchema }).strict();
 
 export type AiFundedControlPlaneConfig = { enabled: false } | {
   enabled: true;
@@ -117,9 +119,11 @@ export function createAiFundedRuntimeRoutes(options: {
   });
   app.post("/funded-credential", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {
     const handle = HandleSchema.parse(c.req.param("handle"));
+    const query = RuntimeQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+    if (!query.success) return c.json(safeError("invalid_request"), 400);
     let machine: Awaited<ReturnType<typeof getRunningUserMachineByHandle>>;
     try {
-      machine = await getRunningUserMachineByHandle(options.db, handle);
+      machine = await getRunningUserMachineByHandle(options.db, handle, query.data.runtimeSlot);
     } catch (error) {
       return policyErrorResponse(c, error);
     }
