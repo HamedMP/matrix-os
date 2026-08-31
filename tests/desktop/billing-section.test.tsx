@@ -120,6 +120,9 @@ describe("desktop billing settings", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
       url: "https://checkout.stripe.test/session",
     });
+    expect(screen.queryByRole("option", { name: "Annual" })).toBeNull();
+    fireEvent.click(screen.getByText(/Server location/));
+    expect(screen.getByRole("option", { name: "🇺🇸 Ashburn, Virginia" })).not.toBeNull();
   });
 
   it("keeps the billing portal available for locked Stripe subscriptions", async () => {

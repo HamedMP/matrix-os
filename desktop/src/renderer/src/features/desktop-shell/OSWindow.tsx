@@ -134,8 +134,7 @@ export function TopBar({
         <div
           data-os-window-gesture-layer
           data-testid="desktop-window-drag-handle"
-          className="absolute inset-y-0 left-0 z-20"
-          style={{ width: controlsWidth }}
+          className="absolute inset-0 z-20"
           onPointerDown={onDragStart}
           onDoubleClick={handleDoubleClick}
         />

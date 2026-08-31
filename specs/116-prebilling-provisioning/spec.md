@@ -110,7 +110,7 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - **FR-015**: Matrix MUST periodically reclaim expired unauthorized prepared computers and all associated platform-owned secrets, credentials, and transient records.
 - **FR-016**: Cleanup MUST re-resolve current billing authorization and the current intent revision immediately before every irreversible provider deletion; authorization or a newer intent MUST fence out stale cleanup.
 - **FR-017**: Provider creation and deletion outcomes that are ambiguous MUST be reconciled against provider state before retrying so Matrix does not leak or duplicate computers.
-- **FR-018**: Preparation MUST have bounded per-user, per-runtime-slot, per-network-origin, and global concurrency/capacity controls with an explicit operational cost ceiling.
+- **FR-018**: Preparation MUST have bounded per-user, per-runtime-slot, per-network-origin, and global concurrency controls. Global unpaid admission MUST use one count-only ceiling across all offered machine sizes.
 - **FR-019**: Capacity exhaustion MUST fail closed without creating a provider resource, MUST preserve checkout safety by continuing with post-authorization fallback provisioning, and MUST expose only a generic preparation status if the user needs to be informed.
 - **FR-020**: Plan, compute shape, region, agent selections, runtime slot, and return path MUST be validated at their request boundaries before any external call or persisted intent.
 - **FR-021**: External billing and provider calls MUST have bounded timeouts, idempotency keys where supported, and generic client errors with detailed server-side diagnostics.
@@ -118,7 +118,7 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - **FR-023**: Preparation failures MUST NOT revoke or invalidate a successful billing authorization; an entitled user MUST fall back to the existing retryable provisioning journey.
 - **FR-024**: The journey UI MUST show distinct, resumable states for choosing agents, opening checkout, preparing during checkout, waiting for billing confirmation, authorized provisioning, failure, and readiness.
 - **FR-025**: User-facing preparation and health states MUST expose only coarse progress and safe actions, never provider names, raw upstream statuses, internal identifiers, network details, database errors, or filesystem paths.
-- **FR-026**: Preparation state changes, checkout state changes, authorization, cleanup, and failures MUST emit bounded telemetry sufficient to measure conversion, latency overlap, duplicate prevention, abandonment cost, and cleanup lag.
+- **FR-026**: Preparation state changes, checkout state changes, authorization, cleanup, and failures MUST emit bounded telemetry sufficient to measure conversion, latency overlap, duplicate prevention, active unpaid exposure, and cleanup lag.
 - **FR-027**: V1 MUST apply only to new-user primary-computer onboarding; existing paid provisioning, additional computers, recovery, resize, suspension, billing grace, and operator-preview behavior MUST remain unchanged.
 - **FR-028**: A prepared computer MUST be permanently bound to its initiating owner and MUST never be reassigned to another user, whether preparation succeeds, fails, or is abandoned.
 - **FR-029**: Abandoned owner data and credentials created during preparation MUST be deleted according to the same owner-deletion guarantees as other Matrix data, while billing and security audit records retain only the minimum required history.
@@ -146,7 +146,7 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - **SC-007**: The share of billing-authorized new users with no machine and no active provisioning job falls to zero in end-to-end test coverage and remains below 0.1% in production monitoring.
 - **SC-008**: Existing billing, provisioning, recovery, resize, suspension, preview, and additional-computer contract suites pass without behavior changes outside the explicitly eligible onboarding cohort.
 - **SC-009**: User-facing errors reveal no provider names, raw infrastructure errors, internal identifiers, network details, database details, or filesystem paths in all tested failure paths.
-- **SC-010**: The platform can enforce a configured provisional-computer cost ceiling without weakening duplicate-prevention or billing-authorization guarantees.
+- **SC-010**: Under concurrent mixed-size checkout admission, the platform prepares at most the configured number of unpaid computers and defers the next intent without weakening duplicate-prevention or billing-authorization guarantees.
 
 ## Assumptions
 

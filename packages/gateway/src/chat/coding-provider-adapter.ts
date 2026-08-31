@@ -26,7 +26,7 @@ const MAX_ACTIVE_TOOL_ACTIVITIES = 128;
 
 type CodingThreads = Pick<
   CodingAgentThreadStore & CodingAgentTurnStore,
-  "createThread" | "acceptTurn" | "getThread" | "abortThread" | "registerEventSink"
+  "createThread" | "acceptTurn" | "getThread" | "abortThread" | "submitApproval" | "registerEventSink"
 >;
 
 type CodingState = { conversationId: string; providerThreadId?: string };
@@ -174,6 +174,14 @@ function normalizeEvent(
       approvalId: event.approval.approvalId,
       title: event.approval.title,
       risk: event.approval.risk,
+      allowedDecisions: event.approval.allowedDecisions,
+    })];
+  }
+  if (event.type === "approval.resolved") {
+    return [CanonicalProviderRunEventSchema.parse({
+      type: "approval.resolved",
+      approvalId: event.approvalId,
+      decision: event.decision,
     })];
   }
   if (event.type === "user_input.requested") {
@@ -380,6 +388,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           attachments: attachments(input),
           model: input.selection.model,
           modelOptions: input.selection.options ?? [],
+          ...permissions(input.permissionMode),
           clientRequestId: requestId,
         });
         const current = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId);
@@ -395,6 +404,30 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         principal(input.owner.ownerId),
         state.conversationId,
         legacyRequestId(input.runId),
+      );
+    },
+    async submitApproval(input) {
+      if (!input.state) throw new Error("Canonical coding Provider approval state unavailable");
+      const state = CodingAgentProviderResumeStateSchema.parse(input.state);
+      const current = await options.threads.getThread(
+        principal(input.owner.ownerId),
+        state.conversationId,
+      );
+      let correlationId: string | null = null;
+      for (const event of current.events.items) {
+        if (event.type === "approval.requested" && event.approval.approvalId === input.approvalId) {
+          correlationId = event.approval.correlationId;
+        }
+        if (event.type === "approval.resolved" && event.approvalId === input.approvalId) {
+          correlationId = null;
+        }
+      }
+      if (!correlationId) throw new Error("Canonical coding Provider approval request unavailable");
+      await options.threads.submitApproval(
+        principal(input.owner.ownerId),
+        state.conversationId,
+        input.approvalId,
+        { decision: input.decision, clientRequestId: input.clientRequestId, correlationId },
       );
     },
   };

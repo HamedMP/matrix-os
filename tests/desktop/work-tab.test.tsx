@@ -20,18 +20,60 @@ const inspectorProps = vi.hoisted(() => ({
 const chatTabProps = vi.hoisted(() => ({
   tabIds: [] as Array<string | undefined>,
 }));
+const eventSourceProps = vi.hoisted(() => ({ rail: [] as unknown[], chat: [] as unknown[], project: [] as unknown[] }));
+const chatEventSourceFactory = vi.hoisted(() => ({
+  sources: [] as Array<{
+    subscribe: ReturnType<typeof vi.fn>;
+    start: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+  }>,
+}));
+
+vi.mock("@desktop/renderer/src/lib/canonical-chat-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@desktop/renderer/src/lib/canonical-chat-client")>();
+  return {
+    ...actual,
+    createCanonicalChatEventSource: () => {
+      let disposed = false;
+      const source = {
+        subscribe: vi.fn(() => {
+          if (disposed) throw new Error("Chat event source is disposed");
+          return { dispose: vi.fn() };
+        }),
+        start: vi.fn(async () => undefined),
+        dispose: vi.fn(() => { disposed = true; }),
+      };
+      chatEventSourceFactory.sources.push(source);
+      return source;
+    },
+  };
+});
+
+vi.mock("@desktop/renderer/src/features/work/WorkRail", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@desktop/renderer/src/features/work/WorkRail")>();
+  return {
+    ...actual,
+    WorkRail: (props: React.ComponentProps<typeof actual.WorkRail> & { eventSource?: unknown }) => {
+      eventSourceProps.rail.push(props.eventSource);
+      return <actual.WorkRail {...props} />;
+    },
+  };
+});
 
 vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
   default: ({
     tabId,
+    eventSource,
     renderInspector,
     inspectorExclusive,
   }: {
     tabId?: string;
+    eventSource?: unknown;
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
   }) => {
     chatTabProps.tabIds.push(tabId);
+    eventSourceProps.chat.push(eventSource);
     return (
       <>
         <main aria-hidden={inspectorExclusive || undefined}>Chat center</main>
@@ -42,17 +84,22 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
 }));
 vi.mock("@desktop/renderer/src/features/project/ProjectChatsView", () => ({
   default: ({
+    eventSource,
     renderInspector,
     inspectorExclusive,
   }: {
+    eventSource?: unknown;
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
-  }) => (
-    <>
-      <main aria-hidden={inspectorExclusive || undefined}>Project center</main>
-      {renderInspector?.({ record: { chat: { id: "chat_alpha" } }, activities: [] })}
-    </>
-  ),
+  }) => {
+    eventSourceProps.project.push(eventSource);
+    return (
+      <>
+        <main aria-hidden={inspectorExclusive || undefined}>Project center</main>
+        {renderInspector?.({ record: { chat: { id: "chat_alpha" } }, activities: [] })}
+      </>
+    );
+  },
 }));
 vi.mock("@desktop/renderer/src/features/project/ProjectsIndex", () => ({
   default: () => <main>Projects center</main>,
@@ -100,27 +147,34 @@ vi.mock("@desktop/renderer/src/features/work/WorkFilesInspector", () => ({
   },
 }));
 
-const resizeObserverCallbacks: ResizeObserverCallback[] = [];
+const resizeObserverEntries: Array<{
+  callback: ResizeObserverCallback;
+  elements: Set<Element>;
+}> = [];
 let initialWorkWidth = 1_400;
 const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
 const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
 
 class WorkResizeObserver implements ResizeObserver {
+  private readonly entry: (typeof resizeObserverEntries)[number];
   constructor(callback: ResizeObserverCallback) {
-    resizeObserverCallbacks.push(callback);
+    this.entry = { callback, elements: new Set() };
+    resizeObserverEntries.push(this.entry);
   }
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  observe(element: Element) { this.entry.elements.add(element); }
+  unobserve(element: Element) { this.entry.elements.delete(element); }
+  disconnect() { this.entry.elements.clear(); }
   takeRecords() { return []; }
 }
 
 function resizeWork(width: number) {
   initialWorkWidth = width;
-  const callback = resizeObserverCallbacks.at(-1);
-  if (!callback) throw new Error("Work ResizeObserver was not registered");
+  const observer = resizeObserverEntries.find((entry) => (
+    [...entry.elements].some((element) => element.hasAttribute("data-layout"))
+  ));
+  if (!observer) throw new Error("Work ResizeObserver was not registered");
   const entry = { contentRect: { width } } as unknown as ResizeObserverEntry;
-  act(() => callback([entry], {} as ResizeObserver));
+  act(() => observer.callback([entry], {} as ResizeObserver));
 }
 
 const alpha: Project = {
@@ -157,9 +211,13 @@ function activeWorkTab() {
 
 describe("WorkTab rail integration", () => {
   beforeEach(() => {
-    resizeObserverCallbacks.length = 0;
+    resizeObserverEntries.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
+    eventSourceProps.rail = [];
+    eventSourceProps.chat = [];
+    eventSourceProps.project = [];
+    chatEventSourceFactory.sources = [];
     initialWorkWidth = 1_400;
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
       configurable: true,
@@ -213,6 +271,60 @@ describe("WorkTab rail integration", () => {
     render(<WorkTab tabId="chat-tab-2" route="chat" active />);
 
     expect(chatTabProps.tabIds).toContain("chat-tab-2");
+  });
+
+  it("owns one shared Chat event source across rail and content and replaces it on runtime identity changes", async () => {
+    const view = render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
+    await screen.findByRole("button", { name: "Global chat" });
+
+    expect(chatEventSourceFactory.sources).toHaveLength(1);
+    const firstSource = chatEventSourceFactory.sources[0];
+    expect(firstSource).toBeDefined();
+    expect(eventSourceProps.rail.at(-1)).toBe(firstSource);
+    expect(eventSourceProps.chat.at(-1)).toBe(firstSource);
+
+    view.rerender(<WorkTab route="project" projectSlug="alpha" active initialChatId="chat_alpha" initialChatView="conversation" />);
+    await screen.findByText("Project center");
+    expect(chatEventSourceFactory.sources).toHaveLength(1);
+    expect(eventSourceProps.rail.at(-1)).toBe(firstSource);
+    expect(eventSourceProps.project.at(-1)).toBe(firstSource);
+
+    act(() => useConnection.setState({ authGeneration: 2 }));
+    await waitFor(() => expect(chatEventSourceFactory.sources).toHaveLength(2));
+    const secondSource = chatEventSourceFactory.sources[1];
+    expect(firstSource?.dispose).toHaveBeenCalledTimes(1);
+    expect(eventSourceProps.rail.at(-1)).toBe(secondSource);
+    expect(eventSourceProps.project.at(-1)).toBe(secondSource);
+
+    act(() => useConnection.setState({ runtimeSlot: "secondary" }));
+    await waitFor(() => expect(chatEventSourceFactory.sources).toHaveLength(3));
+    const thirdSource = chatEventSourceFactory.sources[2];
+    expect(secondSource?.dispose).toHaveBeenCalledTimes(1);
+    expect(eventSourceProps.rail.at(-1)).toBe(thirdSource);
+    expect(eventSourceProps.project.at(-1)).toBe(thirdSource);
+
+    view.unmount();
+    await waitFor(() => expect(thirdSource?.dispose).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the shared Chat event source alive through the StrictMode effect replay", async () => {
+    const view = render(
+      <React.StrictMode>
+        <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />
+      </React.StrictMode>,
+    );
+
+    await screen.findByRole("button", { name: "Global chat" });
+    expect(chatEventSourceFactory.sources).toHaveLength(2);
+    const committedSource = chatEventSourceFactory.sources.find((source) => source.subscribe.mock.calls.length > 0);
+    const discardedSource = chatEventSourceFactory.sources.find((source) => source !== committedSource);
+    expect(discardedSource?.start).not.toHaveBeenCalled();
+    expect(discardedSource?.subscribe).not.toHaveBeenCalled();
+    expect(committedSource?.subscribe).toHaveBeenCalled();
+    expect(committedSource?.dispose).not.toHaveBeenCalled();
+
+    view.unmount();
+    await waitFor(() => expect(committedSource?.dispose).toHaveBeenCalledTimes(1));
   });
 
   it("opens a Global draft and the existing Create Project dialog state", async () => {

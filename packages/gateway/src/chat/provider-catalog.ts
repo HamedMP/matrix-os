@@ -29,6 +29,13 @@ const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
 const CODING_DRIVERS = ["codex", "claude_code", "opencode", "pi"] as const;
 const MAX_EFFORTS = 4;
 const MAX_SKILLS = 64;
+// These provider-owned IDs were verified against the live Hermes execution path.
+// Keep them in the catalog as unavailable so stale selections fail safely while
+// the model picker hides them.
+const LIVE_PROBED_UNAVAILABLE_SYSTEM_MODELS = new Set([
+  "opencode-free:deepseek-v4-flash-free",
+  "opencode-free:nemotron-3-ultra-free",
+]);
 
 const CODING_SETUP: Record<CodingDriverKind, {
   command: string;
@@ -305,7 +312,7 @@ function systemModels(
       id: `${provider.id}:${model.id}`,
       displayName: model.displayName,
       ...(model.description ? { description: model.description } : {}),
-      availability: model.available
+      availability: model.available && !LIVE_PROBED_UNAVAILABLE_SYSTEM_MODELS.has(`${provider.id}:${model.id}`)
         ? provider.authStatus.state === "ready" ? "available" as const : "auth_required" as const
         : "unavailable" as const,
       capabilities: model.capabilities,

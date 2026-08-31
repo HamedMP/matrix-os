@@ -1,18 +1,11 @@
 import { createHash } from 'node:crypto';
-import { z } from 'zod/v4';
-
-const MAX_COST_ENTRIES = 20;
-const ServerTypeSchema = z.string().min(3).max(64).regex(/^[a-z0-9][a-z0-9-]*$/);
-const CostMapSchema = z.record(ServerTypeSchema, z.number().int().positive().max(Number.MAX_SAFE_INTEGER));
 
 export interface PrebillingProvisioningConfig {
   enabled: boolean;
   rolloutPercent: number;
   allowlist: ReadonlySet<string>;
   maxActive: number;
-  maxHourlyCostMicros: number;
   leaseMs: number;
-  serverHourlyCostMicros: ReadonlyMap<string, number>;
 }
 
 function boundedInteger(value: string | undefined, fallback: number, min: number, max: number): number {
@@ -26,36 +19,6 @@ function parseAllowlist(value: string | undefined): ReadonlySet<string> {
   return new Set(value.split(',').map((item) => item.trim()).filter((item) => /^[A-Za-z0-9_-]{3,256}$/.test(item)).slice(0, 100));
 }
 
-function parseCosts(value: string | undefined): ReadonlyMap<string, number> {
-  if (!value) return new Map();
-  try {
-    const parsed = CostMapSchema.parse(JSON.parse(value));
-    const entries = Object.entries(parsed);
-    return entries.length <= MAX_COST_ENTRIES ? new Map(entries) : new Map();
-  } catch (err: unknown) {
-    if (err instanceof SyntaxError || err instanceof z.ZodError) return new Map();
-    throw err;
-  }
-}
-
-function parseCompactCosts(value: string | undefined): ReadonlyMap<string, number> {
-  if (!value) return new Map();
-  try {
-    const entries = value.split(';').filter(Boolean).map((entry) => {
-      const separator = entry.indexOf(':');
-      if (separator <= 0) throw new Error('invalid_prebilling_cost_entry');
-      return [entry.slice(0, separator), Number(entry.slice(separator + 1))] as const;
-    });
-    if (entries.length > MAX_COST_ENTRIES) return new Map();
-    return new Map(Object.entries(CostMapSchema.parse(Object.fromEntries(entries))));
-  } catch (err: unknown) {
-    if (err instanceof z.ZodError || (err instanceof Error && err.message === 'invalid_prebilling_cost_entry')) {
-      return new Map();
-    }
-    throw err;
-  }
-}
-
 export function loadPrebillingProvisioningConfig(env: NodeJS.ProcessEnv): PrebillingProvisioningConfig {
   const enabled = env.MATRIX_PREBILLING_PROVISIONING_ENABLED === 'true';
   return {
@@ -67,17 +30,11 @@ export function loadPrebillingProvisioningConfig(env: NodeJS.ProcessEnv): Prebil
     maxActive: enabled
       ? boundedInteger(env.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE, 0, 0, 10_000)
       : 0,
-    maxHourlyCostMicros: enabled
-      ? boundedInteger(env.MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS, 0, 0, Number.MAX_SAFE_INTEGER)
-      : 0,
     // Stripe validates the 30-minute minimum when its server receives the
     // request. Keep one minute of bounded transport/clock-skew headroom so an
     // otherwise valid checkout is not rejected after spending a few seconds
     // in transit.
     leaseMs: 31 * 60 * 1_000,
-    serverHourlyCostMicros: env.MATRIX_PREBILLING_PROVISIONING_COSTS
-      ? parseCompactCosts(env.MATRIX_PREBILLING_PROVISIONING_COSTS)
-      : parseCosts(env.MATRIX_PREBILLING_PROVISIONING_COSTS_JSON),
   };
 }
 
@@ -85,17 +42,10 @@ export function prebillingRolloutIncludesUser(
   config: PrebillingProvisioningConfig,
   clerkUserId: string,
 ): boolean {
-  if (!config.enabled || config.maxActive <= 0 || config.maxHourlyCostMicros <= 0) return false;
+  if (!config.enabled || config.maxActive <= 0) return false;
   if (config.allowlist.has(clerkUserId)) return true;
   if (config.rolloutPercent <= 0) return false;
   if (config.rolloutPercent >= 100) return true;
   const bucket = createHash('sha256').update(`prebilling:${clerkUserId}`).digest().readUInt32BE(0) % 100;
   return bucket < config.rolloutPercent;
-}
-
-export function prebillingHourlyCostMicros(
-  config: PrebillingProvisioningConfig,
-  serverType: string,
-): number | null {
-  return config.serverHourlyCostMicros.get(serverType.trim().toLowerCase()) ?? null;
 }

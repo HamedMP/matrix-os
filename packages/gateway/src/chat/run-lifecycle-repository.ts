@@ -30,6 +30,14 @@ import {
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 type Transact = <T>(fn: (trx: Executor) => Promise<T>) => Promise<T>;
+type AppendOutbox = (
+  executor: Executor,
+  owner: ChatOwner,
+  chatId: string,
+  revision: number,
+  eventType: ChatOutboxEventType,
+  payload?: Record<string, unknown>,
+) => Promise<void>;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
@@ -51,6 +59,23 @@ function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
   return activity.type === "run.error"
     || (activity.type === "run.status"
       && ["completed", "failed", "aborted"].includes(activity.status));
+}
+
+function railTransitionForActivity(activity: CanonicalChatRunActivity): {
+  runStatus: "running" | "waiting_for_approval" | "waiting_for_input";
+  attention: "none" | "approval_required" | "input_required";
+} | undefined {
+  switch (activity.type) {
+    case "approval.requested":
+      return { runStatus: "waiting_for_approval", attention: "approval_required" };
+    case "input.requested":
+      return { runStatus: "waiting_for_input", attention: "input_required" };
+    case "approval.resolved":
+    case "input.resolved":
+      return { runStatus: "running", attention: "none" };
+    default:
+      return undefined;
+  }
 }
 
 function canTransitionAgentActivity(
@@ -79,28 +104,11 @@ async function selectOwnedChat(
   return query.executeTakeFirst();
 }
 
-async function insertOutbox(
-  executor: Executor,
-  owner: ChatOwner,
-  chatId: string,
-  revision: number,
-  eventType: ChatOutboxEventType,
-  payload: Record<string, unknown> = {},
-): Promise<void> {
-  await executor.insertInto("chat_outbox").values({
-    owner_type: owner.type,
-    owner_id: owner.ownerId,
-    chat_id: chatId,
-    revision,
-    event_type: eventType,
-    payload: jsonb(payload),
-  }).execute();
-}
-
 export class ChatRunLifecycleRepository {
   constructor(
     private readonly kysely: Kysely<ChatDatabase>,
     private readonly transact: Transact,
+    private readonly appendOutbox: AppendOutbox,
   ) {}
 
   async getAdapterState(ownerInput: ChatOwner, input: {
@@ -158,6 +166,38 @@ export class ChatRunLifecycleRepository {
         executionRootFingerprint: row.execution_root_fingerprint,
       }),
     };
+  }
+
+  async getPendingApproval(ownerInput: ChatOwner, input: {
+    chatId: string;
+    runId: string;
+    approvalId: string;
+  }): Promise<Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.runId, input.approvalId].forEach(requireSafeRef);
+    const rows = await this.kysely.selectFrom("chat_run_events")
+      .innerJoin("chat_runs", "chat_runs.id", "chat_run_events.run_id")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select(["chat_run_events.event"])
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId)
+      .where("chat_runs.id", "=", input.runId)
+      .where("chat_runs.status", "in", [...ACTIVE_RUNS])
+      .orderBy("chat_run_events.run_seq")
+      .limit(500)
+      .execute();
+    let pending: Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null = null;
+    for (const row of rows) {
+      const activity = CanonicalChatRunActivitySchema.safeParse(row.event);
+      if (!activity.success) continue;
+      if (activity.data.type !== "approval.requested" && activity.data.type !== "approval.resolved") continue;
+      if (activity.data.approvalId !== input.approvalId) continue;
+      if (activity.data.type === "approval.requested") pending = activity.data;
+      if (activity.data.type === "approval.resolved") pending = null;
+    }
+    return pending;
   }
 
   async markRunRunning(ownerInput: ChatOwner, input: {
@@ -303,6 +343,7 @@ export class ChatRunLifecycleRepository {
       const existingById = new Map(existing.map((row) => [row.id, row]));
       let nextSequence = Number(latestSequence?.sequence ?? 0);
       let changed = 0;
+      let railTransition: ReturnType<typeof railTransitionForActivity>;
       for (const activity of activities) {
         if (existingIds.has(activity.id)) {
           const row = existingById.get(activity.id);
@@ -341,6 +382,7 @@ export class ChatRunLifecycleRepository {
         }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
         if (row) {
           changed += 1;
+          railTransition = railTransitionForActivity(sequenced) ?? railTransition;
           if (sequenced.type === "terminal.bound") {
             await trx.insertInto("chat_terminal_bindings").values({
               chat_id: chatId,
@@ -357,8 +399,18 @@ export class ChatRunLifecycleRepository {
       }
       if (changed > 0) {
         const revision = Number(current.revision) + 1;
-        await trx.updateTable("chats").set({ revision, updated_at: sql`now()` }).where("id", "=", chatId).execute();
-        await insertOutbox(trx, owner, chatId, revision, "run.activity", { runId });
+        if (railTransition) {
+          await trx.updateTable("chat_runs").set({
+            status: railTransition.runStatus,
+            updated_at: sql`now()`,
+          }).where("id", "=", runId).where("status", "in", [...ACTIVE_RUNS]).execute();
+        }
+        await trx.updateTable("chats").set({
+          revision,
+          ...(railTransition ? { attention: railTransition.attention } : {}),
+          updated_at: sql`now()`,
+        }).where("id", "=", chatId).execute();
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId });
       }
       return changed;
     });
@@ -462,7 +514,7 @@ export class ChatRunLifecycleRepository {
         last_message_preview: preview(next),
         updated_at: createdAt,
       }).where("id", "=", chatId).execute();
-      await insertOutbox(trx, owner, chatId, revision, "run.message", {
+      await this.appendOutbox(trx, owner, chatId, revision, "run.message", {
         runId: input.runId,
         messageId: input.messageId,
       });
@@ -572,7 +624,7 @@ export class ChatRunLifecycleRepository {
         attention: input.outcome === "failed" ? "failed" : "none",
         updated_at: completedAt,
       }).where("id", "=", input.chatId).execute();
-      await insertOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, { runId: input.runId });
+      await this.appendOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, { runId: input.runId });
       return { run: toRun(updated), transitioned: true };
     });
   }

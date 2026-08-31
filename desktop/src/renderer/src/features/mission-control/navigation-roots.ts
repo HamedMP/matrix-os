@@ -23,16 +23,3 @@ export function openTerminalIndex(): void {
   tabs.openTab({ kind: "terminals", title: "Terminal", closable: false });
   tabs.requestTerminalOverview();
 }
-
-export function openProjectsIndex(): void {
-  useTabs.getState().openTabAtHistoryRoot({
-    kind: "work",
-    title: "Chat",
-    workRoute: "projects",
-    closable: false,
-  }, ["project", "task"]);
-}
-
-export function returnToProjectsIndex(): void {
-  openProjectsIndex();
-}

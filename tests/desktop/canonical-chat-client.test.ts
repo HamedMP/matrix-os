@@ -134,6 +134,29 @@ describe("canonical Chat client", () => {
     expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/user-state", { pinned: true });
   });
 
+  it("acknowledges an exact completed Run through the strict canonical path", async () => {
+    const acknowledged = {
+      ...record,
+      latestSuccessfulCompletion: {
+        runId: "run_client_completed",
+        completedAt: "2026-08-25T12:02:00.000Z",
+        unacknowledged: false,
+      },
+    };
+    const post = vi.fn(async () => acknowledged);
+    const client = createCanonicalChatClient(api({ post }));
+    const { acknowledgeCompletion } = client;
+    await expect(acknowledgeCompletion(record.chat.id, "run_client_completed"))
+      .resolves.toEqual(acknowledged);
+    expect(post).toHaveBeenCalledWith(
+      "/api/chats/chat_client_test/runs/run_client_completed/acknowledge",
+      {},
+    );
+    await expect(acknowledgeCompletion("not-a-chat", "run_client_completed")).rejects.toThrow();
+    await expect(acknowledgeCompletion(record.chat.id, "not-a-run")).rejects.toThrow();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
   it("deletes a Chat through the canonical Gateway endpoint", async () => {
     const remove = vi.fn(async () => ({
       chatId: record.chat.id,
@@ -186,6 +209,13 @@ describe("canonical Chat client", () => {
       permissionMode: "supervised",
     };
     const post = vi.fn(async (path: string) => {
+      if (path.includes("/approvals/")) {
+        return {
+          approvalId: "appr_command",
+          decision: "approve_for_session",
+          submission: "accepted",
+        };
+      }
       if (path.endsWith("/cancel")) {
         return {
           run: {
@@ -229,6 +259,10 @@ describe("canonical Chat client", () => {
       clientRequestId: "req_client_retry",
       baseRevision: 2,
     });
+    await client.submitApproval(record.chat.id, "run_client", "appr_command", {
+      clientRequestId: "req_client_approval",
+      decision: "approve_for_session",
+    });
 
     expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns", turnInput);
     expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel", {
@@ -238,6 +272,36 @@ describe("canonical Chat client", () => {
       clientRequestId: "req_client_retry",
       baseRevision: 2,
     });
+    expect(post).toHaveBeenNthCalledWith(
+      4,
+      "/api/chats/chat_client_test/runs/run_client/approvals/appr_command",
+      { clientRequestId: "req_client_approval", decision: "approve_for_session" },
+    );
+  });
+
+  it("admits files accepted by the Desktop 10 MiB attachment picker", async () => {
+    const turnInput = {
+      clientRequestId: "req_client_attachment",
+      baseRevision: 0,
+      parts: [{
+        type: "attachment_reference" as const,
+        attachmentId: "desktop_upload_large_file",
+        kind: "file" as const,
+        label: "research.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 6 * 1024 * 1024,
+        ownerReference: "temporary/desktop-chat/large-research.pdf",
+      }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    };
+    const post = vi.fn(async () => admissionResponse(turnInput));
+    const client = createCanonicalChatClient(api({ post }));
+
+    await client.admitTurn(record.chat.id, turnInput);
+
+    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns", turnInput);
   });
 });
 

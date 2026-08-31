@@ -1,6 +1,7 @@
 import AccountMenu from "../mission-control/AccountMenu";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
 import DesktopSupportButton from "../support/DesktopSupportButton";
+import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import { Search } from "../../lib/hugeicons";
 import { useUi } from "../../stores/ui";
 
@@ -22,6 +23,7 @@ export default function DesktopModeControls() {
       <div className="relative w-[156px]">
         <RuntimeComputerMenu collapsed={false} />
       </div>
+      <DesktopUpdateButton />
       <AccountMenu collapsed compact />
     </div>
   );

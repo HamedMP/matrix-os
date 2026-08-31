@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +9,8 @@ import type { useWindowManager } from "../../shell/src/hooks/useWindowManager.js
 import type { useDesktopConfigStore } from "../../shell/src/stores/desktop-config.js";
 import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
+import { createShellQueryClient } from "../../shell/src/api/query-client.js";
+import { appKeys, type ApiAppEntry } from "../../shell/src/api/apps.js";
 
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: () => undefined,
@@ -19,10 +22,6 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
 
 vi.mock("../../shell/src/components/AppViewer.js", () => ({
   AppViewer: () => null,
-}));
-
-vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
-  WorkspaceApp: () => null,
 }));
 
 vi.mock("../../shell/src/components/file-browser/FileBrowser.js", () => ({
@@ -42,7 +41,23 @@ vi.mock("../../shell/src/components/AIButton.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/MissionControl.js", () => ({
-  MissionControl: () => null,
+  MissionControl: ({
+    open,
+    apps,
+    onOpenApp,
+  }: {
+    open: boolean;
+    apps: Array<{ name: string; path: string }>;
+    onOpenApp: (name: string, path: string) => void;
+  }) => open ? (
+    <div data-testid="launcher-destinations">
+      {apps.map((app) => (
+        <button key={app.path} type="button" onClick={() => onOpenApp(app.name, app.path)}>
+          {app.name}
+        </button>
+      ))}
+    </div>
+  ) : null,
 }));
 
 vi.mock("../../shell/src/components/DotGrid.js", () => ({
@@ -97,10 +112,6 @@ vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => null,
 }));
 
-vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
-  BillingTrialNotification: () => null,
-}));
-
 vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
   DeveloperModeDashboard: () => null,
 }));
@@ -129,6 +140,15 @@ let DesktopComponent: DesktopComponentType;
 let desktopModeStore: DesktopModeStore;
 let desktopConfigStore: DesktopConfigStore;
 let windowManagerStore: WindowManagerStore;
+let queryClient: QueryClient;
+
+function renderDesktop(props: React.ComponentProps<DesktopComponentType> = {}) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <DesktopComponent {...props} />
+    </QueryClientProvider>,
+  );
+}
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -156,7 +176,6 @@ function resetShellMode(mode: "canvas" | "desktop" | "dev", hydrated: boolean) {
   });
   windowManagerStore.setState({
     windows: [],
-    apps: [],
     nextZ: 1,
     closedPaths: new Set(),
     closedLayouts: new Map(),
@@ -184,6 +203,8 @@ describe("Desktop launcher dock button by mode", () => {
     desktopModeStore = (await import("../../shell/src/stores/desktop-mode.js")).useDesktopMode;
     desktopConfigStore = (await import("../../shell/src/stores/desktop-config.js")).useDesktopConfigStore;
     windowManagerStore = (await import("../../shell/src/hooks/useWindowManager.js")).useWindowManager;
+    queryClient = createShellQueryClient();
+    queryClient.setDefaultOptions({ queries: { retry: false } });
   });
 
   afterEach(() => {
@@ -193,7 +214,7 @@ describe("Desktop launcher dock button by mode", () => {
   it("keeps the launcher visible in canvas mode even before mode hydration completes", async () => {
     resetShellMode("canvas", false);
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     expect(await screen.findByTestId("dock-tasks")).toBeTruthy();
   });
@@ -201,7 +222,7 @@ describe("Desktop launcher dock button by mode", () => {
   it("keeps the launcher visible in developer mode", async () => {
     resetShellMode("dev", true);
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     await waitFor(() => {
       expect(screen.getByTestId("dock-tasks")).toBeTruthy();
@@ -212,7 +233,7 @@ describe("Desktop launcher dock button by mode", () => {
   it("shows and launches Chat as the first canonical app in Desktop mode", async () => {
     resetShellMode("desktop", true);
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     const desktopApps = await screen.findByRole("navigation", { name: "Desktop apps" });
     await waitFor(() => {
@@ -220,18 +241,43 @@ describe("Desktop launcher dock button by mode", () => {
         (button) => button.getAttribute("aria-label"),
       ).slice(0, 4)).toEqual(["Chat", "Terminal", "Files", "Editor"]);
     });
-    expect(windowManagerStore.getState().apps.find((app) => app.path === "__chat__"))
-      .toMatchObject({ name: "Hermes", path: "__chat__" });
-
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     expect(windowManagerStore.getState().windows.find((windowRecord) => windowRecord.path === "__chat__"))
       .toMatchObject({ title: "Chat", path: "__chat__" });
+  });
+
+  it("switches Web Desktop to Web Canvas and back from the app launcher without closing apps", async () => {
+    resetShellMode("desktop", true);
+    renderDesktop();
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Chat" }));
+    const chatWindow = windowManagerStore.getState().windows.find(
+      (windowRecord) => windowRecord.path === "__chat__",
+    );
+    expect(chatWindow).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Web Canvas" }));
+    expect(desktopModeStore.getState().mode).toBe("canvas");
+    expect(windowManagerStore.getState().windows.find(
+      (windowRecord) => windowRecord.path === "__chat__",
+    )).toEqual(chatWindow);
+
+    fireEvent.click(screen.getByTestId("dock-tasks"));
+    fireEvent.click(await screen.findByRole("button", { name: "Web Desktop" }));
+    expect(desktopModeStore.getState().mode).toBe("desktop");
+    expect(windowManagerStore.getState().windows.find(
+      (windowRecord) => windowRecord.path === "__chat__",
+    )).toEqual(chatWindow);
   });
 
   it("routes an installed Browser command through the dedicated public browser launch", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return jsonResponse([{
+        name: "Browser", path: "/files/apps/browser/dist/index.html", icon: "browser", slug: "browser",
+      }]);
       if (url.includes("/api/shell/bootstrap")) {
         return jsonResponse({
           layout: { windows: [] },
@@ -250,7 +296,7 @@ describe("Desktop launcher dock button by mode", () => {
     const commandStore = (await import("../../shell/src/stores/commands.js")).useCommandStore;
     resetShellMode("desktop", true);
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     const browserCommand = await waitFor(() => {
       const command = commandStore.getState().commands.get("app:apps/browser/dist/index.html");
@@ -269,6 +315,9 @@ describe("Desktop launcher dock button by mode", () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return jsonResponse([{
+        name: "Browser", path: "/files/apps/browser/dist/index.html", icon: "browser", slug: "browser",
+      }]);
       if (url.includes("/api/shell/bootstrap")) {
         return jsonResponse({
           layout: { windows: [] },
@@ -286,12 +335,12 @@ describe("Desktop launcher dock button by mode", () => {
     const openExternal = vi.spyOn(window, "open").mockImplementation(() => null);
     resetShellMode("canvas", true);
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     await waitFor(() => {
-      expect(windowManagerStore.getState().apps.some(
-        (app) => app.path === "apps/browser/dist/index.html",
-      )).toBe(true);
+      expect(queryClient.getQueryData<ApiAppEntry[]>(appKeys.list())).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "/files/apps/browser/dist/index.html" }),
+      ]));
     });
     act(() => desktopConfigStore.setState({ pinnedApps: ["apps/browser/dist/index.html"] }));
     const browserButtons = await screen.findAllByRole("button", { name: "Browser" });
@@ -317,19 +366,22 @@ describe("Desktop launcher dock button by mode", () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return new Promise(() => undefined);
       if (url.includes("/api/shell/bootstrap")) return new Promise(() => undefined);
       return jsonResponse({});
     }));
     resetShellMode("dev", true);
 
-    render(<DesktopComponent cacheScope={scope} />);
+    renderDesktop({ cacheScope: scope });
 
     await waitFor(() => {
-      expect(windowManagerStore.getState().apps.some((app) => app.path === "apps/notes/index.html")).toBe(true);
+      expect(queryClient.getQueryData(appKeys.list())).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "/files/apps/notes/index.html" }),
+      ]));
     });
   });
 
-  it("removes cached design apps that are absent from the fresh bootstrap", async () => {
+  it("replaces cached apps with the fresh apps query result", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
     saveShellSnapshot(scope, {
@@ -347,6 +399,9 @@ describe("Desktop launcher dock button by mode", () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return jsonResponse([{
+        name: "Stickies", path: "/files/apps/stickies/dist/index.html", icon: "stickies", slug: "stickies",
+      }]);
       if (url.includes("/api/shell/bootstrap")) {
         return jsonResponse({
           layout: { windows: [] },
@@ -363,67 +418,13 @@ describe("Desktop launcher dock button by mode", () => {
     }));
     resetShellMode("dev", true);
 
-    render(<DesktopComponent cacheScope={scope} />);
+    renderDesktop({ cacheScope: scope });
 
     await waitFor(() => {
-      const paths = windowManagerStore.getState().apps.map((app) => app.path);
-      expect(paths).toContain("apps/stickies/dist/index.html");
-      expect(paths).not.toContain("apps/winxp-minesweeper/index.html");
+      const paths = (queryClient.getQueryData<ApiAppEntry[]>(appKeys.list()) ?? []).map((app) => app.path);
+      expect(paths).toContain("/files/apps/stickies/dist/index.html");
+      expect(paths).not.toContain("/files/apps/winxp-minesweeper/index.html");
     });
   });
 
-  it("ignores stale bootstrap responses after cache scope changes", async () => {
-    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
-    expect(scope).not.toBeNull();
-    const firstBootstrap = deferredResponse();
-    const secondBootstrap = deferredResponse();
-    const pendingBootstrap = [firstBootstrap, secondBootstrap];
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
-      if (url.includes("/api/shell/bootstrap")) {
-        const next = pendingBootstrap.shift();
-        if (!next) return jsonResponse({ layout: { windows: [] }, apps: [], modules: [] });
-        return next.promise;
-      }
-      return jsonResponse({});
-    }));
-    resetShellMode("dev", true);
-
-    const { rerender } = render(<DesktopComponent />);
-    await waitFor(() => {
-      expect(pendingBootstrap).toHaveLength(1);
-    });
-
-    rerender(<DesktopComponent cacheScope={scope} />);
-    await waitFor(() => {
-      expect(pendingBootstrap).toHaveLength(0);
-    });
-
-    await act(async () => {
-      secondBootstrap.resolve(new Response(JSON.stringify({
-        layout: { windows: [] },
-        apps: [{ name: "Fresh Notes", path: "/files/apps/fresh/index.html", icon: "fresh", slug: "fresh" }],
-        modules: [],
-      }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    });
-
-    await waitFor(() => {
-      expect(windowManagerStore.getState().apps.some((app) => app.path === "apps/fresh/index.html")).toBe(true);
-    });
-
-    await act(async () => {
-      firstBootstrap.resolve(new Response(JSON.stringify({
-        layout: { windows: [] },
-        apps: [{ name: "Stale Notes", path: "/files/apps/stale/index.html", icon: "stale", slug: "stale" }],
-        modules: [],
-      }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    });
-
-    await waitFor(() => {
-      const appPaths = windowManagerStore.getState().apps.map((app) => app.path);
-      expect(appPaths).toContain("apps/fresh/index.html");
-      expect(appPaths).not.toContain("apps/stale/index.html");
-    });
-  });
 });

@@ -4,14 +4,13 @@ import { useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode 
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { buildWebDesktopLauncherApps } from "@/lib/web-desktop-app-launch";
+import { buildWebDesktopIconApps } from "@/lib/web-desktop-app-launch";
 import {
   Blocks,
   BrushIcon,
   Code2,
   FilePenLine,
   FileText,
-  FolderKanban,
   FolderTree,
   Globe2,
   LayoutGrid,
@@ -85,9 +84,6 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   }
   if (name === "whiteboard") {
     return { color: "#D46A92", iconColor: "white", icon: BrushIcon };
-  }
-  if (app.path === "__workspace__" || name === "projects") {
-    return { color: "var(--surface-error-emphasis, #BA5236)", iconColor: "white", icon: FolderKanban };
   }
   return DEFAULT_APPEARANCE;
 }
@@ -260,7 +256,7 @@ export function WebDesktopSurface({
 }: WebDesktopSurfaceProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const primeDesktopIcons = useDesktopConfigStore((state) => state.primeDesktopIcons);
-  const desktopApps = useMemo(() => buildWebDesktopLauncherApps(apps).slice(0, 10), [apps]);
+  const desktopApps = useMemo(() => buildWebDesktopIconApps(apps).slice(0, 10), [apps]);
   const defaultPlacements = useMemo<DesktopIconPlacement[]>(() => desktopApps.map((app, index) => ({
     path: app.path,
     x: 20 + (index % 2) * 88,

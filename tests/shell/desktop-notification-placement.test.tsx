@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Desktop } from "../../shell/src/components/Desktop.js";
@@ -8,6 +9,7 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useDesktopConfigStore } from "../../shell/src/stores/desktop-config.js";
 import { useVocalStore } from "../../shell/src/stores/vocal.js";
+import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
 const originalConsoleError = console.error;
 
@@ -31,10 +33,6 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: () => null,
 }));
 
-vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
-  WorkspaceApp: () => null,
-}));
-
 vi.mock("../../shell/src/components/file-browser/FileBrowser.js", () => ({
   FileBrowser: () => null,
 }));
@@ -45,10 +43,6 @@ vi.mock("../../shell/src/components/preview-window/PreviewWindow.js", () => ({
 
 vi.mock("../../shell/src/components/system-activity/ActivityMonitorApp.js", () => ({
   ActivityMonitorApp: () => null,
-}));
-
-vi.mock("../../shell/src/components/AIButton.js", () => ({
-  AIButton: () => null,
 }));
 
 vi.mock("../../shell/src/components/MissionControl.js", () => ({
@@ -91,14 +85,6 @@ vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
   ConnectionIndicator: () => <div data-testid="connection-indicator" data-variant="toast" />,
 }));
 
-vi.mock("../../shell/src/components/AmbientClock.js", () => ({
-  AmbientClock: () => null,
-}));
-
-vi.mock("../../shell/src/components/MenuBar.js", () => ({
-  MenuBar: ({ children }: { children?: React.ReactNode }) => <div data-menu-bar>{children}</div>,
-}));
-
 vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
 }));
@@ -107,20 +93,20 @@ vi.mock("../../shell/src/components/ChatPopover.js", () => ({
   ChatPopover: () => null,
 }));
 
-vi.mock("../../shell/src/components/onboarding/ManualSetupStickers.js", () => ({
-  ManualSetupStickers: () => null,
-}));
-
 vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => <div data-testid="runtime-identity-banner" />,
 }));
 
-vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
-  BillingTrialNotification: () => <div data-testid="billing-trial-notification" />,
-}));
-
-vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
-  DeveloperModeDashboard: () => null,
+vi.mock("@/hooks/useMatrixBillingAccess", () => ({
+  useMatrixBillingAccess: () => ({
+    active: true,
+    entitlement: {
+      status: "trialing",
+      trialEndsAt: "2026-09-05T00:00:00.000Z",
+      planSlug: "matrix_builder",
+      billingInterval: "monthly",
+    },
+  }),
 }));
 
 function jsonResponse(body: unknown) {
@@ -138,7 +124,7 @@ describe("Desktop shell notifications", () => {
     });
     act(() => {
       useDesktopMode.setState({
-        mode: "dev",
+        mode: "canvas",
         previousMode: null,
         _hydrated: true,
       });
@@ -148,7 +134,6 @@ describe("Desktop shell notifications", () => {
       });
       useWindowManager.setState({
         windows: [],
-        apps: [],
         nextZ: 1,
         closedPaths: new Set(),
         closedLayouts: new Map(),
@@ -175,26 +160,30 @@ describe("Desktop shell notifications", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders connection, runtime, billing, and vocal notices in the shared top-right stack outside the dock", async () => {
-    render(<Desktop />);
+  it("renders shell notices without showing a trial-ending banner", async () => {
+    const queryClient = createShellQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Desktop />
+      </QueryClientProvider>,
+    );
 
     const indicator = await screen.findByTestId("connection-indicator");
     const banner = screen.getByTestId("runtime-identity-banner");
-    const billingTrial = screen.getByTestId("billing-trial-notification");
     const stack = screen.getByTestId("shell-notification-stack");
     const vocalError = await screen.findByRole("alert");
 
     await waitFor(() => {
       expect(stack.contains(indicator)).toBe(true);
       expect(stack.contains(banner)).toBe(true);
-      expect(stack.contains(billingTrial)).toBe(true);
       expect(stack.contains(vocalError)).toBe(true);
     });
+
+    expect(screen.queryByRole("status", { name: "Matrix free trial" })).toBeNull();
 
     const dock = document.querySelector("[data-dock]");
     expect(dock).toBeTruthy();
     expect(dock?.contains(indicator)).toBe(false);
-    expect(dock?.contains(billingTrial)).toBe(false);
     expect(vocalError.textContent).toContain("Aoede could not connect");
   });
 });

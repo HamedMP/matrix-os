@@ -22,20 +22,12 @@ vi.mock("../../shell/src/components/preview-window/PreviewWindow.js", () => ({
   PreviewWindow: () => null,
 }));
 
-vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
-  WorkspaceApp: () => null,
-}));
-
 vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
 }));
 
 vi.mock("../../shell/src/components/system-activity/ActivityMonitorApp.js", () => ({
   ActivityMonitorApp: () => null,
-}));
-
-vi.mock("../../shell/src/lib/open-app-tab.js", () => ({
-  openAppInStandaloneTab: vi.fn(),
 }));
 
 const appWindow: AppWindow = {
@@ -60,7 +52,6 @@ describe("CanvasWindow design-system title bars", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: appWindow.id,
       fullscreenWindowId: null,
     });

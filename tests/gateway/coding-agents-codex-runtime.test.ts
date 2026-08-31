@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -41,6 +41,25 @@ function runProcess(command: string, args: string[], cwd: string, input = ""): P
 }
 
 describe("Codex structured event runtime", () => {
+  it("ships every plain-Node Codex runtime module in the gateway build", async () => {
+    const sourceDirectory = join(process.cwd(), "packages/gateway/src/coding-agents");
+    const sourceModules = (await readdir(sourceDirectory))
+      .filter((entry) => entry.endsWith(".mjs"));
+    const packageJson = JSON.parse(await readFile(
+      join(process.cwd(), "packages/gateway/package.json"),
+      "utf8",
+    )) as { scripts?: { build?: string } };
+    const buildScript = packageJson.scripts?.build ?? "";
+
+    for (const moduleName of sourceModules) {
+      expect(
+        buildScript.includes("src/coding-agents/*.mjs") ||
+          buildScript.includes(`src/coding-agents/${moduleName}`),
+        `${moduleName} is omitted from the packaged gateway runtime`,
+      ).toBe(true);
+    }
+  });
+
   it("launches coding threads through the Matrix control-capable app-server runner", () => {
     const launch = buildAgentLaunch({
       agent: "codex",

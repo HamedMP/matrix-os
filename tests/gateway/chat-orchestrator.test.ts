@@ -169,6 +169,63 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("projects uploaded attachment paths through the Provider-neutral prompt", async () => {
+    await repository.create(owner, {
+      id: "chat_attachment_prompt",
+      clientRequestId: "req_create_attachment_prompt",
+      title: "Attachment prompt",
+    });
+    let providerPrompt: string | undefined;
+    const provider = adapter(async function* (input) {
+      providerPrompt = input.prompt;
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-31T01:34:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_attachment_prompt", {
+      clientRequestId: "req_attachment_prompt_turn",
+      baseRevision: 0,
+      parts: [
+        { type: "text", text: "Do a summary" },
+        {
+          type: "attachment_reference",
+          attachmentId: "desktop_upload_attachment_prompt",
+          kind: "file",
+          label: "message (1).txt",
+          mimeType: "text/plain",
+          sizeBytes: 19_505,
+          ownerReference: "temporary/desktop-chat/upload_123-message (1).txt",
+        },
+        {
+          type: "attachment_reference",
+          attachmentId: "desktop_upload_shell_chars",
+          kind: "file",
+          label: "notes'$(touch ignored).txt",
+          mimeType: "text/plain",
+          sizeBytes: 32,
+          ownerReference: "temporary/desktop-chat/upload_456-notes'$(touch ignored).txt",
+        },
+      ],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    expect(providerPrompt).toBe([
+      "Do a summary",
+      "",
+      "Attached files (available on this Matrix computer):",
+      '- "message (1).txt": "$MATRIX_HOME"/\'temporary/desktop-chat/upload_123-message (1).txt\'',
+      '- "notes\'$(touch ignored).txt": "$MATRIX_HOME"/\'temporary/desktop-chat/upload_456-notes\'\\\'\'$(touch ignored).txt\'',
+    ].join("\n"));
+  });
+
   it("persists one stable typed activity row across live lifecycle updates", async () => {
     await repository.create(owner, {
       id: "chat_activity_projection",
@@ -629,6 +686,81 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.activities.some((activity) =>
       activity.type === "assistant.delta" && activity.delta === "late output"
     )).toBe(false);
+  });
+
+  it("submits only a pending allowed approval decision through the active Provider Run", async () => {
+    await repository.create(owner, {
+      id: "chat_approval",
+      clientRequestId: "req_create_approval",
+      title: "Approval",
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const submitApproval = vi.fn(async () => {
+      release();
+    });
+    const provider = {
+      ...adapter(async function* () {
+        yield { type: "state.updated" as const, state: { sessionId: "native_approval" } };
+        yield {
+          type: "approval.requested" as const,
+          approvalId: "appr_command",
+          title: "Run command",
+          risk: "medium" as const,
+          allowedDecisions: ["approve" as const, "decline" as const],
+        };
+        await released;
+        yield {
+          type: "approval.resolved" as const,
+          approvalId: "appr_command",
+          decision: "approve" as const,
+        };
+        yield { type: "run.completed" as const, outcome: "completed" as const };
+      }),
+      submitApproval,
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+    });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_approval", {
+      clientRequestId: "req_approval_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "run it" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      expect((await repository.exportChat(owner, "chat_approval"))?.activities)
+        .toEqual(expect.arrayContaining([expect.objectContaining({
+          type: "approval.requested",
+          approvalId: "appr_command",
+        })]));
+    });
+
+    await expect(orchestrator.submitApproval(owner, "chat_approval", admitted.run.id, "appr_command", {
+      clientRequestId: "req_approval_decision",
+      decision: "approve",
+    })).resolves.toEqual({
+      approvalId: "appr_command",
+      decision: "approve",
+      submission: "accepted",
+    });
+    expect(submitApproval).toHaveBeenCalledWith(expect.objectContaining({
+      state: { sessionId: "native_approval" },
+      approvalId: "appr_command",
+      decision: "approve",
+      clientRequestId: "req_approval_decision",
+    }));
+    await expect(orchestrator.submitApproval(owner, "chat_approval", admitted.run.id, "appr_command", {
+      clientRequestId: "req_disallowed_decision",
+      decision: "approve_for_session",
+    })).rejects.toMatchObject({ status: 409 });
+    await orchestrator.drain();
   });
 
   it("resumes later Turns only through the same adapter state schema and Instance", async () => {

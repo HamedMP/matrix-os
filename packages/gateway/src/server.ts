@@ -142,7 +142,12 @@ import { createCodingAgentProviderRegistry } from "./coding-agents/provider-regi
 import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
 import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
-import { createCanonicalChatRoutes } from "./chat/routes.js";
+import {
+  closeCanonicalChatEventLifecycle,
+  createCanonicalChatRoutes,
+} from "./chat/routes.js";
+import { createCanonicalChatEventStream } from "./chat/event-stream.js";
+import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
@@ -250,6 +255,8 @@ import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+import { OsViewStateRepository } from "./os-view-state/repository.js";
+import { createOsViewStateRoutes } from "./os-view-state/routes.js";
 import { ChatRepository } from "./chat/repository.js";
 import {
   createGatewayChatTerminalWiring,
@@ -825,6 +832,7 @@ export async function createGateway(config: GatewayConfig) {
   let appRegistry: AppRegistry | null = null;
   let kyselyInstance: Kysely<any> | null = null;
   let canvasRepository: CanvasRepository | null = null;
+  let osViewStateRepository: OsViewStateRepository | null = null;
 
   // Apps whose Postgres schema we've already ensured this process lifetime.
   // The startup loop pre-registers shipped apps, but apps BUILT in-OS after boot
@@ -890,6 +898,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let chatRepository: ChatRepository | null = null;
+  let canonicalChatEventStream: ReturnType<typeof createCanonicalChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
@@ -908,8 +917,11 @@ export async function createGateway(config: GatewayConfig) {
       }
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
+      osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
+      await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
+      canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       await messagingRepository.bootstrap();
@@ -1022,6 +1034,7 @@ export async function createGateway(config: GatewayConfig) {
       kvStore = null;
       appRegistry = null;
       canvasRepository = null;
+      osViewStateRepository = null;
       canvasService = null;
       canvasSubscriptionHub = null;
       messagingRepository = null;
@@ -4094,6 +4107,14 @@ export async function createGateway(config: GatewayConfig) {
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
+  if (canonicalChatEventStream) {
+    registerCanonicalChatEventWebSocketRoute({
+      app,
+      upgradeWebSocket,
+      getPrincipal: (context) => requireRequestPrincipal(context as Context),
+      stream: canonicalChatEventStream,
+    });
+  }
   app.route("/", createChatProviderRoutes({
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
@@ -4107,6 +4128,14 @@ export async function createGateway(config: GatewayConfig) {
     agentRuntimeController: agentRuntimeServices.controller,
   });
   app.route("/api/settings", settingsRoutes);
+  if (osViewStateRepository) {
+    app.route("/api/os-view-state", createOsViewStateRoutes({
+      repository: osViewStateRepository,
+      getOwnerId: (c) => requireRequestPrincipal(c).userId,
+    }));
+  } else {
+    app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));
+  }
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
   if (messagingRepository) {
@@ -4421,7 +4450,16 @@ export async function createGateway(config: GatewayConfig) {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
       });
       syncR2?.destroy();
-      await chatRepository?.release();
+      if (canonicalChatEventStream && chatRepository) {
+        const repository = chatRepository;
+        await closeCanonicalChatEventLifecycle({
+          stream: canonicalChatEventStream,
+          releaseRepository: () => repository.release(),
+        });
+      } else {
+        await chatRepository?.release();
+      }
+      canonicalChatEventStream = null;
       chatRepository = null;
       await canvasRepository?.destroy();
       await socialRoutes?.shutdownPostHog();

@@ -15,6 +15,7 @@ import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/proje
 import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 const RUNTIME_SCOPE = codingAgentRuntimeScope({
@@ -222,7 +223,7 @@ function resetStores() {
     runtimeScope: RUNTIME_SCOPE,
     hydratedScope: RUNTIME_SCOPE,
   });
-  useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
+  resetProviderPreferences();
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,

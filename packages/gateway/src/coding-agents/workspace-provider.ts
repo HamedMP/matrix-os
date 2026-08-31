@@ -80,6 +80,16 @@ function providerKind(agent: SupportedAgent): AgentProviderSummary["kind"] {
   return "custom";
 }
 
+function safeRecoveryErrorName(error: unknown): string {
+  const name = error instanceof Error ? error.name : "UnknownError";
+  if (name === "Error" || name === "AbortError" || name === "TimeoutError"
+    || name === "CodexControlUnavailableError" || name === "CodexControlTransportError"
+    || name === "CodexControlRejectedError") {
+    return name;
+  }
+  return "UnknownError";
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -317,13 +327,42 @@ export function createWorkspaceCodingAgentProvider(
           sessionId,
           startAtEnd: true,
         });
-        await options.codexControl.submitTurn({
-          sessionId,
-          turnId: turn.turnId,
-          prompt: workspaceTurnPrompt(turn.message, turn.attachments),
-          ...(turn.model ? { model: turn.model } : {}),
-          modelOptions: turn.modelOptions ?? [],
-        });
+        const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
+        try {
+          await options.codexControl.submitTurn({
+            sessionId,
+            turnId: turn.turnId,
+            prompt,
+            ...(turn.model ? { model: turn.model } : {}),
+            modelOptions: turn.modelOptions ?? [],
+          });
+        } catch (error: unknown) {
+          console.warn(
+            "[coding-agents] Codex turn control failed; restarting session",
+            { errorName: safeRecoveryErrorName(error) },
+          );
+          const restarted = await options.runtime.startSession({
+            ownerScope: { type: "user", id: principal.userId },
+            request: {
+              sessionId,
+              ...(resumeState.providerThreadId
+                ? { providerThreadId: resumeState.providerThreadId }
+                : {}),
+              kind: "agent",
+              agent,
+              prompt,
+              attachments: turn.attachments,
+              model: turn.model,
+              modelOptions: turn.modelOptions,
+              projectSlug: thread.projectId,
+              taskId: thread.taskId,
+              approvalPolicy: turn.approvalPolicy ?? "on_request",
+              sandboxMode: turn.sandboxMode ?? "workspace_write",
+              runtimePreference: "zellij",
+            },
+          });
+          if (!restarted.ok) throw new Error("Workspace provider turn recovery failed");
+        }
         return { events: [], outcome: "delivered", resumeState };
       }
       if (!options.runtime.sendInput) {
@@ -337,12 +376,17 @@ export function createWorkspaceCodingAgentProvider(
       if (!result.ok) throw new Error("Workspace provider turn resume failed");
       return { events: [], outcome: "delivered", resumeState };
     },
-    async abortThread({ thread, now, nextEventId }) {
-      const result = await options.runtime.stopSession(sessionIdForThread(thread.id));
-      if (!result.ok) {
-        throw new Error("Workspace provider abort failed");
+    async abortThread({ thread, clientRequestId, now, nextEventId }) {
+      const sessionId = sessionIdForThread(thread.id);
+      if (agent === "codex" && options.codexControl) {
+        await options.codexControl.interruptTurn({ sessionId, clientRequestId });
+      } else {
+        const result = await options.runtime.stopSession(sessionId);
+        if (!result.ok) {
+          throw new Error("Workspace provider abort failed");
+        }
+        options.codexEvents?.markStopped(sessionId);
       }
-      options.codexEvents?.markStopped(sessionIdForThread(thread.id));
       return [
         statusEvent({
           threadId: thread.id,

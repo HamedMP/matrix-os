@@ -476,6 +476,66 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.defaultSelection?.model).toBe("openai:gpt-5");
   });
 
+  it("marks live-probed unavailable OpenCode Free models unavailable", async () => {
+    const source: AgentRuntimeSource = async () => {
+      const snapshot = await runtimeSource()(AbortSignal.timeout(1_000));
+      return {
+        ...snapshot,
+        providers: [{
+          id: "opencode-free",
+          displayName: "OpenCode Free",
+          runtime: "hermes",
+          scopes: ["messaging"],
+          authKind: "none",
+          supportedAuthKinds: ["none"],
+          models: [
+            "deepseek-v4-flash-free",
+            "laguna-s-2.1-free",
+            "ling-3.0-flash-fin-free",
+            "mimo-v2.5-free",
+            "muse-spark-1.2-contributor-free",
+            "nemotron-3-ultra-free",
+            "nemotron-3.5-lightning-free",
+          ].map((id) => ({
+            id,
+            displayName: id,
+            capabilities: ["tools", "reasoning"],
+            efforts: [],
+            available: true,
+          })),
+          authStatus: { state: "ready", authenticated: true, action: "none" },
+        }],
+        messaging: {
+          runtime: "hermes",
+          provider: "opencode-free",
+          model: "laguna-s-2.1-free",
+          configured: true,
+        },
+      };
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([]),
+      agentRuntimeSource: source,
+    });
+
+    const hermes = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "hermes_default")!;
+
+    expect(hermes.models.filter((model) => model.availability === "available").map((model) => model.id))
+      .toEqual([
+        "opencode-free:laguna-s-2.1-free",
+        "opencode-free:ling-3.0-flash-fin-free",
+        "opencode-free:mimo-v2.5-free",
+        "opencode-free:muse-spark-1.2-contributor-free",
+        "opencode-free:nemotron-3.5-lightning-free",
+      ]);
+    expect(hermes.models.filter((model) => model.availability === "unavailable").map((model) => model.id))
+      .toEqual([
+        "opencode-free:deepseek-v4-flash-free",
+        "opencode-free:nemotron-3-ultra-free",
+      ]);
+  });
+
   it("preserves a bounded provider-owned model path in the canonical catalog", async () => {
     const providerModel = "anthropic/claude-opus-4.6";
     const source: AgentRuntimeSource = async () => {

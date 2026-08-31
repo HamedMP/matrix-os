@@ -11,6 +11,7 @@ import {
   DesktopReleaseNotesSchema,
   DesktopUpdateVersionSchema,
 } from "../../shared/desktop-update";
+import { ProviderPreferencesSchema } from "../../shared/provider-preferences";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -54,35 +55,6 @@ const PanelLayoutSchema = z
 const PanelLayoutsSchema = z.record(z.string().max(256), PanelLayoutSchema);
 
 const RecentsSchema = z.array(z.string().max(512)).max(50);
-
-const ComposerOptionPreferenceSchema = z.strictObject({
-  id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/),
-  value: z.union([z.string().max(128), z.boolean()]),
-});
-
-const ComposerSelectionPreferenceSchema = z.strictObject({
-  options: z.array(ComposerOptionPreferenceSchema).max(16),
-  permissionMode: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/),
-});
-
-const ComposerSelectionsSchema = z
-  .record(
-    z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/),
-    ComposerSelectionPreferenceSchema,
-  )
-  .refine((selections) => Object.keys(selections).length <= 20, {
-    message: "too many composer selection preferences",
-  });
-
-const ProviderPreferencesSchema = z
-  .object({
-    defaultProviderId: z
-      .string()
-      .regex(/^[a-z0-9][a-z0-9_-]{0,79}$/)
-      .nullable(),
-    composerSelections: ComposerSelectionsSchema.optional(),
-  })
-  .strict();
 
 const ProfileSchema = z
   .object({

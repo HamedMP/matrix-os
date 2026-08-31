@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
+import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -75,6 +76,7 @@ const ProviderModelReferenceSchema = z.string()
   .refine((value) => !value.includes(".."));
 const RunnerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
+  providerThreadId: NativeReferenceSchema.optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
@@ -237,7 +239,16 @@ const TurnControlSchema = PendingTurnSchema.extend({
   type: z.literal("turn"),
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
-const ControlSchema = z.discriminatedUnion("type", [TurnControlSchema, ApprovalControlSchema, InputControlSchema]);
+const InterruptControlSchema = z.object({
+  type: z.literal("interrupt"),
+  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
+}).strict();
+const ControlSchema = z.discriminatedUnion("type", [
+  TurnControlSchema,
+  InterruptControlSchema,
+  ApprovalControlSchema,
+  InputControlSchema,
+]);
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -299,6 +310,8 @@ let transcriptBytes = (await eventFile.stat()).size;
 let stopping = false;
 let activeTurn = false;
 let activeTurnOutcome;
+let nativeThreadId;
+let activeNativeTurnId;
 let terminalEventCount = 0;
 let stdinClosed = false;
 let wakeTurn;
@@ -307,6 +320,7 @@ let stopTimer;
 let nextRpcId = 1;
 const pendingRpc = new Map();
 const pendingApprovals = new Map();
+const sessionApprovalGrants = createCodexSessionApprovalGrants();
 const pendingInputs = new Map();
 const completedControls = new Map();
 const assistantItemsWithDelta = new Set();
@@ -540,6 +554,14 @@ async function handleApproval(raw) {
   }
   const identity = approvalIdentity(parsed.data);
   const decisions = decisionMapping(parsed.data);
+  const sessionDecision = sessionApprovalGrants.decisionFor(
+    parsed.data.method,
+    decisions.nativeDecisionByMatrixDecision,
+  );
+  if (sessionDecision !== undefined) {
+    sendProvider({ id: parsed.data.id, result: { decision: sessionDecision } });
+    return true;
+  }
   if (decisions.allowedDecisions.length === 0) {
     sendProvider({ id: parsed.data.id, result: { decision: "cancel" } });
     return true;
@@ -557,6 +579,7 @@ async function handleApproval(raw) {
   });
   pendingApprovals.set(identity.approvalId, {
     nativeRequestId: parsed.data.id,
+    method: parsed.data.method,
     allowedDecisions: decisions.allowedDecisions,
     nativeDecisionByMatrixDecision: decisions.nativeDecisionByMatrixDecision,
     expiresAt: Date.now() + REQUEST_TIMEOUT_MS,
@@ -719,7 +742,8 @@ async function handleProviderMessage(raw) {
   }
   const completed = TurnCompletedSchema.safeParse(raw);
   if (completed.success) {
-    await finishTurn(completed.data.params.turn.status === "completed" ? "completed" : "failed");
+    const status = completed.data.params.turn.status;
+    await finishTurn(status === "completed" ? "completed" : status === "interrupted" ? "aborted" : "failed");
   }
 }
 
@@ -779,13 +803,20 @@ async function applyControl(control) {
   }
   if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
+  } else if (control.type === "interrupt") {
+    if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
+    await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
   } else if (control.type === "approval") {
     const pending = pendingApprovals.get(control.approvalId);
     if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
+    const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
     sendProvider({
       id: pending.nativeRequestId,
-      result: { decision: pending.nativeDecisionByMatrixDecision[control.decision] },
+      result: { decision: nativeDecision },
     });
+    if (control.decision === "approve_for_session") {
+      sessionApprovalGrants.grant(pending.method);
+    }
     pendingApprovals.delete(control.approvalId);
   } else {
     const pending = pendingInputs.get(control.requestId);
@@ -979,6 +1010,7 @@ async function finishTurn(outcome) {
     return;
   }
   activeTurn = false;
+  activeNativeTurnId = undefined;
   for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
     await persist({ type: "matrix.codex.assistant.completed", messageId });
@@ -995,7 +1027,9 @@ async function finishTurn(outcome) {
   }
   assistantDeltaBuffers.clear();
   toolItemsWithOutput.clear();
-  await persist({ type: outcome === "completed" ? "turn.completed" : "turn.failed" });
+  await persist({
+    type: outcome === "completed" ? "turn.completed" : outcome === "aborted" ? "turn.aborted" : "turn.failed",
+  });
   terminalEventCount += 1;
   activeTurnOutcome?.(outcome);
   activeTurnOutcome = undefined;
@@ -1008,9 +1042,13 @@ async function runTurn(threadId, turn) {
   });
   activeTurn = true;
   try {
-    await request("turn/start", turnStartParams(threadId, turn));
+    const started = await request("turn/start", turnStartParams(threadId, turn));
+    activeNativeTurnId = z.object({
+      turn: z.object({ id: NativeReferenceSchema }).passthrough(),
+    }).passthrough().parse(started).turn.id;
   } catch (error) {
     activeTurn = false;
+    activeNativeTurnId = undefined;
     activeTurnOutcome = undefined;
     throw error;
   }
@@ -1049,7 +1087,9 @@ try {
     capabilities: { experimentalApi: true },
   });
   sendProvider({ method: "initialized", params: {} });
-  const started = await request("thread/start", {
+  const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
+  const started = await request(threadMethod, {
+    ...(config.providerThreadId ? { threadId: config.providerThreadId } : {}),
     model: config.model,
     serviceTier: config.serviceTier,
     cwd: process.cwd(),
@@ -1058,7 +1098,7 @@ try {
     runtimeWorkspaceRoots: config.writableRoots,
     experimentalRawEvents: false,
   });
-  const threadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
+  nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
   let turn = PendingTurnSchema.parse({
     prompt: config.prompt,
@@ -1069,8 +1109,8 @@ try {
     ],
   });
   while (turn && !stopping) {
-    const outcome = await runTurn(threadId, turn);
-    if (outcome !== "completed") exitCode = 1;
+    const outcome = await runTurn(nativeThreadId, turn);
+    if (outcome === "failed") exitCode = 1;
     const next = await Promise.race([
       nextTurn().then((value) => ({ type: "turn", value })),
       childExit.then((exit) => ({ type: "exit", exit })),

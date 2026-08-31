@@ -99,7 +99,6 @@ describe("AgentConversationView composer busy conflict", () => {
     expect(invoke).not.toHaveBeenCalledWith("runtime:create-turn", expect.anything());
     expect(input.textContent).toBe("Follow-up while busy");
     expect(screen.queryByLabelText("Queued follow-ups")).toBeNull();
-    expect(useTabs.getState().recentViews).toHaveLength(0);
     expect(screen.getByText("Agent is working — draft now, send when this turn finishes")).toBeTruthy();
   });
 

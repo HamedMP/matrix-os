@@ -1,4 +1,4 @@
-export const DESKTOP_DEV_RENDERER_HOST = "desktop.local.matrix-os.com";
+export const DESKTOP_DEV_RENDERER_HOST = "desktop.localhost";
 
 const LOCAL_RENDERER_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 

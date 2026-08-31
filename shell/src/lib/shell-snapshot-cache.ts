@@ -229,7 +229,7 @@ function normalizeDock(value: unknown): DesktopConfig["dock"] {
 }
 
 function normalizeBackground(value: unknown): DesktopConfig["background"] {
-  const fallback: DesktopConfig["background"] = { type: "wallpaper", name: "moraine-lake.jpg" };
+  const fallback: DesktopConfig["background"] = { type: "wallpaper", name: "matrix-dusk.webp" };
   if (!isRecord(value) || typeof value.type !== "string") return fallback;
   if (value.type === "pattern") return { type: "pattern" };
   if (value.type === "solid" && safeCssColor(value.color)) return { type: "solid", color: value.color };

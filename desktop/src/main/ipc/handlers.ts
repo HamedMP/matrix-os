@@ -11,6 +11,7 @@ import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-age
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 import { clampZoomFactor, DEFAULT_ZOOM_FACTOR } from "../platform/zoom";
+import { AppError, categoryMessage, type AppErrorCategory } from "../../shared/app-error";
 
 interface IpcMainLike {
   handle(
@@ -102,6 +103,33 @@ type Handler<C extends InvokeChannel> = (
 ) => Promise<InvokeResponse<C>> | InvokeResponse<C>;
 
 const PUBLIC_IPC_ERRORS = new Set(["invalid request", "internal error", "embed unavailable"]);
+
+const THREAD_CREATE_ERROR_CODES: Record<AppErrorCategory, string> = {
+  unauthorized: "thread_create_unauthorized",
+  offline: "thread_create_offline",
+  timeout: "thread_create_timeout",
+  notFound: "thread_create_not_found",
+  server: "thread_create_server",
+  misconfigured: "thread_create_misconfigured",
+  fatalSession: "thread_create_fatal_session",
+};
+
+function threadCreateFailure(error: unknown): InvokeResponse<"runtime:create-thread"> {
+  const category: AppErrorCategory = error instanceof AppError ? error.category : "server";
+  return {
+    ok: false,
+    error: {
+      code: THREAD_CREATE_ERROR_CODES[category],
+      safeMessage: categoryMessage(category),
+      retryable: category !== "unauthorized" && category !== "fatalSession",
+      recoveryActions: category === "unauthorized" || category === "fatalSession"
+        ? ["sign_in"]
+        : category === "misconfigured"
+          ? ["select_runtime"]
+          : ["retry"],
+    },
+  };
+}
 
 // The sender's webContents is the only zoom target; anything else (tests,
 // malformed events) degrades to a no-op instead of throwing.
@@ -214,7 +242,17 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
-  handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
+  handle("runtime:create-thread", async (request) => {
+    try {
+      return { ok: true, snapshot: await ctx.createAgentThread(request) };
+    } catch (error: unknown) {
+      console.warn(
+        "[ipc] runtime:create-thread failed:",
+        error instanceof AppError ? error.category : error instanceof Error ? error.name : "UnknownError",
+      );
+      return threadCreateFailure(error);
+    }
+  });
   handle("runtime:create-turn", (request) => ctx.createAgentTurn(request));
   handle("runtime:abort-thread", (request) => ctx.abortAgentThread(request));
 

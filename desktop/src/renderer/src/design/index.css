@@ -16,6 +16,11 @@
   from { opacity: 1; transform: translate3d(var(--desktop-exit-x), var(--desktop-exit-y), 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
+
+@keyframes chat-title-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-1 * var(--chat-title-scroll-distance))); }
+}
 @import "./chat.css";
 
 /* Map tokens into Tailwind v4 theme so utilities like bg-surface work. */

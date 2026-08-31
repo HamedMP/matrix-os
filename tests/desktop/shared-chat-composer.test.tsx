@@ -424,6 +424,36 @@ describe("SharedChatComposer", () => {
     expect(model.querySelector('[data-provider-glyph="hermes"]')).toBeNull();
   });
 
+  it("hides models that are not available from an otherwise available system harness", () => {
+    const catalog = fixedHermesCatalogFixture();
+    catalog.instances[0]!.models.push({
+      id: "anthropic:claude-opus-4-6",
+      displayName: "claude-opus-4.6",
+      availability: "auth_required",
+      capabilities: ["tools"],
+      supportsVision: false,
+      supportsToolUse: true,
+    });
+    const selection = createCanonicalComposerSelection(catalog)!;
+    render(
+      <SharedChatComposer
+        value=""
+        onChange={() => undefined}
+        onSubmit={() => undefined}
+        busy={false}
+        catalog={catalog}
+        selection={selection}
+        onSelectionChange={() => undefined}
+        instanceLocked={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+
+    expect(screen.getByRole("option", { name: /gpt-5.3-codex-spark/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /claude-opus-4.6/ })).toBeNull();
+  });
+
   it("searches models and switches Provider Instance before the first Turn", () => {
     render(<Harness />);
 

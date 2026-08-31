@@ -6,6 +6,7 @@ import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { groupLauncherApps } from "@/lib/dock-sections";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { isOsViewDestinationPath } from "@/lib/web-desktop-app-launch";
 import {
   computeLaunchpadColumns,
   computeLaunchpadPageSize,
@@ -144,7 +145,12 @@ export function Launchpad({
               }}
             >
               {pageApps.map((app) => (
-                <LaunchpadTile key={app.path} app={app} onLaunch={() => launch(app)} onContextMenu={() => setContextApp(app)} />
+                <LaunchpadTile
+                  key={app.path}
+                  app={app}
+                  onLaunch={() => launch(app)}
+                  onContextMenu={isOsViewDestinationPath(app.path) ? undefined : () => setContextApp(app)}
+                />
               ))}
             </div>
           ) : (
@@ -186,10 +192,10 @@ export function Launchpad({
   );
 }
 
-function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu: () => void }) {
+function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu?: () => void }) {
   const { showImage, onError } = useIconWithFallback(app.iconUrl);
   return (
-    <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={(event) => { event.preventDefault(); onContextMenu(); }}>
+    <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(); } : undefined}>
       <span className="launchpad-icon">
         {app.path === "__create-app__" ? (
           <PlusIcon className="size-12" aria-hidden="true" />

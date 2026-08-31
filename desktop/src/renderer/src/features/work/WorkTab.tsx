@@ -11,7 +11,12 @@ import {
   type RefObject,
 } from "react";
 import type { CanonicalChatDetailResponse, TerminalSessionSummary } from "@matrix-os/contracts";
-import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
+import {
+  createCanonicalChatClient,
+  createCanonicalChatEventSource,
+  type CanonicalChatEventSource,
+  type DesktopCanonicalChatWebSocket,
+} from "../../lib/canonical-chat-client";
 import { useBoard, type Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
@@ -223,6 +228,10 @@ export default function WorkTab({
   const measuredWidthRef = useRef(false);
   const pendingFocusRef = useRef<RefObject<HTMLButtonElement | null> | null>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const pendingEventSourceDisposalRef = useRef<{
+    source: CanonicalChatEventSource;
+    cancelled: boolean;
+  } | null>(null);
   const surfaceChromeHost = useSurfaceChromeHost();
   const hostedChrome = surfaceChromeHost !== null;
   const [responsive, setResponsive] = useState<WorkResponsiveState>({
@@ -240,6 +249,19 @@ export default function WorkTab({
   } | null>(null);
   const { layout, navigationOpen, inspectorOpen } = responsive;
   const client = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
+  const eventSource = useMemo<CanonicalChatEventSource | null>(() => {
+    if (!api || !active) return null;
+    return createCanonicalChatEventSource({
+      gatewayOrigin: api.baseUrl,
+      runtimeSlot,
+      async fetchWebSocketToken() {
+        const response = await api.get<{ token?: unknown }>("/api/auth/ws-token");
+        if (typeof response.token !== "string") throw new Error("ChatEventCredentialUnavailable");
+        return response.token;
+      },
+      createWebSocket: (url) => new WebSocket(url) as unknown as DesktopCanonicalChatWebSocket,
+    });
+  }, [active, api, authGeneration, runtimeSlot]);
   const routeKey = `${active}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
   const hasInspector = Boolean(active && (route === "chat" || route === "project"));
   const narrowPane = effectiveNarrowPane(responsive, routeKey, hasInspector);
@@ -247,6 +269,26 @@ export default function WorkTab({
     ((layout === "wide" || layout === "medium") && inspectorOpen)
     || (layout === "narrow" && narrowPane === "inspector")
   );
+
+  useEffect(() => {
+    const pendingDisposal = pendingEventSourceDisposalRef.current;
+    if (pendingDisposal?.source === eventSource) {
+      pendingDisposal.cancelled = true;
+      pendingEventSourceDisposalRef.current = null;
+    }
+    if (!eventSource) return;
+    void eventSource.start();
+    return () => {
+      const disposal = { source: eventSource, cancelled: false };
+      pendingEventSourceDisposalRef.current = disposal;
+      queueMicrotask(() => {
+        if (!disposal.cancelled) disposal.source.dispose();
+        if (pendingEventSourceDisposalRef.current === disposal) {
+          pendingEventSourceDisposalRef.current = null;
+        }
+      });
+    };
+  }, [eventSource]);
 
   useEffect(() => {
     if (
@@ -532,11 +574,11 @@ export default function WorkTab({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug
-        ? <ProjectChatsView projectId={projectSlug} active={active} initialChatId={initialChatId} initialView={initialChatView} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
+        ? <ProjectChatsView projectId={projectSlug} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
         : null;
 
   const navigationVisible = layout === "narrow" ? narrowPane === "rail" : navigationOpen;
@@ -643,6 +685,7 @@ export default function WorkTab({
           ) : null}
           <WorkRail
             client={client}
+            eventSource={eventSource ?? undefined}
             projects={projects}
             active={active}
             activeChatId={initialChatId}

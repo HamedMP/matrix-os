@@ -2,8 +2,8 @@ import { Command } from "cmdk";
 import { Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
-import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Search, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
-import { appIconUrl, useApps } from "../../stores/apps";
+import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Search, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
+import { appIconUrl, useAppsQuery } from "../apps/apps.api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
@@ -11,7 +11,7 @@ import { useShellSessions, type ShellSessionSummary } from "../../stores/shell-s
 import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
-import { CODING_AGENTS_DESKTOP_WORKSPACE, NATIVE_DESKTOP_WINDOW_SHELL } from "../../lib/feature-flags";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../lib/project-chat";
 import { openProjectOverview } from "../../lib/project-navigation";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
@@ -140,16 +140,13 @@ export default function CommandPalette() {
   const focusTab = useTabs((s) => s.focusTab);
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
-  const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const projects = useBoard((s) => s.projects);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const shellSessions = useShellSessions((s) => s.sessions);
   const loadShellSessions = useShellSessions((s) => s.load);
-  const apps = useApps((s) => s.apps);
-  const appsError = useApps((s) => s.error);
-  const loadApps = useApps((s) => s.load);
+  const { data: apps = [], isError: appsError, refetch: refetchApps } = useAppsQuery();
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
@@ -159,8 +156,8 @@ export default function CommandPalette() {
 
   // Make sure apps are available the first time the palette opens.
   useEffect(() => {
-    if (open && api) void loadApps(api, Boolean(appsError));
-  }, [open, api, appsError, loadApps]);
+    if (open && api && appsError) void refetchApps();
+  }, [open, api, appsError, refetchApps]);
 
   useEffect(() => {
     if (open && api) void loadShellSessions(api);
@@ -302,7 +299,6 @@ export default function CommandPalette() {
             className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide"
             style={{ color: "var(--text-tertiary)" }}
           >
-            <PaletteItem icon={<Plus size={14} />} label="New task" shortcut="C" onSelect={() => run(() => setCreateTaskOpen(true))} />
             <PaletteItem
               icon={<Kanban size={14} />}
               label="Add project…"
@@ -350,8 +346,7 @@ export default function CommandPalette() {
               icon={<LayoutGrid size={14} />}
               label="Open Apps"
               onSelect={() => run(() => {
-                if (NATIVE_DESKTOP_WINDOW_SHELL) useUi.getState().setAppLauncherOpen(true);
-                else openTab({ kind: "apps", title: "Apps" });
+                useUi.getState().setAppLauncherOpen(true);
               })}
             />
           </Command.Group> : null}

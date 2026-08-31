@@ -186,12 +186,15 @@ function DeveloperToolLogo({ logoPath }: { logoPath: string }) {
 export function DeveloperToolsSelector({
   selectedTools,
   onToggle,
+  variant = "default",
 }: {
   selectedTools: DeveloperToolId[];
   onToggle: (tool: DeveloperToolId) => void;
+  variant?: "default" | "billing";
 }) {
   // The selector is bounded to the four supported developer tools.
   const selectedToolIds = new Set(selectedTools);
+  const billingLayout = variant === "billing";
 
   return (
     <section className="max-w-3xl rounded-2xl border border-border/70 bg-background/55 p-3 sm:p-4">
@@ -199,7 +202,10 @@ export function DeveloperToolsSelector({
         <h4 className="text-sm font-semibold text-deep">Developer tools</h4>
         <p className="text-xs text-forest/45">Choose command-line agents to preinstall on this VPS.</p>
       </div>
-      <ol aria-label="Coding agents" className="flex flex-col gap-2">
+      <ol
+        aria-label="Coding agents"
+        className={billingLayout ? "grid grid-cols-2 gap-2" : "flex flex-col gap-2"}
+      >
         {developerToolOptions.map((tool, index) => {
           const checked = selectedToolIds.has(tool.id);
           return (
@@ -211,7 +217,9 @@ export function DeveloperToolsSelector({
               <label
                 className={`group flex min-h-14 cursor-pointer items-center justify-between rounded-xl border px-3 py-2 transition-all duration-200 active:scale-[0.995] ${
                   checked
-                    ? "translate-x-1 border-ember bg-[#fff7ec] shadow-[0_10px_28px_rgba(83,68,48,0.10)]"
+                    ? billingLayout
+                      ? "border-[#0E3422] bg-[#F4F7ED] shadow-[0_8px_24px_rgba(14,52,34,0.08)]"
+                      : "translate-x-1 border-ember bg-[#fff7ec] shadow-[0_10px_28px_rgba(83,68,48,0.10)]"
                     : "border-forest/10 bg-white/90 hover:translate-x-0.5 hover:border-forest/25"
                 }`}
               >
@@ -220,7 +228,9 @@ export function DeveloperToolsSelector({
                     aria-hidden="true"
                     className={`grid size-7 shrink-0 place-items-center rounded-lg border font-mono text-[11px] transition-colors ${
                       checked
-                        ? "border-ember/35 bg-ember text-white"
+                        ? billingLayout
+                          ? "border-[#BED77B] bg-[#BED77B] text-[#0E3422]"
+                          : "border-ember/35 bg-ember text-white"
                         : "border-forest/15 bg-white text-forest/55 group-hover:text-forest"
                     }`}
                   >
@@ -240,7 +250,11 @@ export function DeveloperToolsSelector({
                 />
                 <span
                   className={`flex size-5 items-center justify-center rounded-full border transition-colors ${
-                    checked ? "border-ember bg-ember text-white" : "border-forest/20 bg-white"
+                    checked
+                      ? billingLayout
+                        ? "border-[#0E3422] bg-[#BED77B] text-[#0E3422]"
+                        : "border-ember bg-ember text-white"
+                      : "border-forest/20 bg-white"
                   }`}
                   aria-hidden="true"
                 >

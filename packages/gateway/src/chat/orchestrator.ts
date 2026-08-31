@@ -9,6 +9,7 @@ import {
   CanonicalChatTurnSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalSubmitChatApprovalRequestSchema,
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
@@ -18,6 +19,8 @@ import {
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalSubmitChatApprovalRequest,
+  type CanonicalChatApprovalSubmissionResponse,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type {
@@ -41,6 +44,7 @@ import {
   ChatConflictError,
   ChatNotFoundError,
   ChatProviderInstanceLockedError,
+  ChatRunNotAcknowledgeableError,
   ChatRunNotActiveError,
   type ChatRepository,
 } from "./repository.js";
@@ -104,15 +108,31 @@ function promptFor(parts: CanonicalCreateChatTurnRequest["parts"]): string {
       return [`${part.invocation.invocation}${part.invocation.arguments ? ` ${part.invocation.arguments}` : ""}`];
     }
     if (part.type === "resource_reference") return [`@${part.resource.label}`];
-    if (part.type === "attachment_reference") return [`@${part.label}`];
+    if (part.type === "attachment_reference" && !part.ownerReference) return [`@${part.label}`];
     return [];
   });
+  const attachmentReferences = parts.flatMap((part) => (
+    part.type === "attachment_reference" && part.ownerReference
+      ? [`- ${JSON.stringify(part.label)}: ${shellQuotedOwnerReference(part.ownerReference)}`]
+      : []
+  ));
+  if (attachmentReferences.length > 0) {
+    lines.push(
+      "",
+      "Attached files (available on this Matrix computer):",
+      ...attachmentReferences,
+    );
+  }
   const prompt = lines.join("\n").trim();
   if (!prompt) throw new CanonicalChatOrchestrationError(
     safeError("capability_mismatch", "The message does not contain supported input."),
     400,
   );
   return prompt;
+}
+
+function shellQuotedOwnerReference(ownerReference: string): string {
+  return `"$MATRIX_HOME"/'${ownerReference.replaceAll("'", "'\\''")}'`;
 }
 
 function requirementsFor(input: CanonicalCreateChatTurnRequest) {
@@ -144,6 +164,12 @@ export function mapRepositoryError(error: unknown): never {
       ["fork_chat", "start_new_chat"],
     ), 409);
   }
+  if (error instanceof ChatRunNotAcknowledgeableError) {
+    throw new CanonicalChatOrchestrationError(safeError(
+      "run_unavailable",
+      "Only a successful completed Run can be acknowledged.",
+    ), 409);
+  }
   if (error instanceof ChatConflictError) {
     throw new CanonicalChatOrchestrationError(safeError("chat_conflict", "Chat changed. Refresh and try again.", true, ["retry"]), 409);
   }
@@ -167,6 +193,7 @@ export class CanonicalChatOrchestrator {
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
+      | "getPendingApproval"
       | "getLatestAdapterStateForChat"
       | "getTurnRunContext"
       | "admitRetry"
@@ -786,6 +813,57 @@ export class CanonicalChatOrchestrator {
     } catch (error: unknown) {
       return mapRepositoryError(error);
     }
+  }
+
+  async submitApproval(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    approvalId: string,
+    inputValue: CanonicalSubmitChatApprovalRequest,
+  ): Promise<CanonicalChatApprovalSubmissionResponse> {
+    const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
+    const active = this.active.get(runId);
+    if (!active || active.chatId !== chatId || active.owner.type !== owner.type
+      || active.owner.ownerId !== owner.ownerId || !active.adapter.submitApproval) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This approval is no longer available."),
+        409,
+      );
+    }
+    const pending = await this.options.repository.getPendingApproval(owner, { chatId, runId, approvalId });
+    if (!pending || !pending.allowedDecisions.includes(input.decision)) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This approval decision is no longer available."),
+        409,
+      );
+    }
+    const state = await this.options.repository.getAdapterState(owner, {
+      runId,
+      driverKind: active.adapter.driverKind,
+      instanceId: active.instanceId,
+    });
+    try {
+      await active.adapter.submitApproval({
+        owner,
+        chatId,
+        runId,
+        approvalId,
+        decision: input.decision,
+        clientRequestId: input.clientRequestId,
+        ...(state ? { state: active.adapter.parseState(state.state) } : {}),
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[chat/orchestrator] Provider approval callback failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The approval could not be submitted. Try again.", true, ["retry"]),
+        503,
+      );
+    }
+    return { approvalId, decision: input.decision, submission: "accepted" };
   }
 
   async reconcileActiveRuns(owner: ChatOwner): Promise<number> {

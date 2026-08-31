@@ -276,7 +276,7 @@ describe("provider-neutral conversation transcript", () => {
     render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
 
     const transcript = screen.getByRole("log");
-    expect(transcript.className).toContain("max-w-[46rem]");
+    expect(transcript.className).toContain("max-w-[868px]");
     expect(transcript.className).not.toContain("max-w-[72rem]");
     expect(transcript.className).toContain("gap-3");
     const rows = transcript.querySelectorAll('[data-slot="message-scroller-item"]');

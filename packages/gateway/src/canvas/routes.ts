@@ -6,7 +6,6 @@ import {
   CanvasIdSchema,
   CanvasNodeIdSchema,
   CanvasScopeTypeSchema,
-  CreateCanvasRequestSchema,
   PatchCanvasNodeRequestSchema,
   ReplaceCanvasRequestSchema,
   type CanvasAction,
@@ -147,10 +146,9 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
 
   app.post("/", writeBodyLimit, async (c) => {
     try {
-      const userId = getUserIdOrThrow(deps, c);
-      const parsed = CreateCanvasRequestSchema.safeParse(await parseJson(c));
-      if (!parsed.success) return validationError(c);
-      return c.json(await deps.service.createCanvas(userId, parsed.data), 201);
+      getUserIdOrThrow(deps, c);
+      await c.req.text();
+      return c.json({ error: "Workspace Canvas creation is retired" }, 410);
     } catch (err: unknown) {
       return handleError(c, err);
     }

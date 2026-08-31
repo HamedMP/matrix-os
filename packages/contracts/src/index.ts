@@ -23,6 +23,7 @@ import {
 
 export const CODEX_VERIFIED_VERSION = "0.151.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
+export * from "#billing-catalog";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
@@ -40,6 +41,7 @@ export * from "#hermes-configuration";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#safe-client-error";
+export * from "#terminal-clipboard";
 export * from "#terminal-links";
 export { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 
@@ -398,6 +400,8 @@ export const CreateAgentTurnRequestSchema = z.object({
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
   model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
+  approvalPolicy: ApprovalPolicySchema.optional(),
+  sandboxMode: SandboxModeSchema.optional(),
   clientRequestId: RequestIdSchema,
 }).strict();
 
@@ -1132,5 +1136,37 @@ export const ReviewSnapshotSchema = z.object({
 
 export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
 
-export * from '#client-policy';
-export * from '#client-policy-reader';
+export {
+  OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_LABELS,
+  OS_VIEW_MODES,
+  isOsViewDestinationPath,
+  normalizeOsViewMode,
+  otherOsViewMode,
+  createDefaultOsViewDocument,
+  mergeOsViewStatePatch,
+  rebaseOsViewStatePatch,
+  OsViewAppStateSchema,
+  OsViewCanvasTransformSchema,
+  OsViewDesktopIconSchema,
+  OsViewDocumentSchema,
+  OsViewMutationIdSchema,
+  OsViewStatePatchSchema,
+  OsViewStateResponseSchema,
+  OsViewWindowGeometrySchema,
+  PatchOsViewStateRequestSchema,
+} from "#os-view";
+export type {
+  OsViewAppState,
+  OsViewCanvasTransform,
+  OsViewDesktopIcon,
+  OsViewDocument,
+  OsViewMode,
+  OsViewStatePatch,
+  OsViewStateResponse,
+  OsViewWindowGeometry,
+  PatchOsViewStateRequest,
+} from "#os-view";
+
+export * from "#client-policy";
+export * from "#client-policy-reader";

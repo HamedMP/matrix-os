@@ -79,6 +79,8 @@ export interface CodingAgentProviderAdapter {
       attachments?: CreateAgentTurnRequest["attachments"];
       model?: CreateAgentTurnRequest["model"];
       modelOptions?: CreateAgentTurnRequest["modelOptions"];
+      approvalPolicy?: CreateAgentTurnRequest["approvalPolicy"];
+      sandboxMode?: CreateAgentTurnRequest["sandboxMode"];
     };
     resumeState: CodingAgentProviderResumeState;
     signal: AbortSignal;

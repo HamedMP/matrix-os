@@ -1,11 +1,16 @@
 import type {
   CanonicalChatDetailResponse,
+  CanonicalChatApprovalDecision,
   CanonicalChatRecord,
   CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
+import type {
+  CanonicalChatClient,
+  CanonicalChatEventSource,
+} from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
+import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
@@ -19,18 +24,40 @@ function detailWithRecord(
   return { ...detail, record };
 }
 
+function shouldApplyAcknowledgement(
+  current: CanonicalChatRecord,
+  response: CanonicalChatRecord,
+  acknowledgedRunId: string,
+): boolean {
+  if (response.chat.id !== current.chat.id) return false;
+  const currentCompletion = current.latestSuccessfulCompletion;
+  const responseCompletion = response.latestSuccessfulCompletion;
+  const responseHasStrictlyNewerCompletion = responseCompletion !== undefined
+    && (currentCompletion === undefined || responseCompletion.completedAt > currentCompletion.completedAt);
+  if (response.chat.revision < current.chat.revision) return false;
+  if (responseCompletion?.runId !== acknowledgedRunId && !responseHasStrictlyNewerCompletion) {
+    return false;
+  }
+  if (currentCompletion?.runId !== acknowledgedRunId && !responseHasStrictlyNewerCompletion) {
+    return false;
+  }
+  return true;
+}
+
 export function useCanonicalChatRouteController({
   client,
   projectId,
   active,
   initialChatId = null,
   autoSelectFirst = true,
+  eventSource,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
   active: boolean;
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -42,6 +69,11 @@ export function useCanonicalChatRouteController({
   const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
+  const acknowledgementAttemptRef = useRef<{
+    client: CanonicalChatClient;
+    chatId: string;
+    runId: string;
+  } | null>(null);
 
   const loadDetail = useCallback(async (chatId: string) => {
     const sequence = ++detailRequestSequence.current;
@@ -104,6 +136,7 @@ export function useCanonicalChatRouteController({
     if (!scopeChanged && initialChatId === activeChatIdRef.current) return;
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
+    acknowledgementAttemptRef.current = null;
     setItems([]);
     detailRef.current = null;
     setDetail(null);
@@ -113,6 +146,54 @@ export function useCanonicalChatRouteController({
     setError(null);
     if (active) void load();
   }, [active, initialChatId, load, projectId]);
+
+  useEffect(() => {
+    if (!active || !eventSource) return;
+    let current = true;
+    let detailRefreshInFlight = false;
+    let detailRefreshPending = false;
+    let listRefreshInFlight = false;
+    let listRefreshPending = false;
+    const refreshSelectedDetail = async () => {
+      if (detailRefreshInFlight) {
+        detailRefreshPending = true;
+        return;
+      }
+      detailRefreshInFlight = true;
+      do {
+        detailRefreshPending = false;
+        const selectedChatId = activeChatIdRef.current;
+        if (selectedChatId) await loadDetail(selectedChatId);
+      } while (current && detailRefreshPending);
+      detailRefreshInFlight = false;
+    };
+    const refreshList = async () => {
+      if (listRefreshInFlight) {
+        listRefreshPending = true;
+        return;
+      }
+      listRefreshInFlight = true;
+      do {
+        listRefreshPending = false;
+        await load();
+      } while (current && listRefreshPending);
+      listRefreshInFlight = false;
+    };
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.full_refresh") {
+        void refreshList();
+        void refreshSelectedDetail();
+        return;
+      }
+      if (event.chatId === activeChatIdRef.current) void refreshSelectedDetail();
+    });
+    return () => {
+      current = false;
+      detailRefreshPending = false;
+      listRefreshPending = false;
+      subscription.dispose();
+    };
+  }, [active, eventSource, load, loadDetail]);
 
   useEffect(() => {
     if (!active || !activeChatId || detail?.record.chat.id === activeChatId) return;
@@ -137,6 +218,56 @@ export function useCanonicalChatRouteController({
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
   }, [active, activeChatId, detail?.record.chat.id, loadDetail]);
+
+  useEffect(() => {
+    const completion = detail?.record.latestSuccessfulCompletion;
+    if (!active || !activeChatId || detail?.record.chat.id !== activeChatId || !completion) {
+      acknowledgementAttemptRef.current = null;
+      return;
+    }
+    if (!completion.unacknowledged) return;
+    const existing = acknowledgementAttemptRef.current;
+    if (existing?.client === client
+      && existing.chatId === activeChatId
+      && existing.runId === completion.runId) {
+      return;
+    }
+    const routeScope = routeScopeRef.current;
+    const attempt = { client, chatId: activeChatId, runId: completion.runId };
+    acknowledgementAttemptRef.current = attempt;
+    void client.acknowledgeCompletion(activeChatId, completion.runId).then((record) => {
+      if (!routeScope?.active || routeScopeRef.current !== routeScope
+        || activeChatIdRef.current !== attempt.chatId) {
+        return;
+      }
+      const current = detailRef.current;
+      if (!current || current.record.chat.id !== attempt.chatId
+        || !shouldApplyAcknowledgement(current.record, record, attempt.runId)) {
+        return;
+      }
+      const next = detailWithRecord(current, record);
+      detailRef.current = next;
+      setDetail(next);
+      setItems((items) => items.map((item) => (
+        item.chat.id === record.chat.id
+          && shouldApplyAcknowledgement(item, record, attempt.runId)
+          ? record
+          : item
+      )));
+    }).catch((error: unknown) => {
+      console.warn("[canonical-chat] completion acknowledgement failed:", diagnosticErrorKind(error));
+      if (acknowledgementAttemptRef.current === attempt) {
+        acknowledgementAttemptRef.current = null;
+      }
+    });
+  }, [
+    active,
+    activeChatId,
+    client,
+    detail?.record.chat.id,
+    detail?.record.latestSuccessfulCompletion?.runId,
+    detail?.record.latestSuccessfulCompletion?.unacknowledged,
+  ]);
 
   useEffect(() => {
     if (!active || !activeChatId || !detail?.record.activeRun) return;
@@ -260,7 +391,7 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error));
       if (!isCurrentScope()) return null;
-      setError("The message could not be sent. Try again.");
+      setError(canonicalChatSubmitFailureMessage(error));
       return null;
     }
   }, [client, detail, projectId]);
@@ -282,6 +413,32 @@ export function useCanonicalChatRouteController({
       setError("The active Run could not be stopped. Try again.");
     }
   }, [client, detail, loadDetail]);
+
+  const submitApproval = useCallback(async (
+    approvalId: string,
+    decision: CanonicalChatApprovalDecision,
+  ) => {
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    if (!current || !activeRun) return false;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, {
+        clientRequestId: canonicalChatRequestId(),
+        decision,
+      });
+      if (!isCurrentScope()) return false;
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] approval failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return false;
+      setError("The approval could not be submitted. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return false;
+    }
+  }, [client, loadDetail]);
 
   const retryTurn = useCallback(async (turnId: string) => {
     const current = detailRef.current;
@@ -350,6 +507,7 @@ export function useCanonicalChatRouteController({
     moveProject,
     submitTurn,
     cancelActiveRun,
+    submitApproval,
     retryTurn,
     deleteChat,
     startNewChat: () => selectChat(null),

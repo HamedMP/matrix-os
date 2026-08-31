@@ -2,16 +2,20 @@
 
 import React, { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
+import {
+  canonicalChatRecord as record,
+  createCanonicalChatWorkspaceClient as client,
+  providerCatalog,
+  snapshot,
+} from "./canonical-chat-workspace-test-utils";
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { snapshot, providerCatalog } = createCanonicalChatFixture("completed");
 const resizeObserverCallbacks: ResizeObserverCallback[] = [];
 
 class WorkspaceResizeObserver implements ResizeObserver {
@@ -37,44 +41,6 @@ function resizeChatWorkspace(width: number) {
   }
 }
 
-const record = {
-  chat: {
-    id: snapshot.chat.id,
-    ownerScope: snapshot.chat.ownerScope,
-    title: snapshot.chat.title,
-    lifecycle: snapshot.chat.lifecycle,
-    attention: snapshot.chat.attention,
-    revision: snapshot.chat.revision,
-    messageCount: snapshot.chat.messageCount,
-    lastMessagePreview: snapshot.chat.lastMessagePreview,
-    currentSelection: snapshot.chat.currentSelection,
-    createdAt: snapshot.chat.createdAt,
-    updatedAt: snapshot.chat.updatedAt,
-  },
-  projectId: "matrix-os",
-  providerBinding: snapshot.chat.providerBinding,
-};
-
-function client(): CanonicalChatClient {
-  return {
-    list: vi.fn(async () => ({ items: [record] })),
-    search: vi.fn(async () => ({ items: [record] })),
-    getDetail: vi.fn(async () => ({
-      record,
-      messages: snapshot.messages,
-      turns: snapshot.turns,
-      runs: snapshot.runs,
-      activities: snapshot.activities,
-    })),
-    create: vi.fn(),
-    updateProject: vi.fn(),
-    delete: vi.fn(),
-    admitTurn: vi.fn(),
-    cancelRun: vi.fn(),
-    retryTurn: vi.fn(),
-  } as CanonicalChatClient;
-}
-
 describe("CanonicalChatWorkspace", () => {
   beforeAll(() => {
     globalThis.ResizeObserver = WorkspaceResizeObserver;
@@ -84,6 +50,10 @@ describe("CanonicalChatWorkspace", () => {
     resizeObserverCallbacks.length = 0;
     useBoard.setState(useBoard.getInitialState(), true);
     useConnection.setState(useConnection.getInitialState(), true);
+    window.operator = {
+      invoke: vi.fn(async () => ({ ok: true })),
+      on: vi.fn(() => () => undefined),
+    };
   });
 
   afterEach(cleanup);
@@ -109,6 +79,27 @@ describe("CanonicalChatWorkspace", () => {
     expect(surface.querySelector('[data-slot="shared-chat-composer"]')).toBeTruthy();
   });
 
+  it("uses the same content width for the transcript and canonical composer", async () => {
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const transcript = await screen.findByRole("log");
+    const composer = screen.getByRole("textbox", { name: "Reply to chat" })
+      .closest('[data-slot="shared-chat-composer"]');
+    expect(composer?.parentElement).toBeTruthy();
+    expect(transcript.className).toContain("max-w-[868px]");
+    expect(composer?.parentElement?.className).toContain("max-w-[868px]");
+  });
+
   it("renders Global Chat history beside the new-chat pane before a Chat is selected", async () => {
     render(
       <CanonicalChatWorkspace
@@ -127,6 +118,66 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
+  });
+
+  it("submits live approval actions from the canonical transcript", async () => {
+    const approval = createCanonicalChatFixture("approval_required").snapshot;
+    const approvalRecord = {
+      chat: {
+        ...approval.chat,
+        providerBinding: undefined,
+        activeRun: undefined,
+        project: undefined,
+      },
+      projectId: "matrix-os",
+      providerBinding: approval.chat.providerBinding,
+      activeRun: approval.chat.activeRun,
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [approvalRecord] });
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record: approvalRecord,
+      messages: approval.messages,
+      turns: approval.turns,
+      runs: approval.runs,
+      activities: [...approval.activities, {
+        id: "activity_approval_action",
+        chatId: approval.chat.id,
+        runId: approval.runs[0]!.id,
+        occurredAt: approval.runs[0]!.updatedAt,
+        type: "approval.requested",
+        approvalId: "appr_command",
+        title: "Run command",
+        risk: "medium",
+        allowedDecisions: ["approve", "decline"],
+      }],
+    });
+    vi.mocked(routeClient.submitApproval).mockResolvedValue({
+      approvalId: "appr_command",
+      decision: "approve",
+      submission: "accepted",
+    });
+
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={approval.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve Run command" }));
+
+    await waitFor(() => expect(routeClient.submitApproval).toHaveBeenCalledWith(
+      approval.chat.id,
+      approval.runs[0]!.id,
+      "appr_command",
+      { clientRequestId: expect.any(String), decision: "approve" },
+    ));
   });
 
   it.each([
@@ -342,7 +393,6 @@ describe("CanonicalChatWorkspace", () => {
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
     const chatClient = client();
-    const onChatDeleted = vi.fn();
     vi.mocked(chatClient.delete).mockResolvedValue({
       chatId: record.chat.id,
       deletedAt: "2026-08-26T12:00:00.000Z",
@@ -353,7 +403,6 @@ describe("CanonicalChatWorkspace", () => {
         projectId={null}
         active
         catalog={providerCatalog}
-        onChatDeleted={onChatDeleted}
       />,
     );
 
@@ -366,7 +415,6 @@ describe("CanonicalChatWorkspace", () => {
       record.chat.id,
       expect.stringMatching(/^req_/),
     ));
-    expect(onChatDeleted).toHaveBeenCalledWith(record.chat.id);
     await waitFor(() => expect(screen.queryByRole("button", { name: snapshot.chat.title })).toBeNull());
   });
 
@@ -959,4 +1007,5 @@ describe("CanonicalChatWorkspace", () => {
       expect.objectContaining({ type: "resource_reference" }),
     ]));
   });
+
 });

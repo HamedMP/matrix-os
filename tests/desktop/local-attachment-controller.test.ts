@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AppError } from "@desktop/shared/app-error";
 import {
   appendHermesAttachmentPaths,
   createLocalAttachmentController,
@@ -165,7 +166,7 @@ describe("local Desktop attachment controller", () => {
   it("retains failed previews for Retry and reuses the stable destination", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const putBytes = vi.fn()
-      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new AppError("offline"))
       .mockResolvedValueOnce({ ok: true, path: "temporary/desktop-chat/stable_retry-retry.txt", size: 1 });
     const controller = createLocalAttachmentController({
       api: { putBytes } as never,
@@ -174,8 +175,14 @@ describe("local Desktop attachment controller", () => {
     controller.add([file("retry.txt", 1, "text/plain")]);
     const id = controller.getSnapshot()[0]!.localId;
 
-    await expect(controller.uploadAll()).resolves.toEqual({ ok: false });
-    expect(controller.getSnapshot()[0]).toMatchObject({ status: "failed", error: "Upload failed. Try again." });
+    await expect(controller.uploadAll()).resolves.toEqual({
+      ok: false,
+      error: "Attachment upload failed. Can't reach Matrix OS. Check your connection.",
+    });
+    expect(controller.getSnapshot()[0]).toMatchObject({
+      status: "failed",
+      error: "Attachment upload failed. Can't reach Matrix OS. Check your connection.",
+    });
     await controller.retry(id);
 
     expect(putBytes).toHaveBeenCalledTimes(2);

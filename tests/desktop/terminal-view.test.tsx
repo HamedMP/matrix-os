@@ -276,40 +276,32 @@ describe("TerminalView session switching", () => {
     expect(screen.getByText(/Connecting/)).toBeTruthy();
   });
 
-  it("promotes a terminal in Recents only after user input", () => {
+  it("forwards terminal input without updating navigation state", () => {
     render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;
-    const recentUpdates = vi.fn();
-    const unsubscribe = useTabs.subscribe(recentUpdates);
-
-    expect(useTabs.getState().recentViews).toEqual([]);
+    const navigationUpdates = vi.fn();
+    const unsubscribe = useTabs.subscribe(navigationUpdates);
     act(() => terminal.dataCallback?.("pwd\r"));
     act(() => terminal.dataCallback?.("ls\r"));
 
     expect(attachmentWrite).toHaveBeenCalledWith("pwd\r");
     expect(attachmentWrite).toHaveBeenCalledWith("ls\r");
-    expect(recentUpdates).toHaveBeenCalledTimes(1);
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "terminal",
-      id: "alpha",
-      label: "alpha",
-    });
+    expect(navigationUpdates).not.toHaveBeenCalled();
     unsubscribe();
   });
 
-  it("never publishes Chat-bound input as a standalone Terminal recent or tab", () => {
+  it("never publishes Chat-bound input as a standalone Terminal tab", () => {
     render(<TerminalView sessionName="chat-shell" chatId="chat_selected" />);
     const terminal = createdTerminals.at(-1)!;
     const initialTabs = useTabs.getState().tabs;
-    const recentUpdates = vi.fn();
-    const unsubscribe = useTabs.subscribe(recentUpdates);
+    const navigationUpdates = vi.fn();
+    const unsubscribe = useTabs.subscribe(navigationUpdates);
 
     act(() => terminal.dataCallback?.("pnpm test\r"));
 
     expect(attachmentWrite).toHaveBeenCalledWith("pnpm test\r");
-    expect(useTabs.getState().recentViews).toEqual([]);
     expect(useTabs.getState().tabs).toEqual(initialTabs);
-    expect(recentUpdates).not.toHaveBeenCalled();
+    expect(navigationUpdates).not.toHaveBeenCalled();
     unsubscribe();
   });
 

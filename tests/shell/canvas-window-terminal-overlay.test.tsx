@@ -51,16 +51,8 @@ vi.mock("../../shell/src/components/preview-window/PreviewWindow.js", () => ({
   PreviewWindow: () => null,
 }));
 
-vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
-  WorkspaceApp: () => null,
-}));
-
 vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
-}));
-
-vi.mock("../../shell/src/lib/open-app-tab.js", () => ({
-  openAppInStandaloneTab: vi.fn(),
 }));
 
 const terminalWindow: AppWindow = {
@@ -94,7 +86,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 1,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
       focusWindow: originalFocusWindow,
@@ -132,7 +123,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -167,7 +157,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -194,7 +183,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });
@@ -247,7 +235,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -292,7 +279,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });
@@ -326,7 +312,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });

@@ -75,7 +75,7 @@ describe('platform billing routes', () => {
     return app;
   }
 
-  it('creates checkout sessions from server-owned plan slugs and omits payment_method_types', async () => {
+  it('creates monthly checkout sessions from server-owned plan and region selections', async () => {
     const app = createApp();
 
     const res = await app.request('/billing/checkout', {
@@ -83,8 +83,9 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_builder',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
+        serverType: 'cpx42',
         runtimeSlot: 'studio',
       }),
     });
@@ -95,7 +96,7 @@ describe('platform billing routes', () => {
       idempotencyKey: expect.any(String),
       clerkUserId: 'user_123',
       customerId: undefined,
-      priceId: 'price_builder_annual',
+      priceId: 'price_builder_monthly',
       mode: 'subscription',
       automaticTax: true,
       allowPromotionCodes: true,
@@ -163,7 +164,7 @@ describe('platform billing routes', () => {
     expect(prebilling.createIntent).toHaveBeenCalledWith(expect.objectContaining({
       checkoutAttemptId: expect.any(String),
       clerkUserId: 'user_123',
-      serverType: 'cpx32',
+      serverType: 'cpx42',
       developerTools: ['codex', 'pi'],
     }));
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -336,7 +337,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_builder',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
         returnPath: '/auth/device?user_code=BCDF-GHJK',
       }),
@@ -347,19 +348,19 @@ describe('platform billing routes', () => {
       distinctId: 'user_123',
       properties: expect.objectContaining({
         plan_slug: 'matrix_builder',
-        billing_interval: 'annual',
+        billing_interval: 'monthly',
         region_slug: 'region_nbg1',
         return_path_present: true,
-        price_usd: 190,
+        price_usd: 100,
       }),
     });
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_CREATED, {
       distinctId: 'user_123',
       properties: expect.objectContaining({
         plan_slug: 'matrix_builder',
-        billing_interval: 'annual',
+        billing_interval: 'monthly',
         region_slug: 'region_nbg1',
-        price_usd: 190,
+        price_usd: 100,
       }),
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_test_session');
@@ -847,7 +848,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_max',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
         runtimeSlot: 'studio',
       }),
@@ -970,7 +971,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_max',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
         runtimeSlot: 'studio',
       }),
@@ -1057,7 +1058,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_max',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
         runtimeSlot: 'studio',
       }),
@@ -1100,7 +1101,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_max',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_fsn1',
         runtimeSlot: 'studio',
       }),
@@ -1173,7 +1174,7 @@ describe('platform billing routes', () => {
   });
 
   it.each(['region_ash', 'region_hil'])(
-    'rejects new checkout requests for removed US region %s with a generic validation error',
+    'accepts the US Builder server shape in region %s',
     async (regionSlug) => {
       const app = createApp();
 
@@ -1184,15 +1185,53 @@ describe('platform billing routes', () => {
           planSlug: 'matrix_builder',
           interval: 'monthly',
           regionSlug,
+          serverType: 'cpx31',
           runtimeSlot: 'studio',
         }),
       });
 
-      expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({ error: 'Invalid request' });
-      expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ regionSlug }),
+      );
     },
   );
+
+  it('rejects a server type that does not match the selected plan and region', async () => {
+    const app = createApp();
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_ash',
+        serverType: 'cpx42',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects annual checkout for new sales while legacy annual prices remain recognizable', async () => {
+    const app = createApp();
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'annual',
+        regionSlug: 'region_fsn1',
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
 
   it.each(['region_fsn1', 'region_nbg1'])(
     'accepts new checkout requests for German region %s',
@@ -1349,7 +1388,7 @@ describe('platform billing routes', () => {
       includedRuntimeSlots: 3,
       addonRuntimeSlots: 0,
       defaultServerType: 'cpx52',
-      allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+      allowedServerTypes: ['cpx22', 'cpx21', 'cpx42', 'cpx31', 'cpx52', 'cpx41'],
       reason: 'internal engineer access',
       createdBy: 'test',
       expiresAt: null,
@@ -1455,7 +1494,7 @@ describe('platform billing routes', () => {
       planSlug: 'matrix_max',
       maxRuntimeSlots: 1,
       defaultServerType: 'cpx52',
-      allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+      allowedServerTypes: ['cpx22', 'cpx21', 'cpx42', 'cpx31', 'cpx52', 'cpx41'],
     });
     await expect(getBillingSubscription(db, 'user_123', 'studio', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({
       stripeSubscriptionId: 'sub_123',
@@ -1585,7 +1624,7 @@ describe('platform billing routes', () => {
         plan_slug: 'matrix_max',
         subscription_status: 'active',
         billing_interval: 'monthly',
-        price_usd: 49,
+        price_usd: 200,
         included_runtime_slots: 1,
         addon_runtime_slots: 0,
         max_runtime_slots: 1,

@@ -47,7 +47,7 @@ async function listen(homePath: string, sessionId: string, reply?: string) {
 }
 
 describe("Codex control client", () => {
-  it("submits bounded Turn, approval, and structured input frames", async () => {
+  it("submits bounded Turn, interrupt, approval, and structured input frames", async () => {
     const homePath = await mkdtemp(join(socketTempRoot, "mx-control-"));
     const sessionId = "sess_thread_control_1";
     const frames = await listen(homePath, sessionId, '{"ok":true}\n');
@@ -59,6 +59,10 @@ describe("Codex control client", () => {
       prompt: "Continue with the focused tests.",
       model: "openai/gpt-5.6-sol",
       modelOptions: [{ id: "effort", value: "high" }],
+    });
+    await client.interruptTurn({
+      sessionId,
+      clientRequestId: "req_control_1",
     });
     await client.submitApproval({
       sessionId,
@@ -81,6 +85,10 @@ describe("Codex control client", () => {
         prompt: "Continue with the focused tests.",
         model: "openai/gpt-5.6-sol",
         modelOptions: [{ id: "effort", value: "high" }],
+        clientRequestId: "req_control_1",
+      },
+      {
+        type: "interrupt",
         clientRequestId: "req_control_1",
       },
       {

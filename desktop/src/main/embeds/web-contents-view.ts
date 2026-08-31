@@ -145,6 +145,16 @@ export function createWebContentsView(options: {
   });
 
   let attached = false;
+  const detachFromWindow = () => {
+    if (!attached) return;
+    attached = false;
+    // BrowserWindow emits "closed" after Electron has destroyed its native
+    // contentView. OTA quit-and-install can therefore reach embed cleanup
+    // after the parent is already gone; the child view is detached as part of
+    // that destruction, so there is nothing left to remove explicitly.
+    if (options.window.isDestroyed()) return;
+    options.window.contentView.removeChildView(view);
+  };
 
   return {
     setBounds(bounds: Bounds) {
@@ -162,16 +172,11 @@ export function createWebContentsView(options: {
       attached = true;
     },
     detach() {
-      if (!attached) return;
-      options.window.contentView.removeChildView(view);
-      attached = false;
+      detachFromWindow();
     },
     destroy() {
       options.appBridge?.unregister(contents.id);
-      if (attached) {
-        options.window.contentView.removeChildView(view);
-        attached = false;
-      }
+      detachFromWindow();
       // WebContentsView is GC'd once detached and dereferenced; closing the
       // contents releases the renderer process promptly.
       if (!contents.isDestroyed()) contents.close();
