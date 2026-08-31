@@ -47,15 +47,26 @@ export function providerSettingsCanonicalFixture(): AiProviderSnapshotV3 {
       accountLabel: "Personal",
       ...providerReady,
     }],
-    drivers: [{
-      id: "kernel",
-      displayName: "Matrix Agent",
-      kind: "agent_sdk",
-      installState: "installed",
-      health: "ready",
-      capabilities: ["tools", "resume"],
-      setupActions: [],
-    }],
+    drivers: [
+      {
+        id: "kernel",
+        displayName: "Matrix Agent",
+        kind: "agent_sdk",
+        installState: "installed",
+        health: "ready",
+        capabilities: ["tools", "resume"],
+        setupActions: [],
+      },
+      {
+        id: "claude_code",
+        displayName: "Claude",
+        kind: "cli",
+        installState: "installed",
+        health: "ready",
+        capabilities: ["tools", "resume"],
+        setupActions: [],
+      },
+    ],
     instances: [
       {
         id: "kernel_matrix",

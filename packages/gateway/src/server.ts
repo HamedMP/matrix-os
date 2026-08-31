@@ -237,6 +237,8 @@ import { AiProviderService } from "./ai-providers/service.js";
 import { createAiProviderRoutes } from "./ai-providers/routes.js";
 import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
 import { createProviderSettingsRoutes } from "./ai-providers/provider-settings-routes.js";
+import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
+import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
@@ -4154,10 +4156,24 @@ export async function createGateway(config: GatewayConfig) {
     client: hermesClient,
   });
   await agentRuntimeServices.controller.reconcile();
-  const aiProviderService = new AiProviderService({ homePath });
+  const aiProviderService = new AiProviderService({
+    homePath,
+    driverInventory: createProviderDriverInventoryReader({
+      detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
+      runtimeSource: agentRuntimeServices.source,
+    }),
+  });
+  const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
+    homePath,
+    registry: zellijShellRegistry,
+    enabledHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "codex" | "claude" => agent === "codex" || agent === "claude",
+    ),
+  });
   const providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
+    loginCoordinator: providerLoginCoordinator,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,

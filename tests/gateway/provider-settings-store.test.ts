@@ -93,6 +93,7 @@ describe("ProviderSettingsStore", () => {
       }),
     };
     login = {
+      supportedMethods: vi.fn(() => ["terminal", "oauth", "api_key"]),
       startLogin: vi.fn(async ({ mutation }) => ({
         id: "attempt_real_terminal_1",
         harnessInstanceId: mutation.harnessInstanceId,
@@ -105,6 +106,16 @@ describe("ProviderSettingsStore", () => {
       })),
     };
     runtime = {
+      supportedActions: [
+        "add_harness",
+        "update_harness",
+        "set_harness_enabled",
+        "set_route",
+        "select_account",
+        "select_access_source",
+        "set_gateway_budget",
+        "set_gateway_allowlist",
+      ],
       applyConfiguration: vi.fn(async () => undefined),
     };
   });
@@ -170,6 +181,95 @@ describe("ProviderSettingsStore", () => {
     const stored = await readFile(store.configurationPath, "utf8");
     expect((await stat(store.configurationPath)).mode & 0o777).toBe(0o600);
     expect(stored).not.toMatch(/"readiness"|"usage"|apiKey|accessToken/);
+  });
+
+  it("normalizes a persisted legacy Claude driver to canonical inventory for projection and login", async () => {
+    canonical = AiProviderSnapshotV3Schema.parse({
+      ...canonical,
+      drivers: canonical.drivers.filter((driver) => driver.id === "claude_code"),
+      instances: canonical.instances.map((instance) => ({ ...instance, driverId: "claude_code" })),
+    });
+    login.supportedMethods = vi.fn(({ driverId, installState }) =>
+      driverId === "claude_code" && installState === "installed" ? ["terminal"] : []);
+    const store = createStore();
+    await mkdir(dirname(store.configurationPath), { recursive: true });
+    await writeFile(store.configurationPath, JSON.stringify({
+      schemaVersion: 1,
+      revision: 0,
+      harnesses: [{
+        id: "harness_legacy_claude",
+        driverId: "kernel",
+        harness: "claude",
+        displayName: "Claude",
+        accentColor: null,
+        enabled: true,
+        selectedAccountId: null,
+        accessSourceId: "matrix_included",
+        route: { kind: "fixed", providerId: "anthropic", modelId: "claude-sonnet-5" },
+      }],
+      accountProfiles: [],
+      gatewayPolicy: {
+        accessSourceId: "matrix_included",
+        monthlyBudgetMicrousd: null,
+        allowedModelIds: ["claude-sonnet-5"],
+        topUpEnabled: false,
+      },
+      receipts: [],
+    }), { mode: 0o600 });
+
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.supportedActions).toContain("start_login");
+    expect(snapshot.harnesses).toContainEqual(expect.objectContaining({
+      id: "harness_legacy_claude",
+      harness: "claude",
+      enabled: true,
+      installState: "installed",
+      loginMethods: ["terminal"],
+      recommendedLoginMethod: "terminal",
+    }));
+
+    await expect(store.mutate({
+      type: "start_login",
+      expectedRevision: 0,
+      idempotencyKey: "legacy_claude_login_1",
+      harnessInstanceId: "harness_legacy_claude",
+      accountId: null,
+      method: "terminal",
+    })).resolves.toMatchObject({
+      kind: "login_attempt",
+      snapshot: {
+        harnesses: [expect.objectContaining({ enabled: true, installState: "installed" })],
+      },
+    });
+    expect(login.startLogin).toHaveBeenCalledWith(expect.objectContaining({
+      harness: expect.objectContaining({
+        id: "harness_legacy_claude",
+        driverId: "claude_code",
+        harness: "claude",
+        installState: "installed",
+      }),
+    }));
+
+    await expect(store.mutate({
+      type: "set_harness_enabled",
+      expectedRevision: 1,
+      idempotencyKey: "legacy_claude_disable_1",
+      harnessInstanceId: "harness_legacy_claude",
+      enabled: false,
+    })).resolves.toMatchObject({
+      kind: "snapshot",
+      snapshot: { harnesses: [expect.objectContaining({ enabled: false })] },
+    });
+    await expect(store.mutate({
+      type: "set_harness_enabled",
+      expectedRevision: 2,
+      idempotencyKey: "legacy_claude_enable_1",
+      harnessInstanceId: "harness_legacy_claude",
+      enabled: true,
+    })).resolves.toMatchObject({
+      kind: "snapshot",
+      snapshot: { harnesses: [expect.objectContaining({ enabled: true })] },
+    });
   });
 
   it("is read-only and rejects cosmetic mutations without a runtime coordinator", async () => {
