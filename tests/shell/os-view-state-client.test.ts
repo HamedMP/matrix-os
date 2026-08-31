@@ -59,4 +59,43 @@ describe("Web OS-view state client", () => {
     expect(retried.patch).toEqual({ pinnedApps: ["__terminal__", "__chat__"] });
     expect(JSON.parse(fetchMock.mock.calls[3][1].body).baseRevision).toBe(8);
   });
+
+  it("keeps rebasing the pending mutation when the retry also conflicts", async () => {
+    const firstLatest = {
+      ...latest,
+      document: {
+        ...latest.document,
+        pinnedApps: ["__terminal__"],
+      },
+    };
+    const secondLatest = {
+      ...firstLatest,
+      revision: 7,
+      document: {
+        ...firstLatest.document,
+        pinnedApps: ["__terminal__", "__file-browser__"],
+      },
+    };
+    const afterRetry = { ...secondLatest, revision: 8 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => firstLatest })
+      .mockResolvedValueOnce({ ok: false, status: 409 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => secondLatest })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => afterRetry });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await patchWebOsViewState("http://gateway.test", { pinnedApps: ["__chat__"] });
+
+    const first = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const firstRetry = JSON.parse(fetchMock.mock.calls[2][1].body);
+    const secondRetry = JSON.parse(fetchMock.mock.calls[4][1].body);
+    expect(firstRetry.baseRevision).toBe(4);
+    expect(secondRetry.baseRevision).toBe(7);
+    expect(firstRetry.mutationId).toBe(first.mutationId);
+    expect(secondRetry.mutationId).toBe(first.mutationId);
+    expect(secondRetry.patch).toEqual({
+      pinnedApps: ["__terminal__", "__file-browser__", "__chat__"],
+    });
+  });
 });

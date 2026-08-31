@@ -55,4 +55,46 @@ describe("Electron Desktop OS-view state client", () => {
     });
     expect(api.patch.mock.calls[2][1].baseRevision).toBe(9);
   });
+
+  it("keeps rebasing the pending mutation when the retry also conflicts", async () => {
+    const firstLatest = {
+      ...latest,
+      document: {
+        ...latest.document,
+        pinnedApps: ["__terminal__"],
+      },
+    };
+    const secondLatest = {
+      ...firstLatest,
+      revision: 8,
+      document: {
+        ...firstLatest.document,
+        pinnedApps: ["__terminal__", "__file-browser__"],
+      },
+    };
+    const afterRetry = { ...secondLatest, revision: 9 };
+    const conflict = new AppError("server", { detail: "os_view_state_conflict" });
+    const api = {
+      get: vi.fn()
+        .mockResolvedValueOnce(firstLatest)
+        .mockResolvedValueOnce(secondLatest),
+      patch: vi.fn()
+        .mockRejectedValueOnce(conflict)
+        .mockRejectedValueOnce(conflict)
+        .mockResolvedValueOnce(afterRetry),
+    };
+
+    await patchNativeOsViewState(api as never, { pinnedApps: ["__chat__"] });
+
+    const first = api.patch.mock.calls[0][1];
+    const firstRetry = api.patch.mock.calls[1][1];
+    const secondRetry = api.patch.mock.calls[2][1];
+    expect(firstRetry.baseRevision).toBe(6);
+    expect(secondRetry.baseRevision).toBe(8);
+    expect(firstRetry.mutationId).toBe(first.mutationId);
+    expect(secondRetry.mutationId).toBe(first.mutationId);
+    expect(secondRetry.patch).toEqual({
+      pinnedApps: ["__terminal__", "__file-browser__", "__chat__"],
+    });
+  });
 });

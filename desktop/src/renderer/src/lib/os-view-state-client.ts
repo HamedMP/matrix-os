@@ -53,20 +53,22 @@ export function patchNativeOsViewState(api: ApiClient, patch: OsViewStatePatch):
       document: createDefaultOsViewDocument(),
       updatedAt: new Date(0).toISOString(),
     };
-    try {
-      cached = { api, state: await sendPatch(api, base, patch, id) };
-      return;
-    } catch (error: unknown) {
-      if (!(error instanceof AppError && error.detail === "os_view_state_conflict")) throw error;
+    let pendingPatch = patch;
+    while (true) {
+      try {
+        cached = { api, state: await sendPatch(api, base, pendingPatch, id) };
+        return;
+      } catch (error: unknown) {
+        if (!(error instanceof AppError && error.detail === "os_view_state_conflict")) throw error;
+      }
+      const conflictedBase = base;
+      base = await loadNativeOsViewState(api);
+      pendingPatch = rebaseOsViewStatePatch(
+        conflictedBase.document,
+        base.document,
+        pendingPatch,
+      );
     }
-    const conflictedBase = base;
-    base = await loadNativeOsViewState(api);
-    const rebasedPatch = rebaseOsViewStatePatch(
-      conflictedBase.document,
-      base.document,
-      patch,
-    );
-    cached = { api, state: await sendPatch(api, base, rebasedPatch, id) };
   };
   const pending = mutationQueue.then(write, write);
   mutationQueue = pending.catch((error: unknown) => {

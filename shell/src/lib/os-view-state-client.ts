@@ -75,19 +75,21 @@ export function patchWebOsViewState(
       document: createDefaultOsViewDocument(),
       updatedAt: new Date(0).toISOString(),
     };
-    let result = await sendPatch(gatewayUrl, base, patch, id);
-    if (result.conflict) {
+    let pendingPatch = patch;
+    while (true) {
+      const result = await sendPatch(gatewayUrl, base, pendingPatch, id);
+      if (result.state) {
+        cached = { gatewayUrl, state: result.state };
+        return;
+      }
       const conflictedBase = base;
       base = await requestState(gatewayUrl);
-      const rebasedPatch = rebaseOsViewStatePatch(
+      pendingPatch = rebaseOsViewStatePatch(
         conflictedBase.document,
         base.document,
-        patch,
+        pendingPatch,
       );
-      result = await sendPatch(gatewayUrl, base, rebasedPatch, id);
     }
-    if (!result.state) throw new Error("OS-view state remained conflicted");
-    cached = { gatewayUrl, state: result.state };
   };
   const pending = mutationQueue.then(write, write);
   mutationQueue = pending.catch((error: unknown) => {
