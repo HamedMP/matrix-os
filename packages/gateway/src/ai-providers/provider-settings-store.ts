@@ -232,6 +232,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
 
   async getSnapshot(): Promise<ProviderSettingsSnapshot> {
     return await this.#serialize(async () => {
+      if (this.#runtime && !this.#runtime.isRecoveryReady()) {
+        throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      }
       const canonical = await this.#canonical();
       return await this.#project(canonical, await this.#configuration(canonical));
     });

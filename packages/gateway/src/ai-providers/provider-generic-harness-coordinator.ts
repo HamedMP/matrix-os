@@ -374,7 +374,13 @@ export function createProviderGenericHarnessCoordinator(options: {
         throw new ProviderSettingsStoreError("idempotency_conflict", 409);
       }
     }
-    await reconcilePendingReceipts(receipts, duplicate?.key);
+    try {
+      await reconcilePendingReceipts(receipts, duplicate?.key);
+    } catch (error) {
+      recoveryBlocked = true;
+      if (error instanceof ProviderSettingsStoreError) throw error;
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
     if (duplicate) {
       if (duplicate.state === "applied") return;
       const beforeRoute = duplicate.beforeRoute;
@@ -417,6 +423,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     };
     replaceReceipt(receipts, receipt);
     await writeReceipts(receipts);
+    recoveryBlocked = true;
     if (!sameRuntimeRoute(beforeRoute, afterRoute)) await applyRuntimeRoute(afterRoute);
     receipt.state = "applied";
     replaceReceipt(receipts, receipt);
@@ -427,6 +434,7 @@ export function createProviderGenericHarnessCoordinator(options: {
         if (!sameRuntimeRoute(beforeRoute, afterRoute)) await applyRuntimeRoute(beforeRoute);
         receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
         await writeReceipts(receipts);
+        recoveryBlocked = false;
       } catch (rollbackError) {
         console.warn(
           "[provider-settings] Generic harness receipt rollback failed:",
@@ -453,6 +461,7 @@ export function createProviderGenericHarnessCoordinator(options: {
       return;
     }
     receipt.state = "compensation_pending";
+    recoveryBlocked = true;
     let markerDurable = false;
     try {
       await writeReceipts(receipts);
@@ -534,19 +543,23 @@ export function createProviderGenericHarnessCoordinator(options: {
       "set_harness_enabled",
       "set_route",
     ],
+    isRecoveryReady() {
+      return !recoveryBlocked;
+    },
     reconcilePending() {
       return serialize(recoverPendingReceipts);
     },
     applyConfiguration(input) {
       return serialize(async () => {
-        await requireRecoveryReady();
         await coordinate(input);
+        recoveryBlocked = false;
       });
     },
     rollbackConfiguration(input) {
       return serialize(async () => {
         await requireRecoveryReady();
         await rollback(input);
+        recoveryBlocked = false;
       });
     },
   };

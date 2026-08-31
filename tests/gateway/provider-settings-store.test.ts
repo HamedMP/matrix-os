@@ -109,6 +109,7 @@ describe("ProviderSettingsStore", () => {
         "set_gateway_budget",
         "set_gateway_allowlist",
       ],
+      isRecoveryReady: vi.fn(() => true),
       applyConfiguration: vi.fn(async () => undefined),
       rollbackConfiguration: vi.fn(async () => undefined),
     };
@@ -432,6 +433,17 @@ describe("ProviderSettingsStore", () => {
       idempotencyKey: "budget_unwired_1",
       monthlyBudgetMicrousd: 1,
     })).rejects.toMatchObject({ code: "runtime_unavailable" });
+  });
+
+  it("fails reads closed while runtime receipt recovery is unresolved", async () => {
+    runtime.isRecoveryReady = () => false;
+    const store = createStore();
+    await expect(store.getSnapshot()).rejects.toMatchObject({
+      code: "runtime_unavailable",
+      status: 503,
+    });
+    runtime.isRecoveryReady = () => true;
+    await expect(store.getSnapshot()).resolves.toMatchObject({ revision: 0 });
   });
 
   it("rejects missing, malformed, and stale canonical projections", async () => {
