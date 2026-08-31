@@ -8,6 +8,7 @@ import {
   type ProviderDependencyCounts,
   type ProviderHarnessInstance,
   type ProviderHarnessKind,
+  type ProviderHarnessCatalogEntry,
   type ProviderLoginMethod,
   type ProviderSettingsSupportedAction,
   type ProviderSettingsSnapshot,
@@ -329,6 +330,10 @@ export async function projectProviderSettings(input: {
         topUpEnabled: input.fundingSummary?.topUpEnabled === true,
       } : null;
   const allowedGatewayModels = new Set(gatewayPolicy?.allowedModelIds ?? []);
+  const harnessCatalog = projectHarnessCatalog(
+    input.canonical,
+    input.configurationHarnessKinds ?? [],
+  );
   const harnesses = input.config.harnesses.flatMap((stored) => {
     const harness = projectHarness({
       stored,
@@ -354,10 +359,93 @@ export async function projectProviderSettings(input: {
       : { mode: "read_only", reason: "runtime_unavailable" },
     supportedActions,
     configurationHarnessKinds: input.configurationHarnessKinds ?? [],
+    harnessCatalog,
     modelProviders,
     accessSources: sources,
     accounts,
     harnesses,
     gatewayPolicy,
+  });
+}
+
+const GENERIC_HARNESS_CATALOG = [
+  { harness: "hermes", displayName: "Hermes", system: true },
+  { harness: "openclaw", displayName: "OpenClaw", system: true },
+  { harness: "pi", displayName: "Pi", system: false },
+  { harness: "opencode", displayName: "OpenCode", system: false },
+] as const;
+
+type GenericHarnessCatalogDefinition = (typeof GENERIC_HARNESS_CATALOG)[number];
+type CanonicalDriver = AiProviderSnapshotV3["drivers"][number];
+
+function catalogDriverRunnable(
+  catalog: GenericHarnessCatalogDefinition,
+  driver: CanonicalDriver | undefined,
+): boolean {
+  if (!driver || driver.installState !== "installed") return false;
+  // Pi and OpenCode receive credentials from the access source selected while
+  // adding the harness. Their installation probe intentionally cannot prove
+  // that future route credential, so a registered direct adapter reports
+  // unknown health until the first configured run. Match the runtime
+  // coordinator's admission rule here instead of creating a setup deadlock.
+  if (!catalog.system) return driver.health !== "unavailable" && driver.health !== "stopped";
+  return driver.health === "ready" || driver.health === "degraded"
+    || (driver.health === "stopped" && driver.setupActions.length === 0);
+}
+
+function catalogSafeReason(
+  driver: CanonicalDriver | undefined,
+): Exclude<ProviderHarnessCatalogEntry["safeReason"], null> {
+  if (!driver || driver.installState === "missing") return "not_installed";
+  if (driver.installState === "installing") return "installing";
+  if (driver.installState === "failed") return "install_failed";
+  if (driver.installState === "unknown") return "install_state_unknown";
+  if (driver.health === "unavailable" || driver.health === "unknown") return "runtime_unavailable";
+  return "setup_required";
+}
+
+function projectHarnessCatalog(
+  canonical: AiProviderSnapshotV3,
+  supportedKinds: readonly ProviderHarnessKind[],
+): ProviderHarnessCatalogEntry[] {
+  const supported = new Set(supportedKinds);
+  return GENERIC_HARNESS_CATALOG.map((catalog): ProviderHarnessCatalogEntry => {
+    const driver = canonical.drivers.find((candidate) => candidate.id === catalog.harness);
+    const installState = driver?.installState ?? "missing";
+    if (!supported.has(catalog.harness)) {
+      return {
+        harness: catalog.harness,
+        displayName: driver?.displayName ?? catalog.displayName,
+        installState,
+        available: false,
+        runnable: false,
+        setupAction: "none",
+        safeReason: "runtime_not_supported",
+      };
+    }
+
+    if (catalogDriverRunnable(catalog, driver)) {
+      return {
+        harness: catalog.harness,
+        displayName: driver!.displayName,
+        installState,
+        available: true,
+        runnable: true,
+        setupAction: "none",
+        safeReason: null,
+      };
+    }
+
+    const setupAction = driver?.setupActions[0]
+      ?? (installState === "missing" ? "install" : "retry");
+    return {
+      harness: catalog.harness,
+      displayName: driver?.displayName ?? catalog.displayName,
+      installState,
+      available: true,
+      runnable: false,
+      setupAction,
+      safeReason: catalogSafeReason(driver),
+    };
   });
 }

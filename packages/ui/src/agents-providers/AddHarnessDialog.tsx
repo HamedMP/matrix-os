@@ -1,30 +1,90 @@
 import { useMemo, useState } from "react";
-import type { ProviderHarnessKind, ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import {
+  isPortableGenericHarnessCredentialRoute,
+  type ProviderAccessSource,
+  type ProviderGenericHarnessKind,
+  type ProviderHarnessCatalogEntry,
+  type ProviderSettingsSnapshot,
+} from "@matrix-os/contracts";
 import { FeatureDialog } from "./FeatureDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
-const HARNESS_CATALOG: ReadonlyArray<{
-  id: ProviderHarnessKind;
-  label: string;
-  routeKind: "configurable" | "fixed";
-  preferredProvider: string | null;
-}> = [
-  { id: "hermes", label: "Hermes", routeKind: "configurable", preferredProvider: null },
-  { id: "openclaw", label: "OpenClaw", routeKind: "configurable", preferredProvider: null },
-  { id: "pi", label: "Pi", routeKind: "configurable", preferredProvider: null },
-  { id: "opencode", label: "OpenCode", routeKind: "configurable", preferredProvider: null },
-];
+function catalogStatus(entry: ProviderHarnessCatalogEntry): string {
+  const installed = {
+    installed: "Installed",
+    missing: "Not installed",
+    installing: "Installing",
+    failed: "Install failed",
+    unknown: "Install status unknown",
+  }[entry.installState];
+  const state = entry.runnable ? "Ready" : {
+    runtime_not_supported: "Unavailable in this runtime",
+    not_installed: "Install required",
+    installing: "Setup in progress",
+    install_failed: "Retry required",
+    install_state_unknown: "Status unavailable",
+    setup_required: "Setup required",
+    runtime_unavailable: "Unavailable",
+  }[entry.safeReason!];
+  return `${installed} · ${state}`;
+}
+
+function setupCopy(entry: ProviderHarnessCatalogEntry): { title: string; body: string } | null {
+  if (entry.runnable || !entry.available) return null;
+  if (entry.setupAction === "install") {
+    return {
+      title: `Install ${entry.displayName} before adding it`,
+      body: `Open Terminal and use the + menu to install ${entry.displayName}. Refresh this page when the install finishes.`,
+    };
+  }
+  if (entry.setupAction === "open_terminal" || entry.setupAction === "connect_account"
+    || entry.setupAction === "enter_api_key") {
+    return {
+      title: `Finish ${entry.displayName} setup before adding it`,
+      body: `Open Terminal and run ${entry.displayName} once to finish setup or authentication. Then refresh this page.`,
+    };
+  }
+  return {
+    title: `${entry.displayName} isn't ready yet`,
+    body: "Refresh provider status after the current setup finishes. If the status does not recover, open Terminal to inspect the harness.",
+  };
+}
 
 function sourceSupportsRoute(
   snapshot: ProviderSettingsSnapshot,
+  harness: ProviderGenericHarnessKind,
   source: ProviderSettingsSnapshot["accessSources"][number],
   providerId: string,
   modelId: string,
 ): boolean {
   if (source.providerId !== providerId || !source.eligibleModelIds.includes(modelId)) return false;
-  if (source.kind !== "matrix_gateway") return true;
-  return snapshot.gatewayPolicy?.accessSourceId === source.id
-    && snapshot.gatewayPolicy.allowedModelIds.includes(modelId);
+  const gatewayAllowed = source.kind !== "matrix_gateway"
+    || (snapshot.gatewayPolicy?.accessSourceId === source.id
+      && snapshot.gatewayPolicy.allowedModelIds.includes(modelId));
+  if (!gatewayAllowed) return false;
+  if (harness !== "pi" && harness !== "opencode") return true;
+  return isPortableGenericHarnessCredentialRoute({
+    harness,
+    accessSourceId: source.id,
+    route: { kind: "configurable", providerId, modelId },
+  }, source as ProviderAccessSource);
+}
+
+function modelsForProvider(
+  snapshot: ProviderSettingsSnapshot,
+  harness: ProviderGenericHarnessKind,
+  provider: ProviderSettingsSnapshot["modelProviders"][number],
+) {
+  return provider.models.filter((model) => model.enabled && snapshot.accessSources.some((source) =>
+    sourceSupportsRoute(snapshot, harness, source, provider.id, model.id)));
+}
+
+function providersForHarness(
+  snapshot: ProviderSettingsSnapshot,
+  harness: ProviderGenericHarnessKind,
+) {
+  return snapshot.modelProviders.filter((provider) =>
+    modelsForProvider(snapshot, harness, provider).length > 0);
 }
 
 export function AddHarnessDialog({
@@ -36,46 +96,46 @@ export function AddHarnessDialog({
   onMutate: (intent: ProviderSettingsMutationIntent) => void;
   onClose: () => void;
 }) {
-  const availableCatalog = HARNESS_CATALOG.filter((entry) =>
-    snapshot.configurationHarnessKinds?.includes(entry.id));
-  const firstCatalog = availableCatalog[0] ?? HARNESS_CATALOG[0]!;
-  const [kind, setKind] = useState<ProviderHarnessKind>(firstCatalog.id);
-  const selectedCatalog = HARNESS_CATALOG.find((entry) => entry.id === kind) ?? firstCatalog;
-  const defaultProvider = snapshot.modelProviders.find((provider) => provider.id === selectedCatalog.preferredProvider)
-    ?? snapshot.modelProviders[0]
-    ?? null;
-  const [displayName, setDisplayName] = useState(selectedCatalog.label);
+  const firstCatalog = snapshot.harnessCatalog.find((entry) => entry.available)
+    ?? snapshot.harnessCatalog[0]!;
+  const [kind, setKind] = useState<ProviderGenericHarnessKind>(firstCatalog.harness);
+  const selectedCatalog = snapshot.harnessCatalog.find((entry) => entry.harness === kind) ?? firstCatalog;
+  const eligibleProviders = useMemo(() => providersForHarness(snapshot, kind), [kind, snapshot]);
+  const defaultProvider = eligibleProviders[0] ?? null;
+  const [displayName, setDisplayName] = useState(selectedCatalog.displayName);
   const [providerId, setProviderId] = useState(defaultProvider?.id ?? "");
-  const provider = snapshot.modelProviders.find((candidate) => candidate.id === providerId) ?? defaultProvider;
-  const firstModel = provider?.models.find((model) => model.enabled) ?? null;
+  const provider = eligibleProviders.find((candidate) => candidate.id === providerId) ?? defaultProvider;
+  const eligibleModels = useMemo(() => provider === null ? [] : modelsForProvider(snapshot, kind, provider),
+    [kind, provider, snapshot]);
+  const firstModel = eligibleModels[0] ?? null;
   const [modelId, setModelId] = useState(firstModel?.id ?? "");
   const eligibleSources = useMemo(() => snapshot.accessSources.filter((source) =>
-    sourceSupportsRoute(snapshot, source, providerId, modelId)), [modelId, providerId, snapshot]);
+    sourceSupportsRoute(snapshot, kind, source, provider?.id ?? "", modelId)),
+    [kind, modelId, provider, snapshot]);
   const [sourceId, setSourceId] = useState(eligibleSources[0]?.id ?? "");
   const selectedSource = eligibleSources.find((source) => source.id === sourceId) ?? eligibleSources[0] ?? null;
-  const canAdd = availableCatalog.some((entry) => entry.id === kind)
+  const canAdd = selectedCatalog.available && selectedCatalog.runnable
     && displayName.trim() !== "" && provider !== null && modelId !== "" && selectedSource !== null;
+  const setup = setupCopy(selectedCatalog);
 
-  const selectKind = (nextKind: ProviderHarnessKind) => {
-    const catalog = HARNESS_CATALOG.find((entry) => entry.id === nextKind) ?? HARNESS_CATALOG[0]!;
-    const nextProvider = snapshot.modelProviders.find((candidate) => candidate.id === catalog.preferredProvider)
-      ?? snapshot.modelProviders[0]
-      ?? null;
-    const nextModel = nextProvider?.models.find((model) => model.enabled) ?? null;
+  const selectKind = (nextKind: ProviderGenericHarnessKind) => {
+    const catalog = snapshot.harnessCatalog.find((entry) => entry.harness === nextKind) ?? snapshot.harnessCatalog[0]!;
+    const nextProvider = providersForHarness(snapshot, nextKind)[0] ?? null;
+    const nextModel = nextProvider ? modelsForProvider(snapshot, nextKind, nextProvider)[0] ?? null : null;
     const nextSource = nextModel === null ? undefined : snapshot.accessSources.find((source) =>
-      sourceSupportsRoute(snapshot, source, nextProvider?.id ?? "", nextModel.id));
+      sourceSupportsRoute(snapshot, nextKind, source, nextProvider?.id ?? "", nextModel.id));
     setKind(nextKind);
-    setDisplayName(catalog.label);
+    setDisplayName(catalog.displayName);
     setProviderId(nextProvider?.id ?? "");
     setModelId(nextModel?.id ?? "");
     setSourceId(nextSource?.id ?? "");
   };
 
   const selectProvider = (nextProviderId: string) => {
-    const nextProvider = snapshot.modelProviders.find((candidate) => candidate.id === nextProviderId) ?? null;
-    const nextModel = nextProvider?.models.find((model) => model.enabled) ?? null;
+    const nextProvider = eligibleProviders.find((candidate) => candidate.id === nextProviderId) ?? null;
+    const nextModel = nextProvider ? modelsForProvider(snapshot, kind, nextProvider)[0] ?? null : null;
     const nextSource = nextModel === null ? undefined : snapshot.accessSources.find((source) =>
-      sourceSupportsRoute(snapshot, source, nextProviderId, nextModel.id));
+      sourceSupportsRoute(snapshot, kind, source, nextProviderId, nextModel.id));
     setProviderId(nextProviderId);
     setModelId(nextModel?.id ?? "");
     setSourceId(nextSource?.id ?? "");
@@ -83,7 +143,7 @@ export function AddHarnessDialog({
 
   const selectModel = (nextModelId: string) => {
     const nextSource = snapshot.accessSources.find((source) =>
-      sourceSupportsRoute(snapshot, source, providerId, nextModelId));
+      sourceSupportsRoute(snapshot, kind, source, provider?.id ?? "", nextModelId));
     setModelId(nextModelId);
     setSourceId(nextSource?.id ?? "");
   };
@@ -95,8 +155,8 @@ export function AddHarnessDialog({
       harness: kind,
       displayName: displayName.trim(),
       route: {
-        kind: selectedCatalog.routeKind,
-        providerId,
+        kind: "configurable",
+        providerId: provider!.id,
         modelId,
       },
       accessSourceId: selectedSource.id,
@@ -108,19 +168,37 @@ export function AddHarnessDialog({
   return (
     <FeatureDialog title="Add harness" onClose={onClose}>
       <div className="matrix-ap-driver-grid">
-        {availableCatalog.map((entry) => (
-          <label key={entry.id} data-selected={entry.id === kind ? "true" : undefined}>
-            <input
-              type="radio"
-              name="harness-kind"
-              value={entry.id}
-              checked={entry.id === kind}
-              onChange={() => selectKind(entry.id)}
-            />
-            <span>{entry.label}</span>
-          </label>
-        ))}
+        {snapshot.harnessCatalog.map((entry) => {
+          const statusId = `matrix-ap-harness-status-${entry.harness}`;
+          return (
+            <label
+              key={entry.harness}
+              data-selected={entry.harness === kind ? "true" : undefined}
+              data-available={entry.available ? "true" : "false"}
+              data-runnable={entry.runnable ? "true" : "false"}
+            >
+              <input
+                type="radio"
+                name="harness-kind"
+                value={entry.harness}
+                checked={entry.harness === kind}
+                disabled={!entry.available}
+                aria-label={entry.displayName}
+                aria-describedby={statusId}
+                onChange={() => selectKind(entry.harness)}
+              />
+              <span>{entry.displayName}</span>
+              <small id={statusId}>{catalogStatus(entry)}</small>
+            </label>
+          );
+        })}
       </div>
+      {setup ? (
+        <div className="matrix-ap-setup-notice" role="status">
+          <strong>{setup.title}</strong>
+          <span>{setup.body}</span>
+        </div>
+      ) : null}
       <label className="matrix-ap-field">
         <span>Display name</span>
         <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={120} />
@@ -128,24 +206,32 @@ export function AddHarnessDialog({
       <div className="matrix-ap-form-grid">
         <label className="matrix-ap-field">
           <span>Model provider</span>
-          <select value={providerId} onChange={(event) => selectProvider(event.target.value)} disabled={selectedCatalog.routeKind === "fixed"}>
-            {snapshot.modelProviders.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
+          <select value={provider?.id ?? ""} onChange={(event) => selectProvider(event.target.value)} disabled={!selectedCatalog.runnable}>
+            {eligibleProviders.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
           </select>
         </label>
         <label className="matrix-ap-field">
           <span>Model</span>
-          <select value={modelId} onChange={(event) => selectModel(event.target.value)} disabled={selectedCatalog.routeKind === "fixed"}>
-            {provider?.models.filter((model) => model.enabled).map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
+          <select value={modelId} onChange={(event) => selectModel(event.target.value)} disabled={!selectedCatalog.runnable}>
+            {eligibleModels.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
           </select>
         </label>
       </div>
       <label className="matrix-ap-field">
         <span>Access source</span>
-        <select value={selectedSource?.id ?? ""} onChange={(event) => setSourceId(event.target.value)}>
-          {eligibleSources.map((source) => <option key={source.id} value={source.id}>{source.displayName}</option>)}
+        <select value={selectedSource?.id ?? ""} onChange={(event) => setSourceId(event.target.value)} disabled={!selectedCatalog.runnable}>
+          {eligibleSources.map((source) => (
+            <option key={source.id} value={source.id}>
+              {source.displayName}{source.readiness.state === "ready" ? "" : " · authentication required"}
+            </option>
+          ))}
         </select>
       </label>
-      <p className="matrix-ap-help">Authentication opens in a visible Terminal, browser, or secure credential prompt after the harness is added.</p>
+      <p className="matrix-ap-help">
+        {selectedSource && selectedSource.readiness.state !== "ready"
+          ? "After adding the harness, continue authentication from Accounts in a visible Terminal, browser, or secure credential prompt."
+          : "Authentication always continues in a visible Terminal, browser, or secure credential prompt."}
+      </p>
       <div className="matrix-ap-dialog-actions">
         <button type="button" className="matrix-ap-button" onClick={onClose}>Cancel</button>
         <button type="button" className="matrix-ap-button matrix-ap-button-primary" disabled={!canAdd} onClick={add}>Add harness</button>

@@ -25,6 +25,12 @@ const snapshot: ProviderSettingsSnapshot = {
     "set_gateway_budget",
     "set_gateway_allowlist",
   ],
+  harnessCatalog: [
+    { harness: "hermes", displayName: "Hermes", installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null },
+    { harness: "openclaw", displayName: "OpenClaw", installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" },
+    { harness: "pi", displayName: "Pi", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+    { harness: "opencode", displayName: "OpenCode", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+  ],
   modelProviders: [{
     id: "anthropic",
     displayName: "Anthropic",

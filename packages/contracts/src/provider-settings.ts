@@ -19,6 +19,9 @@ const UsageScopeSchema = z.enum(["account", "access_source", "owner_entitlement"
 export const ProviderHarnessKindSchema = z.enum([
   "hermes", "openclaw", "pi", "opencode", "codex", "claude",
 ]);
+export const ProviderGenericHarnessKindSchema = z.enum([
+  "hermes", "openclaw", "pi", "opencode",
+]);
 export const ProviderHarnessInstallStateSchema = z.enum([
   "installed", "missing", "installing", "failed", "unknown",
 ]);
@@ -269,6 +272,48 @@ export const ProviderHarnessInstanceSchema = z.object({
   }
 });
 
+export const ProviderHarnessSetupActionSchema = z.enum([
+  "none", "install", "connect_account", "enter_api_key", "open_terminal", "retry",
+]);
+export const ProviderHarnessCatalogSafeReasonSchema = z.enum([
+  "not_installed",
+  "installing",
+  "install_failed",
+  "install_state_unknown",
+  "runtime_not_supported",
+  "runtime_unavailable",
+  "setup_required",
+]);
+export const ProviderHarnessCatalogEntrySchema = z.object({
+  harness: ProviderGenericHarnessKindSchema,
+  displayName: DisplayNameSchema,
+  installState: ProviderHarnessInstallStateSchema,
+  /** The current runtime coordinator supports configuration for this kind. */
+  available: z.boolean(),
+  /** Canonical inventory says an add/enable operation can run now. */
+  runnable: z.boolean(),
+  setupAction: ProviderHarnessSetupActionSchema,
+  safeReason: ProviderHarnessCatalogSafeReasonSchema.nullable(),
+}).strict().superRefine((entry, ctx) => {
+  if (entry.runnable && (!entry.available || entry.installState !== "installed"
+    || entry.setupAction !== "none" || entry.safeReason !== null)) {
+    ctx.addIssue({ code: "custom", message: "Runnable harnesses must be installed, available, and setup-free" });
+  }
+  if (!entry.runnable && entry.safeReason === null) {
+    ctx.addIssue({ code: "custom", path: ["safeReason"], message: "Unavailable harnesses require a safe reason" });
+  }
+  if (!entry.available && (entry.runnable || entry.setupAction !== "none"
+    || entry.safeReason !== "runtime_not_supported")) {
+    ctx.addIssue({ code: "custom", message: "Unsupported harnesses cannot advertise setup or execution" });
+  }
+  if (entry.available && !entry.runnable && entry.setupAction === "none") {
+    ctx.addIssue({ code: "custom", path: ["setupAction"], message: "Supported unavailable harnesses require a setup action" });
+  }
+  if (entry.setupAction === "install" && entry.installState === "installed") {
+    ctx.addIssue({ code: "custom", path: ["setupAction"], message: "Installed harnesses cannot require installation" });
+  }
+});
+
 export const ProviderGatewayPolicySchema = z.object({
   accessSourceId: ReferenceIdSchema,
   monthlyBudgetMicrousd: MicrousdSchema.nullable(),
@@ -316,6 +361,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   access: ProviderSettingsAccessSchema,
   supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(15),
   configurationHarnessKinds: z.array(ProviderHarnessKindSchema).max(6).optional(),
+  harnessCatalog: z.array(ProviderHarnessCatalogEntrySchema).length(4),
   modelProviders: z.array(ProviderModelProviderSchema).max(32),
   accessSources: z.array(ProviderAccessSourceSchema).max(64),
   accounts: z.array(ProviderAccountSchema).max(128),
@@ -333,6 +379,19 @@ export const ProviderSettingsSnapshotSchema = z.object({
   }
   if (snapshot.configurationHarnessKinds && !unique(snapshot.configurationHarnessKinds)) {
     ctx.addIssue({ code: "custom", path: ["configurationHarnessKinds"], message: "Duplicate configurable harness kind" });
+  }
+  const genericHarnessKinds = ProviderGenericHarnessKindSchema.options;
+  if (!unique(snapshot.harnessCatalog.map((entry) => entry.harness))
+    || genericHarnessKinds.some((kind) => !snapshot.harnessCatalog.some((entry) => entry.harness === kind))) {
+    ctx.addIssue({ code: "custom", path: ["harnessCatalog"], message: "Generic harness catalog must contain each supported kind exactly once" });
+  }
+  if (snapshot.configurationHarnessKinds) {
+    const configurable = new Set(snapshot.configurationHarnessKinds);
+    snapshot.harnessCatalog.forEach((entry, index) => {
+      if (entry.available !== configurable.has(entry.harness)) {
+        ctx.addIssue({ code: "custom", path: ["harnessCatalog", index, "available"], message: "Harness availability must match runtime configuration support" });
+      }
+    });
   }
   if (snapshot.access.mode === "read_only" && snapshot.supportedActions.length > 0) {
     ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Read-only settings cannot advertise mutations" });
@@ -492,6 +551,7 @@ export const ProviderSettingsMutationResponseSchema = z.discriminatedUnion("kind
 ]);
 
 export type ProviderHarnessKind = z.infer<typeof ProviderHarnessKindSchema>;
+export type ProviderGenericHarnessKind = z.infer<typeof ProviderGenericHarnessKindSchema>;
 export type ProviderHarnessInstallState = z.infer<typeof ProviderHarnessInstallStateSchema>;
 export type ProviderAuthenticationState = z.infer<typeof ProviderAuthenticationStateSchema>;
 export type ProviderLoginMethod = z.infer<typeof ProviderLoginMethodSchema>;
@@ -512,6 +572,9 @@ export type ProviderAccessSource = z.infer<typeof ProviderAccessSourceSchema>;
 export type ProviderDependencyCounts = z.infer<typeof ProviderDependencyCountsSchema>;
 export type ProviderAccount = z.infer<typeof ProviderAccountSchema>;
 export type ProviderHarnessInstance = z.infer<typeof ProviderHarnessInstanceSchema>;
+export type ProviderHarnessSetupAction = z.infer<typeof ProviderHarnessSetupActionSchema>;
+export type ProviderHarnessCatalogSafeReason = z.infer<typeof ProviderHarnessCatalogSafeReasonSchema>;
+export type ProviderHarnessCatalogEntry = z.infer<typeof ProviderHarnessCatalogEntrySchema>;
 export type ProviderGatewayPolicy = z.infer<typeof ProviderGatewayPolicySchema>;
 export type ProviderSettingsSupportedAction = z.infer<typeof ProviderSettingsSupportedActionSchema>;
 /** Mutable Settings projection with explicit lineage to its canonical V3 input. */

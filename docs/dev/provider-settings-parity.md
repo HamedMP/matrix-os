@@ -168,6 +168,12 @@ child processes with cancellation, timeout, output, event, and active-process
 limits. A request for workspace-write or full access is rejected rather than
 run without confinement.
 
+Long Pi and OpenCode first turns are dispatched only after the queued Chat is
+durably visible. They never hold the global thread-state mutation queue while a
+CLI runs; inspect, abort, another Chat, and shutdown retain bounded independent
+progress. Provider output is finalized in a short race-safe mutation and late
+output cannot resurrect an aborted or otherwise terminal Chat.
+
 Each Pi or OpenCode turn resolves the one enabled owner harness instance and its
 selected access source immediately before spawn. Only portable credentials for
 that exact source are copied into the child environment. Matrix-included access
@@ -176,6 +182,12 @@ not reused by another CLI. Missing binaries, duplicate enabled instances,
 unavailable credentials, offline routes, unsupported model vendors, and stale
 models all remain non-runnable. Resume state retains only the provider session ID
 and the validated working directory; it never persists a credential.
+
+The portable-credential predicate is one shared contract. The add-harness UI
+filters provider, model, and source choices with it, configuration mutations
+revalidate it at the gateway boundary, and the Chat catalog plus child-process
+credential resolver enforce it again. Renderer state can therefore never make
+an otherwise unsupported owner subscription or model vendor executable.
 
 Multiple accounts are first-class. Account IDs are stable and owner-scoped;
 labels are safe display metadata, not secret suffixes. Adding an account must
