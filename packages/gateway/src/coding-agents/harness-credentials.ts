@@ -10,6 +10,7 @@ import {
   type KernelCredentialLaunch,
 } from "../kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 
 const PORTABLE_CREDENTIAL_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"] as const;
 const SAFE_ERROR = "Selected coding harness access is unavailable";
@@ -60,6 +61,13 @@ export function createCodingHarnessCredentialResolver(options: {
     const enabled = snapshot.harnesses.filter(
       (candidate) => candidate.harness === options.harness && candidate.enabled,
     );
+    if (enabled.length === 0) {
+      if (await hasNativeHarnessAuth(options.homePath, options.harness)) {
+        signal?.throwIfAborted();
+        return { env: {} };
+      }
+      throw new Error(SAFE_ERROR);
+    }
     if (enabled.length !== 1) throw new Error(SAFE_ERROR);
     const harness = enabled[0]!;
     if (harness.authState !== "authenticated"

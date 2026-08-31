@@ -57,6 +57,7 @@ export function ProviderModelPicker({
   catalog,
   selection,
   instanceLocked,
+  disabled = false,
   unavailableProviderLabel,
   menuSide = "top",
   onSetupAction,
@@ -66,6 +67,7 @@ export function ProviderModelPicker({
   catalog: CanonicalProviderCatalog;
   selection: CanonicalComposerSelection | null;
   instanceLocked: boolean;
+  disabled?: boolean;
   unavailableProviderLabel?: string;
   menuSide?: "top" | "bottom";
   onSetupAction?: (
@@ -102,6 +104,10 @@ export function ProviderModelPicker({
     <Popover.Root
       open={open}
       onOpenChange={(nextOpen) => {
+        if (disabled) {
+          setOpen(false);
+          return;
+        }
         setOpen(nextOpen);
         if (nextOpen) {
           setActiveInstanceId(selectedInstance?.id ?? catalog.instances[0]?.id ?? "");
@@ -111,6 +117,7 @@ export function ProviderModelPicker({
       <Popover.Trigger asChild>
       <button
         type="button"
+        disabled={disabled}
         aria-label="Choose model and provider"
         aria-expanded={open}
         data-provider-instance={selectedInstance?.id ?? ""}
@@ -118,7 +125,7 @@ export function ProviderModelPicker({
         title={selectedInstance && selectedModel
           ? `${selectedModel.displayName} · ${selectedInstance.displayName}`
           : unavailableProviderLabel ?? "Choose model and provider"}
-        className="flex h-8 max-w-[12rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        className="flex h-8 max-w-[12rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-wait disabled:opacity-50"
         style={{ color: "var(--text-secondary)" }}
       >
         {selectedInstance ? <ProviderDriverGlyph kind={selectedInstance.driverKind} /> : <Cpu size={15} />}

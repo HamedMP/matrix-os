@@ -142,8 +142,11 @@ Generic lifecycle mutations are admitted only for exact runtime support. Hermes
 and OpenClaw reuse the bounded messaging-runtime controller. Pi and OpenCode must
 be registered coding runtimes at gateway startup in addition to appearing in
 binary inventory. Their binary probes establish installation only; owner
-Settings establish authentication, connectivity, exact access source, provider,
-and model readiness. Codex and Claude remain specialized model-specific drivers;
+Terminal login is recognized only through bounded metadata at each CLI's fixed
+owner-local auth file. Matrix never reads or returns credential bytes. An
+explicit enabled Settings instance remains authoritative for a portable access
+source, provider, and model route; without one, the CLI uses its own configured
+default provider and model. Codex and Claude remain specialized model-specific drivers;
 their existing login/logout commands are not routed through the generic
 coordinator. Multiple account rows are a forward-compatible data shape, not a
 claim that a CLI can run concurrent profiles today; generic runtimes do not
@@ -174,14 +177,17 @@ CLI runs; inspect, abort, another Chat, and shutdown retain bounded independent
 progress. Provider output is finalized in a short race-safe mutation and late
 output cannot resurrect an aborted or otherwise terminal Chat.
 
-Each Pi or OpenCode turn resolves the one enabled owner harness instance and its
-selected access source immediately before spawn. Only portable credentials for
-that exact source are copied into the child environment. Matrix-included access
-and owner Anthropic API keys are portable; a Claude OAuth profile is intentionally
-not reused by another CLI. Missing binaries, duplicate enabled instances,
+Each Pi or OpenCode turn first resolves an explicit enabled owner harness
+instance and selected access source immediately before spawn. Only portable
+credentials for that exact source are copied into the child environment. When
+no Settings instance exists, a bounded metadata check may admit the CLI's own
+fixed owner-local Terminal login; the child receives no Matrix credential and
+uses its configured default provider and model. Matrix-included access and owner
+Anthropic API keys are portable; a Claude OAuth profile is intentionally not
+copied into another CLI. Missing binaries, duplicate enabled instances,
 unavailable credentials, offline routes, unsupported model vendors, and stale
-models all remain non-runnable. Resume state retains only the provider session ID
-and the validated working directory; it never persists a credential.
+explicit models all remain non-runnable. Resume state retains only the provider
+session ID and validated working directory; it never persists a credential.
 
 The portable-credential predicate is one shared contract. The add-harness UI
 filters provider, model, and source choices with it, configuration mutations

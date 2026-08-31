@@ -23,6 +23,7 @@ import type {
   CodingHarnessCredentialLaunch,
   CodingHarnessCredentialResolver,
 } from "./harness-credentials.js";
+import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
 
 /**
@@ -525,7 +526,7 @@ interface PiRunInput {
 }
 
 function piModelArguments(reference: string | undefined): string[] {
-  if (reference === undefined) return [];
+  if (reference === undefined || reference === "provider-default") return [];
   const separator = reference.indexOf(":");
   if (separator < 1 || separator === reference.length - 1) return ["--model", reference];
   return ["--provider", reference.slice(0, separator), "--model", reference.slice(separator + 1)];
@@ -923,15 +924,16 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
     async getSummary({ now }) {
       const installed = await probeInstalled();
+      const authenticated = installed && await hasNativeHarnessAuth(homePath, "pi");
       return AgentProviderSummarySchema.parse({
         id: providerId,
         displayName: "Pi",
         kind: "pi",
-        availability: installed ? "auth_required" : "unavailable",
+        availability: authenticated ? "available" : installed ? "auth_required" : "unavailable",
         installStatus: installed ? "installed" : "missing",
-        // pi has no non-interactive auth probe (`pi auth status` is a prompt,
-        // not a subcommand). Owner harness settings remain authoritative.
-        authStatus: "unknown",
+        // Pi has no non-interactive auth command. Readiness checks only bounded
+        // metadata at its fixed owner-local auth path; credential bytes stay CLI-owned.
+        authStatus: authenticated ? "authenticated" : "unknown",
         supportedModes: ["default"],
         defaultMode: "default",
         setupActions: [],

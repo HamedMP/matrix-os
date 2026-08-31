@@ -102,84 +102,6 @@ function driverDisplayName(kind: CanonicalProviderDriverKind): string {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
-function kernelAvailability(
-  state: AiProviderSnapshotV3["instances"][number]["readiness"]["state"],
-): CanonicalProviderInstanceDescriptor["availability"] {
-  if (state === "ready") return "available";
-  if (state === "setup_required") return "setup_required";
-  if (state === "auth_required" || state === "invalid" || state === "expired" || state === "unknown") {
-    return "auth_required";
-  }
-  return "unavailable";
-}
-
-function kernelInstances(
-  snapshot: AiProviderSnapshotV3 | undefined,
-  skills: CanonicalChatSkillDescriptor[],
-): InstanceDraft[] {
-  if (!snapshot) return [];
-  const modelCatalog = new Map(snapshot.models.map((model) => [model.id, model]));
-  return snapshot.instances
-    .filter((instance) => (
-      instance.driverId === "kernel"
-      && instance.id !== "kernel_matrix_included"
-    ))
-    .map((instance) => {
-      const availability = kernelAvailability(instance.readiness.state);
-      const models = availability === "available"
-        ? instance.modelIds.flatMap((modelId) => {
-            const model = modelCatalog.get(modelId);
-            if (!model || model.status === "unavailable" || model.status === "retired") return [];
-            return [{
-              id: model.id,
-              displayName: model.displayName,
-              availability: "available" as const,
-              capabilities: model.capabilities,
-              supportsVision: model.capabilities.includes("vision"),
-              supportsToolUse: model.capabilities.includes("tools"),
-            }];
-          })
-        : [];
-      const efforts = models.flatMap((model) => modelCatalog.get(model.id)?.effortControls ?? [])
-        .filter((effort, index, values) => values.indexOf(effort) === index);
-      const options: CanonicalProviderOptionDescriptor[] = efforts.length === 0 ? [] : [{
-        id: "effort",
-        label: "Reasoning",
-        kind: "enum",
-        values: efforts.map((effort) => ({
-          value: effort,
-          label: effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1),
-        })),
-        placement: "composer",
-      }];
-      const defaultModel = instance.defaultModelId !== null
-        && models.some((model) => model.id === instance.defaultModelId)
-        ? instance.defaultModelId
-        : models[0]?.id;
-      return {
-        id: instance.id,
-        driverKind: "kernel" as const,
-        displayName: instance.label,
-        availability,
-        workspaceRequirement: "none" as const,
-        models,
-        options,
-        skills,
-        commands: [],
-        setupActions: availability === "available" ? [] : [{
-          id: `${instance.id}_connect`,
-          kind: "foreground_terminal" as const,
-          label: `Connect ${instance.label}`,
-          command: visibleSetupCommand("claude"),
-        }],
-        supports: systemSupports(),
-        ...(availability === "available" && defaultModel ? {
-          defaultSelection: { instanceId: instance.id, model: defaultModel },
-        } : {}),
-      };
-    });
-}
-
 function codingDriverKind(provider: AgentProviderSummary): CodingDriverKind | null {
   if (provider.kind === "claude" || provider.id === "claude") return "claude_code";
   if (provider.kind === "codex" || provider.id === "codex") return "codex";
@@ -445,8 +367,21 @@ function systemOptions(
   }];
 }
 
-function systemSetupActions(kind: typeof SYSTEM_DRIVERS[number]): CanonicalProviderSetupAction[] {
+function systemSetupActions(
+  kind: typeof SYSTEM_DRIVERS[number],
+  runtime: AgentRuntimeDescriptor | undefined,
+): CanonicalProviderSetupAction[] {
   const displayName = driverDisplayName(kind);
+  if (runtime?.installState === "missing" || runtime?.installState === "installing") {
+    return [{
+      id: `${kind}_install`,
+      kind: "foreground_terminal",
+      label: `Install ${displayName}`,
+      command: visibleSetupCommand(
+        `/opt/matrix/bin/matrix-agent-runtime-control install ${kind}`,
+      ),
+    }];
+  }
   return [{
     id: `${kind}_connect`,
     kind: "foreground_terminal",
@@ -506,7 +441,7 @@ function systemInstance(input: {
     options: [],
     skills: input.skills,
     commands: [],
-    setupActions: systemSetupActions(input.kind),
+    setupActions: systemSetupActions(input.kind, input.runtime),
     supports: systemSupports(),
     ...(availability === "available" && hasSelectedModel ? {
       defaultSelection: { instanceId: id, model: selectedModel! },
@@ -530,9 +465,8 @@ function genericHarnessKind(kind: CanonicalProviderDriverKind): GenericDriverKin
 }
 
 function settingsHarnessKind(kind: CanonicalProviderDriverKind): ProviderHarnessKind | null {
-  if (kind === "claude_code") return "claude";
-  if (kind === "codex") return "codex";
-  return genericHarnessKind(kind);
+  if (kind === "pi" || kind === "opencode") return kind;
+  return null;
 }
 
 function unavailableReasonFor(
@@ -643,7 +577,17 @@ function applyHarnessSettings(input: {
     if (enabledHarnesses.length > 1) {
       return unavailableInstance(instance, "multiple_profiles_unsupported");
     }
+    const executable = input.executableDriverKinds === undefined
+      || input.executableDriverKinds.includes(instance.driverKind);
+    const nativeTerminalProfile = (generic === "pi" || generic === "opencode")
+      && instance.availability === "available"
+      && input.credentialedDriverKinds?.includes(generic);
     if (settingsHarness !== null && input.settingsRequired && enabledHarnesses.length === 0) {
+      if (nativeTerminalProfile) {
+        return executable
+          ? { ...instance, unavailabilityReason: undefined }
+          : unavailableInstance(instance, "runtime_not_runnable");
+      }
       return unavailableInstance(instance, "disabled_in_settings");
     }
     const enabledHarness = enabledHarnesses[0];
@@ -656,8 +600,6 @@ function applyHarnessSettings(input: {
     if (enabledHarness && enabledHarness.connectivity !== "online") {
       return unavailableInstance(configuredInstance, "runtime_unavailable");
     }
-    const executable = input.executableDriverKinds === undefined
-      || input.executableDriverKinds.includes(instance.driverKind);
     if (!executable) {
       return unavailableInstance(configuredInstance, "runtime_not_runnable");
     }
@@ -797,11 +739,9 @@ export function createChatProviderCatalogService(options: {
       const aiSnapshot = aiProviderResult.status === "fulfilled"
         ? aiProviderResult.value
         : undefined;
-      const projectedKernelInstances = kernelInstances(aiSnapshot, skills);
       const executableDriverKinds = options.executableDriverKinds;
       const instances = applyHarnessSettings({
         instances: [
-        ...projectedKernelInstances,
         ...systemInstances,
         ...completeCodingInstances,
         ],
@@ -813,7 +753,6 @@ export function createChatProviderCatalogService(options: {
         aiSnapshot,
       });
       const driverKinds: CanonicalProviderDriverKind[] = [
-        ...(options.aiProviderSource ? ["kernel" as const] : []),
         ...SYSTEM_DRIVERS,
         ...CODING_DRIVERS,
       ];

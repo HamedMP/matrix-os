@@ -22,6 +22,7 @@ import {
   buildPiChildEnvironment,
 } from "./pi-process-environment.js";
 import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
+import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
@@ -105,7 +106,7 @@ function promptWithReferences(message: string, attachments: AgentAttachment[] | 
 }
 
 function modelSlug(reference: string | undefined): string | undefined {
-  if (!reference) return undefined;
+  if (!reference || reference === "provider-default") return undefined;
   const separator = reference.indexOf(":");
   return separator > 0 ? `${reference.slice(0, separator)}/${reference.slice(separator + 1)}` : reference;
 }
@@ -510,11 +511,12 @@ export function createOpenCodeCodingAgentProvider(
       let installed = false;
       try { await runCommand(command, ["--version"], { cwd: options.homePath, timeout: PROBE_TIMEOUT_MS, env: buildPiChildEnvironment(options.env) }); installed = true; }
       catch (error: unknown) { logCodingAgentWarning("OpenCode binary probe failed", error); }
+      const authenticated = installed && await hasNativeHarnessAuth(options.homePath, "opencode");
       return AgentProviderSummarySchema.parse({
         id: providerId, displayName: "OpenCode", kind: "opencode",
-        availability: installed ? "auth_required" : "unavailable",
+        availability: authenticated ? "available" : installed ? "auth_required" : "unavailable",
         installStatus: installed ? "installed" : "missing",
-        authStatus: "unknown",
+        authStatus: authenticated ? "authenticated" : "unknown",
         supportedModes: ["default"], defaultMode: "default", setupActions: [], lastCheckedAt: now().toISOString(),
       });
     },

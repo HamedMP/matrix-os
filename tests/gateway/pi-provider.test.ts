@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -338,6 +338,22 @@ describe("pi provider adapter — spawn contract", () => {
     expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
       "--provider", "anthropic", "--model", "claude-sonnet-5",
     ]));
+  });
+
+  it("lets Pi use its configured default model for the native Terminal profile", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { model: "provider-default" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.args).not.toContain("--model");
+    expect(fake.calls[0]!.args).not.toContain("--provider");
   });
 
   it("resolves fresh selected credentials per turn without inheriting gateway secrets", async () => {
@@ -1329,6 +1345,27 @@ describe("pi provider adapter — availability and summary", () => {
       now: () => baseNow,
       signal: AbortSignal.timeout(1_000),
     })).toEqual({ ok: true });
+  });
+
+  it("reports the fixed owner-local Pi auth profile as authenticated without reading credentials", async () => {
+    const authDirectory = join(homePath, ".pi", "agent");
+    await mkdir(authDirectory, { recursive: true });
+    await writeFile(join(authDirectory, "auth.json"), "{\"anthropic\":{}}\n", { mode: 0o600 });
+    const provider = createPiCodingAgentProvider({
+      homePath,
+      spawnFn: fakeSpawn({ lines: [] }).spawnFn,
+      runCommand: async () => ({ stdout: "0.81.0\n", stderr: "" }),
+    });
+
+    await expect(provider.getSummary!({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    })).resolves.toMatchObject({
+      availability: "available",
+      installStatus: "installed",
+      authStatus: "authenticated",
+    });
   });
 
   it("reports the provider missing when the binary probe fails", async () => {

@@ -175,6 +175,7 @@ function Harness({
   initialValue = "",
   initialReferenceTokens = [],
   onNewChat,
+  disabled = false,
 }: {
   locked?: boolean;
   onSubmit?: (submission: SharedChatComposerSubmission) => void;
@@ -185,6 +186,7 @@ function Harness({
   initialValue?: string;
   initialReferenceTokens?: ComposerReferenceToken[];
   onNewChat?: () => void;
+  disabled?: boolean;
 }) {
   const catalog = catalogFixture();
   const [value, setValue] = useState(initialValue);
@@ -200,6 +202,7 @@ function Harness({
       onReferenceTokensChange={setReferenceTokens}
       onSubmit={onSubmit}
       busy={false}
+      disabled={disabled}
       catalog={catalog}
       selection={selection}
       onSelectionChange={setSelection}
@@ -244,6 +247,15 @@ describe("SharedChatComposer", () => {
 
     expect(screen.getByRole("listbox", { name: "Models and providers" }).closest(".prompt-card"))
       .toBeNull();
+  });
+
+  it("does not open a fallback model catalog while the composer is loading", () => {
+    render(<Harness disabled />);
+
+    const picker = screen.getByRole("button", { name: "Choose model and provider" });
+    expect(picker.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(picker);
+    expect(screen.queryByRole("listbox", { name: "Models and providers" })).toBeNull();
   });
 
   it("uses a compact inline harness glyph for each model row", () => {

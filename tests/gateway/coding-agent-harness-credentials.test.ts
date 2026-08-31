@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import {
   createCodingHarnessCredentialResolver,
@@ -69,6 +72,32 @@ function snapshot(
 }
 
 describe("coding harness credential resolution", () => {
+  it.each([
+    ["pi", ".pi/agent/auth.json"],
+    ["opencode", ".local/share/opencode/auth.json"],
+  ] as const)("uses %s's owner-local Terminal login when no Settings route exists", async (harness, relativePath) => {
+    const homePath = await mkdtemp(join(tmpdir(), `native-${harness}-auth-`));
+    const authPath = join(homePath, relativePath);
+    await mkdir(join(authPath, ".."), { recursive: true });
+    await writeFile(authPath, "{\"configured\":true}\n", { mode: 0o600 });
+    const value = snapshot(harness, "matrix_included");
+    value.harnesses = [];
+    const resolveCredentialLaunch = vi.fn();
+    try {
+      const resolver = createCodingHarnessCredentialResolver({
+        harness,
+        homePath,
+        settings: { getSnapshot: async () => value },
+        resolveCredentialLaunch,
+      });
+
+      await expect(resolver()).resolves.toEqual({ env: {} });
+      expect(resolveCredentialLaunch).not.toHaveBeenCalled();
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("resolves the unique enabled harness through its exact access source", async () => {
     const resolveCredentialLaunch = vi.fn(async (_home: string, _env: NodeJS.ProcessEnv, source: string) => ({
       env: {

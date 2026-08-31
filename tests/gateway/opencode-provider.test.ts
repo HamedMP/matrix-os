@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AgentThreadSummary,
@@ -130,6 +133,23 @@ describe("OpenCode coding-agent provider", () => {
         expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
       ]),
     });
+  });
+
+  it("lets OpenCode use its configured default model for the native Terminal profile", async () => {
+    const fake = fakeSpawn([
+      line("text", { part: { id: "part_text", type: "text", text: "Done", time: { end: 1 } } }),
+    ]);
+    const adapter = provider(fake.spawnFn);
+
+    await adapter.startThread({
+      principal,
+      thread: thread(),
+      request: request({ model: "provider-default" }),
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    expect(fake.calls[0]!.args).not.toContain("--model");
   });
 
   it("normalizes completed tool output and provider errors without leaking raw details", async () => {
@@ -594,5 +614,24 @@ describe("OpenCode coding-agent provider", () => {
         authStatus: "unknown",
       });
     expect(runCommand).toHaveBeenCalledWith("opencode", ["--version"], expect.objectContaining({ timeout: 1_500 }));
+  });
+
+  it("reports the fixed owner-local OpenCode auth profile as authenticated without reading credentials", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "opencode-native-auth-"));
+    const authDirectory = join(homePath, ".local", "share", "opencode");
+    await mkdir(authDirectory, { recursive: true });
+    await writeFile(join(authDirectory, "auth.json"), "{\"anthropic\":{}}\n", { mode: 0o600 });
+    try {
+      const runCommand = vi.fn(async () => ({ stdout: "1.16.0\n", stderr: "" }));
+      const adapter = provider(fakeSpawn([]).spawnFn, { homePath, runCommand });
+      await expect(adapter.getSummary!({ principal, now: () => now, signal: AbortSignal.timeout(1_000) }))
+        .resolves.toMatchObject({
+          availability: "available",
+          installStatus: "installed",
+          authStatus: "authenticated",
+        });
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 });

@@ -550,6 +550,7 @@ export function SharedChatComposer({
               catalog={catalog}
               selection={selection}
               instanceLocked={instanceLocked}
+              disabled={disabled}
               unavailableProviderLabel={unavailableProviderLabel}
               menuSide={menuSide}
               onSetupAction={onProviderSetup}
