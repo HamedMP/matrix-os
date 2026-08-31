@@ -180,14 +180,14 @@ describe("createApiClient", () => {
     const image = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: "image/png" });
 
     await client.postBytes(
-      "/api/terminal/sessions/main/paste-assets",
+      "/api/terminal/workspaces/tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/tabs/tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/paste-assets",
       image,
       { "Content-Type": "image/png", "X-Matrix-Filename": "shot.png" },
       { timeoutMs: 30_000 },
     );
 
     const [url, init] = fetchFn.mock.calls[0]!;
-    expect(url).toBe("https://x.test/api/terminal/sessions/main/paste-assets?runtime=vm-2");
+    expect(url).toBe("https://x.test/api/terminal/workspaces/tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/tabs/tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/paste-assets?runtime=vm-2");
     expect(init).toMatchObject({ method: "POST", body: image });
     expect((init as RequestInit).headers).toEqual({
       "Content-Type": "image/png",

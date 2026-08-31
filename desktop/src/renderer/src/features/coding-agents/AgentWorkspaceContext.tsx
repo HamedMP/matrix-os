@@ -4,6 +4,7 @@ import type { PreviewSessionSummary, RuntimeSummary } from "@matrix-os/contracts
 import { Button, StatusDot } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
 import { AgentWorkspaceSection } from "./AgentWorkspaceSection";
+import { runtimeTerminalTabs } from "../../lib/terminal-workspaces";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -26,10 +27,11 @@ function canOpenPreviewExternally(origin: string | undefined): origin is string 
 }
 
 export function AgentTerminalList({ summary }: { summary: RuntimeSummary }) {
+  const tabs = runtimeTerminalTabs(summary);
   return (
-    <AgentWorkspaceSection title="Terminals" count={summary.terminalSessions.items.length}>
+    <AgentWorkspaceSection title="Terminals" count={tabs.length}>
       <div className="grid gap-2">
-        {summary.terminalSessions.items.map((session) => (
+        {tabs.map((session) => (
           <article
             key={session.id}
             className="flex items-center justify-between gap-3 rounded-md border p-3"
@@ -51,7 +53,7 @@ export function AgentTerminalList({ summary }: { summary: RuntimeSummary }) {
             </span>
           </article>
         ))}
-        {summary.terminalSessions.items.length === 0 ? (
+        {tabs.length === 0 ? (
           <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             No terminal sessions.
           </p>
