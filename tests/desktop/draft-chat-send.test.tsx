@@ -108,8 +108,10 @@ function mockOperator({ createImpl, summary = summaryFixture() }: {
     }
     if (channel === "runtime:get-project-workspace") return workspaceFixture();
     if (channel === "runtime:create-thread") {
-      if (createImpl) return createImpl(payload);
-      return createdThreadSnapshot((payload as { prompt?: string }).prompt ?? "New chat");
+      const snapshot = createImpl
+        ? await createImpl(payload)
+        : createdThreadSnapshot((payload as { prompt?: string }).prompt ?? "New chat");
+      return { ok: true, snapshot };
     }
     if (channel === "runtime:get-thread-snapshot") {
       const { threadId } = payload as { threadId: string };

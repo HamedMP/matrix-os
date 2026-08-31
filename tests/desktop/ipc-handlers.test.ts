@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerIpcHandlers, type HandlerContext } from "../../desktop/src/main/ipc/handlers";
+import { AppError } from "../../desktop/src/shared/app-error";
 
 type IpcListener = (event: unknown, payload: unknown) => Promise<unknown> | unknown;
 
@@ -1081,30 +1082,56 @@ describe("registerIpcHandlers", () => {
       clientRequestId: "req_desktop_1",
     };
 
-    await expect(harness.invoke("runtime:create-thread", request)).resolves.toEqual(snapshot);
+    await expect(harness.invoke("runtime:create-thread", request)).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
     expect(createAgentThread).toHaveBeenCalledWith(request);
   });
 
-  it("maps agent thread create failures to a generic IPC error", async () => {
+  it("maps agent thread create failures to a safe typed IPC result", async () => {
     const createAgentThread = vi
       .fn()
       .mockRejectedValue(new Error("provider failed on /home/matrix/workspace with token secret"));
     const harness = makeHarness({ createAgentThread } as Partial<HandlerContext>);
 
-    await expect(
-      harness.invoke("runtime:create-thread", {
-        providerId: "codex",
-        prompt: "Summarize the failing checks",
-        clientRequestId: "req_desktop_1",
-      }),
-    ).rejects.toThrow("internal error");
-    await expect(
-      harness.invoke("runtime:create-thread", {
-        providerId: "codex",
-        prompt: "Summarize the failing checks",
-        clientRequestId: "req_desktop_1",
-      }),
-    ).rejects.not.toThrow("/home/matrix");
+    await expect(harness.invoke("runtime:create-thread", {
+      providerId: "codex",
+      prompt: "Summarize the failing checks",
+      clientRequestId: "req_desktop_1",
+    })).resolves.toEqual({
+      ok: false,
+      error: {
+        code: "thread_create_server",
+        safeMessage: "Something went wrong. Please try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+  });
+
+  it("preserves a safe offline reason across the agent thread IPC boundary", async () => {
+    const createAgentThread = vi.fn().mockRejectedValue(new AppError("offline", {
+      cause: new TypeError("fetch failed for https://private-runtime.test"),
+    }));
+    const harness = makeHarness({ createAgentThread } as Partial<HandlerContext>);
+
+    const result = await harness.invoke("runtime:create-thread", {
+      providerId: "codex",
+      prompt: "Summarize the failing checks",
+      clientRequestId: "req_desktop_1",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "thread_create_offline",
+        safeMessage: "Can't reach Matrix OS. Check your connection.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/private-runtime|provider/i);
   });
 
   it("creates same-thread turns through trusted-core IPC without exposing credentials", async () => {

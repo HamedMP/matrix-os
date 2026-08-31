@@ -33,6 +33,7 @@ import {
 } from "./coding-agent/thread-model";
 import { createThreadSnapshotPoller } from "./coding-agent/thread-snapshot-poller";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
+import { diagnosticErrorKind } from "../lib/errors";
 
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
@@ -1004,8 +1005,13 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     const runtimeGeneration = captureRuntimeGeneration();
     set({ createStatus: "submitting", createError: null });
     try {
-      const snapshot = await invoke("runtime:create-thread", built.request);
+      const result = await invoke("runtime:create-thread", built.request);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
+      if (!result.ok) {
+        set({ createStatus: "idle", createError: result.error.safeMessage });
+        return null;
+      }
+      const snapshot = result.snapshot;
       const thread = snapshot.thread;
       set((state) => {
         const createdThreadHandles = [
@@ -1049,9 +1055,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       });
       attachActiveThreadEventStream(snapshot);
       return thread.id;
-    } catch {
+    } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
-      console.warn("[coding-agents] thread create failed");
+      console.warn("[coding-agents] thread create failed:", diagnosticErrorKind(error));
       set({ createStatus: "idle", createError: "Agent run could not be started. Try again." });
       return null;
     }

@@ -1,7 +1,8 @@
-import type { AgentAttachment } from "@matrix-os/contracts";
+import { MAX_AGENT_ATTACHMENT_BYTES, type AgentAttachment } from "@matrix-os/contracts";
 import type { ApiClient } from "../../../lib/api";
+import { diagnosticErrorKind, toUserMessage } from "../../../lib/errors";
 
-export const MAX_ATTACHMENT_FILE_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_FILE_BYTES = MAX_AGENT_ATTACHMENT_BYTES;
 const MAX_ATTACHMENTS = 8;
 const MAX_SUBSCRIBERS = 16;
 const MAX_CONCURRENT_UPLOADS = 3;
@@ -32,7 +33,7 @@ export interface LocalAttachmentController {
   add(files: readonly File[]): void;
   remove(localId: string): void;
   retry(localId: string): Promise<void>;
-  uploadAll(): Promise<UploadedConversationAttachments | { ok: false }>;
+  uploadAll(): Promise<UploadedConversationAttachments | { ok: false; error: string }>;
   clear(): void;
   dispose(): void;
 }
@@ -96,7 +97,13 @@ export function createLocalAttachmentController(options: {
   };
 
   const uploadOne = async (item: InternalAttachment): Promise<boolean> => {
-    if (disposed || !options.api || item.file.size > MAX_ATTACHMENT_FILE_BYTES) return false;
+    if (disposed || item.file.size > MAX_ATTACHMENT_FILE_BYTES) return false;
+    if (!options.api) {
+      item.status = "failed";
+      item.error = "Attachment upload is unavailable because no Matrix computer is connected.";
+      emit();
+      return false;
+    }
     if (item.uploadedPath) return true;
     item.status = "uploading";
     item.error = undefined;
@@ -117,10 +124,10 @@ export function createLocalAttachmentController(options: {
       emit();
       return true;
     } catch (err: unknown) {
-      console.warn("[desktop attachments] upload failed:", err instanceof Error ? err.message : String(err));
+      console.warn("[desktop attachments] upload failed:", diagnosticErrorKind(err));
       if (!disposed && items.includes(item)) {
         item.status = "failed";
-        item.error = "Upload failed. Try again.";
+        item.error = `Attachment upload failed. ${toUserMessage(err)}`;
         emit();
       }
       return false;
@@ -168,7 +175,7 @@ export function createLocalAttachmentController(options: {
       await uploadOne(item);
     },
     async uploadAll() {
-      if (uploadInFlight) return { ok: false };
+      if (uploadInFlight) return { ok: false, error: "Attachment upload is already in progress." };
       uploadInFlight = true;
       const batch = [...items];
       try {
@@ -186,9 +193,18 @@ export function createLocalAttachmentController(options: {
         ));
         const batchStillCurrent = items.length === batch.length
           && batch.every((item, index) => items[index] === item);
-        if (disposed || !batchStillCurrent || batch.some((item) => !item.uploadedPath)) return { ok: false };
+        if (disposed) return { ok: false, error: "Attachment upload was interrupted. Try again." };
+        if (!batchStillCurrent) {
+          return { ok: false, error: "The attachment selection changed before upload completed. Try again." };
+        }
+        const failed = batch.find((item) => !item.uploadedPath);
+        if (failed) {
+          return { ok: false, error: failed.error ?? "Attachment upload failed. Try again." };
+        }
         const attachments = batch.map(attachmentReference);
-        if (attachments.some((attachment) => !attachment)) return { ok: false };
+        if (attachments.some((attachment) => !attachment)) {
+          return { ok: false, error: "An attachment could not be prepared for Chat. Remove it and try again." };
+        }
         return {
           ok: true,
           paths: batch.map((item) => item.uploadedPath!),

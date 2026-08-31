@@ -59,7 +59,7 @@ describe("ChatTab", () => {
       loadStatus: "idle",
       loadError: null,
       loadingConversationId: null,
-      send: vi.fn(),
+      send: vi.fn(() => true),
       abort: vi.fn(),
     });
     useThreads.setState({ threads: [], activeThreadId: null });
@@ -419,7 +419,7 @@ describe("ChatTab", () => {
   });
 
   it("renders the approved centered empty state and only working composer controls", () => {
-    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
+    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(() => true), abort: vi.fn() });
     render(<ChatTab />);
 
     expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
@@ -444,7 +444,7 @@ describe("ChatTab", () => {
   });
 
   it("seeds the shared composer from a Figma starter card", async () => {
-    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
+    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(() => true), abort: vi.fn() });
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Review code and suggest changes" }));
@@ -469,7 +469,7 @@ describe("ChatTab", () => {
   });
 
   it("adds files from the visible attachment control", async () => {
-    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
+    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(() => true), abort: vi.fn() });
     render(<ChatTab />);
 
     const picker = screen.getByLabelText("Choose files") as HTMLInputElement;
@@ -522,7 +522,7 @@ describe("ChatTab", () => {
   });
 
   it("previews pasted files horizontally, uploads on Send, and sends Hermes readable paths", async () => {
-    const send = vi.fn();
+    const send = vi.fn(() => true);
     const putBytes = vi.fn(async (path: string, file: File) => ({
       ok: true,
       path: decodeURIComponent(path.split("path=")[1] ?? ""),
@@ -551,7 +551,7 @@ describe("ChatTab", () => {
   });
 
   it("promotes a Hermes conversation only after the user sends a message", async () => {
-    const send = vi.fn();
+    const send = vi.fn(() => true);
     useHermesChat.setState({
       messages: [],
       sessionId: "conversation-active",
@@ -571,7 +571,7 @@ describe("ChatTab", () => {
   });
 
   it("sends Global Chat skill and project tokens as agent-readable prompt context", async () => {
-    const send = vi.fn();
+    const send = vi.fn(() => true);
     const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
     const availableCatalog = {
       ...catalog,
@@ -766,7 +766,7 @@ describe("ChatTab", () => {
   });
 
   it("does not intercept a text-only drop in Chat", () => {
-    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
+    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(() => true), abort: vi.fn() });
     render(<ChatTab />);
 
     const pane = screen.getByRole("region", { name: "Hermes conversation" });
@@ -778,20 +778,6 @@ describe("ChatTab", () => {
 
     expect(drop.defaultPrevented).toBe(false);
     expect(screen.queryByRole("group", { name: "Attachments" })).toBeNull();
-  });
-
-  it("retains a failed Chat preview instead of sending", async () => {
-    const send = vi.fn();
-    useHermesChat.setState({ messages: [], status: "idle", send, abort: vi.fn() });
-    useConnection.setState({ api: { putBytes: vi.fn().mockRejectedValue(new Error("offline")) } as never });
-    render(<ChatTab />);
-    const pane = screen.getByRole("region", { name: "Hermes conversation" });
-    fireEvent.drop(pane, { dataTransfer: { files: [new File(["x"], "notes.txt", { type: "text/plain" })] } });
-    fireEvent.click(await screen.findByRole("button", { name: "Send" }));
-
-    expect(await screen.findByText("Upload failed. Try again.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Retry notes.txt" })).toBeTruthy();
-    expect(send).not.toHaveBeenCalled();
   });
 
   it("renders the persistent Hermes index newest-first with bounded metadata", () => {

@@ -7,6 +7,7 @@ import type {
   CanonicalChatInvalidation,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
+import { AppError } from "@desktop/shared/app-error";
 import { describe, expect, it, vi } from "vitest";
 
 const globalRecord = {
@@ -1048,12 +1049,12 @@ describe("canonical Chat route controller", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("keeps the user error generic while recording a diagnostic category", async () => {
+  it("includes a safe failure reason while recording only the diagnostic category", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const failedClient = client({
       list: vi.fn(async () => ({ items: [] })),
       create: vi.fn(async () => globalRecord),
-      admitTurn: vi.fn(async () => { throw new TypeError("provider secret detail"); }),
+      admitTurn: vi.fn(async () => { throw new AppError("offline", { cause: new TypeError("provider secret detail") }); }),
     });
     const { result } = renderHook(() => useCanonicalChatRouteController({
       client: failedClient,
@@ -1072,9 +1073,12 @@ describe("canonical Chat route controller", () => {
       }, "Fail safely");
     });
 
-    expect(result.current.error).toBe("The message could not be sent. Try again.");
-    expect(warn).toHaveBeenCalledWith("[canonical-chat] submit failed:", "TypeError");
+    expect(result.current.error).toBe(
+      "The message could not be sent. Reason: Can't reach Matrix OS. Check your connection.",
+    );
+    expect(warn).toHaveBeenCalledWith("[canonical-chat] submit failed:", "offline");
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("provider secret detail"));
     warn.mockRestore();
   });
+
 });

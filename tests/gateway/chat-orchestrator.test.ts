@@ -169,6 +169,63 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("projects uploaded attachment paths through the Provider-neutral prompt", async () => {
+    await repository.create(owner, {
+      id: "chat_attachment_prompt",
+      clientRequestId: "req_create_attachment_prompt",
+      title: "Attachment prompt",
+    });
+    let providerPrompt: string | undefined;
+    const provider = adapter(async function* (input) {
+      providerPrompt = input.prompt;
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-31T01:34:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_attachment_prompt", {
+      clientRequestId: "req_attachment_prompt_turn",
+      baseRevision: 0,
+      parts: [
+        { type: "text", text: "Do a summary" },
+        {
+          type: "attachment_reference",
+          attachmentId: "desktop_upload_attachment_prompt",
+          kind: "file",
+          label: "message (1).txt",
+          mimeType: "text/plain",
+          sizeBytes: 19_505,
+          ownerReference: "temporary/desktop-chat/upload_123-message (1).txt",
+        },
+        {
+          type: "attachment_reference",
+          attachmentId: "desktop_upload_shell_chars",
+          kind: "file",
+          label: "notes'$(touch ignored).txt",
+          mimeType: "text/plain",
+          sizeBytes: 32,
+          ownerReference: "temporary/desktop-chat/upload_456-notes'$(touch ignored).txt",
+        },
+      ],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    expect(providerPrompt).toBe([
+      "Do a summary",
+      "",
+      "Attached files (available on this Matrix computer):",
+      '- "message (1).txt": "$MATRIX_HOME"/\'temporary/desktop-chat/upload_123-message (1).txt\'',
+      '- "notes\'$(touch ignored).txt": "$MATRIX_HOME"/\'temporary/desktop-chat/upload_456-notes\'\\\'\'$(touch ignored).txt\'',
+    ].join("\n"));
+  });
+
   it("persists one stable typed activity row across live lifecycle updates", async () => {
     await repository.create(owner, {
       id: "chat_activity_projection",

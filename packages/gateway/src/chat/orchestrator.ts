@@ -108,15 +108,31 @@ function promptFor(parts: CanonicalCreateChatTurnRequest["parts"]): string {
       return [`${part.invocation.invocation}${part.invocation.arguments ? ` ${part.invocation.arguments}` : ""}`];
     }
     if (part.type === "resource_reference") return [`@${part.resource.label}`];
-    if (part.type === "attachment_reference") return [`@${part.label}`];
+    if (part.type === "attachment_reference" && !part.ownerReference) return [`@${part.label}`];
     return [];
   });
+  const attachmentReferences = parts.flatMap((part) => (
+    part.type === "attachment_reference" && part.ownerReference
+      ? [`- ${JSON.stringify(part.label)}: ${shellQuotedOwnerReference(part.ownerReference)}`]
+      : []
+  ));
+  if (attachmentReferences.length > 0) {
+    lines.push(
+      "",
+      "Attached files (available on this Matrix computer):",
+      ...attachmentReferences,
+    );
+  }
   const prompt = lines.join("\n").trim();
   if (!prompt) throw new CanonicalChatOrchestrationError(
     safeError("capability_mismatch", "The message does not contain supported input."),
     400,
   );
   return prompt;
+}
+
+function shellQuotedOwnerReference(ownerReference: string): string {
+  return `"$MATRIX_HOME"/'${ownerReference.replaceAll("'", "'\\''")}'`;
 }
 
 function requirementsFor(input: CanonicalCreateChatTurnRequest) {

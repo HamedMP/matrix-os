@@ -2,16 +2,20 @@
 
 import React, { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
+import {
+  canonicalChatRecord as record,
+  createCanonicalChatWorkspaceClient as client,
+  providerCatalog,
+  snapshot,
+} from "./canonical-chat-workspace-test-utils";
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { snapshot, providerCatalog } = createCanonicalChatFixture("completed");
 const resizeObserverCallbacks: ResizeObserverCallback[] = [];
 
 class WorkspaceResizeObserver implements ResizeObserver {
@@ -37,45 +41,6 @@ function resizeChatWorkspace(width: number) {
   }
 }
 
-const record = {
-  chat: {
-    id: snapshot.chat.id,
-    ownerScope: snapshot.chat.ownerScope,
-    title: snapshot.chat.title,
-    lifecycle: snapshot.chat.lifecycle,
-    attention: snapshot.chat.attention,
-    revision: snapshot.chat.revision,
-    messageCount: snapshot.chat.messageCount,
-    lastMessagePreview: snapshot.chat.lastMessagePreview,
-    currentSelection: snapshot.chat.currentSelection,
-    createdAt: snapshot.chat.createdAt,
-    updatedAt: snapshot.chat.updatedAt,
-  },
-  projectId: "matrix-os",
-  providerBinding: snapshot.chat.providerBinding,
-};
-
-function client(): CanonicalChatClient {
-  return {
-    list: vi.fn(async () => ({ items: [record] })),
-    search: vi.fn(async () => ({ items: [record] })),
-    getDetail: vi.fn(async () => ({
-      record,
-      messages: snapshot.messages,
-      turns: snapshot.turns,
-      runs: snapshot.runs,
-      activities: snapshot.activities,
-    })),
-    create: vi.fn(),
-    updateProject: vi.fn(),
-    delete: vi.fn(),
-    admitTurn: vi.fn(),
-    cancelRun: vi.fn(),
-    submitApproval: vi.fn(),
-    retryTurn: vi.fn(),
-  } as CanonicalChatClient;
-}
-
 describe("CanonicalChatWorkspace", () => {
   beforeAll(() => {
     globalThis.ResizeObserver = WorkspaceResizeObserver;
@@ -85,6 +50,10 @@ describe("CanonicalChatWorkspace", () => {
     resizeObserverCallbacks.length = 0;
     useBoard.setState(useBoard.getInitialState(), true);
     useConnection.setState(useConnection.getInitialState(), true);
+    window.operator = {
+      invoke: vi.fn(async () => ({ ok: true })),
+      on: vi.fn(() => () => undefined),
+    };
   });
 
   afterEach(cleanup);
@@ -1038,4 +1007,5 @@ describe("CanonicalChatWorkspace", () => {
       expect.objectContaining({ type: "resource_reference" }),
     ]));
   });
+
 });

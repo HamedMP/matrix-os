@@ -28,6 +28,8 @@ const AssistantTextDeltaSchema = z.string()
   .max(4_000)
   .refine((value) => byteLength(value) <= 16 * 1024, { message: "Text exceeds byte limit" });
 
+export const MAX_AGENT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
 export const AgentThreadStatusSchema = z.enum([
   "queued", "starting", "running", "waiting_for_approval", "waiting_for_input",
   "completed", "failed", "aborted", "stale", "archived",
@@ -43,7 +45,7 @@ export const AgentAttachmentSchema = z.object({
   label: SafeDisplayStringSchema,
   path: safeRelativePath().optional(),
   mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
-  sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
+  sizeBytes: z.number().int().min(0).max(MAX_AGENT_ATTACHMENT_BYTES).optional(),
 }).strict();
 
 export const AgentThreadSummarySchema = z.object({
