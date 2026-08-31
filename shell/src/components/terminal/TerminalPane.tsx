@@ -60,6 +60,7 @@ import {
   applyXtermScrollSurface,
   applyXtermSurfaceBackground,
   describeReadyState,
+  isAppleCommandPlatform,
   refreshTerminalRenderer,
   scrollTerminalViewportToBottom,
   shouldDisableWebglRenderer,
@@ -1576,7 +1577,7 @@ export function TerminalPane({
         const clipboardAction = classifyTerminalClipboardShortcut({
           type: ev.type as "keydown" | "keyup" | "keypress",
           key: ev.key,
-          isMac: navigator.platform.startsWith("Mac"),
+          isMac: isAppleCommandPlatform(navigator.platform),
           metaKey: ev.metaKey,
           ctrlKey: ev.ctrlKey,
           shiftKey: ev.shiftKey,

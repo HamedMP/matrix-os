@@ -43,6 +43,10 @@ export type CanonicalReplayRequest = {
   requestedSeq: number;
 };
 
+export function isAppleCommandPlatform(platform: string): boolean {
+  return /^(Mac|iPad|iPhone|iPod)/.test(platform);
+}
+
 export function shouldDisableWebglRenderer(suppressNativeKeyboard: boolean): boolean {
   if (suppressNativeKeyboard) return true;
   if (typeof navigator === "undefined") return false;

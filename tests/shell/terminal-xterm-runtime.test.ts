@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyXtermScrollOptions,
   describeReadyState,
+  isAppleCommandPlatform,
   shouldDisableWebglRenderer,
   toDisposableWebglAddon,
 } from "../../shell/src/components/terminal/terminal-xterm-runtime.js";
@@ -11,6 +12,15 @@ afterEach(() => {
 });
 
 describe("terminal xterm runtime", () => {
+  it.each(["MacIntel", "iPad", "iPhone", "iPod"])("recognizes %s as an Apple Command-key platform", (platform) => {
+    expect(isAppleCommandPlatform(platform)).toBe(true);
+  });
+
+  it("does not treat non-Apple platforms as Command-key platforms", () => {
+    expect(isAppleCommandPlatform("Linux armv8l")).toBe(false);
+    expect(isAppleCommandPlatform("Win32")).toBe(false);
+  });
+
   it("applies the terminal's bounded scroll behavior", () => {
     const term = { options: {} };
 
