@@ -73,7 +73,9 @@ export function useMatrixBillingAccess(): BillingAccessState {
     active: false,
     checking: false,
     entitlement: null,
-    trialOffer: null,
+    // Keep browser screenshots deterministic while exercising the same
+    // three-day offer shown to eligible first-time hosted customers.
+    trialOffer: { eligible: true, durationDays: 3 },
     accessReason: "e2e_test_bypass",
     accessIssue: null,
   };

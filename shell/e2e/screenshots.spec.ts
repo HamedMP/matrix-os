@@ -149,14 +149,22 @@ test.describe("Visual regression", () => {
         body: JSON.stringify({ ok: true }),
       }),
     );
+    await page.route("**/billing/status**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          access: { runtimeProxyAllowed: false },
+          trialOffer: { eligible: true, durationDays: 3 },
+        }),
+      }),
+    );
     // Block WebSocket upgrade requests so they don't keep reconnecting
     await page.route("**/ws/**", (route) => route.abort());
 
     await page.goto("/");
     // Wait for the dock to render (confirms the shell loaded past auth)
-    await page.waitForSelector("[data-testid='dock-settings']", {
-      timeout: 15000,
-    });
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
   });
 
   test("desktop default state", async ({ page }) => {
@@ -178,12 +186,51 @@ test.describe("Visual regression", () => {
   });
 
   test("settings panel", async ({ page }) => {
-    const settingsButton = page.getByTestId("dock-settings");
-    await settingsButton.dispatchEvent("click");
+    const settingsButton = page.getByRole("button", { name: "Settings", exact: true });
+    await settingsButton.dblclick();
     await page.mouse.move(720, 450);
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("settings-panel.png", {
       maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("billing pricing", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(page.getByRole("heading", { name: "Choose your Matrix computer" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start 3-day trial" })).toBeVisible();
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-pricing.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
+  test("billing computer plans", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(page.getByText("For everyday use")).toBeVisible();
+    await expect(page.getByText("For technical work and building")).toBeVisible();
+    await expect(page.getByText("For serious, demanding workloads")).toBeVisible();
+    await page.getByRole("button", { name: /^Max\b/ }).click();
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-computer-picker.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
+  test("billing region picker", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await page.getByRole("button", { name: "Advanced settings" }).click();
+    await page.getByRole("button", { name: "Change server location" }).click();
+    await expect(page.getByText("Choose a server location")).toBeVisible();
+    await page.getByText("Hillsboro, Oregon").evaluate((element) => {
+      element.scrollIntoView({ block: "center" });
+    });
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-region-picker.png", {
+      maxDiffPixelRatio: 0.001,
     });
   });
 
@@ -211,9 +258,9 @@ test.describe("Visual regression", () => {
       }),
     );
 
-    await page.getByTestId("dock-settings").dispatchEvent("click");
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();
-    await expect(page.getByText("Not active")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Choose your Matrix computer" })).toBeVisible();
     await page.getByRole("button", { name: "Continue to pay" }).click();
     await expect(
       page.getByText(
@@ -228,7 +275,7 @@ test.describe("Visual regression", () => {
   });
 
   test("Agent runtime settings", async ({ page }) => {
-    await page.getByTestId("dock-settings").dispatchEvent("click");
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByText("Agent", { exact: true }).click();
     await expect(page.getByText("Chat agent", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Install OpenClaw" })).toBeVisible();

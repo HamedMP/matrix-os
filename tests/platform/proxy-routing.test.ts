@@ -2073,6 +2073,73 @@ describe("platform proxy routing", () => {
     }, DETACHED_PROVISION_OPTIONS);
   });
 
+  it("uses the paid checkout machine, region, and agents as the provisioning source of truth", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertCheckoutAttempt(db, {
+      id: "attempt_authoritative_configuration",
+      clerkUserId: "user_paid_configuration",
+      stripeSessionId: "cs_paid_configuration",
+      runtimeSlot: "research-lab",
+      planSlug: "matrix_builder",
+      billingInterval: "monthly",
+      regionSlug: "region_ash",
+      serverType: "cpx31",
+      status: "paid",
+      createdAt: "2026-08-30T12:00:00.000Z",
+      developerTools: ["claude-code"],
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      username: "newuser",
+      first_name: "New",
+      last_name: "User",
+      primary_email_address_id: "email_1",
+      email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+    }));
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff160",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_paid_configuration" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        runtime: "research-lab",
+        developerTools: ["codex"],
+        serverType: "cpx22",
+        location: "fsn1",
+      }),
+    });
+
+    expect(provision.status).toBe(202);
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "newuser",
+      clerkUserId: "user_paid_configuration",
+      runtimeSlot: "research-lab",
+      developerTools: ["claude-code"],
+      serverType: "cpx31",
+      location: "ash",
+    }, DETACHED_PROVISION_OPTIONS);
+  });
+
   it("converges an old post-payment provision request onto the checkout-bound intent", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
@@ -5211,7 +5278,8 @@ describe("platform proxy routing", () => {
       expect(body).not.toContain("registration.unregister()");
       expect(body).toContain('p.startsWith("/api/")');
       expect(body).toContain('p.startsWith("/files/apps/")');
-      expect(body).toContain('p.startsWith("/_next/static/")');
+      expect(body).not.toContain('p.startsWith("/_next/static/")');
+      expect(body).not.toMatch(/woff2\?\|ttf\|css\|js/);
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {

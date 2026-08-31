@@ -99,9 +99,11 @@ Do not copy `PIPEDREAM_*`, Clerk server secrets, platform DB credentials, or `PL
 
 Hosted billing must be configured before promoting production Cloud Run
 revisions. Missing Stripe price IDs break the signed-in no-VPS path because the
-pre-VPS billing gate uses `matrix_builder` monthly checkout by default. Store
-the Price IDs in Secret Manager with these names and grant the Cloud Run service
-account `roles/secretmanager.secretAccessor`:
+pre-VPS billing gate uses `matrix_builder` monthly checkout by default. The
+public monthly catalog is Starter $20, Builder $100, and Max $200. Create new
+immutable Stripe Prices at those amounts, then store their IDs in Secret
+Manager with these names and grant the Cloud Run service account
+`roles/secretmanager.secretAccessor`:
 
 ```bash
 STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly
@@ -110,7 +112,20 @@ STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly
 STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual
 STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly
 STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual
+STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json
 ```
+
+Annual IDs are retained only to recognize and manage existing subscriptions;
+new Checkout sessions are monthly-only. The legacy catalog secret must be a
+bounded JSON array such as
+`[{"priceId":"price_old_builder_monthly","planSlug":"matrix_builder","interval":"monthly"}]`.
+List every replaced live Price ID before changing the current monthly secrets,
+so existing customers keep their original subscription and entitlement. The
+current price IDs take precedence if an ID appears in both catalogs.
+
+Stripe automatic tax is enabled in Checkout. Before promotion, verify the live
+account has the required tax registrations; enabling automatic tax alone does
+not create registrations.
 
 The two portal configurations are required to enable the customer-facing
 add-computer flow, but their absence does not block an otherwise healthy

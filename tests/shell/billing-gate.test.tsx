@@ -410,7 +410,7 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    await waitFor(() => expect(screen.getByText("Start checkout & provision")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Choose your Matrix computer")).toBeTruthy());
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
 
@@ -432,7 +432,7 @@ describe("BillingGate", () => {
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
-    expect(await screen.findByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
+    expect(await screen.findByText("Choose your Matrix computer")).toBeTruthy();
     expect(
       (screen.getByRole("button", {
         name: "Appearance Locked until billing is active",
@@ -461,8 +461,11 @@ describe("BillingGate", () => {
 
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    expect(await screen.findByText("Finish billing to approve CLI login")).toBeTruthy();
-    expect(screen.getByText("Billing settings")).toBeTruthy();
+    expect(await screen.findByText("Finish billing")).toBeTruthy();
+    expect(
+      screen.getByRole("group", { name: "Choose your Matrix computer" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Billing settings")).toBeNull();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).includes("/billing/checkout")),
@@ -478,7 +481,7 @@ describe("BillingGate", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
-            serverType: "cpx32",
+            serverType: "cpx42",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/auth/device?user_code=BCDF-GHJK",
           }),

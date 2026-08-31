@@ -114,9 +114,11 @@ describe("platform-owned shell assets", () => {
       join(process.cwd(), "packages/platform/src/app-domain-service-worker.ts"),
       "utf8",
     );
-    expect(platformWorker).toContain('const VERSION = "app-v2"');
+    expect(platformWorker).toContain('const VERSION = "app-v3"');
     expect(platformWorker).toContain(
       'p === "/__platform-shell" || p.startsWith("/__platform-shell/")',
     );
+    expect(platformWorker).not.toContain('p.startsWith("/_next/static/")');
+    expect(platformWorker).not.toMatch(/woff2\?\|ttf\|css\|js/);
   });
 });

@@ -41,6 +41,7 @@ import {
   loadStripePriceCatalog,
   parseBillingEntitlementRecord,
   parseBillingOverrideRecord,
+  resolveServerType,
   type BillingEntitlementStatus,
   type BillingEntitlement,
   type MatrixBillingPlanSlug,
@@ -84,6 +85,8 @@ const TRIAL_PAYMENT_SUSPEND_DELAY_MS = 24 * 60 * 60 * 1000;
 const CheckoutBillingRegionSlugSchema = z.enum([
   'region_fsn1',
   'region_nbg1',
+  'region_ash',
+  'region_hil',
 ]);
 const HistoricalBillingRegionSlugSchema = z.enum([
   'region_fsn1',
@@ -94,7 +97,7 @@ const HistoricalBillingRegionSlugSchema = z.enum([
 
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
-  interval: z.enum(['monthly', 'annual']).default('monthly'),
+  interval: z.literal('monthly').default('monthly'),
   regionSlug: CheckoutBillingRegionSlugSchema.default('region_fsn1'),
   serverType: HetznerServerTypeSchema.optional(),
   developerTools: DeveloperToolsWithDefaultSchema,
@@ -389,7 +392,8 @@ export function createBillingRoutes(options: {
       }
       const selectedPlan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((plan) => plan.slug === parsed.data.planSlug);
       const serverType = selectedPlan
-        ? loadRuntimeCatalog(env).profiles.find((profile) => profile.sku === selectedPlan.defaultCatalogSku)?.serverType
+        ? resolveServerType(loadRuntimeCatalog(env), selectedPlan.defaultCatalogSku, parsed.data.regionSlug)
+          ?? undefined
         : undefined;
       if (parsed.data.serverType && parsed.data.serverType !== serverType) {
         return c.json({ error: 'Invalid request' }, 400);
@@ -1048,7 +1052,7 @@ function buildSubscriptionTelemetryProperties(
 function planPriceUsd(planSlug: MatrixBillingPlanSlug, interval: MatrixBillingInterval): number | undefined {
   const plan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((candidate) => candidate.slug === planSlug);
   if (!plan) return undefined;
-  return interval === 'annual' ? plan.annualUsd : plan.monthlyUsd;
+  return interval === 'monthly' ? plan.monthlyUsd : undefined;
 }
 
 function resolveBillingReturnUrl(
@@ -1316,7 +1320,6 @@ export function getPublicBillingPlans() {
     slug: plan.slug,
     marketingName: plan.marketingName,
     monthlyUsd: plan.monthlyUsd,
-    annualUsd: plan.annualUsd,
     includedRuntimeSlots: plan.includedRuntimeSlots,
   }));
 }
