@@ -462,7 +462,10 @@ describe("BillingGate", () => {
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     expect(await screen.findByText("Finish billing")).toBeTruthy();
-    expect(screen.getByText("Billing settings")).toBeTruthy();
+    expect(
+      screen.getByRole("group", { name: "Choose your Matrix computer" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Billing settings")).toBeNull();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).includes("/billing/checkout")),
