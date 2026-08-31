@@ -11,7 +11,12 @@ interface MockPageProps {
   scroll?: boolean;
 }
 
-export function MockPage({ title, subtitle, children, scroll = true }: MockPageProps) {
+export function MockPage({
+  title,
+  subtitle,
+  children,
+  scroll = true,
+}: MockPageProps) {
   const content = (
     <View testID="mock-page-content" style={styles.content}>
       <Spacer size="lg" />

@@ -26,4 +26,5 @@ describe("IconButton", () => {
       backgroundColor: "#2B3715",
     });
   });
+
 });

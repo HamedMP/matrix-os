@@ -42,6 +42,8 @@ export default function AppsScreen() {
               <GridTile
                 key={slug}
                 label={app.name}
+                centered
+                artworkLabelSpacerSize="md"
                 leading={<AppLogo
                   name={app.name}
                   uri={gatewayUrl ? buildAppIconUrl(gatewayUrl, app.icon ?? app.slug) : null}

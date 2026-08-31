@@ -25,6 +25,7 @@
     "@expo-google-fonts/inter": "^0.2.3",
     "@expo-google-fonts/jetbrains-mono": "^0.2.3",
     "@expo/metro-runtime": "~57.0.3",
+    "@expo/ui": "~57.0.14",
     "@expo/vector-icons": "15.1.1",
     "@hugeicons/core-free-icons": "^4.3.0",
     "@hugeicons/react-native": "^1.0.16",

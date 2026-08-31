@@ -16,5 +16,10 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "exclude": ["node_modules", "dist", ".next"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".next"
+  ],
+  "extends": "expo/tsconfig.base"
 }

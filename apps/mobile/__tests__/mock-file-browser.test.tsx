@@ -1,6 +1,8 @@
 const mockPush = jest.fn();
 const mockDismiss = jest.fn();
 const mockBack = jest.fn();
+let mockPathname = "/file-browser";
+const mockFileCreationPaths: string[] = [];
 const mockParams = {
   folder: "Projects",
   path: undefined as string | string[] | undefined,
@@ -32,8 +34,21 @@ jest.mock("expo-router", () => ({
     },
   ),
   useLocalSearchParams: () => mockParams,
+  useGlobalSearchParams: () => mockParams,
+  usePathname: () => mockPathname,
   useRouter: () => ({ push: mockPush, dismiss: mockDismiss, back: mockBack }),
 }));
+
+jest.mock("@/components/files/FileCreationControls", () => {
+  const React = require("react");
+  const { View } = require("react-native");
+  return {
+    FileCreationControls: ({ currentPath }: { currentPath: string }) => {
+      mockFileCreationPaths.push(currentPath);
+      return React.createElement(View, { testID: "file-creation-controls", currentPath });
+    },
+  };
+});
 
 jest.mock("@/lib/queries/use-computer-directory", () => ({
   useComputerDirectory: (...args: unknown[]) => mockUseComputerDirectory(...args),
@@ -54,6 +69,8 @@ describe("file browser modal stack", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockStackScreens.length = 0;
+    mockFileCreationPaths.length = 0;
+    mockPathname = "/file-browser";
     mockParams.folder = "Projects";
     mockParams.path = undefined;
     mockParams.name = undefined;
@@ -117,6 +134,23 @@ describe("file browser modal stack", () => {
     expect(NativeStyleSheet.flatten(screen.getByTestId("file-preview-screen").props.style).flex).toBe(1);
   });
 
+  it("shows a centered empty-file state for a zero-length text file", () => {
+    mockParams.name = "empty.txt";
+    mockParams.path = "Projects/empty.txt";
+    mockUseComputerFilePreview.mockReturnValue({
+      preview: { kind: "text", content: "" },
+      isPending: false,
+      isError: false,
+    });
+
+    render(<FileDetailScreen />);
+
+    expect(screen.getByTestId("empty-file-state")).toBeTruthy();
+    expect(screen.getByTestId("empty-file-icon")).toBeTruthy();
+    expect(screen.getByText("this file is currently empty")).toBeTruthy();
+    expect(screen.queryByTestId("file-preview-text")).toBeNull();
+  });
+
   it("shows three skeleton tiles while a folder modal is loading", () => {
     mockUseComputerDirectory.mockReturnValue({
       computer: { handle: "solar-vale" },
@@ -128,6 +162,21 @@ describe("file browser modal stack", () => {
     render(<FileBrowserScreen />);
 
     expect(screen.getAllByTestId("file-tile-skeleton")).toHaveLength(3);
+  });
+
+  it("shows the shared empty-folder state in an empty modal directory", () => {
+    mockUseComputerDirectory.mockReturnValue({
+      computer: { handle: "solar-vale" },
+      entries: [],
+      isPending: false,
+      isError: false,
+    });
+
+    render(<FileBrowserScreen />);
+
+    expect(screen.getByTestId("empty-folder-state")).toBeTruthy();
+    expect(screen.getByTestId("empty-folder-icon")).toBeTruthy();
+    expect(screen.getByText("this folder is currently empty")).toBeTruthy();
   });
 
   it("renders authenticated image previews natively", () => {
@@ -190,5 +239,22 @@ describe("file browser modal stack", () => {
     fireEvent.press(screen.getByLabelText("Back to previous folder"));
     expect(mockDismiss).toHaveBeenCalledTimes(1);
     expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one file-creation controller mounted above the modal stack", () => {
+    const { rerender } = render(<FileBrowserLayout />);
+
+    expect(screen.getAllByTestId("file-creation-controls")).toHaveLength(1);
+    expect(mockFileCreationPaths.at(-1)).toBe("Projects");
+
+    mockPathname = "/file-browser/Projects/mobile-lab";
+    mockParams.path = ["Projects", "mobile-lab"];
+    rerender(<FileBrowserLayout />);
+    expect(mockFileCreationPaths.at(-1)).toBe("Projects/mobile-lab");
+
+    mockPathname = "/file-browser/file";
+    mockParams.path = "Projects/mobile-lab/notes.md";
+    rerender(<FileBrowserLayout />);
+    expect(mockFileCreationPaths.at(-1)).toBe("Projects/mobile-lab");
   });
 });

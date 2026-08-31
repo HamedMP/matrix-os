@@ -261,6 +261,7 @@ export const designShadows = {
   sm: "0 2px 4px rgba(51, 46, 36, 0.06)",
   md: "0 4px 8px rgba(51, 46, 36, 0.08)",
   lg: "0 8px 16px rgba(51, 46, 36, 0.10)",
+  lgShine: "inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 16px rgba(51, 46, 36, 0.10)",
 } as const;
 
 // Frosted-glass recipe for floating/elevated chrome (tab bar, cards, modals,

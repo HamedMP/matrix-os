@@ -68,6 +68,30 @@ describe("mock apps screen", () => {
 
     expect(screen.getByLabelText("Open Notes")).toBeTruthy();
     expect(screen.queryByLabelText("Open Chess")).toBeNull();
+
+    fireEvent.press(screen.getByLabelText("Clear Search apps"));
+
+    expect(screen.getByLabelText("Open Chess")).toBeTruthy();
+    expect(screen.getByLabelText("Search apps").props.value).toBe("");
+  });
+
+  it("centers larger app artwork above the app name", () => {
+    render(<AppsScreen />);
+
+    expect(NativeStyleSheet.flatten(screen.getByLabelText("Open Chess").props.style)).toEqual(
+      expect.objectContaining({
+        flexDirection: "column",
+        alignItems: "center",
+        borderWidth: 0,
+        backgroundColor: "transparent",
+      }),
+    );
+    expect(NativeStyleSheet.flatten(screen.getByTestId("app-logo-Chess").props.style)).toEqual(
+      expect.objectContaining({ width: 68, height: 68 }),
+    );
+    expect(screen.getAllByTestId("app-tile-artwork-label-spacer")[0].props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ height: 12 })]),
+    );
   });
 
   it("uses spacers instead of vertical padding or margins", () => {

@@ -6,11 +6,12 @@ import {
   View,
 } from "react-native";
 import { Image } from "expo-image";
+import FileEmpty01Icon from "@hugeicons/core-free-icons/FileEmpty01Icon";
 
 import { AnalyticsMask } from "@/lib/analytics";
 import { useComputerFilePreview } from "@/lib/queries/use-computer-file-preview";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
-import { Spacer, Text } from "@/components/ui";
+import { EmptyState, Spacer, Text } from "@/components/ui";
 
 export function ComputerFilePreview({ name, path }: { name: string; path: string }) {
   const { preview, isPending, isError } = useComputerFilePreview(path);
@@ -61,11 +62,22 @@ export function ComputerFilePreview({ name, path }: { name: string; path: string
         </ScrollView>
       ) : null}
 
-      {preview?.kind === "text" ? (
+      {preview?.kind === "text" && preview.content.length === 0 ? (
+        <EmptyState
+          icon={FileEmpty01Icon}
+          message="this file is currently empty"
+          testID="empty-file-state"
+          iconTestID="empty-file-icon"
+        />
+      ) : null}
+
+      {preview?.kind === "text" && preview.content.length > 0 ? (
         <ScrollView style={styles.textViewport} contentContainerStyle={styles.textContent}>
           <Spacer size="lg" />
           <ScrollView horizontal showsHorizontalScrollIndicator>
-            <NativeText selectable style={styles.code}>{preview.content}</NativeText>
+            <NativeText testID="file-preview-text" selectable style={styles.code}>
+              {preview.content}
+            </NativeText>
           </ScrollView>
           <Spacer size="3xl" />
         </ScrollView>

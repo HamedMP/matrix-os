@@ -257,6 +257,7 @@ const styles = StyleSheet.create({
   newChatContent: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 4,
   },
   newChatIcon: {
     marginRight: 8,

@@ -3,6 +3,7 @@ import { Stack, useRouter } from "expo-router";
 import File01Icon from "@hugeicons/core-free-icons/File01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 
+import { EmptyFolderState } from "@/components/files/EmptyFolderState";
 import { Spacer } from "@/components/ui";
 import { FileTileSkeletonGrid, GridTile, GridTileGrid } from "./MockControls";
 import { mockColors, mockFonts } from "./theme";
@@ -24,7 +25,8 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
       <Spacer size="lg" />
       {isPending ? <FileTileSkeletonGrid /> : null}
       {isError ? <Text style={styles.statusText}>Files unavailable. Try again.</Text> : null}
-      {!isPending && !isError ? <GridTileGrid>
+      {!isPending && !isError && entries.length === 0 ? <EmptyFolderState /> : null}
+      {!isPending && !isError && entries.length > 0 ? <GridTileGrid>
         {entries.map((entry) => (
           <GridTile
             key={entry.name}

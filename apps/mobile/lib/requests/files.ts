@@ -7,7 +7,10 @@ import {
 } from "@/lib/requests/http";
 
 const FILES_UNAVAILABLE_ERROR = "Files unavailable. Try again.";
+const CREATE_FOLDER_ERROR = "Could not create folder. Try again.";
+const CREATE_FILE_ERROR = "Could not create file. Try again.";
 const MAX_FILE_NAME_LENGTH = 512;
+const MAX_NEW_ENTRY_NAME_LENGTH = 255;
 const MAX_FILE_PATH_LENGTH = 4_096;
 const MAX_FILE_ENTRIES = 5_000;
 const DEFAULT_FILE_PREVIEW_BYTES = 512 * 1024;
@@ -38,6 +41,11 @@ const FileStatResponseSchema = z.object({
   modified: z.string().max(64),
   created: z.string().max(64),
   mime: z.string().max(128).optional(),
+});
+
+const FileMutationResponseSchema = z.object({
+  ok: z.literal(true),
+  path: z.string().max(MAX_FILE_PATH_LENGTH).optional(),
 });
 
 export type FileEntry = z.infer<typeof FileEntrySchema>;
@@ -72,6 +80,39 @@ export function fetchFileList(
     schema: FileListResponseSchema,
     errorMessage: FILES_UNAVAILABLE_ERROR,
   });
+}
+
+export function isValidNewFileEntryName(value: string): boolean {
+  return value.length > 0
+    && value.length <= MAX_NEW_ENTRY_NAME_LENGTH
+    && value === value.trim()
+    && value !== "."
+    && value !== ".."
+    && !/[\/\u0000-\u001F\u007F]/u.test(value);
+}
+
+export function createFolder(
+  clerkToken: string,
+  computerGatewayUrl: string,
+  parentPath: string,
+  name: string,
+): Promise<void> {
+  return createFileEntry(
+    clerkToken,
+    computerGatewayUrl,
+    parentPath,
+    name,
+    "directory",
+  );
+}
+
+export function createFile(
+  clerkToken: string,
+  computerGatewayUrl: string,
+  parentPath: string,
+  name: string,
+): Promise<void> {
+  return createFileEntry(clerkToken, computerGatewayUrl, parentPath, name, "file");
 }
 
 export async function fetchFilePreview(
@@ -148,6 +189,41 @@ function normalizeFilePath(path: string): string | null {
   const segments = path.split("/").filter((segment) => segment && segment !== ".");
   if (segments.some((segment) => segment === "..")) return null;
   return segments.join("/");
+}
+
+async function createFileEntry(
+  clerkToken: string,
+  computerGatewayUrl: string,
+  parentPath: string,
+  name: string,
+  type: "directory" | "file",
+): Promise<void> {
+  const errorMessage = type === "directory" ? CREATE_FOLDER_ERROR : CREATE_FILE_ERROR;
+  const safeParentPath = normalizeFilePath(parentPath);
+  if (safeParentPath === null || !isValidNewFileEntryName(name)) {
+    throw new Error(errorMessage);
+  }
+  const path = safeParentPath ? `${safeParentPath}/${name}` : name;
+
+  let url: string;
+  try {
+    url = buildGatewayRequestUrl(
+      computerGatewayUrl,
+      type === "directory" ? "/api/files/mkdir" : "/api/files/touch",
+    );
+  } catch {
+    throw new Error(errorMessage);
+  }
+
+  await fetchAuthenticatedJson({
+    url,
+    token: clerkToken,
+    schema: FileMutationResponseSchema,
+    errorMessage,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
 }
 
 function isImagePath(path: string): boolean {

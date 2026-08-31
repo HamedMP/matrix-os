@@ -8,8 +8,11 @@ export {
 export { fetchActiveComputer, fetchComputers } from "./computers";
 export { fetchConversations, type ConversationSummary } from "./conversations";
 export {
+  createFile,
+  createFolder,
   fetchFileList,
   fetchFilePreview,
+  isValidNewFileEntryName,
   type FileEntry,
   type FileListResponse,
   type FilePreview,

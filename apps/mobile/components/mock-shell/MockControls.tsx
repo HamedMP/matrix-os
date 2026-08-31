@@ -1,11 +1,13 @@
-import { Children, Fragment, type ReactNode } from "react";
+import { Children, Fragment, useState, type ReactNode } from "react";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
+import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
 import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
 import { Pressable, StyleSheet, Text, TextInput, View, type ColorValue } from "react-native";
 
-import { Icon, Skeleton, Spacer, type IconData } from "@/components/ui";
+import { Icon, IconButton, Skeleton, Spacer, type IconData } from "@/components/ui";
 import { mockColors, mockFonts } from "./theme";
+import type { SpacingSize } from "@/lib/theme";
 
 interface MockSearchFieldProps {
   placeholder?: string;
@@ -18,6 +20,13 @@ export function MockSearchField({
   value,
   onChangeText,
 }: MockSearchFieldProps) {
+  const [uncontrolledValue, setUncontrolledValue] = useState("");
+  const currentValue = value ?? uncontrolledValue;
+  const updateValue = (nextValue: string) => {
+    if (value === undefined) setUncontrolledValue(nextValue);
+    onChangeText?.(nextValue);
+  };
+
   return (
     <View style={styles.search}>
       <Icon icon={Search01Icon} size={17} color={mockColors.muted} />
@@ -25,10 +34,21 @@ export function MockSearchField({
         accessibilityLabel={placeholder}
         placeholder={placeholder}
         placeholderTextColor={mockColors.muted}
-        value={value}
-        onChangeText={onChangeText}
+        value={currentValue}
+        onChangeText={updateValue}
         style={styles.searchInput}
       />
+      {currentValue ? (
+        <IconButton
+          accessibilityLabel={`Clear ${placeholder}`}
+          icon={Cancel01Icon}
+          iconColor={mockColors.ink}
+          iconSize={18}
+          buttonSize={32}
+          pressedOpacity={0.65}
+          onPress={() => updateValue("")}
+        />
+      ) : null}
     </View>
   );
 }
@@ -38,6 +58,8 @@ interface GridTileProps {
   icon?: IconData;
   leading?: ReactNode;
   accent?: boolean;
+  centered?: boolean;
+  artworkLabelSpacerSize?: SpacingSize;
   iconBackgroundColor?: ColorValue;
   accessibilityLabel?: string;
   onPress?: () => void;
@@ -86,6 +108,8 @@ export function GridTile({
   icon = CubeIcon,
   leading,
   accent = false,
+  centered = false,
+  artworkLabelSpacerSize = "xl",
   iconBackgroundColor = "transparent",
   accessibilityLabel,
   onPress,
@@ -99,6 +123,7 @@ export function GridTile({
       onPress={onPress}
       style={({ pressed }) => [
         styles.tile,
+        centered && styles.tileCentered,
         accent && styles.tileAccent,
         pressed && styles.pressed,
       ]}
@@ -112,8 +137,13 @@ export function GridTile({
           <Icon icon={icon} size={24} color={accent ? mockColors.blue : mockColors.ink} />
         </View>
       )}
-      <Spacer size="xl" />
-      <Text numberOfLines={1} style={[styles.tileLabel, accent && styles.tileLabelAccent]}>{label}</Text>
+      <Spacer testID={centered ? "app-tile-artwork-label-spacer" : undefined} size={artworkLabelSpacerSize} />
+      <Text
+        numberOfLines={1}
+        style={[styles.tileLabel, centered && styles.tileLabelCentered, accent && styles.tileLabelAccent]}
+      >
+        {label}
+      </Text>
       <Spacer size="md" />
     </Pressable>
   );
@@ -264,6 +294,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     columnGap: 10,
   },
+  tileCentered: {
+    flexDirection: "column",
+    alignItems: "center",
+    borderWidth: 0,
+    backgroundColor: "transparent",
+  },
   tileAccent: {
     borderColor: mockColors.blue,
     backgroundColor: mockColors.blueSoft,
@@ -286,6 +322,10 @@ const styles = StyleSheet.create({
     fontFamily: mockFonts.semibold,
     fontSize: 13,
     color: mockColors.ink,
+  },
+  tileLabelCentered: {
+    alignSelf: "stretch",
+    textAlign: "center",
   },
   tileLabelAccent: {
     color: mockColors.blue,

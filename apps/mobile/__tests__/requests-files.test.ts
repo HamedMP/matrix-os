@@ -1,4 +1,9 @@
-import { fetchFileList, fetchFilePreview } from "@/lib/requests/files";
+import {
+  createFile,
+  createFolder,
+  fetchFileList,
+  fetchFilePreview,
+} from "@/lib/requests/files";
 
 describe("file requests", () => {
   beforeEach(() => {
@@ -45,6 +50,65 @@ describe("file requests", () => {
       "https://app.matrix-os.com/vm/solar-vale",
       "../system",
     )).rejects.toThrow("Files unavailable. Try again.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a folder through the selected computer route", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ ok: true, path: "projects/New folder" }),
+    } as unknown as Response);
+
+    await expect(createFolder(
+      "clerk-token",
+      "https://app.matrix-os.com/vm/solar-vale?runtime=preview-1",
+      "projects",
+      "New folder",
+    )).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/solar-vale/api/files/mkdir?runtime=preview-1",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          Authorization: "Bearer clerk-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "projects/New folder" }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("creates an empty file through the selected computer route", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ ok: true, path: "notes.md" }),
+    } as unknown as Response);
+
+    await expect(createFile(
+      "clerk-token",
+      "https://app.matrix-os.com/vm/solar-vale",
+      "",
+      "notes.md",
+    )).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/solar-vale/api/files/touch",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ path: "notes.md" }),
+      }),
+    );
+  });
+
+  it("rejects invalid entry names before calling the gateway", async () => {
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    await expect(createFolder(
+      "clerk-token",
+      "https://app.matrix-os.com/vm/solar-vale",
+      "",
+      "../private",
+    )).rejects.toThrow("Could not create folder. Try again.");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

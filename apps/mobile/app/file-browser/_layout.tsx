@@ -1,12 +1,20 @@
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
+import { StyleSheet, View } from "react-native";
 
+import { FileCreationControls } from "@/components/files/FileCreationControls";
 import { IconButton } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function FileBrowserLayout() {
   const router = useRouter();
+  const pathname = usePathname();
+  const params = useGlobalSearchParams<{
+    folder?: string | string[];
+    path?: string | string[];
+  }>();
+  const currentPath = resolveFileCreationPath(pathname, params);
   const closeButton = () => (
     <IconButton
       accessibilityLabel="Close file browser"
@@ -33,53 +41,75 @@ export default function FileBrowserLayout() {
   );
 
   return (
-    <Stack
-      screenOptions={{
-        headerShadowVisible: false,
-        headerStyle: { backgroundColor: mockColors.canvas },
-        headerTintColor: mockColors.ink,
-        headerTitleStyle: { fontFamily: mockFonts.semibold, fontSize: 15 },
-        headerBackButtonDisplayMode: "minimal",
-        contentStyle: { backgroundColor: mockColors.canvas },
-      }}
-    >
-      <Stack.Screen
-        name="index"
-        options={{
-          title: "Files",
-          headerBackVisible: false,
-          headerLeft: closeButton,
-          unstable_headerLeftItems: () => [{
-            type: "custom",
-            element: closeButton(),
-            hidesSharedBackground: true,
-          }],
+    <View style={styles.container}>
+      <Stack
+        screenOptions={{
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: mockColors.canvas },
+          headerTintColor: mockColors.ink,
+          headerTitleStyle: { fontFamily: mockFonts.semibold, fontSize: 15 },
+          headerBackButtonDisplayMode: "minimal",
+          contentStyle: { backgroundColor: mockColors.canvas },
         }}
-      />
-      <Stack.Screen
-        name="[...path]"
-        options={{
-          headerBackVisible: false,
-          headerLeft: backButton,
-          unstable_headerLeftItems: () => [{
-            type: "custom",
-            element: backButton(),
-            hidesSharedBackground: true,
-          }],
-        }}
-      />
-      <Stack.Screen
-        name="file"
-        options={{
-          headerBackVisible: false,
-          headerLeft: backButton,
-          unstable_headerLeftItems: () => [{
-            type: "custom",
-            element: backButton(),
-            hidesSharedBackground: true,
-          }],
-        }}
-      />
-    </Stack>
+      >
+        <Stack.Screen
+          name="index"
+          options={{
+            title: "Files",
+            headerBackVisible: false,
+            headerLeft: closeButton,
+            unstable_headerLeftItems: () => [{
+              type: "custom",
+              element: closeButton(),
+              hidesSharedBackground: true,
+            }],
+          }}
+        />
+        <Stack.Screen
+          name="[...path]"
+          options={{
+            headerBackVisible: false,
+            headerLeft: backButton,
+            unstable_headerLeftItems: () => [{
+              type: "custom",
+              element: backButton(),
+              hidesSharedBackground: true,
+            }],
+          }}
+        />
+        <Stack.Screen
+          name="file"
+          options={{
+            headerBackVisible: false,
+            headerLeft: backButton,
+            unstable_headerLeftItems: () => [{
+              type: "custom",
+              element: backButton(),
+              hidesSharedBackground: true,
+            }],
+          }}
+        />
+      </Stack>
+      <FileCreationControls currentPath={currentPath} />
+    </View>
   );
 }
+
+export function resolveFileCreationPath(
+  pathname: string,
+  params: { folder?: string | string[]; path?: string | string[] },
+) {
+  const routePath = Array.isArray(params.path) ? params.path.join("/") : params.path;
+  if (pathname.endsWith("/file")) {
+    const segments = (routePath ?? "").split("/").filter(Boolean);
+    return segments.slice(0, -1).join("/");
+  }
+  if (routePath) return routePath;
+  return Array.isArray(params.folder) ? (params.folder[0] ?? "Projects") : (params.folder ?? "Projects");
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+});
