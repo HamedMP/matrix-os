@@ -1,5 +1,5 @@
 import type { OsViewMode, OsViewStatePatch, OsViewWindowGeometry } from "@matrix-os/contracts";
-import type { MatrixApp } from "../../stores/apps";
+import type { MatrixApp } from "../apps/apps.api";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import { FIXED_DESKTOP_APPS } from "./desktop-apps";

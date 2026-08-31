@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { OsViewMode, OsViewStateResponse } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
 import { loadNativeOsViewState, patchNativeOsViewState } from "../../lib/os-view-state-client";
-import type { MatrixApp } from "../../stores/apps";
+import type { MatrixApp } from "../apps/apps.api";
 import {
   desktopSurfaceBounds,
   useDesktopSurfaces,
