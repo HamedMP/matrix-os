@@ -1,39 +1,36 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
+import ChevronRight from "@hugeicons/core-free-icons/ChevronRightIcon";
+import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
+import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
-import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components/ui";
+import {
+  Divider,
+  FloatingActionButton,
+  Icon,
+  IconButton,
+  Sheet,
+  Spacer,
+} from "@/components/ui";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { isValidNewFileEntryName } from "@/lib/requests";
 import { fonts, palette, semanticColors } from "@/lib/theme";
 
 type CreationType = "folder" | "file";
-
-const SHEET_DISMISS_TRANSITION_MS = 500;
+type CreationScreen = "options" | "name";
 
 export function FileCreationControls({ currentPath }: { currentPath: string }) {
   const [isCreateSheetVisible, setIsCreateSheetVisible] = useState(false);
-  const [createAction, setCreateAction] = useState<CreationType | null>(null);
-  const [creatingType, setCreatingType] = useState<CreationType | null>(null);
+  const [sheetScreen, setSheetScreen] = useState<CreationScreen>("options");
+  const [creationType, setCreationType] = useState<CreationType>("folder");
+  const [isCreating, setIsCreating] = useState(false);
   const [nextName, setNextName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
-  const popupTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { entries, createFolder, createFile } = useComputerDirectory(currentPath);
 
-  useEffect(() => () => {
-    if (popupTransitionTimer.current) clearTimeout(popupTransitionTimer.current);
-  }, []);
+  const noun = creationType === "folder" ? "folder" : "file";
 
   return (
     <>
@@ -41,53 +38,61 @@ export function FileCreationControls({ currentPath }: { currentPath: string }) {
         accessibilityLabel="Create"
         icon={Add01Icon}
         iconTestID="create-folder-icon"
-        onPress={() => {
-          setCreateError(null);
-          setIsCreateSheetVisible(true);
-        }}
+        onPress={openCreationSheet}
       />
       <Sheet
         visible={isCreateSheetVisible}
-        onClose={() => setIsCreateSheetVisible(false)}
+        onClose={closeCreationSheet}
         testID="files-create-sheet"
       >
-        <Divider testID="files-create-divider" />
-        <CreateOption label="New folder" onPress={() => openCreatePopup("folder")} />
-        <Divider testID="files-create-divider" />
-        <CreateOption label="New file" onPress={() => openCreatePopup("file")} />
-        <Spacer size="4xl" />
+        {sheetScreen === "options" ? (
+          <CreationOptions onSelect={openNameScreen} />
+        ) : (
+          <NameCreationScreen
+            noun={noun}
+            name={nextName}
+            error={createError}
+            loading={isCreating}
+            onBack={openOptionsScreen}
+            onChangeName={setNextName}
+            onConfirm={() => void submitCreation()}
+          />
+        )}
       </Sheet>
-      <FileCreatePopup
-        type={createAction}
-        name={nextName}
-        error={createError}
-        loading={creatingType !== null}
-        onChangeName={setNextName}
-        onClose={() => {
-          if (creatingType) return;
-          setCreateAction(null);
-          setCreateError(null);
-        }}
-        onConfirm={() => void submitCreation()}
-      />
     </>
   );
 
-  function openCreatePopup(type: CreationType) {
-    if (creatingType) return;
+  function openCreationSheet() {
+    setSheetScreen("options");
     setNextName("");
     setCreateError(null);
+    setIsCreateSheetVisible(true);
+  }
+
+  function closeCreationSheet() {
+    if (isCreating) return;
     setIsCreateSheetVisible(false);
-    if (popupTransitionTimer.current) clearTimeout(popupTransitionTimer.current);
-    popupTransitionTimer.current = setTimeout(() => {
-      popupTransitionTimer.current = null;
-      setCreateAction(type);
-    }, SHEET_DISMISS_TRANSITION_MS);
+    setSheetScreen("options");
+    setNextName("");
+    setCreateError(null);
+  }
+
+  function openNameScreen(type: CreationType) {
+    setCreationType(type);
+    setNextName("");
+    setCreateError(null);
+    setSheetScreen("name");
+  }
+
+  function openOptionsScreen() {
+    if (isCreating) return;
+    setNextName("");
+    setCreateError(null);
+    setSheetScreen("options");
   }
 
   async function submitCreation() {
-    const type = createAction;
-    if (!type) return;
+    if (isCreating) return;
     const name = nextName.trim();
     if (!isValidNewFileEntryName(name)) {
       setCreateError("Enter a valid name without slashes or control characters.");
@@ -99,22 +104,40 @@ export function FileCreationControls({ currentPath }: { currentPath: string }) {
     }
 
     setCreateError(null);
-    setCreatingType(type);
+    setIsCreating(true);
     try {
-      if (type === "folder") {
+      if (creationType === "folder") {
         await createFolder(name);
       } else {
         await createFile(name);
       }
       setNextName("");
-      setCreateAction(null);
+      setSheetScreen("options");
       setIsCreateSheetVisible(false);
     } catch {
-      setCreateError(`Could not create ${type}. Try again.`);
+      setCreateError(`Could not create ${noun}. Try again.`);
     } finally {
-      setCreatingType(null);
+      setIsCreating(false);
     }
   }
+}
+
+function CreationOptions({ onSelect }: { onSelect: (type: CreationType) => void }) {
+  return (
+    <>
+      <View style={styles.nameHeader}>
+        <View accessibilityElementsHidden style={styles.headerBalance} />
+        <Text style={styles.nameTitle}>Create File/Folder</Text>
+        <View accessibilityElementsHidden style={styles.headerBalance} />
+      </View>
+      <Spacer size="xl" />
+      <Divider testID="files-create-divider" />
+      <CreateOption label="New folder" onPress={() => onSelect("folder")} />
+      <Divider testID="files-create-divider" />
+      <CreateOption label="New file" onPress={() => onSelect("file")} />
+      <Spacer size="4xl" />
+    </>
+  );
 }
 
 function CreateOption({ label, onPress }: { label: string; onPress: () => void }) {
@@ -125,144 +148,91 @@ function CreateOption({ label, onPress }: { label: string; onPress: () => void }
       onPress={onPress}
       style={({ pressed }) => [
         styles.createOption,
-        pressed && styles.createOptionPressed,
+        pressed && styles.pressed,
       ]}
     >
       <Spacer size="lg" />
       <View style={styles.createOptionContent}>
+        <Text style={styles.createOptionLabel}>{label}</Text>
         <Icon
-          icon={Add01Icon}
+          icon={ChevronRight}
           size={22}
           color={semanticColors.textDefault}
           style={styles.createOptionIcon}
         />
-        <Text style={styles.createOptionLabel}>{label}</Text>
       </View>
       <Spacer size="lg" />
     </Pressable>
   );
 }
 
-function FileCreatePopup({
-  type,
+function NameCreationScreen({
+  noun,
   name,
   error,
   loading,
+  onBack,
   onChangeName,
-  onClose,
   onConfirm,
 }: {
-  type: CreationType | null;
+  noun: CreationType;
   name: string;
   error: string | null;
   loading: boolean;
+  onBack: () => void;
   onChangeName: (value: string) => void;
-  onClose: () => void;
   onConfirm: () => void;
 }) {
-  const noun = type === "folder" ? "folder" : "file";
-
   return (
-    <Modal
-      transparent
-      animationType="fade"
-      visible={type !== null}
-      onRequestClose={loading ? undefined : onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.popupOverlay}
-      >
-        <Pressable
-          accessibilityLabel="Close file creation popup"
+    <View style={styles.nameScreen}>
+      <View style={styles.nameHeader}>
+        <IconButton
+          accessibilityLabel="Back to creation options"
+          icon={ArrowLeft01Icon}
+          iconSize={22}
+          buttonSize={32}
           disabled={loading}
-          onPress={onClose}
-          style={styles.popupBackdrop}
+          pressedOpacity={1}
+          onPress={onBack}
         />
-        <View style={styles.popupCard}>
-          <Spacer size="xl" />
-          <Text style={styles.popupTitle}>New {noun}</Text>
+        <Text style={styles.nameTitle}>Name {noun}</Text>
+        <View accessibilityElementsHidden style={styles.headerBalance} />
+      </View>
+      <Spacer size="xl" />
+      <TextInput
+        accessibilityLabel={`New ${noun} name`}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoFocus
+        editable={!loading}
+        maxLength={255}
+        onChangeText={onChangeName}
+        onSubmitEditing={onConfirm}
+        returnKeyType="done"
+        value={name}
+        style={styles.nameInput}
+      />
+      {error ? (
+        <>
           <Spacer size="sm" />
-          <Text style={styles.popupBody}>Enter a name for the new {noun}.</Text>
-          <Spacer size="lg" />
-          <TextInput
-            accessibilityLabel={`New ${noun} name`}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
-            editable={!loading}
-            maxLength={255}
-            onChangeText={onChangeName}
-            onSubmitEditing={onConfirm}
-            returnKeyType="done"
-            value={name}
-            style={styles.popupInput}
-          />
-          {error ? (
-            <>
-              <Spacer size="sm" />
-              <Text style={styles.popupError}>{error}</Text>
-            </>
-          ) : null}
-          <Spacer size="xl" />
-          <View style={styles.popupButtons}>
-            <PopupButton label="Cancel" disabled={loading} onPress={onClose} />
-            <PopupButton
-              accessibilityLabel={`Confirm new ${noun}`}
-              label="Create"
-              loading={loading}
-              loadingTestID={`create-${noun}-confirm-loading`}
-              onPress={onConfirm}
-            />
-          </View>
-          <Spacer size="xl" />
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-function PopupButton({
-  label,
-  accessibilityLabel,
-  disabled = false,
-  loading = false,
-  loadingTestID,
-  onPress,
-}: {
-  label: string;
-  accessibilityLabel?: string;
-  disabled?: boolean;
-  loading?: boolean;
-  loadingTestID?: string;
-  onPress: () => void;
-}) {
-  const isDisabled = disabled || loading;
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityState={{ busy: loading, disabled: isDisabled }}
-      disabled={isDisabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.popupButton,
-        styles.popupButtonNeutral,
-        pressed && styles.createOptionPressed,
-        isDisabled && styles.createOptionDisabled,
-      ]}
-    >
-      {loading ? (
-        <ActivityIndicator
-          testID={loadingTestID}
-          size="small"
-          color={semanticColors.textDefault}
+          <Text style={styles.error}>{error}</Text>
+        </>
+      ) : null}
+      <Spacer size="2xl" />
+      <View style={styles.nameFooter}>
+        <FloatingActionButton
+          accessibilityLabel={`Create ${noun}`}
+          accessibilityState={{ busy: loading, disabled: loading }}
+          icon={ArrowRight01Icon}
+          iconTestID={`create-${noun}-submit-icon`}
+          loading={loading}
+          loadingTestID={`create-${noun}-submit-loading`}
+          onPress={onConfirm}
+          style={styles.submitButton}
         />
-      ) : (
-        <Text style={styles.popupButtonText}>{label}</Text>
-      )}
-    </Pressable>
+      </View>
+      <Spacer size="xl" />
+    </View>
   );
 }
 
@@ -270,16 +240,14 @@ const styles = StyleSheet.create({
   createOption: {
     alignSelf: "stretch",
   },
-  createOptionPressed: {
+  pressed: {
     opacity: 0.65,
-  },
-  createOptionDisabled: {
-    opacity: 0.5,
   },
   createOptionContent: {
     paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 8,
   },
   createOptionIcon: {
@@ -290,42 +258,26 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: semanticColors.textDefault,
   },
-  popupOverlay: {
+  nameScreen: {
+    alignSelf: "stretch",
+    paddingHorizontal: 16,
+  },
+  nameHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  nameTitle: {
     flex: 1,
-    justifyContent: "center",
-    paddingHorizontal: 24,
+    fontFamily: fonts.productMedium,
+    fontSize: 18,
+    color: semanticColors.textDefault,
+    textAlign: "center",
   },
-  popupBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(13, 12, 12, 0.36)",
+  headerBalance: {
+    width: 32,
+    height: 32,
   },
-  popupCard: {
-    width: "100%",
-    maxWidth: 420,
-    alignSelf: "center",
-    paddingHorizontal: 20,
-    backgroundColor: palette.neutral[50],
-    borderWidth: 1,
-    borderColor: palette.neutral[300],
-    borderRadius: 20,
-    shadowColor: palette.neutral[900],
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 12,
-  },
-  popupTitle: {
-    fontFamily: mockFonts.semibold,
-    fontSize: 19,
-    color: mockColors.ink,
-  },
-  popupBody: {
-    fontFamily: mockFonts.body,
-    fontSize: 14,
-    lineHeight: 20,
-    color: mockColors.muted,
-  },
-  popupInput: {
+  nameInput: {
     height: 48,
     paddingHorizontal: 14,
     fontFamily: mockFonts.body,
@@ -336,32 +288,18 @@ const styles = StyleSheet.create({
     borderColor: palette.neutral[300],
     borderRadius: 12,
   },
-  popupError: {
+  error: {
     fontFamily: mockFonts.body,
     fontSize: 13,
     color: palette.coral[600],
   },
-  popupButtons: {
+  nameFooter: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    columnGap: 8,
   },
-  popupButton: {
-    minWidth: 88,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderRadius: 12,
-  },
-  popupButtonNeutral: {
-    backgroundColor: palette.neutral[50],
-    borderColor: palette.neutral[300],
-  },
-  popupButtonText: {
-    fontFamily: mockFonts.semibold,
-    fontSize: 14,
-    color: mockColors.ink,
+  submitButton: {
+    position: "relative",
+    right: 0,
+    bottom: 0,
   },
 });

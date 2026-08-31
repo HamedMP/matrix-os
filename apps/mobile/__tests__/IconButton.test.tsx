@@ -27,4 +27,23 @@ describe("IconButton", () => {
     });
   });
 
+  it("replaces its icon with a spinner while loading", () => {
+    render(
+      <IconButton
+        accessibilityLabel="Add"
+        icon={Add01Icon}
+        iconTestID="add-icon"
+        loading
+        loadingTestID="add-loading"
+      />,
+    );
+
+    expect(screen.getByTestId("add-loading")).toBeTruthy();
+    expect(screen.queryByTestId("add-icon")).toBeNull();
+    expect(screen.getByLabelText("Add").props.accessibilityState).toMatchObject({
+      busy: true,
+      disabled: true,
+    });
+  });
+
 });

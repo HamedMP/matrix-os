@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import {
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   type ColorValue,
@@ -16,6 +17,9 @@ export interface IconButtonProps
   iconColor?: ColorValue;
   iconSize?: number;
   iconTestID?: string;
+  loading?: boolean;
+  loadingTestID?: string;
+  spinnerColor?: ColorValue;
   backgroundColor?: ColorValue;
   buttonSize?: number;
   borderRadius?: number;
@@ -29,6 +33,9 @@ export function IconButton({
   iconColor = semanticColors.textDefault,
   iconSize = 20,
   iconTestID,
+  loading = false,
+  loadingTestID,
+  spinnerColor,
   backgroundColor = "transparent",
   buttonSize = 40,
   borderRadius = 15,
@@ -36,10 +43,18 @@ export function IconButton({
   style,
   ...pressableProps
 }: IconButtonProps) {
+  const disabled = Boolean(pressableProps.disabled || loading);
+
   return (
     <Pressable
       {...pressableProps}
       accessibilityRole={pressableProps.accessibilityRole ?? "button"}
+      accessibilityState={{
+        ...pressableProps.accessibilityState,
+        busy: loading || pressableProps.accessibilityState?.busy,
+        disabled,
+      }}
+      disabled={disabled}
       style={({ pressed }) => [
         styles.button,
         {
@@ -52,7 +67,15 @@ export function IconButton({
         pressed && { opacity: pressedOpacity },
       ]}
     >
-      <Icon testID={iconTestID} icon={icon} size={iconSize} color={iconColor} />
+      {loading ? (
+        <ActivityIndicator
+          testID={loadingTestID}
+          size="small"
+          color={spinnerColor ?? iconColor}
+        />
+      ) : (
+        <Icon testID={iconTestID} icon={icon} size={iconSize} color={iconColor} />
+      )}
     </Pressable>
   );
 }

@@ -48,7 +48,6 @@ import FilesScreen from "../app/(drawer)/files";
 
 describe("mock files screen", () => {
   beforeEach(() => {
-    jest.useFakeTimers();
     jest.clearAllMocks();
     mockUseComputerDirectory.mockReturnValue({
       computer: { handle: "solar-vale" },
@@ -62,10 +61,6 @@ describe("mock files screen", () => {
       createFolder: mockCreateFolder,
       createFile: mockCreateFile,
     });
-  });
-
-  afterEach(() => {
-    jest.useRealTimers();
   });
 
   it("opens a folder as one modal workspace", () => {
@@ -147,7 +142,7 @@ describe("mock files screen", () => {
     });
   });
 
-  it("creates a folder while showing progress in the popup confirm button", async () => {
+  it("pushes a folder naming screen and shows progress in its FAB", async () => {
     let resolveCreate: (() => void) | undefined;
     mockCreateFolder.mockImplementation(() => new Promise<void>((resolve) => {
       resolveCreate = resolve;
@@ -156,63 +151,78 @@ describe("mock files screen", () => {
 
     fireEvent.press(screen.getByLabelText("Create"));
     fireEvent.press(screen.getByLabelText("New folder"));
-    expect(screen.queryByTestId("files-create-sheet")).toBeNull();
-    await React.act(async () => {
-      jest.advanceTimersByTime(500);
-    });
+    expect(screen.getByTestId("files-create-sheet")).toBeTruthy();
+    expect(screen.getByText("Name folder")).toBeTruthy();
+    expect(screen.getByLabelText("Back to creation options")).toBeTruthy();
     fireEvent.changeText(screen.getByLabelText("New folder name"), "Work");
-    fireEvent.press(screen.getByLabelText("Confirm new folder"));
+    const confirmButton = screen.getByLabelText("Create folder");
+    expect(NativeStyleSheet.flatten(confirmButton.props.style)).toMatchObject({
+      position: "relative",
+      width: 48,
+      height: 48,
+      borderRadius: 999,
+      backgroundColor: "#2B3715",
+    });
+    expect(screen.getByTestId("create-folder-submit-icon")).toBeTruthy();
+    fireEvent.press(confirmButton);
 
     expect(mockCreateFolder).toHaveBeenCalledWith("Work");
     expect(screen.getByLabelText("New folder name")).toBeTruthy();
-    expect(screen.getByTestId("create-folder-confirm-loading")).toBeTruthy();
-    expect(screen.getByLabelText("Confirm new folder").props.accessibilityState).toMatchObject({
+    expect(screen.getByTestId("create-folder-submit-loading")).toBeTruthy();
+    expect(screen.getByLabelText("Create folder").props.accessibilityState).toMatchObject({
       busy: true,
       disabled: true,
     });
-    expect(screen.queryByTestId("files-create-sheet")).toBeNull();
+    expect(screen.getByTestId("files-create-sheet")).toBeTruthy();
 
     await React.act(async () => resolveCreate?.());
 
-    expect(screen.queryByLabelText("New folder name")).toBeNull();
     expect(screen.queryByTestId("files-create-sheet")).toBeNull();
   });
 
-  it("keeps the creation popup open and restores its confirm button after a failed request", async () => {
+  it("keeps the naming sheet open and restores its submit FAB after a failed request", async () => {
     mockCreateFolder.mockRejectedValue(new Error("request failed"));
     render(<FilesScreen />);
 
     fireEvent.press(screen.getByLabelText("Create"));
     fireEvent.press(screen.getByLabelText("New folder"));
-    await React.act(async () => {
-      jest.advanceTimersByTime(500);
-    });
     fireEvent.changeText(screen.getByLabelText("New folder name"), "Work");
     await React.act(async () => {
-      fireEvent.press(screen.getByLabelText("Confirm new folder"));
+      fireEvent.press(screen.getByLabelText("Create folder"));
     });
 
     expect(screen.getByLabelText("New folder name")).toBeTruthy();
     expect(screen.getByText("Could not create folder. Try again.")).toBeTruthy();
-    expect(screen.queryByTestId("create-folder-confirm-loading")).toBeNull();
-    expect(screen.queryByTestId("files-create-sheet")).toBeNull();
+    expect(screen.queryByTestId("create-folder-submit-loading")).toBeNull();
+    expect(screen.getByTestId("create-folder-submit-icon")).toBeTruthy();
+    expect(screen.getByTestId("files-create-sheet")).toBeTruthy();
   });
 
-  it("creates a file through the matching popup", async () => {
+  it("creates a file through the matching sheet screen", async () => {
     mockCreateFile.mockResolvedValue(undefined);
     render(<FilesScreen />);
 
     fireEvent.press(screen.getByLabelText("Create"));
     fireEvent.press(screen.getByLabelText("New file"));
-    await React.act(async () => {
-      jest.advanceTimersByTime(500);
-    });
+    expect(screen.getByText("Name file")).toBeTruthy();
     fireEvent.changeText(screen.getByLabelText("New file name"), "notes.md");
-    fireEvent.press(screen.getByLabelText("Confirm new file"));
+    fireEvent.press(screen.getByLabelText("Create file"));
     await React.act(async () => undefined);
 
     expect(mockCreateFile).toHaveBeenCalledWith("notes.md");
     expect(screen.queryByTestId("files-create-sheet")).toBeNull();
+  });
+
+  it("returns from the naming screen to the creation options", () => {
+    render(<FilesScreen />);
+
+    fireEvent.press(screen.getByLabelText("Create"));
+    fireEvent.press(screen.getByLabelText("New file"));
+    fireEvent.press(screen.getByLabelText("Back to creation options"));
+
+    expect(screen.getByLabelText("New folder")).toBeTruthy();
+    expect(screen.getByLabelText("New file")).toBeTruthy();
+    expect(screen.queryByLabelText("New file name")).toBeNull();
   });
 
   it("shows three skeleton tiles while the root directory is loading", () => {
