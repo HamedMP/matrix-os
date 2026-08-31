@@ -113,7 +113,10 @@ suite("packaged Electron terminal clipboard", () => {
       },
     });
     page = await app.firstWindow();
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.waitForFunction(() => typeof window.operator?.invoke === "function");
+    await page.evaluate(async () => {
+      await window.operator.invoke("auth:start-device-flow", {});
+    });
     await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
     await openSession("matrix-task-1");
