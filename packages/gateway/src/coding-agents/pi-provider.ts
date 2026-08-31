@@ -584,6 +584,9 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     try {
       credentialLaunch = await options.resolveCredentialLaunch?.(input.signal);
     } catch (err: unknown) {
+      if (input.signal?.aborted) {
+        return { events: [], outcome: "aborted", sessionId: input.sessionId };
+      }
       logCodingAgentWarning("pi provider credential resolution failed", err);
       return { events: [], outcome: "failed", sessionId: input.sessionId };
     }

@@ -263,6 +263,7 @@ export function createOpenCodeCodingAgentProvider(
   }): Promise<{ events: AgentThreadEvent[]; outcome: "completed" | "failed" | "aborted"; sessionId?: string }> {
     let launch;
     try { launch = await options.resolveCredentialLaunch(input.signal); } catch (error: unknown) {
+      if (input.signal?.aborted) return { events: [], outcome: "aborted" };
       logCodingAgentWarning("OpenCode credential resolution failed", error);
       return { events: [], outcome: "failed" };
     }
