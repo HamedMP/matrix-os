@@ -14,11 +14,13 @@ const MAX_FILE_BYTES = 256 * 1024;
 const LOGIN_LIFETIME_MS = 10 * 60_000;
 const MAX_LEGACY_REVISION_LOOKBACK = 64;
 const SafeRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+const DigestSchema = z.string().length(64).regex(/^[a-f0-9]+$/);
 const EnabledHarnessSchema = z.enum(["codex", "claude"]);
 const ReceiptSchema = z.object({
   key: SafeRefSchema,
-  payloadHash: z.string().length(64).regex(/^[a-f0-9]+$/),
-  recoveryHash: z.string().length(64).regex(/^[a-f0-9]+$/).optional(),
+  payloadHash: DigestSchema,
+  recoveryHash: DigestSchema.optional(),
+  legacyPayloadHash: DigestSchema.optional(),
   attempt: ProviderConnectionAttemptSchema,
 }).strict();
 const ReceiptDocumentSchema = z.object({
@@ -85,24 +87,40 @@ function loginSessionName(recoveryHash: string): string {
   return `provider-login-${recoveryHash.slice(0, 24)}`;
 }
 
-function isExpiredCanonicalRecoveryReceipt(
+interface RecoverySession {
+  name: string;
+  legacyPayloadHash?: string;
+}
+
+function exactRecoverySession(
   receipt: ReceiptDocument["receipts"][number],
   recoveryHash: string,
   input: LoginInput,
-  currentTime: Date,
-): boolean {
+): RecoverySession | null {
   if (receipt.recoveryHash !== recoveryHash
-    || currentProviderConnectionAttempt(receipt.attempt, currentTime).state !== "expired"
     || receipt.attempt.harnessInstanceId !== input.mutation.harnessInstanceId
     || receipt.attempt.accountId !== input.mutation.accountId
     || receipt.attempt.method !== input.mutation.method
     || receipt.attempt.action.kind !== "open_terminal") {
-    return false;
+    return null;
   }
-  // The recovery hash binds provider, harness, driver, instance, account, and
-  // method. Requiring its canonical session name additionally prevents a
-  // migrated legacy or unrelated terminal from being adopted by this path.
-  return receipt.attempt.action.terminalSessionId === loginSessionName(recoveryHash);
+  const sessionName = receipt.attempt.action.terminalSessionId;
+  if (sessionName === loginSessionName(recoveryHash)) return { name: sessionName };
+  if (input.harness.harness !== "codex" && input.harness.harness !== "claude") return null;
+  const legacyPayloadHash = receipt.legacyPayloadHash ?? receipt.payloadHash;
+  return sessionName === legacyLoginSessionName(input.harness.harness, legacyPayloadHash)
+    ? { name: sessionName, legacyPayloadHash }
+    : null;
+}
+
+function expiredRecoverySession(
+  receipt: ReceiptDocument["receipts"][number],
+  recoveryHash: string,
+  input: LoginInput,
+  currentTime: Date,
+): RecoverySession | null {
+  if (currentProviderConnectionAttempt(receipt.attempt, currentTime).state !== "expired") return null;
+  return exactRecoverySession(receipt, recoveryHash, input);
 }
 
 function legacyLoginSessionName(harness: "codex" | "claude", legacyPayloadHash: string): string {
@@ -218,12 +236,12 @@ export function createProviderTerminalLoginCoordinator(options: {
             throw new ProviderSettingsStoreError("idempotency_conflict", 409);
           }
           const attempt = currentProviderConnectionAttempt(duplicate.attempt, currentTime);
-          const renewExpired = isExpiredCanonicalRecoveryReceipt(
+          const renewExpired = expiredRecoverySession(
             duplicate,
             recoveryHash,
             input,
             currentTime,
-          );
+          ) !== null;
           if (!renewExpired && attempt.state !== "expired" && attempt.action.kind === "open_terminal") {
             try {
               await options.registry.get(attempt.action.terminalSessionId);
@@ -270,6 +288,7 @@ export function createProviderTerminalLoginCoordinator(options: {
           document.receipts[legacyIndex] = ReceiptSchema.parse({
             ...legacyReceipt,
             recoveryHash,
+            legacyPayloadHash: legacyReceipt.payloadHash,
           });
           try {
             await persistReceipt(receiptsPath, ReceiptDocumentSchema.parse(document));
@@ -285,15 +304,26 @@ export function createProviderTerminalLoginCoordinator(options: {
         const activeRecoveryReceipts = [...document.receipts, ...recoveryDocument.receipts].filter((receipt) =>
           receipt.recoveryHash === recoveryHash
           && currentProviderConnectionAttempt(receipt.attempt, currentTime).state !== "expired");
-        const activeRecoveryAttempts = new Map(activeRecoveryReceipts.map((receipt) => [
-          JSON.stringify(receipt.attempt),
-          receipt.attempt,
-        ]));
+        const activeRecoveryAttempts = new Map<string, typeof activeRecoveryReceipts>();
+        for (const receipt of activeRecoveryReceipts) {
+          const key = JSON.stringify(receipt.attempt);
+          activeRecoveryAttempts.set(key, [...(activeRecoveryAttempts.get(key) ?? []), receipt]);
+        }
         if (activeRecoveryAttempts.size > 1) {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
-        const recoverable = activeRecoveryAttempts.values().next().value;
-        if (recoverable) {
+        const recoverableReceipts = activeRecoveryAttempts.values().next().value;
+        if (recoverableReceipts) {
+          const recoverySessions = new Map<string, RecoverySession>();
+          for (const candidate of recoverableReceipts) {
+            const session = exactRecoverySession(candidate, recoveryHash, input);
+            if (session) recoverySessions.set(JSON.stringify(session), session);
+          }
+          if (recoverySessions.size !== 1) {
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
+          const recoverySession = recoverySessions.values().next().value!;
+          const recoverable = recoverableReceipts[0]!.attempt;
           const attempt = currentProviderConnectionAttempt(recoverable, now());
           if (attempt.action.kind !== "open_terminal") {
             throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
@@ -302,6 +332,9 @@ export function createProviderTerminalLoginCoordinator(options: {
             key: input.mutation.idempotencyKey,
             payloadHash: hash,
             recoveryHash,
+            ...(recoverySession.legacyPayloadHash
+              ? { legacyPayloadHash: recoverySession.legacyPayloadHash }
+              : {}),
             attempt: recoverable,
           }));
           try {
@@ -329,17 +362,50 @@ export function createProviderTerminalLoginCoordinator(options: {
           return attempt;
         }
 
-        const canAdoptExpiredSession = [...document.receipts, ...recoveryDocument.receipts]
-          .some((receipt) => isExpiredCanonicalRecoveryReceipt(
-            receipt,
-            recoveryHash,
-            input,
-            currentTime,
-          ));
+        const expiredRecoverySessions = new Map<string, RecoverySession>();
+        for (const candidate of [...document.receipts, ...recoveryDocument.receipts]) {
+          const session = expiredRecoverySession(candidate, recoveryHash, input, currentTime);
+          if (session) expiredRecoverySessions.set(JSON.stringify(session), session);
+        }
+        if (expiredRecoverySessions.size > 1) {
+          throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        }
+        const expiredSession = expiredRecoverySessions.values().next().value;
         recoveryDocument.receipts = recoveryDocument.receipts.filter((receipt) =>
           receipt.recoveryHash !== recoveryHash);
         const command = LOGIN_COMMANDS[input.harness.harness];
-        const sessionName = loginSessionName(recoveryHash);
+        const canonicalSessionName = loginSessionName(recoveryHash);
+        let sessionName = canonicalSessionName;
+        let adoptedExpiredSession = false;
+        if (expiredSession) {
+          try {
+            await options.registry.get(expiredSession.name);
+            sessionName = expiredSession.name;
+            adoptedExpiredSession = true;
+          } catch (error) {
+            if (!isMissingSession(error)) throw error;
+          }
+        }
+        if (!adoptedExpiredSession) {
+          try {
+            await options.registry.get(canonicalSessionName);
+            if (expiredSession?.name === canonicalSessionName) {
+              adoptedExpiredSession = true;
+            } else {
+              try {
+                await options.registry.delete(canonicalSessionName, { force: true });
+              } catch (error) {
+                console.warn(
+                  "[provider-login] Failed to reconcile unrecorded login session:",
+                  error instanceof Error ? error.name : "UnknownError",
+                );
+                throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+              }
+            }
+          } catch (error) {
+            if (!isMissingSession(error)) throw error;
+          }
+        }
         const attempt = ProviderConnectionAttemptSchema.parse({
           id: `attempt_${hash.slice(0, 24)}`,
           harnessInstanceId: input.mutation.harnessInstanceId,
@@ -354,27 +420,11 @@ export function createProviderTerminalLoginCoordinator(options: {
           key: input.mutation.idempotencyKey,
           payloadHash: hash,
           recoveryHash,
+          ...(expiredSession?.legacyPayloadHash
+            ? { legacyPayloadHash: expiredSession.legacyPayloadHash }
+            : {}),
           attempt,
         });
-        let adoptedExpiredSession = false;
-        try {
-          await options.registry.get(sessionName);
-          if (canAdoptExpiredSession) {
-            adoptedExpiredSession = true;
-          } else {
-            try {
-              await options.registry.delete(sessionName, { force: true });
-            } catch (error) {
-              console.warn(
-                "[provider-login] Failed to reconcile unrecorded login session:",
-                error instanceof Error ? error.name : "UnknownError",
-              );
-              throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
-            }
-          }
-        } catch (error) {
-          if (!isMissingSession(error)) throw error;
-        }
         replaceBoundedReceipt(recoveryDocument, receipt);
         try {
           await writeProviderJsonAtomic(recoveryPath, ReceiptDocumentSchema.parse(recoveryDocument));

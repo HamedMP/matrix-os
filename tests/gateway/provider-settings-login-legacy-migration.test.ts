@@ -146,6 +146,90 @@ describe("provider terminal login legacy migration", () => {
     expect(sessions).toEqual(new Set([legacy.sessionName]));
   });
 
+  it("renews an expired migrated legacy session without creating a canonical duplicate", async () => {
+    const legacy = await seedLegacyLoginReceipt();
+    let checkedAt = new Date(now);
+    const login = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => new Date(checkedAt),
+    });
+    const migrated = await login.startLogin({
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 1,
+        idempotencyKey: "login_legacy_migrated_key",
+      },
+    });
+    expect(migrated.action).toEqual({
+      kind: "open_terminal",
+      terminalSessionId: legacy.sessionName,
+    });
+
+    checkedAt = new Date(Date.parse(migrated.expiresAt) + 1);
+    const renewed = await login.startLogin({
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 2,
+        idempotencyKey: "login_legacy_after_expiry",
+      },
+    });
+
+    expect(renewed).toMatchObject({
+      state: "pending",
+      action: { kind: "open_terminal", terminalSessionId: legacy.sessionName },
+    });
+    expect(Date.parse(renewed.expiresAt) - checkedAt.getTime()).toBe(10 * 60_000);
+
+    checkedAt = new Date(Date.parse(renewed.expiresAt) + 1);
+    const sameKeyRenewal = await login.startLogin({
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 2,
+        idempotencyKey: "login_legacy_after_expiry",
+      },
+    });
+    expect(sameKeyRenewal.action).toEqual({
+      kind: "open_terminal",
+      terminalSessionId: legacy.sessionName,
+    });
+
+    let latest = sameKeyRenewal;
+    for (let revision = 3; revision <= 70; revision += 1) {
+      checkedAt = new Date(Date.parse(latest.expiresAt) + 1);
+      latest = await login.startLogin({
+        ...legacyInput,
+        mutation: {
+          ...legacyInput.mutation,
+          expectedRevision: revision,
+          idempotencyKey: `login_legacy_after_expiry_${revision}`,
+        },
+      });
+      expect(latest.action).toEqual({
+        kind: "open_terminal",
+        terminalSessionId: legacy.sessionName,
+      });
+    }
+
+    const receipts = JSON.parse(await readFile(
+      join(homePath, "system/ai-providers/login-receipts.json"),
+      "utf8",
+    )) as { receipts: unknown[] };
+    const recovery = JSON.parse(await readFile(
+      join(homePath, "system/ai-providers/login-recovery.json"),
+      "utf8",
+    )) as { receipts: unknown[] };
+    expect(receipts.receipts).toHaveLength(64);
+    expect(recovery.receipts).toHaveLength(1);
+    expect(registry.create).not.toHaveBeenCalled();
+    expect(registry.delete).not.toHaveBeenCalled();
+    expect(sessions).toEqual(new Set([legacy.sessionName]));
+  });
+
   it.each([
     ["provider", { providerId: "openai", accountId: "owner_anthropic" }],
     ["account", { providerId: "anthropic", accountId: "owner_other" }],
