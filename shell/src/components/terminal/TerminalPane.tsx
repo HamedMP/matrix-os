@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useEffectEvent, useReducer, useRef, useState, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { createSocketHealth } from "@/lib/socket-health";
 import { useTerminalSettings } from "@/stores/terminal-settings";
@@ -84,6 +84,11 @@ import { createXtermLogger } from "./xterm-logger";
 import { createColdReplayVisibility, type ColdReplayVisibility } from "./cold-replay-visibility";
 import { parseTerminalServerMessage, stripTerminalControls } from "./terminal-server-message";
 import type { TerminalPaneProps } from "./terminal-pane-types";
+import {
+  terminalClipboardFailureFeedback,
+  terminalClipboardSuccessFeedback,
+  type TerminalClipboardFeedback,
+} from "./terminal-clipboard-feedback";
 import { useTerminalFocusRequest } from "./useTerminalFocusRequest";
 import { useTerminalFilePaste } from "./useTerminalFilePaste";
 import type { TerminalCompatMode } from "@/stores/terminal-store";
@@ -149,6 +154,7 @@ export function TerminalPane({
   const wsGenerationRef = useRef(0);
   const copyOperationGenerationRef = useRef(0);
   const pasteOperationGenerationRef = useRef(0);
+  const clipboardOperationSequenceRef = useRef(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
@@ -164,7 +170,7 @@ export function TerminalPane({
     INITIAL_TERMINAL_LINKS_STATE,
   );
   const [linkContextMenu, setLinkContextMenu] = useState<TerminalLinkMenuState | null>(null);
-  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [clipboardFeedback, setClipboardFeedback] = useState<TerminalClipboardFeedback | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | "elsewhere" | null>(null);
   const resumeLeaseRef = useRef<() => void>(() => undefined);
   const wasFocusedRef = useRef(isFocused);
@@ -192,8 +198,15 @@ export function TerminalPane({
     setLinkContextMenu(null);
     (termRef.current as Terminal | null)?.focus();
   }, []);
+  const reportClipboardFailure = useCallback((sequence: number, message: string) => {
+    setClipboardFeedback((current) => terminalClipboardFailureFeedback(current, sequence, message));
+  }, []);
+  const reportClipboardSuccess = useCallback((sequence: number) => {
+    setClipboardFeedback((current) => terminalClipboardSuccessFeedback(current, sequence));
+  }, []);
   const copyTerminalSelection = useCallback((selection: string) => {
     const operation = ++copyOperationGenerationRef.current;
+    const feedbackSequence = ++clipboardOperationSequenceRef.current;
     const initiatingSession = sessionIdRef.current;
     const canCommit = () => copyOperationGenerationRef.current === operation
       && sessionIdRef.current === initiatingSession;
@@ -203,16 +216,21 @@ export function TerminalPane({
       canCommit,
     }).then((result) => {
       if (!canCommit() || result === "cancelled") return;
-      setPasteError(result === "success" ? null : "Clipboard copy failed. Try again.");
+      if (result === "success") {
+        reportClipboardSuccess(feedbackSequence);
+      } else {
+        reportClipboardFailure(feedbackSequence, "Clipboard copy failed. Try again.");
+      }
     }).catch((error: unknown) => {
       console.warn("[terminal] clipboard copy unavailable", {
         category: error instanceof DOMException ? error.name : "clipboard-error",
       });
-      if (canCommit()) setPasteError("Clipboard copy failed. Try again.");
+      if (canCommit()) reportClipboardFailure(feedbackSequence, "Clipboard copy failed. Try again.");
     });
-  }, []);
+  }, [reportClipboardFailure, reportClipboardSuccess]);
   const pasteTerminalClipboard = useCallback((submit = false) => {
     const operation = ++pasteOperationGenerationRef.current;
+    const feedbackSequence = ++clipboardOperationSequenceRef.current;
     const initiatingSession = sessionIdRef.current;
     const initiatingSocket = wsRef.current;
     const initiatingSocketGeneration = wsGenerationRef.current;
@@ -229,19 +247,20 @@ export function TerminalPane({
     }).then((result) => {
       if (!canCommit() || result === "cancelled") return;
       if (result === "failed" || result === "unavailable") {
-        setPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
+        reportClipboardFailure(feedbackSequence, "Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
       } else if (result === "image" || result === "text") {
-        setPasteError(null);
+        reportClipboardSuccess(feedbackSequence);
       }
     }).catch((error: unknown) => {
       console.warn("[terminal] clipboard paste unavailable", {
         category: error instanceof DOMException ? error.name : "clipboard-error",
       });
       if (canCommit()) {
-        setPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
+        reportClipboardFailure(feedbackSequence, "Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
       }
     });
-  }, []);
+  }, [reportClipboardFailure, reportClipboardSuccess]);
+  const pasteTerminalClipboardEvent = useEffectEvent(pasteTerminalClipboard);
   const selectAllTerminal = useCallback(() => {
     (termRef.current as Terminal | null)?.selectAll();
   }, []);
@@ -376,9 +395,11 @@ export function TerminalPane({
   useTerminalFilePaste({
     containerRef,
     cwd,
+    feedbackSequenceRef: clipboardOperationSequenceRef,
     operationGenerationRef: pasteOperationGenerationRef,
+    reportPasteFailure: reportClipboardFailure,
+    reportPasteSuccess: reportClipboardSuccess,
     sessionIdRef,
-    setPasteError,
     socketGenerationRef: wsGenerationRef,
     wsRef,
   });
@@ -415,7 +436,7 @@ export function TerminalPane({
         return;
       }
       if (detail.action === "paste") {
-        pasteTerminalClipboard(detail.submit === true);
+        pasteTerminalClipboardEvent(detail.submit === true);
         return;
       }
       if (!detail.data) return;
@@ -426,7 +447,7 @@ export function TerminalPane({
     };
     window.addEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
     return () => window.removeEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
-  }, [paneId, pasteTerminalClipboard]);
+  }, [paneId]);
 
   // This effect owns the terminal's full lifecycle (WebSocket connect, xterm
   // bootstrap, reconnect timers, heartbeat). init() returns the real cleanup,
@@ -1885,10 +1906,10 @@ export function TerminalPane({
   }, [viewportHeight, viewportOffsetTop, keyboardOpen, suppressNativeKeyboard]);
 
   useEffect(() => {
-    if (!pasteError) return;
-    const timer = window.setTimeout(() => setPasteError(null), 5_000);
+    if (!clipboardFeedback) return;
+    const timer = window.setTimeout(() => setClipboardFeedback(null), 5_000);
     return () => window.clearTimeout(timer);
-  }, [pasteError]);
+  }, [clipboardFeedback]);
 
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
@@ -1907,7 +1928,7 @@ export function TerminalPane({
       onPointerDown={handleFocus}
       onClick={handleFocus}
     >
-      {pasteError && (
+      {clipboardFeedback && (
         <div
           role="status"
           aria-live="polite"
@@ -1917,10 +1938,10 @@ export function TerminalPane({
             background: "rgba(127, 29, 29, 0.95)",
           }}
         >
-          <div style={{ flex: 1, minWidth: 0 }}>{pasteError}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>{clipboardFeedback.message}</div>
           <button
             type="button"
-            onClick={() => setPasteError(null)}
+            onClick={() => setClipboardFeedback(null)}
             style={{
               background: "none",
               border: "none",
@@ -1935,7 +1956,7 @@ export function TerminalPane({
           </button>
         </div>
       )}
-      {connectionNotice && !pasteError && (
+      {connectionNotice && !clipboardFeedback && (
         <div
           role="status"
           aria-live="polite"

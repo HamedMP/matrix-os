@@ -841,6 +841,160 @@ describe("TerminalPane scrolling", () => {
     }));
   });
 
+  it("keeps a newer copy failure visible when an older paste completes", async () => {
+    const pendingRead = deferred<string>();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: vi.fn(() => pendingRead.promise),
+        writeText: vi.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError")),
+      },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+    render(
+      <TerminalPane
+        paneId="pane-copy-feedback-during-paste"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    terminal.selection = "copy failure remains visible";
+    const shortcut = (key: "c" | "v") => terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    shortcut("v");
+    shortcut("c");
+    expect(await screen.findByText("Clipboard copy failed. Try again.")).toBeTruthy();
+
+    pendingRead.resolve("paste still completes");
+    await act(async () => pendingRead.promise);
+
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "input",
+      data: "\x1b[200~paste still completes\x1b[201~",
+    }));
+    expect(screen.getByText("Clipboard copy failed. Try again.")).toBeTruthy();
+  });
+
+  it("keeps a newer paste failure visible when an older copy completes", async () => {
+    let rejectWrite!: (reason?: unknown) => void;
+    const pendingWrite = new Promise<void>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: vi.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError")),
+        writeText: vi.fn(() => pendingWrite),
+      },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-paste-feedback-during-copy"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    terminal.selection = "older copy completion";
+    const shortcut = (key: "c" | "v") => terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    shortcut("c");
+    shortcut("v");
+    expect(await screen.findByText(/Clipboard paste failed\. Try again/)).toBeTruthy();
+
+    rejectWrite(new DOMException("denied", "NotAllowedError"));
+    await act(async () => pendingWrite.catch(() => undefined));
+
+    expect(screen.getByText(/Clipboard paste failed\. Try again/)).toBeTruthy();
+    expect(screen.queryByText("Clipboard copy failed. Try again.")).toBeNull();
+  });
+
+  it("shows an older paste failure after a newer copy succeeds", async () => {
+    let rejectRead!: (reason?: unknown) => void;
+    const pendingRead = new Promise<string>((_resolve, reject) => {
+      rejectRead = reject;
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText: vi.fn(() => pendingRead), writeText },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-running-paste-feedback"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    terminal.selection = "newer copy succeeds";
+    const shortcut = (key: "c" | "v") => terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    shortcut("v");
+    shortcut("c");
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+
+    rejectRead(new DOMException("denied", "NotAllowedError"));
+    await act(async () => pendingRead.catch(() => undefined));
+
+    expect(await screen.findByText(/Clipboard paste failed\. Try again/)).toBeTruthy();
+  });
+
   it("shows generic paste feedback and retries exactly once after recovery", async () => {
     const readText = vi.fn()
       .mockRejectedValueOnce(new Error("OpenAI /Users/operator/private.txt session-main"))

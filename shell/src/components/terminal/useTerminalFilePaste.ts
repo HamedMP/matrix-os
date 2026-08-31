@@ -15,9 +15,11 @@ type CurrentRef<T> = { current: T };
 interface TerminalFilePasteOptions {
   containerRef: CurrentRef<HTMLDivElement | null>;
   cwd: string;
+  feedbackSequenceRef: CurrentRef<number>;
   operationGenerationRef: CurrentRef<number>;
+  reportPasteFailure: (sequence: number, message: string) => void;
+  reportPasteSuccess: (sequence: number) => void;
   sessionIdRef: CurrentRef<string | null>;
-  setPasteError: (message: string | null) => void;
   socketGenerationRef: CurrentRef<number>;
   wsRef: CurrentRef<WebSocket | null>;
 }
@@ -25,9 +27,11 @@ interface TerminalFilePasteOptions {
 export function useTerminalFilePaste({
   containerRef,
   cwd,
+  feedbackSequenceRef,
   operationGenerationRef,
+  reportPasteFailure,
+  reportPasteSuccess,
   sessionIdRef,
-  setPasteError,
   socketGenerationRef,
   wsRef,
 }: TerminalFilePasteOptions): void {
@@ -57,6 +61,7 @@ export function useTerminalFilePaste({
 
     const uploadAndPasteFiles = async (files: File[]) => {
       const operation = ++operationGenerationRef.current;
+      const feedbackSequence = ++feedbackSequenceRef.current;
       const sessionId = sessionIdRef.current;
       const initiatingSocket = wsRef.current;
       const initiatingSocketGeneration = socketGenerationRef.current;
@@ -65,7 +70,7 @@ export function useTerminalFilePaste({
         && wsRef.current === initiatingSocket
         && socketGenerationRef.current === initiatingSocketGeneration;
       if (!sessionId || !initiatingSocket) {
-        if (canCommit()) setPasteError("Image paste failed. Try again.");
+        if (canCommit()) reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
         return;
       }
       const terminalPaths: string[] = [];
@@ -126,12 +131,14 @@ export function useTerminalFilePaste({
       }
       if (!canCommit()) return;
       if (failed || terminalPaths.length === 0) {
-        setPasteError("Image paste failed. Try again.");
+        reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
         return;
       }
-      setPasteError(sendBracketedPaste(terminalPaths, initiatingSocket)
-        ? null
-        : "Image paste failed. Try again.");
+      if (sendBracketedPaste(terminalPaths, initiatingSocket)) {
+        reportPasteSuccess(feedbackSequence);
+      } else {
+        reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
+      }
     };
 
     const captureImagePayload = (event: ClipboardEvent | DragEvent): File[] => {
@@ -176,9 +183,11 @@ export function useTerminalFilePaste({
   }, [
     containerRef,
     cwd,
+    feedbackSequenceRef,
     operationGenerationRef,
+    reportPasteFailure,
+    reportPasteSuccess,
     sessionIdRef,
-    setPasteError,
     socketGenerationRef,
     wsRef,
   ]);
