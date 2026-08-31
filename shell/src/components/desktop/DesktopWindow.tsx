@@ -185,6 +185,8 @@ export function DesktopWindow({
         {win.path.startsWith("__terminal__") ? (
           <TerminalApp
             launchTargetId={win.id}
+            layoutId={win.terminalLayoutId}
+            persistence={win.terminalPersistence ?? "durable"}
             embeddedChrome
             desktopParity={desktopParity}
             windowControls={{

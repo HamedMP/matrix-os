@@ -17,6 +17,130 @@ export interface TerminalLayout {
   sidebarOpen?: boolean;
 }
 
+function layoutValueEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeLayoutValue<T>(base: T, local: T, remote: T): T {
+  if (layoutValueEqual(local, remote)) return local;
+  if (layoutValueEqual(local, base)) return remote;
+  if (layoutValueEqual(remote, base)) return local;
+  return remote;
+}
+
+function mergeOptionalPaneValue<T>(
+  base: T | undefined,
+  local: T | undefined,
+  remote: T | undefined,
+): T | undefined {
+  if (base !== undefined && (local === undefined || remote === undefined)) return undefined;
+  return mergeLayoutValue(base, local, remote);
+}
+
+function findPaneById(node: PaneNode, paneId: string): Extract<PaneNode, { type: "pane" }> | null {
+  if (node.type === "pane") return node.id === paneId ? node : null;
+  return findPaneById(node.children[0], paneId) ?? findPaneById(node.children[1], paneId);
+}
+
+function mergePaneTrees(base: PaneNode, local: PaneNode, remote: PaneNode): PaneNode {
+  if (layoutValueEqual(local, remote)) return local;
+  if (layoutValueEqual(local, base)) return remote;
+  if (layoutValueEqual(remote, base)) return local;
+  if (base.type !== local.type || base.type !== remote.type) {
+    if (remote.type === "pane") {
+      const basePane = findPaneById(base, remote.id);
+      const localPane = findPaneById(local, remote.id);
+      if (basePane && localPane) return mergePaneTrees(basePane, localPane, remote);
+    }
+    if (local.type === "pane") {
+      const basePane = findPaneById(base, local.id);
+      const remotePane = findPaneById(remote, local.id);
+      if (basePane && remotePane) return mergePaneTrees(basePane, local, remotePane);
+    }
+    return remote;
+  }
+
+  if (base.type === "pane" && local.type === "pane" && remote.type === "pane") {
+    if (base.id !== local.id || base.id !== remote.id) return remote;
+    const sessionId = mergeOptionalPaneValue(base.sessionId, local.sessionId, remote.sessionId);
+    const claudeMode = mergeOptionalPaneValue(base.claudeMode, local.claudeMode, remote.claudeMode);
+    const startupCommand = mergeOptionalPaneValue(base.startupCommand, local.startupCommand, remote.startupCommand);
+    const compatMode = mergeOptionalPaneValue(base.compatMode, local.compatMode, remote.compatMode);
+    return {
+      type: "pane",
+      id: base.id,
+      cwd: mergeLayoutValue(base.cwd, local.cwd, remote.cwd),
+      ...(sessionId === undefined ? {} : { sessionId }),
+      ...(claudeMode === undefined ? {} : { claudeMode }),
+      ...(startupCommand === undefined ? {} : { startupCommand }),
+      ...(compatMode === undefined ? {} : { compatMode }),
+    };
+  }
+
+  if (base.type === "split" && local.type === "split" && remote.type === "split") {
+    return {
+      type: "split",
+      direction: mergeLayoutValue(base.direction, local.direction, remote.direction),
+      ratio: mergeLayoutValue(base.ratio, local.ratio, remote.ratio),
+      children: [
+        mergePaneTrees(base.children[0], local.children[0], remote.children[0]),
+        mergePaneTrees(base.children[1], local.children[1], remote.children[1]),
+      ],
+    };
+  }
+
+  return remote;
+}
+
+/** Three-way merge for concurrent Terminal windows. Tab/pane deletion wins over stale references. */
+export function mergeTerminalLayouts(
+  base: TerminalLayout,
+  local: TerminalLayout,
+  remote: TerminalLayout,
+): TerminalLayout {
+  const baseTabs = base.tabs ?? [];
+  const localTabs = local.tabs ?? [];
+  const remoteTabs = remote.tabs ?? [];
+  const localOrderUnchanged = layoutValueEqual(
+    localTabs.map((tab) => tab.id),
+    baseTabs.map((tab) => tab.id),
+  );
+  const candidateIds = [
+    ...(localOrderUnchanged ? remoteTabs : localTabs).map((tab) => tab.id),
+    ...localTabs.map((tab) => tab.id),
+    ...remoteTabs.map((tab) => tab.id),
+  ];
+  const orderedIds = candidateIds.filter((id, index) => candidateIds.indexOf(id) === index);
+  const tabs = orderedIds.flatMap((id) => {
+    const baseTab = baseTabs.find((tab) => tab.id === id);
+    const localTab = localTabs.find((tab) => tab.id === id);
+    const remoteTab = remoteTabs.find((tab) => tab.id === id);
+    if (!baseTab) return localTab ? [localTab] : remoteTab ? [remoteTab] : [];
+    if (!localTab || !remoteTab) return [];
+    return [{
+      id,
+      label: mergeLayoutValue(baseTab.label, localTab.label, remoteTab.label),
+      paneTree: mergePaneTrees(baseTab.paneTree, localTab.paneTree, remoteTab.paneTree),
+    }];
+  });
+  const requestedActiveTabId = mergeLayoutValue(
+    base.activeTabId,
+    local.activeTabId,
+    remote.activeTabId,
+  );
+  const activeTabId = tabs.some((tab) => tab.id === requestedActiveTabId)
+    ? requestedActiveTabId
+    : tabs.find((tab) => tab.id === local.activeTabId)?.id
+      ?? tabs.find((tab) => tab.id === remote.activeTabId)?.id
+      ?? tabs[0]?.id
+      ?? "";
+  return {
+    tabs,
+    activeTabId,
+    sidebarOpen: mergeLayoutValue(base.sidebarOpen, local.sidebarOpen, remote.sidebarOpen),
+  };
+}
+
 export function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
