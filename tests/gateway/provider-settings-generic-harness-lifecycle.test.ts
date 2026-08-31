@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
-import { createProviderGenericHarnessCoordinator } from "../../packages/gateway/src/ai-providers/provider-generic-harness-coordinator.js";
+import {
+  createProviderGenericHarnessCoordinator,
+  reconcileProviderRuntimeAtStartup,
+} from "../../packages/gateway/src/ai-providers/provider-generic-harness-coordinator.js";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import {
   writeProviderJsonAtomic,
@@ -653,6 +656,80 @@ describe("generic provider harness lifecycle coordinator", () => {
       "utf8",
     ));
     expect(receipts.receipts).toEqual([]);
+  });
+
+  it("keeps startup alive and gates mutations until pending recovery succeeds", async () => {
+    const { coordinator, restart, update } = await makeCoordinator();
+    const before = config([hermes]);
+    const applied = structuredClone(before);
+    applied.harnesses[0]!.route.modelId = "claude-opus-5";
+    const appliedInput = {
+      mutation: {
+        type: "set_route" as const,
+        expectedRevision: 0,
+        idempotencyKey: "route_startup_recovery_pending",
+        harnessInstanceId: hermes.id,
+        route: applied.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after: applied,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_startup_recovery_pending",
+    };
+    await coordinator.applyConfiguration(appliedInput);
+    update.mockRejectedValueOnce(new Error("rollback unavailable"));
+    await expect(coordinator.rollbackConfiguration(appliedInput)).rejects.toThrow("rollback unavailable");
+
+    const restarted = restart();
+    update.mockRejectedValueOnce(new Error("startup compensation unavailable"));
+    await expect(reconcileProviderRuntimeAtStartup(restarted)).resolves.toBeUndefined();
+    const pending = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(pending.receipts).toMatchObject([{
+      key: "route_startup_recovery_pending",
+      state: "compensation_pending",
+    }]);
+
+    const retryAfter = structuredClone(before);
+    retryAfter.harnesses[0]!.route.modelId = "claude-haiku-5";
+    const retryInput = {
+      mutation: {
+        type: "set_route" as const,
+        expectedRevision: 0,
+        idempotencyKey: "route_after_startup_recovery",
+        harnessInstanceId: hermes.id,
+        route: retryAfter.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after: retryAfter,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_after_startup_recovery",
+    };
+    update.mockRejectedValueOnce(new Error("retry compensation unavailable"));
+    await expect(restarted.applyConfiguration(retryInput)).rejects.toMatchObject({
+      code: "runtime_unavailable",
+      status: 503,
+    });
+    expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ messagingModel: "claude-haiku-5" }));
+
+    await restarted.applyConfiguration(retryInput);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      messagingModel: "claude-haiku-5",
+    }));
+    const recovered = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(recovered.receipts).toMatchObject([{
+      key: "route_after_startup_recovery",
+      state: "applied",
+    }]);
   });
 
   it("reconciles compensation pending under an older key before a fresh mutation", async () => {
