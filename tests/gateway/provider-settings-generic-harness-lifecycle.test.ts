@@ -413,6 +413,61 @@ describe("generic provider harness lifecycle coordinator", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("logs a safe rejection and continues serializing later configuration", async () => {
+    const { coordinator, update } = await makeCoordinator();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    update.mockRejectedValueOnce(new Error("secret provider failure at /private/runtime"));
+    const before = config([hermes]);
+    const firstAfter = structuredClone(before);
+    firstAfter.harnesses[0]!.route.modelId = "claude-opus-5";
+    const secondAfter = structuredClone(before);
+    secondAfter.harnesses[0]!.route.modelId = "claude-haiku-5";
+
+    try {
+      await expect(coordinator.applyConfiguration({
+        mutation: {
+          type: "set_route",
+          expectedRevision: 0,
+          idempotencyKey: "route_failed_1",
+          harnessInstanceId: hermes.id,
+          route: firstAfter.harnesses[0]!.route,
+          accessSourceId: "matrix_included",
+          accountId: null,
+        },
+        before,
+        after: firstAfter,
+        canonical: genericCanonical(),
+        idempotencyKey: "route_failed_1",
+      })).rejects.toThrow("secret provider failure");
+
+      await coordinator.applyConfiguration({
+        mutation: {
+          type: "set_route",
+          expectedRevision: 0,
+          idempotencyKey: "route_recovered_1",
+          harnessInstanceId: hermes.id,
+          route: secondAfter.harnesses[0]!.route,
+          accessSourceId: "matrix_included",
+          accountId: null,
+        },
+        before,
+        after: secondAfter,
+        canonical: genericCanonical(),
+        idempotencyKey: "route_recovered_1",
+      });
+
+      expect(update).toHaveBeenCalledTimes(2);
+      expect(warning).toHaveBeenCalledWith(
+        "[provider-settings] Generic harness configuration failed:",
+        "Error",
+      );
+      expect(warning.mock.calls.flat().join(" ")).not.toContain("secret provider failure");
+      expect(warning.mock.calls.flat().join(" ")).not.toContain("/private/runtime");
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("runs add, enable, disable, and remove through the real settings store without touching binaries", async () => {
     const { coordinator, update } = await makeCoordinator({ codingHarnesses: ["pi"] });
     const canonical = genericCanonical();

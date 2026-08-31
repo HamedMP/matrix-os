@@ -222,7 +222,12 @@ export function createProviderGenericHarnessCoordinator(options: {
     ],
     applyConfiguration(input) {
       const pending = tail.then(() => coordinate(input));
-      tail = pending.catch(() => undefined);
+      tail = pending.catch((error: unknown) => {
+        console.warn(
+          "[provider-settings] Generic harness configuration failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      });
       return pending;
     },
   };
