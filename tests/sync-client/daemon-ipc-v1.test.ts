@@ -36,11 +36,14 @@ describe("daemon IPC v1 envelopes", () => {
     });
   });
 
-  it("dispatches auth and shell control commands through v1 dependencies", async () => {
+  it("dispatches auth and workspace terminal commands through v1 dependencies", async () => {
+    const workspaceId = "tws_00000000000000000000000000000001";
+    const tabId = "tt_00000000000000000000000000000001";
     const shell = {
-      listSessions: async () => [{ name: "main" }],
-      createSession: async (input: Record<string, unknown>) => ({ ...input, created: true }),
-      deleteSession: async () => undefined,
+      listWorkspaces: async () => [{ id: workspaceId, scope: "main" }],
+      ensureWorkspace: async (input: Record<string, unknown>) => ({ ...input, id: workspaceId }),
+      createTab: async (id: string, input: Record<string, unknown>) => ({ ...input, workspaceId: id, id: tabId }),
+      terminateTab: async () => undefined,
     };
     const handler = createIpcHandler({
       config: baseConfig(),
@@ -68,14 +71,22 @@ describe("daemon IPC v1 envelopes", () => {
       accessToken: "tok",
       expiresAt: 4102444800000,
     });
-    await expect(handler("shell.list", {})).resolves.toEqual({ sessions: [{ name: "main" }] });
-    await expect(handler("shell.create", { name: "main" })).resolves.toEqual({ name: "main", created: true });
-    await expect(handler("shell.destroy", { name: "main" })).resolves.toEqual({ ok: true });
+    await expect(handler("terminal.workspaces.list", {})).resolves.toEqual({
+      workspaces: [{ id: workspaceId, scope: "main" }],
+    });
+    await expect(handler("terminal.workspace.ensure", {})).resolves.toEqual({ id: workspaceId });
+    await expect(handler("terminal.tab.create", { workspaceId, name: "main" })).resolves.toEqual({
+      name: "main",
+      workspaceId,
+      id: tabId,
+    });
+    await expect(handler("terminal.tab.terminate", { workspaceId, tabId })).resolves.toEqual({ ok: true });
   });
 
   it("validates shell IPC payloads before dispatching to the REST client", async () => {
+    const workspaceId = "tws_00000000000000000000000000000001";
     const shell = {
-      createSession: vi.fn(async (input: Record<string, unknown>) => ({ ...input, created: true })),
+      createTab: vi.fn(async (_id: string, input: Record<string, unknown>) => ({ ...input, created: true })),
     };
     const handler = createIpcHandler({
       config: baseConfig(),
@@ -88,12 +99,11 @@ describe("daemon IPC v1 envelopes", () => {
       shell,
     });
 
-    await expect(handler("shell.create", { name: "../main", cwd: "../outside" })).rejects.toThrow("invalid_request");
-    expect(shell.createSession).not.toHaveBeenCalled();
+    await expect(handler("terminal.tab.create", { workspaceId, name: "main", cwd: "../outside" })).rejects.toThrow("invalid_request");
+    expect(shell.createTab).not.toHaveBeenCalled();
   });
 
-  it("dispatches tab, pane, layout, and sync v1 aliases", async () => {
-    const splitPane = vi.fn(async () => ({ paneId: "pane-2" }));
+  it("removes legacy session, native-pane, and layout commands while preserving sync aliases", async () => {
     const handler = createIpcHandler({
       config: baseConfig(),
       syncState: baseSyncState(),
@@ -102,37 +112,20 @@ describe("daemon IPC v1 envelopes", () => {
       persistPauseState: async () => undefined,
       clearAuth: async () => undefined,
       exit: () => undefined,
-      shell: {
-        listTabs: async () => [{ idx: 0, name: "main" }],
-        createTab: async () => ({ ok: true }),
-        switchTab: async () => ({ ok: true }),
-        closeTab: async () => ({ ok: true }),
-        splitPane,
-        closePane: async () => ({ ok: true }),
-        listLayouts: async () => [{ name: "dev" }],
-        showLayout: async () => ({ name: "dev", kdl: "layout {}" }),
-        saveLayout: async () => ({ ok: true }),
-        applyLayout: async () => ({ ok: true }),
-        deleteLayout: async () => ({ ok: true }),
-      },
+      shell: {},
     });
 
-    await expect(handler("tab.list", { session: "main" })).resolves.toEqual({ tabs: [{ idx: 0, name: "main" }] });
-    await expect(handler("pane.split", { session: "main", direction: "right" })).resolves.toEqual({ paneId: "pane-2" });
-    await expect(handler("pane.split", { session: "main", direction: "down" })).resolves.toEqual({ paneId: "pane-2" });
-    await expect(handler("pane.split", { session: "main" })).resolves.toEqual({ paneId: "pane-2" });
-    expect(splitPane).toHaveBeenNthCalledWith(1, "main", { direction: "right" });
-    expect(splitPane).toHaveBeenNthCalledWith(2, "main", { direction: "down" });
-    expect(splitPane).toHaveBeenNthCalledWith(3, "main", { direction: "right" });
-    await expect(handler("layout.list", {})).resolves.toEqual({ layouts: [{ name: "dev" }] });
+    for (const command of ["shell.list", "shell.create", "shell.destroy", "tab.list", "pane.split", "layout.list"]) {
+      await expect(handler(command, {})).rejects.toThrow("Unknown IPC command");
+    }
     await expect(handler("sync.status", {})).resolves.toMatchObject({ syncing: true, fileCount: 0 });
     await expect(handler("sync.pause", {})).resolves.toEqual({ paused: true });
     await expect(handler("sync.resume", {})).resolves.toEqual({ paused: false });
   });
 
-  it("rejects invalid pane split directions before dispatch", async () => {
+  it("rejects invalid workspace and tab IDs before dispatch", async () => {
     const shell = {
-      splitPane: vi.fn(async () => ({ paneId: "pane-2" })),
+      terminateTab: vi.fn(async () => undefined),
     };
     const handler = createIpcHandler({
       config: baseConfig(),
@@ -145,12 +138,13 @@ describe("daemon IPC v1 envelopes", () => {
       shell,
     });
 
-    await expect(handler("pane.split", { session: "main", direction: "sideways" })).rejects.toThrow("invalid_request");
-    expect(shell.splitPane).not.toHaveBeenCalled();
+    await expect(handler("terminal.tab.terminate", { workspaceId: "main", tabId: "tab-1" })).rejects.toThrow("invalid_request");
+    expect(shell.terminateTab).not.toHaveBeenCalled();
   });
 
-  it("keeps daemon shell-control pane direction errors typed", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ paneId: "pane-2" })));
+  it("routes daemon shell-control through workspace and tab endpoints", async () => {
+    const workspaceId = "tws_00000000000000000000000000000001";
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ id: "workspace" })));
     vi.stubGlobal("fetch", fetchImpl);
     const client = createDaemonShellControlClient({
       config: baseConfig(),
@@ -163,10 +157,11 @@ describe("daemon IPC v1 envelopes", () => {
     });
 
     try {
-      await expect(client.splitPane("main", { direction: "sideways" })).rejects.toMatchObject({
-        code: "invalid_request",
-      });
-      expect(fetchImpl).not.toHaveBeenCalled();
+      await expect(client.createTab(workspaceId, { name: "tab" })).resolves.toEqual({ id: "workspace" });
+      expect(fetchImpl).toHaveBeenCalledWith(
+        `https://gateway.example/api/terminal/workspaces/${workspaceId}/tabs`,
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "tab" }) }),
+      );
     } finally {
       vi.unstubAllGlobals();
     }
