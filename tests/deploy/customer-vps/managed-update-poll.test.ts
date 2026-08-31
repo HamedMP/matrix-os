@@ -52,6 +52,15 @@ describe('managed host passive updates', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).not.toContain('prepared');
   });
+  it('allows loopback HTTP locally but rejects network HTTP before sending the machine bearer', () => {
+    const local = poll('{"passiveUpdatesAllowed":true}', { PLATFORM_INTERNAL_URL: 'http://localhost:9000' });
+    expect(local.stderr).toContain('policy-read');
+    expect(local.stdout).toContain('applied');
+
+    const network = poll('{"passiveUpdatesAllowed":true}', { PLATFORM_INTERNAL_URL: 'http://distro-platform-1:9000' });
+    expect(network.stderr).not.toContain('policy-read');
+    expect(network.stdout).not.toContain('applied');
+  });
   it('preserves self-hosted channel polling without a machine policy request', () => {
     const result = poll('{}', { MATRIX_MACHINE_ID: '' });
     expect(result.status).toBe(0);

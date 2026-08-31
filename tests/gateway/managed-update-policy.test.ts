@@ -38,4 +38,25 @@ describe('managed runtime version selection', () => {
     expect(await createManagedUpdatePolicy({ env: {} }).selectionAllowed()).toBe(true);
   });
 
+  it('allows loopback HTTP for local development but never sends the bearer over network HTTP', async () => {
+    const grant = () => new Response(JSON.stringify({
+      managed: true,
+      versionSelectionAllowed: true,
+      holdUntil: new Date(Date.now() + 60_000).toISOString(),
+    }));
+    const loopbackFetch = vi.fn().mockImplementation(grant);
+    expect(await createManagedUpdatePolicy({
+      env: { ...env, PLATFORM_INTERNAL_URL: 'http://localhost:9000' },
+      fetchFn: loopbackFetch,
+    }).selectionAllowed()).toBe(true);
+    expect(loopbackFetch).toHaveBeenCalledOnce();
+
+    const networkFetch = vi.fn().mockImplementation(grant);
+    expect(await createManagedUpdatePolicy({
+      env: { ...env, PLATFORM_INTERNAL_URL: 'http://distro-platform-1:9000' },
+      fetchFn: networkFetch,
+    }).selectionAllowed()).toBe(false);
+    expect(networkFetch).not.toHaveBeenCalled();
+  });
+
 });

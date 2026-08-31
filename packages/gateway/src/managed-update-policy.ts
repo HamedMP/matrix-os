@@ -1,6 +1,14 @@
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod/v4';
 
+const LOOPBACK_POLICY_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+function isAllowedPolicyTransport(url: URL): boolean {
+  if (url.username || url.password || !url.hostname) return false;
+  if (url.protocol === 'https:') return true;
+  return url.protocol === 'http:' && LOOPBACK_POLICY_HOSTS.has(url.hostname.toLowerCase());
+}
+
 export function createManagedUpdatePolicy(options: { env?: NodeJS.ProcessEnv; fetchFn?: typeof fetch } = {}) {
   const env = options.env ?? process.env;
   const managed = Boolean(env.MATRIX_MACHINE_ID);
@@ -21,6 +29,9 @@ export function createManagedUpdatePolicy(options: { env?: NodeJS.ProcessEnv; fe
       try {
         if (!env.PLATFORM_INTERNAL_URL || !env.UPGRADE_TOKEN || !/^[A-Za-z0-9_-]{1,128}$/.test(env.MATRIX_MACHINE_ID!)) return false;
         const url = new URL(`/backend-management/machines/${env.MATRIX_MACHINE_ID}/policy`, env.PLATFORM_INTERNAL_URL);
+        // Local loopback HTTP is useful in development. Never attach the
+        // privileged machine bearer to cleartext container or network traffic.
+        if (!isAllowedPolicyTransport(url)) return false;
         const response = await (options.fetchFn ?? fetch)(url.toString(), {
           headers: { authorization: `Bearer ${env.UPGRADE_TOKEN}` }, signal: AbortSignal.timeout(3000), redirect: 'error',
         });

@@ -8,9 +8,31 @@ if [[ ! "${MATRIX_MACHINE_ID:-}" =~ ^[A-Za-z0-9_-]{1,128}$ ]] \
   echo 'matrix-sync-agent: passive update policy configuration unavailable' >&2
   exit 1
 fi
+policy_url="${PLATFORM_INTERNAL_URL%/}/backend-management/machines/$MATRIX_MACHINE_ID/policy"
+if ! policy_protocol="$(python3 - "$policy_url" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+try:
+    url = urlsplit(sys.argv[1])
+    if not url.hostname or url.username or url.password:
+        raise ValueError("invalid policy URL")
+    if url.scheme == "https":
+        print("https")
+    elif url.scheme == "http" and url.hostname.lower() in {"localhost", "127.0.0.1", "::1"}:
+        print("http")
+    else:
+        raise ValueError("unsafe policy transport")
+except ValueError:
+    sys.exit(1)
+PY
+)"; then
+  echo 'matrix-sync-agent: passive update policy transport unavailable' >&2
+  exit 1
+fi
 if ! decision="$(curl --fail --silent --max-time 10 --max-filesize 4096 \
-  --proto '=http,https' --header "Authorization: Bearer $UPGRADE_TOKEN" \
-  "${PLATFORM_INTERNAL_URL%/}/backend-management/machines/$MATRIX_MACHINE_ID/policy" \
+  --proto "=$policy_protocol" --header "Authorization: Bearer $UPGRADE_TOKEN" \
+  "$policy_url" \
   | python3 -c '
 import json
 import sys
