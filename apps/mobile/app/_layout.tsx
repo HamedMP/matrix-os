@@ -38,6 +38,7 @@ import { mobileQueryClient } from "@/lib/query-client";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
+import { startMobileThemeController } from "@/lib/theme-preference";
 import {
   captureScreen,
   getAnalyticsClient,
@@ -113,6 +114,8 @@ export default function RootLayout() {
 
   const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
   const ready = authenticated !== undefined;
+
+  useEffect(() => startMobileThemeController(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -391,6 +394,7 @@ function GatewayShell() {
           <Stack.Screen name="app-preview" options={{ headerShown: false, presentation: "fullScreenModal" }} />
           <Stack.Screen name="integrations-installed" options={{ headerShown: false, presentation: "fullScreenModal" }} />
           <Stack.Screen name="integration-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+          <Stack.Screen name="settings-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
           <Stack.Screen
             name="computers"
             options={{

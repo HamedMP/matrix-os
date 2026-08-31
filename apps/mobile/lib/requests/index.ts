@@ -36,4 +36,12 @@ export {
   renameTerminalSession,
   type TerminalSession,
 } from "./terminals";
+export {
+  createMobileBillingPortal,
+  fetchMobileBillingStatus,
+  fetchMobileSystemInfo,
+  updatePushRegistration,
+  type MobileBillingStatus,
+  type MobileSystemInfo,
+} from "./settings";
 export { mobileQueryKeys } from "./query-keys";

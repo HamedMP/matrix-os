@@ -47,4 +47,18 @@ export const mobileQueryKeys = {
     computerKey,
     slug,
   ] as const,
+  systemInfo: (userId: string, computerKey: string) => [
+    "mobile",
+    "settings",
+    "system",
+    userId,
+    computerKey,
+  ] as const,
+  billing: (userId: string, runtimeSlot: string) => [
+    "mobile",
+    "settings",
+    "billing",
+    userId,
+    runtimeSlot,
+  ] as const,
 };
