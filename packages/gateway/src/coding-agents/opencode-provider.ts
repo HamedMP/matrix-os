@@ -288,6 +288,7 @@ export function createOpenCodeCodingAgentProvider(
       let timedOut = false;
       let failed = false;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       let sessionId = input.sessionId;
       let stdout = "";
       let stdoutBytes = 0;
@@ -297,6 +298,7 @@ export function createOpenCodeCodingAgentProvider(
       const stop = () => {
         if (settled || aborted) return;
         aborted = true;
+        if (timer) clearTimeout(timer);
         try { child.kill("SIGTERM"); } catch (error: unknown) { logCodingAgentWarning("OpenCode termination failed", error); }
         killTimer = setTimeout(() => {
           if (settled) return;
@@ -312,7 +314,7 @@ export function createOpenCodeCodingAgentProvider(
         active.delete(oldest);
       }
       active.set(input.threadId, stop);
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         timedOut = true;
         stop();
       }, timeoutMs);
@@ -320,7 +322,7 @@ export function createOpenCodeCodingAgentProvider(
       const finish = (code: number | null) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
         input.signal?.removeEventListener("abort", stop);
         if (active.get(input.threadId) === stop) active.delete(input.threadId);
