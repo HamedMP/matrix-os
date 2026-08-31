@@ -135,6 +135,14 @@ describe("funded AI policy routes", () => {
     await repository.setRuntimePolicy({
       identity: { ownerId: "user_alice", machineId: "machine_staging", runtimeSlot: "staging" },
       expectedRevision: 0, enabled: true, allowedModelIds: [modelId], expiresAt: null,
+      monthlyBudgetMicrousd: 1_000,
+    });
+    await repository.grantCredit({
+      entryId: "grant_routes_staging",
+      identity: { ownerId: "user_alice", machineId: "machine_staging", runtimeSlot: "staging" },
+      kind: "promotional_grant",
+      amountMicrousd: 1_000,
+      sourceReference: "route-fixture-staging",
     });
 
     const response = await app.request(fundedCredentialPath("alice", "staging"), {
