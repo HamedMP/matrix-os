@@ -138,7 +138,8 @@ function matchesLegacyLoginPayload(
   return false;
 }
 
-function appendBoundedReceipt(document: ReceiptDocument, receipt: ReceiptDocument["receipts"][number]): void {
+function replaceBoundedReceipt(document: ReceiptDocument, receipt: ReceiptDocument["receipts"][number]): void {
+  document.receipts = document.receipts.filter((candidate) => candidate.key !== receipt.key);
   document.receipts.push(receipt);
   if (document.receipts.length > MAX_RECEIPTS) {
     document.receipts.splice(0, document.receipts.length - MAX_RECEIPTS);
@@ -205,6 +206,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         const recoveryHash = recoveryIdentityHash(input);
         const document = await readReceipts(receiptsPath);
         const recoveryDocument = await readReceipts(recoveryPath);
+        const currentTime = now();
         const matchingReceipts = [...document.receipts, ...recoveryDocument.receipts]
           .filter((receipt) => receipt.key === input.mutation.idempotencyKey);
         if (new Set(matchingReceipts.map((receipt) => receipt.payloadHash)).size > 1) {
@@ -215,8 +217,14 @@ export function createProviderTerminalLoginCoordinator(options: {
           if (duplicate.payloadHash !== hash) {
             throw new ProviderSettingsStoreError("idempotency_conflict", 409);
           }
-          const attempt = currentProviderConnectionAttempt(duplicate.attempt, now());
-          if (attempt.state !== "expired" && attempt.action.kind === "open_terminal") {
+          const attempt = currentProviderConnectionAttempt(duplicate.attempt, currentTime);
+          const renewExpired = isExpiredCanonicalRecoveryReceipt(
+            duplicate,
+            recoveryHash,
+            input,
+            currentTime,
+          );
+          if (!renewExpired && attempt.state !== "expired" && attempt.action.kind === "open_terminal") {
             try {
               await options.registry.get(attempt.action.terminalSessionId);
             } catch (error) {
@@ -231,10 +239,9 @@ export function createProviderTerminalLoginCoordinator(options: {
               });
             }
           }
-          return attempt;
+          if (!renewExpired) return attempt;
         }
 
-        const currentTime = now();
         const liveLegacyReceipts = [];
         for (const receipt of document.receipts) {
           const attempt = currentProviderConnectionAttempt(receipt.attempt, currentTime);
@@ -291,7 +298,7 @@ export function createProviderTerminalLoginCoordinator(options: {
           if (attempt.action.kind !== "open_terminal") {
             throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
           }
-          appendBoundedReceipt(recoveryDocument, ReceiptSchema.parse({
+          replaceBoundedReceipt(recoveryDocument, ReceiptSchema.parse({
             key: input.mutation.idempotencyKey,
             payloadHash: hash,
             recoveryHash,
@@ -368,7 +375,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         } catch (error) {
           if (!isMissingSession(error)) throw error;
         }
-        appendBoundedReceipt(recoveryDocument, receipt);
+        replaceBoundedReceipt(recoveryDocument, receipt);
         try {
           await writeProviderJsonAtomic(recoveryPath, ReceiptDocumentSchema.parse(recoveryDocument));
         } catch (error) {
@@ -390,7 +397,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         if (session.name !== sessionName) {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
-        appendBoundedReceipt(document, receipt);
+        replaceBoundedReceipt(document, receipt);
         try {
           await persistReceipt(receiptsPath, ReceiptDocumentSchema.parse(document));
         } catch (error) {
