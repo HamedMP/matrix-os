@@ -110,6 +110,7 @@ describe("ProviderSettingsStore", () => {
         "set_gateway_allowlist",
       ],
       applyConfiguration: vi.fn(async () => undefined),
+      rollbackConfiguration: vi.fn(async () => undefined),
     };
   });
 
@@ -463,6 +464,93 @@ describe("ProviderSettingsStore", () => {
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(results.find((result) => result.status === "rejected"))
       .toMatchObject({ reason: expect.objectContaining({ code: "revision_conflict" }) });
+  });
+
+  it("rolls runtime configuration back when canonical refresh fails", async () => {
+    let reads = 0;
+    const store = createStore({
+      snapshot: () => {
+        reads += 1;
+        if (reads === 2) throw new Error("refresh failed at /private/provider");
+        return canonical;
+      },
+    });
+    const mutation = {
+      type: "add_harness" as const,
+      expectedRevision: 0,
+      idempotencyKey: "add_refresh_failure_1",
+      harness: "opencode" as const,
+      displayName: "OpenCode",
+      route: { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" },
+      accessSourceId: "matrix_included",
+      accountId: null,
+    };
+
+    await expect(store.mutate(mutation)).rejects.toMatchObject({ code: "projection_unavailable" });
+    expect(runtime.applyConfiguration).toHaveBeenCalledOnce();
+    expect(runtime.rollbackConfiguration).toHaveBeenCalledOnce();
+    expect(runtime.rollbackConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ mutation, idempotencyKey: mutation.idempotencyKey }),
+    );
+    expect((await store.getSnapshot()).revision).toBe(0);
+  });
+
+  it("rolls runtime configuration back when owner configuration persistence fails", async () => {
+    const store = createStore();
+    await store.getSnapshot();
+    const tempPath = join(dirname(store.configurationPath), ".settings.json.tmp");
+    const sentinelPath = join(homePath, "runtime-rollback-sentinel.txt");
+    await writeFile(sentinelPath, "untouched");
+    await symlink(sentinelPath, tempPath);
+    const mutation = {
+      type: "add_harness" as const,
+      expectedRevision: 0,
+      idempotencyKey: "add_persist_failure_1",
+      harness: "opencode" as const,
+      displayName: "OpenCode",
+      route: { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" },
+      accessSourceId: "matrix_included",
+      accountId: null,
+    };
+
+    await expect(store.mutate(mutation)).rejects.toMatchObject({ code: "configuration_unavailable" });
+    expect(runtime.applyConfiguration).toHaveBeenCalledOnce();
+    expect(runtime.rollbackConfiguration).toHaveBeenCalledOnce();
+    expect(await readFile(sentinelPath, "utf8")).toBe("untouched");
+    await unlink(tempPath);
+    expect((await store.getSnapshot()).revision).toBe(0);
+  });
+
+  it("fails closed without exposing a runtime compensation error", async () => {
+    let reads = 0;
+    runtime.rollbackConfiguration = vi.fn(async () => {
+      throw new Error("rollback failed at /private/provider");
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const store = createStore({
+      snapshot: () => {
+        reads += 1;
+        if (reads === 2) throw new Error("canonical refresh failed");
+        return canonical;
+      },
+    });
+
+    try {
+      await expect(store.mutate({
+        type: "add_harness",
+        expectedRevision: 0,
+        idempotencyKey: "add_compensation_failure_1",
+        harness: "opencode",
+        displayName: "OpenCode",
+        route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" },
+        accessSourceId: "matrix_included",
+        accountId: null,
+      })).rejects.toMatchObject({ code: "runtime_unavailable" });
+      expect(warning.mock.calls.flat().join(" ")).not.toContain("rollback failed at");
+      expect(warning.mock.calls.flat().join(" ")).not.toContain("/private/provider");
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("returns an idempotent visible Terminal login attempt and keeps secrets outside sync/export", async () => {
