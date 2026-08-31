@@ -266,12 +266,16 @@ export class AiProviderService implements AiProviderSnapshotReader {
       .filter((source) => source.vendor === "anthropic")
       .map((source) => {
         const sourceModels = eligibleModelsForSource(source.id, catalog);
+        // A persisted selection is an explicit route request. If the selected
+        // access source cannot serve it, fail closed instead of silently
+        // replacing it with a cheaper or differently governed model.
         const configuredModel = savedModel !== null
-          && sourceModels.some((model) => model.id === savedModel)
-          ? savedModel
+          ? sourceModels.some((model) => model.id === savedModel)
+            ? savedModel
+            : null
           : sourceModels.some((model) => model.id === KERNEL_DEFAULTS.model)
-            ? KERNEL_DEFAULTS.model
-            : sourceModels[0]?.id ?? null;
+              ? KERNEL_DEFAULTS.model
+              : sourceModels[0]?.id ?? null;
         return {
           id: `kernel_${source.id}`,
           driverId: "kernel",

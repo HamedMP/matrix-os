@@ -6,9 +6,10 @@ import {
   resolveKernelModelOption,
 } from "../kernel-settings.js";
 
-export const AI_PROVIDER_CATALOG_VERSION = "bundled_2026_08_29";
+export const AI_PROVIDER_CATALOG_VERSION = "bundled_2026_08_30";
 export const MATRIX_INCLUDED_MODEL_IDS = ["claude-sonnet-5"] as const;
 export const OWNER_ANTHROPIC_MODEL_IDS = [
+  "claude-fable-5",
   "claude-opus-5",
   "claude-sonnet-5",
   "claude-haiku-4-5",
