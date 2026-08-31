@@ -178,6 +178,23 @@ describe("funded AI control-plane contracts", () => {
     }).success).toBe(false);
   });
 
+  it("projects durable funding shortfall as a contra-credit balance", () => {
+    const response = {
+      contractVersion: 1,
+      funding: {
+        ...funding,
+        fundingShortfallMicrousd: 150_000,
+        remainingBalanceMicrousd: 650_000,
+      },
+      policy,
+    } as const;
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.parse(response)).toEqual(response);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse({
+      ...response,
+      funding: { ...response.funding, remainingBalanceMicrousd: 800_000 },
+    }).success).toBe(false);
+  });
+
   it("keeps operator policy and promotional grant payloads bounded and identity-free", () => {
     const globalRequest = {
       expectedRevision: 4,

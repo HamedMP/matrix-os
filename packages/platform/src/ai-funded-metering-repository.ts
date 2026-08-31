@@ -69,44 +69,16 @@ type BalanceSnapshot = {
   promotional_balance_microusd: unknown;
   addon_balance_microusd: unknown;
   reserved_microusd: unknown;
+  funding_shortfall_microusd: unknown;
   month_period_start: string;
   month_spent_microusd: unknown;
   month_reserved_microusd: unknown;
-};
-
-type ExpirableReservationHold = {
-  reservation_id: string;
-  machine_id: string;
-  period_start: string;
-  reserved_microusd: unknown;
 };
 
 function exactInteger(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed)) throw new Error("Funded AI monetary total exceeds safe integer range");
   return parsed;
-}
-
-async function expireReservationHold(
-  executor: PlatformDB["executor"],
-  reservation: ExpirableReservationHold,
-  checkedAt: string,
-): Promise<void> {
-  const reserved = exactInteger(reservation.reserved_microusd);
-  const releasedBalance = await executor.updateTable("ai_funded_runtime_balances").set({
-    reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
-    month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
-    updated_at: checkedAt,
-  }).where("machine_id", "=", reservation.machine_id)
-    .where(sql<boolean>`reserved_microusd >= ${reserved}`)
-    .returning("machine_id").executeTakeFirst();
-  if (!releasedBalance) throw new Error("Funded AI balance invariant violated");
-  const expiredReservation = await executor.updateTable("ai_funded_usage_reservations")
-    .set({ status: "expired" })
-    .where("reservation_id", "=", reservation.reservation_id)
-    .where("status", "=", "settling")
-    .returning("reservation_id").executeTakeFirst();
-  if (!expiredReservation) throw new Error("Funded AI reservation invariant violated");
 }
 
 function hashesEqual(left: string, right: string): boolean {
@@ -139,6 +111,7 @@ function fundingSummary(
 ): FundedAiFundingSummary {
   const creditBalanceMicrousd = exactInteger(balance.credit_balance_microusd);
   const reservedMicrousd = exactInteger(balance.reserved_microusd);
+  const fundingShortfallMicrousd = exactInteger(balance.funding_shortfall_microusd);
   const settledThisMonthMicrousd = exactInteger(balance.month_spent_microusd);
   const reservedThisMonthMicrousd = exactInteger(balance.month_reserved_microusd);
   return FundedAiFundingSummarySchema.parse({
@@ -151,12 +124,99 @@ function fundingSummary(
     promotionalBalanceMicrousd: exactInteger(balance.promotional_balance_microusd),
     addonBalanceMicrousd: exactInteger(balance.addon_balance_microusd),
     creditBalanceMicrousd,
-    remainingBalanceMicrousd: Math.max(0, creditBalanceMicrousd - reservedMicrousd),
+    fundingShortfallMicrousd,
+    remainingBalanceMicrousd: Math.max(
+      0,
+      creditBalanceMicrousd - reservedMicrousd - fundingShortfallMicrousd,
+    ),
     remainingBudgetMicrousd: Math.max(
       0,
       monthlyBudgetMicrousd - settledThisMonthMicrousd - reservedThisMonthMicrousd,
     ),
   });
+}
+
+async function recordUsageFunding(
+  executor: PlatformDB["executor"],
+  reservation: {
+    reservation_id: string;
+    request_id: string;
+    owner_id: string;
+    machine_id: string;
+    runtime_slot: string;
+    period_start: string;
+    reserved_microusd: unknown;
+  },
+  actualCostMicrousd: number,
+  promotionalDebitMicrousd: number,
+  addonDebitMicrousd: number,
+  checkedAt: string,
+): Promise<void> {
+  const reservedMicrousd = exactInteger(reservation.reserved_microusd);
+  const chargedMicrousd = promotionalDebitMicrousd + addonDebitMicrousd;
+  const fundingShortfallMicrousd = actualCostMicrousd - chargedMicrousd;
+  if (fundingShortfallMicrousd < 0) {
+    throw new Error("Funded AI usage debit exceeds provider actual");
+  }
+  const ledgerRows = [
+    promotionalDebitMicrousd > 0 ? {
+      entry_id: `usage:${reservation.reservation_id}:promotional`,
+      owner_id: reservation.owner_id,
+      machine_id: reservation.machine_id,
+      runtime_slot: reservation.runtime_slot,
+      kind: "promotional_debit",
+      amount_microusd: -promotionalDebitMicrousd,
+      source_reference: reservation.request_id,
+      reservation_id: reservation.reservation_id,
+      period_start: reservation.period_start,
+      expires_at: null,
+      created_at: checkedAt,
+    } : null,
+    addonDebitMicrousd > 0 ? {
+      entry_id: `usage:${reservation.reservation_id}:addon`,
+      owner_id: reservation.owner_id,
+      machine_id: reservation.machine_id,
+      runtime_slot: reservation.runtime_slot,
+      kind: "addon_debit",
+      amount_microusd: -addonDebitMicrousd,
+      source_reference: reservation.request_id,
+      reservation_id: reservation.reservation_id,
+      period_start: reservation.period_start,
+      expires_at: null,
+      created_at: checkedAt,
+    } : null,
+    fundingShortfallMicrousd > 0 ? {
+      entry_id: `usage:${reservation.reservation_id}:shortfall`,
+      owner_id: reservation.owner_id,
+      machine_id: reservation.machine_id,
+      runtime_slot: reservation.runtime_slot,
+      kind: "usage_shortfall",
+      amount_microusd: -fundingShortfallMicrousd,
+      source_reference: reservation.request_id,
+      reservation_id: reservation.reservation_id,
+      period_start: reservation.period_start,
+      expires_at: null,
+      created_at: checkedAt,
+    } : null,
+  ].filter((row): row is NonNullable<typeof row> => row !== null);
+  if (ledgerRows.length > 0) {
+    await executor.insertInto("ai_funded_credit_ledger").values(ledgerRows).execute();
+  }
+  const debitedBalance = await executor.updateTable("ai_funded_runtime_balances").set({
+    credit_balance_microusd: sql<number>`credit_balance_microusd - ${chargedMicrousd}`,
+    promotional_balance_microusd: sql<number>`promotional_balance_microusd - ${promotionalDebitMicrousd}`,
+    addon_balance_microusd: sql<number>`addon_balance_microusd - ${addonDebitMicrousd}`,
+    reserved_microusd: sql<number>`reserved_microusd - ${reservedMicrousd}`,
+    funding_shortfall_microusd: sql<number>`funding_shortfall_microusd + ${fundingShortfallMicrousd}`,
+    month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_spent_microusd + ${actualCostMicrousd} ELSE month_spent_microusd END`,
+    month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reservedMicrousd} ELSE month_reserved_microusd END`,
+    updated_at: checkedAt,
+  }).where("machine_id", "=", reservation.machine_id)
+    .where(sql<boolean>`reserved_microusd >= ${reservedMicrousd}`)
+    .where(sql<boolean>`credit_balance_microusd >= ${chargedMicrousd}`)
+    .where(sql<boolean>`funding_shortfall_microusd <= ${Number.MAX_SAFE_INTEGER - fundingShortfallMicrousd}`)
+    .returning("machine_id").executeTakeFirst();
+  if (!debitedBalance) throw new Error("Funded AI balance invariant violated");
 }
 
 export function createAiFundedMeteringRepository(options: AiFundedMeteringRepositoryOptions) {
@@ -385,11 +445,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         updated_at: checkedAt,
       }).where("machine_id", "=", identity.machineId)
         .where(sql<boolean>`reserved_microusd <= ${Number.MAX_SAFE_INTEGER - request.maxCostMicrousd}`)
-        .where(sql<boolean>`credit_balance_microusd - reserved_microusd >= ${request.maxCostMicrousd}`)
+        .where(sql<boolean>`credit_balance_microusd - reserved_microusd - funding_shortfall_microusd >= ${request.maxCostMicrousd}`)
         .where(sql<boolean>`${monthlyBudget} - month_spent_microusd - month_reserved_microusd >= ${request.maxCostMicrousd}`)
         .returning([
           "credit_balance_microusd", "promotional_balance_microusd", "addon_balance_microusd",
-          "reserved_microusd", "month_period_start", "month_spent_microusd", "month_reserved_microusd",
+          "reserved_microusd", "funding_shortfall_microusd", "month_period_start",
+          "month_spent_microusd", "month_reserved_microusd",
         ])
         .executeTakeFirst();
       if (!reserved) {
@@ -400,7 +461,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         if (request.maxCostMicrousd > availableBudget) throw new AiFundedPolicyError("budget_exceeded");
         throw new AiFundedPolicyError("insufficient_credit");
       }
-      const remainingBalance = exactInteger(reserved.credit_balance_microusd) - exactInteger(reserved.reserved_microusd);
+      const remainingBalance = exactInteger(reserved.credit_balance_microusd)
+        - exactInteger(reserved.reserved_microusd)
+        - exactInteger(reserved.funding_shortfall_microusd);
       const remainingBudget = monthlyBudget - exactInteger(reserved.month_spent_microusd)
         - exactInteger(reserved.month_reserved_microusd);
       const fundingSources = await reserveFundingSources(
@@ -640,57 +703,21 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           checkedAt,
         );
       }
-      // Legacy rows have no trustworthy source allocation. If their complete
-      // provider actual is no longer backed, close the hold without recording
-      // usage or debiting only a misleading fraction of the charge.
       const chargedMicrousd = appliedPromotionalDebit + addonDebit;
-      if (!attributed && chargedMicrousd !== request.actualCostMicrousd) {
-        await expireReservationHold(trx.executor, reservation, checkedAt);
-        return null;
+      if (attributed && chargedMicrousd !== request.actualCostMicrousd) {
+        throw new Error("Funded AI attributed reservation debit invariant violated");
       }
-      if (appliedPromotionalDebit > 0) {
-        await trx.executor.insertInto("ai_funded_credit_ledger").values({
-          entry_id: `usage:${reservation.reservation_id}:promotional`,
-          owner_id: reservation.owner_id,
-          machine_id: reservation.machine_id,
-          runtime_slot: reservation.runtime_slot,
-          kind: "promotional_debit",
-          amount_microusd: -appliedPromotionalDebit,
-          source_reference: reservation.request_id,
-          reservation_id: reservation.reservation_id,
-          period_start: reservation.period_start,
-          expires_at: null,
-          created_at: checkedAt,
-        }).execute();
-      }
-      if (addonDebit > 0) {
-        await trx.executor.insertInto("ai_funded_credit_ledger").values({
-          entry_id: `usage:${reservation.reservation_id}:addon`,
-          owner_id: reservation.owner_id,
-          machine_id: reservation.machine_id,
-          runtime_slot: reservation.runtime_slot,
-          kind: "addon_debit",
-          amount_microusd: -addonDebit,
-          source_reference: reservation.request_id,
-          reservation_id: reservation.reservation_id,
-          period_start: reservation.period_start,
-          expires_at: null,
-          created_at: checkedAt,
-        }).execute();
-      }
-      const debitedBalance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-        credit_balance_microusd: sql<number>`credit_balance_microusd - ${chargedMicrousd}`,
-        promotional_balance_microusd: sql<number>`promotional_balance_microusd - ${appliedPromotionalDebit}`,
-        addon_balance_microusd: sql<number>`addon_balance_microusd - ${addonDebit}`,
-        reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
-        month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_spent_microusd + ${request.actualCostMicrousd} ELSE month_spent_microusd END`,
-        month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
-        updated_at: checkedAt,
-      }).where("machine_id", "=", reservation.machine_id)
-        .where(sql<boolean>`reserved_microusd >= ${reserved}`)
-        .where(sql<boolean>`credit_balance_microusd >= ${chargedMicrousd}`)
-        .returningAll().executeTakeFirst();
-      if (!debitedBalance) throw new Error("Funded AI balance invariant violated");
+      // A migrated reservation may lack source attribution. Charge every live,
+      // unprotected source that can be proven and persist the remainder as a
+      // contra-credit shortfall so full provider usage is never made spendable.
+      await recordUsageFunding(
+        trx.executor,
+        reservation,
+        request.actualCostMicrousd,
+        appliedPromotionalDebit,
+        addonDebit,
+        checkedAt,
+      );
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations").set({
         status: "settled",
         actual_microusd: request.actualCostMicrousd,
@@ -722,7 +749,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("reservation_id", "=", reservation.reservation_id).execute();
       return response;
     });
-    if (result === null) throw new AiFundedPolicyError("reservation_expired");
     return result;
   }
 
@@ -882,55 +908,18 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
               checkedAt,
             );
           }
-          // Cleanup must preserve the same all-or-nothing funding invariant as
-          // explicit settlement for legacy reservations.
           const chargedMicrousd = appliedPromotionalDebit + addonDebit;
-          if (!attributed && chargedMicrousd !== reserved) {
-            await expireReservationHold(trx.executor, reservation, checkedAt);
-            continue;
+          if (attributed && chargedMicrousd !== reserved) {
+            throw new Error("Funded AI attributed reservation debit invariant violated");
           }
-          const debitRows = [
-            appliedPromotionalDebit > 0 ? {
-              entry_id: `usage:${reservation.reservation_id}:promotional`,
-              owner_id: reservation.owner_id,
-              machine_id: reservation.machine_id,
-              runtime_slot: reservation.runtime_slot,
-              kind: "promotional_debit",
-              amount_microusd: -appliedPromotionalDebit,
-              source_reference: reservation.request_id,
-              reservation_id: reservation.reservation_id,
-              period_start: reservation.period_start,
-              expires_at: null,
-              created_at: checkedAt,
-            } : null,
-            addonDebit > 0 ? {
-              entry_id: `usage:${reservation.reservation_id}:addon`,
-              owner_id: reservation.owner_id,
-              machine_id: reservation.machine_id,
-              runtime_slot: reservation.runtime_slot,
-              kind: "addon_debit",
-              amount_microusd: -addonDebit,
-              source_reference: reservation.request_id,
-              reservation_id: reservation.reservation_id,
-              period_start: reservation.period_start,
-              expires_at: null,
-              created_at: checkedAt,
-            } : null,
-          ].filter((row): row is NonNullable<typeof row> => row !== null);
-          if (debitRows.length > 0) await trx.executor.insertInto("ai_funded_credit_ledger").values(debitRows).execute();
-          const debitedBalance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-            credit_balance_microusd: sql<number>`credit_balance_microusd - ${chargedMicrousd}`,
-            promotional_balance_microusd: sql<number>`promotional_balance_microusd - ${appliedPromotionalDebit}`,
-            addon_balance_microusd: sql<number>`addon_balance_microusd - ${addonDebit}`,
-            reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
-            month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_spent_microusd + ${reserved} ELSE month_spent_microusd END`,
-            month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
-            updated_at: checkedAt,
-          }).where("machine_id", "=", reservation.machine_id)
-            .where(sql<boolean>`reserved_microusd >= ${reserved}`)
-            .where(sql<boolean>`credit_balance_microusd >= ${chargedMicrousd}`)
-            .returningAll().executeTakeFirst();
-          if (!debitedBalance) throw new Error("Funded AI balance invariant violated");
+          await recordUsageFunding(
+            trx.executor,
+            reservation,
+            reserved,
+            appliedPromotionalDebit,
+            addonDebit,
+            checkedAt,
+          );
           const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
             .select("monthly_budget_microusd").where("machine_id", "=", reservation.machine_id)
             .executeTakeFirstOrThrow();
