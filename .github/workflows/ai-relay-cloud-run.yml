@@ -1,0 +1,186 @@
+name: AI Relay Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub environment to deploy
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      promote:
+        description: Promote the verified revision to 100% traffic
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-relay-cloud-run-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy funded AI relay
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
+      AI_RELAY_CLOUD_RUN_SERVICE: ${{ vars.AI_RELAY_CLOUD_RUN_SERVICE }}
+      AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT }}
+      PLATFORM_INTERNAL_URL: ${{ vars.PLATFORM_INTERNAL_URL }}
+      CLOUDFLARE_AI_GATEWAY_URL: ${{ vars.CLOUDFLARE_AI_GATEWAY_URL }}
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate preview deployment configuration
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" != "staging" ]; then
+            echo "Production funded AI deployment remains blocked until preview metering is verified." >&2
+            exit 1
+          fi
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            ARTIFACT_REPOSITORY
+            AI_RELAY_CLOUD_RUN_SERVICE
+            AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT
+            PLATFORM_INTERNAL_URL
+            CLOUDFLARE_AI_GATEWAY_URL
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required GitHub environment variable: $name" >&2
+              exit 1
+            fi
+          done
+          if ! [[ "$PLATFORM_INTERNAL_URL" =~ ^https://[^/?#]+/?$ ]]; then
+            echo "PLATFORM_INTERNAL_URL must be an HTTPS origin." >&2
+            exit 1
+          fi
+          if ! [[ "$CLOUDFLARE_AI_GATEWAY_URL" =~ ^https://gateway\.ai\.cloudflare\.com/v1/[a-f0-9]{32}/[A-Za-z0-9_-]{1,64}/anthropic$ ]]; then
+            echo "CLOUDFLARE_AI_GATEWAY_URL must be an official Anthropic AI Gateway URL." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Verify relay secrets and least-privilege access
+        run: |
+          set -euo pipefail
+          required_secrets=(
+            cloudflare-ai-gateway-token
+            ai-relay-control-token
+            ai-relay-metadata-secret
+          )
+          for secret_name in "${required_secrets[@]}"; do
+            gcloud secrets versions describe latest \
+              --secret "$secret_name" \
+              --project "$GCP_PROJECT_ID" >/dev/null
+            accessor_member="$(
+              gcloud secrets get-iam-policy "$secret_name" \
+                --project "$GCP_PROJECT_ID" \
+                --flatten='bindings[].members' \
+                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT}" \
+                --format='value(bindings.members)' \
+                | head -1
+            )"
+            if [ "$accessor_member" != "serviceAccount:${AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "$secret_name must grant secret accessor to the relay service account." >&2
+              exit 1
+            fi
+          done
+
+      - name: Build relay image
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-ai-relay:${GITHUB_SHA::12}"
+          cache_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-ai-relay:buildcache"
+          gcloud builds submit . \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --config cloudbuild.ai-relay.yaml \
+            --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image" \
+            --timeout=1200s
+          digest="$(gcloud artifacts docker images describe "$image" \
+            --project "$GCP_PROJECT_ID" \
+            --format='value(image_summary.digest)')"
+          if [ -z "$digest" ]; then
+            echo "Could not resolve the immutable relay image digest." >&2
+            exit 1
+          fi
+          echo "IMAGE_DIGEST=${image%:*}@${digest}" >> "$GITHUB_ENV"
+
+      - name: Deploy candidate revision
+        run: |
+          set -euo pipefail
+          traffic_flags=(--tag candidate)
+          if gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" >/dev/null 2>&1; then
+            traffic_flags+=(--no-traffic)
+          fi
+          deploy_json="$(gcloud run deploy "$AI_RELAY_CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE_DIGEST" \
+            --service-account "$AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT" \
+            --platform managed \
+            --port 8080 \
+            --cpu 1 \
+            --memory 512Mi \
+            --concurrency 32 \
+            --timeout 900 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --ingress all \
+            --allow-unauthenticated \
+            "${traffic_flags[@]}" \
+            --set-env-vars "MATRIX_FUNDED_AI_ENABLED=true,PLATFORM_INTERNAL_URL=${PLATFORM_INTERNAL_URL},CLOUDFLARE_AI_GATEWAY_URL=${CLOUDFLARE_AI_GATEWAY_URL},MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=16,MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=2,MATRIX_FUNDED_AI_GLOBAL_RATE_LIMIT=60,MATRIX_FUNDED_AI_RATE_LIMIT=20" \
+            --set-secrets "CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest,AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest" \
+            --format=json)"
+          candidate_url="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)"
+          candidate_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)"
+          if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
+            echo "Could not resolve the candidate relay URL and revision." >&2
+            exit 1
+          fi
+          echo "CANDIDATE_URL=$candidate_url" >> "$GITHUB_ENV"
+          echo "CANDIDATE_REVISION=$candidate_revision" >> "$GITHUB_ENV"
+
+      - name: Smoke candidate relay
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health" >/dev/null
+          unknown_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$CANDIDATE_URL/instances")"
+          if [ "$unknown_status" != "404" ]; then
+            echo "Dedicated relay unexpectedly exposed a legacy proxy route." >&2
+            exit 1
+          fi
+
+      - name: Promote verified revision
+        if: ${{ inputs.promote }}
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$AI_RELAY_CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --to-revisions "$CANDIDATE_REVISION=100"

@@ -107,9 +107,40 @@ Repeat for disconnect, timeout, oversized/malformed stream, rejected model, disa
 ## 6. Verify Cloudflare with a non-production gateway
 
 - Use a dedicated development gateway and low spend limit.
+- Require gateway authentication, disable request/response payload logging and
+  caching, and enable Zero Data Retention for unified-billing requests.
+- Configure both a small gateway-wide fuse and a smaller per-user fuse split by
+  the opaque `matrix_user_ref` metadata key. Cloudflare limits are a delayed
+  safety backstop; the Matrix Postgres ledger remains the exact balance source.
 - Confirm `cf-aig-collect-log-payload: false` and inspect logs for metadata-only records.
 - Verify required Anthropic SDK/beta headers, streaming cancellation, and canonical usage/model metadata.
 - Do not enable semantic caching.
+
+The dedicated relay deploys through `AI Relay Cloud Run`. Its Cloud Run service
+account may read only `cloudflare-ai-gateway-token`,
+`ai-relay-control-token`, and `ai-relay-metadata-secret`. The platform service
+account receives only `ai-relay-control-token` and
+`ai-funded-credential-hash-secret`. Customer VPSes never receive any of these
+central credentials; they receive only the relay origin and their scoped,
+revocable runtime credential.
+
+Preview activation order is deliberate:
+
+1. create and harden the non-production Cloudflare gateway;
+2. create the four Secret Manager secrets and grant the two least-privilege
+   runtime identities access to their exact subsets;
+3. deploy and smoke the dedicated relay candidate;
+4. enable both funded control-plane/runtime flags in the selected PR preview
+   environment and deploy that platform revision;
+5. provision or recreate the disposable VPS so cloud-init receives the funded
+   relay URL and runtime credential;
+6. enable the runtime policy and a bounded promotional grant through the
+   operator-authenticated platform endpoints;
+7. test Canvas, Web Desktop, and Electron before any production rollout.
+
+The relay workflow intentionally refuses production today. Removing that gate
+requires completed preview metering evidence and the general-availability gates
+below.
 
 ## 7. Add provider connections
 
