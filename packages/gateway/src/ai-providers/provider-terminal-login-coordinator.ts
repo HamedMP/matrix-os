@@ -12,6 +12,7 @@ import { currentProviderConnectionAttempt } from "./provider-settings-receipts.j
 const MAX_RECEIPTS = 64;
 const MAX_FILE_BYTES = 256 * 1024;
 const LOGIN_LIFETIME_MS = 10 * 60_000;
+const MAX_LEGACY_REVISION_LOOKBACK = 64;
 const SafeRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const EnabledHarnessSchema = z.enum(["codex", "claude"]);
 const ReceiptSchema = z.object({
@@ -93,20 +94,28 @@ function matchesLegacyLoginPayload(
   receipt: ReceiptDocument["receipts"][number],
 ): boolean {
   if (receipt.recoveryHash !== undefined) return false;
-  // A successful legacy start advanced settings once. Looking back any farther could
-  // adopt a terminal across intervening route or account changes.
-  const revisions = [input.mutation.expectedRevision];
-  if (input.mutation.expectedRevision > 0) {
-    revisions.push(input.mutation.expectedRevision - 1);
+  // Legacy receipts did not persist their recovery identity. Recompute the exact
+  // legacy payload across a bounded revision window so unrelated provider, account,
+  // harness, or method changes can never match while recovery work stays capped.
+  const oldestRevision = Math.max(
+    0,
+    input.mutation.expectedRevision - MAX_LEGACY_REVISION_LOOKBACK,
+  );
+  for (let expectedRevision = input.mutation.expectedRevision;
+    expectedRevision >= oldestRevision;
+    expectedRevision -= 1) {
+    if (payloadHash({
+      ...input,
+      mutation: {
+        ...input.mutation,
+        expectedRevision,
+        idempotencyKey: receipt.key,
+      },
+    }) === receipt.payloadHash) {
+      return true;
+    }
   }
-  return revisions.some((expectedRevision) => payloadHash({
-    ...input,
-    mutation: {
-      ...input.mutation,
-      expectedRevision,
-      idempotencyKey: receipt.key,
-    },
-  }) === receipt.payloadHash);
+  return false;
 }
 
 function appendBoundedReceipt(document: ReceiptDocument, receipt: ReceiptDocument["receipts"][number]): void {

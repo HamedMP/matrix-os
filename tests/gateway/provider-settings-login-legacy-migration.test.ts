@@ -126,6 +126,26 @@ describe("provider terminal login legacy migration", () => {
     }));
   });
 
+  it("migrates a live legacy receipt across intervening settings revisions", async () => {
+    const legacy = await seedLegacyLoginReceipt();
+
+    const recovered = await coordinator().startLogin({
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 4,
+        idempotencyKey: "login_legacy_later_retry",
+      },
+    });
+
+    expect(recovered.action).toEqual({
+      kind: "open_terminal",
+      terminalSessionId: legacy.sessionName,
+    });
+    expect(registry.create).not.toHaveBeenCalled();
+    expect(sessions).toEqual(new Set([legacy.sessionName]));
+  });
+
   it.each([
     ["provider", { providerId: "openai", accountId: "owner_anthropic" }],
     ["account", { providerId: "anthropic", accountId: "owner_other" }],
