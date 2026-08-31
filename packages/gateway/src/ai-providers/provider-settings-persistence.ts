@@ -12,6 +12,7 @@ import {
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
 
 const MAX_FILE_BYTES = 1024 * 1024;
 export const MAX_PROVIDER_SETTINGS_RECEIPTS = 256;
@@ -124,8 +125,11 @@ export async function writeProviderJsonAtomic(path: string, value: unknown): Pro
 }
 
 function driverIdForHarness(kind: ProviderHarnessKind, canonical: AiProviderSnapshotV3): string {
-  if (kind !== "claude") return kind;
-  return canonical.drivers.some((driver) => driver.id === "claude_code") ? "claude_code" : "kernel";
+  return resolveProviderSettingsDriverId({
+    driverId: kind === "claude" ? "kernel" : kind,
+    harness: kind,
+    canonical,
+  });
 }
 
 function harnessKindForDriver(driverId: string): ProviderHarnessKind {

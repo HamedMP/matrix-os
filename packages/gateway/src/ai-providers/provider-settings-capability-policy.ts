@@ -12,6 +12,7 @@ import type {
   ProviderLoginCoordinator,
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
+import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
 
 export function coordinatorLoginHarness(input: {
   harness: ProviderSettingsConfiguration["harnesses"][number];
@@ -22,9 +23,11 @@ export function coordinatorLoginHarness(input: {
   harness: ProviderHarnessKind;
   installState: ProviderHarnessInstallState;
 } {
-  const driverId = input.harness.driverId === "kernel" && input.harness.harness === "claude"
-    ? "claude_code"
-    : input.harness.driverId;
+  const driverId = resolveProviderSettingsDriverId({
+    driverId: input.harness.driverId,
+    harness: input.harness.harness,
+    canonical: input.canonical,
+  });
   const driver = input.canonical.drivers.find((candidate) => candidate.id === driverId);
   return {
     id: input.harness.id,
