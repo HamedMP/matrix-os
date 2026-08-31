@@ -82,14 +82,22 @@ function projectAccessSources(
   const accountBySource = new Map([...sourceByAccount].map(([accountId, sourceId]) => [sourceId, accountId]));
   const sources = canonical.accessSources.filter((source) => sourceIds.has(source.id)).map((source) => {
     const matrix = source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon";
-    const fundedModelIds = matrix && fundedPolicyAuthoritative
+    // Platform policy replaces the bundled Matrix allowlist. The canonical
+    // catalog still bounds projection to runnable models for this vendor.
+    const availableModelIds = matrix && fundedPolicyAuthoritative
+      ? new Set(canonical.models
+        .filter((model) => model.vendor === source.vendor
+          && model.status !== "retired" && model.status !== "unavailable")
+        .map((model) => model.id))
+      : null;
+    const fundedModelIds = availableModelIds
       ? (fundedPolicy?.allowedModelIds ?? []).flatMap((policyModelId) => {
-        if (source.eligibleModelIds.includes(policyModelId)) return [policyModelId];
+        if (availableModelIds.has(policyModelId)) return [policyModelId];
         const vendorPrefix = `${source.vendor}/`;
         const canonicalModelId = policyModelId.startsWith(vendorPrefix)
           ? policyModelId.slice(vendorPrefix.length)
           : null;
-        return canonicalModelId && source.eligibleModelIds.includes(canonicalModelId)
+        return canonicalModelId && availableModelIds.has(canonicalModelId)
           ? [canonicalModelId]
           : [];
       })
