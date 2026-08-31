@@ -10,17 +10,20 @@ describe("provider terminal login coordinator", () => {
   let homePath: string;
   const now = new Date("2026-08-30T12:00:00.000Z");
   const sessions = new Set<string>();
+  const runningAgents = new Map<string, "codex" | "claude">();
   const registry = {
     get: vi.fn(async (name: string) => {
       if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" });
-      return { name };
+      return { name, agent: runningAgents.get(name) };
     }),
-    create: vi.fn(async (input: { name: string }) => {
+    create: vi.fn(async (input: { name: string; agent?: "codex" | "claude" }) => {
       sessions.add(input.name);
-      return { name: input.name };
+      if (input.agent) runningAgents.set(input.name, input.agent);
+      return { name: input.name, agent: input.agent };
     }),
     delete: vi.fn(async (name: string) => {
       sessions.delete(name);
+      runningAgents.delete(name);
     }),
     rename: vi.fn(async (name: string, nextName: string) => {
       if (!sessions.delete(name)) {
@@ -31,13 +34,17 @@ describe("provider terminal login coordinator", () => {
         throw Object.assign(new Error("exists"), { code: "session_exists" });
       }
       sessions.add(nextName);
-      return { name: nextName };
+      const agent = runningAgents.get(name);
+      runningAgents.delete(name);
+      if (agent) runningAgents.set(nextName, agent);
+      return { name: nextName, agent };
     }),
   };
 
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "provider-terminal-login-"));
     sessions.clear();
+    runningAgents.clear();
     registry.get.mockClear();
     registry.create.mockClear();
     registry.delete.mockClear();

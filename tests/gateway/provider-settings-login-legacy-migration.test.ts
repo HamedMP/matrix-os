@@ -11,17 +11,20 @@ describe("provider terminal login legacy migration", () => {
   let homePath: string;
   const now = new Date("2026-08-30T12:00:00.000Z");
   const sessions = new Set<string>();
+  const runningAgents = new Map<string, "codex" | "claude">();
   const registry = {
     get: vi.fn(async (name: string) => {
       if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" });
-      return { name };
+      return { name, agent: runningAgents.get(name) };
     }),
-    create: vi.fn(async (input: { name: string }) => {
+    create: vi.fn(async (input: { name: string; agent?: "codex" | "claude" }) => {
       sessions.add(input.name);
-      return { name: input.name };
+      if (input.agent) runningAgents.set(input.name, input.agent);
+      return { name: input.name, agent: input.agent };
     }),
     delete: vi.fn(async (name: string) => {
       sessions.delete(name);
+      runningAgents.delete(name);
     }),
     rename: vi.fn(async (name: string, nextName: string) => {
       if (!sessions.delete(name)) {
@@ -32,7 +35,10 @@ describe("provider terminal login legacy migration", () => {
         throw Object.assign(new Error("exists"), { code: "session_exists" });
       }
       sessions.add(nextName);
-      return { name: nextName };
+      const agent = runningAgents.get(name);
+      runningAgents.delete(name);
+      if (agent) runningAgents.set(nextName, agent);
+      return { name: nextName, agent };
     }),
   };
   const legacyInput = {
@@ -57,6 +63,7 @@ describe("provider terminal login legacy migration", () => {
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "provider-terminal-login-legacy-"));
     sessions.clear();
+    runningAgents.clear();
     registry.get.mockClear();
     registry.create.mockClear();
     registry.delete.mockClear();
@@ -99,6 +106,7 @@ describe("provider terminal login legacy migration", () => {
       JSON.stringify({ version: 1, receipts: [receipt] }),
     );
     sessions.add(sessionName);
+    runningAgents.set(sessionName, "claude");
     return { receipt, sessionName };
   }
 
@@ -325,6 +333,122 @@ describe("provider terminal login legacy migration", () => {
     expect(registry.create).toHaveBeenCalledTimes(createCountBeforeRetry);
     expect(registry.delete).toHaveBeenCalledTimes(deleteCountBeforeRetry);
     expect(sessions).toContain(migratedSessionName);
+  });
+
+  it("restarts an evicted canonical session whose login process has exited", async () => {
+    const legacy = await seedLegacyLoginReceipt();
+    let checkedAt = new Date(now);
+    const login = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => new Date(checkedAt),
+    });
+    const migrated = await login.startLogin({
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 1,
+        idempotencyKey: "login_legacy_migrated_stale",
+      },
+    });
+    const migratedSessionName = migrated.action.kind === "open_terminal"
+      ? migrated.action.terminalSessionId
+      : "";
+
+    for (let index = 0; index < 65; index += 1) {
+      await login.startLogin({
+        ...legacyInput,
+        mutation: {
+          ...legacyInput.mutation,
+          expectedRevision: index + 2,
+          idempotencyKey: `login_stale_eviction_${index}`,
+          accountId: `owner_stale_other_${index}`,
+        },
+      });
+    }
+    runningAgents.delete(migratedSessionName);
+    checkedAt = new Date(Date.parse(migrated.expiresAt) + 1);
+    const createCountBeforeRetry = registry.create.mock.calls.length;
+    const deleteCountBeforeRetry = registry.delete.mock.calls.length;
+
+    const recovered = await login.startLogin({
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 67,
+        idempotencyKey: "login_legacy_after_stale_eviction",
+      },
+    });
+
+    expect(recovered.action).toEqual({
+      kind: "open_terminal",
+      terminalSessionId: migratedSessionName,
+    });
+    expect(registry.delete).toHaveBeenCalledTimes(deleteCountBeforeRetry + 1);
+    expect(registry.delete).toHaveBeenLastCalledWith(migratedSessionName, { force: true });
+    expect(registry.create).toHaveBeenCalledTimes(createCountBeforeRetry + 1);
+    expect(registry.create).toHaveBeenLastCalledWith(expect.objectContaining({
+      name: migratedSessionName,
+      agent: "claude",
+    }));
+    expect(sessions).toContain(migratedSessionName);
+    expect(runningAgents.get(migratedSessionName)).toBe("claude");
+  });
+
+  it("recovers the canonical identity when migration persistence and rollback both fail", async () => {
+    const legacy = await seedLegacyLoginReceipt();
+    const persistReceipt = vi.fn(async (path: string, value: unknown) => {
+      await writeFile(path, JSON.stringify(value));
+    });
+    persistReceipt.mockRejectedValueOnce(new Error("persist failed"));
+    registry.rename
+      .mockImplementationOnce(async (name: string, nextName: string) => {
+        sessions.delete(name);
+        sessions.add(nextName);
+        const agent = runningAgents.get(name);
+        runningAgents.delete(name);
+        if (agent) runningAgents.set(nextName, agent);
+        return { name: nextName, agent };
+      })
+      .mockRejectedValueOnce(new Error("rollback failed"));
+    const login = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => now,
+      persistReceipt,
+    });
+    const input = {
+      ...legacyInput,
+      mutation: {
+        ...legacyInput.mutation,
+        expectedRevision: 1,
+        idempotencyKey: "login_legacy_rollback_failure",
+      },
+    };
+
+    await expect(login.startLogin(input)).rejects.toMatchObject({
+      code: "lifecycle_unavailable",
+    });
+    const canonicalSessionName = [...sessions][0]!;
+    expect(canonicalSessionName).toMatch(/^provider-login-[a-f0-9]{64}$/);
+    expect(sessions).not.toContain(legacy.sessionName);
+
+    const recovered = await login.startLogin(input);
+
+    expect(recovered.action).toEqual({
+      kind: "open_terminal",
+      terminalSessionId: canonicalSessionName,
+    });
+    expect(registry.create).not.toHaveBeenCalled();
+    expect(sessions).toEqual(new Set([canonicalSessionName]));
+    const receipts = await readFile(
+      join(homePath, "system/ai-providers/login-receipts.json"),
+      "utf8",
+    );
+    expect(receipts).toContain("login_legacy_rollback_failure");
+    expect(receipts).toContain(canonicalSessionName);
   });
 
   it.each([

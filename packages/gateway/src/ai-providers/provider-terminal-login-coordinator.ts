@@ -423,10 +423,26 @@ export function createProviderTerminalLoginCoordinator(options: {
             if (canonicalSession.name !== canonicalSessionName) {
               throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
             }
-            // A full-digest canonical name is itself the durable exact identity
-            // marker. It is safe to adopt when bounded receipts have expired or
-            // been evicted; unrelated/legacy names are never accepted here.
-            adoptedExpiredSession = true;
+            if (canonicalSession.agent === command.agent) {
+              // A full-digest canonical name plus an observed matching foreground
+              // agent is the durable exact identity/liveness marker. It remains
+              // safe to adopt after bounded receipts have been evicted.
+              adoptedExpiredSession = true;
+            } else {
+              // Zellij sessions outlive their foreground command. Replace a
+              // canonical shell whose login process exited before relaunching;
+              // creating against the still-live shell would silently leave the
+              // user at a prompt instead of restarting authentication.
+              try {
+                await options.registry.delete(canonicalSessionName, { force: true });
+              } catch (deleteError) {
+                console.warn(
+                  "[provider-login] Failed to replace inactive login session:",
+                  deleteError instanceof Error ? deleteError.name : "UnknownError",
+                );
+                throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+              }
+            }
           } catch (error) {
             if (!isMissingSession(error)) throw error;
           }
