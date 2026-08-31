@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createProviderTerminalLoginCoordinator,
 } from "../../packages/gateway/src/ai-providers/provider-terminal-login-coordinator.js";
+import { SESSION_NAME_PATTERN } from "../../packages/gateway/src/shell/names.js";
 
 describe("provider terminal login coordinator", () => {
   let homePath: string;
@@ -39,6 +40,9 @@ describe("provider terminal login coordinator", () => {
       if (agent) runningAgents.set(nextName, agent);
       return { name: nextName, agent };
     }),
+    observeAgentLiveness: vi.fn(async (name: string, agent: "codex" | "claude") => (
+      runningAgents.get(name) === agent ? "running" as const : "unknown" as const
+    )),
   };
 
   beforeEach(async () => {
@@ -49,6 +53,7 @@ describe("provider terminal login coordinator", () => {
     registry.create.mockClear();
     registry.delete.mockClear();
     registry.rename.mockClear();
+    registry.observeAgentLiveness.mockClear();
   });
 
   afterEach(async () => {
@@ -100,6 +105,10 @@ describe("provider terminal login coordinator", () => {
       safeFailure: null,
     });
     expect(Date.parse(attempt.expiresAt) - now.getTime()).toBe(10 * 60_000);
+    expect(attempt.action.kind === "open_terminal" && attempt.action.terminalSessionId)
+      .toMatch(SESSION_NAME_PATTERN);
+    expect(attempt.action.kind === "open_terminal" && attempt.action.terminalSessionId.length)
+      .toBeLessThanOrEqual(64);
     expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({
       name: attempt.action.kind === "open_terminal" ? attempt.action.terminalSessionId : "",
       cwd: "~",
@@ -397,7 +406,7 @@ describe("provider terminal login coordinator", () => {
         installState: "installed",
       },
     })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
-    expect(registry.delete).toHaveBeenCalledWith(expect.stringMatching(/^provider-login-[a-f0-9]{64}$/), { force: true });
+    expect(registry.delete).toHaveBeenCalledWith(expect.stringMatching(/^provider-auth-[a-z0-9]{50}$/), { force: true });
     expect(sessions.size).toBe(0);
   });
 
@@ -437,7 +446,7 @@ describe("provider terminal login coordinator", () => {
     expect(sessions.size).toBe(1);
     expect(registry.create).toHaveBeenCalledOnce();
     const orphanName = [...sessions][0];
-    expect(orphanName).toMatch(/^provider-login-[a-f0-9]{64}$/);
+    expect(orphanName).toMatch(/^provider-auth-[a-z0-9]{50}$/);
 
     const recovery = await readFile(join(homePath, "system/ai-providers/login-recovery.json"), "utf8");
     expect(recovery).toContain("login_orphan_recovery_1");

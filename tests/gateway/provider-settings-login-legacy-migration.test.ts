@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createProviderTerminalLoginCoordinator,
 } from "../../packages/gateway/src/ai-providers/provider-terminal-login-coordinator.js";
+import { SESSION_NAME_PATTERN } from "../../packages/gateway/src/shell/names.js";
 
 describe("provider terminal login legacy migration", () => {
   let homePath: string;
@@ -40,6 +41,9 @@ describe("provider terminal login legacy migration", () => {
       if (agent) runningAgents.set(nextName, agent);
       return { name: nextName, agent };
     }),
+    observeAgentLiveness: vi.fn(async (name: string, agent: "codex" | "claude") => (
+      runningAgents.get(name) === agent ? "running" as const : "unknown" as const
+    )),
   };
   const legacyInput = {
     mutation: {
@@ -68,6 +72,7 @@ describe("provider terminal login legacy migration", () => {
     registry.create.mockClear();
     registry.delete.mockClear();
     registry.rename.mockClear();
+    registry.observeAgentLiveness.mockClear();
   });
 
   afterEach(async () => {
@@ -124,13 +129,15 @@ describe("provider terminal login legacy migration", () => {
 
     expect(recovered.action).toMatchObject({
       kind: "open_terminal",
-      terminalSessionId: expect.stringMatching(/^provider-login-[a-f0-9]{64}$/),
+      terminalSessionId: expect.stringMatching(/^provider-auth-[a-z0-9]{50}$/),
     });
     const recoveredSessionName = recovered.action.kind === "open_terminal"
       ? recovered.action.terminalSessionId
       : "";
     expect(registry.create).not.toHaveBeenCalled();
     expect(registry.rename).toHaveBeenCalledWith(legacy.sessionName, recoveredSessionName);
+    expect(recoveredSessionName).toMatch(SESSION_NAME_PATTERN);
+    expect(recoveredSessionName.length).toBeLessThanOrEqual(64);
     expect(sessions).toEqual(new Set([recoveredSessionName]));
 
     const receipts = JSON.parse(await readFile(
@@ -164,7 +171,7 @@ describe("provider terminal login legacy migration", () => {
 
     expect(recovered.action).toMatchObject({
       kind: "open_terminal",
-      terminalSessionId: expect.stringMatching(/^provider-login-[a-f0-9]{64}$/),
+      terminalSessionId: expect.stringMatching(/^provider-auth-[a-z0-9]{50}$/),
     });
     const recoveredSessionName = recovered.action.kind === "open_terminal"
       ? recovered.action.terminalSessionId
@@ -193,7 +200,7 @@ describe("provider terminal login legacy migration", () => {
     });
     expect(migrated.action).toMatchObject({
       kind: "open_terminal",
-      terminalSessionId: expect.stringMatching(/^provider-login-[a-f0-9]{64}$/),
+      terminalSessionId: expect.stringMatching(/^provider-auth-[a-z0-9]{50}$/),
     });
     const migratedSessionName = migrated.action.kind === "open_terminal"
       ? migrated.action.terminalSessionId
@@ -281,7 +288,7 @@ describe("provider terminal login legacy migration", () => {
     });
     expect(migrated.action).toMatchObject({
       kind: "open_terminal",
-      terminalSessionId: expect.stringMatching(/^provider-login-[a-f0-9]{64}$/),
+      terminalSessionId: expect.stringMatching(/^provider-auth-[a-z0-9]{50}$/),
     });
     const migratedSessionName = migrated.action.kind === "open_terminal"
       ? migrated.action.terminalSessionId
@@ -335,7 +342,7 @@ describe("provider terminal login legacy migration", () => {
     expect(sessions).toContain(migratedSessionName);
   });
 
-  it("restarts an evicted canonical session whose login process has exited", async () => {
+  it("fails closed without deleting an evicted canonical session whose foreground liveness is unavailable", async () => {
     const legacy = await seedLegacyLoginReceipt();
     let checkedAt = new Date(now);
     const login = createProviderTerminalLoginCoordinator({
@@ -372,28 +379,19 @@ describe("provider terminal login legacy migration", () => {
     const createCountBeforeRetry = registry.create.mock.calls.length;
     const deleteCountBeforeRetry = registry.delete.mock.calls.length;
 
-    const recovered = await login.startLogin({
+    await expect(login.startLogin({
       ...legacyInput,
       mutation: {
         ...legacyInput.mutation,
         expectedRevision: 67,
         idempotencyKey: "login_legacy_after_stale_eviction",
       },
-    });
+    })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
 
-    expect(recovered.action).toEqual({
-      kind: "open_terminal",
-      terminalSessionId: migratedSessionName,
-    });
-    expect(registry.delete).toHaveBeenCalledTimes(deleteCountBeforeRetry + 1);
-    expect(registry.delete).toHaveBeenLastCalledWith(migratedSessionName, { force: true });
-    expect(registry.create).toHaveBeenCalledTimes(createCountBeforeRetry + 1);
-    expect(registry.create).toHaveBeenLastCalledWith(expect.objectContaining({
-      name: migratedSessionName,
-      agent: "claude",
-    }));
+    expect(registry.delete).toHaveBeenCalledTimes(deleteCountBeforeRetry);
+    expect(registry.create).toHaveBeenCalledTimes(createCountBeforeRetry);
     expect(sessions).toContain(migratedSessionName);
-    expect(runningAgents.get(migratedSessionName)).toBe("claude");
+    expect(runningAgents.has(migratedSessionName)).toBe(false);
   });
 
   it("recovers the canonical identity when migration persistence and rollback both fail", async () => {
@@ -432,7 +430,7 @@ describe("provider terminal login legacy migration", () => {
       code: "lifecycle_unavailable",
     });
     const canonicalSessionName = [...sessions][0]!;
-    expect(canonicalSessionName).toMatch(/^provider-login-[a-f0-9]{64}$/);
+    expect(canonicalSessionName).toMatch(/^provider-auth-[a-z0-9]{50}$/);
     expect(sessions).not.toContain(legacy.sessionName);
 
     const recovered = await login.startLogin(input);
@@ -449,6 +447,14 @@ describe("provider terminal login legacy migration", () => {
     );
     expect(receipts).toContain("login_legacy_rollback_failure");
     expect(receipts).toContain(canonicalSessionName);
+
+    const originalKeyRecovery = await login.startLogin(legacyInput);
+    expect(originalKeyRecovery.action).toEqual({
+      kind: "open_terminal",
+      terminalSessionId: canonicalSessionName,
+    });
+    expect(registry.create).not.toHaveBeenCalled();
+    expect(sessions).toEqual(new Set([canonicalSessionName]));
   });
 
   it.each([

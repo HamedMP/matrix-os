@@ -114,6 +114,7 @@ type RegistryFile = z.infer<typeof RegistryFileSchema>;
 type ShellSessionReference = z.infer<typeof ShellSessionReferenceSchema>;
 export type ShellPlacement = z.infer<typeof ShellPlacementSchema>;
 export type ShellVisualStatus = z.infer<typeof ShellVisualStatusSchema>;
+export type ShellAgentLiveness = "running" | "stopped" | "unknown";
 export type ShellSessionAliasSource = z.infer<typeof ShellSessionReferenceSourceSchema>;
 export interface ShellSessionAlias {
   name: string;
@@ -248,6 +249,30 @@ export class ShellRegistry {
         await this.write(file);
       }
       return this.decorateSession(session, file);
+    });
+  }
+
+  async observeAgentLiveness(name: string, agent: AgentKind): Promise<ShellAgentLiveness> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
+      const live = await this.options.adapter.listSessions();
+      if (!live.includes(targetName)) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      const [runtime, snapshot] = await Promise.all([
+        this.readFocusedPaneRuntime(targetName),
+        this.readAgentSnapshot(targetName),
+      ]);
+      if (!runtime.observed) return "unknown";
+      const observedAgent = inferAgentFromCommand(runtime.command ?? undefined);
+      if (observedAgent) return observedAgent === agent ? "running" : "stopped";
+      const executable = runtime.command?.trim().split(/\s+/, 1)[0]?.split("/").pop();
+      if (executable !== "matrix-terminal-shell") return "stopped";
+      return snapshot && snapshot.agent === agent && snapshot.phase !== "ended"
+        ? "running"
+        : "unknown";
     });
   }
 

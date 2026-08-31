@@ -30,7 +30,8 @@ const ReceiptDocumentSchema = z.object({
 
 type LoginHarness = Parameters<ProviderLoginCoordinator["supportedMethods"]>[0];
 type LoginInput = Parameters<ProviderLoginCoordinator["startLogin"]>[0];
-type LoginRegistry = Pick<ShellRegistry, "create" | "get" | "delete" | "rename">;
+type LoginRegistry = Pick<ShellRegistry,
+  "create" | "get" | "delete" | "rename" | "observeAgentLiveness">;
 type ReceiptDocument = z.infer<typeof ReceiptDocumentSchema>;
 type ReceiptWriter = (path: string, value: ReceiptDocument) => Promise<void>;
 
@@ -84,11 +85,11 @@ function recoveryIdentityHash(input: LoginInput): string {
 }
 
 function loginSessionName(recoveryHash: string): string {
-  // The complete recovery digest makes the live terminal name a durable,
-  // exact identity marker. That lets retries recover it even after the
-  // bounded receipt documents evict older entries, without another growing
-  // index or adopting a terminal from a merely truncated-name collision.
-  return `provider-login-${recoveryHash}`;
+  // Base36 preserves all 256 digest bits while staying inside the shell's
+  // lowercase 64-character session-name contract. Fixed-width padding keeps
+  // the mapping bijective for digests with leading zeroes.
+  const encoded = BigInt(`0x${recoveryHash}`).toString(36).padStart(50, "0");
+  return `provider-auth-${encoded}`;
 }
 
 interface RecoverySession {
@@ -189,7 +190,7 @@ export function createProviderTerminalLoginCoordinator(options: {
 }): ProviderLoginCoordinator {
   if (!options.homePath) throw new Error("Provider login home path is required");
   if (!options.registry?.create || !options.registry.get || !options.registry.delete
-    || !options.registry.rename) {
+    || !options.registry.rename || !options.registry.observeAgentLiveness) {
     throw new Error("Provider login shell registry is required");
   }
   const enabledHarnesses = new Set(EnabledHarnessSchema.array().max(2).parse(options.enabledHarnesses));
@@ -227,6 +228,8 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         const hash = payloadHash(input);
         const recoveryHash = recoveryIdentityHash(input);
+        const command = LOGIN_COMMANDS[input.harness.harness];
+        const canonicalSessionName = loginSessionName(recoveryHash);
         const document = await readReceipts(receiptsPath);
         const recoveryDocument = await readReceipts(recoveryPath);
         const currentTime = now();
@@ -235,10 +238,70 @@ export function createProviderTerminalLoginCoordinator(options: {
         if (new Set(matchingReceipts.map((receipt) => receipt.payloadHash)).size > 1) {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
-        const duplicate = matchingReceipts[0];
+        let duplicate = matchingReceipts[0];
         if (duplicate) {
           if (duplicate.payloadHash !== hash) {
             throw new ProviderSettingsStoreError("idempotency_conflict", 409);
+          }
+          if (duplicate.attempt.action.kind === "open_terminal"
+            && duplicate.attempt.action.terminalSessionId !== canonicalSessionName) {
+            let canonicalSession: Awaited<ReturnType<LoginRegistry["get"]>> | null = null;
+            try {
+              canonicalSession = await options.registry.get(canonicalSessionName);
+            } catch (error) {
+              if (!isMissingSession(error)) throw error;
+            }
+            if (canonicalSession) {
+              // A surviving canonical session means a prior migration crossed
+              // the runtime/persistence boundary. Never recreate the legacy
+              // name while that authoritative identity remains live.
+              if (canonicalSession.name !== canonicalSessionName
+                || await options.registry.observeAgentLiveness(
+                  canonicalSessionName,
+                  command.agent,
+                ) !== "running") {
+                throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+              }
+              try {
+                await options.registry.get(duplicate.attempt.action.terminalSessionId);
+                throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+              } catch (error) {
+                if (!isMissingSession(error)) throw error;
+              }
+              const repaired = ReceiptSchema.parse({
+                ...duplicate,
+                recoveryHash,
+                legacyPayloadHash: duplicate.legacyPayloadHash ?? duplicate.payloadHash,
+                attempt: {
+                  ...duplicate.attempt,
+                  action: { kind: "open_terminal", terminalSessionId: canonicalSessionName },
+                },
+              });
+              const repairDocument = (candidate: ReceiptDocument) => {
+                candidate.receipts = candidate.receipts.map((receipt) => (
+                  receipt.key === duplicate!.key && receipt.payloadHash === duplicate!.payloadHash
+                    ? repaired
+                    : receipt
+                ));
+              };
+              try {
+                if (document.receipts.includes(duplicate)) {
+                  repairDocument(document);
+                  await persistReceipt(receiptsPath, ReceiptDocumentSchema.parse(document));
+                }
+                if (recoveryDocument.receipts.includes(duplicate)) {
+                  repairDocument(recoveryDocument);
+                  await writeProviderJsonAtomic(recoveryPath, ReceiptDocumentSchema.parse(recoveryDocument));
+                }
+              } catch (error) {
+                console.warn(
+                  "[provider-login] Failed to repair canonical login receipt:",
+                  error instanceof Error ? error.name : "UnknownError",
+                );
+                throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+              }
+              duplicate = repaired;
+            }
           }
           const attempt = currentProviderConnectionAttempt(duplicate.attempt, currentTime);
           const renewExpired = expiredRecoverySession(
@@ -252,7 +315,6 @@ export function createProviderTerminalLoginCoordinator(options: {
               await options.registry.get(attempt.action.terminalSessionId);
             } catch (error) {
               if (!isMissingSession(error)) throw error;
-              const command = LOGIN_COMMANDS[input.harness.harness];
               await options.registry.create({
                 name: attempt.action.terminalSessionId,
                 cwd: "~",
@@ -293,7 +355,6 @@ export function createProviderTerminalLoginCoordinator(options: {
             throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
           }
           const legacySessionName = legacyReceipt.attempt.action.terminalSessionId;
-          const canonicalSessionName = loginSessionName(recoveryHash);
           try {
             await options.registry.rename(legacySessionName, canonicalSessionName);
           } catch (error) {
@@ -381,12 +442,11 @@ export function createProviderTerminalLoginCoordinator(options: {
             await options.registry.get(attempt.action.terminalSessionId);
           } catch (error) {
             if (!isMissingSession(error)) throw error;
-            const recoveryCommand = LOGIN_COMMANDS[input.harness.harness];
             await options.registry.create({
               name: attempt.action.terminalSessionId,
               cwd: "~",
-              cmd: recoveryCommand.command,
-              agent: recoveryCommand.agent,
+              cmd: command.command,
+              agent: command.agent,
               exclusive: false,
             });
           }
@@ -404,8 +464,6 @@ export function createProviderTerminalLoginCoordinator(options: {
         const expiredSession = expiredRecoverySessions.values().next().value;
         recoveryDocument.receipts = recoveryDocument.receipts.filter((receipt) =>
           receipt.recoveryHash !== recoveryHash);
-        const command = LOGIN_COMMANDS[input.harness.harness];
-        const canonicalSessionName = loginSessionName(recoveryHash);
         let sessionName = canonicalSessionName;
         let adoptedExpiredSession = false;
         if (expiredSession) {
@@ -423,25 +481,19 @@ export function createProviderTerminalLoginCoordinator(options: {
             if (canonicalSession.name !== canonicalSessionName) {
               throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
             }
-            if (canonicalSession.agent === command.agent) {
+            if (await options.registry.observeAgentLiveness(
+              canonicalSessionName,
+              command.agent,
+            ) === "running") {
               // A full-digest canonical name plus an observed matching foreground
               // agent is the durable exact identity/liveness marker. It remains
               // safe to adopt after bounded receipts have been evicted.
               adoptedExpiredSession = true;
             } else {
-              // Zellij sessions outlive their foreground command. Replace a
-              // canonical shell whose login process exited before relaunching;
-              // creating against the still-live shell would silently leave the
-              // user at a prompt instead of restarting authentication.
-              try {
-                await options.registry.delete(canonicalSessionName, { force: true });
-              } catch (deleteError) {
-                console.warn(
-                  "[provider-login] Failed to replace inactive login session:",
-                  deleteError instanceof Error ? deleteError.name : "UnknownError",
-                );
-                throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
-              }
+              // The production terminal wrapper can hide the foreground agent.
+              // Unknown is not evidence that the login exited: fail closed so
+              // we neither kill an active login nor adopt a stale shell prompt.
+              throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
             }
           } catch (error) {
             if (!isMissingSession(error)) throw error;
