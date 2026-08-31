@@ -226,6 +226,54 @@ describe("OpenCode coding-agent provider", () => {
     ]));
   });
 
+  it("stops a child when credentials return after the run signal was already aborted", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const kills: NodeJS.Signals[] = [];
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const exit: Array<(code: number | null) => void> = [];
+    const adapter = provider(() => ({
+      stdout,
+      stderr,
+      once(event: "exit" | "error", listener: never) {
+        if (event === "exit") exit.push(listener);
+      },
+      kill(signal) {
+        kills.push(signal);
+        queueMicrotask(() => exit.forEach((listener) => listener(null)));
+      },
+    }), {
+      resolveCredentialLaunch: async () => {
+        controller.abort();
+        return { env: { ANTHROPIC_API_KEY: "selected-key" } };
+      },
+      runTimeoutMs: 10_000,
+      killGraceMs: 10,
+    });
+
+    try {
+      const pending = adapter.startThread({
+        principal,
+        thread: thread(),
+        request: request(),
+        signal: controller.signal,
+        now: () => now,
+        nextEventId: ids(),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(kills).toEqual(["SIGTERM"]);
+      await expect(pending).resolves.toMatchObject({
+        events: expect.arrayContaining([
+          expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+        ]),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("terminates a flood of unique unsupported part records without growing dedup state", async () => {
     const fake = fakeSpawn(Array.from({ length: 4_200 }, (_, index) =>
       line("step_start", { part: { id: `unsupported_${index}`, type: "step-start" } })

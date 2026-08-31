@@ -311,7 +311,6 @@ export function createOpenCodeCodingAgentProvider(
         active.delete(oldest);
       }
       active.set(input.threadId, stop);
-      input.signal?.addEventListener("abort", stop, { once: true });
       const timer = setTimeout(() => {
         timedOut = true;
         stop();
@@ -328,7 +327,7 @@ export function createOpenCodeCodingAgentProvider(
         if (tail && !aborted && !failed) feed(tail);
         resolve({
           events,
-          outcome: timedOut || failed || code !== 0 ? "failed" : aborted ? "aborted" : "completed",
+          outcome: timedOut || failed ? "failed" : aborted ? "aborted" : code !== 0 ? "failed" : "completed",
           ...(sessionId ? { sessionId } : {}),
         });
       };
@@ -363,6 +362,8 @@ export function createOpenCodeCodingAgentProvider(
       child.stderr.on("data", () => { /* bounded provider diagnostics stay out of client state */ });
       child.once("error", (error) => { logCodingAgentWarning("OpenCode process failed", error); failed = true; finish(-1); });
       child.once("exit", finish);
+      if (input.signal?.aborted) stop();
+      else input.signal?.addEventListener("abort", stop, { once: true });
     });
   }
 
