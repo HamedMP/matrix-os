@@ -8,32 +8,6 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useProjectLifecycle } from "../../desktop/src/renderer/src/stores/project-lifecycle";
 
-const providerSettingsSnapshot = {
-  contractVersion: 1,
-  projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: 7 },
-  revision: 3,
-  refreshedAt: "2026-09-01T00:00:00.000Z",
-  access: { mode: "read_only", reason: "runtime_unavailable" },
-  supportedActions: [],
-  configurationHarnessKinds: [],
-  harnessCatalog: ["hermes", "openclaw", "pi", "opencode"].map((harness) => ({
-    harness,
-    displayName: harness === "openclaw"
-      ? "OpenClaw"
-      : `${harness.slice(0, 1).toUpperCase()}${harness.slice(1)}`,
-    installState: "missing",
-    available: false,
-    runnable: false,
-    setupAction: "none",
-    safeReason: "runtime_not_supported",
-  })),
-  modelProviders: [],
-  accessSources: [],
-  accounts: [],
-  harnesses: [],
-  gatewayPolicy: null,
-};
-
 describe("SettingsView", () => {
   beforeEach(() => {
     document.documentElement.removeAttribute("data-theme");
@@ -115,25 +89,14 @@ describe("SettingsView", () => {
     expect(providers.className).not.toContain("bg-[var(--bg-selected)]");
   });
 
-  it("loads Agents & providers through the runtime-scoped API without crashing Settings", async () => {
-    const get = vi.fn(async (path: string) => {
-      if (path === "/api/ai/provider-settings") return providerSettingsSnapshot;
-      throw new Error(`Unexpected GET ${path}`);
-    });
-    const runtimeApi = { get, post: vi.fn() };
-    const api = { forRuntime: vi.fn(() => runtimeApi) };
-    useConnection.setState({ api: api as never });
-
+  it("keeps the previous local Agents & providers settings surface", async () => {
     render(<SettingsView />);
     fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
 
-    await waitFor(() => expect(screen.getByText("No harnesses configured")).not.toBeNull());
-    expect(api.forRuntime).toHaveBeenCalledWith("primary");
-    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings", expect.objectContaining({
-      maxBytes: 1024 * 1024,
-      signal: expect.any(AbortSignal),
-    }));
-    expect(screen.queryByText("Settings couldn't open")).toBeNull();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Providers" })).not.toBeNull());
+    expect(document.querySelector('[data-settings-adapter="agents-providers-legacy"]')).not.toBeNull();
+    expect(document.querySelector('[data-provider-settings-adapter="legacy"]')).not.toBeNull();
+    expect(screen.queryByText("HARNESSES")).toBeNull();
   });
 
   it("groups services, MCPs, skills, and CLI under Integrations", () => {

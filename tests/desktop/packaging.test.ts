@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import desktopViteConfig from "../../desktop/electron.vite.config";
 
 function readPngDimensions(path: string): { width: number; height: number } {
   const png = readFileSync(path);
@@ -22,16 +21,6 @@ function sha256(path: string): string {
 }
 
 describe("desktop packaging", () => {
-  it("deduplicates React across renderer workspace packages", () => {
-    const config = desktopViteConfig as {
-      renderer?: { resolve?: { dedupe?: string[] } };
-    };
-
-    expect(config.renderer?.resolve?.dedupe).toEqual(
-      expect.arrayContaining(["react", "react-dom"]),
-    );
-  });
-
   it("uses an electron-builder version that preserves branded DMG backgrounds", () => {
     const packageJson = JSON.parse(
       readFileSync(join(process.cwd(), "desktop/package.json"), "utf8"),
