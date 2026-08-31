@@ -502,6 +502,23 @@ describe('CI workflows', () => {
     );
   });
 
+  it('builds platform previews with the real Clerk key and preview origin', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(workflow).toContain(
+      'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}',
+    );
+    expect(workflow).toContain(
+      "PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}",
+    );
+    expect(workflow).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required.');
+    expect(workflow).toContain(
+      '_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
+    );
+    expect(workflow).toContain('_NEXT_PUBLIC_MATRIX_APP_URL=$PREVIEW_PUBLIC_URL');
+  });
+
   it('deploys the card-trial rollout flag and verifies every trial lifecycle webhook', () => {
     const root = process.cwd();
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
