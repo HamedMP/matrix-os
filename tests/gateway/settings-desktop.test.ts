@@ -54,7 +54,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const data = await res.json();
       expect(data.background).toEqual({
         type: "wallpaper",
-        name: "moraine-lake.jpg",
+        name: "matrix-dusk.webp",
       });
       expect(data.dock).toEqual({
         position: "left",

@@ -11,6 +11,7 @@ import {
 import { DEFAULT_PINNED_APPS } from "../../shell/src/lib/builtin-apps";
 import {
   buildMeshGradient,
+  BUNDLED_WALLPAPERS,
   resetDesktopConfigRuntimeCacheForTests,
   saveDesktopConfig,
   saveDesktopConfigPatch,
@@ -104,7 +105,16 @@ describe("Desktop config", () => {
     // path as the file listing APIs; raw /files/* URLs can 401/404 for
     // signed-in users behind the platform session router.
     const gatewayUrl = "https://gateway.example.com";
-    for (const name of ["moraine-lake.jpg", "xp-bliss.jpg", "win11-bloom.jpg", "macos-light.svg"]) {
+    for (const name of [
+      "matrix-dawn.webp",
+      "matrix-dusk.webp",
+      "matrix-night.webp",
+      "moraine-lake.jpg",
+      "xp-bliss.jpg",
+      "win11-bloom.jpg",
+      "macos-light.svg",
+    ]) {
+      expect(BUNDLED_WALLPAPERS.has(name)).toBe(true);
       expect(wallpaperUrl(name, gatewayUrl)).toBe(
         `${gatewayUrl}/api/files/blob?path=${encodeURIComponent(`system/wallpapers/${name}`)}`,
       );

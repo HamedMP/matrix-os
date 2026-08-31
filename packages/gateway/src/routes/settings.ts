@@ -36,7 +36,7 @@ import {
 import type { AgentRuntimeController } from "../agent-config/runtime-controller.js";
 
 const DESKTOP_DEFAULTS = {
-  background: { type: "wallpaper", name: "moraine-lake.jpg" },
+  background: { type: "wallpaper", name: "matrix-dusk.webp" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: ["__terminal__", "__file-browser__", "__chat__"] as string[],
   iconStyle: DEFAULT_ICON_STYLE,
