@@ -240,7 +240,7 @@ export function createOpenCodeCodingAgentProvider(
   const runCommand = options.runCommand ?? defaultRunCommand;
   const runTimeoutMs = Math.max(1, Math.min(options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS));
   const killGraceMs = Math.max(1, Math.min(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, 10_000));
-  const active = new Map<string, () => void>();
+  const active = new Map<string, { abort: () => void; evict: () => void }>();
   const resolveProjectPath = options.resolveProjectPath ?? (async (slug: string) => {
     const result = await createProjectManager({ homePath: options.homePath }).getProject(slug);
     return result.ok ? result.project.localPath : null;
@@ -284,8 +284,7 @@ export function createOpenCodeCodingAgentProvider(
         return;
       }
       let settled = false;
-      let aborted = false;
-      let timedOut = false;
+      let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
       let failed = false;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -295,9 +294,9 @@ export function createOpenCodeCodingAgentProvider(
       let recordCount = 0;
       const events: AgentThreadEvent[] = [];
       const seenParts = new Set<string>();
-      const stop = () => {
-        if (settled || aborted) return;
-        aborted = true;
+      const stop = (reason: NonNullable<typeof terminationReason>) => {
+        if (settled || terminationReason) return;
+        terminationReason = reason;
         if (timer) clearTimeout(timer);
         try { child.kill("SIGTERM"); } catch (error: unknown) { logCodingAgentWarning("OpenCode termination failed", error); }
         killTimer = setTimeout(() => {
@@ -307,16 +306,19 @@ export function createOpenCodeCodingAgentProvider(
         }, killGraceMs);
         killTimer.unref?.();
       };
+      const tracked = {
+        abort: () => stop("user_abort"),
+        evict: () => stop("failure"),
+      };
       while (active.size >= MAX_ACTIVE_PROCESSES) {
         const oldest = active.keys().next().value as string | undefined;
         if (!oldest) break;
-        active.get(oldest)?.();
+        active.get(oldest)?.evict();
         active.delete(oldest);
       }
-      active.set(input.threadId, stop);
+      active.set(input.threadId, tracked);
       timer = setTimeout(() => {
-        timedOut = true;
-        stop();
+        stop("timeout");
       }, timeoutMs);
       timer.unref?.();
       const finish = (code: number | null) => {
@@ -324,13 +326,17 @@ export function createOpenCodeCodingAgentProvider(
         settled = true;
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
-        input.signal?.removeEventListener("abort", stop);
-        if (active.get(input.threadId) === stop) active.delete(input.threadId);
+        input.signal?.removeEventListener("abort", tracked.abort);
+        if (active.get(input.threadId) === tracked) active.delete(input.threadId);
         const tail = stdout.trim();
-        if (tail && !aborted && !failed) feed(tail);
+        if (tail && !terminationReason && !failed) feed(tail);
         resolve({
           events,
-          outcome: timedOut || failed ? "failed" : aborted ? "aborted" : code !== 0 ? "failed" : "completed",
+          outcome: terminationReason === "user_abort"
+            ? "aborted"
+            : failed || terminationReason === "timeout" || terminationReason === "failure" || code !== 0
+              ? "failed"
+              : "completed",
           ...(sessionId ? { sessionId } : {}),
         });
       };
@@ -338,7 +344,7 @@ export function createOpenCodeCodingAgentProvider(
         recordCount += 1;
         if (recordCount > MAX_RECORDS) {
           failed = true;
-          stop();
+          stop("failure");
           return;
         }
         const result = collectLine({ line, threadId: input.threadId, scope: input.scope, now: input.now, nextEventId: input.nextEventId, events, seenParts });
@@ -346,17 +352,17 @@ export function createOpenCodeCodingAgentProvider(
         failed ||= result.failed === true;
         if (result.limitExceeded) {
           failed = true;
-          stop();
+          stop("failure");
         }
       };
       child.stdout.on("data", (chunk) => {
-        if (settled || aborted) return;
+        if (settled || terminationReason) return;
         stdoutBytes += chunk.byteLength;
-        if (stdoutBytes > MAX_STDOUT_BYTES) { failed = true; stop(); stdout = ""; return; }
+        if (stdoutBytes > MAX_STDOUT_BYTES) { failed = true; stop("failure"); stdout = ""; return; }
         stdout += chunk.toString("utf-8");
-        if (Buffer.byteLength(stdout, "utf-8") > MAX_STDOUT_BUFFER_BYTES) { failed = true; stop(); stdout = ""; return; }
+        if (Buffer.byteLength(stdout, "utf-8") > MAX_STDOUT_BUFFER_BYTES) { failed = true; stop("failure"); stdout = ""; return; }
         let index = stdout.indexOf("\n");
-        while (index >= 0 && !aborted && !settled) {
+        while (index >= 0 && !terminationReason && !settled) {
           feed(stdout.slice(0, index).replace(/\r$/, ""));
           stdout = stdout.slice(index + 1);
           index = stdout.indexOf("\n");
@@ -365,8 +371,8 @@ export function createOpenCodeCodingAgentProvider(
       child.stderr.on("data", () => { /* bounded provider diagnostics stay out of client state */ });
       child.once("error", (error) => { logCodingAgentWarning("OpenCode process failed", error); failed = true; finish(-1); });
       child.once("exit", finish);
-      if (input.signal?.aborted) stop();
-      else input.signal?.addEventListener("abort", stop, { once: true });
+      if (input.signal?.aborted) tracked.abort();
+      else input.signal?.addEventListener("abort", tracked.abort, { once: true });
     });
   }
 
@@ -434,7 +440,7 @@ export function createOpenCodeCodingAgentProvider(
       return { events: run.events, outcome: run.outcome, resumeState };
     },
     abortThread({ thread, now, nextEventId }) {
-      active.get(thread.id)?.();
+      active.get(thread.id)?.abort();
       return [statusEvent(thread.id, "aborted", now, nextEventId), completedEvent(thread.id, "aborted", now, nextEventId)];
     },
     submitApproval() { return []; },

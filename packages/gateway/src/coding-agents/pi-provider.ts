@@ -608,24 +608,18 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         return;
       }
       let settled = false;
-      let aborted = false;
-      let timedOut = false;
-      let terminationStarted = false;
+      let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
       let stdoutBuffer = "";
       let stderrText = "";
       const killTimer: { current?: ReturnType<typeof setTimeout> } = {};
 
       const timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        requestTermination();
+        requestTermination("timeout");
       }, effectiveRunTimeoutMs);
       timeoutTimer.unref?.();
 
       const onAbort = () => {
-        if (aborted || settled) return;
-        aborted = true;
-        clearTimeout(timeoutTimer);
-        requestTermination();
+        requestTermination("user_abort");
       };
       const trackedProcess = trackProcess(input.threadId, onAbort);
       if (input.signal) {
@@ -647,19 +641,20 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         if (settled) return;
         const collected = collector.finish();
         const sessionId = collected.sessionId ?? input.sessionId;
-        if (timedOut) {
+        if (terminationReason === "timeout") {
           logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
         }
         settle({
           events: collected.events,
-          outcome: aborted ? "aborted" : "failed",
+          outcome: terminationReason === "user_abort" ? "aborted" : "failed",
           sessionId,
         });
       }
 
-      function requestTermination(): void {
-        if (terminationStarted || settled) return;
-        terminationStarted = true;
+      function requestTermination(reason: NonNullable<typeof terminationReason>): void {
+        if (terminationReason || settled) return;
+        terminationReason = reason;
+        clearTimeout(timeoutTimer);
         terminate(proc, killTimer, settleAfterForcedTermination);
       }
 
@@ -668,8 +663,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         stdoutBuffer += chunk.toString("utf-8");
         if (stdoutBuffer.length > 8 * 1024 * 1024) {
           logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout buffer overflow"));
-          timedOut = true;
-          requestTermination();
+          requestTermination("failure");
           stdoutBuffer = "";
           return;
         }
@@ -697,12 +691,16 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         if (tail.length > 0) collector.feedLine(tail);
         const collected = collector.finish();
         const sessionId = collected.sessionId ?? input.sessionId;
-        if (aborted) {
+        if (terminationReason === "user_abort") {
           settle({ events: collected.events, outcome: "aborted", sessionId });
           return;
         }
-        if (timedOut) {
+        if (terminationReason === "timeout") {
           logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
+          settle({ events: collected.events, outcome: "failed", sessionId });
+          return;
+        }
+        if (terminationReason === "failure") {
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
