@@ -28,7 +28,6 @@ skills=(
   gesture-ui
   improve-animations
   integrations
-  landing-design
   motion-react
   pick-ui-library
   review-animations

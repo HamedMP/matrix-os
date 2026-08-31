@@ -104,10 +104,42 @@ describe("Matrix coding-agent skill sync", () => {
     }
   });
 
+  it("removes retired managed skills even when their names are not matrix-prefixed", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-skills-retire-${Date.now()}`), { recursive: true }));
+    const source = join(root, "skills", "matrix");
+    const matrixHome = join(root, "matrix-home");
+    const cliHome = join(root, "cli-home");
+
+    try {
+      writeSkill(source, "animate", "animate");
+      const script = join(process.cwd(), "scripts/sync-matrix-agent-skills.sh");
+      const env = {
+        ...process.env,
+        HOME: cliHome,
+        MATRIX_HOME: matrixHome,
+        MATRIX_SKILL_TARGETS: "matrix,codex",
+      };
+
+      execFileSync("bash", [script, source], { env, stdio: "pipe" });
+      const codexTarget = join(cliHome, ".agents", "skills", "animate");
+      expect(existsSync(codexTarget)).toBe(true);
+
+      rmSync(join(source, "animate"), { recursive: true, force: true });
+      execFileSync("bash", [script, source], { env, stdio: "pipe" });
+
+      expect(existsSync(codexTarget)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps manual skill installers aligned with the shipped Matrix skill pack", () => {
     const root = process.cwd();
     const shippedSkillDirs = readdirSync(join(root, "skills", "matrix"), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
+      .filter(
+        (entry) =>
+          entry.isDirectory() && existsSync(join(root, "skills", "matrix", entry.name, "SKILL.md")),
+      )
       .map((entry) => entry.name)
       .sort();
 
@@ -125,7 +157,7 @@ describe("Matrix coding-agent skill sync", () => {
     const logPath = join(root, "agent.log");
 
     try {
-      for (const skillDir of ["app-builder", "app-ui-patterns", "landing-design"]) {
+      for (const skillDir of ["app-builder", "app-ui-patterns", "dev-vps"]) {
         writeSkill(source, skillDir, `matrix-${skillDir}`);
       }
 
@@ -148,7 +180,8 @@ printf '%s\\n' "$*" >> "${logPath}"
       const log = readFileSync(logPath, "utf-8");
       expect(log).toContain(`skills install ${join(source, "app-builder")}`);
       expect(log).toContain(`skills install ${join(source, "app-ui-patterns")}`);
-      expect(log).toContain(`skills install ${join(source, "landing-design")}`);
+      expect(log).toContain(`skills install ${join(source, "dev-vps")}`);
+      expect(log).not.toContain("landing-design");
       expect(log).not.toContain("skills/matrix/skills/matrix");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -163,7 +196,7 @@ printf '%s\\n' "$*" >> "${logPath}"
     const fakeHermes = join(root, "hermes");
 
     try {
-      for (const skillDir of ["app-builder", "app-ui-patterns", "landing-design"]) {
+      for (const skillDir of ["app-builder", "app-ui-patterns", "dev-vps"]) {
         writeSkill(source, skillDir, `matrix-${skillDir}`);
       }
 
@@ -185,7 +218,7 @@ exit 0
         stdio: "pipe",
       });
 
-      for (const skillDir of ["app-builder", "app-ui-patterns", "landing-design"]) {
+      for (const skillDir of ["app-builder", "app-ui-patterns", "dev-vps"]) {
         const skillName = `matrix-${skillDir}`;
         const target = join(hermesHome, "skills", skillName);
         expect(existsSync(join(target, "SKILL.md"))).toBe(true);

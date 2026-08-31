@@ -29,6 +29,7 @@ MATRIX_SKILLS_SOURCE="$(cd "$MATRIX_SKILLS_SOURCE" && pwd)"
 MATRIX_HOME="${MATRIX_HOME:-$HOME/matrixos}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 MATRIX_SKILL_TARGETS=",${MATRIX_SKILL_TARGETS:-matrix,claude,codex},"
+MANAGED_SKILLS_MANIFEST=".matrix-os-managed-skills"
 
 has_target() {
   case "$MATRIX_SKILL_TARGETS" in
@@ -52,13 +53,27 @@ is_matrix_owned_dir() {
     return 1
   fi
   [ -f "$path/.matrix-os-managed" ] && return 0
-  [ -f "$path/SKILL.md" ] && grep -q '^author:[[:space:]]*Matrix OS[[:space:]]*$' "$path/SKILL.md" && return 0
+  [ -f "$path/SKILL.md" ] && grep -q '^[[:space:]]*author:[[:space:]]*Matrix OS[[:space:]]*$' "$path/SKILL.md" && return 0
   return 1
 }
 
 cleanup_root() {
   local root="$1"
   mkdir -p "$root"
+  local manifest="$root/$MANAGED_SKILLS_MANIFEST"
+  if [ -f "$manifest" ]; then
+    while IFS='|' read -r managed_name managed_source; do
+      case "$managed_name" in
+        ""|*[!A-Za-z0-9._-]*) continue ;;
+      esac
+      local managed_path="$root/$managed_name"
+      if [ -L "$managed_path" ] && [ "$(readlink "$managed_path" 2>/dev/null || true)" = "$managed_source" ]; then
+        rm -f "$managed_path"
+      elif [ -d "$managed_path" ] && [ -f "$managed_path/.matrix-os-managed" ]; then
+        rm -rf "$managed_path"
+      fi
+    done < "$manifest"
+  fi
   for generated in "$root"/matrix-*; do
     [ -e "$generated" ] || [ -L "$generated" ] || continue
     if is_matrix_owned_dir "$generated"; then
@@ -79,7 +94,7 @@ link_or_copy_skill() {
       rm -rf "$target"
     else
       echo "Leaving user-managed skill untouched: $target" >&2
-      return 0
+      return 1
     fi
   fi
 
@@ -94,6 +109,9 @@ link_or_copy_skill() {
 sync_root() {
   local root="$1"
   cleanup_root "$root"
+  local manifest="$root/$MANAGED_SKILLS_MANIFEST"
+  local manifest_tmp="$manifest.tmp.$$"
+  : > "$manifest_tmp"
 
   for src in "$MATRIX_SKILLS_SOURCE"/*; do
     [ -d "$src" ] || continue
@@ -103,8 +121,17 @@ sync_root() {
     if [ -z "$name" ]; then
       name="matrix-$(basename "$src")"
     fi
-    link_or_copy_skill "$src" "$root" "$name"
+    case "$name" in
+      ""|*[!A-Za-z0-9._-]*)
+        echo "Skipping skill with unsafe name: $name" >&2
+        continue
+        ;;
+    esac
+    if link_or_copy_skill "$src" "$root" "$name"; then
+      printf '%s|%s\n' "$name" "$src" >> "$manifest_tmp"
+    fi
   done
+  mv "$manifest_tmp" "$manifest"
 }
 
 if has_target matrix; then

@@ -23,7 +23,6 @@ The sync script uses symlinked skill directories when possible, so updates to `s
 | `matrix-integrations` | Use platform-owned Matrix integrations without copying provider secrets into Hermes or customer VPSes. |
 | `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
 | `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
-| `matrix-landing-design` | Build public Matrix OS marketing and landing surfaces without mixing those patterns into apps. |
 
 ## Install Into Hermes
 
@@ -52,7 +51,7 @@ MATRIX_SKILL_TARGETS=matrix,claude,codex,hermes ./scripts/sync-matrix-agent-skil
 Equivalent manual command:
 
 ```bash
-for skill in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
+for skill in app-builder app-ui-patterns design-system integrations dev-vps debug-app; do
   hermes skills install "HamedMP/matrix-os/skills/matrix/$skill"
 done
 ```
@@ -68,7 +67,6 @@ hermes skills install HamedMP/matrix-os/skills/matrix/design-system
 hermes skills install HamedMP/matrix-os/skills/matrix/integrations
 hermes skills install HamedMP/matrix-os/skills/matrix/dev-vps
 hermes skills install HamedMP/matrix-os/skills/matrix/debug-app
-hermes skills install HamedMP/matrix-os/skills/matrix/landing-design
 ```
 
 If Hermes is running from a local checkout, install from the local path or add the repo as a tap:

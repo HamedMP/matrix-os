@@ -27,7 +27,7 @@ if [ -d "${MATRIX_SKILLS_SOURCE}/app-builder" ]; then
   exit 0
 fi
 
-for skill_dir in animate animation-accessibility animation-performance animation-vocabulary app-builder app-ui-patterns css-animations debug-animation debug-app design-system dev-vps find-animation-opportunities gesture-ui improve-animations integrations landing-design motion-react pick-ui-library review-animations scroll-animations; do
+for skill_dir in animate animation-accessibility animation-performance animation-vocabulary app-builder app-ui-patterns css-animations debug-animation debug-app design-system dev-vps find-animation-opportunities gesture-ui improve-animations integrations motion-react pick-ui-library review-animations scroll-animations; do
   "$HERMES_BIN" skills install --force --yes "${MATRIX_SKILLS_SOURCE}/skills/matrix/${skill_dir}"
 done
 

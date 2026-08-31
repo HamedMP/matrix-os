@@ -118,6 +118,33 @@ describe("getCoreAgents", () => {
     expect(agents.builder.prompt).toContain("absolute");
   });
 
+  it("builder prompt applies current Matrix brand guidance through a user taste brief", () => {
+    const prompt = getCoreAgents(homePath).builder.prompt;
+    expect(prompt).toContain("Bricolage Grotesque");
+    expect(prompt).toContain("Geist");
+    expect(prompt).toContain("#0E3422");
+    expect(prompt).toContain("taste brief");
+    expect(prompt).toContain("user's taste");
+    expect(prompt).not.toContain("Orbitron");
+  });
+
+  it("builder prompt directs app work through Matrix and animation skills", () => {
+    const builder = getCoreAgents(homePath).builder;
+    const prompt = builder.prompt;
+    for (const skill of [
+      "matrix-app-builder",
+      "matrix-design-system",
+      "matrix-app-ui-patterns",
+      "find-animation-opportunities",
+      "animate",
+      "animation-accessibility",
+      "animation-performance",
+    ]) {
+      expect(prompt).toContain(skill);
+    }
+    expect(builder.tools).toContain("mcp__matrix-os-ipc__load_skill");
+  });
+
   it("returns all five core agents", () => {
     const agents = getCoreAgents(homePath);
     expect(Object.keys(agents)).toEqual([
@@ -153,6 +180,7 @@ describe("loadCustomAgents", () => {
     expect(agents.builder.maxTurns).toBe(50);
     expect(agents.builder.tools).toContain("Read");
     expect(agents.builder.tools).toContain("mcp__matrix-os-ipc__claim_task");
+    expect(agents.builder.tools).toContain("mcp__matrix-os-ipc__load_skill");
   });
 
   it("loads prompt body for each agent", () => {
@@ -162,6 +190,15 @@ describe("loadCustomAgents", () => {
     expect(agents.researcher.prompt).toContain("GUIDELINES");
     expect(agents.deployer.prompt).toContain("PORT MANAGEMENT");
     expect(agents.evolver.prompt).toContain("SAFETY RULES");
+  });
+
+  it("keeps the custom builder aligned with the current brand and motion skill routing", () => {
+    const prompt = loadCustomAgents("./home/agents/custom").builder.prompt;
+    expect(prompt).toContain("Bricolage Grotesque");
+    expect(prompt).toContain("taste brief");
+    expect(prompt).toContain("matrix-app-builder");
+    expect(prompt).toContain("animation-accessibility");
+    expect(prompt).not.toContain("Orbitron");
   });
 
   it("resolves ~/ paths when homePath provided", () => {
