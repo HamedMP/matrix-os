@@ -1,11 +1,9 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   FUNDED_AI_AUDIENCE,
   FUNDED_AI_SCOPE,
-  FundedAiAuthorizationResponseSchema,
   FundedAiGlobalPolicySchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
-  type FundedAiAuthorizationResponse,
   type FundedAiGlobalPolicy,
   type FundedAiIdentity,
   type FundedAiRuntimeCredentialIssueResponse,
@@ -13,6 +11,10 @@ import {
 import { z } from "zod/v4";
 import { sql } from "kysely";
 import type { PlatformDB } from "./db.js";
+import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
+import { createAiFundedMeteringRepository } from "./ai-funded-metering-repository.js";
+
+export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
 const ModelIdsSchema = z.array(z.string().min(3).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/))
   .max(64).refine((values) => new Set(values).size === values.length);
@@ -31,24 +33,10 @@ const RuntimePolicyUpdateSchema = z.object({
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
   enabled: z.boolean(),
   allowedModelIds: ModelIdsSchema,
+  monthlyBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   expiresAt: z.string().datetime({ offset: true }).nullable(),
 }).strict();
 const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A-Za-z0-9_-]{43})$/;
-
-export type AiFundedPolicyErrorCode =
-  | "access_disabled"
-  | "identity_mismatch"
-  | "model_not_allowed"
-  | "rate_limited"
-  | "revision_conflict"
-  | "unauthorized";
-
-export class AiFundedPolicyError extends Error {
-  constructor(readonly code: AiFundedPolicyErrorCode) {
-    super(code);
-    this.name = "AiFundedPolicyError";
-  }
-}
 
 export interface AiFundedPolicyRepositoryOptions {
   db: PlatformDB;
@@ -59,6 +47,9 @@ export interface AiFundedPolicyRepositoryOptions {
   credentialTtlMs?: number;
   issueCooldownMs?: number;
   policyFreshnessMs?: number;
+  reservationTtlMs?: number;
+  inFlightTtlMs?: number;
+  reservationIdFactory?: () => string;
 }
 
 export type SetRuntimePolicyInput = z.infer<typeof RuntimePolicyUpdateSchema>;
@@ -82,10 +73,8 @@ function intersectModels(globalModels: string[], runtimeModels: string[]): strin
   return globalModels.filter((model) => runtimeSet.has(model));
 }
 
-function hashesEqual(left: string, right: string): boolean {
-  const a = Buffer.from(left, "hex");
-  const b = Buffer.from(right, "hex");
-  return a.length === b.length && timingSafeEqual(a, b);
+function utcMonthStart(at: Date): string {
+  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
 }
 
 export function createAiFundedPolicyRepository(options: AiFundedPolicyRepositoryOptions) {
@@ -98,9 +87,13 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
   const credentialTtlMs = options.credentialTtlMs ?? 15 * 60_000;
   const issueCooldownMs = options.issueCooldownMs ?? 30_000;
   const policyFreshnessMs = options.policyFreshnessMs ?? 60_000;
+  const reservationTtlMs = options.reservationTtlMs ?? 5 * 60_000;
+  const inFlightTtlMs = options.inFlightTtlMs ?? 30 * 60_000;
   if (credentialTtlMs < 60_000 || credentialTtlMs > 60 * 60_000) throw new Error("Invalid credential TTL");
   if (issueCooldownMs < 1_000 || issueCooldownMs > credentialTtlMs) throw new Error("Invalid issue cooldown");
   if (policyFreshnessMs < 1_000 || policyFreshnessMs > 5 * 60_000) throw new Error("Invalid policy freshness");
+  if (reservationTtlMs < 30_000 || reservationTtlMs > 15 * 60_000) throw new Error("Invalid reservation TTL");
+  if (inFlightTtlMs < 60_000 || inFlightTtlMs > 60 * 60_000) throw new Error("Invalid in-flight TTL");
 
   const hashCredential = (credential: string) => createHmac("sha256", options.credentialHashSecret)
     .update(credential).digest("hex");
@@ -146,7 +139,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     const parsed = RuntimePolicyUpdateSchema.parse(input);
     const identity = parsed.identity;
     const allowedModelIds = parsed.allowedModelIds;
-    const at = now().toISOString();
+    const policyTime = now();
+    const at = policyTime.toISOString();
     return options.db.transaction(async (trx) => {
       const machine = await trx.executor.selectFrom("user_machines").select([
         "machine_id", "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
@@ -161,15 +155,30 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         runtime_slot: identity.runtimeSlot,
         enabled: false,
         allowed_model_ids: "[]",
+        monthly_budget_microusd: 0,
         expires_at: null,
         next_issue_at: "1970-01-01T00:00:00.000Z",
         revision: 0,
         created_at: at,
         updated_at: at,
       }).onConflict((conflict) => conflict.column("machine_id").doNothing()).execute();
+      await trx.executor.insertInto("ai_funded_runtime_balances").values({
+        machine_id: identity.machineId,
+        owner_id: identity.ownerId,
+        runtime_slot: identity.runtimeSlot,
+        credit_balance_microusd: 0,
+        promotional_balance_microusd: 0,
+        addon_balance_microusd: 0,
+        reserved_microusd: 0,
+        month_period_start: utcMonthStart(policyTime),
+        month_spent_microusd: 0,
+        month_reserved_microusd: 0,
+        updated_at: at,
+      }).onConflict((conflict) => conflict.column("machine_id").doNothing()).execute();
       const row = await trx.executor.updateTable("ai_funded_runtime_policies").set({
         enabled: parsed.enabled,
         allowed_model_ids: JSON.stringify(allowedModelIds),
+        monthly_budget_microusd: parsed.monthlyBudgetMicrousd,
         expires_at: parsed.expiresAt,
         revision: parsed.expectedRevision + 1,
         updated_at: at,
@@ -182,6 +191,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         enabled: row.enabled,
         revision: row.revision,
         allowedModelIds,
+        monthlyBudgetMicrousd: Number(row.monthly_budget_microusd),
         expiresAt: row.expires_at,
         updatedAt: row.updated_at,
       };
@@ -204,6 +214,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       runtime_revision: number;
       global_models: string;
       runtime_models: string;
+      monthly_budget_microusd: number;
       token_id: string;
     };
     const issued = await sql<IssuedRow>`
@@ -212,6 +223,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           runtime.machine_id,
           runtime.revision AS runtime_revision,
           runtime.allowed_model_ids AS runtime_models,
+          runtime.monthly_budget_microusd,
           global_policy.revision AS global_revision,
           global_policy.allowed_model_ids AS global_models
         FROM ai_funded_runtime_policies runtime
@@ -241,7 +253,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         WHERE runtime.machine_id = eligible.machine_id
           AND runtime.next_issue_at <= ${checkedAt}
         RETURNING eligible.global_revision, eligible.runtime_revision,
-          eligible.global_models, eligible.runtime_models
+          eligible.global_models, eligible.runtime_models, eligible.monthly_budget_microusd
       ), inserted AS (
         INSERT INTO ai_runtime_credentials (
           token_id, token_hash, owner_id, machine_id, runtime_slot,
@@ -278,58 +290,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         globalRevision: row.global_revision,
         runtimeRevision: row.runtime_revision,
         allowedModelIds,
-        checkedAt,
-        staleAfter: new Date(checked.getTime() + policyFreshnessMs).toISOString(),
-      },
-    });
-  }
-
-  async function authorize(input: { credential: string; modelId: string }): Promise<FundedAiAuthorizationResponse> {
-    const match = TOKEN_PATTERN.exec(input.credential);
-    if (!match) throw new AiFundedPolicyError("unauthorized");
-    await options.db.ready;
-    const checked = now();
-    const row = await options.db.executor.selectFrom("ai_runtime_credentials as credential")
-      .innerJoin("ai_funded_runtime_policies as runtime", "runtime.machine_id", "credential.machine_id")
-      .innerJoin("user_machines as machine", "machine.machine_id", "credential.machine_id")
-      .innerJoin("ai_funded_global_policy as global", (join) => join.onRef("global.policy_id", "=", "global.policy_id"))
-      .select([
-        "credential.token_id", "credential.token_hash", "credential.owner_id", "credential.machine_id",
-        "credential.runtime_slot", "credential.audience", "credential.scope", "credential.expires_at",
-        "credential.revoked_at", "runtime.enabled as runtime_enabled", "runtime.allowed_model_ids as runtime_models",
-        "runtime.expires_at as runtime_expires_at", "runtime.revision as runtime_revision",
-        "global.enabled as global_enabled", "global.allowed_model_ids as global_models", "global.revision as global_revision",
-        "machine.clerk_user_id", "machine.runtime_slot as machine_runtime_slot", "machine.status",
-        "machine.activation_state", "machine.deleted_at",
-      ]).where("credential.token_id", "=", match[1]).where("global.policy_id", "=", "default").executeTakeFirst();
-    if (!row || !hashesEqual(row.token_hash, hashCredential(input.credential)) || row.revoked_at !== null
-      || Date.parse(row.expires_at) <= checked.getTime() || row.audience !== FUNDED_AI_AUDIENCE || row.scope !== FUNDED_AI_SCOPE
-      || row.clerk_user_id !== row.owner_id || row.machine_runtime_slot !== row.runtime_slot
-      || row.status !== "running" || row.activation_state !== "authorized" || row.deleted_at !== null) {
-      throw new AiFundedPolicyError("unauthorized");
-    }
-    const runtimeCurrent = row.runtime_expires_at === null || Date.parse(row.runtime_expires_at) > checked.getTime();
-    if (!row.global_enabled || !row.runtime_enabled || !runtimeCurrent) throw new AiFundedPolicyError("access_disabled");
-    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models));
-    if (!allowedModelIds.includes(input.modelId)) throw new AiFundedPolicyError("model_not_allowed");
-    const checkedAt = checked.toISOString();
-    return FundedAiAuthorizationResponseSchema.parse({
-      contractVersion: 1,
-      authorized: true,
-      identity: {
-        tokenId: row.token_id,
-        ownerId: row.owner_id,
-        machineId: row.machine_id,
-        runtimeSlot: row.runtime_slot,
-        audience: FUNDED_AI_AUDIENCE,
-        scope: FUNDED_AI_SCOPE,
-        expiresAt: row.expires_at,
-      },
-      policy: {
-        enabled: true,
-        globalRevision: row.global_revision,
-        runtimeRevision: row.runtime_revision,
-        allowedModelIds,
+        monthlyBudgetMicrousd: Number(row.monthly_budget_microusd),
         checkedAt,
         staleAfter: new Date(checked.getTime() + policyFreshnessMs).toISOString(),
       },
@@ -346,7 +307,16 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     return Number(result.numUpdatedRows) === 1;
   }
 
-  return { getGlobalPolicy, updateGlobalPolicy, setRuntimePolicy, issueRuntimeCredential, authorize, revokeRuntimeCredential };
+  const metering = createAiFundedMeteringRepository({
+    db: options.db,
+    credentialHashSecret: options.credentialHashSecret,
+    now,
+    policyFreshnessMs,
+    reservationTtlMs,
+    inFlightTtlMs,
+    reservationIdFactory: options.reservationIdFactory,
+  });
+  return { getGlobalPolicy, updateGlobalPolicy, setRuntimePolicy, issueRuntimeCredential, revokeRuntimeCredential, ...metering };
 }
 
 export type AiFundedPolicyRepository = ReturnType<typeof createAiFundedPolicyRepository>;
