@@ -282,7 +282,26 @@ describe("provider settings contracts", () => {
       ...mutationBase,
       harnessInstanceId: "harness_hermes",
       route: { kind: "fixed", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
+      accessSourceId: "source_personal",
+      accountId: "account_personal",
     }).success).toBe(false);
+  });
+
+  it("requires route, access source, and account to change atomically", () => {
+    expect(ProviderSettingsMutationSchema.safeParse({
+      type: "set_route",
+      ...mutationBase,
+      harnessInstanceId: "harness_hermes",
+      route: { kind: "configurable", providerId: "openai", modelId: "openai/gpt-5.6" },
+    }).success).toBe(false);
+    expect(ProviderSettingsMutationSchema.safeParse({
+      type: "set_route",
+      ...mutationBase,
+      harnessInstanceId: "harness_hermes",
+      route: { kind: "configurable", providerId: "openai", modelId: "openai/gpt-5.6" },
+      accessSourceId: "source_openai",
+      accountId: "account_openai",
+    }).success).toBe(true);
   });
 
   it.each(["missing", "installing", "failed", "unknown"] as const)(
@@ -381,6 +400,8 @@ describe("provider settings contracts", () => {
       ...mutationBase,
       harnessInstanceId: "harness_hermes",
       route: { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
+      accessSourceId: "source_personal",
+      accountId: "account_personal",
     },
     { type: "select_account", ...mutationBase, harnessInstanceId: "harness_hermes", accountId: "account_personal" },
     { type: "select_access_source", ...mutationBase, harnessInstanceId: "harness_hermes", accessSourceId: "source_matrix" },
