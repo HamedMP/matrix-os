@@ -29,6 +29,15 @@ const PASSTHROUGH_PHASES = new Set<JourneyState["phase"]>(["first_run", "ready"]
 const AMBIGUOUS_PROVISIONING_WINDOW_MS = 30_000;
 const APP_SESSION_POLL_MS = 4_000;
 
+function isRetryableAppSessionStatus(status: number): boolean {
+  return status === 402
+    || status === 404
+    || status === 408
+    || status === 425
+    || status === 429
+    || status >= 500;
+}
+
 const STAGE_LABEL: Record<string, string> = {
   creating_server: "Creating your server",
   booting: "Booting your computer",
@@ -130,6 +139,7 @@ function AppSessionHandoff({
   getToken: () => Promise<string | null>;
 }) {
   const [authenticationExpired, setAuthenticationExpired] = useState(false);
+  const [handoffFailed, setHandoffFailed] = useState(false);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect is the app-session readiness poller. It is gated by an authoritative ready journey phase, runs one request at a time, retries only after settlement, and cleans up its timer on unmount/redirect.
   useEffect(() => {
@@ -177,7 +187,11 @@ function AppSessionHandoff({
         // A 404 means the selected machine is not authorized for an app
         // session yet. Billing propagation and transient platform failures are
         // also passive states here: the journey already owns provisioning.
-        scheduleRetry();
+        if (isRetryableAppSessionStatus(response.status)) {
+          scheduleRetry();
+          return;
+        }
+        setHandoffFailed(true);
       } catch (error: unknown) {
         if (disposed) return;
         console.warn(
@@ -196,6 +210,25 @@ function AppSessionHandoff({
   }, [completionRedirect, getToken, runtimeSlot]);
 
   if (authenticationExpired) return <RedirectToSignIn />;
+
+  if (handoffFailed) {
+    return (
+      <BootShell activeStep="computer">
+        <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
+        <h1 className="text-lg font-medium text-forest">Session needs a refresh</h1>
+        <p role="alert" className="max-w-sm text-sm">
+          Matrix couldn’t finish connecting this browser session.
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="inline-flex items-center gap-2 rounded-md border border-forest/20 px-3 py-1.5 text-sm hover:bg-forest/5"
+        >
+          Try again
+        </button>
+      </BootShell>
+    );
+  }
 
   return (
     <BootShell activeStep="computer">

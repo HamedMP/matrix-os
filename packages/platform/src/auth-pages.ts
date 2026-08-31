@@ -577,7 +577,22 @@ export function getAuthPage(
     var signOutTarget = ${signOutTargetJson};
     var billingSetupTarget = ${billingSetupTargetJson};
     var SIGN_OUT_TIMEOUT_MS = ${BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS};
-    var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
+    function normalizeRuntimeSlot(value) {
+      return typeof value === 'string'
+        && value.length <= 32
+        && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value)
+        ? value
+        : null;
+    }
+    function isRetryableAppSessionStatus(status) {
+      return status === 402
+        || status === 404
+        || status === 408
+        || status === 425
+        || status === 429
+        || status >= 500;
+    }
+    var requestedRuntime = normalizeRuntimeSlot(new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime'));
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
     var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
     var defaultDeveloperTools = ['codex', 'claude-code', 'opencode', 'pi'];
@@ -1190,7 +1205,7 @@ export function getAuthPage(
             else openBillingSettingsFromClerkSession();
             return null;
           }
-          if (passiveRuntimeContinuation) waitForAppSession(provisioningAccepted);
+          if (passiveRuntimeContinuation && isRetryableAppSessionStatus(res.status)) waitForAppSession(provisioningAccepted);
           else showSignedInRecoveryState();
           return null;
         })

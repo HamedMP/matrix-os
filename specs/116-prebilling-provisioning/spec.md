@@ -151,7 +151,7 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - **SC-008**: Existing billing, provisioning, recovery, resize, suspension, preview, and additional-computer contract suites pass without behavior changes outside the explicitly eligible onboarding cohort.
 - **SC-009**: User-facing errors reveal no provider names, raw infrastructure errors, internal identifiers, network details, database details, or filesystem paths in all tested failure paths.
 - **SC-010**: Under concurrent mixed-size checkout admission, the platform prepares at most the configured number of unpaid computers and defers the next intent without weakening duplicate-prevention or billing-authorization guarantees.
-- **SC-011**: Shell and inline-auth contract tests prove that post-checkout device continuation makes zero repeated provisioning requests, never renders another build decision, and completes one app-session handoff after the selected runtime becomes authorized.
+- **SC-011**: Shell and inline-auth contract tests prove that post-checkout device continuation makes zero repeated provisioning requests, never renders another build decision, completes one app-session handoff after the selected runtime becomes authorized, and stops safely without retrying permanent client errors.
 
 ## Assumptions
 

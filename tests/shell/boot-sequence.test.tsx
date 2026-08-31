@@ -201,6 +201,41 @@ describe("BootSequence", () => {
     );
   });
 
+  it("stops automatic app-session retries on a permanent client error", async () => {
+    let appSessionAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        return Response.json({
+          phase: "ready",
+          detail: "Your Matrix computer is ready.",
+          nextAction: { kind: "open_shell" },
+        } satisfies JourneyState);
+      }
+      if (url === "/api/auth/app-session") {
+        appSessionAttempts += 1;
+        return Response.json({ error: "Validation error" }, { status: 400 });
+      }
+      return Response.json({}, { status: 500 });
+    }));
+
+    render(
+      <BootSequence
+        completionRedirect="/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK"
+        runtimeSlot="Bad Slot!"
+        passivePostCheckout
+      >
+        <div data-testid="shell">SHELL</div>
+      </BootSequence>,
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Matrix couldn’t finish connecting this browser session.",
+    );
+    expect(appSessionAttempts).toBe(1);
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
+  });
+
   it("enters passive journey reconciliation after provisioning returns 202", async () => {
     let provisioningAccepted = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

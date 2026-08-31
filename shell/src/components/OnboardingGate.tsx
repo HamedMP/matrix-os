@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
+import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
 import { BillingGate } from "@/components/BillingGate";
 import { BootSequence } from "@/components/BootSequence";
 import { MatrixLoadingScreen } from "@/components/MatrixLoadingScreen";
@@ -52,7 +53,8 @@ function OnboardingGateInner({
   const rawDeviceReturnPath = searchParams.get("device_return");
   const deviceReturnPath = normalizeDeviceReturnPath(rawDeviceReturnPath);
   const isDeviceFlow = deviceReturnPath !== null;
-  const requestedRuntime = searchParams.get("runtime");
+  const parsedRuntime = MatrixComputerRuntimeSlotSchema.safeParse(searchParams.get("runtime"));
+  const requestedRuntime = parsedRuntime.success ? parsedRuntime.data : null;
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const isBillingEntrypoint =
     searchParams.has("billing") ||

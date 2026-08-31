@@ -156,6 +156,27 @@ describe("OnboardingGate", () => {
     });
   });
 
+  it("drops an invalid runtime selector before device journey and session polling", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/?checkout=success&runtime=Bad%20Slot!&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+
+    render(
+      <OnboardingGate>
+        <div>Matrix workspace</div>
+      </OnboardingGate>,
+    );
+
+    expect(await screen.findByTestId("boot-sequence")).toBeTruthy();
+    expect(bootSequenceRender).toHaveBeenCalledWith(expect.objectContaining({
+      completionRedirect: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+      runtimeSlot: null,
+      passivePostCheckout: true,
+    }));
+  });
+
   it("selects the signup surface only for the exact marker", async () => {
     for (const path of [
       "/?billing=setup&handoff=signup",

@@ -2886,6 +2886,10 @@ describe("platform proxy routing", () => {
     expect(html).toContain("showLoadingState('Finishing your Matrix computer...');");
     expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
     expect(html).toContain("var passiveRuntimeContinuation = passiveCheckoutContinuation || Boolean(deviceReturnTarget);");
+    expect(html).toContain("function normalizeRuntimeSlot(value) {");
+    expect(html).toContain("var requestedRuntime = normalizeRuntimeSlot(");
+    expect(html).toContain("function isRetryableAppSessionStatus(status) {");
+    expect(html).toContain("passiveRuntimeContinuation && isRetryableAppSessionStatus(res.status)");
     expect(html).toContain("waitForAppSession(provisioningAccepted);");
     expect(html).not.toContain("if (checkoutJustCompleted) {\n              showDefaultInstallsState();");
     expect(html).toContain("continueWithClerkSession(true);");

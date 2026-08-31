@@ -127,6 +127,56 @@ describe('inline auth fallback continuation', () => {
     expect(dom.window.document.getElementById('auth')?.textContent).toContain('Finishing your Matrix computer');
   });
 
+  it('stops passive app-session polling on a permanent client error', async () => {
+    let appSessionAttempts = 0;
+    let appSessionBody: Record<string, unknown> | null = null;
+    const devicePath = '/?runtime=Bad%20Slot!&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK';
+    const html = getAuthPage(
+      'pk_test_matrix',
+      'sign-up',
+      'test-nonce',
+      devicePath,
+      'https://app.matrix-os.com',
+    );
+    const dom = new JSDOM(html, {
+      url: `https://app.matrix-os.com${devicePath}`,
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        Object.assign(window, {
+          AbortSignal,
+          Response,
+          Clerk: {
+            load: async () => undefined,
+            user: {
+              fullName: 'Test User',
+              username: 'test-user',
+              primaryEmailAddress: { emailAddress: 'test@example.com' },
+            },
+            session: { getToken: async () => 'clerk-token' },
+            signOut: async () => undefined,
+          },
+          fetch: async (input: string | URL | Request, init?: RequestInit) => {
+            if (String(input) === '/api/auth/app-session') {
+              appSessionAttempts += 1;
+              appSessionBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+              return Response.json({ error: 'Validation error' }, { status: 400 });
+            }
+            return Response.json({}, { status: 503 });
+          },
+        });
+      },
+    });
+    openDoms.push(dom);
+
+    await waitForCondition(() => (
+      dom.window.document.getElementById('auth')?.textContent?.includes('Session needs a refresh') ?? false
+    ));
+    expect(appSessionAttempts).toBe(1);
+    expect(appSessionBody).toEqual({ redirectTo: devicePath });
+    expect(dom.window.document.querySelector('.default-installs-state')).toBeNull();
+    expect(dom.window.document.getElementById('auth')?.textContent).not.toContain('Build VPS');
+  });
+
   it('treats accepted legacy provisioning as progress until app-session is ready', async () => {
     const requests: string[] = [];
     let appSessionAttempts = 0;
