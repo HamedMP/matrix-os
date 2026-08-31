@@ -62,7 +62,11 @@ export function GatewayPanel({
     try {
       await onAddCredit(source.id, creditPackage, creditRequestId);
       setCreditDialogOpen(false);
-    } catch {
+    } catch (error) {
+      console.warn(
+        "[provider-settings] Credit checkout failed:",
+        error instanceof Error ? error.name : typeof error,
+      );
       setCreditError(true);
     } finally {
       setCreditBusy(false);
