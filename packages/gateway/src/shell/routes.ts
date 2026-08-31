@@ -42,6 +42,8 @@ interface SessionRegistryRoutes {
 
 interface ShellSessionLifecycleRoutes {
   withSessionLifecycleLock<T>(name: string, operation: () => Promise<T>): Promise<T>;
+  beginSessionDeletion(name: string): Promise<void>;
+  completeSessionDeletion(name: string): Promise<void>;
   deleteSessionReferences(name: string): Promise<void>;
   clearSessionTombstone(name: string): Promise<void>;
   listSessionTombstones(): Promise<string[]>;
@@ -265,6 +267,10 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   };
 
+  const commitRecoveredSession = async (name: string): Promise<void> => {
+    await deps.sessionLifecycle?.clearSessionTombstone(name);
+  };
+
   app.get("/health", async (c) => {
     if (!deps.shellBackend) {
       console.warn("[shell] shell health route missing backend dependency");
@@ -410,12 +416,15 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.delete("/sessions/:name", deleteBodyLimit, async (c) => {
     try {
       const name = SafeSessionNameSchema.parse(c.req.param("name"));
+      const sessionLifecycle = deps.sessionLifecycle;
+      if (!sessionLifecycle) throw new Error("Missing terminal session lifecycle dependency");
       console.info("[terminal-lifecycle]", { event: "terminal.session.delete.requested", name });
-      return await withSessionLifecycleLock(name, async () => {
+      return await sessionLifecycle.withSessionLifecycleLock(name, async () => {
+        await sessionLifecycle.beginSessionDeletion(name);
         await deps.registry.delete(name, {
           force: new URL(c.req.url).searchParams.get("force") === "1",
         });
-        await deps.sessionLifecycle?.deleteSessionReferences(name);
+        await sessionLifecycle.completeSessionDeletion(name);
         console.info("[terminal-lifecycle]", { event: "terminal.session.delete.completed", name });
         return c.json({ ok: true });
       });
@@ -443,7 +452,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
       console.info("[terminal-lifecycle]", { event: "terminal.session.recover.requested", name });
       return await withSessionLifecycleLock(name, async () => {
         const session = await deps.registry.recover!(name, body.cwd ? { cwd: body.cwd } : {});
-        await commitCreatedSession(name);
+        await commitRecoveredSession(name);
         console.info("[terminal-lifecycle]", { event: "terminal.session.recover.completed", name });
         return c.json({ session }, 201);
       });

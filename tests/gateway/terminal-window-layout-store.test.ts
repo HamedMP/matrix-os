@@ -110,6 +110,72 @@ describe("terminal window layout store", () => {
     await expect(store.isSessionTombstoned("deleted-shell")).resolves.toBe(false);
   });
 
+  it("treats pre-upgrade tombstones without lifecycle state as completed", async () => {
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(
+      join(homePath, "system", "terminal-window-layouts.json"),
+      JSON.stringify({
+        version: 1,
+        layouts: {},
+        tombstones: [{
+          sessionName: "legacy-deleted",
+          deletedAt: "2026-08-30T00:00:00.000Z",
+        }],
+      }),
+      { flag: "wx" },
+    );
+    const store = new TerminalWindowLayoutStore({
+      homePath,
+      now: () => new Date("2026-08-30T00:00:01.000Z"),
+    });
+
+    await expect(store.listSessionTombstones()).resolves.toEqual(["legacy-deleted"]);
+    await expect(store.listPendingSessionDeletions()).resolves.toEqual([]);
+  });
+
+  it("keeps pending deletion intents until completion and only then applies tombstone expiry", async () => {
+    let now = new Date("2026-08-30T00:00:00.000Z");
+    const store = new TerminalWindowLayoutStore({ homePath, now: () => now });
+
+    await store.beginSessionDeletion("pending-shell");
+    now = new Date("2026-10-15T00:00:00.000Z");
+
+    await expect(store.listPendingSessionDeletions()).resolves.toEqual(["pending-shell"]);
+    await expect(store.listSessionTombstones()).resolves.toEqual(["pending-shell"]);
+
+    await store.completeSessionDeletion("pending-shell");
+    now = new Date("2026-12-01T00:00:00.000Z");
+
+    await expect(store.listPendingSessionDeletions()).resolves.toEqual([]);
+    await expect(store.listSessionTombstones()).resolves.toEqual([]);
+  });
+
+  it("fails closed before evicting an unfinished deletion intent at capacity", async () => {
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(
+      join(homePath, "system", "terminal-window-layouts.json"),
+      JSON.stringify({
+        version: 1,
+        layouts: {},
+        tombstones: Array.from({ length: 256 }, (_, index) => ({
+          sessionName: `pending-${index}`,
+          deletedAt: "2026-08-30T00:00:00.000Z",
+          state: "pending",
+        })),
+      }),
+      { flag: "wx" },
+    );
+    const store = new TerminalWindowLayoutStore({
+      homePath,
+      now: () => new Date("2026-08-30T00:00:01.000Z"),
+    });
+
+    await expect(store.beginSessionDeletion("overflow")).rejects.toThrow(
+      "Terminal deletion intent capacity exceeded",
+    );
+    await expect(store.listPendingSessionDeletions()).resolves.toHaveLength(256);
+  });
+
   it("deletes one shell through the gateway and reconciles every window layout", async () => {
     const store = new TerminalWindowLayoutStore({ homePath });
     await store.put(FIRST_LAYOUT_ID, 0, layoutWithSession("deleted-shell"));

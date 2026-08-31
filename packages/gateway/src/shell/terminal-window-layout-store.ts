@@ -87,6 +87,7 @@ const PersistedLayoutSchema = z.object({
 const TombstoneSchema = z.object({
   sessionName: SessionNameSchema,
   deletedAt: z.iso.datetime(),
+  state: z.enum(["pending", "complete"]).default("complete"),
 }).strict();
 
 const StateSchema = z.object({
@@ -236,30 +237,32 @@ export class TerminalWindowLayoutStore {
   }
 
   async deleteSessionReferences(sessionName: string): Promise<void> {
+    await this.persistSessionDeletion(sessionName, "complete");
+  }
+
+  async beginSessionDeletion(sessionName: string): Promise<void> {
+    await this.persistSessionDeletion(sessionName, "pending");
+  }
+
+  async completeSessionDeletion(sessionName: string): Promise<void> {
     const safeSessionName = SessionNameSchema.parse(sessionName);
     return this.withMutationLock(async () => {
       const state = this.pruneTombstones(await this.read()).state;
-      const deletedAt = this.now().toISOString();
-      state.tombstones = [
-        ...state.tombstones.filter((entry) => entry.sessionName !== safeSessionName),
-        { sessionName: safeSessionName, deletedAt },
-      ].slice(-MAX_TOMBSTONES);
-      let reconciledLayouts = 0;
-      for (const [layoutId, entry] of Object.entries(state.layouts)) {
-        const layout = removeSessionFromLayout(entry.layout, safeSessionName);
-        if (layout === entry.layout) continue;
-        reconciledLayouts += 1;
-        state.layouts[layoutId] = {
-          revision: entry.revision + 1,
-          updatedAt: deletedAt,
-          layout,
-        };
+      const existingIndex = state.tombstones.findIndex((entry) => entry.sessionName === safeSessionName);
+      if (existingIndex < 0) {
+        throw new Error("Terminal deletion intent is missing");
       }
+      const existing = state.tombstones[existingIndex]!;
+      if (existing.state === "complete") return;
+      state.tombstones[existingIndex] = {
+        ...existing,
+        state: "complete",
+        deletedAt: this.now().toISOString(),
+      };
       await this.write(state);
       console.info("[terminal-layout]", {
-        event: "terminal.layout.reconciled",
+        event: "terminal.session.deletion.completed",
         sessionName: safeSessionName,
-        layouts: reconciledLayouts,
       });
     });
   }
@@ -280,6 +283,16 @@ export class TerminalWindowLayoutStore {
       const pruned = this.pruneTombstones(await this.read());
       if (pruned.changed) await this.write(pruned.state);
       return pruned.state.tombstones.map((entry) => entry.sessionName);
+    });
+  }
+
+  async listPendingSessionDeletions(): Promise<string[]> {
+    return this.withMutationLock(async () => {
+      const pruned = this.pruneTombstones(await this.read());
+      if (pruned.changed) await this.write(pruned.state);
+      return pruned.state.tombstones
+        .filter((entry) => entry.state === "pending")
+        .map((entry) => entry.sessionName);
     });
   }
 
@@ -378,9 +391,63 @@ export class TerminalWindowLayoutStore {
     await writeUtf8FileAtomic(this.statePath, `${JSON.stringify(StateSchema.parse(state), null, 2)}\n`, 0o600);
   }
 
+  private async persistSessionDeletion(
+    sessionName: string,
+    deletionState: "pending" | "complete",
+  ): Promise<void> {
+    const safeSessionName = SessionNameSchema.parse(sessionName);
+    return this.withMutationLock(async () => {
+      const state = this.pruneTombstones(await this.read()).state;
+      const existingIndex = state.tombstones.findIndex((entry) => entry.sessionName === safeSessionName);
+      if (existingIndex < 0 && state.tombstones.length >= MAX_TOMBSTONES) {
+        const completedIndex = state.tombstones.findIndex((entry) => entry.state === "complete");
+        if (completedIndex < 0) {
+          throw new Error("Terminal deletion intent capacity exceeded");
+        }
+        state.tombstones.splice(completedIndex, 1);
+      }
+
+      const deletedAt = this.now().toISOString();
+      const existing = existingIndex >= 0 ? state.tombstones[existingIndex] : undefined;
+      const nextTombstone = {
+        sessionName: safeSessionName,
+        deletedAt: existing?.state === "pending" && deletionState === "pending"
+          ? existing.deletedAt
+          : deletedAt,
+        state: deletionState,
+      } as const;
+      if (existingIndex >= 0) {
+        state.tombstones[existingIndex] = nextTombstone;
+      } else {
+        state.tombstones.push(nextTombstone);
+      }
+
+      let reconciledLayouts = 0;
+      for (const [layoutId, entry] of Object.entries(state.layouts)) {
+        const layout = removeSessionFromLayout(entry.layout, safeSessionName);
+        if (layout === entry.layout) continue;
+        reconciledLayouts += 1;
+        state.layouts[layoutId] = {
+          revision: entry.revision + 1,
+          updatedAt: deletedAt,
+          layout,
+        };
+      }
+      await this.write(state);
+      console.info("[terminal-layout]", {
+        event: "terminal.layout.reconciled",
+        sessionName: safeSessionName,
+        deletionState,
+        layouts: reconciledLayouts,
+      });
+    });
+  }
+
   private pruneTombstones(state: TerminalLayoutState): { state: TerminalLayoutState; changed: boolean } {
     const cutoff = this.now().getTime() - TOMBSTONE_TTL_MS;
-    const tombstones = state.tombstones.filter((entry) => Date.parse(entry.deletedAt) >= cutoff);
+    const tombstones = state.tombstones.filter((entry) => (
+      entry.state === "pending" || Date.parse(entry.deletedAt) >= cutoff
+    ));
     return tombstones.length === state.tombstones.length
       ? { state, changed: false }
       : { state: { ...state, tombstones }, changed: true };

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1828,6 +1828,104 @@ describe("shell registry", () => {
     await expect(registry.delete("already-gone", { force: true })).resolves.toBeUndefined();
 
     expect(adapter.deleteSession).toHaveBeenCalledWith("already-gone", { force: true });
+  });
+
+  it("keeps a recovered pre-existing runtime when the registry write fails and allows retry", async () => {
+    const root = await tempRoot();
+    const systemPath = join(root, "system");
+    const persistPath = join(systemPath, "shell-sessions.json");
+    const backupPath = join(systemPath, "shell-sessions.backup.json");
+    await mkdir(systemPath, { recursive: true });
+    await writeFile(persistPath, JSON.stringify({
+      sessions: {
+        bench: {
+          name: "bench",
+          status: "exited",
+          createdAt: "2026-08-30T00:00:00.000Z",
+          updatedAt: "2026-08-30T00:00:00.000Z",
+          attachedClients: 0,
+          tabs: [],
+        },
+      },
+    }), { flag: "wx" });
+    let live = false;
+    let failRegistryWrite = true;
+    const adapter = {
+      listSessions: vi.fn(async () => live ? ["bench"] : []),
+      createSession: vi.fn(async () => undefined),
+      recoverSession: vi.fn(async () => {
+        live = true;
+        if (failRegistryWrite) {
+          await rename(persistPath, backupPath);
+          await mkdir(persistPath);
+        }
+      }),
+      deleteSession: vi.fn(async () => {
+        live = false;
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, persistPath });
+
+    await expect(registry.recover("bench")).rejects.toBeInstanceOf(Error);
+
+    expect(live).toBe(true);
+    expect(adapter.deleteSession).not.toHaveBeenCalled();
+
+    await rm(persistPath, { recursive: true });
+    await rename(backupPath, persistPath);
+    failRegistryWrite = false;
+
+    await expect(registry.recover("bench")).resolves.toMatchObject({
+      name: "bench",
+      status: "active",
+    });
+    expect(adapter.recoverSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries registry cleanup after runtime deletion succeeds but metadata persistence fails", async () => {
+    const root = await tempRoot();
+    const systemPath = join(root, "system");
+    const persistPath = join(systemPath, "shell-sessions.json");
+    const backupPath = join(systemPath, "shell-sessions.backup.json");
+    await mkdir(systemPath, { recursive: true });
+    await writeFile(persistPath, JSON.stringify({
+      sessions: {
+        bench: {
+          name: "bench",
+          status: "active",
+          createdAt: "2026-08-30T00:00:00.000Z",
+          updatedAt: "2026-08-30T00:00:00.000Z",
+          attachedClients: 0,
+          tabs: [],
+        },
+      },
+    }), { flag: "wx" });
+    let live = true;
+    let failRegistryWrite = true;
+    const adapter = {
+      listSessions: vi.fn(async () => live ? ["bench"] : []),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => {
+        live = false;
+        if (failRegistryWrite) {
+          await rename(persistPath, backupPath);
+          await mkdir(persistPath);
+        }
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, persistPath });
+
+    await expect(registry.delete("bench", { force: true })).rejects.toBeInstanceOf(Error);
+    expect(live).toBe(false);
+
+    await rm(persistPath, { recursive: true });
+    await rename(backupPath, persistPath);
+    failRegistryWrite = false;
+
+    await expect(registry.delete("bench", { force: true })).resolves.toBeUndefined();
+    expect(adapter.deleteSession).toHaveBeenCalledTimes(2);
+    const persisted = JSON.parse(await readFile(persistPath, "utf8"));
+    expect(persisted.sessions.bench).toBeUndefined();
   });
 
   it("deletes metadata-tracked sessions without listing live zellij sessions", async () => {

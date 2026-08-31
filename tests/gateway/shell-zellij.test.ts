@@ -876,6 +876,46 @@ describe("zellij adapter", () => {
     );
   });
 
+  it("treats repeated forced deletion as success after the runtime is already absent", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      if (args[0] === "delete-session") {
+        cb(Object.assign(new Error("missing"), { code: 1 }), "", "session not found");
+      } else {
+        cb(null, "other-shell [EXITED]\n", "");
+      }
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawnPty: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.deleteSession("already-gone", { force: true })).resolves.toBeUndefined();
+
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      "zellij",
+      ["list-sessions", "--no-formatting"],
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it("does not hide a forced deletion failure while the runtime still exists", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      if (args[0] === "delete-session") {
+        cb(Object.assign(new Error("busy"), { code: 1 }), "", "session is busy");
+      } else {
+        cb(null, "still-here [EXITED]\n", "");
+      }
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawnPty: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.deleteSession("still-here", { force: true })).rejects.toMatchObject({
+      code: "zellij_failed",
+    });
+  });
+
   it("evicts the oldest retained creation PTY when the cap is reached", async () => {
     const first = ptyProcess();
     const second = ptyProcess();
