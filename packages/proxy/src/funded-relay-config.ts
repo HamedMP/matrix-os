@@ -102,8 +102,8 @@ function readGatewayBaseUrl(env: NodeJS.ProcessEnv): string {
   return `${url.origin}${path}`;
 }
 
-function readPlatformBaseUrl(env: NodeJS.ProcessEnv): string {
-  const raw = readRequired(env, "PLATFORM_INTERNAL_URL", 2_048);
+export function normalizeFundedPlatformOrigin(raw: string): string {
+  const exactOrigin = /^(https?):\/\/([^/?#]*)(.*)$/i.exec(raw);
   let url: URL;
   try {
     url = new URL(raw);
@@ -111,12 +111,29 @@ function readPlatformBaseUrl(env: NodeJS.ProcessEnv): string {
     if (error instanceof TypeError) throw new Error("PLATFORM_INTERNAL_URL must be a valid URL");
     throw error;
   }
-  if (!(["http:", "https:"] as const).includes(url.protocol as "http:" | "https:")
+  const rawAuthority = exactOrigin?.[2] ?? "";
+  const rawSuffix = exactOrigin?.[3] ?? "";
+  const closingBracket = rawAuthority.indexOf("]");
+  const rawHostname = rawAuthority.startsWith("[") && closingBracket >= 0
+    ? rawAuthority.slice(0, closingBracket + 1).toLowerCase()
+    : (rawAuthority.split(":", 1)[0] ?? "").toLowerCase();
+  const isExactLoopback = rawHostname === "localhost"
+    || rawHostname === "127.0.0.1"
+    || rawHostname === "[::1]";
+  if (!exactOrigin
+    || !(["http:", "https:"] as const).includes(url.protocol as "http:" | "https:")
     || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== ""
-    || (url.pathname !== "" && url.pathname !== "/")) {
-    throw new Error("PLATFORM_INTERNAL_URL must be an HTTP(S) origin without credentials or a path");
+    || (rawSuffix !== "" && rawSuffix !== "/")
+    || (url.protocol === "http:" && !isExactLoopback)) {
+    throw new Error(
+      "PLATFORM_INTERNAL_URL must be an HTTPS origin or an exact loopback HTTP origin without credentials or a path",
+    );
   }
   return url.origin;
+}
+
+function readPlatformBaseUrl(env: NodeJS.ProcessEnv): string {
+  return normalizeFundedPlatformOrigin(readRequired(env, "PLATFORM_INTERNAL_URL", 2_048));
 }
 
 function readAllowedBetas(env: NodeJS.ProcessEnv): ReadonlySet<string> {
