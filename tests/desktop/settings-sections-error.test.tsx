@@ -45,7 +45,6 @@ describe("settings data sections", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     queryClient = createDesktopQueryClient();
-    queryClient.setDefaultOptions({ queries: { retry: false } });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -77,11 +76,18 @@ describe("settings data sections", () => {
       visible: "1.0.0",
     },
   ])("clears stale $name errors after a successful retry", async ({ Component, unavailable, response, visible }) => {
+    const failingApi = useConnection.getState().api;
     renderSection(Component);
 
-    await waitFor(() => {
-      expect(screen.queryByText(unavailable)).not.toBeNull();
-    });
+    await waitFor(
+      () => {
+        expect(screen.queryByText(unavailable)).not.toBeNull();
+      },
+      { timeout: 2_500 },
+    );
+    if (name === "cron") {
+      expect(failingApi.get).toHaveBeenCalledTimes(2);
+    }
 
     await act(async () => {
       useConnection.setState({ api: makeApi(response) });
