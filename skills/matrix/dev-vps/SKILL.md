@@ -1,11 +1,11 @@
 ---
 name: matrix-dev-vps
 description: Work on Matrix OS from inside a Matrix user VPS with near-realtime development, hot reload, previews, and safe separation between customer code and platform secrets.
-version: 1.0.0
-author: Matrix OS
 license: MIT
-platforms: [linux]
 metadata:
+  version: 1.0.0
+  author: Matrix OS
+  platforms: [linux]
   agent:
     tags: [Matrix OS, VPS, development, HMR, devops]
     related_skills: [matrix-app-builder, matrix-debug-app, matrix-integrations]

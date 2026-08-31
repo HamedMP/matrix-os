@@ -1,14 +1,14 @@
 ---
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.0.0
-author: Matrix OS
 license: MIT
-platforms: [linux, macos]
 metadata:
+  version: 1.0.0
+  author: Matrix OS
+  platforms: [linux, macos]
   agent:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
-    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app]
+    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, find-animation-opportunities, animate, animation-accessibility, animation-performance]
 ---
 
 # Matrix App Builder
@@ -28,11 +28,34 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
 - Use injected Matrix theme variables and iframe-safe sizing. Custom apps should inherit the shell theme by default; add explicit app branding only when the user asks for it or the app has a clear domain reason.
-- For UI, ALWAYS load and follow `matrix-design-system` and `matrix-app-ui-patterns`. Key rules: inherit shell fonts through `--matrix-font-sans`/`--matrix-font-mono`, use Forest/Cream/Ember/Deep only as fallback palette values, gradient backgrounds (sand washes not flat), capsule buttons/inputs (50px radius), glass cards (22px radius), inline SVG or bundled local icons (never text characters or remote icon scripts), stable window-sized layouts, and stagger animations on mount. No exceptions.
+- For UI, load and follow `matrix-design-system` and `matrix-app-ui-patterns`. Inherit shell fonts and colors through `--matrix-*`, then adapt the app's identity to the user's taste and task instead of forcing one visual recipe.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
 - Do not use browser `localStorage` as app persistence in the Matrix shell. Sandboxed iframes can throw `SecurityError`; use `window.MatrixOS.db` and keep local fallback paths test-only/no-op.
 - For default or first-party apps under `home/apps/**`, keep manifests deterministic: `runtime: "vite"`, `build.output: "dist"`, schema columns declared in `storage.tables`, and `icon` pointing to a committed asset in `home/system/icons/`.
+
+## Brand, Taste, and Motion
+
+The Matrix shell is the integration frame, not a uniform skin for every user-created app. System-owned surfaces follow the current 2026 brand: Teal `#0E3422`, Coral `#D06E53`, Gold `#F1C379`, Green `#BED77B`, Blue `#C5D6E2`; Bricolage Grotesque for display, Geist for body/UI, and Geist Mono for code and machine output.
+
+Before implementing visual UI, form a short **taste brief** from the user's taste, stated references, app domain, existing project, and prior choices:
+
+- mood and personality;
+- information density;
+- typography character;
+- color behavior;
+- motion character;
+- one memorable signature detail.
+
+Ask one short taste question only when it would materially change the result and there are no useful clues. Otherwise infer, state the brief, and proceed. Keep Matrix theme tokens for chrome integration, focus, status, contrast, and live theme changes, but do not make every app resemble Matrix marketing. Avoid generic AI defaults and compulsory gradients, glass, capsules, oversized type, or dark/light styling.
+
+Route motion selectively:
+
+- Explicitly load `find-animation-opportunities` to scout the few places motion improves causality, continuity, hierarchy, or feedback.
+- Use `animate` for motion direction.
+- Choose `css-animations` for CSS-native motion or `motion-react` for React enter/exit, layout, gesture, or shared-element work.
+- Whenever motion ships, apply `animation-accessibility` and `animation-performance`.
+- Use `gesture-ui`, `scroll-animations`, `debug-animation`, `improve-animations`, `review-animations`, `pick-ui-library`, or `animation-vocabulary` only when the task needs them. Do not load the entire animation pack by default.
 
 ## Standard Structure
 
@@ -127,16 +150,16 @@ The shell injects `--matrix-*` tokens into every bridged app iframe and updates 
 
 ```css
 :root {
-  --app-bg: var(--matrix-bg, #FAFAF9);
-  --app-fg: var(--matrix-fg, #32352E);
-  --app-card: var(--matrix-card, #FCFCF8);
-  --app-primary: var(--matrix-primary, #434E3F);
-  --app-primary-fg: var(--matrix-primary-fg, #FAFAF5);
-  --app-accent: var(--matrix-accent, #D06F25);
-  --app-success: var(--matrix-success, #3A7D44);
-  --app-warning: var(--matrix-warning, #E0A12E);
-  --app-danger: var(--matrix-destructive, #D74A3A);
-  --app-border: var(--matrix-border, #D8D6C7);
+  --app-bg: var(--matrix-bg, #F7F4EC);
+  --app-fg: var(--matrix-fg, #0E3422);
+  --app-card: var(--matrix-card, #FFFFFF);
+  --app-primary: var(--matrix-primary, #0E3422);
+  --app-primary-fg: var(--matrix-primary-fg, #FFFFFF);
+  --app-accent: var(--matrix-accent, #D06E53);
+  --app-success: var(--matrix-success, #4F7D42);
+  --app-warning: var(--matrix-warning, #A96E18);
+  --app-danger: var(--matrix-destructive, #B83F38);
+  --app-border: var(--matrix-border, #D6D9D1);
 }
 ```
 

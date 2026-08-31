@@ -1,0 +1,3 @@
+interface:
+  display_name: "Gesture-Driven UI"
+  short_description: "Build gestures that track the finger and stay interruptible"

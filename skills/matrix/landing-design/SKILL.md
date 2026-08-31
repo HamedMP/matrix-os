@@ -1,11 +1,11 @@
 ---
 name: matrix-landing-design
 description: Design landing pages, marketing surfaces, and public-facing pages for Matrix OS. Covers hero sections, feature blocks, pricing, CTAs, and the brand's atmospheric style.
-version: 1.0.0
-author: Matrix OS
 license: MIT
-platforms: [linux, macos]
 metadata:
+  version: 1.0.0
+  author: Matrix OS
+  platforms: [linux, macos]
   agent:
     tags: [Matrix OS, landing page, marketing, hero, brand, website]
     related_skills: [matrix-design-system]
@@ -33,11 +33,11 @@ The hero is the first thing anyone sees. It sets the entire mood.
 ```
 [Section label]              ← tiny uppercase, ember color, with line prefix
                              
-Headline in                  ← Orbitron, 4-7rem, weight 700-800
-Orbitron                       letter-spacing: -0.03 to -0.04em
+Headline in                  ← Bricolage Grotesque, 4-7rem, weight 700-800
+Bricolage Grotesque                       letter-spacing: -0.03 to -0.04em
                                emphasis word gets ember underline
                              
-One sentence that expands    ← Inter, 1-1.125rem, weight 300, --muted-fg
+One sentence that expands    ← Geist, 1-1.125rem, weight 300, --muted-fg
 on the headline.               max-width: 520px, line-height: 1.7
                              
 [Primary CTA]  [Ghost CTA]  ← pill buttons, 16px vertical padding
@@ -49,7 +49,7 @@ The hero must not be a flat white page. Layer these:
 
 1. **Topographic SVG pattern** — fixed position, 3-5% opacity, tiled
 2. **Grain overlay** — SVG noise texture, fixed, 2-3% opacity
-3. **Radial light blurs** — large (500-700px) radial gradients of Cream (50% opacity) and Ember (5-8% opacity) placed behind/around content
+3. **Radial light blurs** — large (500-700px) radial gradients of Gold or Blue at controlled opacity, with Coral used sparingly around emphasis
 4. **Staggered entrance animation** — each element fades up with 100ms delay between them. 0.8s duration, `cubic-bezier(0.25, 0.46, 0.45, 0.94)`.
 
 ```css
@@ -66,9 +66,9 @@ The hero must not be a flat white page. Layer these:
 
 ### Hero Typography
 
-- Headlines: Orbitron 700-800, `clamp(3rem, 8vw, 7rem)`, line-height 0.95
-- The **emphasis word** gets an Ember underline accent (pseudo-element, 0.12em height, 60% opacity, 4px radius)
-- Subheading: Inter 300, 1.125rem, `--muted-fg`, max-width 520px
+- Headlines: Bricolage Grotesque 700-800, `clamp(3rem, 8vw, 7rem)`, line-height 0.95
+- The **emphasis word** gets an Coral underline accent (pseudo-element, 0.12em height, 60% opacity, 4px radius)
+- Subheading: Geist 300, 1.125rem, `--muted-fg`, max-width 520px
 
 ## Section Labels
 
@@ -76,7 +76,7 @@ Every major section has a label above the title:
 
 ```css
 .section-label {
-  font-family: 'Inter';
+  font-family: 'Geist';
   font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.25em;
@@ -88,7 +88,7 @@ Every major section has a label above the title:
 
 Often prefixed with a section number: `01 — Palette`, `02 — Typography`.
 
-Optionally use `--accent` (Ember) color for the label with a leading line:
+Optionally use `--accent` (Coral) color for the label with a leading line:
 
 ```css
 .section-label::before {
@@ -106,7 +106,7 @@ Optionally use `--accent` (Ember) color for the label with a leading line:
 
 ```css
 .section-title {
-  font-family: 'Orbitron';
+  font-family: 'Bricolage Grotesque';
   font-size: clamp(1.75rem, 4vw, 3rem);
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -115,7 +115,7 @@ Optionally use `--accent` (Ember) color for the label with a leading line:
 }
 ```
 
-Section descriptions: Inter 300-400, 1rem, `--muted-fg`, max-width 500px, line-height 1.7.
+Section descriptions: Geist 300-400, 1rem, `--muted-fg`, max-width 500px, line-height 1.7.
 
 ## Dark Sections
 
@@ -151,8 +151,8 @@ Show capabilities with icon + title + description:
 
 - 3-column grid on desktop, 1-column on mobile
 - Icon: 36-40px, `--forest` color, Lucide line icons
-- Title: Inter 1rem, weight 600
-- Description: Inter 0.875rem, `--muted-fg`, 2 lines max
+- Title: Geist 1rem, weight 600
+- Description: Geist 0.875rem, `--muted-fg`, 2 lines max
 - Card: `--card` background, 1px border, 24px radius, 32px padding
 
 ## App Window Showcase
@@ -178,7 +178,7 @@ Show Matrix OS in action with a floating window mockup:
 For callout sections:
 
 ```css
-background: linear-gradient(135deg, #32352E 0%, #434E3F 40%, #E0E1CA 100%);
+background: linear-gradient(135deg, #32352E 0%, #0E3422 40%, #E0E1CA 100%);
 border-radius: 24px;
 padding: 48px 32px;
 color: white;
@@ -189,10 +189,10 @@ color: white;
 Final CTA before footer:
 
 - Centered layout
-- Orbitron headline, 2-3rem
+- Bricolage Grotesque headline, 2-3rem
 - One sentence description
-- Two buttons: Ember CTA (primary) + Ghost (secondary)
-- Background: Cream gradient or topographic pattern
+- Two buttons: Coral CTA (primary) + Ghost (secondary)
+- Background: warm neutral, Gold/Blue gradient, or restrained topographic pattern
 
 ## Navigation Bar
 
@@ -213,9 +213,9 @@ Final CTA before footer:
 }
 ```
 
-- Logo: Orbitron, 0.8rem, weight 700, letter-spacing 0.1em, Forest color
-- Nav links: Inter, 0.8rem, weight 400, Forest color, underline on hover
-- CTA button: small Ember pill
+- Logo: Bricolage Grotesque, 0.8rem, weight 700, letter-spacing 0.1em, Teal color
+- Nav links: Geist, 0.8rem, weight 400, Teal color, underline on hover
+- CTA button: small Coral pill
 
 ## Footer
 
@@ -227,7 +227,7 @@ Minimal:
   text-align: center;
 }
 .footer-logo {
-  font-family: 'Orbitron';
+  font-family: 'Bricolage Grotesque';
   font-size: 0.8rem;
   font-weight: 700;
   letter-spacing: 0.15em;
@@ -258,14 +258,14 @@ Minimal:
 
 From the brand sheet: use warm, natural imagery. Landscapes, organic textures, warm light. Photography should feel editorial, not stock.
 
-- Overlay images with `mix-blend-mode: multiply` on Cream background for a warm tint
+- Use image blending only when it supports the chosen art direction and maintains contrast
 - Round image corners (16-20px radius)
 - Never use harsh drop shadows on images — integrate with `border: 1px solid var(--border)`
 
 ## Do
 
 - Layer atmosphere: pattern + grain + radial blurs
-- Use Orbitron dramatically at hero scale
+- Use Bricolage Grotesque dramatically at hero scale
 - Create sections with distinct personalities (dark section, cream section, white section)
 - Stagger entrance animations
 - Show the product (floating app windows, UI mockups)
@@ -275,7 +275,7 @@ From the brand sheet: use warm, natural imagery. Landscapes, organic textures, w
 
 - Use generic stock photography
 - Create a wall of text without visual anchors
-- Use more than one Ember CTA per viewport
+- Use more than one Coral CTA per viewport
 - Make the page feel like a template (centered everything, equal spacing, predictable rhythm)
 - Use carousels or sliders
 - Auto-play videos

@@ -20,6 +20,7 @@ import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/st
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useBrowserNavigation } from "../../desktop/src/renderer/src/stores/browser-navigation";
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
 import { toast } from "sonner";
 import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
@@ -785,6 +786,7 @@ describe("ProjectChatsView", () => {
       api: null,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
@@ -1707,7 +1709,7 @@ describe("ProjectChatsView", () => {
     expect(screen.queryByText(/internal\.service|token=secret|\/home\/matrix/i)).toBeNull();
   });
 
-  it("opens a desktop preview inspector and only external-opens https origins", async () => {
+  it("opens local and remote preview origins in Matrix Browser", async () => {
     window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
       if (channel === "runtime:get-summary") return Promise.resolve(previewSummaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1722,19 +1724,21 @@ describe("ProjectChatsView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Inspect preview Local web app" }));
     expect(screen.getByText("Preview details")).toBeTruthy();
     expect(screen.getByText("Local web app")).toBeTruthy();
-    expect(screen.getByText("Open in browser").closest("button")?.hasAttribute("disabled")).toBe(true);
+    const localOpenButton = screen.getByRole("button", { name: "Open preview Local web app in browser" });
+    expect(localOpenButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(localOpenButton);
+    expect(useBrowserNavigation.getState().pending?.url).toBe("http://localhost:3000/");
 
     fireEvent.click(screen.getByRole("button", { name: "Inspect preview Secure app" }));
     const openButton = screen.getByRole("button", { name: "Open preview Secure app in browser" });
     expect(openButton.hasAttribute("disabled")).toBe(false);
     fireEvent.click(openButton);
 
-    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
-      url: "https://preview.matrix-os.test",
-    });
-    expect(window.operator.invoke).not.toHaveBeenCalledWith("shell:open-external", {
-      url: "http://localhost:3000",
-    });
+    expect(useBrowserNavigation.getState().pending?.url).toBe("https://preview.matrix-os.test/");
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "browser", title: "Browser" }),
+    ]));
+    expect(window.operator.invoke).not.toHaveBeenCalledWith("shell:open-external", expect.anything());
   });
 
   it("keeps selected attention-only thread details when refreshed summary still includes the attention thread", async () => {

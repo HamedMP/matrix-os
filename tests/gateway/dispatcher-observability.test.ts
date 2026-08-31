@@ -146,6 +146,30 @@ describe("T1204: Interaction logger wiring in dispatcher", () => {
     expect(events.length).toBeGreaterThan(0);
     expect(events.some((e) => e.type === "result")).toBe(true);
   });
+
+  it("forwards the shared MCP instrumentation hook to serial and batch kernel runs", async () => {
+    const instrumentMcpServer = vi.fn();
+    const receivedHooks: unknown[] = [];
+    const spawnFn: SpawnFn = async function* (_message, config) {
+      receivedHooks.push(config.instrumentMcpServer);
+      yield { type: "init", sessionId: "instrumented-session" } as KernelEvent;
+      yield {
+        type: "result",
+        data: { sessionId: "instrumented-session", cost: 0, turns: 1 },
+      } as KernelEvent;
+    };
+    const dispatcher = createDispatcher({
+      homePath,
+      spawnFn,
+      maxConcurrency: 1,
+      instrumentMcpServer,
+    });
+
+    await dispatcher.dispatch("hello", undefined, () => {});
+    await dispatcher.dispatchBatch([{ taskId: "batch-1", message: "hi", onEvent: () => {} }]);
+
+    expect(receivedHooks).toEqual([instrumentMcpServer, instrumentMcpServer]);
+  });
 });
 
 describe("T1206: Dispatch metrics instrumentation", () => {

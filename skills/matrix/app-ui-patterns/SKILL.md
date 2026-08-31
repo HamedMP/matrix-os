@@ -1,11 +1,11 @@
 ---
 name: matrix-app-ui-patterns
 description: UI patterns and layouts for Matrix OS apps — dashboards, workspaces, data views, mobile, and windowed contexts. Use this when building the interior of an app, not the design tokens (see matrix-design-system).
-version: 1.0.0
-author: Matrix OS
 license: MIT
-platforms: [linux, macos]
 metadata:
+  version: 1.0.0
+  author: Matrix OS
+  platforms: [linux, macos]
   agent:
     tags: [Matrix OS, UI, layout, patterns, dashboard, mobile, responsive]
     related_skills: [matrix-design-system, matrix-app-builder]
@@ -53,7 +53,7 @@ Most apps follow a consistent shell structure:
   grid-template-rows: auto 1fr auto;
   background: var(--bg);
   color: var(--fg);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--matrix-font-sans, Geist, system-ui, sans-serif);
 }
 
 .app-content {
@@ -86,8 +86,8 @@ Greeting, key stats, quick actions, and a command/search bar.
 └─────────────────────────────────────┘
 ```
 
-- **Greeting** uses Inter, 1.25-1.5rem, weight 600. Orbitron only if the greeting is a large hero-level display (2rem+).
-- **Stats** use Orbitron for the number only when large (1.5rem+). Inter weight 700 for smaller stat numbers. Inter for the label (tiny, uppercase, tracked).
+- **Greeting** uses inherited Geist at 1.25-1.5rem and weight 600; use Bricolage Grotesque only when the taste brief calls for an expressive display moment.
+- **Stats** use Geist or Geist Mono according to meaning. Reserve Bricolage Grotesque for expressive presentation, not routine metrics.
 - **Stat cards** have `--bg` background, 14px radius, 16px padding
 - **Command bar** is a composite input: text input + icon button in a single container with `--bg` background, 14-16px radius
 - Keep the dashboard to a single scroll-free view when possible
@@ -108,8 +108,8 @@ For lists, records, logs — the workhorse view.
 └─────────────────────────────────────┘
 ```
 
-- **Header row**: Inter weight 600, `--muted-fg` color, tiny uppercase
-- **Data rows**: Inter weight 400, full `--fg`
+- **Header row**: Geist weight 600, `--muted-fg` color
+- **Data rows**: Geist weight 400, full `--fg`
 - **Row hover**: `--muted` background, smooth 150ms transition
 - **Status badges**: pill-shaped with tinted backgrounds (see design-system badge variants)
 - Row height: 48-52px for comfortable touch targets
@@ -164,7 +164,7 @@ For settings, creation, and edit flows.
 └─────────────────────────────────────┘
 ```
 
-- **Labels**: Inter 0.65rem, weight 600, letter-spacing 0.15em, uppercase, `--muted-fg`
+- **Labels**: Geist 0.75rem, weight 600, restrained tracking, `--muted-fg`
 - **Inputs**: 14px radius, 1.5px border, 12-14px vertical padding
 - **Form width**: constrained to 480-560px max, centered if the window is wider
 - **Spacing**: 20-24px between fields, 32px before action buttons
@@ -188,8 +188,8 @@ For spatial apps: whiteboards, kanban boards, node editors.
 Every empty view needs:
 
 1. **Icon or illustration** — simple, monochrome, 48-64px
-2. **Headline** — Inter weight 600, 1-1.25rem, short, active voice ("No tasks yet")
-3. **Description** — Inter, one sentence, `--muted-fg`
+2. **Headline** — Geist weight 600, 1-1.25rem, short, active voice ("No tasks yet")
+3. **Description** — Geist, one sentence, `--muted-fg`
 4. **Call to action** — a button or text link ("Create your first task")
 
 Place the empty state in the same position where content will appear when populated. Don't center it in the viewport unless the entire view is empty.
@@ -207,11 +207,11 @@ Place the empty state in the same position where content will appear when popula
 }
 ```
 
-- Left border accent: Forest for informational, Ember for urgent
-- Avatar: 32-36px, 10-12px radius, Inter weight 700 initial or icon on colored background
-- Title: Inter 0.8rem weight 600
-- Description: Inter 0.75rem, `--muted-fg`
-- Timestamp: JetBrains Mono 0.6rem, `--muted-fg`, right-aligned
+- Left border accent: inherited primary for informational, inherited accent for urgent
+- Avatar: 32-36px, 10-12px radius, Geist weight 700 initial or icon on colored background
+- Title: Geist 0.8rem weight 600
+- Description: Geist 0.75rem, `--muted-fg`
+- Timestamp: Geist Mono 0.6rem, `--muted-fg`, right-aligned
 
 ## Pattern: Mobile Adaptation
 
@@ -228,7 +228,7 @@ Apps should be usable at 320px width (minimum window size).
 
 - **Skeleton screens**: use `--muted` background with subtle shimmer animation (2.4s, ease-in-out). Match the shape of the content that will load.
 - **Spinners**: use a simple 16-20px circle with `--primary` color, 2px stroke, rotating. Not a full-page overlay — inline where the content will appear.
-- **Progress bars**: 4px height, `--muted` track, fill color matches the context (Forest for neutral, Ember for important).
+- **Progress bars**: 4px height, `--muted` track, fill color matches the semantic context through inherited tokens.
 
 ## Composition Rules
 

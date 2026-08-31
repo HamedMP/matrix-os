@@ -1,275 +1,150 @@
 ---
 name: matrix-design-system
-description: The Matrix OS visual language — colors, typography, icons, animations, and component patterns. Apply this every time you build, redesign, or polish any Matrix OS surface.
-version: 2.0.0
-author: Matrix OS
+description: Apply the current Matrix OS brand, theme contract, accessibility bar, and taste-adaptive visual direction to system surfaces and user-built apps.
 license: MIT
-platforms: [linux, macos]
 metadata:
+  version: 3.0.0
+  author: Matrix OS
+  platforms: [linux, macos]
   agent:
-    tags: [Matrix OS, design, UI, brand, theme, colors, typography, icons, animations]
-    related_skills: [matrix-app-builder]
+    tags: [Matrix OS, design, UI, brand, theme, typography, accessibility]
+    related_skills: [matrix-app-builder, matrix-app-ui-patterns, find-animation-opportunities, animate]
 ---
 
 # Matrix OS Design System
 
 ## When to Use
 
-Apply this for ALL visual work on Matrix OS: building apps, redesigning the shell, creating landing pages, generating icons, or polishing UI. This is the single source of truth.
+Use this for every Matrix OS visual surface and every app built inside Matrix. Pair it with `matrix-app-ui-patterns` for layout and with the relevant animation skills when motion is warranted.
 
-## Brand
+The approved source is the 2026 Matrix brand guideline. System-owned surfaces follow it directly. User-built apps use it as an integration frame and fallback while adapting their identity to the user's taste.
 
-"Technology that understands you." Matrix OS is a personal cloud computer — warm, calm, crafted. The visual language draws from natural materials (forest, sand, ember).
+## Brand Principle
 
-## Color Palette
+**Technology that understands you.** Interfaces should feel clear, calm, capable, and personal.
 
-Four brand colors + warm sand shades for gradient depth:
+- One clear next step.
+- Structure before decoration.
+- Real loading, empty, disabled, success, and error states.
+- Platform-aware parity across Matrix surfaces.
+- Accessible contrast, focus, type, and motion.
+- Innovation grounded in the user's taste and the product's domain.
 
-| Name       | Hex       | CSS Variable    | Role                                        |
-|------------|-----------|-----------------|---------------------------------------------|
-| Forest     | `#434E3F` | `--primary`     | Primary brand, headers, buttons, structure   |
-| Cream      | `#E0E1CA` | `--secondary`   | Warm surfaces, hover states, secondary fills |
-| Ember      | `#D06F25` | `--accent`      | CTAs, highlights — ONE per view max          |
-| Deep       | `#32352E` | `--foreground`  | Primary text, depth, grounding               |
-| Sand Light | `#F7F1E7` | `--sand-light`  | Gradient backgrounds                         |
-| Sand Mid   | `#F3EAE0` | `--sand-mid`    | Gradient backgrounds                         |
-| Sand Warm  | `#D6AB8B` | `--sand-warm`   | Warm accents, gradient endpoints             |
+## Current Brand
 
-### UI Tokens
+| Role | Value | Typical use |
+|---|---|---|
+| Teal | `#0E3422` | Primary structure, key actions, dark brand field |
+| Coral | `#D06E53` | Human warmth, selected accents, emphasis |
+| Gold | `#F1C379` | Optimism, highlight, supporting accent |
+| Green | `#BED77B` | Positive energy, success-adjacent illustration |
+| Blue | `#C5D6E2` | Calm information, cool supporting field |
+| Display | Bricolage Grotesque | Expressive headings and brand moments |
+| Body/UI | Geist | Controls, body copy, navigation, dense product UI |
+| Mono | Geist Mono | Code, terminal, identifiers, machine output |
+
+Do not revive retired palette or typography rules. Do not turn the five brand colors into a requirement to use every color in every view.
+
+## Theme Contract
+
+Apps receive live shell tokens. Use `--matrix-*` directly or alias them to app-local semantic names. Literal values are fallbacks, never replacements for inherited theme behavior.
 
 ```css
 :root {
-  --app-bg: var(--matrix-bg, #FAFAF9);
-  --app-fg: var(--matrix-fg, #32352E);
-  --app-card: var(--matrix-card, #FCFCF8);
-  --app-primary: var(--matrix-primary, #434E3F);
-  --app-primary-fg: var(--matrix-primary-fg, #FAFAF5);
-  --app-accent: var(--matrix-accent, #D06F25);
-  --app-accent-fg: var(--matrix-accent-fg, #FAFAF5);
-  --app-muted: var(--matrix-muted, #E1E1D0);
-  --app-muted-fg: var(--matrix-muted-fg, #747668);
-  --app-border: var(--matrix-border, #D8D6C7);
-  --app-success: var(--matrix-success, #3A7D44);
-  --app-warning: var(--matrix-warning, #E0A12E);
-  --app-danger: var(--matrix-destructive, #D74A3A);
+  --app-bg: var(--matrix-bg, #F7F4EC);
+  --app-fg: var(--matrix-fg, #0E3422);
+  --app-card: var(--matrix-card, #FFFFFF);
+  --app-primary: var(--matrix-primary, #0E3422);
+  --app-primary-fg: var(--matrix-primary-fg, #FFFFFF);
+  --app-accent: var(--matrix-accent, #D06E53);
+  --app-accent-fg: var(--matrix-accent-fg, #FFFFFF);
+  --app-border: var(--matrix-border, color-mix(in srgb, #0E3422 18%, transparent));
+  --app-success: var(--matrix-success, #4F7D42);
+  --app-warning: var(--matrix-warning, #A96E18);
+  --app-danger: var(--matrix-destructive, #B83F38);
+  --app-font-display: var(--matrix-font-display, "Bricolage Grotesque", sans-serif);
+  --app-font-sans: var(--matrix-font-sans, Geist, system-ui, sans-serif);
+  --app-font-mono: var(--matrix-font-mono, "Geist Mono", monospace);
 }
 ```
 
-Use `--matrix-*` directly or define `--app-*` aliases from them. Do not replace inherited tokens with app-local blue, green, purple, or novelty palettes unless the user explicitly asks for branded customization.
+System controls, focus rings, status semantics, and app chrome stay on Matrix tokens. Explicit app branding may introduce named app tokens without breaking those contracts.
 
-### Color Rules
+## Taste-Adaptive Direction
 
-1. **One Ember per view.** Multiple uses = visual noise.
-2. **Forest is structural.** Headers, primary buttons, nav active states.
-3. **Cream is warmth.** Secondary fills, hover states.
-4. **Deep is text.** Never use pure black `#000000`.
-5. **Backgrounds are GRADIENT**, not flat — blend sand shades (`#F7F1E7`, `#F3EAE0`, `#D6AB8B`).
-6. **Shadows always use Deep-tinted** `rgba(50,53,46,X)`, never pure black.
+Before visual implementation, create a concise **taste brief**:
 
-### Gradient Backgrounds
+1. Mood and personality.
+2. Information density.
+3. Typography character.
+4. Color behavior.
+5. Motion character.
+6. One signature detail.
 
-```css
-/* App page background — warm sand wash */
-background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%);
+Build the brief from the user's stated taste, references, existing project, domain, and prior choices. Ask one short question only if it would materially change the outcome and no useful clues exist. Otherwise infer and proceed.
 
-/* Section with depth */
-background: linear-gradient(165deg, #E0E1CA 0%, #FAFAF5 50%, rgba(208,111,37,0.05) 100%);
-
-/* Dark section */
-background: linear-gradient(135deg, #32352E 0%, #434E3F 40%, #D6AB8B 100%);
-```
+The Matrix brand is the default and system frame, not a uniform marketing skin. A finance tool, music studio, children's game, and research notebook should not share the same compulsory gradients, glass cards, capsule controls, or animation wave.
 
 ## Typography
 
-| Role     | Font           | Usage                                                   |
-|----------|----------------|---------------------------------------------------------|
-| Display  | Orbitron       | H1/H2 only — page titles, hero headings, large stat numbers |
-| UI/Body  | Inter          | Everything else — H3+ subtitles, body, buttons, labels, nav, card titles |
-| Code     | JetBrains Mono | Terminal, code blocks, technical data                   |
+- Use Bricolage Grotesque selectively for display character, not dense data or every heading.
+- Use Geist for product UI and readable prose.
+- Use Geist Mono for code and machine-readable material.
+- In sandboxed apps, inherit `--matrix-font-*`; do not load remote font stylesheets.
+- Keep type scales proportional to the actual window. Product tools should not borrow oversized landing-page typography.
+- Hierarchy comes from size, weight, spacing, and placement before decorative effects.
 
-**Orbitron is minimal.** Only H1/H2 display headings and large metric numbers. Never for subtitles (H3+), card titles, descriptions, button labels, or anything below 16px.
+## Shape, Surface, and Color
 
-### Type Scale
+Choose radii, borders, elevation, and surface treatment from the taste brief and task.
 
-| Level      | Font     | Size      | Weight |
-|------------|----------|-----------|--------|
-| Display    | Orbitron | 3rem+     | 700-800|
-| H1         | Orbitron | 2.25rem   | 600    |
-| H2         | Orbitron | 1.75rem   | 600    |
-| H3         | Inter    | 1.25rem   | 600    |
-| H4         | Inter    | 1.125rem  | 600    |
-| Body       | Inter    | 1rem      | 400    |
-| Small      | Inter    | 0.875rem  | 400    |
-| Caption    | Inter    | 0.75rem   | 400    |
-| Label      | Inter    | 0.65rem   | 600    |
-
-Labels: `letter-spacing: 0.15-0.25em; text-transform: uppercase`.
-
-## Shapes
-
-| Element   | Border Radius | Notes                        |
-|-----------|---------------|------------------------------|
-| Buttons   | 50px          | Full capsule, always         |
-| Inputs    | 50px          | Full capsule                 |
-| Cards     | 22px          | Soft rounded                 |
-| Inner UI  | 14-16px       | Nested elements              |
-| Badges    | 9999px        | Perfect pill                 |
-| Icons bg  | 14px          | Icon containers in stat cards|
-
-No sharp corners anywhere in Matrix OS.
-
-### Shadows
-
-| Level | Value                                    | Use For                |
-|-------|------------------------------------------|------------------------|
-| sm    | `0 2px 4px rgba(50,53,46,0.06)`         | Cards at rest          |
-| md    | `0 4px 12px rgba(50,53,46,0.08)`        | Hover, dropdowns       |
-| lg    | `0 8px 24px rgba(50,53,46,0.10)`        | Floating panels        |
-
-### Glass-morphism
-
-```css
-background: rgba(255, 255, 255, 0.55);
-backdrop-filter: blur(12px);
-border: 1px solid rgba(214, 211, 200, 0.35);
-```
+- Keep nested radii systematic.
+- Use shadows to explain elevation, not as decoration everywhere.
+- Use gradients, glass, texture, or flat fields only when they support the chosen direction.
+- Keep contrast and status colors semantically reliable.
+- Avoid pure novelty palettes for system controls.
+- Avoid generic AI styling: violet-on-white gradients, arbitrary glowing cards, excessive pills, and decorative whitespace without hierarchy.
 
 ## Icons
 
-Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
+Use accessible inline SVGs or bundled local assets. Do not load remote icon scripts or use text glyphs as control icons. Decorative icons should be hidden from assistive technology; icon-only controls need an accessible label.
 
-Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present, otherwise the Matrix OS style: light premium iOS/macOS skeuomorphic artwork, warm off-white or pale pastel background, forest/cream/ember/deep accents, one large tactile object, no text/logos/watermarks, no transparent or black dock backgrounds, no empty padding. The Matrix shell owns the final corner radius, so do not bake a visible frame into the artwork.
+Launcher icon direction comes from `system/desktop.json` when present. The fallback is a single legible object or symbol on a warm off-white or pale pastel background with controlled depth. The Matrix shell owns the final corner radius, so do not bake a second visible frame into the artwork.
 
-Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
+## Motion
 
-| Purpose          | Set            | Prefix           | Examples                             |
-|------------------|----------------|------------------|--------------------------------------|
-| UI controls      | Lucide         | `lucide:`        | `lucide:search`, `lucide:plus`, `lucide:x` |
-| Weather          | Meteocons      | `meteocons:`     | `meteocons:clear-day-fill`           |
-| Loading/spinners | SVG Spinners   | `svg-spinners:`  | `svg-spinners:ring-resize`           |
-| Brand logos      | Simple Icons   | `simple-icons:`  | `simple-icons:gmail`                 |
-| File types       | Catppuccin     | `catppuccin:`    | `catppuccin:typescript`              |
-| Flags            | Circle Flags   | `circle-flags:`  | `circle-flags:se`                    |
-| Decorative       | Fluent Emoji   | `fluent-emoji:`  | `fluent-emoji:waving-hand`           |
+Motion is optional. Use it only to clarify causality, continuity, hierarchy, spatial relationship, or feedback.
 
-Default to simple line-style SVGs for all UI. Only use specialist bundled assets when the context is obvious.
+- Explicitly load `find-animation-opportunities` before adding broad motion.
+- Use `animate` for direction and either `css-animations` or `motion-react` for implementation.
+- Every shipped animation must apply `animation-accessibility` and `animation-performance`.
+- Respect `prefers-reduced-motion` with a deliberate alternate state.
+- Prefer transform and opacity when they express the intended change.
+- Keep static what gains no clarity from movement.
+- Verify on the actual target size and device. No horizontal overflow.
 
-**NEVER use text characters as icons.** No `+`, `×`, `→`, `✓`. Use inline SVG or a bundled local asset; text characters have unpredictable baselines and never center properly.
+## Component and State Bar
 
-## Animations
+Reuse shadcn-style or existing repository primitives when available. Do not introduce a second component system for a control already solved by the project.
 
-Clean and subtle — barely noticed but deeply felt.
+Every interactive surface includes:
 
-### Page Mount — Staggered Fade Up
-
-```css
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.animate-in { animation: fadeUp 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; }
-/* Stagger children: 60ms gap */
-.stagger > :nth-child(1) { animation-delay: 0s; }
-.stagger > :nth-child(2) { animation-delay: 0.06s; }
-.stagger > :nth-child(3) { animation-delay: 0.12s; }
-/* ...continue pattern */
-```
-
-### Hover — Lift
-
-```css
-.hoverable:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(50,53,46,0.08); }
-.hoverable:active { transform: translateY(0); }
-```
-
-### Skeleton Loading — Warm Shimmer
-
-```css
-@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-.skeleton {
-  background: linear-gradient(90deg, var(--muted) 25%, #F7F1E7 50%, var(--muted) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.8s ease-in-out infinite;
-  border-radius: 10px;
-}
-```
-
-### Progress Bars
-
-Animate width from 0 to target on mount: `transition: width 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94)`.
-
-### Rules
-
-- Page load = one orchestrated wave (stagger all top-level elements)
-- Hover lift on every clickable card and button
-- Loading always uses warm-tinted skeletons, never blank space
-- Spinners: `svg-spinners:ring-resize`, never custom
-- Always respect `prefers-reduced-motion`
-
-## Component Patterns
-
-Use shadcn-style primitives for app interiors whenever the repo already exposes
-them: Button, Card, Input, Select, Tabs, Tooltip, Badge, Dialog, and related
-unstyled composition helpers. Skin those primitives with Matrix tokens instead
-of inventing one-off controls.
-
-
-### Buttons
-
-```css
-.btn { padding: 10px 24px; border-radius: 50px; font-family: 'Inter'; font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
-```
-
-| Variant   | Background  | Text          |
-|-----------|-------------|---------------|
-| Primary   | `--primary` | `--primary-fg`|
-| Accent    | `--accent`  | white         |
-| Secondary | transparent | `--fg`        |
-| Ghost     | transparent | `--fg`        |
-| Cream     | `--secondary`| `--fg`       |
-
-### Cards
-
-```css
-.card { background: rgba(255,255,255,0.55); backdrop-filter: blur(12px); border: 1px solid rgba(214,211,200,0.35); border-radius: 22px; padding: 20px; }
-```
-
-**Stat cards use horizontal layout** — icon container (46px, gradient bg, 14px radius) + text (label, value, subtitle) side by side. Never stack vertically with empty whitespace.
-
-### Inputs
-
-```css
-.input { background: rgba(255,255,255,0.8); border: 1.5px solid rgba(214,211,200,0.6); border-radius: 50px; padding: 13px 22px; }
-.input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(67,78,63,0.06); background: rgba(255,255,255,0.95); }
-```
-
-## Common Pitfalls (non-negotiable)
-
-**Never use text characters as icons.** `+`, `×`, `→`, `✓` will never center. Use inline SVG or bundled local assets.
-
-**Always center icon buttons with flexbox.** `display:flex; align-items:center; justify-content:center`.
-
-**Components must fill space intentionally.** No cards with 80% empty whitespace and tiny text in one corner. Use horizontal layouts for compact cards.
-
-**Touch targets: minimum 36×36px.** Even if the icon is 16px.
-
-**Text overflow.** Use `overflow:hidden; text-overflow:ellipsis; white-space:nowrap` on single-line text in constrained containers.
-
-**All inputs need visible focus states.** Never just `outline:none`.
-
-**All buttons need hover + active states.** No flat state-free buttons.
-
-**Don't mix border-radius values** on adjacent elements.
+- visible hover, focus, active, and disabled states;
+- loading behavior that preserves layout;
+- helpful empty and error states;
+- keyboard reachability and sensible focus order;
+- 44px-class touch targets where appropriate;
+- responsive behavior down to the supported Matrix window size.
 
 ## Verification
 
-- No horizontal overflow in small windows
-- No text characters used as icons (search for `>×</`, `>+</`)
-- All icon buttons visually centered
-- No components with excessive empty whitespace
-- Gradient backgrounds, not flat colors
-- Capsule-rounded buttons and inputs
-- Stagger animation on page mount
-- All inputs have focus states, all buttons have hover states
-- Orbitron only on H1/H2, Inter everywhere else
-- One Ember accent maximum per view
+Before reporting visual work complete:
+
+- compare the result against the taste brief;
+- verify Matrix token inheritance and live theme changes;
+- check light and dark themes when supported;
+- check narrow and resized windows with no horizontal overflow;
+- test keyboard and focus behavior;
+- test reduced motion;
+- inspect real loading, empty, error, disabled, and populated states;
+- confirm the result has a clear focal action and one intentional signature detail.

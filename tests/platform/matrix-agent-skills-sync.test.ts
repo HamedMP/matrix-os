@@ -104,6 +104,35 @@ describe("Matrix coding-agent skill sync", () => {
     }
   });
 
+  it("removes retired managed skills even when their names are not matrix-prefixed", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-skills-retire-${Date.now()}`), { recursive: true }));
+    const source = join(root, "skills", "matrix");
+    const matrixHome = join(root, "matrix-home");
+    const cliHome = join(root, "cli-home");
+
+    try {
+      writeSkill(source, "animate", "animate");
+      const script = join(process.cwd(), "scripts/sync-matrix-agent-skills.sh");
+      const env = {
+        ...process.env,
+        HOME: cliHome,
+        MATRIX_HOME: matrixHome,
+        MATRIX_SKILL_TARGETS: "matrix,codex",
+      };
+
+      execFileSync("bash", [script, source], { env, stdio: "pipe" });
+      const codexTarget = join(cliHome, ".agents", "skills", "animate");
+      expect(existsSync(codexTarget)).toBe(true);
+
+      rmSync(join(source, "animate"), { recursive: true, force: true });
+      execFileSync("bash", [script, source], { env, stdio: "pipe" });
+
+      expect(existsSync(codexTarget)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps manual skill installers aligned with the shipped Matrix skill pack", () => {
     const root = process.cwd();
     const shippedSkillDirs = readdirSync(join(root, "skills", "matrix"), { withFileTypes: true })

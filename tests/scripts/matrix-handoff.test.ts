@@ -135,9 +135,10 @@ describe("matrix handoff", () => {
   it("builds an extraction script from validated generated identifiers only", () => {
     const script = buildRemoteExtractScript({
       uploadId: "handoff-20260731-abc123",
-      projectDir: "projects/matrix-os-handoff-20260731-abc123",
+      projectDir: "projects/matrix-os",
     });
-    expect(script).toContain('test ! -e "$destination"');
+    expect(script).toContain("Matrix project already exists");
+    expect(script).toContain("Choose another --project-name");
     expect(script).toContain('cat "$upload_dir"/bundle.part-*');
     expect(script).toContain('tar -xzf - -C "$destination"');
     expect(() =>
@@ -191,6 +192,7 @@ appendFileSync(process.env.MATRIX_CALL_LOG, JSON.stringify(process.argv.slice(2)
     )).toBe(true);
     expect(calls.some((args) => args[0] === "shell" && args[1] === "new")).toBe(true);
     expect(stdout).toContain("Handoff ready.");
-    expect(stdout).toContain("~/projects/demo-project-handoff-");
+    expect(stdout).toContain("~/projects/demo-project");
+    expect(stdout).not.toContain("demo-project-handoff-");
   });
 });

@@ -12,6 +12,22 @@ const APP_SKILLS = [
   { dir: "debug-app", name: "matrix-debug-app" },
 ];
 
+const ANIMATION_SKILLS = [
+  "animate",
+  "animation-accessibility",
+  "animation-performance",
+  "animation-vocabulary",
+  "css-animations",
+  "debug-animation",
+  "find-animation-opportunities",
+  "gesture-ui",
+  "improve-animations",
+  "motion-react",
+  "pick-ui-library",
+  "review-animations",
+  "scroll-animations",
+];
+
 function skillPath(dir: string): string {
   return join(SKILLS_DIR, dir, "SKILL.md");
 }
@@ -79,6 +95,44 @@ describe("T1440-T1445: AI skills for app building", () => {
       expect(content).toContain("matrix-design-system");
       expect(content).toContain("matrix-integrations");
     });
+
+    it("uses the current brand as a system frame while adapting apps to user taste", () => {
+      const content = readFileSync(skillPath("app-builder"), "utf-8");
+      expect(content).toContain("Bricolage Grotesque");
+      expect(content).toContain("Geist Mono");
+      expect(content).toContain("#0E3422");
+      expect(content).toContain("taste brief");
+      expect(content).toContain("user's taste");
+      expect(content).not.toContain("Orbitron");
+    });
+
+    it("routes motion work through the bundled animation skills", () => {
+      const content = readFileSync(skillPath("app-builder"), "utf-8");
+      expect(content).toContain("find-animation-opportunities");
+      expect(content).toContain("animation-accessibility");
+      expect(content).toContain("animation-performance");
+      expect(content).toContain("motion-react");
+      expect(content).toContain("css-animations");
+    });
+  });
+
+  describe("bundled animations.dev skills", () => {
+    it("records source archive provenance for future update checks", () => {
+      const provenance = JSON.parse(
+        readFileSync(join(SKILLS_DIR, "animations-dev-pack.json"), "utf-8"),
+      );
+      expect(provenance.archiveSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(provenance.skills).toEqual(ANIMATION_SKILLS);
+    });
+
+    for (const dir of ANIMATION_SKILLS) {
+      it(`ships ${dir} with agent metadata`, () => {
+        const path = skillPath(dir);
+        expect(existsSync(path)).toBe(true);
+        expect(readFileSync(path, "utf-8")).toContain(`name: ${dir}`);
+        expect(existsSync(join(SKILLS_DIR, dir, "agents", "openai.yaml"))).toBe(true);
+      });
+    }
   });
 
   describe("matrix-design-system skill content", () => {

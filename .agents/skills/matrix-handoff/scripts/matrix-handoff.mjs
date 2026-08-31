@@ -169,7 +169,7 @@ export function buildRemoteExtractScript({ uploadId, projectDir }) {
     "set -eu",
     `upload_dir="$HOME/.matrix-handoff/${uploadId}"`,
     `destination="$HOME/${projectDir}"`,
-    'test ! -e "$destination"',
+    'if [ -e "$destination" ]; then printf "%s\\n" "Matrix project already exists: $destination. Choose another --project-name." >&2; exit 73; fi',
     'mkdir -p "$destination"',
     'cat "$upload_dir"/bundle.part-* | tar -xzf - -C "$destination"',
     'rm -f "$upload_dir"/bundle.part-*',
@@ -552,7 +552,7 @@ async function main() {
     }
     const suffix = scopeDigest.slice(0, 12);
     const uploadId = `handoff-${stamp}-${suffix}`;
-    const projectDir = `projects/${base}-handoff-${stamp}-${suffix}`;
+    const projectDir = `projects/${base}`;
 
     console.log("Matrix handoff preview");
     console.log(`  Repository: ${root}`);

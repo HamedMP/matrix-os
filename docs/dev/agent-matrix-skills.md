@@ -1,10 +1,15 @@
 # Agent Matrix Skills
 
-Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skills teach Agent how to build and debug Matrix apps, use the Matrix design system, work with Matrix integrations, and operate on a dev VPS.
+Matrix has two deliberately separate skill products:
+
+1. The **Matrix computer bundle** under `skills/matrix/`: 20 runtime skills preloaded for app-building agents inside Matrix.
+2. The **public portable bundle** under `plugins/matrix-os/skills/`: three remote-computer workflow skills users can install with the skills.sh CLI.
+
+Keeping them separate prevents a local user install from pulling in Matrix-internal runtime and provisioning instructions. The public bundle stays small; the Matrix computer bundle can carry the full app-building craft layer.
 
 `skills/matrix/` is the source of truth for Matrix-hosted coding agents. Runtime sync projects every skill directory with a `SKILL.md` into the tool-specific locations for Matrix, Claude Code, Codex, and Hermes.
 
-## Skills
+## Matrix Computer Bundle (20 skills)
 
 | Skill | Purpose |
 | --- | --- |
@@ -15,6 +20,50 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
 | `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
 | `matrix-landing-design` | Build public Matrix OS marketing and landing surfaces without mixing those patterns into apps. |
+
+The bundled animations.dev craft layer adds 13 focused skills:
+
+| Skill group | Included skills |
+| --- | --- |
+| Direction and discovery | `animate`, `find-animation-opportunities`, `animation-vocabulary` |
+| Implementation | `css-animations`, `motion-react`, `gesture-ui`, `scroll-animations`, `pick-ui-library` |
+| Quality | `animation-accessibility`, `animation-performance`, `debug-animation`, `improve-animations`, `review-animations` |
+
+App-building agents always start with `matrix-app-builder`, `matrix-design-system`, and `matrix-app-ui-patterns`. They explicitly load only the relevant animation skills. Any shipped motion must apply both `animation-accessibility` and `animation-performance`.
+
+`skills/matrix/animations-dev-pack.json` records the imported archive timestamp and SHA-256. The supplied archive did not declare a release version, so future refreshes should compare the new archive hash and skill list, review diffs, rerun the skill validator, and update that provenance file. This makes freshness auditable instead of guessing from copied file dates.
+
+## Public Bundle With skills.sh (3 skills)
+
+Install all three public Matrix skills globally for every supported local agent:
+
+```bash
+pnpm dlx skills@1.5.23 add \
+  https://github.com/HamedMP/matrix-os/tree/main/plugins/matrix-os/skills \
+  --global --all
+```
+
+From a Matrix checkout, the equivalent convenience script is:
+
+```bash
+./scripts/install-public-matrix-skills.sh
+```
+
+List the bundle without installing it:
+
+```bash
+pnpm dlx skills@1.5.23 add \
+  https://github.com/HamedMP/matrix-os/tree/main/plugins/matrix-os/skills \
+  --list
+```
+
+The pinned CLI makes installs repeatable. Use `pnpm dlx skills@1.5.23 update -g` when intentionally refreshing globally installed skills, and validate the release before changing the pin.
+
+| Public skill | Purpose |
+| --- | --- |
+| `matrix-onboarding` | Matrix setup, authentication, diagnostics, and recovery. |
+| `matrix-cloud-run` | Bounded commands and observable coding-agent tasks on Matrix. |
+| `matrix-github-project` | Collision-safe GitHub clone, checkout reuse, changes, and validation. |
 
 ## Install Into Agent
 
@@ -34,10 +83,10 @@ MATRIX_SKILLS_SOURCE=HamedMP/matrix-os ./scripts/install-agent-matrix-skills.sh
 AGENT_BIN=/opt/matrix/runtime/node/bin/agent ./scripts/install-agent-matrix-skills.sh
 ```
 
-Equivalent manual command:
+Equivalent manual command for the internal Matrix computer bundle:
 
 ```bash
-for skill in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
+for skill in animate animation-accessibility animation-performance animation-vocabulary app-builder app-ui-patterns css-animations debug-animation design-system dev-vps debug-app find-animation-opportunities gesture-ui improve-animations integrations landing-design motion-react pick-ui-library review-animations scroll-animations; do
   agent skills install "HamedMP/matrix-os/skills/matrix/$skill"
 done
 ```
@@ -83,7 +132,7 @@ Clone this GitHub repo on Matrix and make a change.
 Run this command on my Matrix computer.
 ```
 
-The product bundles three focused skills:
+The product bundles the same three focused public skills exposed through skills.sh:
 
 | Skill | Purpose |
 | --- | --- |
@@ -107,7 +156,7 @@ codex plugin add matrix-os@matrix-os
 ## Move a Local Task to Matrix
 
 The repo-scoped `matrix-handoff` skill under `.agents/skills/matrix-handoff/` safely moves the
-active working tree and a continuation brief to a new project directory on the user's Matrix
+active working tree and a continuation brief to a same-named project directory on the user's Matrix
 computer, then starts Codex or Claude there. Claude also exposes the workflow as
 `/matrix-handoff` through `.claude/commands/matrix-handoff.md`.
 
@@ -116,8 +165,12 @@ The workflow has two explicit phases:
 1. Preview the filtered file count, optional repository-matched transcript, destination, agent,
    and a SHA-256 scope approval token.
 2. After the user approves that exact scope, rerun with `--approve TOKEN`. The script stages the
-   inputs again and refuses to upload if the files, brief, transcript, agent, profile, or
-   destination basis changed after preview.
+inputs again and refuses to upload if the files, brief, transcript, agent, profile, or
+destination basis changed after preview.
+
+The default destination is `~/projects/<source-repository-name>`; the workflow never appends
+`-handoff`. If that exact directory already exists, it stops without overwriting and asks the user
+for another name to preview with `--project-name`.
 
 Common secret files, `.env` files, private keys, `.git`, dependencies, and generated output are
 excluded. Use `--no-history` for a summary-only handoff that does not discover or upload a raw
