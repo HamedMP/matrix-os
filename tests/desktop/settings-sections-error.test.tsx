@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CronSection from "../../desktop/src/renderer/src/features/settings/sections/CronSection";
 import SystemSection from "../../desktop/src/renderer/src/features/settings/sections/SystemSection";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+
+let queryClient: QueryClient;
+
+function renderSettingsSection(Component: React.ComponentType) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <Component />
+    </QueryClientProvider>,
+  );
+}
 
 function makeApi(response: unknown, reject = false) {
   return {
@@ -31,6 +42,9 @@ function makePendingApi() {
 
 describe("settings data sections", () => {
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     useConnection.setState({
       status: "signed-in",
@@ -43,6 +57,7 @@ describe("settings data sections", () => {
 
   afterEach(() => {
     cleanup();
+    queryClient.clear();
     vi.restoreAllMocks();
   });
 
@@ -62,14 +77,15 @@ describe("settings data sections", () => {
       visible: "1.0.0",
     },
   ])("clears stale $name errors after a successful retry", async ({ Component, unavailable, response, visible }) => {
-    render(<Component />);
+    renderSettingsSection(Component);
 
     await waitFor(() => {
       expect(screen.queryByText(unavailable)).not.toBeNull();
     });
 
     await act(async () => {
-      useConnection.setState({ api: makeApi(response) });
+      const { authGeneration } = useConnection.getState();
+      useConnection.setState({ api: makeApi(response), authGeneration: authGeneration + 1 });
     });
 
     await waitFor(() => {
@@ -88,7 +104,7 @@ describe("settings data sections", () => {
   ])("shows loading instead of empty state while $name load is pending", ({ Component, loading, empty }) => {
     useConnection.setState({ api: makePendingApi() });
 
-    render(<Component />);
+    renderSettingsSection(Component);
 
     expect(screen.queryByText(loading)).not.toBeNull();
     expect(screen.queryByText(empty)).toBeNull();
