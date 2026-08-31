@@ -107,6 +107,10 @@ function supportOpenIsCurrent(generation: number): boolean {
   return generation === supportLifecycleGeneration && initialized && activeIdentity !== null;
 }
 
+function findPostHogButton(selector: string): HTMLButtonElement | null {
+  return document.getElementById(POSTHOG_WIDGET_ID)?.querySelector<HTMLButtonElement>(selector) ?? null;
+}
+
 async function waitForSupportReady(generation: number): Promise<boolean> {
   const deadline = Date.now() + SUPPORT_OPEN_TIMEOUT_MS;
   while (Date.now() < deadline && generation === supportLifecycleGeneration) {
@@ -118,7 +122,7 @@ async function waitForSupportReady(generation: number): Promise<boolean> {
 
 function waitForElement(selector: string, generation: number): Promise<HTMLButtonElement | null> {
   if (!supportOpenIsCurrent(generation)) return Promise.resolve(null);
-  const existing = document.querySelector<HTMLButtonElement>(selector);
+  const existing = findPostHogButton(selector);
   if (existing) return Promise.resolve(existing);
 
   return new Promise((resolve) => {
@@ -137,7 +141,7 @@ function waitForElement(selector: string, generation: number): Promise<HTMLButto
         finish(null);
         return;
       }
-      const element = document.querySelector<HTMLButtonElement>(selector);
+      const element = findPostHogButton(selector);
       if (element) finish(element);
     });
     const timeoutId = window.setTimeout(() => finish(null), SUPPORT_OPEN_TIMEOUT_MS);
@@ -163,7 +167,7 @@ async function openSupportPanel(generation: number): Promise<boolean> {
     if (!supportOpenIsCurrent(generation)) return false;
     posthog.conversations.show();
 
-    let closeButton = document.querySelector<HTMLButtonElement>(POSTHOG_CLOSE_SELECTOR);
+    let closeButton = findPostHogButton(POSTHOG_CLOSE_SELECTOR);
     if (!closeButton) {
       const launcher = await waitForElement(POSTHOG_LAUNCHER_SELECTOR, generation);
       if (!launcher || !supportOpenIsCurrent(generation)) return false;
@@ -174,7 +178,7 @@ async function openSupportPanel(generation: number): Promise<boolean> {
 
     return true;
   } finally {
-    if (generation === supportLifecycleGeneration && !document.querySelector(POSTHOG_CLOSE_SELECTOR)) {
+    if (generation === supportLifecycleGeneration && !findPostHogButton(POSTHOG_CLOSE_SELECTOR)) {
       allowPostHogWidget = false;
       suppressDefaultLauncher();
     }

@@ -24,6 +24,7 @@ const config = getPostHogClientConfig({
 });
 const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
 const SUPPORT_AVAILABILITY_TIMEOUT_MS = 10_000;
+const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
 const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
 const POSTHOG_CLOSE_SELECTOR = 'button[aria-label="Close"]';
 // Replay kill switch. NEXT_PUBLIC_* is inlined at build time, so the build
@@ -100,7 +101,7 @@ export async function openShellSupport(currentConfig: typeof config = config): P
     while (Date.now() < deadline) {
       if (posthog.conversations.isAvailable()) {
         posthog.conversations.show();
-        let closeButton = document.querySelector<HTMLButtonElement>(POSTHOG_CLOSE_SELECTOR);
+        let closeButton = findPostHogButton(POSTHOG_CLOSE_SELECTOR);
         if (!closeButton) {
           const launcher = await waitForPostHogButton(POSTHOG_LAUNCHER_SELECTOR, deadline);
           if (!launcher) return false;
@@ -122,11 +123,15 @@ export async function openShellSupport(currentConfig: typeof config = config): P
 
 async function waitForPostHogButton(selector: string, deadline: number): Promise<HTMLButtonElement | null> {
   while (Date.now() < deadline) {
-    const button = document.querySelector<HTMLButtonElement>(selector);
+    const button = findPostHogButton(selector);
     if (button) return button;
     await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
   }
   return null;
+}
+
+function findPostHogButton(selector: string): HTMLButtonElement | null {
+  return document.getElementById(POSTHOG_WIDGET_ID)?.querySelector<HTMLButtonElement>(selector) ?? null;
 }
 
 export function setPostHogPersonPropertiesOnce(

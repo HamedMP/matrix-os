@@ -22,6 +22,32 @@ export function activateWaitingServiceWorker(
   registration.waiting.postMessage("skipWaiting");
 }
 
+export function monitorServiceWorkerUpdate(
+  registration: ServiceWorkerRegistration,
+  serviceWorkers: ServiceWorkerContainer,
+  reload: () => void,
+): void {
+  let activationRequested = false;
+  let observedInstalling: ServiceWorker | null = null;
+  const activateUpdate = () => {
+    if (activationRequested || !serviceWorkers.controller || !registration.waiting) return;
+    activationRequested = true;
+    activateWaitingServiceWorker(registration, serviceWorkers, reload);
+  };
+  const observeInstalling = () => {
+    const installing = registration.installing;
+    if (!installing || installing === observedInstalling) return;
+    observedInstalling = installing;
+    installing.addEventListener("statechange", () => {
+      if (installing.state === "installed") activateUpdate();
+    });
+  };
+
+  activateUpdate();
+  observeInstalling();
+  registration.addEventListener("updatefound", observeInstalling);
+}
+
 export function PwaRegister() {
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -34,21 +60,7 @@ export function PwaRegister() {
           scope: "/",
           updateViaCache: "none",
         });
-        let activationRequested = false;
-        const activateUpdate = () => {
-          if (activationRequested || !navigator.serviceWorker.controller || !registration.waiting) return;
-          activationRequested = true;
-          activateWaitingServiceWorker(registration, navigator.serviceWorker, () => window.location.reload());
-        };
-
-        activateUpdate();
-        registration.addEventListener("updatefound", () => {
-          const installing = registration.installing;
-          if (!installing) return;
-          installing.addEventListener("statechange", () => {
-            if (installing.state === "installed") activateUpdate();
-          });
-        });
+        monitorServiceWorkerUpdate(registration, navigator.serviceWorker, () => window.location.reload());
       } catch (err) {
         console.warn("[pwa] service worker registration failed:", err instanceof Error ? err.message : err);
       }

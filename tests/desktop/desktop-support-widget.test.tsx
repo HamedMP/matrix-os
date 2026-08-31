@@ -92,6 +92,7 @@ describe("Desktop support widget", () => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     document.getElementById("ph-conversations-widget-container")?.remove();
+    document.getElementById("unrelated-close")?.remove();
   });
 
   it("fails closed when PostHog cannot initialize", async () => {
@@ -191,6 +192,11 @@ describe("Desktop support widget", () => {
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
       .toEqual(["Search", "Support", "Main computer", "Open account menu"]);
 
+    const unrelatedClose = document.createElement("button");
+    unrelatedClose.id = "unrelated-close";
+    unrelatedClose.setAttribute("aria-label", "Close");
+    document.body.appendChild(unrelatedClose);
+
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(useUi.getState().paletteOpen).toBe(true);
 
@@ -198,13 +204,19 @@ describe("Desktop support widget", () => {
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
-    expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        document.querySelector('#ph-conversations-widget-container button[aria-label="Close"]'),
+      ).not.toBeNull();
+    });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
     // PostHog can re-render its panel while it is open. Replacing the close
     // control exercises the user-visible contract without relying on a
     // listener remaining attached to one provider-owned DOM node.
-    const close = screen.getByRole("button", { name: "Close" });
+    const close = document.querySelector<HTMLButtonElement>(
+      '#ph-conversations-widget-container button[aria-label="Close"]',
+    )!;
     const replacementClose = close.cloneNode(true) as HTMLButtonElement;
     replacementClose.addEventListener("click", renderPostHogLauncher);
     close.replaceWith(replacementClose);
@@ -218,7 +230,11 @@ describe("Desktop support widget", () => {
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(2));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
-    expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        document.querySelector('#ph-conversations-widget-container button[aria-label="Close"]'),
+      ).not.toBeNull();
+    });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
   });
 
