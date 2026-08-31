@@ -27,7 +27,7 @@ function exactInteger(value: unknown): number {
 export async function activePromotionalProtection(
   executor: PlatformDB["executor"],
   identity: FundedAiRuntimeIdentity,
-): Promise<{ byGrant: Map<string, number>; legacyReservedMicrousd: number }> {
+): Promise<Map<string, number>> {
   const allocations = await executor.selectFrom("ai_funded_reservation_promotional_allocations as allocation")
     .innerJoin("ai_funded_usage_reservations as reservation", "reservation.reservation_id", "allocation.reservation_id")
     .select([
@@ -44,19 +44,24 @@ export async function activePromotionalProtection(
   if (allocations.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
     throw new Error("Funded AI promotional allocation limit invariant violated");
   }
-  const legacy = await executor.selectFrom("ai_funded_usage_reservations")
-    .select(({ fn }) => fn.sum<number>("reserved_microusd").as("reserved_microusd"))
+  // Only explicit per-grant allocations are evidence that an active reservation
+  // consumed promotional credit. Legacy NULL source attribution remains unknown.
+  return new Map(allocations.map((row) => [row.grant_entry_id, exactInteger(row.reserved_microusd)]));
+}
+
+async function activeAddonProtection(
+  executor: PlatformDB["executor"],
+  identity: FundedAiRuntimeIdentity,
+): Promise<number> {
+  const protection = await executor.selectFrom("ai_funded_usage_reservations")
+    .select(({ fn }) => fn.sum<number>("addon_reserved_microusd").as("reserved_microusd"))
     .where("owner_id", "=", identity.ownerId)
     .where("machine_id", "=", identity.machineId)
     .where("runtime_slot", "=", identity.runtimeSlot)
     .where("status", "in", [...ACTIVE_RESERVATION_STATUSES])
-    .where("promotional_reserved_microusd", "is", null)
+    .where("addon_reserved_microusd", "is not", null)
     .executeTakeFirstOrThrow();
-  return {
-    // The grouped query is capped to the per-runtime promotional grant limit above.
-    byGrant: new Map(allocations.map((row) => [row.grant_entry_id, exactInteger(row.reserved_microusd)])),
-    legacyReservedMicrousd: exactInteger(legacy.reserved_microusd ?? 0),
-  };
+  return exactInteger(protection.reserved_microusd ?? 0);
 }
 
 export async function reserveFundingSources(
@@ -84,19 +89,15 @@ export async function reserveFundingSources(
   if (grants.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
     throw new Error("Funded AI promotional grant limit invariant violated");
   }
-  let legacyProtection = protection.legacyReservedMicrousd;
   let remaining = amountMicrousd;
   const grantAllocations: Array<{ grantEntryId: string; amountMicrousd: number }> = [];
   for (const grant of grants) {
     if (remaining === 0) break;
-    const alreadyAllocated = protection.byGrant.get(grant.grant_entry_id) ?? 0;
+    const alreadyAllocated = protection.get(grant.grant_entry_id) ?? 0;
     const unallocated = exactInteger(grant.remaining_microusd) - alreadyAllocated;
     if (unallocated < 0) throw new Error("Funded AI promotional allocation invariant violated");
-    const legacyForGrant = Math.min(unallocated, legacyProtection);
-    legacyProtection -= legacyForGrant;
-    const available = unallocated - legacyForGrant;
     if (grant.expires_at !== null && grant.expires_at <= checkedAt) continue;
-    const allocation = Math.min(available, remaining);
+    const allocation = Math.min(unallocated, remaining);
     if (allocation > 0) {
       grantAllocations.push({ grantEntryId: grant.grant_entry_id, amountMicrousd: allocation });
       remaining -= allocation;
@@ -104,16 +105,10 @@ export async function reserveFundingSources(
   }
   const promotionalReservedMicrousd = amountMicrousd - remaining;
   const addonReservedMicrousd = remaining;
-  const existingReserved = exactInteger(balance.reserved_microusd) - amountMicrousd;
-  const existingPromotionalReserved = [...protection.byGrant.values()].reduce((sum, value) => sum + value, 0);
-  const legacyPromotionalReserved = Math.min(
-    protection.legacyReservedMicrousd,
-    Math.max(0, exactInteger(balance.promotional_balance_microusd) - existingPromotionalReserved),
-  );
-  const existingAddonReserved = Math.max(
-    0,
-    existingReserved - existingPromotionalReserved - legacyPromotionalReserved,
-  );
+  // Only explicit add-on attribution is evidence that an active reservation
+  // consumed add-on credit. Legacy NULL attribution must not be guessed from
+  // the aggregate reserved balance because that can block unrelated funding.
+  const existingAddonReserved = await activeAddonProtection(executor, identity);
   if (addonReservedMicrousd > exactInteger(balance.addon_balance_microusd) - existingAddonReserved) {
     throw new Error("Funded AI add-on reservation allocation invariant violated");
   }
@@ -148,17 +143,14 @@ export async function reconcileExpiredPromotionalCredit(
   }
 
   const protection = await activePromotionalProtection(executor, identity);
-  let legacyProtection = protection.legacyReservedMicrousd;
   let totalRetired = 0;
   for (const grant of expiredGrants) {
     const remaining = exactInteger(grant.remaining_microusd);
-    const attributedProtection = protection.byGrant.get(grant.grant_entry_id) ?? 0;
+    const attributedProtection = protection.get(grant.grant_entry_id) ?? 0;
     if (attributedProtection > remaining) {
       throw new Error("Funded AI promotional allocation invariant violated");
     }
-    const legacyForGrant = Math.min(remaining - attributedProtection, legacyProtection);
-    legacyProtection -= legacyForGrant;
-    const retiredMicrousd = remaining - attributedProtection - legacyForGrant;
+    const retiredMicrousd = remaining - attributedProtection;
     if (retiredMicrousd === 0) continue;
 
     const nextRevision = grant.revision + 1;
@@ -246,6 +238,7 @@ export async function debitPromotionalGrants(
   checkedAt: string,
 ): Promise<void> {
   if (amountMicrousd === 0) return;
+  const protection = await activePromotionalProtection(executor, identity);
   const grants = await executor.selectFrom("ai_funded_promotional_grant_balances")
     .selectAll()
     .where("machine_id", "=", identity.machineId)
@@ -263,7 +256,11 @@ export async function debitPromotionalGrants(
   for (const grant of grants) {
     if (remainingDebit === 0) break;
     const remaining = exactInteger(grant.remaining_microusd);
-    const debit = Math.min(remaining, remainingDebit);
+    const protectedMicrousd = protection.get(grant.grant_entry_id) ?? 0;
+    const available = remaining - protectedMicrousd;
+    if (available < 0) throw new Error("Funded AI promotional allocation invariant violated");
+    const debit = Math.min(available, remainingDebit);
+    if (debit === 0) continue;
     const updated = await executor.updateTable("ai_funded_promotional_grant_balances").set({
       remaining_microusd: remaining - debit,
       updated_at: checkedAt,
@@ -317,19 +314,23 @@ export async function debitAttributedPromotionalGrants(
   if (remainingDebit !== 0) throw new Error("Funded AI promotional allocation balance invariant violated");
 }
 
-export function reservationDebitSplit(
+export async function reservationDebitSplit(
+  executor: PlatformDB["executor"],
+  identity: FundedAiRuntimeIdentity,
   reservation: {
     reserved_microusd: unknown;
     promotional_reserved_microusd: unknown;
     addon_reserved_microusd: unknown;
   },
   actualCostMicrousd: number,
-  legacyPromotionalBalanceMicrousd: number,
-): { promotionalDebit: number; addonDebit: number; attributed: boolean } {
+  balance: FundedAiReservationBalance,
+): Promise<{ promotionalDebit: number; addonDebit: number; attributed: boolean }> {
   if (reservation.promotional_reserved_microusd === null
     || reservation.addon_reserved_microusd === null) {
-    const promotionalDebit = Math.min(actualCostMicrousd, legacyPromotionalBalanceMicrousd);
-    return { promotionalDebit, addonDebit: actualCostMicrousd - promotionalDebit, attributed: false };
+    const protectedAddon = await activeAddonProtection(executor, identity);
+    const availableAddon = Math.max(0, exactInteger(balance.addon_balance_microusd) - protectedAddon);
+    const addonDebit = Math.min(actualCostMicrousd, availableAddon);
+    return { promotionalDebit: actualCostMicrousd - addonDebit, addonDebit, attributed: false };
   }
   const promotionalReserved = exactInteger(reservation.promotional_reserved_microusd);
   const addonReserved = exactInteger(reservation.addon_reserved_microusd);

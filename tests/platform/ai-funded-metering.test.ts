@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AiFundedPolicyError,
@@ -70,6 +71,48 @@ describe("funded AI metering", () => {
     }
     const issued = await repo.issueRuntimeCredential(identity);
     return issued.credential;
+  }
+
+  async function insertLegacyReservation(input: {
+    tokenId: string;
+    reservationId: string;
+    requestId: string;
+    reservedMicrousd: number;
+    status: "reserved" | "in_flight";
+    expiresAt: string;
+  }) {
+    await db.transaction(async (trx) => {
+      await trx.executor.updateTable("ai_funded_runtime_balances").set({
+        reserved_microusd: sql<number>`reserved_microusd + ${input.reservedMicrousd}`,
+        month_reserved_microusd: sql<number>`month_reserved_microusd + ${input.reservedMicrousd}`,
+      }).where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+      await trx.executor.insertInto("ai_funded_usage_reservations").values({
+        reservation_id: input.reservationId,
+        request_id: input.requestId,
+        payload_hash: "a".repeat(64),
+        authorization_response: "{}",
+        settlement_response: null,
+        start_response: input.status === "in_flight" ? "{}" : null,
+        release_response: null,
+        release_reason: null,
+        token_id: input.tokenId,
+        owner_id: identity.ownerId,
+        machine_id: identity.machineId,
+        runtime_slot: identity.runtimeSlot,
+        model_id: modelId,
+        reserved_microusd: input.reservedMicrousd,
+        promotional_reserved_microusd: null,
+        addon_reserved_microusd: null,
+        actual_microusd: null,
+        period_start: "2026-08-01T00:00:00.000Z",
+        status: input.status,
+        created_at: clock.toISOString(),
+        started_at: input.status === "in_flight" ? clock.toISOString() : null,
+        expires_at: input.expiresAt,
+        settled_at: null,
+        released_at: null,
+      }).execute();
+    });
   }
 
   it("atomically reserves worst-case cost so concurrent requests cannot overspend", async () => {
@@ -575,7 +618,7 @@ describe("funded AI metering", () => {
     ]);
   });
 
-  it("does not double-protect legacy reservations across expired and live promotional grants", async () => {
+  it("keeps migrated null attribution unknown without preserving unrelated expired promotion", async () => {
     await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
     await repo.setRuntimePolicy({
       identity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId],
@@ -597,41 +640,31 @@ describe("funded AI metering", () => {
       sourceReference: "legacy-live",
       expiresAt: "2026-08-30T20:10:00.000Z",
     });
+    await repo.grantCredit({
+      entryId: "legacy_addon_credit",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 5,
+      sourceReference: "legacy-addon",
+    });
     const credential = (await repo.issueRuntimeCredential(identity)).credential;
-    await db.transaction(async (trx) => {
-      await trx.executor.updateTable("ai_funded_runtime_balances").set({
-        reserved_microusd: 5,
-        month_reserved_microusd: 5,
-      }).where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
-      await trx.executor.insertInto("ai_funded_usage_reservations").values({
-        reservation_id: "legacy_reservation",
-        request_id: "legacy_request",
-        payload_hash: "a".repeat(64),
-        authorization_response: "{}",
-        settlement_response: null,
-        start_response: null,
-        release_response: null,
-        release_reason: null,
-        token_id: credential.tokenId,
-        owner_id: identity.ownerId,
-        machine_id: identity.machineId,
-        runtime_slot: identity.runtimeSlot,
-        model_id: modelId,
-        reserved_microusd: 5,
-        promotional_reserved_microusd: null,
-        addon_reserved_microusd: null,
-        actual_microusd: null,
-        period_start: "2026-08-01T00:00:00.000Z",
-        status: "reserved",
-        created_at: clock.toISOString(),
-        started_at: null,
-        expires_at: "2026-08-30T20:05:00.000Z",
-        settled_at: null,
-        released_at: null,
-      }).execute();
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "legacy_reservation",
+      requestId: "legacy_request",
+      reservedMicrousd: 5,
+      status: "reserved",
+      expiresAt: "2026-08-30T20:05:00.000Z",
     });
 
     clock = new Date("2026-08-30T20:04:00.000Z");
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      promotionalBalanceMicrousd: 5,
+      addonBalanceMicrousd: 5,
+      creditBalanceMicrousd: 10,
+      reservedMicrousd: 5,
+      remainingBalanceMicrousd: 5,
+    });
     const authorization = await repo.authorize({
       credential: credential.token,
       requestId: "post_migration_request",
@@ -639,15 +672,156 @@ describe("funded AI metering", () => {
       maxCostMicrousd: 5,
     });
     expect(authorization.funding).toMatchObject({
-      promotionalBalanceMicrousd: 10,
-      addonBalanceMicrousd: 0,
+      promotionalBalanceMicrousd: 5,
+      addonBalanceMicrousd: 5,
       reservedMicrousd: 10,
       remainingBalanceMicrousd: 0,
+    });
+    const migrated = await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["promotional_reserved_microusd", "addon_reserved_microusd"])
+      .where("reservation_id", "=", "legacy_reservation").executeTakeFirstOrThrow();
+    expect(migrated).toEqual({
+      promotional_reserved_microusd: null,
+      addon_reserved_microusd: null,
     });
     const allocation = await db.executor.selectFrom("ai_funded_reservation_promotional_allocations")
       .selectAll().where("reservation_id", "=", authorization.reservation.reservationId)
       .executeTakeFirstOrThrow();
     expect(allocation).toMatchObject({ grant_entry_id: "legacy_live_credit", amount_microusd: 5 });
+    const expiry = await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select(["amount_microusd", "source_reference"])
+      .where("kind", "=", "promotional_expiry").executeTakeFirstOrThrow();
+    expect({ amount: Number(expiry.amount_microusd), source: expiry.source_reference })
+      .toEqual({ amount: -5, source: "legacy_expired_backing" });
+
+    await repo.startReservation({ reservationId: "legacy_reservation", tokenId: credential.tokenId });
+    await repo.settleReservation({
+      reservationId: "legacy_reservation",
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 5,
+    });
+    await repo.startReservation({
+      reservationId: authorization.reservation.reservationId,
+      tokenId: credential.tokenId,
+    });
+    await expect(repo.settleReservation({
+      reservationId: authorization.reservation.reservationId,
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 5,
+    })).resolves.toMatchObject({
+      funding: {
+        promotionalBalanceMicrousd: 0,
+        addonBalanceMicrousd: 0,
+        reservedMicrousd: 0,
+      },
+    });
+    const usage = await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select(["reservation_id", "kind", "amount_microusd"])
+      .where("reservation_id", "is not", null).orderBy("reservation_id").execute();
+    expect(usage.map((row) => [row.reservation_id, row.kind, Number(row.amount_microusd)]))
+      .toEqual([
+        [authorization.reservation.reservationId, "promotional_debit", -5],
+        ["legacy_reservation", "addon_debit", -5],
+      ]);
+  });
+
+  it("allows live promotion to fund new work beside an unknown legacy reservation", async () => {
+    const credential = await enableAndFund({ budget: 10, credit: 10 });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "legacy_unknown_source",
+      requestId: "legacy_unknown_request",
+      reservedMicrousd: 5,
+      status: "reserved",
+      expiresAt: "2026-08-30T20:05:00.000Z",
+    });
+
+    await expect(repo.authorize({
+      credential: credential.token,
+      requestId: "new_promotional_request",
+      modelId,
+      maxCostMicrousd: 5,
+    })).resolves.toMatchObject({
+      funding: {
+        promotionalBalanceMicrousd: 10,
+        addonBalanceMicrousd: 0,
+        reservedMicrousd: 10,
+        remainingBalanceMicrousd: 0,
+      },
+    });
+    const attributed = await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["request_id", "promotional_reserved_microusd", "addon_reserved_microusd"])
+      .orderBy("request_id").execute();
+    expect(attributed).toEqual([
+      {
+        request_id: "legacy_unknown_request",
+        promotional_reserved_microusd: null,
+        addon_reserved_microusd: null,
+      },
+      {
+        request_id: "new_promotional_request",
+        promotional_reserved_microusd: 5,
+        addon_reserved_microusd: 0,
+      },
+    ]);
+  });
+
+  it("expires an unfunded legacy in-flight reservation without poisoning cleanup", async () => {
+    const credential = await enableAndFund({ budget: 5, credit: 0 });
+    await repo.grantCredit({
+      entryId: "legacy_only_expiring_credit",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 5,
+      sourceReference: "legacy-only-expiring",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "legacy_unfunded_inflight",
+      requestId: "legacy_unfunded_request",
+      reservedMicrousd: 4,
+      status: "in_flight",
+      expiresAt: "2026-08-30T20:05:00.000Z",
+    });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "legacy_batch_sibling",
+      requestId: "legacy_batch_sibling_request",
+      reservedMicrousd: 1,
+      status: "reserved",
+      expiresAt: "2026-08-30T20:05:30.000Z",
+    });
+
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      creditBalanceMicrousd: 0,
+      promotionalBalanceMicrousd: 0,
+      reservedMicrousd: 5,
+    });
+    clock = new Date("2026-08-30T20:06:00.000Z");
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(2);
+
+    const reservation = await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "actual_microusd", "promotional_reserved_microusd", "addon_reserved_microusd"])
+      .where("reservation_id", "=", "legacy_unfunded_inflight").executeTakeFirstOrThrow();
+    expect(reservation).toEqual({
+      status: "expired",
+      actual_microusd: null,
+      promotional_reserved_microusd: null,
+      addon_reserved_microusd: null,
+    });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      creditBalanceMicrousd: 0,
+      promotionalBalanceMicrousd: 0,
+      addonBalanceMicrousd: 0,
+      reservedMicrousd: 0,
+    });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select("kind").where("reservation_id", "=", "legacy_unfunded_inflight").execute()).toEqual([]);
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select("status").where("reservation_id", "=", "legacy_batch_sibling").executeTakeFirstOrThrow())
+      .toEqual({ status: "expired" });
   });
 
   it("charges an in-flight reservation before retiring its expired promotional backing", async () => {
