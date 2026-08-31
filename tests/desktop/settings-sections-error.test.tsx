@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CronSection from "../../desktop/src/renderer/src/features/settings/sections/CronSection";
 import SystemSection from "../../desktop/src/renderer/src/features/settings/sections/SystemSection";
-import { createDesktopQueryClient } from "../../desktop/src/renderer/src/lib/query-client";
+import {
+  createDesktopQueryClient,
+  QueryClientProvider,
+} from "../../desktop/src/renderer/src/lib/query-client";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
-let queryClient: QueryClient;
+let queryClient: ReturnType<typeof createDesktopQueryClient>;
 
 function renderSection(Component: React.ComponentType) {
   return render(

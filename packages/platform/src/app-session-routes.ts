@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { MATRIX_HOSTED_BILLING_REGIONS } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 
 import {
@@ -215,27 +216,34 @@ export function createAppSessionRoutes(opts: {
         opts.applyNoStoreHeaders(c);
         return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
       }
-      const checkoutAttempt = parsed.data.developerTools !== undefined
-        ? null
-        : await getSettlingCheckoutAttempt(opts.db, result.userId, parsed.data.runtime);
+      const checkoutAttempt = await getSettlingCheckoutAttempt(
+        opts.db,
+        result.userId,
+        parsed.data.runtime,
+      );
       const settlingCheckoutDeveloperTools = (
         checkoutAttempt &&
         (checkoutAttempt.status === 'paid' || checkoutAttempt.status === 'open')
           ? checkoutAttempt.developerTools
           : undefined
       );
+      const settlingCheckoutRegion = checkoutAttempt?.regionSlug
+        ? MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === checkoutAttempt.regionSlug)
+        : undefined;
       const developerTools = resolveProvisioningDeveloperTools(
-        parsed.data.developerTools,
-        settlingCheckoutDeveloperTools,
+        settlingCheckoutDeveloperTools ?? parsed.data.developerTools,
+        undefined,
       );
+      const serverType = checkoutAttempt?.serverType ?? parsed.data.serverType;
+      const location = settlingCheckoutRegion?.location ?? parsed.data.location;
       const provisioned = await opts.customerVpsService.provision(
         {
           handle: identity.handle,
           clerkUserId: result.userId,
           runtimeSlot: parsed.data.runtime,
           ...(developerTools !== undefined ? { developerTools } : {}),
-          ...(parsed.data.serverType ? { serverType: parsed.data.serverType } : {}),
-          ...(parsed.data.location ? { location: parsed.data.location } : {}),
+          ...(serverType ? { serverType } : {}),
+          ...(location ? { location } : {}),
         },
         { dispatch: 'detached' },
       );

@@ -1,5 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 
+export { QueryClientProvider } from "@tanstack/react-query";
+
 export interface DesktopQueryScope {
   platformHost: string;
   authGeneration: number;
