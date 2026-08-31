@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentAttachmentSchema,
   AgentProviderSummarySchema,
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
@@ -43,6 +44,25 @@ import {
 const now = "2026-07-06T12:00:00.000Z";
 
 describe("coding agent contracts", () => {
+  it("matches the Desktop 10 MiB attachment boundary", () => {
+    const attachment = {
+      id: "desktop_upload_contract",
+      kind: "file" as const,
+      label: "research.pdf",
+      path: "temporary/desktop-chat/research.pdf",
+      mimeType: "application/pdf",
+    };
+
+    expect(AgentAttachmentSchema.safeParse({
+      ...attachment,
+      sizeBytes: 10 * 1024 * 1024,
+    }).success).toBe(true);
+    expect(AgentAttachmentSchema.safeParse({
+      ...attachment,
+      sizeBytes: 10 * 1024 * 1024 + 1,
+    }).success).toBe(false);
+  });
+
   it("rejects unsafe identifiers and unsafe client error text", () => {
     expect(ThreadIdSchema.parse("thread_abc-123")).toBe("thread_abc-123");
     expect(() => ThreadIdSchema.parse("../thread_abc")).toThrow();

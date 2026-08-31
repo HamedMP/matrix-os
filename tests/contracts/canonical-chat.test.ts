@@ -596,7 +596,7 @@ describe("canonical Chat contracts", () => {
         attachmentId: "attachment_too_large",
         kind: "file",
         label: "large.bin",
-        sizeBytes: 5 * 1024 * 1024 + 1,
+        sizeBytes: 10 * 1024 * 1024 + 1,
       }],
     }).success).toBe(false);
 

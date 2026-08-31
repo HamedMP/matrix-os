@@ -1,7 +1,7 @@
-import type { AgentAttachment } from "@matrix-os/contracts";
+import { MAX_AGENT_ATTACHMENT_BYTES, type AgentAttachment } from "@matrix-os/contracts";
 import type { ApiClient } from "../../../lib/api";
 
-export const MAX_ATTACHMENT_FILE_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_FILE_BYTES = MAX_AGENT_ATTACHMENT_BYTES;
 const MAX_ATTACHMENTS = 8;
 const MAX_SUBSCRIBERS = 16;
 const MAX_CONCURRENT_UPLOADS = 3;
