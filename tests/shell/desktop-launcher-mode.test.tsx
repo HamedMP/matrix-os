@@ -100,10 +100,6 @@ vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
 }));
 
-vi.mock("../../shell/src/components/ChatPopover.js", () => ({
-  ChatPopover: () => null,
-}));
-
 vi.mock("../../shell/src/components/onboarding/ManualSetupStickers.js", () => ({
   ManualSetupStickers: () => null,
 }));

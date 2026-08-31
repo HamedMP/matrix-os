@@ -137,11 +137,4 @@ describe("ph-no-capture privacy surfaces", () => {
     expect(screen.getByRole("log").classList.contains("ph-no-capture")).toBe(true);
   });
 
-  it("keeps the ChatPopover message list out of session recording", () => {
-    const source = readFileSync(
-      join(process.cwd(), "shell/src/components/ChatPopover.tsx"),
-      "utf8",
-    );
-    expect(source).toMatch(/ph-no-capture[^"]*"[^>]*ref=\{attachScrollRef\}|ref=\{attachScrollRef\}[^>]*ph-no-capture/s);
-  });
 });

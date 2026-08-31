@@ -61,15 +61,11 @@ interface VocalPanelProps {
   active: boolean;
   chat?: ChatState;
   onOpenApp?: (query: string) => { success: boolean; resolvedName?: string };
-  // Dismisses the chat popover so Aoede's delegation banner is the only
-  // build-surface on screen. Called when vocal activates and again when
-  // Aoede delegates a build, since the popup otherwise lingers.
-  onDismissChat?: () => void;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-purpose vocal/build-delegation panel: the mic/WS lifecycle, delegation snapshot throttling, build-progress indicator, and entrance animations are tightly coupled around one shared session and timer set; splitting them would fragment the session lifecycle and add prop-drilling without reducing real complexity.
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (enabled, hasEntered, delegation, rememberedFlash, buildProgress) are independent concerns with separate lifecycles and update sources; collapsing them into one reducer would couple unrelated state and is not a mechanical transform.
-export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPanelProps) {
+export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
   const { data: installedApps = [], refetch: refreshApps } = useQuery(appsQueryOptions());
   // Delay WS/mic mount by one tick so React strict-mode's double-mount
   // doesn't open two sessions back-to-back.
@@ -99,18 +95,6 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
   useEffect(() => {
     onOpenAppRef.current = onOpenApp;
   }, [onOpenApp]);
-
-  const onDismissChatRef = useRef(onDismissChat);
-  useEffect(() => {
-    onDismissChatRef.current = onDismissChat;
-  }, [onDismissChat]);
-
-  // When Aoede activates, dismiss the chat popover so the delegation
-  // banner + progress card are the only build surfaces on screen.
-  useEffect(() => {
-    // react-doctor-disable-next-line react-doctor/no-event-handler -- `active` is an out-of-band prop edge driven by the vocal session activating, not a local user event; there is no parent click/change handler that owns this transition, so dismissing the chat must run from an effect keyed on `active`.
-    if (active) onDismissChatRef.current?.();
-  }, [active]);
 
   const [delegation, setDelegation] = useState<DelegationStatus | null>(null);
 
@@ -161,10 +145,6 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
     if (intent.kind === "create_app") {
       const startIdx = chatRef.current?.messages.length ?? 0;
       const appsSnapshot = new Set(installedApps.map((app) => app.name));
-      // Submitting a message flips chat.busy true, which the ChatPopover's
-      // rising-edge effect would turn into an auto-open. Dismiss first so
-      // the popup can't take over the screen mid-build.
-      onDismissChatRef.current?.();
       chatRef.current?.submitMessage(intent.description);
       setDelegation({
         kind: "create_app",
