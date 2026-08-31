@@ -13,7 +13,10 @@ import {
 import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
-import type { CodingHarnessCredentialResolver } from "./harness-credentials.js";
+import type {
+  CodingHarnessCredentialLaunch,
+  CodingHarnessCredentialResolver,
+} from "./harness-credentials.js";
 import {
   addPortableProviderCredentials,
   buildPiChildEnvironment,
@@ -126,6 +129,51 @@ function childEnvironment(
   env.OPENCODE_DISABLE_AUTOUPDATE = "1";
   env.OPENCODE_CONFIG_CONTENT = readOnlyConfig(env.ANTHROPIC_BASE_URL);
   return env;
+}
+
+type CredentialResolution =
+  | { kind: "resolved"; launch: CodingHarnessCredentialLaunch }
+  | { kind: "aborted" }
+  | { kind: "timed_out" }
+  | { kind: "failed"; error: unknown };
+
+async function resolveCredentialsWithinRun(input: {
+  resolver: CodingHarnessCredentialResolver;
+  signal?: AbortSignal;
+  timeoutMs: number;
+}): Promise<CredentialResolution> {
+  return await new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => finish({ kind: "aborted" });
+    const finish = (result: CredentialResolution) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      input.signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+
+    if (input.signal?.aborted) {
+      finish({ kind: "aborted" });
+      return;
+    }
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    timer = setTimeout(() => finish({ kind: "timed_out" }), input.timeoutMs);
+    timer.unref?.();
+
+    let pending: Promise<CodingHarnessCredentialLaunch>;
+    try {
+      pending = input.resolver(input.signal);
+    } catch (error: unknown) {
+      finish({ kind: "failed", error });
+      return;
+    }
+    void pending.then(
+      (launch) => finish({ kind: "resolved", launch }),
+      (error: unknown) => finish({ kind: "failed", error }),
+    );
+  });
 }
 
 function eventBase(threadId: string, now: () => Date, nextEventId: () => string) {
@@ -264,12 +312,20 @@ export function createOpenCodeCodingAgentProvider(
     now: () => Date;
     nextEventId: () => string;
   }): Promise<{ events: AgentThreadEvent[]; outcome: "completed" | "failed" | "aborted"; sessionId?: string }> {
-    let launch;
-    try { launch = await options.resolveCredentialLaunch(input.signal); } catch (error: unknown) {
+    const runDeadline = Date.now() + runTimeoutMs;
+    const credentialResolution = await resolveCredentialsWithinRun({
+      resolver: options.resolveCredentialLaunch,
+      signal: input.signal,
+      timeoutMs: runTimeoutMs,
+    });
+    if (credentialResolution.kind === "aborted") return { events: [], outcome: "aborted" };
+    if (credentialResolution.kind === "timed_out") return { events: [], outcome: "failed" };
+    if (credentialResolution.kind === "failed") {
       if (input.signal?.aborted) return { events: [], outcome: "aborted" };
-      logCodingAgentWarning("OpenCode credential resolution failed", error);
+      logCodingAgentWarning("OpenCode credential resolution failed", credentialResolution.error);
       return { events: [], outcome: "failed" };
     }
+    const launch = credentialResolution.launch;
     const args = ["run", "--format", "json", "--pure"];
     const selectedModel = modelSlug(input.model);
     if (selectedModel) args.push("--model", selectedModel);
@@ -278,7 +334,8 @@ export function createOpenCodeCodingAgentProvider(
     // end-of-options marker. Keep all user text in the variadic message.
     args.push("--", input.prompt);
     const env = childEnvironment(options.env, launch.env);
-    const timeoutMs = launch.maxRunMs ? Math.min(runTimeoutMs, launch.maxRunMs) : runTimeoutMs;
+    const configuredTimeoutMs = launch.maxRunMs ? Math.min(runTimeoutMs, launch.maxRunMs) : runTimeoutMs;
+    const timeoutMs = Math.max(1, Math.min(configuredTimeoutMs, runDeadline - Date.now()));
     return await new Promise((resolve) => {
       let child: ChildProcess;
       try { child = spawnFn(command, args, { cwd: input.cwd, env }); } catch (error: unknown) {
