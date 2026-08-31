@@ -1401,6 +1401,9 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   `.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0)`.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0)`.execute(db);
+  // Existing reservations intentionally remain NULL/NULL: historical rows do
+  // not contain evidence of which funding source paid for them. Runtime expiry
+  // reconciliation protects promotion only through explicit allocation rows.
   await sql`
     DO $$
     BEGIN

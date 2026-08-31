@@ -575,10 +575,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
         updated_at: checkedAt,
       }).where("machine_id", "=", locator.machine_id).returningAll().executeTakeFirstOrThrow();
-      const { promotionalDebit, addonDebit, attributed } = reservationDebitSplit(
+      const reservationIdentity = {
+        ownerId: reservation.owner_id,
+        machineId: reservation.machine_id,
+        runtimeSlot: reservation.runtime_slot,
+      };
+      const { promotionalDebit, addonDebit, attributed } = await reservationDebitSplit(
+        trx.executor,
+        reservationIdentity,
         reservation,
         request.actualCostMicrousd,
-        exactInteger(currentBalance.promotional_balance_microusd),
+        currentBalance,
       );
       if (attributed) {
         await debitAttributedPromotionalGrants(
@@ -588,11 +595,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           checkedAt,
         );
       } else {
-        await debitPromotionalGrants(trx.executor, {
-          ownerId: reservation.owner_id,
-          machineId: reservation.machine_id,
-          runtimeSlot: reservation.runtime_slot,
-        }, promotionalDebit, checkedAt);
+        await debitPromotionalGrants(trx.executor, reservationIdentity, promotionalDebit, checkedAt);
       }
       if (promotionalDebit > 0) {
         await trx.executor.insertInto("ai_funded_credit_ledger").values({
@@ -788,10 +791,39 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           updated_at: checkedAt,
         }).where("machine_id", "=", reservation.machine_id).returningAll().executeTakeFirstOrThrow();
         if (reservation.status === "in_flight") {
-          const { promotionalDebit, addonDebit, attributed } = reservationDebitSplit(
+          const reservationIdentity = {
+            ownerId: reservation.owner_id,
+            machineId: reservation.machine_id,
+            runtimeSlot: reservation.runtime_slot,
+          };
+          const hasUnknownLegacySource = reservation.promotional_reserved_microusd === null
+            && reservation.addon_reserved_microusd === null;
+          if (hasUnknownLegacySource && exactInteger(currentBalance.credit_balance_microusd) < reserved) {
+            // A migrated reservation without source attribution cannot safely
+            // debit credit that has since expired. Release its aggregate hold
+            // atomically instead of inventing a source or aborting the batch.
+            const releasedBalance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
+              reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
+              month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
+              updated_at: checkedAt,
+            }).where("machine_id", "=", reservation.machine_id)
+              .where(sql<boolean>`reserved_microusd >= ${reserved}`)
+              .returning("machine_id").executeTakeFirst();
+            if (!releasedBalance) throw new Error("Funded AI balance invariant violated");
+            const expiredReservation = await trx.executor.updateTable("ai_funded_usage_reservations")
+              .set({ status: "expired" })
+              .where("reservation_id", "=", reservation.reservation_id)
+              .where("status", "=", "settling")
+              .returning("reservation_id").executeTakeFirst();
+            if (!expiredReservation) throw new Error("Funded AI reservation invariant violated");
+            continue;
+          }
+          const { promotionalDebit, addonDebit, attributed } = await reservationDebitSplit(
+            trx.executor,
+            reservationIdentity,
             reservation,
             reserved,
-            exactInteger(currentBalance.promotional_balance_microusd),
+            currentBalance,
           );
           if (attributed) {
             await debitAttributedPromotionalGrants(
@@ -801,11 +833,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
               checkedAt,
             );
           } else {
-            await debitPromotionalGrants(trx.executor, {
-              ownerId: reservation.owner_id,
-              machineId: reservation.machine_id,
-              runtimeSlot: reservation.runtime_slot,
-            }, promotionalDebit, checkedAt);
+            await debitPromotionalGrants(trx.executor, reservationIdentity, promotionalDebit, checkedAt);
           }
           const debitRows = [
             promotionalDebit > 0 ? {
