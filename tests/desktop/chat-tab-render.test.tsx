@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
 import { createLegacyGlobalProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 import { useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
 import {
   conversationMessageDisplay,
@@ -70,11 +71,7 @@ describe("ChatTab", () => {
     });
     useTabs.setState(useTabs.getInitialState(), true);
     useDesktopEditor.setState(useDesktopEditor.getInitialState(), true);
-    useProviderPreferences.setState({
-      defaultProviderId: null,
-      composerSelections: {},
-      hydrated: true,
-    });
+    resetProviderPreferences({ hydrated: true });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -749,6 +746,7 @@ describe("ChatTab", () => {
     fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
 
     expect(useProviderPreferences.getState().composerSelections.hermes_default).toEqual({
+      model: "provider-default",
       options: [{ id: "effort", value: "high" }],
       permissionMode: "full_access",
     });

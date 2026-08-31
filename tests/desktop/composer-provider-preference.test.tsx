@@ -12,6 +12,7 @@ import { defaultAgentThreadComposerDraft, type RuntimeSummary } from "@matrix-os
 import { AgentComposer } from "../../desktop/src/renderer/src/features/coding-agents/AgentComposer";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 
 const NOW = "2026-07-27T12:00:00.000Z";
 
@@ -56,7 +57,7 @@ describe("AgentComposer default provider preference", () => {
         on: vi.fn(() => () => undefined),
       },
     });
-    useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
+    resetProviderPreferences();
     useCodingAgentWorkspace.setState({ createStatus: "idle", createError: null });
   });
 
@@ -66,7 +67,7 @@ describe("AgentComposer default provider preference", () => {
   });
 
   it("keeps the ready provider when the saved preference is not runnable", () => {
-    useProviderPreferences.setState({ defaultProviderId: "claude", composerSelections: {}, hydrated: true });
+    resetProviderPreferences({ defaultProviderId: "claude", hydrated: true });
     render(
       <AgentComposer
         summary={summaryWith([provider("codex", true), provider("claude", false)])}
@@ -81,7 +82,7 @@ describe("AgentComposer default provider preference", () => {
   });
 
   it("uses the saved preference when that provider is runnable", () => {
-    useProviderPreferences.setState({ defaultProviderId: "claude", composerSelections: {}, hydrated: true });
+    resetProviderPreferences({ defaultProviderId: "claude", hydrated: true });
     render(
       <AgentComposer
         summary={summaryWith([provider("codex", true), provider("claude", true)])}

@@ -41,6 +41,7 @@ export function useCanonicalComposerSelection({
     initializeImmediately ? createCanonicalComposerSelection(catalog) : null
   ));
   const providerPreferencesHydrated = useProviderPreferences((state) => state.hydrated);
+  const lastComposerInstanceId = useProviderPreferences((state) => state.lastComposerInstanceId);
   const setComposerSelection = useProviderPreferences((state) => state.setComposerSelection);
   const composerSelectionTouched = useRef(false);
   const selectionChatId = useRef<string | null>(null);
@@ -58,9 +59,17 @@ export function useCanonicalComposerSelection({
     setSelection((current) => {
       if (!catalogReady) return null;
       const currentInstance = catalog.instances.find((instance) => instance.id === current?.instanceId);
+      const selectedChatInstance = currentSelection
+        ? catalog.instances.find((instance) => instance.id === currentSelection.instanceId)
+        : undefined;
+      const rememberedInstance = lastComposerInstanceId
+        ? catalog.instances.find((instance) => instance.id === lastComposerInstanceId)
+        : undefined;
       const requiredInstance = boundInstanceId
         ? catalog.instances.find((instance) => instance.id === boundInstanceId)
-        : currentInstance;
+        : chatId
+          ? selectedChatInstance ?? currentInstance
+          : rememberedInstance ?? currentInstance;
       const next = requiredInstance
         ? createCanonicalComposerSelection(catalog, requiredInstance.id)
         : createCanonicalComposerSelection(catalog);
@@ -93,7 +102,15 @@ export function useCanonicalComposerSelection({
           }
         : preferred;
     });
-  }, [boundInstanceId, catalog, catalogReady, chatId, currentSelection, providerPreferencesHydrated]);
+  }, [
+    boundInstanceId,
+    catalog,
+    catalogReady,
+    chatId,
+    currentSelection,
+    lastComposerInstanceId,
+    providerPreferencesHydrated,
+  ]);
 
   const onSelectionChange = useCallback((nextSelection: CanonicalComposerSelection) => {
     composerSelectionTouched.current = true;

@@ -54,6 +54,15 @@ import {
 import { ProjectChatHero } from "./ProjectChatHero";
 import { startCanonicalProjectChat } from "./start-canonical-project-chat";
 
+function composerOptionsEqual(
+  left: CanonicalComposerSelection["options"],
+  right: CanonicalComposerSelection["options"],
+): boolean {
+  return left.length === right.length && left.every((option) => (
+    right.some((candidate) => candidate.id === option.id && candidate.value === option.value)
+  ));
+}
+
 /**
  * The draft-chat pane: shown in the conversation column while no chat is
  * selected. It reuses the exact floating composer bar threads use (PromptInput
@@ -92,6 +101,7 @@ export function ProjectChatDraft({
   heroHeadline?: string;
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
+  const lastComposerInstanceId = useProviderPreferences((s) => s.lastComposerInstanceId);
   const composerSelections = useProviderPreferences((s) => s.composerSelections);
   const setComposerSelectionPreference = useProviderPreferences((s) => s.setComposerSelection);
   const api = useConnection((state) => state.api);
@@ -186,7 +196,7 @@ export function ProjectChatDraft({
     [canonicalClient, liveCatalog.catalog, liveCatalog.status, summary, unavailableCatalog],
   );
   const preferredInstanceId = canonicalClient
-    ? undefined
+    ? lastComposerInstanceId ?? undefined
     : instanceIdForLegacyProvider(projectCatalog, summary, effectiveDraft.providerId);
   const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
     () => {
@@ -195,6 +205,9 @@ export function ProjectChatDraft({
         summary,
         restoredDraft?.providerId ?? initialDraft.providerId,
       ));
+      if (canonicalClient && lastComposerInstanceId) {
+        selection = createCanonicalComposerSelection(fallbackCatalog, lastComposerInstanceId);
+      }
       if (selection) {
         selection = applyCanonicalComposerPreference(
           fallbackCatalog,
@@ -249,6 +262,7 @@ export function ProjectChatDraft({
         && current.model === next.model
         && current.interactionMode === next.interactionMode
         && current.permissionMode === next.permissionMode
+        && composerOptionsEqual(current.options, next.options)
         ? current
         : next;
     });

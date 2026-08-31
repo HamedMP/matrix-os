@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "@desktop/renderer/src/features/chat/ChatTab";
 import { useProviderPreferences } from "@desktop/renderer/src/features/settings/provider-preferences";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -24,7 +25,7 @@ describe("ChatTab send failures", () => {
     useHermesChat.setState({ messages: [], status: "idle", view: "conversation" });
     useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true);
     useCodingAgentWorkspace.setState({ summary: { providers: [] } as never, status: "ready" });
-    useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: true });
+    resetProviderPreferences({ hydrated: true });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
