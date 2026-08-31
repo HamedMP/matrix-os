@@ -11,6 +11,7 @@ import {
 } from "../../shell/src/components/launchpad/launchpad-utils.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { createShellQueryClient } from "../../shell/src/api/query-client.js";
+import { appKeys } from "../../shell/src/api/apps.js";
 
 vi.mock("@/hooks/useTaskBoard", () => ({
   useTaskBoard: () => ({
@@ -44,7 +45,6 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
     onRemoveFromCanvas: vi.fn(),
     onCreateApp: vi.fn(),
     onAddToDesktop: vi.fn(),
-    onAppsRefreshed: vi.fn(),
   };
   const props = {
     apps: opts.apps ?? defaultApps,
@@ -71,7 +71,7 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
     );
     await Promise.resolve();
   });
-  return { ...result, handlers };
+  return { ...result, handlers, queryClient };
 }
 
 function setDesign(style: string) {
@@ -116,10 +116,9 @@ describe("Launchpad (macos-glass launcher)", () => {
     });
     vi.stubGlobal("fetch", vi.fn(() => response));
 
-    const { handlers } = await renderLauncher();
+    const { queryClient } = await renderLauncher();
 
     expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
-    expect(handlers.onAppsRefreshed).not.toHaveBeenCalled();
 
     await act(async () => {
       resolveResponse(new Response(JSON.stringify([{
@@ -130,7 +129,7 @@ describe("Launchpad (macos-glass launcher)", () => {
       await response;
     });
 
-    await waitFor(() => expect(handlers.onAppsRefreshed).toHaveBeenCalledWith([{
+    await waitFor(() => expect(queryClient.getQueryData(appKeys.list())).toEqual([{
       name: "Fresh App",
       path: "/files/apps/fresh/index.html",
       slug: "fresh",

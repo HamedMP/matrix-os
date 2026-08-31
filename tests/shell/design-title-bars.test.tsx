@@ -52,7 +52,6 @@ describe("CanvasWindow design-system title bars", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: appWindow.id,
       fullscreenWindowId: null,
     });

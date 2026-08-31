@@ -3,7 +3,6 @@
 import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { appsQueryOptions } from "@/api/apps";
-import type { ApiAppEntry } from "@/lib/design-apps-refresh";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { groupLauncherApps } from "@/lib/dock-sections";
@@ -38,7 +37,6 @@ interface MissionControlProps {
   nativePresentation?: boolean;
   onCreateApp: () => void;
   onAddToDesktop?: (path: string) => void;
-  onAppsRefreshed?: (apps: ApiAppEntry[]) => void;
 }
 
 const CREATE_APP: AppEntry = { name: "Create app", path: "__create-app__" };
@@ -57,29 +55,20 @@ export function MissionControl({
   nativePresentation = false,
   onCreateApp,
   onAddToDesktop,
-  onAppsRefreshed,
 }: MissionControlProps) {
   const { provision } = useTaskBoard();
   const themeStyle = useThemeStyle();
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const closingRef = useRef(false);
-  const { data: refreshedApps, refetch: refreshApps } = useQuery({
+  const { refetch: refreshApps } = useQuery({
     ...appsQueryOptions(),
     enabled: false,
-  });
-
-  const onAppsRefreshedEvent = useEffectEvent((apps: ApiAppEntry[]) => {
-    onAppsRefreshed?.(apps);
   });
 
   useEffect(() => {
     if (open) void refreshApps();
   }, [open, refreshApps]);
-
-  useEffect(() => {
-    if (refreshedApps) onAppsRefreshedEvent(refreshedApps);
-  }, [refreshedApps]);
 
   const prevOpenRef = useRef(open);
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- enter/exit animation orchestration, not derived state: the `open` prop drives requestAnimationFrame double-buffering (mount now, set visible next frame) and a 300ms setTimeout-delayed unmount. These are side effects that must run in an effect, and `mounted`/`visible` cannot be computed in render without dropping the transition.

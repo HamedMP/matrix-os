@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Desktop } from "../../shell/src/components/Desktop.js";
@@ -8,6 +9,7 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useDesktopConfigStore } from "../../shell/src/stores/desktop-config.js";
 import { useVocalStore } from "../../shell/src/stores/vocal.js";
+import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
 const originalConsoleError = console.error;
 
@@ -132,7 +134,6 @@ describe("Desktop shell notifications", () => {
       });
       useWindowManager.setState({
         windows: [],
-        apps: [],
         nextZ: 1,
         closedPaths: new Set(),
         closedLayouts: new Map(),
@@ -160,7 +161,12 @@ describe("Desktop shell notifications", () => {
   });
 
   it("renders shell notices without showing a trial-ending banner", async () => {
-    render(<Desktop />);
+    const queryClient = createShellQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Desktop />
+      </QueryClientProvider>,
+    );
 
     const indicator = await screen.findByTestId("connection-indicator");
     const banner = screen.getByTestId("runtime-identity-banner");

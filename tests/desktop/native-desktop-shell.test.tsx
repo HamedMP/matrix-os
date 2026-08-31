@@ -8,13 +8,13 @@ import NavigationHeader from "@desktop/renderer/src/features/mission-control/Nav
 import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "@desktop/renderer/src/design/layering";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
-import { useApps } from "@desktop/renderer/src/stores/apps";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { useDesktopAppDrawer } from "@desktop/renderer/src/stores/desktop-app-drawer";
 import { useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
 import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
+import { seedDesktopApps } from "./apps-query-test-utils";
 
 const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
@@ -67,7 +67,6 @@ beforeEach(() => {
   useTabs.setState(useTabs.getInitialState(), true);
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
   useConnection.setState(useConnection.getInitialState(), true);
-  useApps.setState(useApps.getInitialState(), true);
   useUi.setState(useUi.getInitialState(), true);
   useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
   useDesktopAppDrawer.setState(useDesktopAppDrawer.getInitialState(), true);
@@ -216,9 +215,11 @@ describe("native desktop shell", () => {
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
     const api = {
-      get: vi.fn()
-        .mockResolvedValueOnce({ background: { type: "wallpaper", name: "moraine-lake.jpg" } })
-        .mockResolvedValueOnce({ background: { type: "solid", color: "#123456" } }),
+      get: vi.fn((path: string) => path === "/api/apps"
+        ? Promise.resolve({ apps: [] })
+        : api.get.mock.calls.filter(([calledPath]) => calledPath === "/api/settings/desktop").length === 1
+          ? Promise.resolve({ background: { type: "wallpaper", name: "moraine-lake.jpg" } })
+          : Promise.resolve({ background: { type: "solid", color: "#123456" } })),
       getBlob: vi.fn(async () => new Blob(["wallpaper"], { type: "image/jpeg" })),
     };
     useConnection.setState({ api: api as never });
@@ -233,15 +234,17 @@ describe("native desktop shell", () => {
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundColor).toBe("rgb(18, 52, 86)");
     });
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get.mock.calls.filter(([path]) => path === "/api/settings/desktop")).toHaveLength(2);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:first-wallpaper");
   });
 
   it("refreshes the background after returning from the hosted Browser to Desktop", async () => {
     const api = {
-      get: vi.fn()
-        .mockResolvedValueOnce({ background: { type: "solid", color: "#111111" } })
-        .mockResolvedValueOnce({ background: { type: "solid", color: "#223344" } }),
+      get: vi.fn((path: string) => path === "/api/apps"
+        ? Promise.resolve({ apps: [] })
+        : api.get.mock.calls.filter(([calledPath]) => calledPath === "/api/settings/desktop").length === 1
+          ? Promise.resolve({ background: { type: "solid", color: "#111111" } })
+          : Promise.resolve({ background: { type: "solid", color: "#223344" } })),
     };
     useConnection.setState({ api: api as never });
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
@@ -256,7 +259,7 @@ describe("native desktop shell", () => {
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundColor).toBe("rgb(34, 51, 68)");
     });
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get.mock.calls.filter(([path]) => path === "/api/settings/desktop")).toHaveLength(2);
   });
 
   it.each([
@@ -485,12 +488,7 @@ describe("native desktop shell", () => {
       authGeneration: 1,
       runtimeSlot: "primary",
     });
-    useApps.setState({
-      apps: [{ slug: "cached", name: "Cached App" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "cached", name: "Cached App" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
@@ -512,7 +510,7 @@ describe("native desktop shell", () => {
   });
 
   it("switches Electron Desktop to Canvas and back without replacing shared apps or geometry", () => {
-    useApps.setState({ apps: [], loaded: true, loading: false, error: null });
+    seedDesktopApps([]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     const chatTab = useTabs.getState().tabs.find((tab) => tab.kind === "work")!;
@@ -549,12 +547,7 @@ describe("native desktop shell", () => {
 
   it("retains launcher icon elements after closing so reopening does not download them again", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
-    useApps.setState({
-      apps: [{ slug: "notes", name: "Notes" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
@@ -574,12 +567,7 @@ describe("native desktop shell", () => {
 
   it("keeps the fixed header sidebar tab inert beside maximized workspace tabs", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
-    useApps.setState({
-      apps: [{ slug: "notes", name: "Notes" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
@@ -666,12 +654,7 @@ describe("native desktop shell", () => {
 
   it("uses the same icon-and-name tile treatment for first-party and user apps", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
-    useApps.setState({
-      apps: [{ slug: "notes", name: "Notes" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
@@ -688,12 +671,7 @@ describe("native desktop shell", () => {
 
   it("opens launcher apps as windows after returning from retained tabs to the Desktop", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
-    useApps.setState({
-      apps: [{ slug: "notes", name: "Notes" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));

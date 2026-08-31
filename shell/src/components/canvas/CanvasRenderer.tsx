@@ -3,7 +3,7 @@
 import { useEffect, useCallback, useState } from "react";
 import type { ReactNode } from "react";
 import { useWindowManager } from "@/hooks/useWindowManager";
-import type { AppWindow } from "@/hooks/useWindowManager";
+import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasGroups } from "@/stores/canvas-groups";
 import { useCanvasLabels } from "@/stores/canvas-labels";
@@ -20,6 +20,7 @@ const APP_HYDRATION_MARGIN_PX = 320;
 
 interface CanvasRendererProps {
   children?: ReactNode;
+  apps?: AppEntry[];
 }
 
 interface CanvasWindowMountProps {
@@ -30,6 +31,7 @@ interface CanvasWindowMountProps {
   panY: number;
   viewportWidth: number;
   viewportHeight: number;
+  iconUrl?: string;
 }
 
 export function shouldHydrateCanvasWindow(input: {
@@ -59,7 +61,7 @@ export function shouldHydrateCanvasWindow(input: {
   );
 }
 
-export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
+export function CanvasRenderer({ children, apps = [] }: CanvasRendererProps = {}) {
   const windows = useWindowManager((s) => s.windows);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const clearFocus = useWindowManager((s) => s.clearFocus);
@@ -173,6 +175,7 @@ export function CanvasRenderer({ children }: CanvasRendererProps = {}) {
               panY={panY}
               viewportWidth={viewportWidth}
               viewportHeight={viewportHeight}
+              iconUrl={apps.find((app) => app.path === win.path)?.iconUrl}
             />
           );
         })}
@@ -190,6 +193,7 @@ function CanvasWindowMount({
   panY,
   viewportWidth,
   viewportHeight,
+  iconUrl,
 }: CanvasWindowMountProps) {
   const shouldHydrateNow = shouldHydrateCanvasWindow({
     window: win,
@@ -209,6 +213,7 @@ function CanvasWindowMount({
   return (
     <CanvasWindow
       win={win}
+      iconUrl={iconUrl}
       hidden={win.minimized}
       deferAppContent={!(shouldHydrateNow || hydratedOnce)}
     />

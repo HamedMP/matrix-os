@@ -71,6 +71,7 @@ function getEffectiveMinimumWindowSize(path: string): { width: number; height: n
 }
 
 interface ClosedLayout {
+  title?: string;
   x: number;
   y: number;
   width: number;
@@ -115,7 +116,6 @@ interface WindowManagerState {
   nextZ: number;
   closedPaths: Set<string>;
   closedLayouts: Map<string, ClosedLayout>;
-  apps: AppEntry[];
   focusedWindowId: string | null;
   /** Per-app last-launched timestamp (ms since epoch). Drives the dock's
       default sort when the user hasn't manually reordered. In-memory only
@@ -140,7 +140,6 @@ interface WindowManagerActions {
   getFocusedWindow: () => AppWindow | undefined;
   loadLayout: (saved: LayoutWindow[]) => void;
   setWindows: (updater: AppWindow[] | ((prev: AppWindow[]) => AppWindow[])) => void;
-  setApps: (updater: AppEntry[] | ((prev: AppEntry[]) => AppEntry[])) => void;
   cascadeWindows: (startX: number, startY: number, gap: number) => void;
   toggleFullscreen: (id: string) => void;
   exitFullscreen: () => void;
@@ -159,7 +158,9 @@ export function resetWindowManagerLayoutPersistenceForTests(): void {
   saveTimer = undefined;
 }
 
-function debouncedSave(state: WindowManagerState) {
+function debouncedSave(
+  state: Pick<WindowManagerState, "windows" | "closedPaths" | "closedLayouts">,
+) {
   if (!layoutPersistenceArmed) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -176,17 +177,16 @@ function debouncedSave(state: WindowManagerState) {
     }));
 
     const layoutPaths = new Set(layoutWindows.map((lw) => lw.path));
-    const appsByPath = new Map(state.apps.map((a) => [a.path, a]));
     for (const path of state.closedPaths) {
       if (!layoutPaths.has(path)) {
-        const app = appsByPath.get(path);
+        const closedLayout = state.closedLayouts.get(path);
         layoutWindows.push({
           path,
-          title: app?.name ?? path,
-          x: 0,
-          y: 0,
-          width: 640,
-          height: 480,
+          title: closedLayout?.title ?? path,
+          x: closedLayout?.x ?? 0,
+          y: closedLayout?.y ?? 0,
+          width: closedLayout?.width ?? 640,
+          height: closedLayout?.height ?? 480,
           state: "closed",
         });
       }
@@ -289,7 +289,6 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     nextZ: 1,
     closedPaths: new Set<string>(),
     closedLayouts: new Map<string, ClosedLayout>(),
-    apps: [],
     focusedWindowId: null,
     appLaunchTimes: {},
     fullscreenWindowId: null,
@@ -402,7 +401,13 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         const newLayouts = new Map(state.closedLayouts);
         if (win) {
           newClosed.add(win.path);
-          newLayouts.set(win.path, { x: win.x, y: win.y, width: win.width, height: win.height });
+          newLayouts.set(win.path, {
+            title: win.title,
+            x: win.x,
+            y: win.y,
+            width: win.width,
+            height: win.height,
+          });
         }
         // Evict oldest entries if over cap
         while (newClosed.size > MAX_CLOSED_ENTRIES) {
@@ -540,6 +545,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           if (s.state === "closed") {
             newClosed.add(s.path);
             newLayouts.set(s.path, {
+              title: s.title,
               x: restored.x,
               y: restored.y,
               width: restored.width,
@@ -589,12 +595,6 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
       });
     },
 
-    setApps: (updater) => {
-      set((state) => ({
-        apps: typeof updater === "function" ? updater(state.apps) : updater,
-      }));
-    },
-
     cascadeWindows: (startX, startY, gap) => {
       markUserLayoutMutation();
       set((state) => ({
@@ -623,9 +623,19 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
 // Auto-save layout on window/closedPaths changes
 useWindowManager.subscribe(
-  (state) => ({ windows: state.windows, closedPaths: state.closedPaths, apps: state.apps }),
+  (state) => ({
+    windows: state.windows,
+    closedPaths: state.closedPaths,
+    closedLayouts: state.closedLayouts,
+  }),
   (current) => {
-    debouncedSave(current as WindowManagerState);
+    debouncedSave(current);
   },
-  { equalityFn: (a, b) => a.windows === b.windows && a.closedPaths === b.closedPaths && a.apps === b.apps },
+  {
+    equalityFn: (a, b) => (
+      a.windows === b.windows
+      && a.closedPaths === b.closedPaths
+      && a.closedLayouts === b.closedLayouts
+    ),
+  },
 );

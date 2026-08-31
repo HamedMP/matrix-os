@@ -1,6 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { ApiAppEntry } from "@/lib/design-apps-refresh";
 import { shellApi, type RequestOptions } from "./http";
+
+export interface ApiAppEntry {
+  name: string;
+  path: string;
+  slug?: string;
+  icon?: string;
+  iconUrl?: string;
+}
 
 type AppsLoader = (options?: RequestOptions) => Promise<ApiAppEntry[]>;
 
@@ -12,7 +19,7 @@ export const appKeys = {
 export async function listApps(options?: RequestOptions): Promise<ApiAppEntry[]> {
   const value = await shellApi.get<unknown>("/api/apps", options);
   if (!Array.isArray(value)) return [];
-  return value.slice(0, 200).filter((entry): entry is ApiAppEntry => (
+  return value.filter((entry): entry is ApiAppEntry => (
     Boolean(entry)
     && typeof entry === "object"
     && typeof (entry as ApiAppEntry).name === "string"

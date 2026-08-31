@@ -23,9 +23,7 @@ import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import { useConnection } from "../../stores/connection";
 import { defaultDesktopIcons, useDesktopIcons } from "../../stores/desktop-icons";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
-import { appIconUrl, useApps } from "../../stores/apps";
-import { desktopQueryClient } from "../../lib/query-client";
-import { appsQueryOptions } from "../apps/apps.api";
+import { appIconUrl, useAppsQuery } from "../apps/apps.api";
 import { LayoutGrid } from "@renderer/lib/hugeicons";
 import { useCreateAppRequest } from "../../stores/create-app-request";
 import {
@@ -79,8 +77,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const api = useConnection((state) => state.api);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
-  const authGeneration = useConnection((state) => state.authGeneration);
-  const installedApps = useApps((state) => state.apps);
+  const { data: installedApps = [], refetch: refetchInstalledApps } = useAppsQuery();
   const desktopIcons = useDesktopIcons((state) => state.icons);
   const primeDesktopIcons = useDesktopIcons((state) => state.prime);
   const moveDesktopIcon = useDesktopIcons((state) => state.move);
@@ -118,21 +115,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
 
   useEffect(() => {
     if (!launcherOpen || !api) return;
-    let cancelled = false;
-    void desktopQueryClient.fetchQuery({
-      ...appsQueryOptions(api, { platformHost, authGeneration, runtimeSlot }),
-      staleTime: 0,
-    }).then((apps) => {
-      if (!cancelled) {
-        useApps.setState({ apps, loaded: true, loading: false, error: null });
-      }
-    }).catch(() => {
-      if (!cancelled) console.warn("[apps] silent launcher catalog refresh failed");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, authGeneration, launcherOpen, platformHost, runtimeSlot]);
+    void refetchInstalledApps();
+  }, [api, launcherOpen, refetchInstalledApps]);
 
   useEffect(() => {
     normalizeLegacyTabs();

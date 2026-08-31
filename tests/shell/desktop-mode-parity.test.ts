@@ -14,7 +14,6 @@ describe("web desktop mode parity", () => {
     useWindowManager.setState({
       windows: [],
       focusedWindowId: null,
-      apps: [],
       closedPaths: new Set(),
       closedLayouts: new Map(),
       nextZ: 1,

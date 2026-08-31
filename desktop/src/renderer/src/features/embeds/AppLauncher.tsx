@@ -1,7 +1,7 @@
 import { LayoutGrid, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
-import { appIconUrl, useApps, type MatrixApp } from "../../stores/apps";
+import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
@@ -71,19 +71,17 @@ export default function AppLauncher({
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const openTab = useTabs((s) => s.openTab);
-  const apps = useApps((s) => s.apps);
-  const loaded = useApps((s) => s.loaded);
-  const loading = useApps((s) => s.loading);
-  const error = useApps((s) => s.error);
-  const load = useApps((s) => s.load);
+  const {
+    data: apps = [],
+    isPending,
+    isFetching,
+    error,
+    refetch,
+  } = useAppsQuery();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [contextEntry, setContextEntry] = useState<LauncherEntry | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (api) void load(api);
-  }, [api, load]);
 
   // Launcher behavior: focus the search immediately like a desktop launcher.
   useEffect(() => {
@@ -181,8 +179,8 @@ export default function AppLauncher({
         description="The app catalog could not be loaded. Try again once your computer is reachable."
         action={
           api ? (
-            <Button variant="primary" disabled={loading} onClick={() => void load(api, true)}>
-              {loading ? "Loading..." : "Retry"}
+            <Button variant="primary" disabled={isFetching} onClick={() => void refetch()}>
+              {isFetching ? "Loading..." : "Retry"}
             </Button>
           ) : null
         }
@@ -190,7 +188,7 @@ export default function AppLauncher({
     );
   }
 
-  if (presentation !== "launchpad" && loaded && !loading && apps.length === 0) {
+  if (presentation !== "launchpad" && !isPending && !isFetching && apps.length === 0) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
@@ -200,7 +198,7 @@ export default function AppLauncher({
     );
   }
 
-  if (presentation !== "launchpad" && !loaded && apps.length === 0) {
+  if (presentation !== "launchpad" && isPending && apps.length === 0) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
