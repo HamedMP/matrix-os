@@ -166,7 +166,7 @@ Phase 2 now has one gateway-owned V3 provider snapshot and compatibility project
 Matrix AI: ready / included
 Anthropic account: not connected
 OpenRouter account: not connected
-Matrix Agent (Agent SDK): installed / ready
+Claude SDK kernel: internal / ready
 Claude Sonnet 5: selectable only through Matrix AI
 ```
 

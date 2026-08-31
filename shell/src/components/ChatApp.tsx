@@ -407,7 +407,7 @@ export function ChatApp({
                     className={`max-w-full truncate rounded px-1 text-sm font-semibold leading-4 text-foreground outline-none enabled:hover:bg-accent/40 enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
                     onClick={() => sessionId && activeConversationTitle && setEditingChat({ id: sessionId, source: "header" })}
                   >
-                    {activeConversationTitle ?? providerState.activeInstance?.displayName ?? "Matrix Agent"}
+                    {activeConversationTitle ?? providerState.activeInstance?.displayName ?? "Built-in AI"}
                   </button>
                 )}
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">

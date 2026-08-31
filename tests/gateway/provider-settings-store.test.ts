@@ -160,6 +160,11 @@ describe("ProviderSettingsStore", () => {
       revision: 0,
       access: { mode: "writable" },
     });
+    expect(initial.harnesses.map((harness) => ({
+      harness: harness.harness,
+      displayName: harness.displayName,
+    }))).toEqual([{ harness: "claude", displayName: "Claude" }]);
+    expect(initial.harnesses.some((harness) => harness.displayName === "Matrix Agent")).toBe(false);
     expect(initial.harnessCatalog).toEqual([
       expect.objectContaining({ harness: "hermes", available: false, runnable: false, safeReason: "runtime_not_supported" }),
       expect.objectContaining({ harness: "openclaw", available: false, runnable: false, safeReason: "runtime_not_supported" }),
@@ -279,6 +284,70 @@ describe("ProviderSettingsStore", () => {
       kind: "snapshot",
       snapshot: { harnesses: [expect.objectContaining({ enabled: true })] },
     });
+  });
+
+  it("automatically reconciles newly installed real harnesses without restoring the synthetic kernel", async () => {
+    const store = createStore();
+    await store.getSnapshot();
+    canonical.drivers.push(
+      { id: "hermes", displayName: "Hermes", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools"], setupActions: [] },
+      { id: "opencode", displayName: "OpenCode", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools"], setupActions: [] },
+      { id: "pi", displayName: "Pi", kind: "cli", installState: "missing", health: "stopped", capabilities: ["tools"], setupActions: ["install"] },
+    );
+
+    const reconciled = await store.getSnapshot();
+
+    expect(reconciled.harnesses.map((harness) => harness.harness)).toEqual([
+      "claude",
+      "hermes",
+      "opencode",
+    ]);
+    expect(reconciled.harnesses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ harness: "hermes", enabled: false, installState: "installed" }),
+      expect.objectContaining({ harness: "opencode", enabled: false, installState: "installed" }),
+    ]));
+    expect(reconciled.harnesses.some((harness) => harness.harness === "pi")).toBe(false);
+    expect(reconciled.harnesses.some((harness) => harness.displayName === "Matrix Agent")).toBe(false);
+  });
+
+  it("migrates an existing synthetic kernel row to the detected Claude harness without breaking its stable id", async () => {
+    const store = createStore();
+    await mkdir(dirname(store.configurationPath), { recursive: true });
+    await writeFile(store.configurationPath, JSON.stringify({
+      schemaVersion: 1,
+      revision: 4,
+      harnesses: [{
+        id: "harness_kernel",
+        driverId: "kernel",
+        harness: "claude",
+        displayName: "Matrix Agent",
+        accentColor: "orange",
+        enabled: true,
+        selectedAccountId: null,
+        accessSourceId: "matrix_included",
+        route: { kind: "fixed", providerId: "anthropic", modelId: "claude-sonnet-5" },
+      }],
+      accountProfiles: [],
+      gatewayPolicy: {
+        accessSourceId: "matrix_included",
+        monthlyBudgetMicrousd: null,
+        allowedModelIds: ["claude-sonnet-5"],
+        topUpEnabled: false,
+      },
+      receipts: [],
+    }), { mode: 0o600 });
+
+    const migrated = await store.getSnapshot();
+    const persisted = JSON.parse(await readFile(store.configurationPath, "utf8"));
+
+    expect(migrated.revision).toBe(4);
+    expect(migrated.harnesses).toEqual([
+      expect.objectContaining({ id: "harness_kernel", harness: "claude", displayName: "Claude" }),
+    ]);
+    expect(persisted.harnesses).toEqual([
+      expect.objectContaining({ id: "harness_kernel", driverId: "claude_code", displayName: "Claude" }),
+    ]);
+    expect(JSON.stringify(persisted)).not.toContain("Matrix Agent");
   });
 
   it("projects all four generic harness setup states from canonical inventory and runtime support", async () => {
@@ -634,7 +703,7 @@ describe("ProviderSettingsStore", () => {
       type: "start_login" as const,
       expectedRevision: 0,
       idempotencyKey: "login_1",
-      harnessInstanceId: "harness_kernel",
+      harnessInstanceId: "harness_claude_code",
       accountId: null,
       method: "terminal" as const,
     };
@@ -662,7 +731,7 @@ describe("ProviderSettingsStore", () => {
       type: "start_login",
       expectedRevision: 0,
       idempotencyKey: "login_unwired_1",
-      harnessInstanceId: "harness_kernel",
+      harnessInstanceId: "harness_claude_code",
       accountId: null,
       method: "terminal",
     })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
@@ -720,7 +789,7 @@ describe("ProviderSettingsStore", () => {
       type: "start_login",
       expectedRevision: 0,
       idempotencyKey: "login_wrong_provider_1",
-      harnessInstanceId: "harness_kernel",
+      harnessInstanceId: "harness_claude_code",
       accountId: "owner_openai",
       method: "terminal",
     })).rejects.toMatchObject({ code: "invalid_route" });
@@ -740,7 +809,7 @@ describe("ProviderSettingsStore", () => {
       type: "start_login",
       expectedRevision: 0,
       idempotencyKey: "login_incoherent_1",
-      harnessInstanceId: "harness_kernel",
+      harnessInstanceId: "harness_claude_code",
       accountId: null,
       method: "terminal",
     })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
@@ -784,7 +853,7 @@ describe("ProviderSettingsStore", () => {
       type: "select_account",
       expectedRevision: 0,
       idempotencyKey: "select_owner_1",
-      harnessInstanceId: "harness_kernel",
+      harnessInstanceId: "harness_claude_code",
       accountId: "owner_anthropic",
     });
     await store.setAccountSecret("owner_anthropic", "secret-value");
