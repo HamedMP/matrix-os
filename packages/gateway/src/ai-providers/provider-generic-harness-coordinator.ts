@@ -170,6 +170,7 @@ export function createProviderGenericHarnessCoordinator(options: {
   const writeReceiptDocument = options.receiptWriter ?? writeProviderJsonAtomic;
   let tail: Promise<void> = Promise.resolve();
   let recoveryBlocked = false;
+  let pendingReceiptRepair: RuntimeReceipt | undefined;
 
   async function requireRuntimeSupport(
     harness: HarnessConfiguration & { harness: GenericHarness },
@@ -318,6 +319,16 @@ export function createProviderGenericHarnessCoordinator(options: {
   async function recoverPendingReceipts(): Promise<void> {
     try {
       const receipts = await readReceipts(receiptPath);
+      if (pendingReceiptRepair) {
+        const repair = pendingReceiptRepair;
+        const durable = receipts.receipts.find((receipt) => receipt.key === repair.key);
+        if (!durable || durable.payloadHash !== repair.payloadHash) {
+          throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        }
+        replaceReceipt(receipts, repair);
+        await writeReceipts(receipts);
+        pendingReceiptRepair = undefined;
+      }
       await reconcilePendingReceipts(receipts);
       recoveryBlocked = false;
     } catch (error) {
@@ -365,6 +376,7 @@ export function createProviderGenericHarnessCoordinator(options: {
   async function coordinate(
     input: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0],
   ): Promise<void> {
+    if (pendingReceiptRepair) await recoverPendingReceipts();
     const mutation = ProviderSettingsMutationSchema.parse(input.mutation);
     const payloadHash = mutationHash(mutation);
     const receipts = await readReceipts(receiptPath);
@@ -388,10 +400,12 @@ export function createProviderGenericHarnessCoordinator(options: {
         if (!beforeRoute || !afterRoute) return;
         const current = await currentRuntimeRoute();
         if (!sameRuntimeRoute(current, afterRoute)) {
-          duplicate.beforeRoute = current;
-          replaceReceipt(receipts, duplicate);
-          await writeReceipts(receipts);
+          const repaired = ReceiptSchema.parse({ ...duplicate, beforeRoute: current });
+          replaceReceipt(receipts, repaired);
           recoveryBlocked = true;
+          pendingReceiptRepair = repaired;
+          await writeReceipts(receipts);
+          pendingReceiptRepair = undefined;
           await applyRuntimeRoute(afterRoute);
         }
         return;
