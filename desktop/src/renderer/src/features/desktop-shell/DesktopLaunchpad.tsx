@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import AppLauncher from "../embeds/AppLauncher";
 import type { DesktopAppConfig } from "./desktop-apps";
+import type { OsViewMode } from "@matrix-os/contracts";
 
 export default function DesktopLaunchpad({
   open,
@@ -10,6 +11,8 @@ export default function DesktopLaunchpad({
   onCreateApp,
   onOpenDesktopApp,
   onAddToDesktop,
+  osViewMode,
+  onSwitchOsView,
 }: {
   open: boolean;
   onClose: () => void;
@@ -17,6 +20,8 @@ export default function DesktopLaunchpad({
   onCreateApp?: () => void;
   onOpenDesktopApp?: (app: DesktopAppConfig) => void;
   onAddToDesktop?: (path: string) => void;
+  osViewMode: OsViewMode;
+  onSwitchOsView: (mode: OsViewMode) => void;
 }) {
   const closeLauncher = useEffectEvent(onClose);
 
@@ -53,6 +58,11 @@ export default function DesktopLaunchpad({
         onCreateApp={onCreateApp}
         onOpenDesktopApp={onOpenDesktopApp}
         onAddToDesktop={onAddToDesktop}
+        osViewMode={osViewMode}
+        onSwitchOsView={(mode) => {
+          onSwitchOsView(mode);
+          onClose();
+        }}
         onLaunch={(tabId) => {
           onLaunchTab?.(tabId);
           onClose();

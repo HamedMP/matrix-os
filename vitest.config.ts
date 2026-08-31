@@ -10,12 +10,6 @@ export default defineConfig({
         if (!importer) return null;
         const normalized = importer.split(path.sep).join("/");
         if (
-          source === "@tldraw/tldraw" &&
-          normalized.endsWith("/shell/src/components/canvas/WorkspaceCanvas.tsx")
-        ) {
-          return path.resolve(__dirname, "tests/shell/mocks/tldraw.tsx");
-        }
-        if (
           source === "@tiptap/react" &&
           normalized.endsWith("/home/apps/notes/src/RichEditor.tsx")
         ) {

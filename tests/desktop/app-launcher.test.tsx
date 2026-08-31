@@ -4,9 +4,9 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLauncher from "../../desktop/src/renderer/src/features/embeds/AppLauncher";
-import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
 
 describe("AppLauncher", () => {
   beforeEach(() => {
@@ -17,16 +17,12 @@ describe("AppLauncher", () => {
       runtimeSlot: "primary",
       api: null,
     });
-    useApps.setState({
-      apps: [
-        { slug: "alpha", name: "Alpha", appIdentity: "utilities/alpha" },
-        { slug: "beta", name: "Beta" },
-        { slug: "bravo", name: "Bravo" },
-      ],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    clearDesktopApps();
+    seedDesktopApps([
+      { slug: "alpha", name: "Alpha", appIdentity: "utilities/alpha" },
+      { slug: "beta", name: "Beta" },
+      { slug: "bravo", name: "Bravo" },
+    ]);
     useTabs.setState({ tabs: [], activeTabId: null });
   });
 
@@ -52,7 +48,7 @@ describe("AppLauncher", () => {
         }),
       } as never,
     });
-    useApps.setState({ apps: [], loaded: false, loading: false, error: null });
+    clearDesktopApps();
 
     render(<AppLauncher />);
 
@@ -93,15 +89,24 @@ describe("AppLauncher", () => {
     });
   });
 
-  it("puts Create app first and includes every first-class Desktop app", () => {
+  it("puts Create app and the other OS view first, then every first-class Electron Desktop app", () => {
     const onCreateApp = vi.fn();
-    render(<AppLauncher presentation="launchpad" onCreateApp={onCreateApp} />);
+    const onSwitchOsView = vi.fn();
+    render(
+      <AppLauncher
+        presentation="launchpad"
+        osViewMode="desktop"
+        onCreateApp={onCreateApp}
+        onSwitchOsView={onSwitchOsView}
+      />,
+    );
 
     const launcher = screen.getByTestId("desktop-launcher-grid");
     const names = Array.from(launcher.querySelectorAll("button"))
       .map((button) => button.getAttribute("aria-label"));
-    expect(names.slice(0, 11)).toEqual([
+    expect(names.slice(0, 12)).toEqual([
       "Create app",
+      "Canvas",
       "Chat",
       "Terminal",
       "Files",
@@ -116,6 +121,27 @@ describe("AppLauncher", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Create app" }));
     expect(onCreateApp).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Canvas" }));
+    expect(onSwitchOsView).toHaveBeenCalledWith("canvas");
+  });
+
+  it("offers Desktop from Canvas and keeps the OS-view destination launcher-only", () => {
+    const onSwitchOsView = vi.fn();
+    const onAddToDesktop = vi.fn();
+    render(
+      <AppLauncher
+        presentation="launchpad"
+        osViewMode="canvas"
+        onSwitchOsView={onSwitchOsView}
+        onAddToDesktop={onAddToDesktop}
+      />,
+    );
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Desktop" }));
+    expect(screen.queryByRole("menuitem", { name: "Add Desktop to Desktop" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Desktop" }));
+    expect(onSwitchOsView).toHaveBeenCalledWith("desktop");
+    expect(onAddToDesktop).not.toHaveBeenCalled();
   });
 
   it("adds a launcher app back to the Desktop from its context menu", () => {
@@ -137,11 +163,9 @@ describe("AppLauncher", () => {
   });
 
   it("does not show a no-match state before the app catalog loads", () => {
-    useApps.setState({
-      apps: [],
-      loaded: false,
-      loading: true,
-      error: null,
+    clearDesktopApps();
+    useConnection.setState({
+      api: { get: vi.fn(() => new Promise(() => undefined)) } as never,
     });
 
     render(<AppLauncher />);

@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
+import { MAX_AGENT_ATTACHMENT_BYTES } from "#agent-thread-contracts";
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalProviderDriverKindSchema,
@@ -278,7 +279,7 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     kind: CanonicalChatAttachmentKindSchema,
     label: canonicalSafeLabel(240, 960),
     mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
-    sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
+    sizeBytes: z.number().int().min(0).max(MAX_AGENT_ATTACHMENT_BYTES).optional(),
     ownerReference: canonicalOwnerRelativePath().optional(),
   }).strict(),
   z.object({

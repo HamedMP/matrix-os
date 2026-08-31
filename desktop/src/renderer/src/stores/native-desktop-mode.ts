@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { invoke } from "../lib/operator";
+import { normalizeOsViewMode, type OsViewMode } from "@matrix-os/contracts";
 
-export type NativeDesktopMode = "desktop" | "canvas";
+export type NativeDesktopMode = OsViewMode;
 
 export const MIN_CANVAS_ZOOM = 0.5;
 export const MAX_CANVAS_ZOOM = 2;
@@ -58,14 +59,13 @@ export const useNativeDesktopMode = create<NativeDesktopModeState>()((set, get) 
       try {
         const result = await invoke("state:get", { key: "desktopShell" });
         const persisted = result.value as { mode?: unknown } | null;
-        const migrateLegacyCanvasMode = persisted?.mode === "canvas";
+        const persistedMode = normalizeOsViewMode(persisted?.mode);
         set(modeRevision === startingRevision
           ? {
-              mode: "desktop",
+              mode: persistedMode,
               hydrated: true,
             }
           : { hydrated: true });
-        if (migrateLegacyCanvasMode) persistMode("desktop");
       } catch (error: unknown) {
         console.warn(
           "[native-desktop] mode load failed:",
@@ -75,11 +75,11 @@ export const useNativeDesktopMode = create<NativeDesktopModeState>()((set, get) 
       }
     },
 
-    setMode: () => {
-      if (get().mode === "desktop") return;
+    setMode: (mode) => {
+      if (get().mode === mode) return;
       modeRevision += 1;
-      set({ mode: "desktop" });
-      persistMode("desktop");
+      set({ mode });
+      persistMode(mode);
     },
 
     setCanvasTransform: (patch) => set((state) => ({

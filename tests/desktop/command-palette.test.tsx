@@ -11,7 +11,7 @@ vi.mock("../../desktop/src/renderer/src/lib/feature-flags", () => ({
 
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
 import type { AgentThreadSummary, RuntimeSummary, TerminalSessionSummary } from "../../packages/contracts/src/index";
-import { useApps } from "../../desktop/src/renderer/src/stores/apps";
+import { desktopQueryClient } from "../../desktop/src/renderer/src/lib/query-client";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
@@ -22,6 +22,7 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { currentAppsQueryKey } from "./apps-query-test-utils";
 
 function threadSummary(id: string, overrides: Partial<AgentThreadSummary> = {}): AgentThreadSummary {
   return {
@@ -132,6 +133,7 @@ describe("CommandPalette", () => {
       runtimeSlot: "primary",
       api: { get: vi.fn() } as never,
     });
+    desktopQueryClient.clear();
   });
 
   afterEach(() => {
@@ -181,19 +183,18 @@ describe("CommandPalette", () => {
   });
 
   it("forces an app catalog retry after a previous palette load failed", async () => {
-    const load = vi.fn().mockResolvedValue(undefined);
-    useApps.setState({
-      apps: [],
-      loaded: true,
-      loading: false,
-      error: "server",
-      load,
-    });
+    await desktopQueryClient.fetchQuery({
+      queryKey: currentAppsQueryKey(),
+      queryFn: () => Promise.reject(new Error("server")),
+      retry: false,
+    }).catch(() => undefined);
+    const get = vi.fn().mockResolvedValue({ apps: [] });
+    useConnection.setState({ api: { get } as never });
 
     render(<CommandPalette />);
 
     await waitFor(() => {
-      expect(load).toHaveBeenCalledWith(useConnection.getState().api, true);
+      expect(get).toHaveBeenCalledWith("/api/apps", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
   });
 

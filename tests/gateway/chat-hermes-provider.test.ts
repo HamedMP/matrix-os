@@ -105,6 +105,70 @@ async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("projects a large official Hermes vision result before the final assistant message", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    const privateVisionPayload = "vision-private-sentinel".repeat(19_000);
+    gateway.event("tool.start", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      args: { path: "/home/matrix/home/private/screenshot.png" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      result: { success: true, output: privateVisionPayload },
+    });
+    gateway.event("message.complete", { text: "The game is ready.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_browser_vision",
+        status: "running",
+      }),
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_browser_vision",
+        status: "completed",
+      }),
+      { type: "assistant.delta", delta: "The game is ready." },
+      { type: "run.completed", outcome: "completed" },
+    ]));
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toContain("vision-private-sentinel");
+    expect(JSON.stringify(events)).not.toContain("/home/matrix/home/private/screenshot.png");
+  });
+
+  it("reports an oversized Hermes response as a Run failure instead of a connection failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.complete", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      result: { success: true, output: "oversized-private-sentinel".repeat(25_000) },
+    });
+
+    expect(await eventsPromise).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "run_failed",
+        safeMessage: "The agent returned a response that was too large to process.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }]);
+    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("projects official Hermes tool frames without leaking provider payloads", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });

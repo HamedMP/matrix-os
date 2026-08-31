@@ -1,13 +1,22 @@
 import { LayoutGrid, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
-import { appIconUrl, useApps, type MatrixApp } from "../../stores/apps";
+import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
+import {
+  OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_LABELS,
+  otherOsViewMode,
+  type OsViewMode,
+} from "@matrix-os/contracts";
+import canvasIconUrl from "../../../../../../home/system/icons/canvas.svg";
+import desktopIconUrl from "../../../../../../home/system/icons/desktop.svg";
 
 type LauncherEntry =
   | { type: "create"; key: "__create-app__"; name: "Create app" }
+  | { type: "os-view"; key: string; name: string; mode: OsViewMode; iconUrl: string }
   | { type: "fixed"; key: string; name: string; app: DesktopAppConfig }
   | { type: "installed"; key: string; name: string; app: MatrixApp };
 
@@ -46,6 +55,8 @@ export default function AppLauncher({
   onCreateApp,
   onOpenDesktopApp,
   onAddToDesktop,
+  osViewMode,
+  onSwitchOsView,
 }: {
   presentation?: "surface" | "launchpad";
   launcherActive?: boolean;
@@ -53,24 +64,24 @@ export default function AppLauncher({
   onCreateApp?: () => void;
   onOpenDesktopApp?: (app: DesktopAppConfig) => void;
   onAddToDesktop?: (path: string) => void;
+  osViewMode?: OsViewMode;
+  onSwitchOsView?: (mode: OsViewMode) => void;
 } = {}) {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const openTab = useTabs((s) => s.openTab);
-  const apps = useApps((s) => s.apps);
-  const loaded = useApps((s) => s.loaded);
-  const loading = useApps((s) => s.loading);
-  const error = useApps((s) => s.error);
-  const load = useApps((s) => s.load);
+  const {
+    data: apps = [],
+    isPending,
+    isFetching,
+    error,
+    refetch,
+  } = useAppsQuery();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [contextEntry, setContextEntry] = useState<LauncherEntry | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (api) void load(api);
-  }, [api, load]);
 
   // Launcher behavior: focus the search immediately like a desktop launcher.
   useEffect(() => {
@@ -82,8 +93,16 @@ export default function AppLauncher({
       return apps.map((app) => ({ type: "installed", key: `installed:${app.slug}`, name: app.name, app }));
     }
     const fixedNames = new Set(FIXED_DESKTOP_APPS.map((app) => app.name.toLowerCase()));
+    const destinationMode = osViewMode ? otherOsViewMode(osViewMode) : null;
     return [
       { type: "create", key: "__create-app__", name: "Create app" },
+      ...(destinationMode ? [{
+        type: "os-view" as const,
+        key: OS_VIEW_DESTINATION_PATHS[destinationMode],
+        name: OS_VIEW_LABELS[destinationMode],
+        mode: destinationMode,
+        iconUrl: destinationMode === "canvas" ? canvasIconUrl : desktopIconUrl,
+      }] : []),
       ...FIXED_DESKTOP_APPS.map((app) => {
         const installed = apps.find((candidate) => candidate.name.toLowerCase() === app.name.toLowerCase());
         return {
@@ -99,7 +118,7 @@ export default function AppLauncher({
         .filter((app) => !fixedNames.has(app.name.toLowerCase()))
         .map((app) => ({ type: "installed" as const, key: `installed:${app.slug}`, name: app.name, app })),
     ];
-  }, [apps, platformHost, presentation, runtimeSlot]);
+  }, [apps, osViewMode, platformHost, presentation, runtimeSlot]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -126,6 +145,10 @@ export default function AppLauncher({
       onCreateApp?.();
       return;
     }
+    if (entry.type === "os-view") {
+      onSwitchOsView?.(entry.mode);
+      return;
+    }
     if (entry.type === "fixed") {
       onOpenDesktopApp?.(entry.app);
       return;
@@ -148,7 +171,7 @@ export default function AppLauncher({
     }
   };
 
-  if (error) {
+  if (presentation !== "launchpad" && error) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
@@ -156,8 +179,8 @@ export default function AppLauncher({
         description="The app catalog could not be loaded. Try again once your computer is reachable."
         action={
           api ? (
-            <Button variant="primary" disabled={loading} onClick={() => void load(api, true)}>
-              {loading ? "Loading..." : "Retry"}
+            <Button variant="primary" disabled={isFetching} onClick={() => void refetch()}>
+              {isFetching ? "Loading..." : "Retry"}
             </Button>
           ) : null
         }
@@ -165,7 +188,7 @@ export default function AppLauncher({
     );
   }
 
-  if (loaded && !loading && apps.length === 0) {
+  if (presentation !== "launchpad" && !isPending && !isFetching && apps.length === 0) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
@@ -175,7 +198,7 @@ export default function AppLauncher({
     );
   }
 
-  if (!loaded && apps.length === 0) {
+  if (presentation !== "launchpad" && isPending && apps.length === 0) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
@@ -238,7 +261,7 @@ export default function AppLauncher({
                   }}
                   onMouseEnter={() => setActive(i)}
                   onContextMenu={(event) => {
-                    if (entry.type === "create") return;
+                    if (entry.type === "create" || entry.type === "os-view") return;
                     event.preventDefault();
                     setContextEntry(entry);
                   }}
@@ -248,6 +271,8 @@ export default function AppLauncher({
                     <span className="flex size-16 items-center justify-center rounded-[18px] bg-[var(--accent)] text-white shadow-[var(--shadow-1)]">
                       <Plus size={40} aria-hidden="true" />
                     </span>
+                  ) : entry.type === "os-view" ? (
+                    <img src={entry.iconUrl} alt="" className="size-16 rounded-[18px] object-cover shadow-[var(--shadow-1)]" draggable={false} />
                   ) : entry.type === "fixed" ? (
                     <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
                       {entry.app.iconUrl
@@ -268,7 +293,7 @@ export default function AppLauncher({
             })}
           </div>
         )}
-        {contextEntry && onAddToDesktop ? (
+        {contextEntry && contextEntry.type !== "os-view" && onAddToDesktop ? (
           <div role="menu" data-launchpad-interactive className="fixed left-1/2 top-1/2 z-50 min-w-48 -translate-x-1/2 rounded-xl border bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-3)]">
             <button
               type="button"

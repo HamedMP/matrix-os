@@ -10,6 +10,7 @@ import type {
   CanonicalChatEventSource,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
+import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
@@ -390,7 +391,7 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error));
       if (!isCurrentScope()) return null;
-      setError("The message could not be sent. Try again.");
+      setError(canonicalChatSubmitFailureMessage(error));
       return null;
     }
   }, [client, detail, projectId]);

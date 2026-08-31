@@ -77,7 +77,7 @@ As a Matrix user, I want Canvas to remain available on mobile when I explicitly 
 - The user opens a desktop-sized viewport on a tablet or foldable device; Matrix may use Canvas by default when there is enough room, but phone-sized layouts must remain launcher-first.
 - An app cannot be loaded, is missing, or requires a refreshed session; the shell must show a generic recovery path and return to the launcher.
 - Multiple browser tabs open Matrix on the same phone; session state must avoid confusing duplicate active-app or terminal ownership messages.
-- The same user opens Matrix through the browser shell and the native mobile app; both surfaces must use the same owner-scoped app and terminal inventory without corrupting each other's resume state.
+- The same user opens Matrix through Web Mobile and Native Mobile; both surfaces must use the same owner-scoped app and terminal inventory without corrupting each other's resume state. Native Mobile is the behavioral reference and Web Mobile follows its information architecture and state semantics.
 
 ## Requirements *(mandatory)*
 
@@ -103,7 +103,7 @@ As a Matrix user, I want Canvas to remain available on mobile when I explicitly 
 - **FR-018**: Terminal and shell session collections MUST have clear limits, stale-session handling, and explicit cleanup behavior for ended sessions.
 - **FR-019**: Mobile shell errors MUST provide safe recovery actions, such as retry, resume, new session, return home, or reopen app.
 - **FR-020**: Mobile shell behavior MUST be testable independently from desktop Canvas behavior so regressions in one shell do not mask regressions in the other.
-- **FR-021**: The phone-first shell behavior MUST apply to phone-sized browser shell sessions and to the native mobile app runtime where that runtime is available.
+- **FR-021**: The phone-first OS-view behavior MUST apply to Web Mobile and Native Mobile where the capability is available.
 - **FR-022**: App runtime launch from mobile MUST use short-lived, owner-scoped session bootstrap tokens or equivalent authenticated session handoff, without exposing reusable credentials to embedded apps.
 - **FR-023**: Terminal resume MUST distinguish server terminal process state from mobile attachment state so a browser/app disconnect detaches the client without implying that the shell process exited.
 
@@ -131,7 +131,7 @@ As a Matrix user, I want Canvas to remain available on mobile when I explicitly 
 
 | Surface | Operation | Auth requirement | Public? | Notes |
 |---------|-----------|------------------|---------|-------|
-| Phone browser shell | Load mobile launcher, app surfaces, Canvas entry | Existing Matrix shell authentication | No | Phone-sized layout changes must not bypass normal shell auth. |
+| Web Mobile | Load mobile launcher, app surfaces, Canvas entry | Existing Matrix Web authentication | No | Phone-sized layout changes must not bypass normal authentication. |
 | Native mobile app | Connect to owner's gateway | Existing Matrix mobile authentication and gateway token handling | No | Mobile app stores only user-session material required by existing auth flow. |
 | `GET /api/apps` and app manifest reads | List/open owner-visible apps | Authenticated owner session | No | App inventory remains owner-scoped and safe for mobile display. |
 | App runtime session bootstrap | Launch embedded runtime apps | Authenticated owner session plus short-lived app-scoped handoff | No | Handoff token/cookie must be scoped to app slug and owner session. |

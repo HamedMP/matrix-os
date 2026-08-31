@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { LayoutGridIcon, MonitorIcon, type LucideIcon } from "@/lib/hugeicons";
+import { normalizeOsViewMode, type OsViewMode } from "@matrix-os/contracts";
 
-export type DesktopMode = "desktop" | "canvas";
+export type DesktopMode = OsViewMode;
 
 export interface ModeConfig {
   id: DesktopMode;
@@ -34,8 +35,7 @@ const DEFAULT_MODE: DesktopMode = "desktop";
  * remain live user preferences.
  */
 export function normalizeDesktopMode(value: unknown): DesktopMode {
-  if (value === "canvas") return "canvas";
-  return DEFAULT_MODE;
+  return normalizeOsViewMode(value);
 }
 
 interface DesktopModeStore {

@@ -13,7 +13,6 @@ function resetStores() {
     nextZ: 1,
     closedPaths: new Set(),
     closedLayouts: new Map(),
-    apps: [],
     focusedWindowId: null,
   });
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });

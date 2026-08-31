@@ -177,19 +177,33 @@ describe("IPC contract", () => {
     ).toBe(false);
     expect(
       INVOKE_CHANNELS["runtime:create-thread"].response.safeParse({
-        thread: {
-          id: "thread_desktop_1",
-          providerId: "codex",
-          title: "Summarize the failing checks",
-          status: "queued",
-          attention: "none",
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
+        ok: true,
+        snapshot: {
+          thread: {
+            id: "thread_desktop_1",
+            providerId: "codex",
+            title: "Summarize the failing checks",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
         },
-        events: {
-          items: [],
-          hasMore: false,
-          limit: 200,
+      }).success,
+    ).toBe(true);
+    expect(
+      INVOKE_CHANNELS["runtime:create-thread"].response.safeParse({
+        ok: false,
+        error: {
+          code: "thread_create_offline",
+          safeMessage: "Can't reach Matrix OS. Check your connection.",
+          retryable: true,
+          recoveryActions: ["retry"],
         },
       }).success,
     ).toBe(true);

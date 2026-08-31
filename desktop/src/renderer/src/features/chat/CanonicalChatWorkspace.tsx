@@ -28,10 +28,7 @@ import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
 import { canonicalChatInputParts, canonicalChatTitle } from "./canonical-chat-submission";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
-import {
-  createCanonicalComposerSelection,
-  type CanonicalComposerSelection,
-} from "./canonical-composer-state";
+import { chatSendFailureMessage } from "./chat-send-error";
 import { failClosedProviderCatalog, useChatProviderCatalog } from "./chat-provider-catalog";
 import { searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
@@ -43,25 +40,11 @@ import {
 } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
 import { useCanonicalChatRouteController } from "./use-canonical-chat-route-controller";
+import { useCanonicalComposerSelection } from "./use-canonical-composer-selection";
 import { useProviderSetup } from "./use-provider-setup";
 import { useCreateAppRequest } from "../../stores/create-app-request";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
-
-function rememberedOptions(
-  catalog: CanonicalProviderCatalog,
-  selection: CanonicalComposerSelection,
-) {
-  const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
-  if (!instance) return [];
-  return selection.options.filter((selected) => {
-    const descriptor = instance.options.find((candidate) => candidate.id === selected.id);
-    if (!descriptor) return false;
-    if (descriptor.kind === "boolean") return typeof selected.value === "boolean";
-    return typeof selected.value === "string"
-      && descriptor.values?.some((candidate) => candidate.value === selected.value) === true;
-  });
-}
 
 function projectContext(
   projectId: string | undefined,
@@ -137,6 +120,7 @@ export function CanonicalChatWorkspace({
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const [draftProjectId, setDraftProjectId] = useState<string | null>(projectId);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
@@ -153,9 +137,14 @@ export function CanonicalChatWorkspace({
     refreshRuntimeSummary,
     api ?? null,
   );
-  const [selection, setSelection] = useState<CanonicalComposerSelection | null>(() => (
-    catalog ? createCanonicalComposerSelection(providerCatalog) : null
-  ));
+  const { selection, onSelectionChange } = useCanonicalComposerSelection({
+    catalog: providerCatalog,
+    catalogReady: Boolean(catalog || liveCatalog.status === "ready"),
+    initializeImmediately: Boolean(catalog),
+    chatId: controller.detail?.record.chat.id ?? null,
+    currentSelection: controller.detail?.record.chat.currentSelection,
+    boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
+  });
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -205,38 +194,8 @@ export function CanonicalChatWorkspace({
   useLayoutEffect(() => {
     submissionSequence.current += 1;
     setUploadingAttachments(false);
+    setSubmissionError(null);
   }, [client]);
-
-  useEffect(() => {
-    setSelection((current) => {
-      if (!catalog && liveCatalog.status !== "ready") return null;
-      const boundInstance = controller.detail?.record.providerBinding?.instanceId;
-      const currentInstance = providerCatalog.instances.find((instance) => instance.id === current?.instanceId);
-      const requiredInstance = boundInstance
-        ? providerCatalog.instances.find((instance) => instance.id === boundInstance)
-        : currentInstance;
-      const next = requiredInstance
-        ? createCanonicalComposerSelection(providerCatalog, requiredInstance.id)
-        : createCanonicalComposerSelection(providerCatalog);
-      if (!next) return null;
-      const currentSelection = controller.detail?.record.chat.currentSelection;
-      const rememberedModel = currentSelection && currentSelection.instanceId === next.instanceId
-        ? requiredInstance?.models.find((model) => (
-            model.id === currentSelection.model && model.availability === "available"
-          ))
-        : undefined;
-      return currentSelection && rememberedModel
-        ? {
-            ...next,
-            model: currentSelection.model,
-            options: rememberedOptions(providerCatalog, {
-              ...next,
-              options: currentSelection.options ?? next.options,
-            }),
-          }
-        : next;
-    });
-  }, [catalog, controller.detail?.record.chat.currentSelection, controller.detail?.record.providerBinding, liveCatalog.status, providerCatalog]);
 
   useEffect(() => {
     const record = controller.detail?.record;
@@ -312,8 +271,14 @@ export function CanonicalChatWorkspace({
       !selection
       || activeRun
       || uploadingAttachments
-      || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
     ) return;
+    if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) {
+      setSubmissionError(chatSendFailureMessage(
+        "The selected provider does not support file attachments.",
+      ));
+      return;
+    }
+    setSubmissionError(null);
     const runtimeGeneration = captureRuntimeGeneration();
     const sequence = ++submissionSequence.current;
     const isCurrentSubmission = () => (
@@ -323,7 +288,11 @@ export function CanonicalChatWorkspace({
     setUploadingAttachments(true);
     try {
       const uploaded = await attachments.uploadAll();
-      if (!uploaded.ok || !isCurrentSubmission()) return;
+      if (!isCurrentSubmission()) return;
+      if (!uploaded.ok) {
+        setSubmissionError(chatSendFailureMessage(uploaded.error));
+        return;
+      }
       const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
         attachment.path
           ? [{
@@ -368,6 +337,7 @@ export function CanonicalChatWorkspace({
   };
 
   const startNewChat = () => {
+    setSubmissionError(null);
     controller.startNewChat();
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
@@ -376,6 +346,7 @@ export function CanonicalChatWorkspace({
   };
 
   const selectChat = (chatId: string) => {
+    setSubmissionError(null);
     controller.selectChat(chatId);
     const selected = controller.items.find((item) => item.chat.id === chatId);
     reportedChatId.current = chatId;
@@ -410,7 +381,7 @@ export function CanonicalChatWorkspace({
         ))}
         catalog={providerCatalog}
         selection={selection}
-        onSelectionChange={setSelection}
+        onSelectionChange={onSelectionChange}
         onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
         instanceLocked={controller.detail?.record.providerBinding !== undefined}
         resources={resources}
@@ -555,9 +526,9 @@ export function CanonicalChatWorkspace({
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
         {...attachments.paneProps}
       >
-        {controller.error ? (
+        {submissionError || controller.error ? (
           <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-            {controller.error}
+            {submissionError ?? controller.error}
           </div>
         ) : null}
         {controller.detail && globalView === "conversation" ? (

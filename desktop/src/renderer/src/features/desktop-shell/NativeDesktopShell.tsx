@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
@@ -23,9 +23,13 @@ import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import { useConnection } from "../../stores/connection";
 import { defaultDesktopIcons, useDesktopIcons } from "../../stores/desktop-icons";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
-import { appIconUrl, useApps } from "../../stores/apps";
+import { appIconUrl, useAppsQuery } from "../apps/apps.api";
 import { LayoutGrid } from "@renderer/lib/hugeicons";
 import { useCreateAppRequest } from "../../stores/create-app-request";
+import {
+  createNativeOsViewLayoutMemory,
+  transitionNativeOsViewLayout,
+} from "./native-os-view-layout-memory";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
@@ -73,7 +77,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const api = useConnection((state) => state.api);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
-  const installedApps = useApps((state) => state.apps);
+  const { data: installedApps = [], refetch: refetchInstalledApps } = useAppsQuery();
   const desktopIcons = useDesktopIcons((state) => state.icons);
   const primeDesktopIcons = useDesktopIcons((state) => state.prime);
   const moveDesktopIcon = useDesktopIcons((state) => state.move);
@@ -83,6 +87,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   // browser's decoded icon resources instead of issuing another request set.
   const [launcherMounted, setLauncherMounted] = useState(launcherOpen);
   const [viewport, setViewport] = useState(currentViewport);
+  const previousDesktopModeRef = useRef(desktopMode);
+  const osViewLayoutsRef = useRef(createNativeOsViewLayoutMemory());
   const tabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
   const defaultIconLayout = useMemo(
     () => defaultDesktopIcons(FIXED_DESKTOP_APPS.map((app) => app.path)),
@@ -108,11 +114,28 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [launcherOpen]);
 
   useEffect(() => {
+    if (!launcherOpen || !api) return;
+    void refetchInstalledApps();
+  }, [api, launcherOpen, refetchInstalledApps]);
+
+  useEffect(() => {
     normalizeLegacyTabs();
   }, [normalizeLegacyTabs]);
 
   useEffect(() => {
     if (!desktopModeHydrated) return;
+    const previousMode = previousDesktopModeRef.current;
+    if (previousMode !== desktopMode) {
+      const transition = transitionNativeOsViewLayout(
+        osViewLayoutsRef.current,
+        previousMode,
+        desktopMode,
+        useDesktopSurfaces.getState().surfaces,
+      );
+      osViewLayoutsRef.current = transition.memory;
+      useDesktopSurfaces.setState({ surfaces: transition.surfaces });
+      previousDesktopModeRef.current = desktopMode;
+    }
     reconcileTabs(tabIds, viewport, desktopMode !== "canvas");
   }, [desktopMode, desktopModeHydrated, reconcileTabs, tabIds, viewport]);
 
@@ -372,6 +395,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
           onCreateApp={createApp}
           onOpenDesktopApp={openDesktopApp}
           onAddToDesktop={addIcon}
+          osViewMode={desktopMode}
+          onSwitchOsView={setDesktopMode}
         />
       ) : null}
       {!tabWorkspaceActive ? (

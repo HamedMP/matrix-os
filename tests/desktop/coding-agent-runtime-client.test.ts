@@ -18,6 +18,7 @@ import {
   updateCodingAgentNotificationPreferences,
 } from "../../desktop/src/main/coding-agents/runtime-summary-client";
 import type { AuthService } from "../../desktop/src/main/auth/auth-service";
+import { AppError } from "../../desktop/src/shared/app-error";
 
 function auth(runtimeSlot = "primary"): AuthService {
   return {
@@ -281,6 +282,44 @@ describe("coding agent desktop runtime client", () => {
       "https://runtime.test/api/coding-agents/threads?runtime=secondary",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("classifies thread creation transport failures without exposing raw details", async () => {
+    const fetchFn = vi.fn().mockRejectedValue(
+      new TypeError("fetch failed for https://private-runtime.test with token secret"),
+    );
+
+    const rejection = createCodingAgentThread(auth(), {
+      providerId: "codex",
+      prompt: "Run the focused tests.",
+      clientRequestId: "req_desktop_thread_create",
+    }, fetchFn);
+
+    await expect(rejection).rejects.toMatchObject({
+      name: "AppError",
+      category: "offline",
+      message: "Can't reach Matrix OS. Check your connection.",
+    });
+    await expect(rejection).rejects.not.toThrow(/private-runtime|token secret/i);
+  });
+
+  it("classifies unauthorized thread creation responses for the IPC boundary", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+
+    try {
+      await createCodingAgentThread(auth(), {
+        providerId: "codex",
+        prompt: "Run the focused tests.",
+        clientRequestId: "req_desktop_thread_create",
+      }, fetchFn);
+      throw new Error("expected createCodingAgentThread to reject");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(AppError);
+      expect(error).toMatchObject({
+        category: "unauthorized",
+        message: "Your session has expired. Please sign in again.",
+      });
+    }
   });
 
   it("creates same-thread turns against the selected runtime without exposing credentials", async () => {
