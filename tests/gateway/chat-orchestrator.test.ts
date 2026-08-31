@@ -180,7 +180,9 @@ describe("CanonicalChatOrchestrator", () => {
     const providerGate = new Promise<void>((resolve) => {
       releaseProvider = resolve;
     });
-    const provider = adapter(async function* () {
+    const prompts: string[] = [];
+    const provider = adapter(async function* (input) {
+      prompts.push(input.prompt);
       await providerGate;
       yield { type: "run.completed", outcome: "completed" };
     });
@@ -231,6 +233,17 @@ describe("CanonicalChatOrchestrator", () => {
 
     releaseProvider();
     await orchestrator.drain();
+    expect(prompts).toEqual(["keep running", "run this next"]);
+    expect((await repository.getDetailPage(owner, "chat_queue_orchestrated", { limit: 200 }))?.queuedTurns)
+      .toEqual([]);
+    const snapshot = await repository.exportChat(owner, "chat_queue_orchestrated");
+    expect(snapshot?.messages.filter((message) => message.role === "user")
+      .map((message) => message.parts)).toEqual([
+      [{ type: "text", text: "keep running" }],
+      [{ type: "text", text: "run this next" }],
+    ]);
+    expect(snapshot?.runs).toHaveLength(2);
+    expect(snapshot?.runs.every((run) => run.status === "completed")).toBe(true);
   });
 
   it("persists and dispatches an idempotent steer only to the exact active Run", async () => {
@@ -1086,6 +1099,96 @@ describe("CanonicalChatOrchestrator", () => {
         error: expect.objectContaining({ retryable: true, recoveryActions: ["retry"] }),
       }),
     ]);
+  });
+
+  it("claims and dispatches an idle durable queue after Gateway restart", async () => {
+    await repository.create(owner, {
+      id: "chat_queue_restarted",
+      clientRequestId: "req_create_queue_restarted",
+      title: "Queue restarted",
+    });
+    const capabilitySnapshot = {
+      revision: "catalog_orchestrator",
+      ...catalog().instances[0]!.supports,
+    };
+    const initialMessage = {
+      id: "msg_queue_restarted_initial",
+      chatId: "chat_queue_restarted",
+      seq: 1,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: "cturn_queue_restarted_initial",
+      parts: [{ type: "text" as const, text: "initial" }],
+      createdAt: "2026-08-26T00:00:00.000Z",
+    };
+    const initialTurn = {
+      id: "cturn_queue_restarted_initial",
+      chatId: "chat_queue_restarted",
+      clientRequestId: "req_queue_restarted_initial",
+      baseMessageSeq: 0,
+      inputMessageId: initialMessage.id,
+      status: "accepted" as const,
+      createdAt: initialMessage.createdAt,
+      updatedAt: initialMessage.createdAt,
+    };
+    await repository.admitTurn(owner, {
+      chatId: "chat_queue_restarted",
+      baseRevision: 0,
+      message: initialMessage,
+      turn: initialTurn,
+      run: {
+        id: "run_queue_restarted_initial",
+        chatId: "chat_queue_restarted",
+        turnId: initialTurn.id,
+        attempt: 1,
+        driverKind: "codex",
+        instanceId: "codex_default",
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        status: "accepted",
+        historyBoundarySeq: 0,
+        capabilitySnapshot,
+        createdAt: initialMessage.createdAt,
+        updatedAt: initialMessage.createdAt,
+      },
+    });
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: "chat_queue_restarted",
+      baseRevision: 1,
+      queuedTurnId: "qturn_queue_restarted_next",
+      clientRequestId: "req_queue_restarted_next",
+      parts: [{ type: "text", text: "resume queued work" }],
+      driverKind: "codex",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot,
+      createdAt: "2026-08-26T00:00:01.000Z",
+    });
+    await repository.finishRun(owner, {
+      chatId: "chat_queue_restarted",
+      runId: "run_queue_restarted_initial",
+      outcome: "failed",
+      completedAt: "2026-08-26T00:00:02.000Z",
+    });
+    const prompts: string[] = [];
+    const restarted = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([adapter(async function* (input) {
+        prompts.push(input.prompt);
+        yield { type: "run.completed", outcome: "completed" };
+      })]),
+      now: () => new Date("2026-08-26T00:02:00.000Z"),
+    });
+
+    expect(await restarted.reconcileActiveRuns(owner)).toBe(0);
+    await restarted.drain();
+
+    expect(prompts).toEqual(["resume queued work"]);
+    expect((await repository.getDetailPage(owner, "chat_queue_restarted", { limit: 200 }))?.queuedTurns)
+      .toEqual([]);
   });
 
   it("terminalizes an orphaned Run when its activity history is already full", async () => {

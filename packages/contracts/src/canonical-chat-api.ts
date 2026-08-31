@@ -35,6 +35,9 @@ export const CanonicalChatOutboxEventTypeSchema = z.enum([
   "chat.user_state_updated",
   "turn.accepted",
   "queue.enqueued",
+  "queue.cancelled",
+  "queue.reordered",
+  "queue.claimed",
   "run.steer_requested",
   "run.steered",
   "run.steer_failed",
@@ -170,6 +173,29 @@ export const CanonicalChatQueueAdmissionResponseSchema = z.object({
   queueDepth: z.number().int().min(1).max(20),
 }).strict();
 
+export const CanonicalCancelQueuedChatTurnRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+}).strict();
+
+export const CanonicalChatQueueCancellationResponseSchema = z.object({
+  queuedTurnId: CanonicalChatQueuedTurnIdSchema,
+  queueDepth: z.number().int().min(0).max(20),
+  cancellation: z.enum(["cancelled", "already_cancelled"]),
+}).strict();
+
+export const CanonicalReorderQueuedChatTurnsRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  queuedTurnIds: z.array(CanonicalChatQueuedTurnIdSchema).max(20),
+}).strict().refine((input) => new Set(input.queuedTurnIds).size === input.queuedTurnIds.length, {
+  message: "Queued Turn identifiers must be unique",
+});
+
+export const CanonicalChatQueueReorderResponseSchema = z.object({
+  queuedTurns: z.array(CanonicalChatQueuedTurnSchema).max(20),
+}).strict();
+
 export const CanonicalCancelChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
 }).strict();
@@ -300,6 +326,18 @@ export type CanonicalChatRunSteeringResponse = z.infer<
 export type CanonicalChatQueuedTurn = z.infer<typeof CanonicalChatQueuedTurnSchema>;
 export type CanonicalChatQueueAdmissionResponse = z.infer<
   typeof CanonicalChatQueueAdmissionResponseSchema
+>;
+export type CanonicalCancelQueuedChatTurnRequest = z.infer<
+  typeof CanonicalCancelQueuedChatTurnRequestSchema
+>;
+export type CanonicalChatQueueCancellationResponse = z.infer<
+  typeof CanonicalChatQueueCancellationResponseSchema
+>;
+export type CanonicalReorderQueuedChatTurnsRequest = z.infer<
+  typeof CanonicalReorderQueuedChatTurnsRequestSchema
+>;
+export type CanonicalChatQueueReorderResponse = z.infer<
+  typeof CanonicalChatQueueReorderResponseSchema
 >;
 export type CanonicalCancelChatRunRequest = z.infer<typeof CanonicalCancelChatRunRequestSchema>;
 export type CanonicalSubmitChatApprovalRequest = z.infer<typeof CanonicalSubmitChatApprovalRequestSchema>;

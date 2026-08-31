@@ -11,6 +11,7 @@ import {
   CanonicalOwnerScopeSchema,
   TerminalSessionIdSchema,
   type CanonicalChatMessage,
+  type CanonicalChatQueuedTurn,
   type CanonicalChatModelSelection,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
@@ -53,6 +54,10 @@ import {
   ChatQueueRepository,
   type EnqueueQueuedTurnInput,
   type EnqueuedQueuedTurn,
+  type CancelQueuedTurnInput,
+  type ReorderQueuedTurnsInput,
+  type ClaimNextQueuedTurnInput,
+  type ClaimedQueuedTurn,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -75,7 +80,14 @@ export {
   ChatRunNotActiveError,
 } from "./errors.js";
 export type { ChatDetailPage } from "./detail-repository.js";
-export type { EnqueueQueuedTurnInput, EnqueuedQueuedTurn } from "./queue-repository.js";
+export type {
+  EnqueueQueuedTurnInput,
+  EnqueuedQueuedTurn,
+  CancelQueuedTurnInput,
+  ReorderQueuedTurnsInput,
+  ClaimNextQueuedTurnInput,
+  ClaimedQueuedTurn,
+} from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
@@ -967,6 +979,29 @@ export class ChatRepository {
     input: EnqueueQueuedTurnInput,
   ): Promise<EnqueuedQueuedTurn> {
     return this.queue.enqueue(owner, input);
+  }
+
+  async listQueuedTurns(owner: ChatOwner, chatId: string): Promise<CanonicalChatQueuedTurn[]> {
+    return this.queue.list(owner, chatId);
+  }
+
+  async cancelQueuedTurn(owner: ChatOwner, input: CancelQueuedTurnInput) {
+    return this.queue.cancel(owner, input);
+  }
+
+  async reorderQueuedTurns(owner: ChatOwner, input: ReorderQueuedTurnsInput) {
+    return this.queue.reorder(owner, input);
+  }
+
+  async claimNextQueuedTurn(
+    owner: ChatOwner,
+    input: ClaimNextQueuedTurnInput,
+  ): Promise<ClaimedQueuedTurn | null> {
+    return this.queue.claimNext(owner, input);
+  }
+
+  async listQueuedChatIds(owner: ChatOwner, limit?: number): Promise<string[]> {
+    return this.queue.listQueuedChatIds(owner, limit);
   }
 
   async beginSteer(owner: ChatOwner, input: BeginSteerInput): Promise<BegunSteer> {

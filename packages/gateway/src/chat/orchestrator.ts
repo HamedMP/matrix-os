@@ -180,6 +180,7 @@ export function mapRepositoryError(error: unknown): never {
 export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
   private readonly pendingDispatch = new Set<string>();
+  private readonly queueDispatches = new Set<string>();
   private readonly reconciliation = new Map<string, Promise<number>>();
   private readonly shutdownDrainMs: number;
   private closing = false;
@@ -189,6 +190,8 @@ export class CanonicalChatOrchestrator {
       | "get"
       | "admitTurn"
       | "enqueueQueuedTurn"
+      | "claimNextQueuedTurn"
+      | "listQueuedChatIds"
       | "beginSteer"
       | "acceptSteer"
       | "failSteer"
@@ -622,7 +625,18 @@ export class CanonicalChatOrchestrator {
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       })
-      .finally(() => this.active.delete(run.id));
+      .finally(async () => {
+        this.active.delete(run.id);
+        if (this.closing) return;
+        try {
+          await this.dispatchNextQueued(owner, run.chatId);
+        } catch (error: unknown) {
+          console.error(
+            "[chat/orchestrator] Queued Run dispatch failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      });
     this.active.set(run.id, {
       controller,
       adapter,
@@ -632,6 +646,76 @@ export class CanonicalChatOrchestrator {
       instanceId: run.instanceId,
       completion,
     });
+  }
+
+  private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
+    if (this.closing || this.atCapacity(owner)) return;
+    for (const entry of this.active.values()) {
+      if (entry.chatId === chatId && entry.owner.type === owner.type
+        && entry.owner.ownerId === owner.ownerId) return;
+    }
+    const key = `${owner.type}:${owner.ownerId}:${chatId}`;
+    if (this.queueDispatches.has(key) || this.queueDispatches.size >= MAX_ACTIVE_RUNS_GLOBAL) return;
+    this.queueDispatches.add(key);
+    try {
+      for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(owner); offset += 1) {
+        const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+        const claimed = await this.options.repository.claimNextQueuedTurn(owner, {
+          chatId,
+          turnId: id("cturn_"),
+          runId: id("run_"),
+          messageId: id("msg_"),
+          claimedAt: timestamp,
+        });
+        if (!claimed) return;
+        const adapter = this.options.adapters.get(claimed.run.driverKind);
+        let resolvedRoot: ResolvedChatExecutionRoot | undefined;
+        let resumeState: unknown;
+        try {
+          if (!adapter) throw new Error("Queued Provider adapter unavailable");
+          if (claimed.run.executionRoot) {
+            if (!this.options.executionRoots) throw new Error("Queued execution root resolver unavailable");
+            resolvedRoot = await this.options.executionRoots.resolve(owner, claimed.run.executionRoot);
+            if (resolvedRoot.fingerprint !== claimed.run.executionRootFingerprint) {
+              throw new Error("Queued execution root provenance changed");
+            }
+          }
+          const previousState = await this.options.repository.getLatestAdapterStateForChat(owner, {
+            chatId,
+            driverKind: claimed.run.driverKind,
+            instanceId: claimed.run.instanceId,
+          });
+          resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
+            && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
+            ? adapter.parseState(previousState.state)
+            : undefined;
+        } catch (error: unknown) {
+          console.warn(
+            "[chat/orchestrator] Queued Run preparation failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          await this.options.repository.finishRun(owner, {
+            chatId,
+            runId: claimed.run.id,
+            outcome: "failed",
+            completedAt: timestamp,
+          });
+          continue;
+        }
+        this.startDispatch(
+          owner,
+          claimed.message,
+          claimed.run,
+          adapter,
+          claimed.message.seq + 1,
+          resolvedRoot,
+          resumeState,
+        );
+        return;
+      }
+    } finally {
+      this.queueDispatches.delete(key);
+    }
   }
 
   private async dispatch(
@@ -1052,11 +1136,17 @@ export class CanonicalChatOrchestrator {
         if (!(reconcileError instanceof ChatRunNotActiveError)) throw reconcileError;
       }
     }
+    const queuedChatIds = await this.options.repository.listQueuedChatIds(owner, 20);
+    for (const chatId of queuedChatIds) {
+      await this.dispatchNextQueued(owner, chatId);
+    }
     return reconciled;
   }
 
   async drain(): Promise<void> {
-    await Promise.allSettled([...this.active.values()].map((entry) => entry.completion));
+    while (this.active.size > 0) {
+      await Promise.allSettled([...this.active.values()].map((entry) => entry.completion));
+    }
   }
 
   async close(): Promise<void> {

@@ -9,11 +9,15 @@ import {
   CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatQueueAdmissionResponseSchema,
+  CanonicalChatQueueCancellationResponseSchema,
+  CanonicalChatQueueReorderResponseSchema,
   CanonicalChatRunIdSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalQueueChatTurnRequestSchema,
+  CanonicalCancelQueuedChatTurnRequestSchema,
+  CanonicalReorderQueuedChatTurnsRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalSteerChatRunRequestSchema,
@@ -27,11 +31,15 @@ import {
   type CanonicalChatRunSteeringResponse,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatQueueAdmissionResponse,
+  type CanonicalChatQueueCancellationResponse,
+  type CanonicalChatQueueReorderResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
+  type CanonicalCancelQueuedChatTurnRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
   type CanonicalQueueChatTurnRequest,
+  type CanonicalReorderQueuedChatTurnsRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalSteerChatRunRequest,
@@ -72,6 +80,8 @@ type ChatServiceRepository = Pick<ChatRepository,
   | "list"
   | "search"
   | "getDetailPage"
+  | "cancelQueuedTurn"
+  | "reorderQueuedTurns"
 >;
 
 function encodeCursor(value: CursorEnvelope): string {
@@ -287,6 +297,41 @@ export function createCanonicalChatService(
       );
     },
 
+    async cancelQueuedTurn(
+      owner: ChatOwner,
+      chatId: string,
+      queuedTurnId: string,
+      input: CanonicalCancelQueuedChatTurnRequest,
+    ): Promise<CanonicalChatQueueCancellationResponse> {
+      const request = CanonicalCancelQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatQueueCancellationResponseSchema.parse(
+        await repository.cancelQueuedTurn(owner, {
+          chatId: CanonicalChatIdSchema.parse(chatId),
+          queuedTurnId,
+          clientRequestId: request.clientRequestId,
+          baseRevision: request.baseRevision,
+          cancelledAt: new Date().toISOString(),
+        }),
+      );
+    },
+
+    async reorderQueuedTurns(
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalReorderQueuedChatTurnsRequest,
+    ): Promise<CanonicalChatQueueReorderResponse> {
+      const request = CanonicalReorderQueuedChatTurnsRequestSchema.parse(input);
+      return CanonicalChatQueueReorderResponseSchema.parse(
+        await repository.reorderQueuedTurns(owner, {
+          chatId: CanonicalChatIdSchema.parse(chatId),
+          clientRequestId: request.clientRequestId,
+          baseRevision: request.baseRevision,
+          queuedTurnIds: request.queuedTurnIds,
+          reorderedAt: new Date().toISOString(),
+        }),
+      );
+    },
+
     async cancelRun(
       owner: ChatOwner,
       chatId: string,
@@ -367,6 +412,8 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     getDetail: unavailable,
     admitTurn: unavailable,
     enqueueQueuedTurn: unavailable,
+    cancelQueuedTurn: unavailable,
+    reorderQueuedTurns: unavailable,
     steerRun: unavailable,
     cancelRun: unavailable,
     submitApproval: unavailable,

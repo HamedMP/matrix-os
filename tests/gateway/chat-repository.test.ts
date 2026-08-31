@@ -956,6 +956,180 @@ describe("ChatRepository", () => {
     })).rejects.toBeInstanceOf(ChatNotFoundError);
   });
 
+  it("cancels one queued Turn idempotently and compacts the remaining order", async () => {
+    const admitted = await admitChat(repository, "queue_cancel");
+    let revision = 1;
+    for (const index of [1, 2, 3]) {
+      await repository.enqueueQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        baseRevision: revision++,
+        queuedTurnId: `qturn_queue_cancel_${index}`,
+        clientRequestId: `req_queue_cancel_${index}`,
+        parts: [{ type: "text", text: `queued ${index}` }],
+        driverKind: "codex",
+        selection: selection(),
+        interactionMode: "default",
+        permissionMode: "supervised",
+        capabilitySnapshot: admitted.run.capabilitySnapshot,
+        createdAt: `2026-08-25T00:00:1${index}.000Z`,
+      });
+    }
+
+    const cancelled = await repository.cancelQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_cancel_2",
+      clientRequestId: "req_queue_cancel_command",
+      baseRevision: 4,
+      cancelledAt: "2026-08-25T00:00:20.000Z",
+    });
+    const duplicate = await repository.cancelQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_cancel_2",
+      clientRequestId: "req_queue_cancel_command",
+      baseRevision: 4,
+      cancelledAt: "2026-08-25T00:00:21.000Z",
+    });
+
+    expect(cancelled).toEqual({
+      queuedTurnId: "qturn_queue_cancel_2",
+      queueDepth: 2,
+      cancellation: "cancelled",
+    });
+    expect(duplicate).toEqual({ ...cancelled, cancellation: "already_cancelled" });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([
+      expect.objectContaining({ id: "qturn_queue_cancel_1", position: 1 }),
+      expect.objectContaining({ id: "qturn_queue_cancel_3", position: 2 }),
+    ]);
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(5);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({
+        eventType: "queue.cancelled",
+        revision: 5,
+        payload: { queuedTurnId: "qturn_queue_cancel_2", position: 2 },
+      }));
+  });
+
+  it("reorders the complete queued set under one revision guard", async () => {
+    const admitted = await admitChat(repository, "queue_reorder");
+    let revision = 1;
+    for (const index of [1, 2, 3]) {
+      await repository.enqueueQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        baseRevision: revision++,
+        queuedTurnId: `qturn_queue_reorder_${index}`,
+        clientRequestId: `req_queue_reorder_${index}`,
+        parts: [{ type: "text", text: `queued ${index}` }],
+        driverKind: "codex",
+        selection: selection(),
+        interactionMode: "default",
+        permissionMode: "supervised",
+        capabilitySnapshot: admitted.run.capabilitySnapshot,
+        createdAt: `2026-08-25T00:00:1${index}.000Z`,
+      });
+    }
+    const order = [
+      "qturn_queue_reorder_3",
+      "qturn_queue_reorder_1",
+      "qturn_queue_reorder_2",
+    ];
+
+    const reordered = await repository.reorderQueuedTurns(owner, {
+      chatId: admitted.chatId,
+      clientRequestId: "req_queue_reorder_command",
+      baseRevision: 4,
+      queuedTurnIds: order,
+      reorderedAt: "2026-08-25T00:00:20.000Z",
+    });
+
+    expect(reordered.queuedTurns.map((queuedTurn) => queuedTurn.id)).toEqual(order);
+    expect(reordered.queuedTurns.map((queuedTurn) => queuedTurn.position)).toEqual([1, 2, 3]);
+    await expect(repository.reorderQueuedTurns(owner, {
+      chatId: admitted.chatId,
+      clientRequestId: "req_queue_reorder_incomplete",
+      baseRevision: 5,
+      queuedTurnIds: order.slice(0, 2),
+      reorderedAt: "2026-08-25T00:00:21.000Z",
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({
+        eventType: "queue.reordered",
+        revision: 5,
+        payload: { queuedTurnIds: order },
+      }));
+  });
+
+  it("claims at most one queued Turn into canonical message, Turn, and Run records", async () => {
+    const admitted = await admitChat(repository, "queue_claim");
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queue_claim_1",
+      clientRequestId: "req_queue_claim_1",
+      parts: [{ type: "text", text: "first queued" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 2,
+      queuedTurnId: "qturn_queue_claim_2",
+      clientRequestId: "req_queue_claim_2",
+      parts: [{ type: "text", text: "second queued" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:11.000Z",
+    });
+    await repository.finishRun(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      outcome: "completed",
+      completedAt: "2026-08-25T00:00:20.000Z",
+    });
+
+    const claims = await Promise.all([
+      repository.claimNextQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        turnId: "cturn_queue_claim_next_a",
+        runId: "run_queue_claim_next_a",
+        messageId: "msg_queue_claim_next_a",
+        claimedAt: "2026-08-25T00:00:21.000Z",
+      }),
+      repository.claimNextQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        turnId: "cturn_queue_claim_next_b",
+        runId: "run_queue_claim_next_b",
+        messageId: "msg_queue_claim_next_b",
+        claimedAt: "2026-08-25T00:00:21.000Z",
+      }),
+    ]);
+    const claimed = claims.find((claim) => claim !== null);
+
+    expect(claims.filter((claim) => claim !== null)).toHaveLength(1);
+    expect(claimed).toMatchObject({
+      queuedTurn: { id: "qturn_queue_claim_1", position: 1 },
+      message: { role: "user", state: "committed", parts: [{ type: "text", text: "first queued" }] },
+      turn: { status: "accepted", clientRequestId: "req_queue_claim_1" },
+      run: { status: "accepted", driverKind: "codex", attempt: 1 },
+    });
+    expect((await repository.get(owner, admitted.chatId))?.activeRun)
+      .toMatchObject({ runId: claimed!.run.id, turnId: claimed!.turn.id, status: "accepted" });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([
+      expect.objectContaining({ id: "qturn_queue_claim_2", position: 1 }),
+    ]);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 30 }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ eventType: "queue.claimed" }),
+        expect.objectContaining({ eventType: "turn.accepted" }),
+      ]));
+  });
+
   it("persists one idempotent same-Run steering message and terminalizes it atomically", async () => {
     const admitted = await admitChat(repository, "steer_persistence");
     const input = {
