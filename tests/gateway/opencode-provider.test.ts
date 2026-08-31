@@ -301,6 +301,38 @@ describe("OpenCode coding-agent provider", () => {
     }
   });
 
+  it("reports a resumed run signal deadline during credential resolution as failed", async () => {
+    const fake = fakeSpawn([]);
+    const controller = new AbortController();
+    const adapter = provider(fake.spawnFn, {
+      resolveCredentialLaunch: async () => await new Promise(() => {}),
+      runTimeoutMs: 10_000,
+    });
+    const pending = adapter.resumeTurn!({
+      principal,
+      thread: { ...thread(), status: "idle" },
+      turn: {
+        turnId: "turn_deadline",
+        message: "Continue",
+        model: "anthropic:claude-sonnet-5",
+        sandboxMode: "read_only",
+      },
+      resumeState: {
+        conversationId: JSON.stringify({ s: sessionId, c: "/work/repo" }),
+      },
+      signal: controller.signal,
+      now: () => now,
+      nextEventId: ids(),
+    });
+    controller.abort(new DOMException("The operation timed out", "TimeoutError"));
+
+    await expect(pending).resolves.toMatchObject({
+      events: [],
+      outcome: "failed",
+    });
+    expect(fake.calls).toHaveLength(0);
+  });
+
   it("bounds a hung child even when it ignores graceful termination", async () => {
     vi.useFakeTimers();
     const kills: NodeJS.Signals[] = [];

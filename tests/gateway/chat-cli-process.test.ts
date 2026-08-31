@@ -79,4 +79,34 @@ describe("canonical provider CLI lifecycle", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await expect(rejection).resolves.toMatchObject({ message: "Provider CLI Run timed out" });
   });
+
+  it("bounds private stderr evidence and preserves typed exit diagnostics", async () => {
+    const child = new StubbornCli();
+    const stderrChunks: Buffer[] = [];
+    const run = runCanonicalCli({
+      command: "provider",
+      args: [],
+      cwd: "/tmp",
+      env: {},
+      signal: new AbortController().signal,
+      timeoutMs: 10_000,
+      maxStdoutBytes: 1024,
+      maxStderrBytes: 8,
+      spawnFn: () => child,
+      onStdout: vi.fn(),
+      onStderr: (chunk) => stderrChunks.push(chunk),
+    });
+
+    child.stderr.emit("data", Buffer.from("123456"));
+    child.stderr.emit("data", Buffer.from("7890-secret"));
+    child.emit("exit", 17, null);
+
+    await expect(run).rejects.toMatchObject({
+      name: "CanonicalCliError",
+      kind: "exit",
+      exitCode: 17,
+      signal: null,
+    });
+    expect(Buffer.concat(stderrChunks).toString("utf8")).toBe("12345678");
+  });
 });

@@ -140,6 +140,14 @@ type CredentialResolution =
   | { kind: "timed_out" }
   | { kind: "failed"; error: unknown };
 
+function interruptedCredentialResolution(signal: AbortSignal | undefined): CredentialResolution {
+  const reason = signal?.reason;
+  return typeof reason === "object" && reason !== null && "name" in reason
+      && reason.name === "TimeoutError"
+    ? { kind: "timed_out" }
+    : { kind: "aborted" };
+}
+
 async function resolveCredentialsWithinRun(input: {
   resolver: CodingHarnessCredentialResolver;
   signal?: AbortSignal;
@@ -148,7 +156,7 @@ async function resolveCredentialsWithinRun(input: {
   return await new Promise((resolve) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const onAbort = () => finish({ kind: "aborted" });
+    const onAbort = () => finish(interruptedCredentialResolution(input.signal));
     const finish = (result: CredentialResolution) => {
       if (settled) return;
       settled = true;
@@ -158,7 +166,7 @@ async function resolveCredentialsWithinRun(input: {
     };
 
     if (input.signal?.aborted) {
-      finish({ kind: "aborted" });
+      finish(interruptedCredentialResolution(input.signal));
       return;
     }
     input.signal?.addEventListener("abort", onAbort, { once: true });

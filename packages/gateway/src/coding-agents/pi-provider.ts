@@ -19,7 +19,10 @@ import {
   buildPiChildEnvironment,
   resolvePiCommand,
 } from "./pi-process-environment.js";
-import type { CodingHarnessCredentialResolver } from "./harness-credentials.js";
+import type {
+  CodingHarnessCredentialLaunch,
+  CodingHarnessCredentialResolver,
+} from "./harness-credentials.js";
 import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
 
 /**
@@ -116,6 +119,65 @@ const defaultSpawnFn: PiSpawnFn = (command, args, options) =>
 function boundedTimeout(value: number | undefined, fallback: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.min(Math.floor(value), DEFAULT_RUN_TIMEOUT_MS));
+}
+
+type PiCredentialResolution =
+  | { kind: "resolved"; launch: CodingHarnessCredentialLaunch | undefined }
+  | { kind: "aborted" }
+  | { kind: "timed_out" }
+  | { kind: "failed"; error: unknown };
+
+function interruptedCredentialResolution(signal: AbortSignal | undefined): PiCredentialResolution {
+  const reason = signal?.reason;
+  return typeof reason === "object" && reason !== null && "name" in reason
+      && reason.name === "TimeoutError"
+    ? { kind: "timed_out" }
+    : { kind: "aborted" };
+}
+
+async function resolveCredentialsWithinRun(input: {
+  resolver: CodingHarnessCredentialResolver | undefined;
+  signal?: AbortSignal;
+  timeoutMs: number;
+}): Promise<PiCredentialResolution> {
+  const resolver = input.resolver;
+  if (!resolver) {
+    return input.signal?.aborted
+      ? interruptedCredentialResolution(input.signal)
+      : { kind: "resolved", launch: undefined };
+  }
+  return await new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => finish(interruptedCredentialResolution(input.signal));
+    const finish = (result: PiCredentialResolution) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      input.signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+
+    if (input.signal?.aborted) {
+      finish(interruptedCredentialResolution(input.signal));
+      return;
+    }
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    timer = setTimeout(() => finish({ kind: "timed_out" }), input.timeoutMs);
+    timer.unref?.();
+
+    let pending: Promise<CodingHarnessCredentialLaunch>;
+    try {
+      pending = resolver(input.signal);
+    } catch (error: unknown) {
+      finish({ kind: "failed", error });
+      return;
+    }
+    void pending.then(
+      (launch) => finish({ kind: "resolved", launch }),
+      (error: unknown) => finish({ kind: "failed", error }),
+    );
+  });
 }
 
 function piPromptWithReferences(message: string, attachments: AgentAttachment[] | undefined): string {
@@ -557,6 +619,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
   }
 
   async function runPi(input: PiRunInput): Promise<PiRunResult> {
+    const runDeadline = Date.now() + runTimeoutMs;
     const collector = createPiRunCollector({
       threadId: input.threadId,
       scope: input.scope,
@@ -580,16 +643,22 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       "--session-id", input.sessionId,
       promptArg(input.prompt),
     ];
-    let credentialLaunch: Awaited<ReturnType<NonNullable<typeof options.resolveCredentialLaunch>>> | undefined;
-    try {
-      credentialLaunch = await options.resolveCredentialLaunch?.(input.signal);
-    } catch (err: unknown) {
-      if (input.signal?.aborted) {
-        return { events: [], outcome: "aborted", sessionId: input.sessionId };
-      }
-      logCodingAgentWarning("pi provider credential resolution failed", err);
+    const credentialResolution = await resolveCredentialsWithinRun({
+      resolver: options.resolveCredentialLaunch,
+      signal: input.signal,
+      timeoutMs: runTimeoutMs,
+    });
+    if (credentialResolution.kind === "aborted") {
+      return { events: [], outcome: "aborted", sessionId: input.sessionId };
+    }
+    if (credentialResolution.kind === "timed_out") {
       return { events: [], outcome: "failed", sessionId: input.sessionId };
     }
+    if (credentialResolution.kind === "failed") {
+      logCodingAgentWarning("pi provider credential resolution failed", credentialResolution.error);
+      return { events: [], outcome: "failed", sessionId: input.sessionId };
+    }
+    const credentialLaunch = credentialResolution.launch;
     const env = addPortableProviderCredentials(
       buildPiChildEnvironment(options.env),
       credentialLaunch?.env,
@@ -597,6 +666,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     const effectiveRunTimeoutMs = credentialLaunch?.maxRunMs
       ? Math.min(runTimeoutMs, credentialLaunch.maxRunMs)
       : runTimeoutMs;
+    const remainingRunTimeoutMs = Math.max(1, Math.min(
+      effectiveRunTimeoutMs,
+      runDeadline - Date.now(),
+    ));
 
     return await new Promise<PiRunResult>((resolve) => {
       let proc: PiChildProcess;
@@ -615,7 +688,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
       const timeoutTimer = setTimeout(() => {
         requestTermination("timeout");
-      }, effectiveRunTimeoutMs);
+      }, remainingRunTimeoutMs);
       timeoutTimer.unref?.();
 
       const onAbort = () => {
@@ -642,7 +715,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         const collected = collector.finish();
         const sessionId = collected.sessionId ?? input.sessionId;
         if (terminationReason === "timeout") {
-          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${remainingRunTimeoutMs}ms`));
         }
         settle({
           events: collected.events,

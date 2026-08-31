@@ -12,6 +12,7 @@ import {
   type CanonicalProviderRunInput,
 } from "./provider-adapter.js";
 import {
+  CanonicalCliError,
   createCanonicalCliEventQueue,
   runCanonicalCli,
   type CanonicalCliSpawn,
@@ -53,6 +54,7 @@ const ClaudeStreamLineSchema = z.object({
 type ClaudeChatState = z.infer<typeof ClaudeChatStateSchema>;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const MAX_STREAM_BYTES = 1024 * 1024;
+const MAX_STDERR_BYTES = 8_192;
 
 function definedEnvironment(
   value: Record<string, string | undefined>,
@@ -97,6 +99,81 @@ function claudeActivity(name: string) {
     return { kind: "delegation" as const, label: "Delegated task" };
   }
   return { kind: "dynamic_tool" as const, label: name };
+}
+
+function classifiedClaudeFailureEvidence(text: string) {
+  if (/\b(?:unsupported|invalid) model\b|\bmodel\b.{0,120}\b(?:does not exist|not found|not available|unavailable|unsupported)\b/i.test(text)) {
+    return {
+      category: "unsupported_model" as const,
+      safeError: {
+        code: "model_unavailable" as const,
+        safeMessage: "The selected Claude model is unavailable. Choose another model and try again.",
+        retryable: false,
+        recoveryActions: ["select_provider" as const],
+      },
+    };
+  }
+  if (/\b(?:authentication (?:failed|required)|unauthorized|not logged in|login required|invalid (?:api[ -]?key|x-api-key)|api[ -]?key.{0,80}(?:missing|required|invalid)|oauth.{0,80}(?:expired|required)|credentials?.{0,80}(?:missing|invalid|expired|required))\b|\bplease (?:run )?\/?login\b/i.test(text)) {
+    return {
+      category: "authentication" as const,
+      safeError: {
+        code: "authorization_failed" as const,
+        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        retryable: false,
+        recoveryActions: ["open_setup_terminal" as const],
+      },
+    };
+  }
+  if (/\b(?:permission denied|not permitted|operation not permitted|access denied|requires? permission)\b/i.test(text)) {
+    return {
+      category: "permission" as const,
+      safeError: {
+        code: "authorization_failed" as const,
+        safeMessage: "Claude was blocked by its current permissions. Review the permission mode and try again.",
+        retryable: true,
+        recoveryActions: ["retry" as const],
+      },
+    };
+  }
+  return undefined;
+}
+
+function classifiedClaudeCliFailure(error: unknown) {
+  if (!(error instanceof CanonicalCliError)) return undefined;
+  if (error.kind === "startup") {
+    return {
+      category: "startup" as const,
+      safeError: {
+        code: "provider_unavailable" as const,
+        safeMessage: "Claude is not available on this runtime. Open setup and install or reconnect Claude.",
+        retryable: false,
+        recoveryActions: ["open_setup_terminal" as const],
+      },
+    };
+  }
+  if (error.kind === "timeout") {
+    return {
+      category: "timeout" as const,
+      safeError: {
+        code: "service_unavailable" as const,
+        safeMessage: "Claude took too long to respond. Try the Run again.",
+        retryable: true,
+        recoveryActions: ["retry" as const],
+      },
+    };
+  }
+  if (error.kind === "invalid_output" || error.kind === "stdout_limit") {
+    return {
+      category: "invalid_protocol" as const,
+      safeError: {
+        code: "run_failed" as const,
+        safeMessage: "Claude returned an invalid response. Try the Run again.",
+        retryable: true,
+        recoveryActions: ["retry" as const],
+      },
+    };
+  }
+  return undefined;
 }
 
 export function createClaudeChatProviderAdapter(options: {
@@ -151,10 +228,13 @@ export function createClaudeChatProviderAdapter(options: {
 
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
     let buffered = "";
+    let stderrEvidence = "";
+    let stderrEvidenceBytes = 0;
     let streamedText = false;
     let resultText = "";
     let sawResult = false;
     let resultFailed = false;
+    let resultSubtype: "success" | "error" | "other" | undefined;
     let emittedState = resumeState;
     let pendingDelta = "";
     let pendingDeltaMessageId: string | undefined;
@@ -308,6 +388,11 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "result") {
         sawResult = true;
+        resultSubtype = line.subtype === "success" || line.subtype === "error"
+          ? line.subtype
+          : line.subtype === undefined
+            ? undefined
+            : "other";
         resultText = sanitizeAssistantText(line.result ?? "", {
           homePath: options.homePath,
           executionRoot: input.executionRoot,
@@ -317,7 +402,7 @@ export function createClaudeChatProviderAdapter(options: {
     };
 
     const emitBufferedResult = () => {
-      if (!streamedText && resultText) {
+      if (!resultFailed && !streamedText && resultText) {
         for (const delta of outputChunks(resultText)) {
           queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
         }
@@ -333,6 +418,7 @@ export function createClaudeChatProviderAdapter(options: {
       signal: input.signal,
       timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,
+      maxStderrBytes: MAX_STDERR_BYTES,
       spawnFn: options.spawnFn,
       onStdout(chunk) {
         buffered += chunk.toString("utf8");
@@ -340,30 +426,53 @@ export function createClaudeChatProviderAdapter(options: {
         buffered = lines.pop() ?? "";
         for (const line of lines) parseLine(line);
       },
+      onStderr(chunk) {
+        stderrEvidence += chunk.toString("utf8");
+        stderrEvidenceBytes += chunk.byteLength;
+      },
     }).then(() => {
       if (buffered.trim()) parseLine(buffered);
       flushPendingDelta();
       emitBufferedResult();
+      const classifiedFailure = resultFailed
+        ? classifiedClaudeFailureEvidence(`${resultText}\n${stderrEvidence}`)
+        : undefined;
+      if (!sawResult || resultFailed) {
+        console.warn("[chat-claude] Claude CLI result did not complete the Run", {
+          category: classifiedFailure?.category ?? (resultFailed ? "result_error" : "missing_result"),
+          resultSubtype,
+          resultHasText: resultText.length > 0,
+          stderrEvidenceBytes,
+        });
+      }
       queue.push(CanonicalProviderRunEventSchema.parse(!sawResult || resultFailed
         ? {
             type: "run.completed",
             outcome: "failed",
-            error: {
-              code: "run_failed",
-              safeMessage: "The Claude Run failed. Check Claude setup and try again.",
-              retryable: true,
-              recoveryActions: ["retry"],
-            },
+            error: classifiedFailure?.safeError ?? (resultFailed
+              ? {
+                  code: "run_failed",
+                  safeMessage: "Claude reported a failure before completing this Run. Try again, or open Claude setup if it continues.",
+                  retryable: true,
+                  recoveryActions: ["retry", "open_setup_terminal"],
+                }
+              : {
+                  code: "run_failed",
+                  safeMessage: "Claude returned an invalid response. Try the Run again.",
+                  retryable: true,
+                  recoveryActions: ["retry"],
+                }),
           }
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
     }).catch((error: unknown) => {
       flushPendingDelta();
       if (sawResult && !resultFailed) {
-        console.warn(
-          "[chat-claude] Claude CLI exited non-zero after a successful result:",
-          error instanceof Error ? error.message : "unknown error",
-        );
+        console.warn("[chat-claude] Claude CLI exited non-zero after a successful result", {
+          cliFailureKind: error instanceof CanonicalCliError ? error.kind : "unknown",
+          exitCode: error instanceof CanonicalCliError ? error.exitCode : undefined,
+          signal: error instanceof CanonicalCliError ? error.signal : undefined,
+        });
         emitBufferedResult();
         queue.push(CanonicalProviderRunEventSchema.parse({
           type: "run.completed",
@@ -372,11 +481,22 @@ export function createClaudeChatProviderAdapter(options: {
         queue.finish();
         return;
       }
+      const classifiedFailure = classifiedClaudeFailureEvidence(`${resultText}\n${stderrEvidence}`)
+        ?? classifiedClaudeCliFailure(error);
+      if (!input.signal.aborted) {
+        console.warn("[chat-claude] Claude CLI Run failed", {
+          category: classifiedFailure?.category ?? "provider_exit",
+          cliFailureKind: error instanceof CanonicalCliError ? error.kind : "unknown",
+          exitCode: error instanceof CanonicalCliError ? error.exitCode : undefined,
+          signal: error instanceof CanonicalCliError ? error.signal : undefined,
+          stderrEvidenceBytes,
+        });
+      }
       queue.push(CanonicalProviderRunEventSchema.parse({
         type: "run.completed",
         outcome: input.signal.aborted ? "aborted" : "failed",
         ...(input.signal.aborted ? {} : {
-          error: {
+          error: classifiedFailure?.safeError ?? {
             code: "run_failed",
             safeMessage: "Claude could not complete this Run. Check its connection and retry.",
             retryable: true,

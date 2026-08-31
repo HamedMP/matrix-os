@@ -1037,6 +1037,88 @@ describe("pi provider adapter — failures", () => {
 });
 
 describe("pi provider adapter — abort and timeout", () => {
+  it("bounds blocked credential resolution at the provider-local deadline", async () => {
+    const fake = fakeSpawn({ lines: [] });
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => await new Promise(() => {}),
+      runTimeoutMs: 10,
+    });
+
+    const result = await Promise.race([
+      provider.resumeTurn!({
+        principal: ownerPrincipal,
+        thread: threadSummary({ status: "idle" }),
+        turn: {
+          turnId: "turn_credential_deadline",
+          message: "Continue",
+          sandboxMode: "read_only",
+        },
+        resumeState: { conversationId: JSON.stringify({ s: SESSION_ID, c: "/work/repo" }) },
+        now: () => baseNow,
+        nextEventId: nextEventIdFactory(),
+      }),
+      new Promise<"watchdog">((resolve) => setTimeout(() => resolve("watchdog"), 200)),
+    ]);
+
+    expect(result).not.toBe("watchdog");
+    expect(result).toMatchObject({ events: [], outcome: "failed" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("settles explicit cancellation while credential resolution is blocked", async () => {
+    const fake = fakeSpawn({ lines: [] });
+    const controller = new AbortController();
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => await new Promise(() => {}),
+      runTimeoutMs: 10_000,
+    });
+    const pending = provider.resumeTurn!({
+      principal: ownerPrincipal,
+      thread: threadSummary({ status: "idle" }),
+      turn: {
+        turnId: "turn_credential_cancel",
+        message: "Continue",
+        sandboxMode: "read_only",
+      },
+      resumeState: { conversationId: JSON.stringify({ s: SESSION_ID, c: "/work/repo" }) },
+      signal: controller.signal,
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+    controller.abort();
+
+    const result = await Promise.race([
+      pending,
+      new Promise<"watchdog">((resolve) => setTimeout(() => resolve("watchdog"), 200)),
+    ]);
+    expect(result).not.toBe("watchdog");
+    expect(result).toMatchObject({ events: [], outcome: "aborted" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("reports a signal deadline during credential resolution as failed", async () => {
+    const fake = fakeSpawn({ lines: [] });
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => await new Promise(() => {}),
+      runTimeoutMs: 10_000,
+    });
+
+    await expect(provider.resumeTurn!({
+      principal: ownerPrincipal,
+      thread: threadSummary({ status: "idle" }),
+      turn: {
+        turnId: "turn_credential_signal_deadline",
+        message: "Continue",
+        sandboxMode: "read_only",
+      },
+      resumeState: { conversationId: JSON.stringify({ s: SESSION_ID, c: "/work/repo" }) },
+      signal: AbortSignal.timeout(10),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    })).resolves.toMatchObject({ events: [], outcome: "failed" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
   it("kills the child with SIGTERM when the turn signal aborts", async () => {
     const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true });
     const provider = providerFor(fake.spawnFn);
