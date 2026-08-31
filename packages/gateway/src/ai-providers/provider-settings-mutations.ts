@@ -1,7 +1,10 @@
-import type {
-  AiProviderSnapshotV3,
-  ProviderSettingsMutation,
-  ProviderSettingsSnapshot,
+import {
+  isPortableGenericHarnessCredentialRoute,
+  type AiProviderSnapshotV3,
+  type ProviderAccessSource,
+  type ProviderHarnessInstance,
+  type ProviderSettingsMutation,
+  type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import {
@@ -15,6 +18,14 @@ export type ProviderConfigurationMutation = Exclude<ProviderSettingsMutation,
   | { type: "logout_account" }
   | { type: "remove_account" }
   | { type: "reassign_account" }>;
+
+function genericHarnessRouteIsSupported(
+  harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
+  source: ProviderAccessSource | undefined,
+): boolean {
+  return (harness.harness !== "pi" && harness.harness !== "opencode")
+    || isPortableGenericHarnessCredentialRoute(harness, source);
+}
 
 export function applyProviderConfigurationMutation(input: {
   mutation: ProviderSettingsMutation;
@@ -41,7 +52,12 @@ export function applyProviderConfigurationMutation(input: {
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(mutation.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
         || !source.eligibleModelIds.includes(mutation.route.modelId)
-        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)) {
+        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)
+        || !genericHarnessRouteIsSupported({
+          harness: mutation.harness,
+          accessSourceId: source.id,
+          route: mutation.route,
+        }, source)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       input.config.harnesses.push({
@@ -79,6 +95,10 @@ export function applyProviderConfigurationMutation(input: {
       if (mutation.enabled && driver?.installState !== "installed") {
         throw new ProviderSettingsStoreError("invalid_request", 400);
       }
+      const source = input.snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+      if (mutation.enabled && !genericHarnessRouteIsSupported(harness, source)) {
+        throw new ProviderSettingsStoreError("invalid_route", 400);
+      }
       harness.enabled = mutation.enabled;
       return true;
     }
@@ -94,7 +114,12 @@ export function applyProviderConfigurationMutation(input: {
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(mutation.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
         || !source.eligibleModelIds.includes(mutation.route.modelId)
-        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)) {
+        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)
+        || !genericHarnessRouteIsSupported({
+          harness: harness.harness,
+          accessSourceId: source.id,
+          route: mutation.route,
+        }, source)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       harness.route = mutation.route;
@@ -108,7 +133,8 @@ export function applyProviderConfigurationMutation(input: {
       const source = account
         && input.snapshot.accessSources.find((candidate) => candidate.id === account.accessSourceId);
       if (!account || !source || source.providerId !== harness.route.providerId
-        || !source.eligibleModelIds.includes(harness.route.modelId)) {
+        || !source.eligibleModelIds.includes(harness.route.modelId)
+        || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       harness.selectedAccountId = account.id;
@@ -121,7 +147,8 @@ export function applyProviderConfigurationMutation(input: {
       const gatewayAllowed = source?.kind !== "matrix_gateway"
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(harness.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== harness.route.providerId
-        || !source.eligibleModelIds.includes(harness.route.modelId)) {
+        || !source.eligibleModelIds.includes(harness.route.modelId)
+        || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       harness.accessSourceId = source.id;

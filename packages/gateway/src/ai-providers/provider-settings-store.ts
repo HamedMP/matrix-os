@@ -442,6 +442,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           before: previousConfig,
           after: structuredClone(config),
           canonical: structuredClone(canonical),
+          snapshot: structuredClone(snapshot),
         };
         try {
           await this.#runtime!.applyConfiguration(runtimeMutation);

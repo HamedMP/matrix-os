@@ -226,6 +226,21 @@ describe("OpenCode coding-agent provider", () => {
     ]));
   });
 
+  it("terminates a flood of unique unsupported part records without growing dedup state", async () => {
+    const fake = fakeSpawn(Array.from({ length: 4_200 }, (_, index) =>
+      line("step_start", { part: { id: `unsupported_${index}`, type: "step-start" } })
+    ));
+
+    const result = await provider(fake.spawnFn).startThread({
+      principal, thread: thread(), request: request(), now: () => now, nextEventId: ids(),
+    });
+
+    expect(fake.kills).toContain("SIGTERM");
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
+    ]));
+  });
+
   it("reports binary presence independently from credentials", async () => {
     const runCommand = vi.fn(async () => ({ stdout: "1.16.0\n", stderr: "" }));
     const adapter = provider(fakeSpawn([]).spawnFn, { runCommand });

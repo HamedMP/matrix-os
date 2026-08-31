@@ -6,6 +6,7 @@ import type {
   ProviderHarnessKind,
   ProviderLoginMethod,
   ProviderSettingsMutation,
+  ProviderSettingsSnapshot,
   ProviderSettingsSupportedAction,
 } from "@matrix-os/contracts";
 import type { ProviderConfigurationMutation } from "./provider-settings-mutations.js";
@@ -55,6 +56,8 @@ export interface ProviderSettingsRuntimeMutationInput {
   before: import("./provider-settings-persistence.js").ProviderSettingsConfiguration;
   after: import("./provider-settings-persistence.js").ProviderSettingsConfiguration;
   canonical: AiProviderSnapshotV3;
+  /** Exact public source truth used to validate credential portability. */
+  snapshot?: ProviderSettingsSnapshot;
 }
 
 /** Applies settings to the real runtime/control plane and durably deduplicates the key. */

@@ -1220,8 +1220,12 @@ describe("pi provider adapter — thread store integration", () => {
     });
 
     const created = await store.createThread(ownerPrincipal, createRequest("Say hi"));
-    expect(created.snapshot.thread.status).toBe("completed");
-    const textEvents = created.snapshot.events.items.filter((event: AgentThreadEvent) =>
+    expect(created.snapshot.thread.status).toBe("queued");
+    await vi.waitFor(async () => {
+      expect((await store.getThread(ownerPrincipal, created.snapshot.thread.id)).thread.status).toBe("completed");
+    }, { timeout: 2_000, interval: 20 });
+    const initialSnapshot = await store.getThread(ownerPrincipal, created.snapshot.thread.id);
+    const textEvents = initialSnapshot.events.items.filter((event: AgentThreadEvent) =>
       event.type === "assistant.text.delta"
     );
     expect(textEvents.length).toBeGreaterThan(0);
