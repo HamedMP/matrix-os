@@ -290,7 +290,7 @@ describe("ProviderSettingsStore", () => {
       enabled: true,
       globalRevision: 4,
       runtimeRevision: 2,
-      allowedModelIds: ["anthropic/claude-sonnet-5"],
+      allowedModelIds: ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
       monthlyBudgetMicrousd: fundingSummary.monthlyBudgetMicrousd,
       checkedAt: NOW.toISOString(),
       staleAfter: "2026-08-30T10:01:00.000Z",
@@ -325,9 +325,11 @@ describe("ProviderSettingsStore", () => {
     });
     expect(snapshot.gatewayPolicy).toMatchObject({
       monthlyBudgetMicrousd: 5_000_000,
-      allowedModelIds: ["claude-sonnet-5"],
+      allowedModelIds: ["claude-sonnet-5", "claude-opus-5"],
       topUpEnabled: false,
     });
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
+      .toEqual(["claude-sonnet-5", "claude-opus-5"]);
     expect(snapshot.supportedActions).not.toContain("add_credit");
     expect(snapshot.supportedActions).not.toContain("set_gateway_budget");
     expect(snapshot.supportedActions).not.toContain("set_gateway_allowlist");
