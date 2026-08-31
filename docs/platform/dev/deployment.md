@@ -156,6 +156,34 @@ The `Platform Cloud Run` workflow preflights these secrets, mounts them into
 the deployed revision, smokes `/sign-in` for the pre-VPS billing shell, and
 keeps production at `min-instances=1`. Staging may still scale to zero.
 
+## Matrix-Funded AI Relay
+
+Matrix-funded AI uses a dedicated Cloud Run service built from
+`Dockerfile.ai-relay`; it does not deploy the legacy shared proxy or run on a
+customer VPS. Configure its selected GitHub environment with the relay service
+name and service account, the fixed Cloudflare Anthropic gateway URL, and the
+internal platform origin. Store credentials only in Google Secret Manager:
+
+```text
+cloudflare-ai-gateway-token       -> relay service account only
+ai-relay-metadata-secret          -> relay service account only
+ai-relay-control-token            -> relay and platform service accounts
+ai-funded-credential-hash-secret  -> platform service account only
+```
+
+The `AI Relay Cloud Run` workflow preflights secret versions and IAM bindings,
+builds an immutable image, deploys a tagged candidate, and smokes `/health` plus
+the absence of legacy proxy routes. It is preview-only until the metering and
+rollback gates in spec 118 are complete.
+
+Platform and PR-preview workflows mount the two platform secrets only when both
+`MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED` and
+`MATRIX_FUNDED_AI_RUNTIME_ENABLED` are `true`. They also require an HTTPS
+`MATRIX_FUNDED_AI_RELAY_URL`; disabling the flags removes those secret bindings
+from newly deployed revisions. Existing customer VPSes must be reprovisioned or
+updated through the normal host configuration flow before they receive a new
+relay origin and scoped runtime token.
+
 ## Updating Platform Auth and Device-Login Pages
 
 `app.matrix-os.com` sign-in, sign-up, billing handoff, provisioning handoff, and
