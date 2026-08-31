@@ -206,6 +206,20 @@ test.describe("Visual regression", () => {
     });
   });
 
+  test("legacy trial keeps its locked Stripe price", async ({ page }) => {
+    await page.goto("/?e2e_billing_state=legacy-trial");
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(page.getByText("Free trial active")).toBeVisible();
+    await expect(page.getByText("Your first monthly charge is on Sep 1, 2026.")).toBeVisible();
+    await expect(page.getByText(/Your first \$100 monthly charge/)).toHaveCount(0);
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-legacy-trial.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
   test("billing computer plans", async ({ page }) => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();
