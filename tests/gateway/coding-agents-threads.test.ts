@@ -132,6 +132,50 @@ describe("coding agent thread lifecycle", () => {
     await threads.shutdownTurns();
   });
 
+  it("finalizes a cancelled background initial run as aborted without a provider failure", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-cancelled-background-initial-run-"));
+    const pendingProvider: CodingAgentProviderAdapter = {
+      providerId: "opencode",
+      initialRunExecution: "background",
+      startThread({ thread, signal, now: providerNow, nextEventId }) {
+        return new Promise((resolve) => {
+          const finish = () => resolve({
+            events: [AgentThreadEventSchema.parse({
+              type: "thread.completed",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              outcome: "aborted",
+            })],
+          });
+          if (signal?.aborted) finish();
+          else signal?.addEventListener("abort", finish, { once: true });
+        });
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      providers: [pendingProvider],
+      turnDispatchTimeoutMs: 1_000,
+    });
+
+    const created = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      providerId: "opencode",
+      clientRequestId: "req_cancelled_background_initial_1",
+    });
+    await threads.shutdownTurns();
+
+    const snapshot = await threads.getThread(ownerPrincipal, created.snapshot.thread.id);
+    expect(snapshot.thread).toMatchObject({ status: "aborted", attention: "none" });
+    expect(snapshot.events.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+    ]));
+    expect(snapshot.events.items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error", error: expect.objectContaining({ code: "provider_run_failed" }) }),
+    ]));
+  });
+
   it("reserves enough bounded event sinks for canonical Chat Runs", async () => {
     const { threads } = await createHarness();
     const subscriptions = Array.from({ length: 72 }, () => threads.registerEventSink(() => undefined));

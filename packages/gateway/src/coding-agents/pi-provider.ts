@@ -624,6 +624,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       const onAbort = () => {
         if (aborted || settled) return;
         aborted = true;
+        clearTimeout(timeoutTimer);
         requestTermination();
       };
       const trackedProcess = trackProcess(input.threadId, onAbort);

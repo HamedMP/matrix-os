@@ -1148,11 +1148,14 @@ export function createCodingAgentThreadStore(
           providerResumeState: parsed.resumeState,
         });
       } catch (err: unknown) {
-        logCodingAgentWarning("provider start failed", err);
+        const explicitlyAborted = controller.signal.aborted;
+        if (!explicitlyAborted) logCodingAgentWarning("provider start failed", err);
         await finalizeInitialRun({
           ownerId: input.principal.userId,
           threadId: input.thread.id,
-          providerEvents: safeProviderRunFailureEvents(input.thread.id, now, nextEventId),
+          providerEvents: explicitlyAborted
+            ? defaultAbortEvents(input.thread.id, now, nextEventId)
+            : safeProviderRunFailureEvents(input.thread.id, now, nextEventId),
         });
       }
     })().catch((err: unknown) => logCodingAgentWarning("initial run finalization failed", err))

@@ -255,6 +255,41 @@ describe("OpenCode coding-agent provider", () => {
     ]));
   });
 
+  it("keeps explicit cancellation aborted when kill grace outlives the run timeout", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const kills: NodeJS.Signals[] = [];
+    const adapter = provider(() => ({
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      once: vi.fn(),
+      kill(signal) { kills.push(signal); },
+    }), { runTimeoutMs: 20, killGraceMs: 30 });
+
+    try {
+      const pending = adapter.startThread({
+        principal,
+        thread: thread(),
+        request: request(),
+        signal: controller.signal,
+        now: () => now,
+        nextEventId: ids(),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(31);
+
+      expect(kills).toEqual(["SIGTERM", "SIGKILL"]);
+      await expect(pending).resolves.toMatchObject({
+        events: expect.arrayContaining([
+          expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+        ]),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops a child when credentials return after the run signal was already aborted", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
