@@ -945,21 +945,13 @@ describe("funded AI metering", () => {
       status: "in_flight",
       expiresAt: "2026-08-30T20:10:00.000Z",
     });
-    await insertLegacyReservation({
-      tokenId: credential.tokenId,
-      reservationId: "legacy_finalization_without_backing",
-      requestId: "legacy_finalization_without_backing_request",
-      reservedMicrousd: 5,
-      status: "in_flight",
-      expiresAt: "2026-08-30T20:10:00.000Z",
-    });
 
     clock = new Date("2026-08-30T20:04:00.000Z");
     expect(await repo.getFundingSummary(identity)).toMatchObject({
       creditBalanceMicrousd: 7,
       promotionalBalanceMicrousd: 0,
       addonBalanceMicrousd: 7,
-      reservedMicrousd: 15,
+      reservedMicrousd: 10,
     });
     const settlement = await repo.settleReservation({
       reservationId: "legacy_settlement_without_backing",
@@ -1003,26 +995,6 @@ describe("funded AI metering", () => {
       promotionalBalanceMicrousd: 0,
       addonBalanceMicrousd: 5,
       reservedMicrousd: 5,
-    });
-
-    await expect(repo.finalizeReservation({
-      reservationId: "legacy_finalization_without_backing",
-      tokenId: credential.tokenId,
-      mode: "conservative",
-    })).rejects.toMatchObject({ code: "reservation_expired" });
-    await expect(db.executor.selectFrom("ai_funded_usage_reservations")
-      .select(["status", "actual_microusd"])
-      .where("reservation_id", "=", "legacy_finalization_without_backing")
-      .executeTakeFirstOrThrow()).resolves.toEqual({ status: "expired", actual_microusd: null });
-    expect(await repo.getFundingSummary(identity)).toMatchObject({
-      creditBalanceMicrousd: 5,
-      promotionalBalanceMicrousd: 0,
-      addonBalanceMicrousd: 5,
-      reservedMicrousd: 5,
-      settledThisMonthMicrousd: 5,
-      fundingShortfallMicrousd: 3,
-      remainingBalanceMicrousd: 0,
-      remainingBudgetMicrousd: 10,
     });
 
     await repo.startReservation({

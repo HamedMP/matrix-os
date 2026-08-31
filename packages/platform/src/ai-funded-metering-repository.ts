@@ -796,7 +796,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         );
       }
       const chargedMicrousd = appliedPromotionalDebit + addonDebit;
-      if (attributed && chargedMicrousd !== request.actualCostMicrousd) {
+      if (attributed && chargedMicrousd !== actualCostMicrousd) {
         throw new Error("Funded AI attributed reservation debit invariant violated");
       }
       // A migrated reservation may lack source attribution. Charge every live,
@@ -805,7 +805,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       await recordUsageFunding(
         trx.executor,
         reservation,
-        request.actualCostMicrousd,
+        actualCostMicrousd,
         appliedPromotionalDebit,
         addonDebit,
         checkedAt,

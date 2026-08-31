@@ -544,7 +544,7 @@ describe("funded AI policy routes", () => {
 
   it("finalizes ambiguous post-start usage at the reserved amount", async () => {
     const { app } = await createTestApp();
-    const issuedResponse = await app.request("/internal/containers/alice/ai/funded-credential", {
+    const issuedResponse = await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: "{}",
@@ -576,7 +576,7 @@ describe("funded AI policy routes", () => {
 
   it("checks policy through service auth without reserving credit", async () => {
     const { app } = await createTestApp();
-    const issuedResponse = await app.request("/internal/containers/alice/ai/funded-credential", {
+    const issuedResponse = await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: "{}",
