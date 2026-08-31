@@ -357,6 +357,69 @@ export function createProviderGenericHarnessCoordinator(options: {
     await writeReceipts(receipts);
   }
 
+  function sameRepairTransition(left: RuntimeReceipt, right: RuntimeReceipt): boolean {
+    return left.key === right.key
+      && left.payloadHash === right.payloadHash
+      && left.beforeRoute !== undefined
+      && right.beforeRoute !== undefined
+      && left.afterRoute !== undefined
+      && right.afterRoute !== undefined
+      && sameRuntimeRoute(left.beforeRoute, right.beforeRoute)
+      && sameRuntimeRoute(left.afterRoute, right.afterRoute)
+      && left.beforeRevision === right.beforeRevision;
+  }
+
+  async function recoverRepairIntent(
+    receipts: z.infer<typeof ReceiptDocumentSchema>,
+    repair: RuntimeReceipt,
+  ): Promise<void> {
+    const durable = receipts.receipts.find((receipt) => receipt.key === repair.key);
+    if (durable && durable.payloadHash !== repair.payloadHash) {
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
+    if (!repair.beforeRoute || !repair.afterRoute) {
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
+
+    const finalized = durable?.state === "applied"
+      && durable.afterRevision !== undefined
+      && sameRepairTransition(durable, repair);
+    if (finalized) {
+      await writeRepair(null);
+      pendingReceiptRepair = undefined;
+      return;
+    }
+
+    const armed = durable?.state === "prepared" && sameRepairTransition(durable, repair);
+    if (armed) {
+      const current = await currentRuntimeState();
+      if (sameRuntimeRoute(current.route, repair.beforeRoute)) {
+        repair.afterRevision = await applyRuntimeRoute(repair.afterRoute);
+      } else if (sameRuntimeRoute(current.route, repair.afterRoute)) {
+        repair.afterRevision = current.revision;
+      } else {
+        await retireReceiptAtCurrentState(receipts, repair, current);
+        await writeRepair(null);
+        pendingReceiptRepair = undefined;
+        return;
+      }
+      repair.state = "applied";
+      replaceReceipt(receipts, repair);
+      await writeReceipts(receipts);
+      await writeRepair(null);
+      pendingReceiptRepair = undefined;
+      return;
+    }
+
+    // The repair journal was durable but its prepared receipt was not. The
+    // runtime mutation was therefore never armed. Abort the retry against its
+    // captured displaced route before clearing the journal.
+    replaceReceipt(receipts, repair);
+    await compensatePendingReceipt(receipts, repair);
+    await writeRepair(null);
+    pendingReceiptRepair = undefined;
+  }
+
   async function reconcilePendingReceipts(
     receipts: z.infer<typeof ReceiptDocumentSchema>,
     excludedKey?: string,
@@ -388,16 +451,7 @@ export function createProviderGenericHarnessCoordinator(options: {
       const durableRepair = await readRepair(repairPath);
       const repair = pendingReceiptRepair ?? durableRepair.repair ?? undefined;
       if (repair) {
-        const durable = receipts.receipts.find((receipt) => receipt.key === repair.key);
-        if (durable && durable.payloadHash !== repair.payloadHash) {
-          throw new ProviderSettingsStoreError("runtime_unavailable", 503);
-        }
-        if (durable) {
-          replaceReceipt(receipts, repair);
-          await writeReceipts(receipts);
-        }
-        await writeRepair(null);
-        pendingReceiptRepair = undefined;
+        await recoverRepairIntent(receipts, repair);
       }
       await reconcilePendingReceipts(receipts);
       recoveryBlocked = false;
@@ -482,12 +536,12 @@ export function createProviderGenericHarnessCoordinator(options: {
           pendingReceiptRepair = repaired;
           await writeRepair(repaired);
           await writeReceipts(receipts);
-          await writeRepair(null);
-          pendingReceiptRepair = undefined;
           repaired.afterRevision = await applyRuntimeRoute(afterRoute);
           repaired.state = "applied";
           replaceReceipt(receipts, repaired);
           await writeReceipts(receipts);
+          await writeRepair(null);
+          pendingReceiptRepair = undefined;
         }
         return;
       }
