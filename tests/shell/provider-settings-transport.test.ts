@@ -25,6 +25,12 @@ const snapshot = ProviderSettingsSnapshotSchema.parse({
   refreshedAt: "2026-08-30T10:00:00.000Z",
   access: { mode: "read_only", reason: "runtime_unavailable" },
   supportedActions: [],
+  harnessCatalog: [
+    { harness: "hermes", displayName: "Hermes", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+    { harness: "openclaw", displayName: "OpenClaw", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+    { harness: "pi", displayName: "Pi", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+    { harness: "opencode", displayName: "OpenCode", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+  ],
   modelProviders: [{
     id: "anthropic",
     displayName: "Anthropic",

@@ -44,6 +44,44 @@ function makeSnapshot(): ProviderSettingsSnapshot {
       "set_gateway_budget",
       "set_gateway_allowlist",
     ],
+    harnessCatalog: [
+      {
+        harness: "hermes",
+        displayName: "Hermes",
+        installState: "installed",
+        available: true,
+        runnable: true,
+        setupAction: "none",
+        safeReason: null,
+      },
+      {
+        harness: "openclaw",
+        displayName: "OpenClaw",
+        installState: "missing",
+        available: true,
+        runnable: false,
+        setupAction: "install",
+        safeReason: "not_installed",
+      },
+      {
+        harness: "pi",
+        displayName: "Pi",
+        installState: "missing",
+        available: false,
+        runnable: false,
+        setupAction: "none",
+        safeReason: "runtime_not_supported",
+      },
+      {
+        harness: "opencode",
+        displayName: "OpenCode",
+        installState: "unknown",
+        available: false,
+        runnable: false,
+        setupAction: "none",
+        safeReason: "runtime_not_supported",
+      },
+    ],
     modelProviders: [{
       id: "anthropic",
       displayName: "Anthropic",
@@ -208,6 +246,34 @@ describe("provider settings contracts", () => {
     expect(ProviderSettingsSnapshotSchema.safeParse(unavailableLogin).success).toBe(true);
     unavailableLogin.harnesses[0]!.recommendedLoginMethod = "terminal";
     expect(ProviderSettingsSnapshotSchema.safeParse(unavailableLogin).success).toBe(false);
+  });
+
+  it("requires a truthful, unique four-harness setup catalog", () => {
+    const snapshot = makeSnapshot();
+    expect(snapshot.harnessCatalog.map((entry) => entry.harness)).toEqual([
+      "hermes", "openclaw", "pi", "opencode",
+    ]);
+
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      harnessCatalog: snapshot.harnessCatalog.slice(0, 3),
+    }).success).toBe(false);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      harnessCatalog: snapshot.harnessCatalog.map((entry) => entry.harness === "openclaw"
+        ? { ...entry, runnable: true }
+        : entry),
+    }).success).toBe(false);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      harnessCatalog: snapshot.harnessCatalog.map((entry) => entry.harness === "pi"
+        ? { ...entry, setupAction: "install" }
+        : entry),
+    }).success).toBe(false);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      configurationHarnessKinds: ["hermes"],
+    }).success).toBe(false);
   });
 
   it("keeps accounts owner-funded, opaque, reciprocal, and secret-free", () => {
