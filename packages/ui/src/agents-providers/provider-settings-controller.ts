@@ -142,7 +142,12 @@ export class ProviderSettingsController {
       this.pendingMutations -= 1;
       this.syncBusy();
     });
-    this.mutationTail = tracked.catch(() => undefined);
+    this.mutationTail = tracked.catch((error: unknown) => {
+      console.warn(
+        "[provider-settings] Mutation queue recovered:",
+        error instanceof Error ? error.name : typeof error,
+      );
+    });
     return tracked;
   };
 

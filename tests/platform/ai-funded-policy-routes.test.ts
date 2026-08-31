@@ -103,8 +103,9 @@ describe("funded AI policy routes", () => {
     })).status).toBe(401);
   });
 
-  it("rejects missing auth, caller identity fields, oversized bodies, and legacy-only handles", async () => {
+  it("rejects missing auth, malformed or oversized bodies, caller identity fields, and legacy-only handles", async () => {
     const { app } = await createTestApp();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     expect((await app.request("/internal/containers/alice/ai/funded-credential", { method: "POST" })).status).toBe(401);
     const spoofed = await app.request("/internal/containers/alice/ai/funded-credential", {
       method: "POST",
@@ -112,6 +113,16 @@ describe("funded AI policy routes", () => {
       body: JSON.stringify({ ownerId: "user_bob", machineId: "machine_other" }),
     });
     expect(spoofed.status).toBe(400);
+    const malformedSecret = "sk-provider-do-not-log";
+    const malformed = await app.request("/internal/containers/alice/ai/funded-credential", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: `{"credential":"${malformedSecret}"`,
+    });
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toMatchObject({ error: { code: "invalid_request" } });
+    expect(warning).toHaveBeenCalledWith("[ai-funded-policy] invalid JSON body (syntax_error)");
+    expect(JSON.stringify(warning.mock.calls)).not.toContain(malformedSecret);
     const oversized = await app.request("/internal/containers/alice/ai/funded-credential", {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },

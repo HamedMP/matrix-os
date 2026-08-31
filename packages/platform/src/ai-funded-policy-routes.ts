@@ -93,7 +93,11 @@ async function readStrictJson(c: Context): Promise<unknown> {
   if (text.trim() === "") return {};
   try {
     return JSON.parse(text) as unknown;
-  } catch {
+  } catch (error: unknown) {
+    const category = error instanceof SyntaxError ? "syntax_error" : "unexpected_error";
+    // Log only a coarse category. The request body may contain provider
+    // credentials and must never be included in platform logs.
+    console.warn(`[ai-funded-policy] invalid JSON body (${category})`);
     return Symbol.for("invalid-json");
   }
 }
