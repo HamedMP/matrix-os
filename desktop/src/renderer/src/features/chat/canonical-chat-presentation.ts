@@ -6,6 +6,7 @@ import type {
 } from "@matrix-os/contracts";
 import type {
   ConversationAttachmentPresentation,
+  ConversationActivityGroupPresentation,
   ConversationActivityPresentation,
   ConversationMessagePresentation,
   ConversationMessageContentPresentation,
@@ -446,7 +447,7 @@ function runPresentation(
     }
   }
 
-  const activityGroups: ConversationWorkPresentation[] = [];
+  const activityGroups: ConversationActivityGroupPresentation[] = [];
   for (const entry of activityOrder) {
     if (entry.type === "agent") {
       const activity = agentActivities.get(entry.id);
@@ -491,7 +492,15 @@ function runPresentation(
   }
   const active = isActiveRun(run);
   const projectedActivityGroups = active
-    ? activityGroups.slice(-(MAX_RUN_ACTIVITY_PROJECTIONS - 1))
+    ? activityGroups
+      .map((item, index) => ({ item, index }))
+      .sort((left, right) => (
+        (left.item.sequence ?? Number.MAX_SAFE_INTEGER) - (right.item.sequence ?? Number.MAX_SAFE_INTEGER)
+        || (left.item.timestamp ?? Number.MAX_SAFE_INTEGER) - (right.item.timestamp ?? Number.MAX_SAFE_INTEGER)
+        || left.index - right.index
+      ))
+      .slice(-(MAX_RUN_ACTIVITY_PROJECTIONS - 1))
+      .map(({ item }) => item)
     : activityGroups;
   const work: ConversationWorkPresentation[] = [
     ...projectedActivityGroups,
