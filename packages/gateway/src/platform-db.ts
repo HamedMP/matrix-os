@@ -1,6 +1,12 @@
 import { Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
+import type {
+  CustomMcpAuthMode,
+  CustomMcpServer,
+  CustomMcpStatus,
+  CustomMcpTool,
+} from "./integrations/custom-mcp/types.js";
 
 // ---------------------------------------------------------------------------
 // Kysely table types
@@ -67,12 +73,32 @@ export interface BillingTable {
   status: string;
 }
 
+export interface CustomMcpServersTable {
+  id: string;
+  user_id: string;
+  preset_id: string | null;
+  name: string;
+  url: string;
+  auth_mode: CustomMcpAuthMode;
+  status: CustomMcpStatus;
+  enabled: boolean;
+  revision: number;
+  tools: CustomMcpTool[];
+  enforcement_projection: CustomMcpTool[];
+  encrypted_credentials: string | null;
+  pending_expires_at: Date | null;
+  action_required_reason: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface PlatformDatabase {
   users: UsersTable;
   connected_services: ConnectedServicesTable;
   user_apps: UserAppsTable;
   event_subscriptions: EventSubscriptionsTable;
   billing: BillingTable;
+  custom_mcp_servers: CustomMcpServersTable;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +139,29 @@ export interface CreateEventSubscriptionInput {
   eventType: string;
 }
 
+export interface CreateCustomMcpServerInput {
+  id?: string;
+  userId: string;
+  name: string;
+  url: string;
+  authMode: CustomMcpAuthMode;
+  encryptedCredentials?: string;
+  pendingExpiresAt: Date;
+  presetId?: string;
+}
+
+export interface UpdateCustomMcpServerInput {
+  name?: string;
+  enabled?: boolean;
+  status?: CustomMcpStatus;
+  tools?: CustomMcpTool[];
+  encryptedCredentials?: string | null;
+  pendingExpiresAt?: Date | null;
+  actionRequiredReason?: string | null;
+}
+
+export type CustomMcpServerBrokerRow = CustomMcpServersTable;
+
 // ---------------------------------------------------------------------------
 // PlatformDb interface
 // ---------------------------------------------------------------------------
@@ -143,6 +192,26 @@ export interface PlatformDb {
   createEventSubscription(input: CreateEventSubscriptionInput): Promise<EventSubscriptionsTable>;
   listEventSubscriptions(userId: string): Promise<EventSubscriptionsTable[]>;
   deleteEventSubscription(id: string): Promise<void>;
+
+  createCustomMcpServer(input: CreateCustomMcpServerInput): Promise<CustomMcpServer>;
+  listCustomMcpServers(userId: string): Promise<CustomMcpServer[]>;
+  getCustomMcpServerForBroker(id: string, userId: string): Promise<CustomMcpServerBrokerRow | null>;
+  getCustomMcpPresetForBroker(presetId: string, userId: string): Promise<CustomMcpServerBrokerRow | null>;
+  updateCustomMcpServer(
+    id: string,
+    userId: string,
+    revision: number,
+    update: UpdateCustomMcpServerInput,
+  ): Promise<CustomMcpServer | null>;
+  updateCustomMcpCredentials(
+    id: string,
+    userId: string,
+    revision: number,
+    encryptedCredentials: string,
+    status: CustomMcpStatus,
+  ): Promise<boolean>;
+  deleteCustomMcpServer(id: string, userId: string): Promise<boolean>;
+  sweepPendingCustomMcpServers(now: Date): Promise<number>;
 
   // Escape hatch for queries that Kysely's builder doesn't express cleanly
   // (e.g. RETURNING with custom projections, system columns, or pg-specific
@@ -187,6 +256,19 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       pipedream_external_id: input.pipedreamExternalId ?? null,
       created_at: sql`now()`,
       updated_at: sql`now()`,
+    };
+  }
+
+  function publicCustomMcpServer(row: CustomMcpServersTable): CustomMcpServer {
+    return {
+      id: row.id,
+      name: row.name,
+      url: row.url,
+      authMode: row.auth_mode,
+      status: row.status,
+      enabled: row.enabled,
+      revision: row.revision,
+      tools: row.tools,
     };
   }
 
@@ -263,12 +345,37 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         )
       `.execute(kysely);
 
+      await sql`
+        CREATE TABLE IF NOT EXISTS custom_mcp_servers (
+          id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id                  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          preset_id                TEXT,
+          name                     TEXT NOT NULL,
+          url                      TEXT NOT NULL,
+          auth_mode                TEXT NOT NULL CHECK (auth_mode IN ('none', 'oauth', 'bearer', 'api_key')),
+          status                   TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'auth_required', 'ready', 'degraded', 'disabled', 'action_required')),
+          enabled                  BOOLEAN NOT NULL DEFAULT false,
+          revision                 INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          tools                    JSONB NOT NULL DEFAULT '[]'::jsonb,
+          enforcement_projection   JSONB NOT NULL DEFAULT '[]'::jsonb,
+          encrypted_credentials    TEXT,
+          pending_expires_at       TIMESTAMPTZ,
+          action_required_reason   TEXT,
+          created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `.execute(kysely);
+      await sql`ALTER TABLE custom_mcp_servers ADD COLUMN IF NOT EXISTS preset_id TEXT`.execute(kysely);
+
       // Indexes
       await sql`CREATE INDEX IF NOT EXISTS idx_connected_services_user ON connected_services(user_id)`.execute(kysely);
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_connected_services_user_account ON connected_services(user_id, pipedream_account_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_user_apps_user ON user_apps(user_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_event_subs_user ON event_subscriptions(user_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_users_pipedream_ext_id ON users(pipedream_external_id)`.execute(kysely);
+      await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_servers_user ON custom_mcp_servers(user_id)`.execute(kysely);
+      await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_pending_expiry ON custom_mcp_servers(pending_expires_at) WHERE status = 'pending'`.execute(kysely);
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_mcp_user_preset ON custom_mcp_servers(user_id, preset_id) WHERE preset_id IS NOT NULL`.execute(kysely);
     },
 
     async createUser(input: CreateUserInput): Promise<UsersTable> {
@@ -507,6 +614,151 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         .deleteFrom("event_subscriptions")
         .where("id", "=", id)
         .execute();
+    },
+
+    async createCustomMcpServer(input: CreateCustomMcpServerInput): Promise<CustomMcpServer> {
+      const row = await kysely.transaction().execute(async (trx) => {
+        const owner = await trx
+          .selectFrom("users")
+          .select("id")
+          .where("id", "=", input.userId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!owner) throw new Error("Custom MCP owner not found");
+        const count = await trx
+          .selectFrom("custom_mcp_servers")
+          .select((eb) => eb.fn.countAll<number>().as("count"))
+          .where("user_id", "=", input.userId)
+          .where("preset_id", "is", null)
+          .executeTakeFirstOrThrow();
+        if (Number(count.count) >= 20) throw new Error("Custom MCP server limit reached");
+        return trx
+          .insertInto("custom_mcp_servers")
+          .values({
+            id: input.id ?? randomUUID(),
+            user_id: input.userId,
+            preset_id: input.presetId ?? null,
+            name: input.name,
+            url: input.url,
+            auth_mode: input.authMode,
+            status: "pending",
+            enabled: false,
+            revision: 1,
+            tools: sql`'[]'::jsonb`,
+            enforcement_projection: sql`'[]'::jsonb`,
+            encrypted_credentials: input.encryptedCredentials ?? null,
+            pending_expires_at: input.pendingExpiresAt,
+            action_required_reason: null,
+            created_at: sql`now()`,
+            updated_at: sql`now()`,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      });
+      return publicCustomMcpServer(row);
+    },
+
+    async listCustomMcpServers(userId: string): Promise<CustomMcpServer[]> {
+      const rows = await kysely
+        .selectFrom("custom_mcp_servers")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .where("preset_id", "is", null)
+        .orderBy("created_at", "asc")
+        .execute();
+      return rows.map(publicCustomMcpServer);
+    },
+
+    async getCustomMcpServerForBroker(id: string, userId: string): Promise<CustomMcpServerBrokerRow | null> {
+      return await kysely
+        .selectFrom("custom_mcp_servers")
+        .selectAll()
+        .where("id", "=", id)
+        .where("user_id", "=", userId)
+        .executeTakeFirst() ?? null;
+    },
+
+    async getCustomMcpPresetForBroker(presetId: string, userId: string): Promise<CustomMcpServerBrokerRow | null> {
+      return await kysely
+        .selectFrom("custom_mcp_servers")
+        .selectAll()
+        .where("preset_id", "=", presetId)
+        .where("user_id", "=", userId)
+        .executeTakeFirst() ?? null;
+    },
+
+    async updateCustomMcpServer(
+      id: string,
+      userId: string,
+      revision: number,
+      update: UpdateCustomMcpServerInput,
+    ): Promise<CustomMcpServer | null> {
+      const values: Record<string, unknown> = {
+        revision: sql`revision + 1`,
+        updated_at: sql`now()`,
+      };
+      if (update.name !== undefined) values.name = update.name;
+      if (update.enabled !== undefined) values.enabled = update.enabled;
+      if (update.status !== undefined) values.status = update.status;
+      if (update.tools !== undefined) {
+        values.tools = sql`${JSON.stringify(update.tools)}::jsonb`;
+        values.enforcement_projection = sql`${JSON.stringify(update.tools)}::jsonb`;
+      }
+      if (update.encryptedCredentials !== undefined) values.encrypted_credentials = update.encryptedCredentials;
+      if (update.pendingExpiresAt !== undefined) values.pending_expires_at = update.pendingExpiresAt;
+      if (update.actionRequiredReason !== undefined) values.action_required_reason = update.actionRequiredReason;
+
+      const row = await kysely
+        .updateTable("custom_mcp_servers")
+        .set(values as never)
+        .where("id", "=", id)
+        .where("user_id", "=", userId)
+        .where("revision", "=", revision)
+        .returningAll()
+        .executeTakeFirst();
+      return row ? publicCustomMcpServer(row) : null;
+    },
+
+    async deleteCustomMcpServer(id: string, userId: string): Promise<boolean> {
+      const rows = await kysely
+        .deleteFrom("custom_mcp_servers")
+        .where("id", "=", id)
+        .where("user_id", "=", userId)
+        .returning("id")
+        .execute();
+      return rows.length === 1;
+    },
+
+    async updateCustomMcpCredentials(
+      id: string,
+      userId: string,
+      revision: number,
+      encryptedCredentials: string,
+      status: CustomMcpStatus,
+    ): Promise<boolean> {
+      const row = await kysely
+        .updateTable("custom_mcp_servers")
+        .set({
+          encrypted_credentials: encryptedCredentials,
+          status,
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", id)
+        .where("user_id", "=", userId)
+        .where("revision", "=", revision)
+        .returning("id")
+        .executeTakeFirst();
+      return Boolean(row);
+    },
+
+    async sweepPendingCustomMcpServers(now: Date): Promise<number> {
+      const rows = await kysely
+        .deleteFrom("custom_mcp_servers")
+        .where("status", "=", "pending")
+        .where("pending_expires_at", "<", now)
+        .returning("id")
+        .execute();
+      return rows.length;
     },
 
     async raw(query: string, params: readonly unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
