@@ -316,8 +316,9 @@ export async function projectProviderSettings(input: {
           ? sources.find((source) => source.id === input.config.gatewayPolicy?.accessSourceId)!
             .eligibleModelIds
           : input.config.gatewayPolicy.allowedModelIds,
-        monthlyBudgetMicrousd: input.fundingSummary?.monthlyBudgetMicrousd
-          ?? input.config.gatewayPolicy.monthlyBudgetMicrousd,
+        monthlyBudgetMicrousd: input.fundedPolicyAuthoritative
+          ? input.fundingSummary?.monthlyBudgetMicrousd ?? null
+          : input.config.gatewayPolicy.monthlyBudgetMicrousd,
         // Stripe top-ups are not wired yet; schemas alone never advertise purchase capability.
         topUpEnabled: false,
       } : null;

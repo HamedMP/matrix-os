@@ -369,6 +369,15 @@ describe("ProviderSettingsStore", () => {
   });
 
   it("shows ledger usage as unavailable instead of falling back to local estimates", async () => {
+    const localStore = createStore();
+    const localSnapshot = await localStore.getSnapshot();
+    await localStore.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: localSnapshot.revision,
+      idempotencyKey: "stale_local_budget_1",
+      monthlyBudgetMicrousd: 9_000_000,
+    });
+
     const store = createStore({ fundingSummary: new Error("postgresql://secret@db.internal") });
     const snapshot = await store.getSnapshot();
     expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.usage).toMatchObject({
@@ -379,8 +388,22 @@ describe("ProviderSettingsStore", () => {
     expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
       .toEqual([]);
     expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual([]);
+    expect(snapshot.gatewayPolicy?.monthlyBudgetMicrousd).toBeNull();
     expect(snapshot.harnesses.some((harness) => harness.accessSourceId === "matrix_included"))
       .toBe(false);
+
+    const malformedSnapshot = await createStore({
+      fundingSummary: { funding: {}, policy: {} } as unknown as {
+        funding: FundedAiFundingSummary;
+        policy: FundedAiEffectivePolicy;
+      },
+    }).getSnapshot();
+    expect(malformedSnapshot.accessSources.find((source) => source.id === "matrix_included")?.usage)
+      .toMatchObject({ kind: "unavailable", reason: "ledger_not_available" });
+    expect(malformedSnapshot.gatewayPolicy).toMatchObject({
+      allowedModelIds: [],
+      monthlyBudgetMicrousd: null,
+    });
   });
 
   it("is read-only and rejects cosmetic mutations without a runtime coordinator", async () => {
