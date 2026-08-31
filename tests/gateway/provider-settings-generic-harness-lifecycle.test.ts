@@ -77,6 +77,22 @@ const hermes = {
   },
 };
 
+function systemRouteInput(modelId: string, idempotencyKey: string) {
+  const before = config([hermes]);
+  const after = structuredClone(before);
+  after.harnesses[0]!.route.modelId = modelId;
+  const mutation = {
+    type: "set_route" as const,
+    expectedRevision: 0,
+    idempotencyKey,
+    harnessInstanceId: hermes.id,
+    route: after.harnesses[0]!.route,
+    accessSourceId: "matrix_included",
+    accountId: null,
+  };
+  return { mutation, before, after, canonical: genericCanonical(), idempotencyKey };
+}
+
 describe("generic provider harness lifecycle coordinator", () => {
   let homePath: string | undefined;
 
@@ -856,6 +872,67 @@ describe("generic provider harness lifecycle coordinator", () => {
     await coordinator.applyConfiguration(input);
     expect(update).toHaveBeenCalledTimes(2);
     expect(update).toHaveBeenNthCalledWith(1, expect.objectContaining({ messagingModel: "claude-opus-5" }));
+  });
+
+  it("compensates despite a failed pending marker and never trusts its stale applied receipt", async () => {
+    let failReceiptWrites = false;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      if (failReceiptWrites) throw new Error("receipt storage unavailable");
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, restart, update } = await makeCoordinator({ receiptWriter });
+    const appliedInput = systemRouteInput("claude-opus-5", "route_marker_write_failure");
+    await coordinator.applyConfiguration(appliedInput);
+
+    failReceiptWrites = true;
+    update.mockRejectedValueOnce(new Error("rollback runtime unavailable"));
+    await expect(coordinator.rollbackConfiguration(appliedInput))
+      .rejects.toThrow("rollback runtime unavailable");
+    expect(update).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      messagingModel: "claude-sonnet-5",
+    }));
+    const receiptPath = join(homePath!, "system/ai-providers/runtime-receipts.json");
+    const staleApplied = JSON.parse(await readFile(receiptPath, "utf8"));
+    expect(staleApplied.receipts).toMatchObject([{
+      key: "route_marker_write_failure",
+      state: "applied",
+    }]);
+    const nextInput = systemRouteInput("claude-haiku-5", "route_after_marker_write_failure");
+    await expect(coordinator.applyConfiguration(nextInput)).rejects.toMatchObject({
+      code: "runtime_unavailable",
+      status: 503,
+    });
+    expect(update).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      messagingModel: "claude-sonnet-5",
+    }));
+    expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ messagingModel: "claude-haiku-5" }));
+
+    failReceiptWrites = false;
+    const restarted = restart();
+    await restarted.reconcilePending();
+    await restarted.applyConfiguration(nextInput);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ messagingModel: "claude-haiku-5" }));
+  });
+
+  it("prunes an applied runtime receipt only after owner settings commit the same mutation", async () => {
+    const { coordinator, restart, update } = await makeCoordinator();
+    const input = systemRouteInput("claude-opus-5", "route_owner_committed");
+    await coordinator.applyConfiguration(input);
+    const runtimeReceiptPath = join(homePath!, "system/ai-providers/runtime-receipts.json");
+    const runtimeReceipts = JSON.parse(await readFile(runtimeReceiptPath, "utf8"));
+    await writeProviderJsonAtomic(join(homePath!, "system/ai-providers/settings.json"), {
+      ...input.after,
+      revision: 1,
+      receipts: [{
+        key: input.idempotencyKey,
+        payloadHash: runtimeReceipts.receipts[0].payloadHash,
+        appliedRevision: 1,
+      }],
+    });
+
+    await restart().reconcilePending();
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(await readFile(runtimeReceiptPath, "utf8")).receipts).toEqual([]);
   });
 
   it("runs add, enable, disable, and remove through the real settings store without touching binaries", async () => {
