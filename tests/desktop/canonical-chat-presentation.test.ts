@@ -63,7 +63,7 @@ describe("canonical Chat presentation adapter", () => {
     ]);
   });
 
-  it("caps transcript projection collections at the public activity-page boundary", () => {
+  it("caps active transcript projection while preserving the newest server-ordered activity", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;
     const occurredAt = run.startedAt ?? run.createdAt;
@@ -90,7 +90,8 @@ describe("canonical Chat presentation adapter", () => {
 
     expect(projectedActivities).toHaveLength(500);
     expect(projectedActivities[0]?.id).toBe(`${run.id}:selected-model`);
-    expect(projectedActivities.at(-1)?.id).toContain("activity_bounded_498");
+    expect(projectedActivities.some((item) => item.id.endsWith("activity_bounded_1"))).toBe(false);
+    expect(projectedActivities.at(-1)?.id).toContain("activity_bounded_500");
   });
 
   it("projects canonical messages into the shared provider-neutral transcript", () => {
