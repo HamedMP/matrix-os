@@ -201,6 +201,29 @@ describe("agent runtime configuration contracts", () => {
     expect(AgentSettingsViewSchema.parse(makeView()).contractVersion).toBe(2);
   });
 
+  it("represents no active Chat route without weakening messaging validation", () => {
+    const inactive = makeView({
+      chat: null,
+      currentSelection: {
+        chat: null,
+        messaging: makeView().currentSelection.messaging,
+      },
+    });
+    expect(AgentSettingsViewSchema.safeParse(inactive).success).toBe(true);
+    expect(AgentSettingsViewSchema.safeParse({
+      ...inactive,
+      currentSelection: {
+        chat: null,
+        messaging: {
+          runtime: "hermes",
+          provider: "missing-provider",
+          model: "missing-model",
+          configured: true,
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it("aligns the additive Chat selection with legacy effective defaults", () => {
     const defaultSelection = { ...chatSelection, source: "default" as const };
     const view = makeView({
