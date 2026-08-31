@@ -274,10 +274,14 @@
 .matrix-ap-driver-grid { display: grid; gap: 7px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 15px; }
 .matrix-ap-driver-grid label { align-items: center; background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 9px; cursor: pointer; display: flex; gap: 8px; min-height: 46px; padding: 10px; }
 .matrix-ap-driver-grid label[data-selected="true"] { border-color: var(--matrix-ap-accent); box-shadow: inset 0 0 0 1px var(--matrix-ap-accent); }
-.matrix-ap-driver-grid label[data-installed="true"] { cursor: not-allowed; opacity: 0.5; }
+.matrix-ap-driver-grid label[data-available="false"] { cursor: not-allowed; opacity: 0.62; }
+.matrix-ap-driver-grid label[data-runnable="false"][data-available="true"] small { color: var(--matrix-ap-warning); }
 .matrix-ap-driver-grid input { accent-color: var(--matrix-ap-accent); }
 .matrix-ap-driver-grid span { font-size: 13px; font-weight: 620; }
 .matrix-ap-driver-grid small { color: var(--matrix-ap-faint); font-size: 10px; margin-left: auto; }
+.matrix-ap-setup-notice { background: color-mix(in srgb, var(--matrix-ap-warning) 9%, var(--matrix-ap-surface)); border: 1px solid color-mix(in srgb, var(--matrix-ap-warning) 28%, var(--matrix-ap-border)); border-radius: 9px; display: flex; flex-direction: column; gap: 3px; margin: 0 0 15px; padding: 10px 11px; }
+.matrix-ap-setup-notice strong { font-size: 11px; }
+.matrix-ap-setup-notice span { color: var(--matrix-ap-muted); font-size: 10px; line-height: 1.5; }
 
 @media (max-width: 760px) {
   .matrix-ap-page-head { align-items: flex-start; flex-direction: column; }

@@ -23,6 +23,12 @@ function snapshot(): ProviderSettingsSnapshot {
     refreshedAt: now,
     access: { mode: "writable" },
     configurationHarnessKinds: ["hermes", "openclaw", "pi", "opencode"],
+    harnessCatalog: [
+      { harness: "hermes", displayName: "Hermes", installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null },
+      { harness: "openclaw", displayName: "OpenClaw", installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" },
+      { harness: "pi", displayName: "Pi", installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null },
+      { harness: "opencode", displayName: "OpenCode", installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null },
+    ],
     modelProviders: [
       {
         id: "anthropic",
@@ -350,17 +356,57 @@ describe("AgentsProvidersView", () => {
     expect(within(dialog).queryByRole("radio", { name: "Claude" })).toBeNull();
   });
 
-  it("offers only harness kinds enabled by the runtime workspace", () => {
+  it("always shows all generic harnesses and explains why unavailable kinds cannot be added", () => {
     const limited = snapshot();
     limited.configurationHarnessKinds = ["hermes", "openclaw"];
+    limited.harnessCatalog = limited.harnessCatalog.map((entry) => {
+      if (entry.harness === "pi" || entry.harness === "opencode") {
+        return { ...entry, available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" };
+      }
+      return entry;
+    });
     setup({ snapshot: limited });
 
     fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
     const dialog = screen.getByRole("dialog", { name: "Add harness" });
     expect(within(dialog).getByRole("radio", { name: "Hermes" })).toBeVisible();
     expect(within(dialog).getByRole("radio", { name: "OpenClaw" })).toBeVisible();
-    expect(within(dialog).queryByRole("radio", { name: "Pi" })).toBeNull();
-    expect(within(dialog).queryByRole("radio", { name: "OpenCode" })).toBeNull();
+    expect(within(dialog).getByRole("radio", { name: "Pi" })).toBeDisabled();
+    expect(within(dialog).getByRole("radio", { name: "OpenCode" })).toBeDisabled();
+    expect(within(dialog).getAllByText(/Unavailable in this runtime/)).toHaveLength(2);
+    expect(within(dialog).getByRole("radio", { name: "Pi" }))
+      .toHaveAccessibleDescription(/Unavailable in this runtime/);
+    expect(within(dialog).getByRole("radio", { name: "OpenCode" }))
+      .toHaveAccessibleDescription(/Unavailable in this runtime/);
+  });
+
+  it("shows the truthful setup path for a supported harness that is not installed", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "OpenClaw" }));
+
+    expect(within(dialog).getByText("Install OpenClaw before adding it")).toBeVisible();
+    expect(within(dialog).getByText(/Open Terminal and use the \+ menu to install OpenClaw/)).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Add harness" })).toBeDisabled();
+  });
+
+  it("marks access sources that still need authentication and keeps the auth handoff visible", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.change(within(dialog).getByLabelText("Model"), {
+      target: { value: "anthropic/claude-sonnet-5" },
+    });
+    const sources = within(dialog).getByLabelText("Access source");
+
+    expect(within(sources).getByRole("option", {
+      name: "Work Anthropic key · authentication required",
+    })).toBeVisible();
+    fireEvent.change(sources, { target: { value: "source_work" } });
+    expect(within(dialog).getByText(/continue authentication from Accounts in a visible Terminal, browser, or secure credential prompt/)).toBeVisible();
   });
 
   it("shows exact, stale, and unavailable gateway credit without inventing balances", () => {

@@ -24,6 +24,12 @@ function snapshot(revision: number, harnessIds = ["harness_one"]): ProviderSetti
     refreshedAt: checkedAt,
     access: { mode: "writable" },
     supportedActions: ["update_harness", "set_harness_enabled", "start_login"],
+    harnessCatalog: [
+      { harness: "hermes", displayName: "Hermes", installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null },
+      { harness: "openclaw", displayName: "OpenClaw", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+      { harness: "pi", displayName: "Pi", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+      { harness: "opencode", displayName: "OpenCode", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+    ],
     modelProviders: [{
       id: "anthropic",
       displayName: "Anthropic",

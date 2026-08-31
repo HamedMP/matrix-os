@@ -160,6 +160,12 @@ function harnessSettings(
       refreshedAt: "2026-08-30T00:00:00.000Z",
       access: { mode: "writable" },
       supportedActions: [],
+      harnessCatalog: [
+        { harness: "hermes", displayName: "Hermes", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+        { harness: "openclaw", displayName: "OpenClaw", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+        { harness: "pi", displayName: "Pi", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+        { harness: "opencode", displayName: "OpenCode", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+      ],
       modelProviders: [],
       accessSources,
       accounts: [],

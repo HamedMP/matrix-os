@@ -159,6 +159,12 @@ describe("ProviderSettingsStore", () => {
       revision: 0,
       access: { mode: "writable" },
     });
+    expect(initial.harnessCatalog).toEqual([
+      expect.objectContaining({ harness: "hermes", available: false, runnable: false, safeReason: "runtime_not_supported" }),
+      expect.objectContaining({ harness: "openclaw", available: false, runnable: false, safeReason: "runtime_not_supported" }),
+      expect.objectContaining({ harness: "pi", available: false, runnable: false, safeReason: "runtime_not_supported" }),
+      expect.objectContaining({ harness: "opencode", available: false, runnable: false, safeReason: "runtime_not_supported" }),
+    ]);
     expect(initial.accessSources[0]!.usage).toMatchObject({
       kind: "unavailable",
       authority: "unavailable",
@@ -271,6 +277,44 @@ describe("ProviderSettingsStore", () => {
     })).resolves.toMatchObject({
       kind: "snapshot",
       snapshot: { harnesses: [expect.objectContaining({ enabled: true })] },
+    });
+  });
+
+  it("projects all four generic harness setup states from canonical inventory and runtime support", async () => {
+    canonical.drivers.push(
+      { id: "hermes", displayName: "Hermes", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools"], setupActions: [] },
+      { id: "openclaw", displayName: "OpenClaw", kind: "cli", installState: "missing", health: "stopped", capabilities: ["tools"], setupActions: ["install"] },
+      { id: "pi", displayName: "Pi", kind: "cli", installState: "installed", health: "stopped", capabilities: ["tools"], setupActions: ["open_terminal"] },
+      { id: "opencode", displayName: "OpenCode", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools"], setupActions: [] },
+    );
+    runtime = { ...runtime, supportedHarnessKinds: ["hermes", "openclaw", "pi"] };
+
+    const projected = await createStore().getSnapshot();
+
+    expect(projected.harnessCatalog).toEqual([
+      { harness: "hermes", displayName: "Hermes", installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null },
+      { harness: "openclaw", displayName: "OpenClaw", installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" },
+      { harness: "pi", displayName: "Pi", installState: "installed", available: true, runnable: false, setupAction: "open_terminal", safeReason: "setup_required" },
+      { harness: "opencode", displayName: "OpenCode", installState: "installed", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+    ]);
+  });
+
+  it("fails closed when an installed coding harness has unknown health", async () => {
+    canonical.drivers.push(
+      { id: "opencode", displayName: "OpenCode", kind: "cli", installState: "installed", health: "unknown", capabilities: ["tools"], setupActions: [] },
+    );
+    runtime = { ...runtime, supportedHarnessKinds: ["opencode"] };
+
+    const projected = await createStore().getSnapshot();
+
+    expect(projected.harnessCatalog.find((entry) => entry.harness === "opencode")).toEqual({
+      harness: "opencode",
+      displayName: "OpenCode",
+      installState: "installed",
+      available: true,
+      runnable: false,
+      setupAction: "retry",
+      safeReason: "runtime_unavailable",
     });
   });
 
