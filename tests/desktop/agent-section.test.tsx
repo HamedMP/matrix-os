@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AgentSection from "../../desktop/src/renderer/src/features/settings/sections/AgentSection";
+import IdentityPersonalitySection from "../../desktop/src/renderer/src/features/settings/sections/IdentityPersonalitySection";
 import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -197,6 +198,35 @@ describe("AgentSection", () => {
     cleanup();
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("keeps the provider adapter separate from identity and personality", async () => {
+    render(<AgentSection />);
+
+    const heading = screen.getByRole("heading", { name: "Agents & providers" });
+    expect(heading).toBeTruthy();
+    expect(heading.closest("[data-provider-settings-adapter='legacy']")).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "SOUL system instructions" })).toBeNull();
+
+    cleanup();
+    render(<IdentityPersonalitySection />);
+
+    expect(screen.getByRole("heading", { name: "Identity & personality" })).toBeTruthy();
+    expect(await screen.findByRole("textbox", { name: "SOUL system instructions" })).toBeTruthy();
+  });
+
+  it("persists personality changes to the owner-controlled SOUL file", async () => {
+    api.putText.mockResolvedValue(undefined);
+    render(<IdentityPersonalitySection />);
+
+    const editor = await screen.findByRole("textbox", { name: "SOUL system instructions" });
+    fireEvent.change(editor, { target: { value: "# Updated SOUL" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(api.putText).toHaveBeenCalledWith(
+      "/files/system/soul.md",
+      "# Updated SOUL",
+    ));
   });
 
   it("renders the additive runtime and provider controls and sends revisioned updates", async () => {

@@ -17,14 +17,6 @@ import { findProviderForSetupAction } from "../coding-agents/provider-readiness"
 
 const SETUP_ERROR = "Could not open setup. Open Settings to continue.";
 
-function settingsSectionForInstance(
-  instance: CanonicalProviderInstanceDescriptor,
-): "agent" | "providers" {
-  return instance.driverKind === "hermes" || instance.driverKind === "openclaw"
-    ? "agent"
-    : "providers";
-}
-
 export function useProviderSetup(
   providers: AgentProviderSummary[],
   onRefresh?: () => Promise<void>,
@@ -40,7 +32,7 @@ export function useProviderSetup(
     action: CanonicalProviderSetupAction,
   ) => {
     if (action.kind === "open_settings") {
-      requestSettingsSection(settingsSectionForInstance(instance));
+      requestSettingsSection("agents-providers");
       openTab({ kind: "settings", title: "Settings" });
       return;
     }
