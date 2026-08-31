@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import type {
-  ProviderGenericHarnessKind,
-  ProviderHarnessCatalogEntry,
-  ProviderSettingsSnapshot,
+import {
+  isPortableGenericHarnessCredentialRoute,
+  type ProviderAccessSource,
+  type ProviderGenericHarnessKind,
+  type ProviderHarnessCatalogEntry,
+  type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { FeatureDialog } from "./FeatureDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
@@ -50,14 +52,39 @@ function setupCopy(entry: ProviderHarnessCatalogEntry): { title: string; body: s
 
 function sourceSupportsRoute(
   snapshot: ProviderSettingsSnapshot,
+  harness: ProviderGenericHarnessKind,
   source: ProviderSettingsSnapshot["accessSources"][number],
   providerId: string,
   modelId: string,
 ): boolean {
   if (source.providerId !== providerId || !source.eligibleModelIds.includes(modelId)) return false;
-  if (source.kind !== "matrix_gateway") return true;
-  return snapshot.gatewayPolicy?.accessSourceId === source.id
-    && snapshot.gatewayPolicy.allowedModelIds.includes(modelId);
+  const gatewayAllowed = source.kind !== "matrix_gateway"
+    || (snapshot.gatewayPolicy?.accessSourceId === source.id
+      && snapshot.gatewayPolicy.allowedModelIds.includes(modelId));
+  if (!gatewayAllowed) return false;
+  if (harness !== "pi" && harness !== "opencode") return true;
+  return isPortableGenericHarnessCredentialRoute({
+    harness,
+    accessSourceId: source.id,
+    route: { kind: "configurable", providerId, modelId },
+  }, source as ProviderAccessSource);
+}
+
+function modelsForProvider(
+  snapshot: ProviderSettingsSnapshot,
+  harness: ProviderGenericHarnessKind,
+  provider: ProviderSettingsSnapshot["modelProviders"][number],
+) {
+  return provider.models.filter((model) => model.enabled && snapshot.accessSources.some((source) =>
+    sourceSupportsRoute(snapshot, harness, source, provider.id, model.id)));
+}
+
+function providersForHarness(
+  snapshot: ProviderSettingsSnapshot,
+  harness: ProviderGenericHarnessKind,
+) {
+  return snapshot.modelProviders.filter((provider) =>
+    modelsForProvider(snapshot, harness, provider).length > 0);
 }
 
 export function AddHarnessDialog({
@@ -73,14 +100,18 @@ export function AddHarnessDialog({
     ?? snapshot.harnessCatalog[0]!;
   const [kind, setKind] = useState<ProviderGenericHarnessKind>(firstCatalog.harness);
   const selectedCatalog = snapshot.harnessCatalog.find((entry) => entry.harness === kind) ?? firstCatalog;
-  const defaultProvider = snapshot.modelProviders[0] ?? null;
+  const eligibleProviders = useMemo(() => providersForHarness(snapshot, kind), [kind, snapshot]);
+  const defaultProvider = eligibleProviders[0] ?? null;
   const [displayName, setDisplayName] = useState(selectedCatalog.displayName);
   const [providerId, setProviderId] = useState(defaultProvider?.id ?? "");
-  const provider = snapshot.modelProviders.find((candidate) => candidate.id === providerId) ?? defaultProvider;
-  const firstModel = provider?.models.find((model) => model.enabled) ?? null;
+  const provider = eligibleProviders.find((candidate) => candidate.id === providerId) ?? defaultProvider;
+  const eligibleModels = useMemo(() => provider === null ? [] : modelsForProvider(snapshot, kind, provider),
+    [kind, provider, snapshot]);
+  const firstModel = eligibleModels[0] ?? null;
   const [modelId, setModelId] = useState(firstModel?.id ?? "");
   const eligibleSources = useMemo(() => snapshot.accessSources.filter((source) =>
-    sourceSupportsRoute(snapshot, source, providerId, modelId)), [modelId, providerId, snapshot]);
+    sourceSupportsRoute(snapshot, kind, source, provider?.id ?? "", modelId)),
+    [kind, modelId, provider, snapshot]);
   const [sourceId, setSourceId] = useState(eligibleSources[0]?.id ?? "");
   const selectedSource = eligibleSources.find((source) => source.id === sourceId) ?? eligibleSources[0] ?? null;
   const canAdd = selectedCatalog.available && selectedCatalog.runnable
@@ -89,10 +120,10 @@ export function AddHarnessDialog({
 
   const selectKind = (nextKind: ProviderGenericHarnessKind) => {
     const catalog = snapshot.harnessCatalog.find((entry) => entry.harness === nextKind) ?? snapshot.harnessCatalog[0]!;
-    const nextProvider = snapshot.modelProviders[0] ?? null;
-    const nextModel = nextProvider?.models.find((model) => model.enabled) ?? null;
+    const nextProvider = providersForHarness(snapshot, nextKind)[0] ?? null;
+    const nextModel = nextProvider ? modelsForProvider(snapshot, nextKind, nextProvider)[0] ?? null : null;
     const nextSource = nextModel === null ? undefined : snapshot.accessSources.find((source) =>
-      sourceSupportsRoute(snapshot, source, nextProvider?.id ?? "", nextModel.id));
+      sourceSupportsRoute(snapshot, nextKind, source, nextProvider?.id ?? "", nextModel.id));
     setKind(nextKind);
     setDisplayName(catalog.displayName);
     setProviderId(nextProvider?.id ?? "");
@@ -101,10 +132,10 @@ export function AddHarnessDialog({
   };
 
   const selectProvider = (nextProviderId: string) => {
-    const nextProvider = snapshot.modelProviders.find((candidate) => candidate.id === nextProviderId) ?? null;
-    const nextModel = nextProvider?.models.find((model) => model.enabled) ?? null;
+    const nextProvider = eligibleProviders.find((candidate) => candidate.id === nextProviderId) ?? null;
+    const nextModel = nextProvider ? modelsForProvider(snapshot, kind, nextProvider)[0] ?? null : null;
     const nextSource = nextModel === null ? undefined : snapshot.accessSources.find((source) =>
-      sourceSupportsRoute(snapshot, source, nextProviderId, nextModel.id));
+      sourceSupportsRoute(snapshot, kind, source, nextProviderId, nextModel.id));
     setProviderId(nextProviderId);
     setModelId(nextModel?.id ?? "");
     setSourceId(nextSource?.id ?? "");
@@ -112,7 +143,7 @@ export function AddHarnessDialog({
 
   const selectModel = (nextModelId: string) => {
     const nextSource = snapshot.accessSources.find((source) =>
-      sourceSupportsRoute(snapshot, source, providerId, nextModelId));
+      sourceSupportsRoute(snapshot, kind, source, provider?.id ?? "", nextModelId));
     setModelId(nextModelId);
     setSourceId(nextSource?.id ?? "");
   };
@@ -125,7 +156,7 @@ export function AddHarnessDialog({
       displayName: displayName.trim(),
       route: {
         kind: "configurable",
-        providerId,
+        providerId: provider!.id,
         modelId,
       },
       accessSourceId: selectedSource.id,
@@ -175,14 +206,14 @@ export function AddHarnessDialog({
       <div className="matrix-ap-form-grid">
         <label className="matrix-ap-field">
           <span>Model provider</span>
-          <select value={providerId} onChange={(event) => selectProvider(event.target.value)} disabled={!selectedCatalog.runnable}>
-            {snapshot.modelProviders.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
+          <select value={provider?.id ?? ""} onChange={(event) => selectProvider(event.target.value)} disabled={!selectedCatalog.runnable}>
+            {eligibleProviders.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
           </select>
         </label>
         <label className="matrix-ap-field">
           <span>Model</span>
           <select value={modelId} onChange={(event) => selectModel(event.target.value)} disabled={!selectedCatalog.runnable}>
-            {provider?.models.filter((model) => model.enabled).map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
+            {eligibleModels.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
           </select>
         </label>
       </div>
