@@ -34,6 +34,7 @@ export const CanonicalChatOutboxEventTypeSchema = z.enum([
   "chat.updated",
   "chat.user_state_updated",
   "turn.accepted",
+  "queue.enqueued",
   "run.activity",
   "run.message",
   "chat.terminal_bound",
@@ -120,6 +121,32 @@ export const CanonicalCreateChatTurnRequestSchema = z.object({
   executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
 }).strict();
 
+export const CanonicalChatQueuedTurnIdSchema = canonicalReferenceId(128)
+  .refine((value) => value.startsWith("qturn_"), {
+    message: "Invalid queued Turn identifier",
+  });
+
+export const CanonicalQueueChatTurnRequestSchema = CanonicalCreateChatTurnRequestSchema;
+
+export const CanonicalChatQueuedTurnSchema = z.object({
+  id: CanonicalChatQueuedTurnIdSchema,
+  chatId: CanonicalChatSchema.shape.id,
+  clientRequestId: CanonicalChatRequestIdSchema,
+  position: z.number().int().min(1).max(20),
+  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+  selection: CanonicalChatModelSelectionSchema,
+  interactionMode: canonicalReferenceId(80),
+  permissionMode: canonicalReferenceId(80),
+  executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  createdAt: IsoTimestampSchema,
+  updatedAt: IsoTimestampSchema,
+}).strict();
+
+export const CanonicalChatQueueAdmissionResponseSchema = z.object({
+  queuedTurn: CanonicalChatQueuedTurnSchema,
+  queueDepth: z.number().int().min(1).max(20),
+}).strict();
+
 export const CanonicalCancelChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
 }).strict();
@@ -170,6 +197,7 @@ export const CanonicalChatDetailResponseSchema = z.object({
   turns: z.array(CanonicalChatTurnSchema).max(100),
   runs: z.array(CanonicalChatRunSchema).max(100),
   activities: z.array(CanonicalChatRunActivitySchema).max(500),
+  queuedTurns: z.array(CanonicalChatQueuedTurnSchema).max(20).optional(),
   terminalSessionIds: z.array(canonicalReferenceId(128)).max(100).optional(),
   nextCursor: CanonicalChatApiCursorSchema.optional(),
 }).strict().superRefine((detail, ctx) => {
@@ -241,6 +269,11 @@ export type CanonicalChatStreamServerFrame = z.infer<typeof CanonicalChatStreamS
 export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateChatProjectRequestSchema>;
 export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdateChatUserStateRequestSchema>;
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
+export type CanonicalQueueChatTurnRequest = z.infer<typeof CanonicalQueueChatTurnRequestSchema>;
+export type CanonicalChatQueuedTurn = z.infer<typeof CanonicalChatQueuedTurnSchema>;
+export type CanonicalChatQueueAdmissionResponse = z.infer<
+  typeof CanonicalChatQueueAdmissionResponseSchema
+>;
 export type CanonicalCancelChatRunRequest = z.infer<typeof CanonicalCancelChatRunRequestSchema>;
 export type CanonicalSubmitChatApprovalRequest = z.infer<typeof CanonicalSubmitChatApprovalRequestSchema>;
 export type CanonicalRetryChatTurnRequest = z.infer<typeof CanonicalRetryChatTurnRequestSchema>;

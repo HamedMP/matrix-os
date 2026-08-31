@@ -11,11 +11,13 @@ import {
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
+  CanonicalChatQueueAdmissionResponseSchema,
   CanonicalChatTurnIdSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalQueueChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
@@ -26,10 +28,12 @@ import {
   type CanonicalChatApprovalSubmissionResponse,
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalQueueChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalUpdateChatProjectRequest,
@@ -122,6 +126,12 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
   ): Promise<CanonicalChatTurnAdmissionResponse>;
+  enqueueQueuedTurn(
+    principal: RequestPrincipal,
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalQueueChatTurnRequest,
+  ): Promise<CanonicalChatQueueAdmissionResponse>;
   cancelRun(
     owner: ChatOwner,
     chatId: string,
@@ -417,6 +427,24 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       return context.json(CanonicalChatTurnAdmissionResponseSchema.parse(result), 202);
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/queued-turns", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalQueueChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const principal = options.getPrincipal(context);
+      const result = await options.service.enqueueQueuedTurn(
+        principal,
+        ownerFromPrincipal(principal),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueAdmissionResponseSchema.parse(result), 201);
     } catch (error: unknown) {
       return handleError(context, error);
     }

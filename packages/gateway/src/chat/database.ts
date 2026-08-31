@@ -107,6 +107,28 @@ export interface ChatRunsTable {
   updated_at: Timestamp;
 }
 
+export interface ChatQueuedTurnsTable {
+  id: string;
+  chat_id: string;
+  client_request_id: string;
+  position: number;
+  status: "queued" | "claimed" | "cancelled";
+  parts: JsonValue;
+  driver_kind: string;
+  instance_id: string;
+  selection: JsonValue;
+  interaction_mode: string;
+  permission_mode: string;
+  execution_root: JsonValue | null;
+  execution_root_fingerprint: string | null;
+  capability_snapshot: JsonValue;
+  claimed_turn_id: string | null;
+  claimed_run_id: string | null;
+  cancelled_at: NullableTimestamp;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface ChatRunEventsTable {
   id: string;
   chat_id: string;
@@ -187,6 +209,7 @@ export interface ChatDatabase {
   chat_attachments: ChatAttachmentsTable;
   chat_turns: ChatTurnsTable;
   chat_runs: ChatRunsTable;
+  chat_queued_turns: ChatQueuedTurnsTable;
   chat_run_events: ChatRunEventsTable;
   chat_terminal_bindings: ChatTerminalBindingsTable;
   chat_run_adapter_state: ChatRunAdapterStateTable;
@@ -339,6 +362,39 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_runs_one_active
     ON chat_runs(chat_id)
     WHERE status IN ('accepted', 'running', 'waiting_for_approval', 'waiting_for_input')
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_queued_turns (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      client_request_id TEXT NOT NULL,
+      position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 20),
+      status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'cancelled')),
+      parts JSONB NOT NULL,
+      driver_kind TEXT NOT NULL,
+      instance_id TEXT NOT NULL,
+      selection JSONB NOT NULL,
+      interaction_mode TEXT NOT NULL,
+      permission_mode TEXT NOT NULL,
+      execution_root JSONB,
+      execution_root_fingerprint TEXT,
+      capability_snapshot JSONB NOT NULL,
+      claimed_turn_id TEXT REFERENCES chat_turns(id) ON DELETE SET NULL,
+      claimed_run_id TEXT REFERENCES chat_runs(id) ON DELETE SET NULL,
+      cancelled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      UNIQUE (chat_id, client_request_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_position
+    ON chat_queued_turns(chat_id, position)
+    WHERE status = 'queued'
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_chat_queued_turns_claim
+    ON chat_queued_turns(chat_id, status, position)
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_run_events (

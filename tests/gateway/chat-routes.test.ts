@@ -60,6 +60,9 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     admitTurn: vi.fn(async () => {
       throw new Error("not configured");
     }),
+    enqueueQueuedTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
     cancelRun: vi.fn(async () => {
       throw new Error("not configured");
     }),

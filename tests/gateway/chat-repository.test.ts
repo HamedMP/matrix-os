@@ -212,6 +212,7 @@ describe("ChatRepository", () => {
       "chat_messages",
       "chat_migrations",
       "chat_outbox",
+      "chat_queued_turns",
       "chat_run_adapter_state",
       "chat_run_events",
       "chat_runs",
@@ -898,6 +899,58 @@ describe("ChatRepository", () => {
       turn: secondTurn,
       run: run(created.chat.id, secondTurn, 2),
     })).rejects.toBeInstanceOf(ChatBusyError);
+  });
+
+  it("durably enqueues an idempotent ordered Turn while a Run is active", async () => {
+    const admitted = await admitChat(repository, "queued_turn");
+    const queuedInput = {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queued_turn_1",
+      clientRequestId: "req_queue_turn_1",
+      parts: [{ type: "text" as const, text: "run this next" }],
+      driverKind: "codex" as const,
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    };
+
+    const first = await repository.enqueueQueuedTurn(owner, queuedInput);
+    const repeated = await repository.enqueueQueuedTurn(owner, {
+      ...queuedInput,
+      baseRevision: 1,
+      queuedTurnId: "qturn_should_not_be_inserted",
+    });
+
+    expect(first).toMatchObject({
+      alreadyQueued: false,
+      queueDepth: 1,
+      queuedTurn: {
+        id: "qturn_queued_turn_1",
+        chatId: admitted.chatId,
+        clientRequestId: "req_queue_turn_1",
+        position: 1,
+        parts: [{ type: "text", text: "run this next" }],
+      },
+    });
+    expect(repeated).toEqual({ ...first, alreadyQueued: true });
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(2);
+    expect((await repository.getDetailPage(owner, admitted.chatId, { limit: 200 }))?.queuedTurns)
+      .toEqual([first.queuedTurn]);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 10 }))
+      .toContainEqual(expect.objectContaining({
+        eventType: "queue.enqueued",
+        revision: 2,
+        payload: { queuedTurnId: "qturn_queued_turn_1", position: 1 },
+      }));
+    await expect(repository.enqueueQueuedTurn(otherOwner, {
+      ...queuedInput,
+      clientRequestId: "req_queue_other_owner",
+      queuedTurnId: "qturn_other_owner",
+      baseRevision: 2,
+    })).rejects.toBeInstanceOf(ChatNotFoundError);
   });
 
   it("admits an idempotent retry as a new Run attempt without duplicating the Turn input", async () => {

@@ -7,10 +7,12 @@ import {
   CanonicalChatRecordSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatQueueAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalQueueChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
@@ -21,10 +23,12 @@ import {
   type CanonicalChatRecord,
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalQueueChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalChatApprovalSubmissionResponse,
@@ -104,7 +108,9 @@ function decodeMessageCursor(value: string, chatId: string): number {
 export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
-    orchestrator?: Pick<CanonicalChatOrchestrator, "admitTurn" | "cancelRun" | "submitApproval" | "retryTurn">;
+    orchestrator?: Pick<CanonicalChatOrchestrator,
+      "admitTurn" | "enqueueQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn"
+    >;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
   } = {},
 ): CanonicalChatRouteService {
@@ -232,6 +238,7 @@ export function createCanonicalChatService(
         turns: page.turns,
         runs: page.runs,
         activities: page.activities,
+        queuedTurns: page.queuedTurns,
         terminalSessionIds: page.terminalSessionIds,
         ...(page.nextBeforeSeq === undefined ? {} : {
           nextCursor: encodeCursor({
@@ -257,6 +264,23 @@ export function createCanonicalChatService(
         CanonicalChatIdSchema.parse(chatId),
         CanonicalCreateChatTurnRequestSchema.parse(input),
       ));
+    },
+
+    async enqueueQueuedTurn(
+      principal: RequestPrincipal,
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalQueueChatTurnRequest,
+    ): Promise<CanonicalChatQueueAdmissionResponse> {
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatQueueAdmissionResponseSchema.parse(
+        await options.orchestrator.enqueueQueuedTurn(
+          principal,
+          owner,
+          CanonicalChatIdSchema.parse(chatId),
+          CanonicalQueueChatTurnRequestSchema.parse(input),
+        ),
+      );
     },
 
     async cancelRun(
@@ -323,6 +347,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     search: unavailable,
     getDetail: unavailable,
     admitTurn: unavailable,
+    enqueueQueuedTurn: unavailable,
     cancelRun: unavailable,
     submitApproval: unavailable,
     retryTurn: unavailable,

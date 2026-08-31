@@ -169,6 +169,69 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("validates and durably queues the next Turn while the active Run continues", async () => {
+    await repository.create(owner, {
+      id: "chat_queue_orchestrated",
+      clientRequestId: "req_create_queue_orchestrated",
+      title: "Queue orchestrated",
+    });
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const provider = adapter(async function* () {
+      await providerGate;
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+    await orchestrator.admitTurn(principal, owner, "chat_queue_orchestrated", {
+      clientRequestId: "req_queue_orchestrated_active",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "keep running" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      expect((await repository.get(owner, "chat_queue_orchestrated"))?.activeRun?.status)
+        .toBe("running");
+    });
+    const active = await repository.get(owner, "chat_queue_orchestrated");
+
+    const queued = await orchestrator.enqueueQueuedTurn(
+      principal,
+      owner,
+      "chat_queue_orchestrated",
+      {
+        clientRequestId: "req_queue_orchestrated_next",
+        baseRevision: active!.chat.revision,
+        parts: [{ type: "text", text: "run this next" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      },
+    );
+
+    expect(queued).toMatchObject({
+      queueDepth: 1,
+      queuedTurn: {
+        chatId: "chat_queue_orchestrated",
+        position: 1,
+        parts: [{ type: "text", text: "run this next" }],
+      },
+    });
+    expect((await repository.getDetailPage(owner, "chat_queue_orchestrated", { limit: 200 }))?.queuedTurns)
+      .toEqual([queued.queuedTurn]);
+
+    releaseProvider();
+    await orchestrator.drain();
+  });
+
   it("persists one stable typed activity row across live lifecycle updates", async () => {
     await repository.create(owner, {
       id: "chat_activity_projection",

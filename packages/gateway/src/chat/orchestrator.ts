@@ -8,16 +8,19 @@ import {
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatTurnSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalQueueChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
   type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatSafeError,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalQueueChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalChatApprovalSubmissionResponse,
@@ -49,6 +52,10 @@ import {
   type ChatRepository,
 } from "./repository.js";
 import type { ChatOwner } from "./records.js";
+import {
+  CanonicalQueueAdmissionError,
+  enqueueCanonicalQueuedTurn,
+} from "./queue-admission.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
@@ -171,6 +178,7 @@ export class CanonicalChatOrchestrator {
     repository: Pick<ChatRepository,
       | "get"
       | "admitTurn"
+      | "enqueueQueuedTurn"
       | "markRunRunning"
       | "appendRunActivities"
       | "appendAssistantDelta"
@@ -406,6 +414,33 @@ export class CanonicalChatOrchestrator {
       });
     } finally {
       this.pendingDispatch.delete(run.id);
+    }
+  }
+
+  async enqueueQueuedTurn(
+    principal: RequestPrincipal,
+    owner: ChatOwner,
+    chatId: string,
+    inputValue: CanonicalQueueChatTurnRequest,
+  ): Promise<CanonicalChatQueueAdmissionResponse> {
+    this.assertOpen();
+    try {
+      return await enqueueCanonicalQueuedTurn({
+        principal,
+        owner,
+        chatId,
+        input: CanonicalQueueChatTurnRequestSchema.parse(inputValue),
+        repository: this.options.repository,
+        catalog: this.options.catalog,
+        adapters: this.options.adapters,
+        ...(this.options.executionRoots ? { executionRoots: this.options.executionRoots } : {}),
+        now: this.options.now ?? (() => new Date()),
+      });
+    } catch (error: unknown) {
+      if (error instanceof CanonicalQueueAdmissionError) {
+        throw new CanonicalChatOrchestrationError(error.safeError, error.status);
+      }
+      return mapRepositoryError(error);
     }
   }
 

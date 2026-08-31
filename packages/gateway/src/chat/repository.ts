@@ -50,6 +50,11 @@ import {
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
 import {
+  ChatQueueRepository,
+  type EnqueueQueuedTurnInput,
+  type EnqueuedQueuedTurn,
+} from "./queue-repository.js";
+import {
   ChatOutboxDelivery,
   type ChatOutboxSink,
 } from "./outbox-delivery.js";
@@ -65,6 +70,7 @@ export {
   ChatRunNotActiveError,
 } from "./errors.js";
 export type { ChatDetailPage } from "./detail-repository.js";
+export type { EnqueueQueuedTurnInput, EnqueuedQueuedTurn } from "./queue-repository.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
@@ -283,6 +289,7 @@ export class ChatRepository {
   private readonly transactionScoped: boolean;
   private readonly detail: ChatDetailRepository;
   private readonly runLifecycle: ChatRunLifecycleRepository;
+  private readonly queue: ChatQueueRepository;
   private readonly outboxDelivery: ChatOutboxDelivery;
 
   constructor(
@@ -297,6 +304,18 @@ export class ChatRepository {
     this.outboxDelivery = outboxDelivery ?? new ChatOutboxDelivery();
     this.detail = new ChatDetailRepository(this.kysely, hydrateRecord.bind(null, this.kysely));
     this.runLifecycle = new ChatRunLifecycleRepository(
+      this.kysely,
+      (fn) => this.transact(fn),
+      (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
+        executor,
+        owner,
+        chatId,
+        revision,
+        eventType,
+        payload,
+      ),
+    );
+    this.queue = new ChatQueueRepository(
       this.kysely,
       (fn) => this.transact(fn),
       (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
@@ -923,6 +942,13 @@ export class ChatRepository {
       if (constraint !== null) throw new ChatConflictError(input.chatId, input.baseRevision);
       throw error;
     });
+  }
+
+  async enqueueQueuedTurn(
+    owner: ChatOwner,
+    input: EnqueueQueuedTurnInput,
+  ): Promise<EnqueuedQueuedTurn> {
+    return this.queue.enqueue(owner, input);
   }
 
   async admitRetry(ownerInput: ChatOwner, input: AdmitRetryInput): Promise<AdmittedRun> {
