@@ -103,11 +103,6 @@ vi.mock("@desktop/renderer/src/features/project/ProjectChatsView", () => ({
 vi.mock("@desktop/renderer/src/features/project/ProjectsIndex", () => ({
   default: () => <main>Projects center</main>,
 }));
-vi.mock("@desktop/renderer/src/features/work/DummyChatShowcase", () => ({
-  DUMMY_CHAT_ID: "frontend:dummy",
-  DUMMY_CHAT_TITLE: "Dummy",
-  DummyChatShowcase: () => <main>Dummy showcase center</main>,
-}));
 vi.mock("@desktop/renderer/src/features/work/WorkFilesInspector", () => ({
   WorkFilesInspector: ({
     active,
@@ -674,33 +669,6 @@ describe("WorkTab rail integration", () => {
 
     fireEvent.click(hideInspector);
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
-  });
-
-  it("renders the frontend-only Dummy chat without canonical Chat or an inspector", async () => {
-    function HostedDummy() {
-      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
-      const host = React.useMemo(() => ({ setChrome }), []);
-      return (
-        <SurfaceChromeContext.Provider value={host}>
-          <header><span>{chrome?.title}</span>{chrome?.rightActions}</header>
-          <WorkTab
-            route="chat"
-            active
-            initialChatId="frontend:dummy"
-            initialChatTitle="Dummy"
-            initialChatView="conversation"
-          />
-        </SurfaceChromeContext.Provider>
-      );
-    }
-
-    render(<HostedDummy />);
-
-    expect(await screen.findByText("Dummy showcase center")).toBeTruthy();
-    expect(screen.getByText("Dummy", { selector: "header span" })).toBeTruthy();
-    expect(screen.queryByText("Chat center")).toBeNull();
-    expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Show inspector" })).toBeNull();
   });
 
   it("keeps the hosted layout stable after the sidebar slot reduces the measured main-pane width", async () => {

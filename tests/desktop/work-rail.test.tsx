@@ -121,29 +121,6 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
-  it("renders a frontend-only Chat entry without persistence actions", () => {
-    const onSelect = vi.fn();
-    render(
-      <WorkRail
-        client={null}
-        projects={[]}
-        active
-        frontendChats={[{ id: "frontend:dummy", title: "Dummy", onSelect }]}
-        onNewGlobalChat={vi.fn()}
-        onCreateProject={vi.fn()}
-        onNewProjectChat={vi.fn()}
-        onSelectChat={vi.fn()}
-        onCollapse={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Dummy" }));
-
-    expect(onSelect).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("button", { name: "Pin Dummy" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Delete Dummy" })).toBeNull();
-  });
-
   it("matches the Settings sidebar title, groups, and item styling", async () => {
     setup();
     const rail = screen.getByRole("navigation", { name: "Chat navigation" });
