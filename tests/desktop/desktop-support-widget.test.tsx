@@ -4,7 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
-import DesktopSupportWidget from "@desktop/renderer/src/features/support/DesktopSupportWidget";
+import DesktopSupportWidget, { openDesktopSupport } from "@desktop/renderer/src/features/support/DesktopSupportWidget";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
@@ -292,5 +292,18 @@ describe("Desktop support widget", () => {
 
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+  });
+
+  it("honors a support click while the widget is still initializing", async () => {
+    posthogClient.conversations.hide.mockImplementation(() => {
+      document.getElementById("ph-conversations-widget-container")?.remove();
+    });
+    posthogClient.conversations.show.mockImplementation(renderPostHogLauncher);
+
+    const opening = openDesktopSupport();
+    render(<DesktopSupportWidget />);
+
+    await expect(opening).resolves.toBe(true);
+    expect(await screen.findByRole("button", { name: "Close" })).toBeTruthy();
   });
 });

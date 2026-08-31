@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
+
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import nextConfig from "../../shell/next.config";
 
 const posthogMock = vi.hoisted(() => ({
@@ -29,6 +31,11 @@ async function getRewrites(): Promise<RewriteRule[]> {
 }
 
 describe("shell PostHog same-origin proxy", () => {
+  afterEach(() => {
+    document.getElementById("ph-conversations-widget-container")?.remove();
+    posthogMock.conversations.show.mockReset();
+  });
+
   it("rewrites the same-origin health probe to the gateway", async () => {
     const rewrites = await getRewrites();
     const healthRule = rewrites.find((rule) => rule.source === "/health");
@@ -105,6 +112,20 @@ describe("shell PostHog same-origin proxy", () => {
   });
 
   it("opens PostHog Conversations from the shell navbar", async () => {
+    const launcherClick = vi.fn(() => {
+      const close = document.createElement("button");
+      close.setAttribute("aria-label", "Close");
+      document.getElementById("ph-conversations-widget-container")?.replaceChildren(close);
+    });
+    posthogMock.conversations.show.mockImplementation(() => {
+      const container = document.createElement("div");
+      container.id = "ph-conversations-widget-container";
+      const launcher = document.createElement("button");
+      launcher.setAttribute("aria-label", "Open chat");
+      launcher.addEventListener("click", launcherClick);
+      container.appendChild(launcher);
+      document.body.appendChild(container);
+    });
     const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
     const opened = await openShellSupport({
       token: "phc_test",
@@ -114,6 +135,8 @@ describe("shell PostHog same-origin proxy", () => {
 
     expect(opened).toBe(true);
     expect(posthogMock.conversations.show).toHaveBeenCalledOnce();
+    expect(launcherClick).toHaveBeenCalledOnce();
+    expect(document.querySelector('button[aria-label="Close"]')).not.toBeNull();
     expect(posthogMock.capture).toHaveBeenCalledWith("shell_support_chat_opened", {
       matrix_client: "web",
     });

@@ -107,6 +107,15 @@ function supportOpenIsCurrent(generation: number): boolean {
   return generation === supportLifecycleGeneration && initialized && activeIdentity !== null;
 }
 
+async function waitForSupportReady(generation: number): Promise<boolean> {
+  const deadline = Date.now() + SUPPORT_OPEN_TIMEOUT_MS;
+  while (Date.now() < deadline && generation === supportLifecycleGeneration) {
+    if (supportOpenIsCurrent(generation)) return true;
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 function waitForElement(selector: string, generation: number): Promise<HTMLButtonElement | null> {
   if (!supportOpenIsCurrent(generation)) return Promise.resolve(null);
   const existing = document.querySelector<HTMLButtonElement>(selector);
@@ -147,7 +156,7 @@ async function waitForConversations(generation: number): Promise<boolean> {
 }
 
 async function openSupportPanel(generation: number): Promise<boolean> {
-  if (!supportOpenIsCurrent(generation) || !await waitForConversations(generation)) return false;
+  if (!await waitForSupportReady(generation) || !await waitForConversations(generation)) return false;
 
   allowPostHogWidget = true;
   try {

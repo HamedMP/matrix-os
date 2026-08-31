@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { ClientApiError, createShellApiClient } from "@/api/http";
 
@@ -9,6 +10,13 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("createShellApiClient", () => {
+  it("keeps the default fetch fallback visibly timeout-bound for the release scanner", () => {
+    const source = readFileSync("shell/src/api/http.ts", "utf8");
+    const fallback = source.slice(source.indexOf("const fetchFn"), source.indexOf("async function request"));
+
+    expect(fallback).toContain("signal: init.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS)");
+  });
+
   it("resolves the gateway URL at request time and composes caller cancellation with its timeout", async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { apps: [] }));
     const controller = new AbortController();

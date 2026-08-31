@@ -24,6 +24,8 @@ const config = getPostHogClientConfig({
 });
 const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
 const SUPPORT_AVAILABILITY_TIMEOUT_MS = 10_000;
+const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
+const POSTHOG_CLOSE_SELECTOR = 'button[aria-label="Close"]';
 // Replay kill switch. NEXT_PUBLIC_* is inlined at build time, so the build
 // flag alone cannot stop replay during an incident. The layout additionally
 // exposes the server's runtime POSTHOG_DISABLE_REPLAY env as a data
@@ -97,8 +99,16 @@ export async function openShellSupport(currentConfig: typeof config = config): P
     const deadline = Date.now() + SUPPORT_AVAILABILITY_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (posthog.conversations.isAvailable()) {
-        posthog.capture("shell_support_chat_opened", { matrix_client: "web" });
         posthog.conversations.show();
+        let closeButton = document.querySelector<HTMLButtonElement>(POSTHOG_CLOSE_SELECTOR);
+        if (!closeButton) {
+          const launcher = await waitForPostHogButton(POSTHOG_LAUNCHER_SELECTOR, deadline);
+          if (!launcher) return false;
+          launcher.click();
+          closeButton = await waitForPostHogButton(POSTHOG_CLOSE_SELECTOR, deadline);
+        }
+        if (!closeButton) return false;
+        posthog.capture("shell_support_chat_opened", { matrix_client: "web" });
         return true;
       }
       await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
@@ -108,6 +118,15 @@ export async function openShellSupport(currentConfig: typeof config = config): P
     console.warn("[posthog] Failed to open support chat:", err instanceof Error ? err.name : typeof err);
     return false;
   }
+}
+
+async function waitForPostHogButton(selector: string, deadline: number): Promise<HTMLButtonElement | null> {
+  while (Date.now() < deadline) {
+    const button = document.querySelector<HTMLButtonElement>(selector);
+    if (button) return button;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+  }
+  return null;
 }
 
 export function setPostHogPersonPropertiesOnce(
