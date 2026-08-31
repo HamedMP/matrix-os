@@ -304,4 +304,93 @@ describe("current and legacy Anthropic models", () => {
       rmSync(providerHome, { recursive: true, force: true });
     }
   });
+
+  it("represents a saved model with no canonical runnable route as inactive", async () => {
+    const providerHome = resolve(mkdtempSync(join(tmpdir(), "settings-provider-inactive-")));
+    mkdirSync(join(providerHome, "system"), { recursive: true });
+    writeFileSync(
+      join(providerHome, "system/config.json"),
+      JSON.stringify({ kernel: { model: "claude-fable-5" } }),
+    );
+    const providerService = new AiProviderService({
+      homePath: providerHome,
+      env: {
+        ANTHROPIC_API_KEY: "platform-secret",
+        MATRIX_FUNDED_AI_ENABLED: "1",
+      },
+    });
+    try {
+      const providerSnapshot = await providerService.getSnapshot();
+      expect(providerSnapshot.active).toEqual({
+        providerInstanceId: null,
+        accessSourceId: null,
+        modelId: null,
+      });
+
+      const view = buildAgentSettingsView({
+        identity: { name: "Matrix Owner" },
+        config: { kernel: { model: "claude-fable-5" } },
+        claudeLoginAvailable: false,
+        platformCredentialAvailable: true,
+        providerSnapshot,
+      });
+
+      expect(view.kernel.model).toBe("claude-fable-5");
+      expect(view.chat).toBeNull();
+      expect(view.currentSelection.chat).toBeNull();
+      expect(view.providers.find((provider) => provider.runtime === null)).toMatchObject({
+        id: "matrix_ai",
+        models: [expect.objectContaining({ id: "claude-sonnet-5", available: true })],
+      });
+      expect(view.providers.find((provider) => provider.runtime === null)?.models)
+        .not.toEqual(expect.arrayContaining([
+          expect.objectContaining({ id: "claude-fable-5", available: true }),
+        ]));
+    } finally {
+      providerService.close();
+      rmSync(providerHome, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a saved model when the canonical owner route is runnable", async () => {
+    const providerHome = resolve(mkdtempSync(join(tmpdir(), "settings-provider-owner-")));
+    mkdirSync(join(providerHome, "system"), { recursive: true });
+    writeFileSync(
+      join(providerHome, "system/config.json"),
+      JSON.stringify({ kernel: { anthropicApiKey: "owner-secret", model: "claude-fable-5" } }),
+    );
+    const providerService = new AiProviderService({
+      homePath: providerHome,
+      healthProbe: async (sourceId) => sourceId === "owner_anthropic_key"
+        ? {
+            state: "ready",
+            checkedAt: "2026-08-31T09:00:00.000Z",
+            staleAfter: "2026-08-31T09:05:00.000Z",
+            action: "none",
+            safeReason: null,
+          }
+        : null,
+    });
+    try {
+      const providerSnapshot = await providerService.getSnapshot({ refresh: true });
+      const view = buildAgentSettingsView({
+        identity: { name: "Matrix Owner" },
+        config: { kernel: { anthropicApiKey: "owner-secret", model: "claude-fable-5" } },
+        claudeLoginAvailable: false,
+        platformCredentialAvailable: false,
+        providerSnapshot,
+      });
+
+      expect(view.chat).toMatchObject({
+        provider: "anthropic",
+        model: "claude-fable-5",
+        source: "saved",
+        authKind: "api_key",
+      });
+      expect(view.currentSelection.chat).toEqual(view.chat);
+    } finally {
+      providerService.close();
+      rmSync(providerHome, { recursive: true, force: true });
+    }
+  });
 });

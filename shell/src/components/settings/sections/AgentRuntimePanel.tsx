@@ -186,14 +186,22 @@ function ChatCard({
   const chatModels = availableModels(provider);
   const [modelOverride, setModelOverride] = useState("");
   const [effortOverride, setEffortOverride] = useState<AgentEffort | "">("");
-  const preferredModel = modelOverride || view.chat.model;
+  const preferredModel = modelOverride
+    || view.chat?.model
+    || view.kernel.model
+    || view.defaults.model
+    || "";
   const selectedModel = chatModels.some((entry) => entry.id === preferredModel)
     ? preferredModel
     : chatModels[0]?.id ?? "";
   const effortOptions = provider?.models.find((entry) => entry.id === selectedModel)?.efforts
     ?? view.availableEfforts;
-  const preferredEffort = effortOverride || view.chat.effort;
-  const selectedEffort = effortOptions.includes(preferredEffort)
+  const preferredEffort = effortOverride
+    || view.chat?.effort
+    || view.kernel.effort
+    || view.defaults.effort
+    || "";
+  const selectedEffort = preferredEffort !== "" && effortOptions.includes(preferredEffort)
     ? preferredEffort
     : effortOptions[0] ?? "";
   const [showKey, setShowKey] = useState(false);
@@ -608,7 +616,7 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
     <div className="space-y-4">
       {error && <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
       <ChatCard
-        key={`${view.chat.model}:${view.chat.effort}:${view.chat.authKind}:${editResetVersion}`}
+        key={`${view.chat?.model ?? "inactive"}:${view.chat?.effort ?? "none"}:${view.chat?.authKind ?? "none"}:${editResetVersion}`}
         view={view}
         busy={busy}
         onOpenTerminal={onOpenTerminal}
