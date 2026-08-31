@@ -19,6 +19,7 @@ import {
   type DesktopConfig,
 } from "../../shell/src/hooks/useDesktopConfig";
 import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
+import { createDefaultOsViewDocument } from "@matrix-os/contracts";
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -254,6 +255,35 @@ describe("Desktop config", () => {
     useDesktopConfigStore.getState().setPinnedApps(["apps/calc.html", "apps/notes.html"]);
     useDesktopConfigStore.getState().togglePin("apps/calc.html");
     expect(useDesktopConfigStore.getState().pinnedApps).toEqual(["apps/notes.html"]);
+  });
+
+  it("retries the current pins after conflict retries are exhausted", async () => {
+    const fetchMock = vi.fn();
+    for (const revision of [2, 3, 4]) {
+      fetchMock
+        .mockResolvedValueOnce({ ok: false, status: 409 })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            revision,
+            document: createDefaultOsViewDocument(),
+            updatedAt: "2026-08-30T12:00:00.000Z",
+          }),
+        });
+    }
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 409 })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+    useDesktopConfigStore.getState().setPinnedApps([]);
+
+    useDesktopConfigStore.getState().togglePin("apps/calc.html");
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(7));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8), { timeout: 3_000 });
+    const retried = JSON.parse(fetchMock.mock.calls[7][1].body);
+    expect(retried.patch.pinnedApps).toEqual(["apps/calc.html"]);
   });
 
   it("DesktopConfig type includes pinnedApps", () => {

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { ApiClient } from "../lib/api";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 import {
+  OsViewStateConflictExhaustedError,
   patchNativeOsViewState,
   primeNativeOsViewState,
   resetNativeOsViewStateClientForTests,
@@ -21,6 +22,7 @@ const GRID_Y = 92;
 const GRID_COLUMNS = 2;
 const START_X = 20;
 const START_Y = 20;
+const ICON_CONFLICT_RETRY_MS = 2_000;
 
 function validPlacement(value: unknown): value is DesktopIconPlacement {
   if (!value || typeof value !== "object") return false;
@@ -130,6 +132,35 @@ function persist(api: ApiClient, icons: DesktopIconPlacement[]): Promise<void> {
   return pending;
 }
 
+function waitForIconConflictRetry(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ICON_CONFLICT_RETRY_MS));
+}
+
+async function retryCurrentIconsAfterConflict(input: {
+  api: ApiClient;
+  sequence: number;
+  epoch: number;
+  runtimeGeneration: number;
+}): Promise<DesktopIconPlacement[] | null> {
+  while (input.epoch === stateEpoch
+    && input.sequence === mutationSequence
+    && isCurrentRuntimeGeneration(input.runtimeGeneration)) {
+    await waitForIconConflictRetry();
+    if (input.epoch !== stateEpoch
+      || input.sequence !== mutationSequence
+      || !isCurrentRuntimeGeneration(input.runtimeGeneration)) return null;
+    const latest = copyIcons(useDesktopIcons.getState().icons);
+    try {
+      await persist(input.api, latest);
+      return latest;
+    } catch (error: unknown) {
+      console.warn("[desktop-icons] conflict retry failed:", error instanceof Error ? error.name : typeof error);
+      if (!(error instanceof OsViewStateConflictExhaustedError)) throw error;
+    }
+  }
+  return null;
+}
+
 async function applyOptimisticMutation(
   api: ApiClient,
   previousIcons: DesktopIconPlacement[],
@@ -162,6 +193,29 @@ async function applyOptimisticMutation(
     }
   } catch (error: unknown) {
     console.warn("[desktop-icons] persist failed:", error instanceof Error ? error.name : typeof error);
+    if (error instanceof OsViewStateConflictExhaustedError
+      && epoch === stateEpoch
+      && sequence === mutationSequence
+      && isCurrentRuntimeGeneration(runtimeGeneration)) {
+      const persistedIcons = await retryCurrentIconsAfterConflict({
+        api,
+        sequence,
+        epoch,
+        runtimeGeneration,
+      });
+      if (persistedIcons
+        && epoch === stateEpoch
+        && sequence === mutationSequence
+        && isCurrentRuntimeGeneration(runtimeGeneration)) {
+        confirmedIcons = copyIcons(persistedIcons);
+        hasConfirmedIcons = true;
+        unconfirmedHydrationRevision = null;
+        unconfirmedRollbackIcons = null;
+        deferredHydrationIcons = null;
+        replayableHydrationRange = null;
+      }
+      return;
+    }
     if (epoch === stateEpoch && sequence === mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
       if (deferredHydrationIcons !== null) {
         const icons = copyIcons(deferredHydrationIcons);

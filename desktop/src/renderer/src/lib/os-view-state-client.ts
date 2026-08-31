@@ -13,6 +13,13 @@ let cached: { api: ApiClient; state: OsViewStateResponse } | null = null;
 let mutationQueue: Promise<void> = Promise.resolve();
 const MAX_CONFLICT_REBASE_ATTEMPTS = 3;
 
+export class OsViewStateConflictExhaustedError extends Error {
+  constructor() {
+    super("OS-view state conflicted repeatedly");
+    this.name = "OsViewStateConflictExhaustedError";
+  }
+}
+
 function mutationId(): string {
   return `osvm_${crypto.randomUUID().replaceAll("-", "")}`;
 }
@@ -64,7 +71,7 @@ export function patchNativeOsViewState(api: ApiClient, patch: OsViewStatePatch):
         if (!(error instanceof AppError && error.detail === "os_view_state_conflict")) throw error;
       }
       if (conflictRebaseAttempts >= MAX_CONFLICT_REBASE_ATTEMPTS) {
-        throw new Error("OS-view state conflicted repeatedly");
+        throw new OsViewStateConflictExhaustedError();
       }
       conflictRebaseAttempts += 1;
       const conflictedBase = base;

@@ -5,6 +5,7 @@ import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
   captureWebDesktopIconsHydrationRevision,
+  scheduleWebDesktopConfigConflictRetry,
   useDesktopConfigStore,
   type DesktopIconPlacement,
   type DockConfig,
@@ -15,7 +16,11 @@ import {
   saveShellSnapshot,
   type ShellSnapshotScope,
 } from "@/lib/shell-snapshot-cache";
-import { loadWebOsViewState, patchWebOsViewState } from "@/lib/os-view-state-client";
+import {
+  loadWebOsViewState,
+  OsViewStateConflictExhaustedError,
+  patchWebOsViewState,
+} from "@/lib/os-view-state-client";
 export type { DockConfig };
 
 export interface DesktopConfig {
@@ -205,6 +210,9 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
           }).catch((error: unknown) => {
             if (!controller.signal.aborted) {
               console.warn("[desktop-config] Initial durable migration failed:", error instanceof Error ? error.name : "UnknownError");
+              if (error instanceof OsViewStateConflictExhaustedError) {
+                scheduleWebDesktopConfigConflictRetry(gatewayUrl);
+              }
             }
           });
           return;
