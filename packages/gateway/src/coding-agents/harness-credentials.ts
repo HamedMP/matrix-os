@@ -1,4 +1,8 @@
-import type { ProviderHarnessKind, ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import {
+  isPortableGenericHarnessCredentialRoute,
+  type ProviderHarnessKind,
+  type ProviderSettingsSnapshot,
+} from "@matrix-os/contracts";
 import {
   buildKernelCredentialLaunch,
   KernelCredentialAccessSourceIdSchema,
@@ -59,16 +63,13 @@ export function createCodingHarnessCredentialResolver(options: {
     if (enabled.length !== 1) throw new Error(SAFE_ERROR);
     const harness = enabled[0]!;
     if (harness.authState !== "authenticated"
-      || harness.connectivity !== "online"
-      || harness.route.providerId !== "anthropic") {
+      || harness.connectivity !== "online") {
       throw new Error(SAFE_ERROR);
     }
+    const source = snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+    if (!isPortableGenericHarnessCredentialRoute(harness, source)) throw new Error(SAFE_ERROR);
     const parsedSource = KernelCredentialAccessSourceIdSchema.safeParse(harness.accessSourceId);
-    // Claude's OAuth profile is consumed by Claude Code/Agent SDK and is not a
-    // portable provider credential. Never pretend it can authenticate another CLI.
-    if (!parsedSource.success || parsedSource.data === "owner_anthropic_profile") {
-      throw new Error(SAFE_ERROR);
-    }
+    if (!parsedSource.success) throw new Error(SAFE_ERROR);
     const launch = await resolveCredentialLaunch(
       options.homePath,
       baseEnv,

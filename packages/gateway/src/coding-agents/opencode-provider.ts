@@ -25,8 +25,11 @@ const DEFAULT_KILL_GRACE_MS = 2_000;
 const PROBE_TIMEOUT_MS = 1_500;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS = 480;
+const MAX_SEEN_PARTS = 512;
+const MAX_RECORDS = 4_096;
 const MAX_TEXT_CHARS = 24_000;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
+const MAX_STDOUT_BUFFER_BYTES = 1024 * 1024;
 const MAX_PROMPT_BYTES = 128 * 1024;
 const OpenCodeResumeStateSchema = z.object({
   s: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/),
@@ -175,7 +178,7 @@ function collectLine(input: {
   nextEventId: () => string;
   events: AgentThreadEvent[];
   seenParts: Set<string>;
-}): { sessionId?: string; failed?: boolean } {
+}): { sessionId?: string; failed?: boolean; limitExceeded?: boolean } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(input.line);
@@ -195,10 +198,14 @@ function collectLine(input: {
   const part = record.part;
   if (!part || typeof part !== "object") return { sessionId };
   const value = part as Record<string, unknown>;
+  const supportedText = record.type === "text" && value.type === "text";
+  const supportedTool = record.type === "tool_use" && value.type === "tool";
+  if (!supportedText && !supportedTool) return { sessionId };
   const partId = safeId(value.id, `part_${input.scope}_${input.seenParts.size + 1}`);
   if (input.seenParts.has(partId)) return { sessionId };
+  if (input.seenParts.size >= MAX_SEEN_PARTS) return { sessionId, limitExceeded: true };
   input.seenParts.add(partId);
-  if (record.type === "text" && value.type === "text" && typeof value.text === "string" && value.text.trim()) {
+  if (supportedText && typeof value.text === "string" && value.text.trim()) {
     const messageId = `msg_${partId}`;
     const text = value.text.slice(0, MAX_TEXT_CHARS);
     input.events.push(
@@ -206,7 +213,7 @@ function collectLine(input: {
       AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "assistant.text.completed", messageId }),
     );
   }
-  if (record.type === "tool_use" && value.type === "tool") {
+  if (supportedTool) {
     const toolCallId = safeId(value.callID, `tool_${partId}`);
     const name = safeToolName(value.tool);
     const state = value.state && typeof value.state === "object" ? value.state as Record<string, unknown> : {};
@@ -282,6 +289,8 @@ export function createOpenCodeCodingAgentProvider(
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       let sessionId = input.sessionId;
       let stdout = "";
+      let stdoutBytes = 0;
+      let recordCount = 0;
       const events: AgentThreadEvent[] = [];
       const seenParts = new Set<string>();
       const stop = () => {
@@ -316,7 +325,7 @@ export function createOpenCodeCodingAgentProvider(
         input.signal?.removeEventListener("abort", stop);
         if (active.get(input.threadId) === stop) active.delete(input.threadId);
         const tail = stdout.trim();
-        if (tail) feed(tail);
+        if (tail && !aborted && !failed) feed(tail);
         resolve({
           events,
           outcome: timedOut || failed || code !== 0 ? "failed" : aborted ? "aborted" : "completed",
@@ -324,15 +333,32 @@ export function createOpenCodeCodingAgentProvider(
         });
       };
       const feed = (line: string) => {
+        recordCount += 1;
+        if (recordCount > MAX_RECORDS) {
+          failed = true;
+          stop();
+          return;
+        }
         const result = collectLine({ line, threadId: input.threadId, scope: input.scope, now: input.now, nextEventId: input.nextEventId, events, seenParts });
         sessionId = result.sessionId ?? sessionId;
         failed ||= result.failed === true;
+        if (result.limitExceeded) {
+          failed = true;
+          stop();
+        }
       };
       child.stdout.on("data", (chunk) => {
+        if (settled || aborted) return;
+        stdoutBytes += chunk.byteLength;
+        if (stdoutBytes > MAX_STDOUT_BYTES) { failed = true; stop(); stdout = ""; return; }
         stdout += chunk.toString("utf-8");
-        if (Buffer.byteLength(stdout, "utf-8") > MAX_STDOUT_BYTES) { failed = true; stop(); stdout = ""; return; }
+        if (Buffer.byteLength(stdout, "utf-8") > MAX_STDOUT_BUFFER_BYTES) { failed = true; stop(); stdout = ""; return; }
         let index = stdout.indexOf("\n");
-        while (index >= 0) { feed(stdout.slice(0, index).replace(/\r$/, "")); stdout = stdout.slice(index + 1); index = stdout.indexOf("\n"); }
+        while (index >= 0 && !aborted && !settled) {
+          feed(stdout.slice(0, index).replace(/\r$/, ""));
+          stdout = stdout.slice(index + 1);
+          index = stdout.indexOf("\n");
+        }
       });
       child.stderr.on("data", () => { /* bounded provider diagnostics stay out of client state */ });
       child.once("error", (error) => { logCodingAgentWarning("OpenCode process failed", error); failed = true; finish(-1); });
@@ -369,6 +395,7 @@ export function createOpenCodeCodingAgentProvider(
 
   return {
     providerId,
+    initialRunExecution: "background",
     async getSummary({ now }) {
       let installed = false;
       try { await runCommand(command, ["--version"], { cwd: options.homePath, timeout: PROBE_TIMEOUT_MS, env: buildPiChildEnvironment(options.env) }); installed = true; }
@@ -383,7 +410,7 @@ export function createOpenCodeCodingAgentProvider(
     },
     async healthCheck({ now, principal, signal }) { return { ok: (await this.getSummary!({ now, principal, signal })).installStatus === "installed" }; },
     buildSetupAction: setupActions,
-    async startThread({ thread, request, now, nextEventId }) {
+    async startThread({ thread, request, signal, now, nextEventId }) {
       if ((request.sandboxMode ?? "workspace_write") !== "read_only") {
         return { events: [failureEvent(thread.id, "sandbox_unavailable", "This agent can only run in read-only mode on this computer.", now, nextEventId), completedEvent(thread.id, "failed", now, nextEventId)] };
       }
@@ -391,7 +418,7 @@ export function createOpenCodeCodingAgentProvider(
       try { cwd = await cwdFor(request.projectId, request.worktreeId); } catch (error: unknown) { logCodingAgentWarning("OpenCode workspace resolution failed", error); }
       if (!cwd) return { events: terminalEvents(thread.id, "failed", now, nextEventId) };
       const prompt = promptWithReferences(request.prompt, request.attachments);
-      const run = await execute({ threadId: thread.id, scope: thread.id, prompt, cwd, model: request.model, now, nextEventId });
+      const run = await execute({ threadId: thread.id, scope: thread.id, prompt, cwd, model: request.model, signal, now, nextEventId });
       const resume = run.sessionId ? JSON.stringify(OpenCodeResumeStateSchema.parse({ s: run.sessionId, c: cwd })) : undefined;
       return { events: [statusEvent(thread.id, "running", now, nextEventId), ...run.events, ...terminalEvents(thread.id, run.outcome, now, nextEventId)], ...(resume ? { resumeState: { conversationId: resume } } : {}) };
     },

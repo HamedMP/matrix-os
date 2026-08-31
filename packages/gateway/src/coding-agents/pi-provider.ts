@@ -844,6 +844,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
   return {
     providerId,
+    initialRunExecution: "background",
 
     async getSummary({ now }) {
       const installed = await probeInstalled();
@@ -886,7 +887,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       ]);
     },
 
-    async startThread({ thread, request, now, nextEventId }) {
+    async startThread({ thread, request, signal, now, nextEventId }) {
       // Fail closed before resolving a workspace or spawning: Pi cannot enforce
       // workspace_write or full_access, so honouring them would mean running
       // with the gateway account's unrestricted filesystem access while the UI
@@ -934,6 +935,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         cwd,
         sessionId,
         model: request.model,
+        signal,
         now,
         nextEventId,
       });

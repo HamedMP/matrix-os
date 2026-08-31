@@ -519,3 +519,40 @@ export type ProviderSettingsSnapshot = z.infer<typeof ProviderSettingsSnapshotSc
 export type ProviderSettingsMutation = z.infer<typeof ProviderSettingsMutationSchema>;
 export type ProviderConnectionAttempt = z.infer<typeof ProviderConnectionAttemptSchema>;
 export type ProviderSettingsMutationResponse = z.infer<typeof ProviderSettingsMutationResponseSchema>;
+
+/**
+ * Returns whether a generic coding harness can receive the selected access
+ * source as explicit Anthropic-compatible process credentials.
+ *
+ * Claude subscription/OAuth profiles are intentionally excluded: those are
+ * valid for Claude Code, but they do not yield a portable API key that Pi or
+ * OpenCode can consume. Keeping this predicate in the public contract lets the
+ * gateway, canonical Chat catalog, and every Settings renderer share one truth.
+ */
+export function isPortableGenericHarnessCredentialRoute(
+  harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
+  source: Pick<
+    ProviderAccessSource,
+    "id" | "kind" | "fundingKind" | "providerId" | "accountId"
+  > | null | undefined,
+): boolean {
+  if ((harness.harness !== "pi" && harness.harness !== "opencode")
+    || harness.route.kind !== "configurable"
+    || harness.route.providerId !== "anthropic"
+    || harness.accessSourceId === null
+    || source === null
+    || source === undefined
+    || source.id !== harness.accessSourceId
+    || source.providerId !== "anthropic") {
+    return false;
+  }
+  if (source.kind === "matrix_gateway") {
+    return source.id === "matrix_included"
+      && source.accountId === null
+      && (source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
+  }
+  return source.kind === "provider_account"
+    && source.id === "owner_anthropic_key"
+    && source.accountId !== null
+    && source.fundingKind === "owner_api_key";
+}

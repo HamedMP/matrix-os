@@ -81,6 +81,57 @@ function workspaceSessionIdForThread(threadId: string): string {
 }
 
 describe("coding agent thread lifecycle", () => {
+  it("keeps a pending background initial run out of the global state queue and aborts it per thread", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-background-initial-run-"));
+    let started = false;
+    let signalAborted = false;
+    const pendingProvider: CodingAgentProviderAdapter = {
+      providerId: "pi",
+      initialRunExecution: "background",
+      startThread({ signal }) {
+        started = true;
+        return new Promise((resolve) => {
+          const finish = () => {
+            signalAborted = true;
+            resolve([]);
+          };
+          if (signal?.aborted) finish();
+          else signal?.addEventListener("abort", finish, { once: true });
+        });
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      providers: [pendingProvider, createFakeCodingAgentProvider({ providerId: "codex" })],
+      turnDispatchTimeoutMs: 1_000,
+    });
+
+    const created = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      providerId: "pi",
+      clientRequestId: "req_background_initial_1",
+    });
+    expect(started).toBe(true);
+    expect(created.snapshot.thread.status).toBe("queued");
+
+    await expect(threads.getThread(ownerPrincipal, created.snapshot.thread.id))
+      .resolves.toMatchObject({ thread: { status: "queued" } });
+    await expect(threads.createThread(ownerPrincipal, {
+      ...createBody,
+      clientRequestId: "req_background_parallel_2",
+    })).resolves.toMatchObject({ snapshot: { thread: { providerId: "codex", status: "running" } } });
+
+    await expect(threads.abortThread(
+      ownerPrincipal,
+      created.snapshot.thread.id,
+      "req_abort_background_initial_1",
+    )).resolves.toMatchObject({ thread: { status: "aborted" } });
+    expect(signalAborted).toBe(true);
+    await expect(threads.getThread(ownerPrincipal, created.snapshot.thread.id))
+      .resolves.toMatchObject({ thread: { status: "aborted" } });
+    await threads.shutdownTurns();
+  });
+
   it("reserves enough bounded event sinks for canonical Chat Runs", async () => {
     const { threads } = await createHarness();
     const subscriptions = Array.from({ length: 72 }, () => threads.registerEventSink(() => undefined));

@@ -48,6 +48,8 @@ export type CodingAgentProviderEventBatch = z.infer<typeof CodingAgentProviderEv
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
+  /** Long-running initial executions are dispatched after durable thread creation. */
+  initialRunExecution?: "background";
   getSummary?(input: {
     principal: RequestPrincipal;
     now: () => Date;
@@ -67,6 +69,7 @@ export interface CodingAgentProviderAdapter {
     principal: RequestPrincipal;
     thread: AgentThreadSummary;
     request: CreateAgentThreadRequest;
+    signal?: AbortSignal;
     now: () => Date;
     nextEventId: () => string;
   }): Promise<AgentThreadEvent[] | CodingAgentProviderRunResult> | AgentThreadEvent[] | CodingAgentProviderRunResult;

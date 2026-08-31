@@ -3,6 +3,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   AgentSettingsUpdateSchema,
+  isPortableGenericHarnessCredentialRoute,
   ProviderSettingsMutationSchema,
   type AiProviderSnapshotV3,
   type ProviderHarnessKind,
@@ -200,6 +201,7 @@ export function createProviderGenericHarnessCoordinator(options: {
   async function requireRuntimeSupport(
     harness: HarnessConfiguration & { harness: GenericHarness },
     canonical: AiProviderSnapshotV3,
+    settingsSnapshot?: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0]["snapshot"],
   ): Promise<void> {
     if (!canonicalDriverInstalled(harness.harness, canonical)) {
       throw new ProviderSettingsStoreError("runtime_unavailable", 503);
@@ -207,6 +209,10 @@ export function createProviderGenericHarnessCoordinator(options: {
     if (!systemHarness(harness.harness)) {
       if (!enabledCodingHarnesses.has(harness.harness)) {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      }
+      const source = settingsSnapshot?.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+      if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
+        throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       return;
     }
@@ -484,7 +490,7 @@ export function createProviderGenericHarnessCoordinator(options: {
         harness.enabled && systemHarness(harness.harness) && harness.id !== target.id,
       );
       const supportedFallback = requireGenericHarness(fallback);
-      await requireRuntimeSupport(supportedFallback, input.canonical);
+      await requireRuntimeSupport(supportedFallback, input.canonical, input.snapshot);
       return configuredRuntimeRoute(supportedFallback as typeof supportedFallback & {
         harness: "hermes" | "openclaw";
       });
@@ -572,7 +578,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     const localOnly = mutation.type === "remove_harness"
       || mutation.type === "update_harness"
       || (mutation.type === "set_harness_enabled" && mutation.enabled === false);
-    if (!localOnly) await requireRuntimeSupport(target, input.canonical);
+    if (!localOnly) await requireRuntimeSupport(target, input.canonical, input.snapshot);
 
     const afterRoute = await runtimeTarget(input, mutation, target);
     if (!afterRoute) {

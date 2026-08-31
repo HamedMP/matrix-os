@@ -3,6 +3,7 @@ import {
   CanonicalChatSafeErrorSchema,
   CanonicalProviderCatalogSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
+  isPortableGenericHarnessCredentialRoute,
   type AgentProviderDescriptor,
   type AgentProviderSummary,
   type AgentRuntimeDescriptor,
@@ -669,13 +670,11 @@ function applyHarnessSettings(input: {
       return { ...configuredInstance, unavailabilityReason: undefined };
     }
     const harness = enabledHarness!;
-    if ((generic === "pi" || generic === "opencode")
-      && harness.accessSourceId === "owner_anthropic_profile") {
-      // Claude's OAuth profile is not a portable provider credential for
-      // another CLI, even though it is valid for Claude Code/Agent SDK.
-      return unavailableInstance(configuredInstance, "runtime_not_runnable");
-    }
     if (generic === "pi" || generic === "opencode") {
+      const source = input.settings!.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+      if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
+        return unavailableInstance(configuredInstance, "runtime_not_runnable");
+      }
       return configuredCodingHarnessInstance({
         instance: { ...configuredInstance, availability: "available" },
         harness,

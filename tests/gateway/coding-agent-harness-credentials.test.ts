@@ -8,6 +8,7 @@ function snapshot(
   harness: "pi" | "opencode",
   accessSourceId: "matrix_included" | "owner_anthropic_key" | "owner_anthropic_profile",
 ): ProviderSettingsSnapshot {
+  const ownerSource = accessSourceId !== "matrix_included";
   return {
     contractVersion: 1,
     projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: "providers_test" },
@@ -16,7 +17,34 @@ function snapshot(
     access: { mode: "writable" },
     supportedActions: [],
     modelProviders: [],
-    accessSources: [],
+    accessSources: [{
+      id: accessSourceId,
+      kind: ownerSource ? "provider_account" : "matrix_gateway",
+      fundingKind: accessSourceId === "matrix_included"
+        ? "matrix_included"
+        : accessSourceId === "owner_anthropic_key"
+          ? "owner_api_key"
+          : "owner_subscription",
+      providerId: "anthropic",
+      accountId: ownerSource ? "owner_anthropic" : null,
+      displayName: ownerSource ? "Owner Anthropic" : "Matrix AI",
+      readiness: {
+        state: "ready",
+        checkedAt: "2026-08-31T00:00:00.000Z",
+        staleAfter: "2026-08-31T00:05:00.000Z",
+        action: "none",
+        safeReason: null,
+      },
+      eligibleModelIds: ["claude-sonnet-5"],
+      usage: {
+        kind: "unavailable",
+        authority: "unavailable",
+        state: "not_applicable",
+        scope: ownerSource ? "account" : "owner_entitlement",
+        reason: "provider_does_not_report",
+        asOf: null,
+      },
+    }],
     accounts: [],
     harnesses: [{
       id: `harness_${harness}`,
