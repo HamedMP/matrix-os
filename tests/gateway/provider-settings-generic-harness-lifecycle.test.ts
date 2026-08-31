@@ -998,9 +998,34 @@ describe("generic provider harness lifecycle coordinator", () => {
     }]);
   });
 
-  it("preserves a newer same-route write over compensation pending recovery", async () => {
+  it("preserves a newer same-route write when rollback has not started", async () => {
+    const { coordinator, update } = await makeCoordinator();
+    const input = systemRouteInput("claude-opus-5", "route_rollback_newer_same_route");
+
+    await coordinator.applyConfiguration(input);
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-opus-5",
+    });
+    await coordinator.rollbackConfiguration(input);
+
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      messagingModel: "claude-opus-5",
+    }));
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toEqual([]);
+    expect(coordinator.isRecoveryReady()).toBe(true);
+  });
+
+  it("does not let a same-route no-op cancel compensation pending recovery", async () => {
     const { coordinator, restart, update } = await makeCoordinator();
-    const input = systemRouteInput("claude-opus-5", "route_compensation_newer_same_route");
+    const input = systemRouteInput("claude-opus-5", "route_compensation_same_route_noop");
 
     await coordinator.applyConfiguration(input);
     update.mockRejectedValueOnce(new Error("compensation unavailable before newer write"));
@@ -1017,9 +1042,9 @@ describe("generic provider harness lifecycle coordinator", () => {
     const restarted = restart();
     await restarted.reconcilePending();
 
-    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).toHaveBeenCalledTimes(4);
     expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
-      messagingModel: "claude-opus-5",
+      messagingModel: "claude-sonnet-5",
     }));
     const receipts = JSON.parse(await readFile(
       join(homePath!, "system/ai-providers/runtime-receipts.json"),

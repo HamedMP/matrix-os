@@ -298,6 +298,24 @@ export function createProviderGenericHarnessCoordinator(options: {
     }
   }
 
+  async function retireReceiptAtCurrentState(
+    receipts: z.infer<typeof ReceiptDocumentSchema>,
+    receipt: RuntimeReceipt,
+    current: RuntimeState,
+  ): Promise<void> {
+    replaceReceipt(receipts, ReceiptSchema.parse({
+      ...receipt,
+      state: "applied",
+      beforeRoute: current.route,
+      afterRoute: current.route,
+      beforeRevision: current.revision,
+      afterRevision: current.revision,
+    }));
+    await writeReceipts(receipts);
+    receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
+    await writeReceipts(receipts);
+  }
+
   async function compensatePendingReceipt(
     receipts: z.infer<typeof ReceiptDocumentSchema>,
     receipt: RuntimeReceipt,
@@ -312,7 +330,8 @@ export function createProviderGenericHarnessCoordinator(options: {
       && current.revision !== receipt.afterRevision;
     if (sameRuntimeRoute(current.route, beforeRoute)) {
       // The compensation target is already active.
-    } else if (sameRuntimeRoute(current.route, afterRoute) && !displacedGeneration) {
+    } else if (sameRuntimeRoute(current.route, afterRoute)
+      && (!displacedGeneration || receipt.state === "compensation_pending")) {
       try {
         await applyRuntimeRoute(beforeRoute);
       } catch (error) {
@@ -331,12 +350,8 @@ export function createProviderGenericHarnessCoordinator(options: {
       // displaced by a newer runtime writer. Persist that exact live state
       // before clearing the stale receipt so a crash cannot later revive its
       // historical rollback target.
-      replaceReceipt(receipts, ReceiptSchema.parse({
-        ...receipt,
-        beforeRoute: current.route,
-        beforeRevision: current.revision,
-      }));
-      await writeReceipts(receipts);
+      await retireReceiptAtCurrentState(receipts, receipt, current);
+      return;
     }
     receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
     await writeReceipts(receipts);
@@ -560,6 +575,13 @@ export function createProviderGenericHarnessCoordinator(options: {
     if (!receipt.beforeRoute || !receipt.afterRoute) {
       receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
       await writeReceipts(receipts);
+      return;
+    }
+    const currentBeforeRollback = await currentRuntimeState();
+    if (receipt.afterRevision !== undefined
+      && currentBeforeRollback.revision !== receipt.afterRevision) {
+      recoveryBlocked = true;
+      await retireReceiptAtCurrentState(receipts, receipt, currentBeforeRollback);
       return;
     }
     receipt.state = "compensation_pending";
