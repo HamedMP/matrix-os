@@ -109,7 +109,10 @@ export function loadFundedAiRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): FundedAiRuntimeConfig | undefined {
   if (env.MATRIX_FUNDED_AI_ENABLED !== "true" && env.MATRIX_FUNDED_AI_ENABLED !== "1") return undefined;
-  const platform = parseServiceUrl(env.PLATFORM_INTERNAL_URL, true);
+  const platform = parseServiceUrl(
+    env.MATRIX_FUNDED_AI_PLATFORM_URL ?? env.PLATFORM_INTERNAL_URL,
+    true,
+  );
   const relay = parseServiceUrl(env.MATRIX_FUNDED_AI_RELAY_URL, false);
   const handle = parseConfigValue(HandleSchema, env.MATRIX_HANDLE);
   const runtimeAuthToken = parseConfigValue(AuthTokenSchema, env.MATRIX_FUNDED_AI_RUNTIME_TOKEN);
