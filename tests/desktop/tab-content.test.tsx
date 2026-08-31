@@ -61,11 +61,11 @@ describe("current desktop tab panes", () => {
   it("keeps terminal visibility separate from keyboard ownership", () => {
     const tab: Tab = { id: "terminal", kind: "terminals", title: "Terminal", closable: true };
     const view = render(<TabPane tab={tab} active visible />);
-    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: true, visible: true }, undefined);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: true, visible: true, visualScale: 1 }, undefined);
     view.rerender(<TabPane tab={tab} active={false} visible />);
-    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: true }, undefined);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: true, visualScale: 1 }, undefined);
     view.rerender(<TabPane tab={tab} active={false} visible={false} />);
-    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: false }, undefined);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: false, visualScale: 1 }, undefined);
   });
 
   it.each(["desktop", "canvas"] as const)("detaches native embeds under overlays in %s", (presentation) => {
