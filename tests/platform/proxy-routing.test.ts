@@ -5211,7 +5211,8 @@ describe("platform proxy routing", () => {
       expect(body).not.toContain("registration.unregister()");
       expect(body).toContain('p.startsWith("/api/")');
       expect(body).toContain('p.startsWith("/files/apps/")');
-      expect(body).toContain('p.startsWith("/_next/static/")');
+      expect(body).not.toContain('p.startsWith("/_next/static/")');
+      expect(body).not.toMatch(/woff2\?\|ttf\|css\|js/);
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
