@@ -231,6 +231,75 @@ describe("OpenCode coding-agent provider", () => {
     expect(JSON.stringify(result)).not.toContain("private cancellation detail");
   });
 
+  it("settles cancellation while credential resolution is blocked", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSpawn([]);
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const adapter = provider(fake.spawnFn, {
+      resolveCredentialLaunch: (signal) => {
+        receivedSignal = signal;
+        return new Promise(() => {});
+      },
+      runTimeoutMs: 10_000,
+    });
+    try {
+      const pending = adapter.startThread({
+        principal,
+        thread: thread(),
+        request: request(),
+        signal: controller.signal,
+        now: () => now,
+        nextEventId: ids(),
+      });
+      const settled = vi.fn();
+      void pending.then(settled);
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(receivedSignal).toBe(controller.signal);
+      expect(settled).toHaveBeenCalledWith(expect.objectContaining({
+        events: expect.arrayContaining([
+          expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+        ]),
+      }));
+      expect(fake.calls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("arms the run deadline before blocked credential resolution", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSpawn([]);
+    const adapter = provider(fake.spawnFn, {
+      resolveCredentialLaunch: async () => await new Promise(() => {}),
+      runTimeoutMs: 20,
+    });
+    try {
+      const pending = adapter.startThread({
+        principal,
+        thread: thread(),
+        request: request(),
+        now: () => now,
+        nextEventId: ids(),
+      });
+      const settled = vi.fn();
+      void pending.then(settled);
+      await vi.advanceTimersByTimeAsync(21);
+
+      expect(settled).toHaveBeenCalledWith(expect.objectContaining({
+        events: expect.arrayContaining([
+          expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
+        ]),
+      }));
+      expect(fake.calls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("bounds a hung child even when it ignores graceful termination", async () => {
     vi.useFakeTimers();
     const kills: NodeJS.Signals[] = [];
@@ -325,24 +394,11 @@ describe("OpenCode coding-agent provider", () => {
     }
   });
 
-  it("stops a child when credentials return after the run signal was already aborted", async () => {
+  it("does not spawn a child when credentials return after the run signal was already aborted", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
-    const kills: NodeJS.Signals[] = [];
-    const stdout = new EventEmitter();
-    const stderr = new EventEmitter();
-    const exit: Array<(code: number | null) => void> = [];
-    const adapter = provider(() => ({
-      stdout,
-      stderr,
-      once(event: "exit" | "error", listener: never) {
-        if (event === "exit") exit.push(listener);
-      },
-      kill(signal) {
-        kills.push(signal);
-        queueMicrotask(() => exit.forEach((listener) => listener(null)));
-      },
-    }), {
+    const spawnFn = vi.fn<OpenCodeSpawnFn>();
+    const adapter = provider(spawnFn, {
       resolveCredentialLaunch: async () => {
         controller.abort();
         return { env: { ANTHROPIC_API_KEY: "selected-key" } };
@@ -362,7 +418,7 @@ describe("OpenCode coding-agent provider", () => {
       });
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(kills).toEqual(["SIGTERM"]);
+      expect(spawnFn).not.toHaveBeenCalled();
       await expect(pending).resolves.toMatchObject({
         events: expect.arrayContaining([
           expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
