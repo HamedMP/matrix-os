@@ -52,9 +52,33 @@ function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClie
   } as CanonicalChatClient;
 }
 
+const MAX_TEST_EVENT_LISTENERS = 16;
+
+function boundedTestListeners<T>() {
+  const listeners: T[] = [];
+  return {
+    add(listener: T) {
+      if (listeners.length >= MAX_TEST_EVENT_LISTENERS) {
+        throw new Error("Test event listener limit reached");
+      }
+      listeners.push(listener);
+    },
+    delete(listener: T) {
+      const index = listeners.indexOf(listener);
+      if (index >= 0) listeners.splice(index, 1);
+    },
+    notify(deliver: (listener: T) => void) {
+      for (const listener of [...listeners]) deliver(listener);
+    },
+    get size() {
+      return listeners.length;
+    },
+  };
+}
+
 function eventHarness(initialConnectionState: ReturnType<CanonicalChatEventSource["connectionState"]> = "open") {
-  const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
-  const connectionStateListeners = new Set<() => void>();
+  const listeners = boundedTestListeners<(event: CanonicalChatInvalidation) => void>();
+  const connectionStateListeners = boundedTestListeners<() => void>();
   let connectionState = initialConnectionState;
   const eventSource: Pick<
     CanonicalChatEventSource,
@@ -75,10 +99,10 @@ function eventHarness(initialConnectionState: ReturnType<CanonicalChatEventSourc
     listeners,
     setConnectionState(next: ReturnType<CanonicalChatEventSource["connectionState"]>) {
       connectionState = next;
-      for (const listener of connectionStateListeners) listener();
+      connectionStateListeners.notify((listener) => listener());
     },
     emit(event: CanonicalChatInvalidation) {
-      for (const listener of listeners) listener(event);
+      listeners.notify((listener) => listener(event));
     },
   };
 }
@@ -92,6 +116,22 @@ function chatChanged(
 }
 
 describe("canonical Chat route controller", () => {
+  it("bounds simulated stream listeners like the production event source", () => {
+    const events = eventHarness();
+    const subscriptions = Array.from(
+      { length: MAX_TEST_EVENT_LISTENERS },
+      () => events.eventSource.subscribeConnectionState(() => undefined),
+    );
+
+    expect(() => events.eventSource.subscribeConnectionState(() => undefined))
+      .toThrow("Test event listener limit reached");
+
+    subscriptions[0]?.dispose();
+    const replacement = events.eventSource.subscribeConnectionState(() => undefined);
+    for (const subscription of subscriptions) subscription.dispose();
+    replacement.dispose();
+  });
+
   it("refreshes only the selected Chat from the shared event source and acknowledges its exact completion", async () => {
     const events = eventHarness();
     const runningA = {
