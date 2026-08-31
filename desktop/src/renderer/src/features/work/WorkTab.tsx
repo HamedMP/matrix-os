@@ -29,6 +29,7 @@ import ProjectsIndex from "../project/ProjectsIndex";
 import { WorkRail } from "./WorkRail";
 import { WorkFilesInspector } from "./WorkFilesInspector";
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { openWorkProject } from "./work-navigation";
@@ -624,8 +625,8 @@ export default function WorkTab({
         onClick={inspectorVisible ? closeInspector : openInspector}
       >
         {inspectorVisible
-          ? <PanelRightCloseIcon size={11.2} strokeWidth={1.7} aria-hidden />
-          : <PanelRightOpen size={11.2} strokeWidth={1.7} aria-hidden />}
+          ? <PanelRightCloseIcon size={15} aria-hidden />
+          : <PanelRightOpen size={15} aria-hidden />}
       </PaneButton>
     ) : undefined,
   }), [chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
@@ -790,12 +791,10 @@ function PaneButton({
       aria-pressed={expanded}
       title={label}
       className={compact
-        ? "no-drag flex size-4 shrink-0 items-center justify-center rounded-[4.8px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+        ? OS_WINDOW_PANE_TRIGGER_CLASS_NAME
         : "flex size-7 shrink-0 items-center justify-center rounded-md border outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"}
-      style={compact ? {
-        background: "var(--surface-primary, #FFFEFC)",
-        border: "0.8px solid var(--border-default, #F3F2F2)",
-      } : { borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+      style={compact ? { color: "var(--text-secondary)" } : { borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+      onPointerDown={compact ? (event) => event.stopPropagation() : undefined}
       onClick={onClick}
     >
       {children}

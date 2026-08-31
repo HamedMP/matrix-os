@@ -654,9 +654,13 @@ describe("WorkTab rail integration", () => {
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     const hideInspector = screen.getByRole("button", { name: "Hide inspector" });
     expect(within(chromeTitle.closest("header")!).queryByRole("button", { name: /Chat navigation/ })).toBeNull();
-    expect(hideInspector.className).toContain("size-4");
-    expect(hideInspector.className).toContain("rounded-[4.8px]");
-    expect(hideInspector.querySelector("svg")?.getAttribute("width")).toBe("11.2");
+    expect(hideInspector.className).toContain("size-7");
+    expect(hideInspector.className).toContain("rounded-md");
+    expect(hideInspector.className).toContain("pointer-events-auto");
+    expect(hideInspector.className).toContain("hover:bg-[var(--bg-hover)]");
+    expect(hideInspector.style.color).toBe("var(--text-secondary)");
+    expect(hideInspector.style.border).toBe("");
+    expect(hideInspector.querySelector("svg")?.getAttribute("width")).toBe("15");
     expect(screen.queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     expect(hideInspector).toBeTruthy();
 

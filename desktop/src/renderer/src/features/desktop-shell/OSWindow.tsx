@@ -13,6 +13,7 @@ import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 export const OS_WINDOW_GESTURE_HEIGHT = 48;
 export const OS_WINDOW_SIDEBAR_MIN_WIDTH = 200;
 export const OS_WINDOW_SIDEBAR_WIDTH = 280;
+export const OS_WINDOW_PANE_TRIGGER_CLASS_NAME = "no-drag pointer-events-auto flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
 export type OSWindowChromePlacement = "full-width" | "sidebar";
 export type OSWindowSafeArea = "pane" | "sidebar";
 
@@ -51,7 +52,7 @@ export function OSWindowSidebarTrigger({
       aria-expanded={sidebar.sidebarShown}
       data-os-window-sidebar-trigger=""
       title={label}
-      className={`no-drag pointer-events-auto flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${className ?? ""}`}
+      className={`${OS_WINDOW_PANE_TRIGGER_CLASS_NAME} ${className ?? ""}`}
       style={{ color: "var(--text-secondary)", ...style }}
       onPointerDown={(event) => {
         event.stopPropagation();
@@ -202,6 +203,11 @@ export function TopBar({
               </div>
             </div>
           ) : null}
+          {rightActions ? (
+            <div className="pointer-events-auto absolute inset-y-0 right-0 z-40 flex items-center px-1">
+              {rightActions}
+            </div>
+          ) : null}
           <div
             data-os-window-chrome-placement={chromePlacement}
             data-testid="os-window-chrome-grid"
@@ -230,16 +236,11 @@ export function TopBar({
                   <span className="truncate">{title}</span>
                 </div>
               ) : null}
-              {alignedRightWidth === 0 ? (
-                <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1">{rightActions}</div>
-              ) : null}
             </div>
             <div
-              className={alignedRightWidth > 0 ? "flex min-w-0 items-center justify-start border-l px-3" : "min-w-0"}
+              className={alignedRightWidth > 0 ? "min-w-0 border-l" : "min-w-0"}
               style={{ borderColor: "var(--border-subtle)" }}
-            >
-              {alignedRightWidth > 0 ? <div className="pointer-events-auto flex items-center gap-1">{rightActions}</div> : null}
-            </div>
+            />
           </div>
         </>
       ) : (

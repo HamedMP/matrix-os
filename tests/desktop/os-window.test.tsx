@@ -144,7 +144,7 @@ describe("Electron OS window chrome", () => {
     expect(title.parentElement?.className).toContain("text-[15px]");
   });
 
-  it("mirrors open pane toggles at their inner edges and closed toggles at the window edges", () => {
+  it("keeps the inspector toggle anchored while the inspector opens and closes", () => {
     const { rerender } = render(
       <TopBar
         leftActions={<button type="button">Toggle navigation</button>}
@@ -157,8 +157,10 @@ describe("Electron OS window chrome", () => {
 
     const openNavigation = screen.getByRole("button", { name: "Toggle navigation" });
     const openInspector = screen.getByRole("button", { name: "Toggle inspector" });
+    const inspectorSlot = openInspector.parentElement;
     expect(openNavigation.parentElement?.className).toContain("ml-auto");
-    expect(openInspector.parentElement?.parentElement?.className).toContain("justify-start");
+    expect(inspectorSlot?.className).toContain("absolute");
+    expect(inspectorSlot?.className).toContain("right-0");
 
     rerender(
       <TopBar
@@ -173,7 +175,8 @@ describe("Electron OS window chrome", () => {
     const closedNavigation = screen.getByRole("button", { name: "Toggle navigation" });
     const closedInspector = screen.getByRole("button", { name: "Toggle inspector" });
     expect(closedNavigation.parentElement?.className).not.toContain("ml-auto");
-    expect(closedInspector.parentElement?.className).toContain("ml-auto");
+    expect(closedInspector).toBe(openInspector);
+    expect(closedInspector.parentElement).toBe(inspectorSlot);
   });
 
   it("keeps the gesture layer full width for full-width window chrome", () => {

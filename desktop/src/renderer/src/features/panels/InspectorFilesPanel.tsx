@@ -137,16 +137,16 @@ function ExpandableFileTree({
               ? `${expanded ? "Collapse" : "Expand"} folder ${entry.path}`
               : `Open file ${entry.path}`}
             {...(entry.kind === "directory" ? { "aria-expanded": expanded } : {})}
-            className="flex w-full items-center gap-2 truncate py-2 pr-3 text-left text-xs outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-            style={{ paddingLeft: 12 + depth * 16, color: "var(--text-primary)" }}
+            className="flex w-full items-center gap-2.5 truncate rounded-md px-2.5 py-1.5 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+            style={{ paddingLeft: 10 + depth * 20, color: "var(--text-primary)" }}
             onClick={() => entry.kind === "directory" ? toggleDirectory(entry.path) : onOpenFile(entry.path)}
           >
             {entry.kind === "directory" ? (
               <>
-                {expanded ? <ChevronDown size={13} aria-hidden className="shrink-0" /> : <ChevronRight size={13} aria-hidden className="shrink-0" />}
-                <Folder size={16} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
+                {expanded ? <ChevronDown size={15} aria-hidden className="shrink-0" /> : <ChevronRight size={15} aria-hidden className="shrink-0" />}
+                <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
               </>
-            ) : <FileTypeIcon filename={entry.path.split("/").at(-1) ?? entry.path} />}
+            ) : <FileTypeIcon filename={entry.path.split("/").at(-1) ?? entry.path} size={15} />}
             <span className="truncate">{entry.path.split("/").at(-1)}</span>
           </button>
           {expanded ? renderDirectory(entry.path, depth + 1) : null}
@@ -261,15 +261,17 @@ function HomeFilesPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        className="shrink-0 border-b px-3 py-2"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-      >
-        <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{scopeLabel}</p>
-        <p className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-          Browse this computer&apos;s files. This view is not limited to the selected project.
-        </p>
-      </div>
+      {!browserOnly ? (
+        <div
+          className="shrink-0 border-b px-3 py-2"
+          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+        >
+          <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{scopeLabel}</p>
+          <p className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+            Browse this computer&apos;s files. This view is not limited to the selected project.
+          </p>
+        </div>
+      ) : null}
       {browserOnly ? (
         <ExpandableFileTree loadDirectory={loadDirectory} onOpenFile={handleOpenFile} />
       ) : (
@@ -344,12 +346,6 @@ function ProjectFilesTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-        <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
-          {scope.label}{scope.worktreeId ? " worktree" : ""}
-        </p>
-        <p className="truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>Project root</p>
-      </div>
       <ExpandableFileTree loadDirectory={loadDirectory} onOpenFile={openFile} />
     </div>
   );
