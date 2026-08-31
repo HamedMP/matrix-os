@@ -46,7 +46,7 @@ function snapshot(): ProviderSettingsSnapshot {
     ],
     accessSources: [
       {
-        id: "source_matrix",
+        id: "matrix_included",
         kind: "matrix_gateway",
         fundingKind: "matrix_included",
         providerId: "anthropic",
@@ -88,7 +88,7 @@ function snapshot(): ProviderSettingsSnapshot {
         },
       },
       {
-        id: "source_personal",
+        id: "owner_anthropic_profile",
         kind: "provider_account",
         fundingKind: "owner_subscription",
         providerId: "anthropic",
@@ -113,7 +113,7 @@ function snapshot(): ProviderSettingsSnapshot {
         },
       },
       {
-        id: "source_work",
+        id: "owner_anthropic_key",
         kind: "provider_account",
         fundingKind: "owner_api_key",
         providerId: "anthropic",
@@ -141,7 +141,7 @@ function snapshot(): ProviderSettingsSnapshot {
         },
       },
       {
-        id: "source_openai",
+        id: "owner_openai_profile",
         kind: "provider_account",
         fundingKind: "owner_subscription",
         providerId: "openai",
@@ -174,7 +174,7 @@ function snapshot(): ProviderSettingsSnapshot {
         authMethod: "terminal",
         authState: "authenticated",
         lastCheckedAt: now,
-        accessSourceId: "source_personal",
+        accessSourceId: "owner_anthropic_profile",
         dependencies: { activeChatCount: 2, resumableChatCount: 1, harnessInstanceCount: 1 },
       },
       {
@@ -184,7 +184,7 @@ function snapshot(): ProviderSettingsSnapshot {
         authMethod: "api_key",
         authState: "unauthenticated",
         lastCheckedAt: now,
-        accessSourceId: "source_work",
+        accessSourceId: "owner_anthropic_key",
         dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 },
       },
       {
@@ -194,7 +194,7 @@ function snapshot(): ProviderSettingsSnapshot {
         authMethod: "oauth",
         authState: "authenticated",
         lastCheckedAt: now,
-        accessSourceId: "source_openai",
+        accessSourceId: "owner_openai_profile",
         dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 },
       },
     ],
@@ -213,7 +213,7 @@ function snapshot(): ProviderSettingsSnapshot {
         connectivity: "online",
         accountIds: ["account_personal", "account_work"],
         selectedAccountId: "account_personal",
-        accessSourceId: "source_personal",
+        accessSourceId: "owner_anthropic_profile",
         route: { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
         activeChatCount: 2,
       },
@@ -231,13 +231,13 @@ function snapshot(): ProviderSettingsSnapshot {
         connectivity: "online",
         accountIds: ["account_personal"],
         selectedAccountId: null,
-        accessSourceId: "source_matrix",
+        accessSourceId: "matrix_included",
         route: { kind: "fixed", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
         activeChatCount: 0,
       },
     ],
     gatewayPolicy: {
-      accessSourceId: "source_matrix",
+      accessSourceId: "matrix_included",
       monthlyBudgetMicrousd: 1_000_000,
       allowedModelIds: ["anthropic/claude-opus-5"],
       topUpEnabled: true,
@@ -308,7 +308,7 @@ describe("AgentsProvidersView", () => {
       type: "set_route",
       harnessInstanceId: "harness_hermes",
       route: { kind: "configurable", providerId: "openai", modelId: "openai/gpt-5.6" },
-      accessSourceId: "source_openai",
+      accessSourceId: "owner_openai_profile",
       accountId: "account_openai",
     });
     expect(onMutate).toHaveBeenCalledWith({ type: "set_harness_enabled", harnessInstanceId: "harness_hermes", enabled: false });
@@ -318,18 +318,18 @@ describe("AgentsProvidersView", () => {
     const next = snapshot();
     const harness = next.harnesses[0]!;
     harness.route = { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-sonnet-5" };
-    harness.accessSourceId = "source_matrix";
+    harness.accessSourceId = "matrix_included";
     harness.selectedAccountId = null;
     next.gatewayPolicy!.allowedModelIds = ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"];
     const { onMutate } = setup({ snapshot: next });
 
-    fireEvent.change(screen.getByLabelText("Access source"), { target: { value: "source_personal" } });
+    fireEvent.change(screen.getByLabelText("Access source"), { target: { value: "owner_anthropic_profile" } });
     fireEvent.change(screen.getByLabelText("Account"), { target: { value: "account_work" } });
     fireEvent.change(screen.getByLabelText("Account"), { target: { value: "" } });
 
-    expect(onMutate).toHaveBeenCalledWith({ type: "select_access_source", harnessInstanceId: "harness_hermes", accessSourceId: "source_personal" });
+    expect(onMutate).toHaveBeenCalledWith({ type: "select_access_source", harnessInstanceId: "harness_hermes", accessSourceId: "owner_anthropic_profile" });
     expect(onMutate).toHaveBeenCalledWith({ type: "select_account", harnessInstanceId: "harness_hermes", accountId: "account_work" });
-    expect(onMutate).toHaveBeenCalledWith({ type: "select_access_source", harnessInstanceId: "harness_hermes", accessSourceId: "source_matrix" });
+    expect(onMutate).toHaveBeenCalledWith({ type: "select_access_source", harnessInstanceId: "harness_hermes", accessSourceId: "matrix_included" });
     expect(onMutate).not.toHaveBeenCalledWith(expect.objectContaining({ type: "select_account", accountId: "" }));
   });
 
@@ -405,7 +405,7 @@ describe("AgentsProvidersView", () => {
     expect(within(sources).getByRole("option", {
       name: "Work Anthropic key · authentication required",
     })).toBeVisible();
-    fireEvent.change(sources, { target: { value: "source_work" } });
+    fireEvent.change(sources, { target: { value: "owner_anthropic_key" } });
     expect(within(dialog).getByText(/continue authentication from Accounts in a visible Terminal, browser, or secure credential prompt/)).toBeVisible();
   });
 
@@ -464,13 +464,13 @@ describe("AgentsProvidersView", () => {
     expect(dialog).toHaveTextContent("2 active chats");
     expect(dialog).toHaveTextContent("1 resumable chat");
     expect(within(dialog).queryByRole("button", { name: "Remove account" })).toBeNull();
-    fireEvent.change(within(dialog).getByLabelText("Reassign to"), { target: { value: "source:source_matrix" } });
+    fireEvent.change(within(dialog).getByLabelText("Reassign to"), { target: { value: "source:matrix_included" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Reassign dependencies" }));
 
     expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({
       type: "reassign_account",
       fromAccountId: "account_personal",
-      target: { kind: "access_source", accessSourceId: "source_matrix" },
+      target: { kind: "access_source", accessSourceId: "matrix_included" },
       scope: "all_dependencies",
     }));
   });
@@ -535,7 +535,7 @@ describe("AgentsProvidersView", () => {
 
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(onAddCredit).toHaveBeenCalledWith(
-      "source_matrix",
+      "matrix_included",
       "usd_10",
       expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
     );
@@ -576,7 +576,7 @@ describe("AgentsProvidersView", () => {
       connectivity: "offline",
       accountIds: [],
       selectedAccountId: null,
-      accessSourceId: "source_matrix",
+      accessSourceId: "matrix_included",
       activeChatCount: 0,
     });
     const { rerender } = setup({ snapshot: base, selectedHarnessId: "harness_pi" });
@@ -639,6 +639,28 @@ describe("AgentsProvidersView", () => {
     expect(within(dialog).queryByLabelText(/API key/i)).toBeNull();
   });
 
+  it("offers direct adapters only routes backed by portable credentials", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "OpenCode" }));
+
+    expect(within(within(dialog).getByLabelText("Model provider"))
+      .queryByRole("option", { name: "OpenAI" })).toBeNull();
+    expect(within(within(dialog).getByLabelText("Access source"))
+      .getByRole("option", { name: "Matrix AI included credit" })).toBeVisible();
+    expect(within(within(dialog).getByLabelText("Access source"))
+      .queryByRole("option", { name: "Personal Anthropic subscription" })).toBeNull();
+
+    fireEvent.change(within(dialog).getByLabelText("Model"), {
+      target: { value: "anthropic/claude-sonnet-5" },
+    });
+    expect(within(within(dialog).getByLabelText("Access source"))
+      .getByRole("option", { name: "Work Anthropic key · authentication required" })).toBeVisible();
+    expect(within(within(dialog).getByLabelText("Access source"))
+      .queryByRole("option", { name: "Personal Anthropic subscription" })).toBeNull();
+  });
+
   it("adds a second instance of an existing harness with its own route and account", () => {
     const { onMutate } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
@@ -657,7 +679,7 @@ describe("AgentsProvidersView", () => {
       harness: "hermes",
       displayName: "Hermes OpenAI",
       route: { kind: "configurable", providerId: "openai", modelId: "openai/gpt-5.6" },
-      accessSourceId: "source_openai",
+      accessSourceId: "owner_openai_profile",
       accountId: "account_openai",
     });
   });
