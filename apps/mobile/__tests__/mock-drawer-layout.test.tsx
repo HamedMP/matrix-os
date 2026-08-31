@@ -1,5 +1,6 @@
 const registeredScreens: Array<{ name: string; options?: Record<string, unknown> }> = [];
 let drawerScreenOptions: Record<string, unknown> | undefined;
+let drawerScreenListeners: Record<string, () => void> | undefined;
 let mockActiveComputerQueryOptions: Record<string, unknown> | undefined;
 let mockConversationsQueryOptions: Record<string, unknown> | undefined;
 
@@ -52,13 +53,15 @@ jest.mock("@/lib/storage", () => ({
 
 jest.mock("expo-router/drawer", () => {
   const React = require("react");
-  function Drawer({ children, screenOptions }: {
+  function Drawer({ children, screenOptions, screenListeners }: {
     children: React.ReactNode;
     screenOptions?: Record<string, unknown> | ((props: Record<string, unknown>) => Record<string, unknown>);
+    screenListeners?: Record<string, () => void>;
   }) {
     drawerScreenOptions = typeof screenOptions === "function"
       ? screenOptions({ navigation: { toggleDrawer: jest.fn() } })
       : screenOptions;
+    drawerScreenListeners = screenListeners;
     return React.createElement(React.Fragment, null, children);
   }
   Drawer.Screen = ({ name, options }: { name: string; options?: Record<string, unknown> }) => {
@@ -75,6 +78,7 @@ jest.mock("expo-router/drawer", () => {
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet } from "react-native";
+import * as Haptics from "expo-haptics";
 import DrawerLayout from "../app/(drawer)/_layout";
 import { MockDrawerContent } from "../components/mock-shell/MockDrawerContent";
 
@@ -82,11 +86,23 @@ describe("authenticated drawer layout", () => {
   beforeEach(() => {
     registeredScreens.length = 0;
     drawerScreenOptions = undefined;
+    drawerScreenListeners = undefined;
     mockActiveComputerQueryOptions = undefined;
     mockConversationsQueryOptions = undefined;
     mockGetToken.mockClear();
     mockFetchActiveComputer.mockClear();
     mockFetchConversations.mockClear();
+    jest.clearAllMocks();
+  });
+
+  it("plays a medium haptic when the drawer opens and closes", () => {
+    render(<DrawerLayout />);
+
+    drawerScreenListeners?.drawerOpen?.();
+    expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Medium);
+
+    drawerScreenListeners?.drawerClose?.();
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
   });
 
   it("uses chat as home, loads the active computer, and exposes the mock shell routes", async () => {
@@ -101,7 +117,8 @@ describe("authenticated drawer layout", () => {
       "apps",
       "settings",
     ]);
-    expect(drawerScreenOptions?.drawerStyle).toMatchObject({ width: "84%" });
+    expect(registeredScreens.find((screen) => screen.name === "index")?.options?.title).toBeNull();
+    expect(drawerScreenOptions?.drawerStyle).toMatchObject({ width: "80%" });
     expect(mockActiveComputerQueryOptions).toMatchObject({
       enabled: true,
       queryKey: ["mobile", "computers", "active", "user_123"],

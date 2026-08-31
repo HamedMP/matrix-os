@@ -2,6 +2,7 @@ import Menu01Icon from "@hugeicons/core-free-icons/Menu01Icon";
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
 import { Pressable, StyleSheet } from "react-native";
+import * as Haptics from "expo-haptics";
 import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
 
 import { Icon } from "@/components/ui";
@@ -10,6 +11,17 @@ import { mockColors } from "@/components/mock-shell/theme";
 import { fetchActiveComputer, fetchConversations, mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { semanticColors } from "@/lib/theme";
+
+function triggerDrawerHaptic() {
+  void Promise.resolve(
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium),
+  ).catch((error: unknown) => {
+    console.warn(
+      "[mobile] drawer haptic unavailable",
+      error instanceof Error ? error.name : "unknown",
+    );
+  });
+}
 
 export default function DrawerLayout() {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth();
@@ -48,6 +60,10 @@ export default function DrawerLayout() {
 
   return (
     <Drawer
+      screenListeners={{
+        drawerOpen: triggerDrawerHaptic,
+        drawerClose: triggerDrawerHaptic,
+      }}
       drawerContent={(props: DrawerContentComponentProps) => (
         <MockDrawerContent
           {...props}
@@ -59,7 +75,7 @@ export default function DrawerLayout() {
       screenOptions={({ navigation }: { navigation: DrawerContentComponentProps["navigation"] }) => ({
         drawerPosition: "left",
         drawerType: "slide",
-        drawerStyle: { width: "84%", backgroundColor: mockColors.canvas },
+        drawerStyle: { width: "80%", backgroundColor: mockColors.canvas },
         overlayColor: "rgba(18, 20, 19, 0.24)",
         swipeEnabled: true,
         swipeEdgeWidth: 800,
@@ -86,7 +102,7 @@ export default function DrawerLayout() {
         sceneStyle: { backgroundColor: mockColors.canvas },
       })}
     >
-      <Drawer.Screen name="index" options={{ title: "Matrix OS", drawerLabel: "Home" }} />
+      <Drawer.Screen name="index" options={{ title: null, drawerLabel: "Home" }} />
       <Drawer.Screen name="search" options={{ title: null, drawerLabel: "Search" }} />
       <Drawer.Screen name="files" options={{ title: null, drawerLabel: "Files" }} />
       <Drawer.Screen name="terminal" options={{ title: null, drawerLabel: "Terminal" }} />

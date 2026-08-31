@@ -1,17 +1,25 @@
 import { useState } from "react";
+import { useUser } from "@clerk/clerk-expo";
 import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
 import ArrowUp01Icon from "@hugeicons/core-free-icons/ArrowUp01Icon";
-import SparklesIcon from "@hugeicons/core-free-icons/SparklesIcon";
+import { Image } from "expo-image";
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Icon, IconButton } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
+const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
+
 export default function MockHomeScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useUser();
   const [message, setMessage] = useState("");
   const [sentMessage, setSentMessage] = useState<string | null>(null);
+  const firstName = user?.firstName
+    ?? user?.fullName?.trim().split(/\s+/)[0]
+    ?? user?.username
+    ?? "there";
 
   function send() {
     const next = message.trim();
@@ -34,18 +42,28 @@ export default function MockHomeScreen() {
             </View>
             <View style={styles.matrixBubble}>
               <View style={styles.spark}>
-                <Icon icon={SparklesIcon} size={16} color={mockColors.blue} />
+                <Image
+                  source={rabbitArtwork}
+                  style={styles.responseRabbit}
+                  contentFit="contain"
+                  accessibilityLabel="Matrix OS"
+                />
               </View>
               <Text style={styles.matrixText}>This is a mock response from your Matrix computer.</Text>
             </View>
           </View>
         ) : (
           <View style={styles.emptyState}>
-            <View style={styles.orb}>
-              <Icon icon={SparklesIcon} size={26} color={mockColors.blue} />
+            <View style={styles.orb} testID="home-rabbit-container">
+              <Image
+                source={rabbitArtwork}
+                style={styles.rabbit}
+                contentFit="contain"
+                accessibilityLabel="Matrix OS"
+                testID="home-rabbit-mark"
+              />
             </View>
-            <Text style={styles.title}>What should we do?</Text>
-            <Text style={styles.subtitle}>Ask Matrix, open the drawer, or continue something recent.</Text>
+            <Text style={styles.title}>Welcome back {firstName}</Text>
           </View>
         )}
       </View>
@@ -97,30 +115,21 @@ const styles = StyleSheet.create({
     paddingBottom: 42,
   },
   orb: {
-    width: 58,
-    height: 58,
+    width: 68,
+    height: 68,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#B9D9FF",
-    backgroundColor: mockColors.blueSoft,
     marginBottom: 20,
+  },
+  rabbit: {
+    width: 68,
+    height: 68,
   },
   title: {
     fontFamily: mockFonts.display,
     fontSize: 28,
     letterSpacing: -0.7,
     color: mockColors.ink,
-  },
-  subtitle: {
-    maxWidth: 290,
-    marginTop: 8,
-    fontFamily: mockFonts.body,
-    fontSize: 14,
-    lineHeight: 21,
-    textAlign: "center",
-    color: mockColors.muted,
   },
   conversation: {
     gap: 18,
@@ -153,6 +162,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 10,
     backgroundColor: mockColors.blueSoft,
+  },
+  responseRabbit: {
+    width: 14,
+    height: 19,
   },
   matrixText: {
     flex: 1,
