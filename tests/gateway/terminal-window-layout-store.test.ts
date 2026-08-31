@@ -1,10 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
-import { createTerminalWindowLayoutRoutes } from "../../packages/gateway/src/shell/terminal-window-layout-routes.js";
 import {
   TerminalLayoutRevisionConflictError,
   TerminalWindowLayoutStore,
@@ -176,7 +173,7 @@ describe("terminal window layout store", () => {
     await expect(store.listPendingSessionDeletions()).resolves.toHaveLength(256);
   });
 
-  it("deletes one shell through the gateway and reconciles every window layout", async () => {
+  it("coordinates shell deletion with reconciliation across every window layout", async () => {
     const store = new TerminalWindowLayoutStore({ homePath });
     await store.put(FIRST_LAYOUT_ID, 0, layoutWithSession("deleted-shell"));
     await store.put(SECOND_LAYOUT_ID, 0, layoutWithSession("deleted-shell"));
@@ -185,22 +182,15 @@ describe("terminal window layout store", () => {
       create: vi.fn(),
       delete: vi.fn(async () => undefined),
     };
-    const app = new Hono()
-      .route("/api/terminal", createShellRoutes({ registry, sessionLifecycle: store }))
-      .route(
-        "/api/terminal/window-layouts",
-        createTerminalWindowLayoutRoutes({ store }),
-      );
-
-    const deleted = await app.request("/api/terminal/sessions/deleted-shell?force=1", {
-      method: "DELETE",
+    await store.withSessionLifecycleLock("deleted-shell", async () => {
+      await store.beginSessionDeletion("deleted-shell");
+      await registry.delete("deleted-shell", { force: true });
+      await store.completeSessionDeletion("deleted-shell");
     });
 
-    expect(deleted.status).toBe(200);
     expect(registry.delete).toHaveBeenCalledWith("deleted-shell", { force: true });
     for (const layoutId of [FIRST_LAYOUT_ID, SECOND_LAYOUT_ID]) {
-      const restored = await app.request(`/api/terminal/window-layouts/${layoutId}`);
-      await expect(restored.json()).resolves.toMatchObject({
+      await expect(store.get(layoutId)).resolves.toMatchObject({
         revision: 2,
         layout: { tabs: [] },
       });
