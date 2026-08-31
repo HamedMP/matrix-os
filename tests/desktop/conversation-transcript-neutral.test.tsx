@@ -63,6 +63,8 @@ describe("provider-neutral conversation transcript", () => {
     const receiptRow = receipt.closest('[data-slot="message-scroller-item"]') as HTMLElement;
     expect(receiptMarker.className).toContain("pb-1");
     expect(receiptMarker.className).not.toContain("pb-2");
+    expect(receiptMarker.className).toContain("border-[var(--border-xsoft)]");
+    expect(receiptMarker.className).not.toContain("border-[var(--border-subtle)]");
     expect(receiptRow.className).toContain("-mb-1");
     expect(screen.getByText("Inspect the workspace")).toBeTruthy();
     const assistantText = screen.getByText("The workspace is clean.");
