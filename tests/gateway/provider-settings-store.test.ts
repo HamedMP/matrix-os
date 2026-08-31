@@ -6,6 +6,7 @@ import {
   AiProviderSnapshotV3Schema,
   ProviderSettingsSnapshotSchema,
   type AiProviderSnapshotV3,
+  type FundedAiEffectivePolicy,
   type FundedAiFundingSummary,
   type ProviderDependencyCounts,
 } from "@matrix-os/contracts";
@@ -123,7 +124,7 @@ describe("ProviderSettingsStore", () => {
     withLogin?: boolean;
     withRuntime?: boolean;
     snapshot?: () => AiProviderSnapshotV3;
-    fundingSummary?: FundedAiFundingSummary | Error;
+    fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
   } = {}) {
     let nextId = 0;
     return new ProviderSettingsStore({
@@ -285,7 +286,16 @@ describe("ProviderSettingsStore", () => {
       remainingBalanceMicrousd: 2_750_000,
       remainingBudgetMicrousd: 3_750_000,
     };
-    const store = createStore({ fundingSummary });
+    const policy: FundedAiEffectivePolicy = {
+      enabled: true,
+      globalRevision: 4,
+      runtimeRevision: 2,
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+      monthlyBudgetMicrousd: fundingSummary.monthlyBudgetMicrousd,
+      checkedAt: NOW.toISOString(),
+      staleAfter: "2026-08-30T10:01:00.000Z",
+    };
+    const store = createStore({ fundingSummary: { funding: fundingSummary, policy } });
     const snapshot = await store.getSnapshot();
     expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.usage).toEqual({
       kind: "managed_credit",
@@ -315,6 +325,7 @@ describe("ProviderSettingsStore", () => {
     });
     expect(snapshot.gatewayPolicy).toMatchObject({
       monthlyBudgetMicrousd: 5_000_000,
+      allowedModelIds: ["claude-sonnet-5"],
       topUpEnabled: false,
     });
     expect(snapshot.supportedActions).not.toContain("add_credit");
@@ -334,7 +345,10 @@ describe("ProviderSettingsStore", () => {
     })).rejects.toMatchObject({ code: "runtime_unavailable" });
 
     const stale = await createStore({
-      fundingSummary: { ...fundingSummary, asOf: "2026-08-30T09:50:00.000Z" },
+      fundingSummary: {
+        funding: { ...fundingSummary, asOf: "2026-08-30T09:50:00.000Z" },
+        policy,
+      },
     }).getSnapshot();
     expect(stale.accessSources.find((source) => source.id === "matrix_included")?.usage)
       .toMatchObject({ kind: "managed_credit", state: "stale" });
@@ -348,6 +362,11 @@ describe("ProviderSettingsStore", () => {
       authority: "unavailable",
       reason: "ledger_not_available",
     });
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
+      .toEqual([]);
+    expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual([]);
+    expect(snapshot.harnesses.some((harness) => harness.accessSourceId === "matrix_included"))
+      .toBe(false);
   });
 
   it("is read-only and rejects cosmetic mutations without a runtime coordinator", async () => {

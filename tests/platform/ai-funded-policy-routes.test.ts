@@ -380,6 +380,20 @@ describe("funded AI policy routes", () => {
 
   it("returns the exact identity-free Postgres funding summary for the authenticated runtime", async () => {
     const { app } = await createTestApp();
+    for (const authorization of [
+      undefined,
+      "Bearer wrong-runtime-token",
+      `Bearer ${bearerFor("bob")}`,
+      `Bearer ${bearerFor("alice", "machine_predecessor")}`,
+    ]) {
+      const denied = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+        method: "POST",
+        headers: authorization ? { authorization, "content-type": "application/json" } : undefined,
+        body: "{}",
+      });
+      expect(denied.status).toBe(401);
+      await expect(denied.json()).resolves.toMatchObject({ error: { code: "unauthorized" } });
+    }
     const response = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
@@ -395,6 +409,11 @@ describe("funded AI policy routes", () => {
       creditBalanceMicrousd: 1_500,
       remainingBalanceMicrousd: 1_500,
       remainingBudgetMicrousd: 1_000,
+    });
+    expect(summary.policy).toMatchObject({
+      enabled: true,
+      allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000,
     });
     expect(JSON.stringify(summary)).not.toMatch(/user_alice|machine_123|primary|credential|token/i);
     expect((await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
@@ -442,19 +461,19 @@ describe("funded AI policy routes", () => {
     });
     expect(oversized.status).toBe(413);
 
-    const summarySpoof = await app.request("/internal/containers/alice/ai/funding-summary?ownerId=user_bob", {
+    const summarySpoof = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary&ownerId=user_bob", {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: "{}",
     });
     expect(summarySpoof.status).toBe(400);
-    const summaryBodySpoof = await app.request("/internal/containers/alice/ai/funding-summary", {
+    const summaryBodySpoof = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: JSON.stringify({ machineId: "machine_other" }),
     });
     expect(summaryBodySpoof.status).toBe(400);
-    const summaryOversized = await app.request("/internal/containers/alice/ai/funding-summary", {
+    const summaryOversized = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
       body: JSON.stringify({ padding: "x".repeat(2_000) }),

@@ -1,6 +1,6 @@
 import {
   FundedAiRuntimeFundingSummaryResponseSchema,
-  type FundedAiFundingSummary,
+  type FundedAiRuntimeFundingSummaryResponse,
 } from "@matrix-os/contracts";
 import type { FundedAiRuntimeConfig } from "./funded-ai-credential-manager.js";
 
@@ -8,7 +8,9 @@ const MAX_RESPONSE_BYTES = 16 * 1024;
 const SAFE_MESSAGE = "Matrix AI usage is temporarily unavailable";
 
 export interface FundedAiFundingSummaryReader {
-  getFundingSummary(options?: { signal?: AbortSignal }): Promise<FundedAiFundingSummary>;
+  getFundingSummary(options?: { signal?: AbortSignal }): Promise<
+    Pick<FundedAiRuntimeFundingSummaryResponse, "funding" | "policy">
+  >;
 }
 
 export class FundedAiFundingSummaryClientError extends Error {
@@ -108,7 +110,7 @@ export function createFundedAiFundingSummaryClient(
           await readBoundedJson(response),
         );
         if (!parsed.success) throw new FundedAiFundingSummaryClientError();
-        return parsed.data.funding;
+        return { funding: parsed.data.funding, policy: parsed.data.policy };
       } catch (error) {
         if (error instanceof FundedAiFundingSummaryClientError) throw error;
         console.warn(

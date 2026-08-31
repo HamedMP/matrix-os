@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
+  FundedAiEffectivePolicySchema,
   FundedAiFundingSummarySchema,
   ProviderConnectionAttemptSchema,
   ProviderDependencyCountsSchema,
@@ -160,12 +161,13 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration) {
     try {
       let fundingSummary;
+      let fundedPolicy;
       if (this.#fundingSummary && canonical.accessSources.some((source) =>
         source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon")) {
         try {
-          fundingSummary = FundedAiFundingSummarySchema.parse(
-            await this.#fundingSummary.getFundingSummary(),
-          );
+          const state = await this.#fundingSummary.getFundingSummary();
+          fundingSummary = FundedAiFundingSummarySchema.parse(state.funding);
+          fundedPolicy = FundedAiEffectivePolicySchema.parse(state.policy);
         } catch (error) {
           console.warn(
             "[provider-settings] Matrix funding summary unavailable:",
@@ -180,6 +182,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         dependencies: this.#dependencies,
         supportedActions: this.#supportedActions(config, canonical),
         fundingSummary,
+        fundedPolicy,
+        fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
         loginMethods: (harness) => coordinatorLoginMethods({
           login: this.#login,
           harness,

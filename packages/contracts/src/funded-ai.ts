@@ -168,7 +168,15 @@ export const FundedAiFundingSummarySchema = z.object({
 export const FundedAiRuntimeFundingSummaryResponseSchema = z.object({
   contractVersion: z.literal(1),
   funding: FundedAiFundingSummarySchema,
-}).strict();
+  policy: FundedAiEffectivePolicySchema,
+}).strict().superRefine((value, ctx) => {
+  if (value.funding.monthlyBudgetMicrousd !== value.policy.monthlyBudgetMicrousd) {
+    ctx.addIssue({ code: "custom", path: ["policy", "monthlyBudgetMicrousd"], message: "Policy and funding budgets must match" });
+  }
+  if (value.funding.asOf !== value.policy.checkedAt) {
+    ctx.addIssue({ code: "custom", path: ["policy", "checkedAt"], message: "Policy and funding timestamps must match" });
+  }
+});
 
 export const FundedAiAuthorizationResponseSchema = z.object({
   contractVersion: z.literal(1),

@@ -21,6 +21,15 @@ const funding = {
   remainingBalanceMicrousd: 2_750_000,
   remainingBudgetMicrousd: 3_750_000,
 } as const;
+const policy = {
+  enabled: true,
+  globalRevision: 4,
+  runtimeRevision: 2,
+  allowedModelIds: ["anthropic/claude-sonnet-5"],
+  monthlyBudgetMicrousd: funding.monthlyBudgetMicrousd,
+  checkedAt: NOW,
+  staleAfter: "2026-08-30T10:01:00.000Z",
+} as const;
 
 function runtimeConfig() {
   return loadFundedAiRuntimeConfig({
@@ -38,7 +47,7 @@ function runtimeConfig() {
 
 describe("funded AI funding summary client", () => {
   it("requests the exact authenticated runtime summary with a bounded deadline", async () => {
-    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ contractVersion: 1, funding }), {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ contractVersion: 1, funding, policy }), {
       status: 200,
       headers: { "content-type": "application/json" },
     }));
@@ -47,7 +56,7 @@ describe("funded AI funding summary client", () => {
       "https://platform.matrix-os.com/internal/containers/alice/ai/funding-summary?runtimeSlot=primary",
     );
     const client = createFundedAiFundingSummaryClient(config, { fetchFn });
-    await expect(client.getFundingSummary()).resolves.toEqual(funding);
+    await expect(client.getFundingSummary()).resolves.toEqual({ funding, policy });
     expect(fetchFn).toHaveBeenCalledWith(config.fundingSummaryUrl, expect.objectContaining({
       method: "POST",
       redirect: "error",

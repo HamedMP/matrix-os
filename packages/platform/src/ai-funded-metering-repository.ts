@@ -22,6 +22,13 @@ import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
+import {
+  debitAttributedPromotionalGrants,
+  debitPromotionalGrants,
+  reconcileExpiredPromotionalCredit,
+  reservationDebitSplit,
+  reserveFundingSources,
+} from "./ai-funded-reservation-sources.js";
 
 const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A-Za-z0-9_-]{43})$/;
 const ReferenceSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
@@ -136,163 +143,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   const hashCredential = (credential: string) => createHmac("sha256", options.credentialHashSecret)
     .update(credential).digest("hex");
 
-  async function reconcileExpiredPromotionalCredit(
-    executor: PlatformDB["executor"],
-    identity: z.output<typeof IdentitySchema>,
-    checkedAt: string,
-  ): Promise<BalanceSnapshot> {
-    const balance = await executor.selectFrom("ai_funded_runtime_balances").selectAll()
-      .where("machine_id", "=", identity.machineId)
-      .where("owner_id", "=", identity.ownerId)
-      .where("runtime_slot", "=", identity.runtimeSlot)
-      .forUpdate().executeTakeFirst();
-    if (!balance) throw new AiFundedPolicyError("access_disabled");
-
-    const expiredGrants = await executor.selectFrom("ai_funded_promotional_grant_balances")
-      .selectAll()
-      .where("machine_id", "=", identity.machineId)
-      .where("owner_id", "=", identity.ownerId)
-      .where("runtime_slot", "=", identity.runtimeSlot)
-      .where("remaining_microusd", ">", 0)
-      .where("expires_at", "is not", null)
-      .where("expires_at", "<=", checkedAt)
-      .orderBy("expires_at").orderBy("created_at").orderBy("grant_entry_id")
-      .limit(MAX_PROMOTIONAL_GRANTS_PER_RUNTIME + 1)
-      .forUpdate().execute();
-    if (expiredGrants.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
-      throw new AiFundedPolicyError("access_disabled");
-    }
-
-    let reservationProtection = exactInteger(balance.reserved_microusd);
-    let totalRetired = 0;
-    for (const grant of expiredGrants) {
-      const remaining = exactInteger(grant.remaining_microusd);
-      const protectedMicrousd = Math.min(remaining, reservationProtection);
-      reservationProtection -= protectedMicrousd;
-      const retiredMicrousd = remaining - protectedMicrousd;
-      if (retiredMicrousd === 0) continue;
-
-      const nextRevision = grant.revision + 1;
-      const updated = await executor.updateTable("ai_funded_promotional_grant_balances").set({
-        remaining_microusd: remaining - retiredMicrousd,
-        updated_at: checkedAt,
-        revision: nextRevision,
-      }).where("grant_entry_id", "=", grant.grant_entry_id)
-        .where("owner_id", "=", identity.ownerId)
-        .where("machine_id", "=", identity.machineId)
-        .where("runtime_slot", "=", identity.runtimeSlot)
-        .where("revision", "=", grant.revision)
-        .returning("grant_entry_id").executeTakeFirst();
-      if (!updated) {
-        const latest = await executor.selectFrom("ai_funded_promotional_grant_balances")
-          .select(["remaining_microusd", "revision"])
-          .where("grant_entry_id", "=", grant.grant_entry_id)
-          .where("owner_id", "=", identity.ownerId)
-          .where("machine_id", "=", identity.machineId)
-          .where("runtime_slot", "=", identity.runtimeSlot).executeTakeFirst();
-        if (latest && latest.revision > grant.revision
-          && exactInteger(latest.remaining_microusd) <= remaining - retiredMicrousd) {
-          continue;
-        }
-        throw new Error("Funded AI promotional grant revision invariant violated");
-      }
-
-      const auditId = createHash("sha256")
-        .update(`${grant.grant_entry_id}:${nextRevision}`)
-        .digest("hex");
-      const auditEntry = {
-        entry_id: `promotion-expiry:${auditId}`,
-        owner_id: identity.ownerId,
-        machine_id: identity.machineId,
-        runtime_slot: identity.runtimeSlot,
-        kind: "promotional_expiry",
-        amount_microusd: -retiredMicrousd,
-        source_reference: grant.grant_entry_id,
-        reservation_id: null,
-        period_start: null,
-        expires_at: null,
-        created_at: checkedAt,
-      };
-      const insertedAudit = await executor.insertInto("ai_funded_credit_ledger").values(auditEntry)
-        .onConflict((conflict) => conflict.column("entry_id").doNothing())
-        .returning("entry_id").executeTakeFirst();
-      if (!insertedAudit) {
-        const storedAudit = await executor.selectFrom("ai_funded_credit_ledger")
-          .selectAll().where("entry_id", "=", auditEntry.entry_id).executeTakeFirst();
-        if (!storedAudit || storedAudit.owner_id !== auditEntry.owner_id
-          || storedAudit.machine_id !== auditEntry.machine_id
-          || storedAudit.runtime_slot !== auditEntry.runtime_slot
-          || storedAudit.kind !== auditEntry.kind
-          || exactInteger(storedAudit.amount_microusd) !== auditEntry.amount_microusd
-          || storedAudit.source_reference !== auditEntry.source_reference
-          || storedAudit.reservation_id !== null || storedAudit.period_start !== null) {
-          throw new Error("Funded AI promotional expiry audit invariant violated");
-        }
-      }
-      totalRetired += retiredMicrousd;
-    }
-
-    if (totalRetired > 0) {
-      const updatedBalance = await executor.updateTable("ai_funded_runtime_balances").set({
-        credit_balance_microusd: sql<number>`credit_balance_microusd - ${totalRetired}`,
-        promotional_balance_microusd: sql<number>`promotional_balance_microusd - ${totalRetired}`,
-        updated_at: checkedAt,
-      }).where("machine_id", "=", identity.machineId)
-        .where("owner_id", "=", identity.ownerId)
-        .where("runtime_slot", "=", identity.runtimeSlot)
-        .where(sql<boolean>`credit_balance_microusd >= ${totalRetired}`)
-        .where(sql<boolean>`promotional_balance_microusd >= ${totalRetired}`)
-        .returningAll().executeTakeFirst();
-      if (!updatedBalance) throw new Error("Funded AI promotional balance invariant violated");
-    }
-    return executor.selectFrom("ai_funded_runtime_balances").selectAll()
-      .where("machine_id", "=", identity.machineId)
-      .where("owner_id", "=", identity.ownerId)
-      .where("runtime_slot", "=", identity.runtimeSlot)
-      .executeTakeFirstOrThrow();
-  }
-
-  async function debitPromotionalGrants(
-    executor: PlatformDB["executor"],
-    identity: z.output<typeof IdentitySchema>,
-    amountMicrousd: number,
-    checkedAt: string,
-  ): Promise<void> {
-    if (amountMicrousd === 0) return;
-    const grants = await executor.selectFrom("ai_funded_promotional_grant_balances")
-      .selectAll()
-      .where("machine_id", "=", identity.machineId)
-      .where("owner_id", "=", identity.ownerId)
-      .where("runtime_slot", "=", identity.runtimeSlot)
-      .where("remaining_microusd", ">", 0)
-      .orderBy(sql<number>`CASE WHEN expires_at IS NOT NULL AND expires_at <= ${checkedAt} THEN 0 ELSE 1 END`)
-      .orderBy("expires_at").orderBy("created_at").orderBy("grant_entry_id")
-      .limit(MAX_PROMOTIONAL_GRANTS_PER_RUNTIME + 1)
-      .forUpdate().execute();
-    if (grants.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
-      throw new Error("Funded AI promotional grant limit invariant violated");
-    }
-    let remainingDebit = amountMicrousd;
-    for (const grant of grants) {
-      if (remainingDebit === 0) break;
-      const remaining = exactInteger(grant.remaining_microusd);
-      const debit = Math.min(remaining, remainingDebit);
-      const updated = await executor.updateTable("ai_funded_promotional_grant_balances").set({
-        remaining_microusd: remaining - debit,
-        updated_at: checkedAt,
-        revision: grant.revision + 1,
-      }).where("grant_entry_id", "=", grant.grant_entry_id)
-        .where("revision", "=", grant.revision)
-        .returning("grant_entry_id").executeTakeFirst();
-      if (!updated) throw new Error("Funded AI promotional grant revision invariant violated");
-      remainingDebit -= debit;
-    }
-    if (remainingDebit !== 0) throw new Error("Funded AI promotional grant balance invariant violated");
-  }
-
-  async function getFundingSummary(
+  async function getRuntimeFundingSummary(
     identityInput: z.input<typeof IdentitySchema>,
-  ): Promise<FundedAiFundingSummary> {
+  ) {
     const identity = IdentitySchema.parse(identityInput);
     const checked = options.now();
     const checkedAt = checked.toISOString();
@@ -303,8 +156,13 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
-        .select(["owner_id", "runtime_slot", "monthly_budget_microusd"])
+        .select([
+          "owner_id", "runtime_slot", "enabled", "allowed_model_ids", "monthly_budget_microusd",
+          "expires_at", "revision",
+        ])
         .where("machine_id", "=", identity.machineId).executeTakeFirst();
+      const global = await trx.executor.selectFrom("ai_funded_global_policy")
+        .selectAll().where("policy_id", "=", "default").executeTakeFirstOrThrow();
       if (!machine || !runtime || machine.clerk_user_id !== identity.ownerId
         || machine.runtime_slot !== identity.runtimeSlot || machine.status !== "running"
         || machine.activation_state !== "authorized" || machine.deleted_at !== null
@@ -320,8 +178,31 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("owner_id", "=", identity.ownerId)
         .where("runtime_slot", "=", identity.runtimeSlot).execute();
       const balance = await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
-      return fundingSummary(balance, exactInteger(runtime.monthly_budget_microusd), checkedAt);
+      const monthlyBudgetMicrousd = exactInteger(runtime.monthly_budget_microusd);
+      const enabled = global.enabled && runtime.enabled
+        && (runtime.expires_at === null || Date.parse(runtime.expires_at) > checked.getTime());
+      const allowedModelIds = enabled
+        ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
+        : [];
+      return {
+        funding: fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
+        policy: {
+          enabled: enabled && allowedModelIds.length > 0,
+          globalRevision: global.revision,
+          runtimeRevision: runtime.revision,
+          allowedModelIds: enabled ? allowedModelIds : [],
+          monthlyBudgetMicrousd,
+          checkedAt,
+          staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
+        },
+      };
     });
+  }
+
+  async function getFundingSummary(
+    identityInput: z.input<typeof IdentitySchema>,
+  ): Promise<FundedAiFundingSummary> {
+    return (await getRuntimeFundingSummary(identityInput)).funding;
   }
 
   async function grantCredit(input: z.input<typeof GrantSchema>) {
@@ -493,6 +374,13 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const remainingBalance = exactInteger(reserved.credit_balance_microusd) - exactInteger(reserved.reserved_microusd);
       const remainingBudget = monthlyBudget - exactInteger(reserved.month_spent_microusd)
         - exactInteger(reserved.month_reserved_microusd);
+      const fundingSources = await reserveFundingSources(
+        trx.executor,
+        identity,
+        request.maxCostMicrousd,
+        reserved,
+        checkedAt,
+      );
 
       const reservationId = ReferenceSchema.parse(reservationIdFactory());
       const expiresAt = new Date(checked.getTime() + options.reservationTtlMs).toISOString();
@@ -545,6 +433,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         },
         model_id: request.modelId,
         reserved_microusd: request.maxCostMicrousd,
+        promotional_reserved_microusd: fundingSources.promotionalReservedMicrousd,
+        addon_reserved_microusd: fundingSources.addonReservedMicrousd,
         actual_microusd: null,
         period_start: periodStart,
         status: "reserved",
@@ -554,6 +444,16 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         settled_at: null,
         released_at: null,
       }).execute();
+      if (fundingSources.grantAllocations.length > 0) {
+        await trx.executor.insertInto("ai_funded_reservation_promotional_allocations").values(
+          fundingSources.grantAllocations.map((allocation) => ({
+            reservation_id: reservationId,
+            grant_entry_id: allocation.grantEntryId,
+            amount_microusd: allocation.amountMicrousd,
+            created_at: checkedAt,
+          })),
+        ).execute();
+      }
       return response;
     });
   }
@@ -675,16 +575,25 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
         updated_at: checkedAt,
       }).where("machine_id", "=", locator.machine_id).returningAll().executeTakeFirstOrThrow();
-      const promotionalDebit = Math.min(
+      const { promotionalDebit, addonDebit, attributed } = reservationDebitSplit(
+        reservation,
         request.actualCostMicrousd,
         exactInteger(currentBalance.promotional_balance_microusd),
       );
-      const addonDebit = request.actualCostMicrousd - promotionalDebit;
-      await debitPromotionalGrants(trx.executor, {
-        ownerId: reservation.owner_id,
-        machineId: reservation.machine_id,
-        runtimeSlot: reservation.runtime_slot,
-      }, promotionalDebit, checkedAt);
+      if (attributed) {
+        await debitAttributedPromotionalGrants(
+          trx.executor,
+          reservation.reservation_id,
+          promotionalDebit,
+          checkedAt,
+        );
+      } else {
+        await debitPromotionalGrants(trx.executor, {
+          ownerId: reservation.owner_id,
+          machineId: reservation.machine_id,
+          runtimeSlot: reservation.runtime_slot,
+        }, promotionalDebit, checkedAt);
+      }
       if (promotionalDebit > 0) {
         await trx.executor.insertInto("ai_funded_credit_ledger").values({
           entry_id: `usage:${reservation.reservation_id}:promotional`,
@@ -858,7 +767,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const expired = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .select([
           "reservation_id", "request_id", "token_id", "owner_id", "machine_id", "runtime_slot",
-          "period_start", "reserved_microusd", "status",
+          "period_start", "reserved_microusd", "promotional_reserved_microusd",
+          "addon_reserved_microusd", "status",
         ])
         .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
         .orderBy("expires_at").orderBy("reservation_id").limit(limit).forUpdate().skipLocked().execute();
@@ -878,13 +788,25 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           updated_at: checkedAt,
         }).where("machine_id", "=", reservation.machine_id).returningAll().executeTakeFirstOrThrow();
         if (reservation.status === "in_flight") {
-          const promotionalDebit = Math.min(reserved, exactInteger(currentBalance.promotional_balance_microusd));
-          const addonDebit = reserved - promotionalDebit;
-          await debitPromotionalGrants(trx.executor, {
-            ownerId: reservation.owner_id,
-            machineId: reservation.machine_id,
-            runtimeSlot: reservation.runtime_slot,
-          }, promotionalDebit, checkedAt);
+          const { promotionalDebit, addonDebit, attributed } = reservationDebitSplit(
+            reservation,
+            reserved,
+            exactInteger(currentBalance.promotional_balance_microusd),
+          );
+          if (attributed) {
+            await debitAttributedPromotionalGrants(
+              trx.executor,
+              reservation.reservation_id,
+              promotionalDebit,
+              checkedAt,
+            );
+          } else {
+            await debitPromotionalGrants(trx.executor, {
+              ownerId: reservation.owner_id,
+              machineId: reservation.machine_id,
+              runtimeSlot: reservation.runtime_slot,
+            }, promotionalDebit, checkedAt);
+          }
           const debitRows = [
             promotionalDebit > 0 ? {
               entry_id: `usage:${reservation.reservation_id}:promotional`,
@@ -977,6 +899,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
 
   return {
     getFundingSummary,
+    getRuntimeFundingSummary,
     authorize,
     startReservation,
     settleReservation,
