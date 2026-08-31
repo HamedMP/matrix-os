@@ -4,18 +4,21 @@ import type {
   CanonicalChatRecord,
   CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   CanonicalChatClient,
-  CanonicalChatEventSource,
+  CanonicalChatEventConsumer,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
-const ACTIVE_RUN_POLL_MS = 200;
-const ACTIVE_RUN_MAX_RETRY_MS = 2_000;
+const INITIAL_DETAIL_RETRY_MS = 200;
+const INITIAL_DETAIL_MAX_RETRY_MS = 2_000;
+const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
+const ACTIVE_RUN_FALLBACK_MAX_RETRY_MS = 10_000;
+const STREAM_MESSAGE_REFRESH_COALESCE_MS = 200;
 
 function detailWithRecord(
   detail: CanonicalChatDetailResponse,
@@ -57,7 +60,7 @@ export function useCanonicalChatRouteController({
   active: boolean;
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
-  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
+  eventSource?: CanonicalChatEventConsumer;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -74,6 +77,19 @@ export function useCanonicalChatRouteController({
     chatId: string;
     runId: string;
   } | null>(null);
+  const subscribeConnectionState = useCallback((notify: () => void) => {
+    const subscription = eventSource?.subscribeConnectionState?.(notify);
+    return () => subscription?.dispose();
+  }, [eventSource]);
+  const getConnectionState = useCallback(
+    () => eventSource?.connectionState?.() ?? "idle",
+    [eventSource],
+  );
+  const eventStreamState = useSyncExternalStore(
+    subscribeConnectionState,
+    getConnectionState,
+    getConnectionState,
+  );
 
   const loadDetail = useCallback(async (chatId: string) => {
     const sequence = ++detailRequestSequence.current;
@@ -154,6 +170,7 @@ export function useCanonicalChatRouteController({
     let detailRefreshPending = false;
     let listRefreshInFlight = false;
     let listRefreshPending = false;
+    let detailRefreshTimer: number | undefined;
     const refreshSelectedDetail = async () => {
       if (detailRefreshInFlight) {
         detailRefreshPending = true;
@@ -179,18 +196,38 @@ export function useCanonicalChatRouteController({
       } while (current && listRefreshPending);
       listRefreshInFlight = false;
     };
-    const subscription = eventSource.subscribe((event) => {
-      if (event.type === "chat.full_refresh") {
-        void refreshList();
+    const scheduleSelectedDetailRefresh = (delay = 0) => {
+      if (delay === 0) {
+        if (detailRefreshTimer !== undefined) {
+          window.clearTimeout(detailRefreshTimer);
+          detailRefreshTimer = undefined;
+        }
         void refreshSelectedDetail();
         return;
       }
-      if (event.chatId === activeChatIdRef.current) void refreshSelectedDetail();
+      if (detailRefreshTimer !== undefined) return;
+      detailRefreshTimer = window.setTimeout(() => {
+        detailRefreshTimer = undefined;
+        void refreshSelectedDetail();
+      }, delay);
+    };
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.full_refresh") {
+        void refreshList();
+        scheduleSelectedDetailRefresh();
+        return;
+      }
+      if (event.chatId === activeChatIdRef.current) {
+        scheduleSelectedDetailRefresh(
+          event.eventType === "run.message" ? STREAM_MESSAGE_REFRESH_COALESCE_MS : 0,
+        );
+      }
     });
     return () => {
       current = false;
       detailRefreshPending = false;
       listRefreshPending = false;
+      if (detailRefreshTimer !== undefined) window.clearTimeout(detailRefreshTimer);
       subscription.dispose();
     };
   }, [active, eventSource, load, loadDetail]);
@@ -207,8 +244,8 @@ export function useCanonicalChatRouteController({
       timeout = window.setTimeout(
         () => void loadInitialDetail(),
         Math.min(
-          ACTIVE_RUN_POLL_MS * (2 ** consecutiveFailures),
-          ACTIVE_RUN_MAX_RETRY_MS,
+          INITIAL_DETAIL_RETRY_MS * (2 ** consecutiveFailures),
+          INITIAL_DETAIL_MAX_RETRY_MS,
         ),
       );
     };
@@ -270,19 +307,19 @@ export function useCanonicalChatRouteController({
   ]);
 
   useEffect(() => {
-    if (!active || !activeChatId || !detail?.record.activeRun) return;
+    if (!active || !activeChatId || !detail?.record.activeRun || eventStreamState === "open") return;
     let cancelled = false;
     let timeout: number | undefined;
     let consecutiveFailures = 0;
-    const poll = (delay = ACTIVE_RUN_POLL_MS) => {
+    const poll = (delay = ACTIVE_RUN_FALLBACK_POLL_MS) => {
       timeout = window.setTimeout(async () => {
         const loaded = await loadDetail(activeChatId);
         if (cancelled) return;
         if (!loaded) {
           consecutiveFailures += 1;
           poll(Math.min(
-            ACTIVE_RUN_POLL_MS * (2 ** consecutiveFailures),
-            ACTIVE_RUN_MAX_RETRY_MS,
+            ACTIVE_RUN_FALLBACK_POLL_MS * (2 ** consecutiveFailures),
+            ACTIVE_RUN_FALLBACK_MAX_RETRY_MS,
           ));
           return;
         }
@@ -295,7 +332,7 @@ export function useCanonicalChatRouteController({
       cancelled = true;
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
-  }, [active, activeChatId, Boolean(detail?.record.activeRun), loadDetail]);
+  }, [active, activeChatId, Boolean(detail?.record.activeRun), eventStreamState, loadDetail]);
 
   const selectChat = useCallback((chatId: string | null) => {
     detailRequestSequence.current += 1;

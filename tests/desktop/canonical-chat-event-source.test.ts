@@ -17,6 +17,7 @@ class FakeSocket implements DesktopCanonicalChatWebSocket {
   send(data: string) { this.sent.push(data); }
   close() { this.closed = true; this.readyState = 3; }
   emit(frame: unknown) { this.onmessage?.({ data: JSON.stringify(frame) }); }
+  emitOpen() { this.readyState = 1; this.onopen?.(); }
   emitClose() { this.readyState = 3; this.onclose?.(); }
 }
 
@@ -58,6 +59,40 @@ async function start(input: ReturnType<typeof harness>) {
 describe("shared Desktop canonical Chat event source", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("publishes healthy state only after server attachment and falls back on stream errors", async () => {
+    const input = harness();
+    const states: string[] = [];
+    input.source.subscribeConnectionState(() => states.push(input.source.connectionState()));
+
+    expect(input.source.connectionState()).toBe("idle");
+    const ws = await start(input);
+    expect(input.source.connectionState()).toBe("connecting");
+
+    ws.emitOpen();
+    expect(input.source.connectionState()).toBe("connecting");
+
+    ws.emit({ type: "chat.stream.attached" });
+    expect(input.source.connectionState()).toBe("open");
+
+    ws.emit({
+      type: "chat.stream.error",
+      error: {
+        code: "stream_unavailable",
+        safeMessage: "Chat stream is temporarily unavailable. Try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    expect(input.source.connectionState()).toBe("reconnecting");
+
+    ws.emitClose();
+    expect(input.source.connectionState()).toBe("reconnecting");
+
+    input.source.dispose();
+    expect(input.source.connectionState()).toBe("disposed");
+    expect(states).toEqual(["connecting", "open", "reconnecting", "disposed"]);
+  });
+
   it("shares one authenticated owner stream across rail and selected-Chat consumers", async () => {
     const fetchWebSocketToken = vi.fn(async () => "signed-ws-token");
     const input = harness({ fetchWebSocketToken });
@@ -72,9 +107,39 @@ describe("shared Desktop canonical Chat event source", () => {
     expect(input.sockets).toHaveLength(1);
     expect(ws.url).toBe("wss://runtime.test/ws/chats/events?token=signed-ws-token");
     expect(input.invalidations).toEqual([
-      { type: "chat.full_refresh", cursor: 7 }, { type: "chat.changed", chatId: "chat_background", cursor: 8 },
+      { type: "chat.full_refresh", cursor: 7 },
+      {
+        type: "chat.changed",
+        chatId: "chat_background",
+        cursor: 8,
+        revision: 8,
+        eventType: "chat.updated",
+      },
     ]);
     expect(selected).toEqual(input.invalidations);
+  });
+
+  it("preserves safe event metadata for targeted Chat refresh decisions", async () => {
+    const input = harness();
+    const ws = await start(input);
+    ws.emit({
+      type: "chat.event",
+      event: {
+        cursor: 9,
+        chatId: "chat_streaming",
+        revision: 14,
+        eventType: "run.message",
+        createdAt: "2026-08-29T00:00:00.000Z",
+      },
+    });
+
+    expect(input.invalidations).toEqual([{
+      type: "chat.changed",
+      chatId: "chat_streaming",
+      cursor: 9,
+      revision: 14,
+      eventType: "run.message",
+    }]);
   });
 
   it("resumes the exact last cursor after bounded reconnect and clears timers on dispose", async () => {
@@ -99,8 +164,9 @@ describe("shared Desktop canonical Chat event source", () => {
     ws.emit({ type: "chat.replay.end", nextCursor: 3 });
     for (const cursor of [5, 4, 5, 4]) ws.emit(event(cursor));
     expect(input.invalidations).toEqual([
-      { type: "chat.full_refresh", cursor: 3 }, { type: "chat.changed", chatId: "chat_5", cursor: 5 },
-      { type: "chat.changed", chatId: "chat_4", cursor: 4 },
+      { type: "chat.full_refresh", cursor: 3 },
+      { type: "chat.changed", chatId: "chat_5", cursor: 5, revision: 5, eventType: "chat.updated" },
+      { type: "chat.changed", chatId: "chat_4", cursor: 4, revision: 4, eventType: "chat.updated" },
     ]);
   });
 
@@ -144,11 +210,11 @@ describe("shared Desktop canonical Chat event source", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain("credential secret");
     input.timers[0]!.callback();
     await vi.waitFor(() => expect(input.sockets[0]?.url).toContain("token=recovered-token"));
-    expect(input.source.activeConsumerCount()).toBe(2);
+    expect(input.source.activeInvalidationConsumerCount()).toBe(2);
     first.dispose();
-    expect(input.source.activeConsumerCount()).toBe(1);
+    expect(input.source.activeInvalidationConsumerCount()).toBe(1);
     input.source.dispose();
-    expect(input.source.activeConsumerCount()).toBe(0);
+    expect(input.source.activeInvalidationConsumerCount()).toBe(0);
   });
 
   it("reports safe error categories for invalid origins and socket construction failures", async () => {

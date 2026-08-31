@@ -52,21 +52,43 @@ function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClie
   } as CanonicalChatClient;
 }
 
-function eventHarness() {
+function eventHarness(initialConnectionState: ReturnType<CanonicalChatEventSource["connectionState"]> = "open") {
   const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
-  const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
+  const connectionStateListeners = new Set<() => void>();
+  let connectionState = initialConnectionState;
+  const eventSource: Pick<
+    CanonicalChatEventSource,
+    "subscribe" | "subscribeConnectionState" | "connectionState"
+  > = {
     subscribe(listener) {
       listeners.add(listener);
       return { dispose: () => listeners.delete(listener) };
     },
+    subscribeConnectionState(listener) {
+      connectionStateListeners.add(listener);
+      return { dispose: () => connectionStateListeners.delete(listener) };
+    },
+    connectionState: () => connectionState,
   };
   return {
     eventSource,
     listeners,
+    setConnectionState(next: ReturnType<CanonicalChatEventSource["connectionState"]>) {
+      connectionState = next;
+      for (const listener of connectionStateListeners) listener();
+    },
     emit(event: CanonicalChatInvalidation) {
       for (const listener of listeners) listener(event);
     },
   };
+}
+
+function chatChanged(
+  chatId: string,
+  cursor: number,
+  eventType: Extract<CanonicalChatInvalidation, { type: "chat.changed" }>["eventType"] = "chat.updated",
+): CanonicalChatInvalidation {
+  return { type: "chat.changed", chatId, cursor, revision: cursor, eventType };
 }
 
 describe("canonical Chat route controller", () => {
@@ -124,11 +146,11 @@ describe("canonical Chat route controller", () => {
     expect(acknowledgeCompletion).toHaveBeenCalledTimes(1);
     const beforeBackgroundEvent = getDetail.mock.calls.length;
 
-    act(() => events.emit({ type: "chat.changed", chatId: runningA.chat.id, cursor: 3 }));
+    act(() => events.emit(chatChanged(runningA.chat.id, 3)));
     await Promise.resolve();
     expect(getDetail).toHaveBeenCalledTimes(beforeBackgroundEvent);
 
-    act(() => events.emit({ type: "chat.changed", chatId: completedB.chat.id, cursor: 4 }));
+    act(() => events.emit(chatChanged(completedB.chat.id, 4)));
     await waitFor(() => expect(getDetail.mock.calls.length).toBe(beforeBackgroundEvent + 1));
     expect(acknowledgeCompletion).toHaveBeenCalledTimes(1);
 
@@ -176,7 +198,7 @@ describe("canonical Chat route controller", () => {
 
     act(() => {
       for (const cursor of [1, 2, 3]) {
-        events.emit({ type: "chat.changed", chatId: globalRecord.chat.id, cursor });
+        events.emit(chatChanged(globalRecord.chat.id, cursor));
       }
     });
     expect(getDetail).toHaveBeenCalledTimes(2);
@@ -442,7 +464,7 @@ describe("canonical Chat route controller", () => {
         globalRecord.chat.id,
         oldCompletion.runId,
       );
-      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
       expect(acknowledgeCompletion.mock.calls).toEqual([
         [globalRecord.chat.id, oldCompletion.runId],
         [globalRecord.chat.id, newestCompletionRecord.latestSuccessfulCompletion.runId],
@@ -508,7 +530,9 @@ describe("canonical Chat route controller", () => {
     await waitFor(() => expect(result.current.status).toBe("ready"));
   });
 
-  it("polls active Runs so persisted activity and assistant deltas reach the shared surface", async () => {
+  it("refreshes persisted activity and assistant deltas from the shared event stream", async () => {
+    vi.useFakeTimers();
+    const events = eventHarness("open");
     const runningRecord = {
       ...globalRecord,
       activeRun: { runId: "run_streaming", turnId: "turn_streaming", status: "running" as const },
@@ -545,21 +569,27 @@ describe("canonical Chat route controller", () => {
       getDetail,
     });
 
-    const { result } = renderHook(() => useCanonicalChatRouteController({
-      client: sharedClient,
-      projectId: null,
-      active: true,
-      initialChatId: globalRecord.chat.id,
-    }));
+    try {
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+        eventSource: events.eventSource,
+      }));
 
-    await waitFor(() => expect(result.current.detail?.record.activeRun?.status).toBe("running"));
-    await waitFor(() => expect(result.current.detail?.activities).toEqual(streamedDetail.activities), {
-      timeout: 2_000,
-    });
-    expect(getDetail).toHaveBeenCalledTimes(2);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.detail?.record.activeRun?.status).toBe("running");
+      act(() => events.emit(chatChanged(globalRecord.chat.id, 1, "run.message")));
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      expect(result.current.detail?.activities).toEqual(streamedDetail.activities);
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("refreshes an active Run quickly enough for conversational streaming", async () => {
+  it("refreshes an active Run through the bounded fallback when no event stream is available", async () => {
     vi.useFakeTimers();
     try {
       const runningRecord = {
@@ -581,7 +611,115 @@ describe("canonical Chat route controller", () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(getDetail).toHaveBeenCalledTimes(1);
-      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses an open Chat event stream without polling the active Run", async () => {
+    vi.useFakeTimers();
+    try {
+      const events = eventHarness("open");
+      const runningRecord = {
+        ...globalRecord,
+        activeRun: { runId: "run_streaming", turnId: "turn_streaming", status: "running" as const },
+      };
+      const runningDetail = { ...detail, record: runningRecord };
+      const getDetail = vi.fn(async () => runningDetail);
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+        eventSource: events.eventSource,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_500); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        events.emit(chatChanged(globalRecord.chat.id, 1));
+        await Promise.resolve();
+      });
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses a low-frequency snapshot fallback while the Chat event stream reconnects", async () => {
+    vi.useFakeTimers();
+    try {
+      const events = eventHarness("reconnecting");
+      const runningRecord = {
+        ...globalRecord,
+        activeRun: { runId: "run_fallback", turnId: "turn_fallback", status: "running" as const },
+      };
+      const runningDetail = { ...detail, record: runningRecord };
+      const getDetail = vi.fn(async () => runningDetail);
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+        eventSource: events.eventSource,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("coalesces a burst of streamed message invalidations into one detail refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      const events = eventHarness("open");
+      const runningRecord = {
+        ...globalRecord,
+        activeRun: { runId: "run_burst", turnId: "turn_burst", status: "running" as const },
+      };
+      const runningDetail = { ...detail, record: runningRecord };
+      const getDetail = vi.fn(async () => runningDetail);
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+        eventSource: events.eventSource,
+      }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        for (const cursor of [1, 2, 3]) {
+          events.emit(chatChanged(globalRecord.chat.id, cursor, "run.message"));
+        }
+      });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
       expect(getDetail).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -618,7 +756,7 @@ describe("canonical Chat route controller", () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(result.current.detail?.record.chat.revision).toBe(1);
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_500); });
 
       expect(getDetail).toHaveBeenCalledTimes(3);
       expect(result.current.detail?.record.chat.revision).toBe(3);
@@ -694,9 +832,9 @@ describe("canonical Chat route controller", () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(result.current.detail?.record.chat.revision).toBe(5);
-      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
       expect(result.current.detail?.record.chat.revision).toBe(5);
-      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
       expect(result.current.detail?.record.chat.revision).toBe(6);
       expect(getDetail).toHaveBeenCalledTimes(3);
     } finally {
@@ -829,7 +967,7 @@ describe("canonical Chat route controller", () => {
           permissionMode: "supervised",
         }, "Project continuation");
       });
-      await act(async () => { await vi.advanceTimersByTimeAsync(450); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(4_100); });
 
       expect(getDetail).toHaveBeenCalledTimes(3);
       expect(result.current.detail?.messages).toContainEqual(assistantMessage);

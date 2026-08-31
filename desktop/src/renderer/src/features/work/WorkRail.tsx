@@ -142,7 +142,10 @@ export function WorkRail({
       } while (current && refreshPending);
       refreshInFlight = false;
     };
-    const subscription = eventSource?.subscribe(() => void refresh());
+    const subscription = eventSource?.subscribe((event) => {
+      if (event.type === "chat.changed" && event.eventType === "run.message") return;
+      void refresh();
+    });
     void refresh();
     return () => {
       current = false;

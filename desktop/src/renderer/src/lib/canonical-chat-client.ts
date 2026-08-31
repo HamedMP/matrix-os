@@ -20,6 +20,7 @@ import {
   CanonicalUpdateChatProjectRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
+  type CanonicalChatStreamEvent,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
   type CanonicalChatApprovalSubmissionResponse,
@@ -61,8 +62,21 @@ const DEFAULT_MAX_RECONNECT_DELAY_MS = 10_000;
 const MAX_CHAT_EVENT_FRAME_CHARS = 16 * 1024;
 
 export type CanonicalChatInvalidation =
-  | { type: "chat.changed"; chatId: string; cursor: number }
+  | {
+      type: "chat.changed";
+      chatId: string;
+      cursor: number;
+      revision: number;
+      eventType: CanonicalChatStreamEvent["eventType"];
+    }
   | { type: "chat.full_refresh"; cursor?: number };
+
+export type CanonicalChatEventConnectionState =
+  | "idle"
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "disposed";
 
 export interface DesktopCanonicalChatWebSocket {
   readyState: number;
@@ -76,9 +90,51 @@ export interface DesktopCanonicalChatWebSocket {
 
 export interface CanonicalChatEventSource {
   subscribe(listener: (event: CanonicalChatInvalidation) => void): { dispose(): void };
+  subscribeConnectionState(listener: () => void): { dispose(): void };
+  connectionState(): CanonicalChatEventConnectionState;
   start(): Promise<void>;
   dispose(): void;
-  activeConsumerCount(): number;
+  activeInvalidationConsumerCount(): number;
+}
+
+export type CanonicalChatEventConsumer = Pick<CanonicalChatEventSource, "subscribe">
+  & Partial<Pick<CanonicalChatEventSource, "subscribeConnectionState" | "connectionState">>;
+
+function createBoundedLocalConsumerRegistry<T>(options: {
+  maxConsumers: number;
+  limitMessage: string;
+  deliveryFailureMessage: string;
+}) {
+  const consumers: T[] = [];
+  return {
+    subscribe(consumer: T) {
+      if (consumers.length >= options.maxConsumers) throw new Error(options.limitMessage);
+      consumers.push(consumer);
+      let subscribed = true;
+      return {
+        dispose() {
+          if (!subscribed) return;
+          subscribed = false;
+          const index = consumers.indexOf(consumer);
+          if (index >= 0) consumers.splice(index, 1);
+        },
+      };
+    },
+    notify(deliver: (consumer: T) => void) {
+      for (const consumer of [...consumers]) {
+        try {
+          deliver(consumer);
+        } catch (error: unknown) {
+          console.warn(
+            options.deliveryFailureMessage,
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      }
+    },
+    clear: () => { consumers.length = 0; },
+    size: () => consumers.length,
+  };
 }
 
 export function createCanonicalChatEventSource(options: {
@@ -92,12 +148,23 @@ export function createCanonicalChatEventSource(options: {
   setTimeoutFn?: (callback: () => void, delay: number) => unknown;
   clearTimeoutFn?: (timer: unknown) => void;
 }): CanonicalChatEventSource {
-  const consumers = new Set<(event: CanonicalChatInvalidation) => void>();
   const seenCursors = new Map<number, true>();
   const maxConsumers = Math.max(1, Math.min(
     options.maxConsumers ?? DEFAULT_MAX_CHAT_EVENT_CONSUMERS,
     DEFAULT_MAX_CHAT_EVENT_CONSUMERS,
   ));
+  const consumers = createBoundedLocalConsumerRegistry<
+    (event: CanonicalChatInvalidation) => void
+  >({
+    maxConsumers,
+    limitMessage: "Chat event consumer limit reached",
+    deliveryFailureMessage: "[canonical-chat] event consumer failed:",
+  });
+  const connectionStateConsumers = createBoundedLocalConsumerRegistry<() => void>({
+    maxConsumers,
+    limitMessage: "Chat connection-state consumer limit reached",
+    deliveryFailureMessage: "[canonical-chat] connection-state consumer failed:",
+  });
   const maxSeenCursors = Math.max(1, Math.min(
     options.maxSeenCursors ?? DEFAULT_MAX_SEEN_CHAT_EVENT_CURSORS,
     DEFAULT_MAX_SEEN_CHAT_EVENT_CURSORS,
@@ -116,18 +183,16 @@ export function createCanonicalChatEventSource(options: {
   let started = false;
   let disposed = false;
   let connectionGeneration = 0;
+  let currentConnectionState: CanonicalChatEventConnectionState = "idle";
+
+  const setConnectionState = (next: CanonicalChatEventConnectionState) => {
+    if (next === currentConnectionState) return;
+    currentConnectionState = next;
+    connectionStateConsumers.notify((consumer) => consumer());
+  };
 
   const emit = (event: CanonicalChatInvalidation) => {
-    for (const consumer of [...consumers]) {
-      try {
-        consumer(event);
-      } catch (error: unknown) {
-        console.warn(
-          "[canonical-chat] event consumer failed:",
-          error instanceof Error ? error.name : "UnknownError",
-        );
-      }
-    }
+    consumers.notify((consumer) => consumer(event));
   };
 
   const rememberCursor = (cursor: number): boolean => {
@@ -159,6 +224,7 @@ export function createCanonicalChatEventSource(options: {
 
   const scheduleReconnect = () => {
     if (disposed || reconnectTimer !== undefined) return;
+    setConnectionState("reconnecting");
     const delay = Math.min(250 * (2 ** reconnectAttempt), maxReconnectDelayMs);
     reconnectAttempt += 1;
     reconnectTimer = setTimeoutFn(() => {
@@ -217,9 +283,6 @@ export function createCanonicalChatEventSource(options: {
       return;
     }
     socket = nextSocket;
-    nextSocket.onopen = () => {
-      if (socket === nextSocket) reconnectAttempt = 0;
-    };
     nextSocket.onmessage = (message) => {
       if (socket !== nextSocket || typeof message.data !== "string") return;
       if (message.data.length > MAX_CHAT_EVENT_FRAME_CHARS) {
@@ -242,6 +305,11 @@ export function createCanonicalChatEventSource(options: {
         return;
       }
       const frame = parsed.data;
+      if (frame.type === "chat.stream.attached") {
+        reconnectAttempt = 0;
+        setConnectionState("open");
+        return;
+      }
       if (frame.type === "chat.replay.gap") {
         replayGap = true;
         return;
@@ -263,19 +331,27 @@ export function createCanonicalChatEventSource(options: {
           type: "chat.changed",
           chatId: frame.event.chatId,
           cursor: frame.event.cursor,
+          revision: frame.event.revision,
+          eventType: frame.event.eventType,
         });
         return;
       }
       if (frame.type === "chat.stream.closing") {
+        setConnectionState("reconnecting");
         nextSocket.close();
         return;
       }
-      if (frame.type === "chat.stream.error" && replayGap) {
-        replayGap = false;
+      if (frame.type === "chat.stream.error") {
+        if (replayGap) replayGap = false;
+        if (frame.error.retryable) {
+          setConnectionState("reconnecting");
+          nextSocket.close();
+        }
       }
     };
     nextSocket.onerror = () => {
       console.warn("[canonical-chat] event stream connection failed");
+      setConnectionState("reconnecting");
     };
     nextSocket.onclose = () => {
       if (socket !== nextSocket) return;
@@ -286,20 +362,17 @@ export function createCanonicalChatEventSource(options: {
   return {
     subscribe(listener) {
       if (disposed) throw new Error("Chat event source is disposed");
-      if (consumers.size >= maxConsumers) throw new Error("Chat event consumer limit reached");
-      consumers.add(listener);
-      let subscribed = true;
-      return {
-        dispose() {
-          if (!subscribed) return;
-          subscribed = false;
-          consumers.delete(listener);
-        },
-      };
+      return consumers.subscribe(listener);
     },
+    subscribeConnectionState(listener) {
+      if (disposed) throw new Error("Chat event source is disposed");
+      return connectionStateConsumers.subscribe(listener);
+    },
+    connectionState: () => currentConnectionState,
     async start() {
       if (started || disposed) return;
       started = true;
+      setConnectionState("connecting");
       await connect();
     },
     dispose() {
@@ -315,8 +388,10 @@ export function createCanonicalChatEventSource(options: {
       closeSocket(currentSocket);
       consumers.clear();
       seenCursors.clear();
+      setConnectionState("disposed");
+      connectionStateConsumers.clear();
     },
-    activeConsumerCount: () => consumers.size,
+    activeInvalidationConsumerCount: () => consumers.size(),
   };
 }
 
