@@ -11,6 +11,7 @@ import {
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import type { HarnessConfiguration, ProviderSettingsConfiguration } from "./provider-settings-persistence.js";
+import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
 
 export interface ProviderSettingsDependencyReader {
   getAccountDependencies(input: {
@@ -147,7 +148,12 @@ function projectHarness(input: {
 }): ProviderHarnessInstance | null {
   const model = input.canonical.models.find((candidate) => candidate.id === input.stored.route.modelId);
   if (!model || model.vendor !== input.stored.route.providerId) return null;
-  const driver = input.canonical.drivers.find((candidate) => candidate.id === input.stored.driverId);
+  const driverId = resolveProviderSettingsDriverId({
+    driverId: input.stored.driverId,
+    harness: input.stored.harness,
+    canonical: input.canonical,
+  });
+  const driver = input.canonical.drivers.find((candidate) => candidate.id === driverId);
   const source = input.stored.accessSourceId === null
     ? undefined
     : input.sources.find((candidate) => candidate.id === input.stored.accessSourceId);
