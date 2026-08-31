@@ -92,9 +92,6 @@ describe("settings data sections", () => {
     await act(async () => {
       useConnection.setState({ api: makeApi(response) });
     });
-    await act(async () => {
-      await queryClient.refetchQueries();
-    });
 
     await waitFor(() => {
       expect(screen.queryByText(unavailable)).toBeNull();
