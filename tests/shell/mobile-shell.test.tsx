@@ -21,16 +21,8 @@ vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
-  TerminalApp: ({ launchTargetId, layoutId, persistence }: {
-    launchTargetId?: string;
-    layoutId?: string;
-    persistence?: "durable" | "ephemeral";
-  }) => (
-    <div
-      data-testid="terminal-app"
-      data-layout-id={layoutId}
-      data-persistence={persistence}
-    >
+  TerminalApp: ({ launchTargetId }: { launchTargetId?: string }) => (
+    <div data-testid="terminal-app">
       <input
         aria-label="Command composer"
         onFocus={() => window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", {
@@ -220,9 +212,7 @@ describe("mobile shell", () => {
     render(<MobileShell />);
     fireEvent.click(screen.getByRole("button", { name: "Install OpenClaw from Settings" }));
 
-    const terminal = await screen.findByTestId("terminal-app");
-    expect(terminal.dataset.persistence).toBe("ephemeral");
-    expect(terminal.dataset.layoutId).toBeUndefined();
+    expect(await screen.findByTestId("terminal-app")).toBeTruthy();
     expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toContain("openclaw-install");
   });
 
@@ -239,29 +229,6 @@ describe("mobile shell", () => {
     expect(await screen.findByTestId("terminal-app")).toBeTruthy();
     expect(window.sessionStorage.getItem("matrix:provider-terminal-session-queue")).toContain("provider-login");
     expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toBeNull();
-  });
-
-  it("gives normal mobile terminals independent durable layouts", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
-      ok: true,
-      json: async () => [],
-    })));
-    const MobileShell = await loadMobileShell();
-
-    render(<MobileShell />);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    act(() => {
-      fireEvent.click(screen.getByLabelText("Terminal"));
-      fireEvent.click(screen.getByLabelText("Terminal"));
-    });
-
-    const terminals = screen.getAllByTestId("terminal-app");
-    const layoutIds = terminals.map((terminal) => terminal.dataset.layoutId);
-    expect(terminals.every((terminal) => terminal.dataset.persistence === "durable")).toBe(true);
-    expect(layoutIds.every((layoutId) => /^term-layout_[0-9a-f]{32}$/.test(layoutId ?? ""))).toBe(true);
-    expect(new Set(layoutIds).size).toBe(2);
   });
 
   it("hides the bottom dock while the terminal command composer is focused", async () => {

@@ -41,7 +41,6 @@ import {
   genId,
   hasPaneId,
   layoutUsesOnlyCanonicalShellSessions,
-  mergeTerminalLayouts,
   removeSessionFromPaneTree,
   renameSessionInTree,
   setPaneSessionId,
@@ -118,6 +117,39 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
       shellSessionsListInflight = null;
     }
   });
+}
+
+type SavedShellSessionsStatus = "active" | "stale" | "unavailable";
+
+async function getSavedShellSessionsStatus(sessionNames: string[]): Promise<SavedShellSessionsStatus> {
+  const requestedNames = Array.from(new Set(
+    sessionNames.filter((name) => isCanonicalShellSessionId(name)),
+  ));
+  if (requestedNames.length === 0) {
+    return "active";
+  }
+
+  try {
+    const sessions = await listShellSessions();
+    if (sessions === null) {
+      return "unavailable";
+    }
+    const existingNames = new Set<string>();
+    for (const session of sessions) {
+      if (typeof session.name === "string") {
+        existingNames.add(session.name);
+      }
+    }
+
+    // A saved layout is only a UI reference. Missing runtimes can be stopped or
+    // intentionally interrupted, so mounting Terminal must never relaunch them.
+    // Falling back to the first active session also prevents a stale layout from
+    // producing one expected 409 response per missing pane on every app mount.
+    return requestedNames.every((name) => existingNames.has(name)) ? "active" : "stale";
+  } catch (err: unknown) {
+    console.warn("Failed to validate saved terminal sessions:", err instanceof Error ? err.message : err);
+    return "unavailable";
+  }
 }
 
 async function getFirstOrderedShellSessionName(): Promise<string | null> {
@@ -199,14 +231,10 @@ interface TerminalAppProps {
   suspended?: boolean;
   /** Use the native Desktop session workspace inside a web OS window. */
   desktopParity?: boolean;
-  /** Stable owner ID for this ordinary Terminal window's independent layout. */
-  layoutId?: string;
-  /** Setup/login terminals never read or write durable window layouts. */
-  persistence?: "durable" | "ephemeral";
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal shell component; extraction tracked separately. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
-export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false, desktopParity = false, layoutId, persistence = "durable" }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false, desktopParity = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
@@ -245,7 +273,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [initialized, setInitialized] = useState(false);
   const [mobileInputActive, setMobileInputActive] = useState(false);
   const [desktopSessionState, setDesktopSessionState] = useState<{ count: number; ready: boolean }>({ count: 0, ready: false });
-  const [unavailableSessionIds, setUnavailableSessionIds] = useState<string[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<Tab[]>(tabs);
@@ -268,14 +295,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const terminalLayoutHydratedRef = useRef(false);
   const terminalLayoutDirtyRef = useRef(false);
-  const terminalLayoutChangeVersionRef = useRef(0);
-  const terminalLayoutRevisionRef = useRef(0);
-  const terminalLayoutBaseRef = useRef<TerminalLayout | null>(null);
-  const terminalLayoutSkipNextDirtyRef = useRef(false);
-  const terminalLayoutRetryAttemptRef = useRef(0);
   const markTerminalLayoutDirty = () => {
     terminalLayoutDirtyRef.current = true;
-    terminalLayoutChangeVersionRef.current += 1;
   };
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `log` is consumed in the dependency array of the tabs-changed useEffect below; removing the memo would re-create it every render and re-run that effect.
   const log = useCallback((event: string, details: Record<string, unknown> = {}) => {
@@ -307,105 +328,22 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, [mobile, mobileTerminalInputId]);
 
-  const persistLayoutNow = async (): Promise<boolean> => {
-    if (persistence === "ephemeral") return true;
-    const changeVersion = terminalLayoutChangeVersionRef.current;
+  const persistLayoutNow = () => {
     const layout: TerminalLayout = {
       tabs: tabsRef.current,
       activeTabId: activeTabIdRef.current,
       ...(initialMobileRef.current ? {} : { sidebarOpen: sidebarOpenRef.current }),
     };
 
-    const endpoint = layoutId
-      ? `${getGatewayUrl()}/api/terminal/window-layouts/${encodeURIComponent(layoutId)}`
-      : `${getGatewayUrl()}/api/terminal/layout`;
-    try {
-      const res = await fetch(endpoint, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(layoutId
-          ? { baseRevision: terminalLayoutRevisionRef.current, layout }
-          : layout),
-        keepalive: true,
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (layoutId && res.status === 409) {
-        const currentRes = await fetch(endpoint, {
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!currentRes.ok) {
-          console.warn("Failed to reload terminal layout after conflict:", currentRes.status);
-          return false;
-        }
-        const current = await currentRes.json() as {
-          revision?: unknown;
-          layout?: TerminalLayout;
-        };
-        if (typeof current.revision !== "number" || !current.layout) {
-          console.warn("Failed to reload terminal layout after conflict: invalid response");
-          return false;
-        }
-        const merged = mergeTerminalLayouts(
-          terminalLayoutBaseRef.current ?? current.layout,
-          layout,
-          current.layout,
-        );
-        const retryRes = await fetch(endpoint, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ baseRevision: current.revision, layout: merged }),
-          keepalive: true,
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!retryRes.ok) {
-          console.warn("Failed to save rebased terminal layout:", retryRes.status);
-          return false;
-        }
-        const saved = await retryRes.json() as { revision?: unknown; layout?: TerminalLayout };
-        if (typeof saved.revision !== "number") {
-          console.warn("Failed to save rebased terminal layout: invalid response");
-          return false;
-        }
-        terminalLayoutRevisionRef.current = saved.revision;
-        const persistedLayout = saved.layout ?? merged;
-        terminalLayoutBaseRef.current = persistedLayout;
-        const changedDuringSave = terminalLayoutChangeVersionRef.current !== changeVersion;
-        const latestLayout: TerminalLayout = {
-          tabs: tabsRef.current,
-          activeTabId: activeTabIdRef.current,
-          ...(initialMobileRef.current ? {} : { sidebarOpen: sidebarOpenRef.current }),
-        };
-        const layoutToAdopt = changedDuringSave
-          ? mergeTerminalLayouts(layout, latestLayout, persistedLayout)
-          : persistedLayout;
-        if (mountedRef.current && JSON.stringify(layoutToAdopt) !== JSON.stringify(latestLayout)) {
-          const nextTabs = layoutToAdopt.tabs ?? [];
-          const nextActiveTabId = nextTabs.some((tab) => tab.id === layoutToAdopt.activeTabId)
-            ? layoutToAdopt.activeTabId ?? ""
-            : nextTabs[0]?.id ?? "";
-          terminalLayoutSkipNextDirtyRef.current = !changedDuringSave;
-          setTabs(applyCompatModeToTabs(nextTabs));
-          setActiveTabId(nextActiveTabId);
-          if (!initialMobileRef.current) setSidebarOpen(layoutToAdopt.sidebarOpen ?? true);
-        }
-        return true;
-      }
-      if (!res.ok) {
-        console.warn("Failed to save terminal layout:", res.status);
-        return false;
-      }
-      if (layoutId) {
-        const saved = await res.json() as { revision?: unknown; layout?: TerminalLayout };
-        if (typeof saved.revision === "number") {
-          terminalLayoutRevisionRef.current = saved.revision;
-          terminalLayoutBaseRef.current = saved.layout ?? layout;
-        }
-      }
-      return true;
-    } catch (err: unknown) {
+    return fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(layout),
+      keepalive: true,
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err: unknown) => {
       console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
-      return false;
-    }
+    });
   };
 
   const getPendingSessionIds = (paneIds: string[]) => {
@@ -434,20 +372,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (persistence === "ephemeral") {
-        destroyTerminalSessions(tabsRef.current.flatMap((tab) => getSessionIds(tab.paneTree)));
-        return;
-      }
-      if (!terminalLayoutDirtyRef.current) return;
-      if (layoutSaveTimerRef.current) {
-        clearTimeout(layoutSaveTimerRef.current);
-        layoutSaveTimerRef.current = null;
-      }
-      const changeVersion = terminalLayoutChangeVersionRef.current;
-      void persistLayoutNow().then((saved) => settleLayoutSave(saved, changeVersion));
     };
-    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- persistence is a mount-time window policy; persistLayoutNow and settleLayoutSave read the latest layout exclusively through refs, and re-subscribing this cleanup would flush during ordinary renders. The retry continuation intentionally survives this component's unmount so a transient final-save failure cannot discard the window layout.
-  }, [persistence]);
+  }, []);
 
   useEffect(() => {
     loadGlobalShellThemePreference(setThemeId);
@@ -637,56 +563,32 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         return;
       }
 
-      if (persistence === "ephemeral") {
-        if (!cancelled) setInitialized(true);
-        return;
-      }
-
       try {
         // Warm the sessions list in parallel with the layout fetch — the
         // ensure step below joins the same in-flight request instead of
         // paying a second serial roundtrip before the terminal can open.
-        const sessionsPromise = listShellSessions();
-        const endpoint = layoutId
-          ? `${getGatewayUrl()}/api/terminal/window-layouts/${encodeURIComponent(layoutId)}`
-          : `${getGatewayUrl()}/api/terminal/layout`;
-        const res = await fetch(endpoint, {
+        void listShellSessions();
+        const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`, {
           signal: AbortSignal.timeout(10_000),
         });
         if (res.ok) {
-          const response = await res.json() as TerminalLayout | {
-            revision?: unknown;
-            layout?: TerminalLayout;
-          };
-          const data = layoutId && "layout" in response && response.layout
-            ? response.layout
-            : response as TerminalLayout;
-          if (layoutId && "revision" in response && typeof response.revision === "number") {
-            terminalLayoutRevisionRef.current = response.revision;
-            terminalLayoutBaseRef.current = data;
-          }
+          const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessions = await sessionsPromise;
-              if (cancelled) return;
-              if (sessions) {
-                const activeNames = new Set(sessions.flatMap((session) => (
-                  typeof session.name === "string" && session.status !== "exited"
-                    ? [session.name]
-                    : []
-                )));
-                setUnavailableSessionIds(
-                  getCanonicalShellSessionIds(data).filter((name) => !activeNames.has(name)),
-                );
+              const sessionStatus = await getSavedShellSessionsStatus(getCanonicalShellSessionIds(data));
+              // A failed catalog request does not prove that a runtime stopped.
+              // Preserve the saved layout so a transient outage cannot overwrite
+              // the user's tabs and panes; only an authoritative stale result falls back.
+              if (!cancelled && sessionStatus !== "stale") {
+                const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
+                const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
+                setTabs(applyCompatModeToTabs(data.tabs));
+                setActiveTabId(nextActiveTabId);
+                setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
+                requestPaneFocus(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+                setInitialized(true);
+                return;
               }
-              const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
-              const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-              setTabs(applyCompatModeToTabs(data.tabs));
-              setActiveTabId(nextActiveTabId);
-              setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
-              requestPaneFocus(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
-              setInitialized(true);
-              return;
             }
 
             const sessionName = await getFirstOrderedShellSessionName();
@@ -795,25 +697,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, [initialized, launchTargetId]);
 
-  const flushLayout = useEffectEvent(() => persistLayoutNow());
-
-  const settleLayoutSave = useEffectEvent(function settle(saved: boolean, changeVersion: number) {
-    if (saved) {
-      terminalLayoutRetryAttemptRef.current = 0;
-      if (terminalLayoutChangeVersionRef.current === changeVersion) {
-        terminalLayoutDirtyRef.current = false;
-        return;
-      }
-    }
-    if (!terminalLayoutDirtyRef.current || layoutSaveTimerRef.current) return;
-    const retryAttempt = Math.min(terminalLayoutRetryAttemptRef.current, 4);
-    terminalLayoutRetryAttemptRef.current = retryAttempt + 1;
-    const retryDelayMs = Math.min(500 * (2 ** retryAttempt), 5_000);
-    layoutSaveTimerRef.current = setTimeout(() => {
-      layoutSaveTimerRef.current = null;
-      const retryVersion = terminalLayoutChangeVersionRef.current;
-      void flushLayout().then((retrySaved) => settle(retrySaved, retryVersion));
-    }, retryDelayMs);
+  const flushLayout = useEffectEvent(() => {
+    void persistLayoutNow();
   });
 
   useEffect(() => {
@@ -825,21 +710,16 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       terminalLayoutHydratedRef.current = true;
       if (!terminalLayoutDirtyRef.current) return;
     }
-    if (terminalLayoutSkipNextDirtyRef.current) {
-      terminalLayoutSkipNextDirtyRef.current = false;
-      return;
-    }
     terminalLayoutDirtyRef.current = true;
-    terminalLayoutChangeVersionRef.current += 1;
 
     if (layoutSaveTimerRef.current) {
       clearTimeout(layoutSaveTimerRef.current);
     }
 
-    const changeVersion = terminalLayoutChangeVersionRef.current;
     layoutSaveTimerRef.current = setTimeout(() => {
       layoutSaveTimerRef.current = null;
-      void flushLayout().then((saved) => settleLayoutSave(saved, changeVersion));
+      flushLayout();
+      terminalLayoutDirtyRef.current = false;
     }, 500);
 
     return () => {
@@ -864,8 +744,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         layoutSaveTimerRef.current = null;
       }
 
-      const changeVersion = terminalLayoutChangeVersionRef.current;
-      void flushLayout().then((saved) => settleLayoutSave(saved, changeVersion));
+      flushLayout();
+      terminalLayoutDirtyRef.current = false;
     };
 
     window.addEventListener("pagehide", flushOnPageHide);
@@ -1008,27 +888,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   const shouldDestroyPane = (paneId: string) => {
     return closingPaneIdsRef.current!.has(paneId);
-  };
-
-  const recoverShellSession = async (sessionId: string, cwd: string): Promise<boolean> => {
-    if (!isCanonicalShellSessionId(sessionId)) return false;
-    try {
-      const res = await fetch(
-        `${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/recover`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cwd }),
-          signal: AbortSignal.timeout(10_000),
-        },
-      );
-      if (!res.ok) return false;
-      setUnavailableSessionIds((current) => current.filter((name) => name !== sessionId));
-      return true;
-    } catch (err: unknown) {
-      console.warn("Failed to recover terminal session:", err instanceof Error ? err.message : String(err));
-      return false;
-    }
   };
 
   useEffect(() => {
@@ -1220,8 +1079,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                     focusRequestId={focusRequestId}
                     onFocusPane={setFocusedPaneId}
                     onSessionAttached={handleSessionAttached}
-                    unavailableSessionIds={unavailableSessionIds}
-                    onRecoverSession={recoverShellSession}
                     shouldCachePane={shouldCachePane}
                     shouldDestroyPane={shouldDestroyPane}
                     allowRemoteResize={!mobile}
