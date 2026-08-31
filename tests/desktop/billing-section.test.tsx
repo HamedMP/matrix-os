@@ -17,8 +17,8 @@ const activeBilling = {
     maxRuntimeSlots: 2,
     includedRuntimeSlots: 1,
     addonRuntimeSlots: 1,
-    defaultServerType: "cpx32",
-    allowedServerTypes: ["cpx22", "cpx32"],
+    defaultServerType: "cpx42",
+    allowedServerTypes: ["cpx42", "cpx31"],
     stripeSubscriptionId: "sub_123",
     stripePriceId: "price_123",
     gracePeriodEndsAt: null,
@@ -87,6 +87,8 @@ describe("desktop billing settings", () => {
     expect(api.get).toHaveBeenCalledWith("/billing/status");
     expect(screen.getByText("Builder")).not.toBeNull();
     expect(screen.getByText("2 of 2")).not.toBeNull();
+    expect(screen.queryByText("Default machine")).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
   });
 
   it("opens the billing portal through the platform billing route", async () => {

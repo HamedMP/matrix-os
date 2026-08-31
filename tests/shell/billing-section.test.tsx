@@ -698,8 +698,11 @@ describe("BillingSection", () => {
             maxRuntimeSlots: 3,
             includedRuntimeSlots: 2,
             addonRuntimeSlots: 1,
-            defaultServerType: "cpx32",
-            allowedServerTypes: ["cpx22", "cpx32"],
+            // Billing defaults are an internal admission/provisioning detail.
+            // They can differ from the customer's regional machine (US Builder
+            // is cpx31 while this entitlement default is the EU cpx42).
+            defaultServerType: "cpx42",
+            allowedServerTypes: ["cpx42", "cpx31"],
             stripeSubscriptionId: "sub_123",
             stripePriceId: "price_123",
             gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
@@ -727,7 +730,9 @@ describe("BillingSection", () => {
     expect(screen.getByText("Current plan")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("2 included, 1 add-on")).toBeTruthy();
-    expect(screen.getByText("cpx32")).toBeTruthy();
+    expect(screen.queryByText("Machine")).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    expect(screen.queryByText(/hetzner/i)).toBeNull();
     expect(screen.getByText("Receipts and payment")).toBeTruthy();
     expect(screen.getByText("Canceling")).toBeTruthy();
 
