@@ -51,6 +51,11 @@ import {
 import { z } from "zod/v4";
 import type { AuthService } from "../auth/auth-service";
 import {
+  AppError,
+  classifyHttpStatus,
+  classifyTransportError,
+} from "../../shared/app-error";
+import {
   CodingAgentProjectWorkspaceRequestSchema,
   type CodingAgentProjectWorkspaceRequest,
 } from "../../shared/coding-agent-project-workspace";
@@ -273,28 +278,33 @@ export async function createCodingAgentThread(
 ): Promise<AgentThreadSnapshot> {
   const token = auth.getToken();
   if (!token) {
-    throw new Error("agent thread unavailable");
+    throw new AppError("unauthorized");
   }
 
   const url = buildRuntimeUrl(auth, "/api/coding-agents/threads");
-  const res = await fetchFn(url.toString(), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-    signal: AbortSignal.timeout(THREAD_CREATE_TIMEOUT_MS),
-  });
+  let res: Response;
+  try {
+    res = await fetchFn(url.toString(), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(THREAD_CREATE_TIMEOUT_MS),
+    });
+  } catch (error: unknown) {
+    throw new AppError(classifyTransportError(error), { cause: error });
+  }
   if (!res.ok) {
-    throw new Error("agent thread unavailable");
+    throw new AppError(classifyHttpStatus(res.status));
   }
 
   const body = await res.json();
   const parsed = AgentThreadSnapshotSchema.safeParse(body);
   if (!parsed.success) {
-    throw new Error("agent thread unavailable");
+    throw new AppError("server");
   }
   return parsed.data;
 }

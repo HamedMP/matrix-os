@@ -94,17 +94,20 @@ function mockOperator({ withThreads = true, failFirstCreate = false }: {
       if (failFirstCreate && createCount === 1) throw new Error("provider failed");
       const draft = payload as { projectId?: string; prompt?: string };
       return {
-        thread: {
-          id: `thread_created_${createCount}`,
-          providerId: "codex",
-          title: draft.prompt ?? "Created chat",
-          status: "queued",
-          attention: "none",
-          projectId: draft.projectId,
-          createdAt: NOW,
-          updatedAt: NOW,
+        ok: true,
+        snapshot: {
+          thread: {
+            id: `thread_created_${createCount}`,
+            providerId: "codex",
+            title: draft.prompt ?? "Created chat",
+            status: "queued",
+            attention: "none",
+            projectId: draft.projectId,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+          events: { items: [], hasMore: false, limit: 200 },
         },
-        events: { items: [], hasMore: false, limit: 200 },
       };
     }
     if (channel === "runtime:get-thread-snapshot") {

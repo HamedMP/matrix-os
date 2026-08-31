@@ -28,6 +28,7 @@ import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
 import { canonicalChatInputParts, canonicalChatTitle } from "./canonical-chat-submission";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
+import { chatSendFailureMessage } from "./chat-send-error";
 import { failClosedProviderCatalog, useChatProviderCatalog } from "./chat-provider-catalog";
 import { searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
@@ -119,6 +120,7 @@ export function CanonicalChatWorkspace({
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const [draftProjectId, setDraftProjectId] = useState<string | null>(projectId);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
@@ -192,6 +194,7 @@ export function CanonicalChatWorkspace({
   useLayoutEffect(() => {
     submissionSequence.current += 1;
     setUploadingAttachments(false);
+    setSubmissionError(null);
   }, [client]);
 
   useEffect(() => {
@@ -268,8 +271,14 @@ export function CanonicalChatWorkspace({
       !selection
       || activeRun
       || uploadingAttachments
-      || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
     ) return;
+    if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) {
+      setSubmissionError(chatSendFailureMessage(
+        "The selected provider does not support file attachments.",
+      ));
+      return;
+    }
+    setSubmissionError(null);
     const runtimeGeneration = captureRuntimeGeneration();
     const sequence = ++submissionSequence.current;
     const isCurrentSubmission = () => (
@@ -279,7 +288,11 @@ export function CanonicalChatWorkspace({
     setUploadingAttachments(true);
     try {
       const uploaded = await attachments.uploadAll();
-      if (!uploaded.ok || !isCurrentSubmission()) return;
+      if (!isCurrentSubmission()) return;
+      if (!uploaded.ok) {
+        setSubmissionError(chatSendFailureMessage(uploaded.error));
+        return;
+      }
       const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
         attachment.path
           ? [{
@@ -324,6 +337,7 @@ export function CanonicalChatWorkspace({
   };
 
   const startNewChat = () => {
+    setSubmissionError(null);
     controller.startNewChat();
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
@@ -332,6 +346,7 @@ export function CanonicalChatWorkspace({
   };
 
   const selectChat = (chatId: string) => {
+    setSubmissionError(null);
     controller.selectChat(chatId);
     const selected = controller.items.find((item) => item.chat.id === chatId);
     reportedChatId.current = chatId;
@@ -511,9 +526,9 @@ export function CanonicalChatWorkspace({
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
         {...attachments.paneProps}
       >
-        {controller.error ? (
+        {submissionError || controller.error ? (
           <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-            {controller.error}
+            {submissionError ?? controller.error}
           </div>
         ) : null}
         {controller.detail && globalView === "conversation" ? (

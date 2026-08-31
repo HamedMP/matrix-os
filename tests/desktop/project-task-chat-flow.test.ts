@@ -106,7 +106,7 @@ describe("project to task to chat flow", () => {
     const created = [snapshot("thread_one", "First chat"), snapshot("thread_two", "Second chat")];
     window.operator = {
       invoke: vi.fn(async (channel: string, request: unknown) => {
-        if (channel === "runtime:create-thread") return created.shift()!;
+        if (channel === "runtime:create-thread") return { ok: true, snapshot: created.shift()! };
         if (channel === "runtime:get-thread-snapshot") {
           return snapshot((request as { threadId: string }).threadId, "Reopened chat");
         }
