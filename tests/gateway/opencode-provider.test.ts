@@ -202,6 +202,35 @@ describe("OpenCode coding-agent provider", () => {
     ]));
   });
 
+  it("reports credential resolution cancellation as aborted before spawn", async () => {
+    const fake = fakeSpawn([]);
+    const controller = new AbortController();
+    const adapter = provider(fake.spawnFn, {
+      resolveCredentialLaunch: async () => {
+        controller.abort();
+        throw new Error("private cancellation detail");
+      },
+    });
+
+    const result = await adapter.startThread({
+      principal,
+      thread: thread(),
+      request: request(),
+      signal: controller.signal,
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+    ]));
+    expect(result.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error" }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("private cancellation detail");
+  });
+
   it("bounds a hung child even when it ignores graceful termination", async () => {
     vi.useFakeTimers();
     const kills: NodeJS.Signals[] = [];

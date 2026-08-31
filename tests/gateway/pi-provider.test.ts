@@ -392,6 +392,35 @@ describe("pi provider adapter — spawn contract", () => {
     expect(JSON.stringify(result)).not.toContain("private credential detail");
   });
 
+  it("reports credential resolution cancellation as aborted before spawn", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const controller = new AbortController();
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => {
+        controller.abort();
+        throw new Error("private cancellation detail");
+      },
+    });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      signal: controller.signal,
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+    ]));
+    expect(result.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error" }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("private cancellation detail");
+  });
+
   it.each([
     ["- list three colors", " - list three colors"],
     ["@hamed thanks", " @hamed thanks"],
