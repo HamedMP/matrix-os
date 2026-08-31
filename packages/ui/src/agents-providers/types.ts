@@ -18,6 +18,7 @@ export type ProviderSettingsMutationIntent =
       accessSourceId: string;
       accountId: string | null;
     }
+  | { type: "remove_harness"; harnessInstanceId: string; confirmation: "remove_harness" }
   | { type: "update_harness"; harnessInstanceId: string; displayName?: string; accentColor?: ProviderAccentColor | null }
   | { type: "set_harness_enabled"; harnessInstanceId: string; enabled: boolean }
   | {

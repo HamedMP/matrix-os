@@ -243,6 +243,10 @@ import { AiProviderService } from "./ai-providers/service.js";
 import { createAiProviderRoutes } from "./ai-providers/routes.js";
 import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
 import { createProviderSettingsRoutes } from "./ai-providers/provider-settings-routes.js";
+import {
+  createProviderGenericHarnessCoordinator,
+  reconcileProviderRuntimeAtStartup,
+} from "./ai-providers/provider-generic-harness-coordinator.js";
 import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
 import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
@@ -279,6 +283,9 @@ import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
 import { OsViewStateRepository } from "./os-view-state/repository.js";
 import { createOsViewStateRoutes } from "./os-view-state/routes.js";
+import {
+  createChatAttachmentCleanupLifecycle,
+} from "./chat/attachment-cleanup.js";
 import { ChatRepository } from "./chat/repository.js";
 import {
   createGatewayChatTerminalWiring,
@@ -932,7 +939,6 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
-
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
@@ -4190,12 +4196,22 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     enabledHarnesses: codingAgentWorkspaceAgents,
   });
+  const providerGenericHarnessCoordinator = createProviderGenericHarnessCoordinator({
+    homePath,
+    runtimeController: agentRuntimeServices.controller,
+    runtimeSource: agentRuntimeServices.source,
+    enabledCodingHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
+    ),
+  });
+  await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
   const providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
+    runtimeCoordinator: providerGenericHarnessCoordinator,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,
@@ -4207,11 +4223,16 @@ export async function createGateway(config: GatewayConfig) {
       && codingAgentProviders.some((provider) => provider.providerId === "codex")
       ? ["codex" as const]
       : []),
+    ...(codingAgentThreadStore
+      && codingAgentProviders.some((provider) => provider.providerId === "pi")
+      ? ["pi" as const]
+      : []),
   ];
   const canonicalChatProviderCatalog = createChatProviderCatalogService({
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
     aiProviderSource: aiProviderService,
+    harnessSettingsSource: providerSettingsStore,
     executableDriverKinds: canonicalExecutableDriverKinds,
     skillsSource: () => loadSkills(homePath),
     ...(codexExecutable ? {
@@ -4246,6 +4267,12 @@ export async function createGateway(config: GatewayConfig) {
       if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
+          threads: codingAgentThreadStore,
+        }));
+      }
+      if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
+        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
+          providerId: "pi",
           threads: codingAgentThreadStore,
         }));
       }
@@ -4557,6 +4584,13 @@ export async function createGateway(config: GatewayConfig) {
 
   const server = serve({ fetch: app.fetch, port });
   injectWebSocket(server);
+  const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
+    homePath,
+    onError: (error) => logBestEffortFailure("Temporary Chat attachment cleanup failed", error),
+  });
+  void chatAttachmentCleanup.runNow().catch((error: unknown) => {
+    logBestEffortFailure("Initial temporary Chat attachment cleanup failed", error);
+  });
 
   return {
     app,
@@ -4571,6 +4605,11 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      chatAttachmentCleanup.close();
+      await chatAttachmentCleanup.waitForIdle().catch((error: unknown) => {
+        logBestEffortFailure("Temporary Chat attachment cleanup shutdown failed", error);
+      });
+
       // T939: Fire gateway_stop hook
       await hookRunner.fireVoidHook("gateway_stop", {}).catch((err: unknown) => {
         logBestEffortFailure("gateway_stop hook failed", err);

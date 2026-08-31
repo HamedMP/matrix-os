@@ -33,6 +33,12 @@ export {
   ProviderSettingsTransportError,
   useProviderSettingsController,
 } from "./agents-providers/provider-settings-controller.js";
+
+export {
+  canonicalProviderAvailabilityLabel,
+  deriveCanonicalProviderChoices,
+} from "./canonical-provider-choice.js";
+export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export type {
   ProviderSettingsControllerState,
   ProviderSettingsControllerOptions,

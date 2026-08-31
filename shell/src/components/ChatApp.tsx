@@ -1,6 +1,12 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
+import type {
+  CanonicalChatApprovalDecision,
+  CanonicalChatModelSelection,
+  CanonicalProviderInstanceDescriptor,
+  CanonicalProviderSetupAction,
+} from "@matrix-os/contracts";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -23,9 +29,15 @@ import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 import { Button } from "@/components/ui/button";
+import { ShellNotificationCard } from "@/components/ShellNotificationCard";
+import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useVoice } from "@/hooks/useVoice";
+import {
+  CANONICAL_PROVIDER_SETUP_ERROR,
+  executeCanonicalProviderSetupAction,
+} from "@/lib/canonical-provider-setup";
 import {
   DEFAULT_HERMES_CHANNELS,
   createChannelConfiguredPrompt,
@@ -34,6 +46,10 @@ import {
   ChatProviderSetupPanel,
   useChatProviderState,
 } from "./chat-app-provider-setup";
+import {
+  CanonicalApprovalMessage,
+  canonicalApproval,
+} from "./chat/CanonicalApprovalMessage";
 import {
   PlusIcon,
   SendIcon,
@@ -97,13 +113,25 @@ interface ChatAppProps {
     options?: {
       displayText?: string;
       promptText?: string;
+      instanceId?: string;
       model?: string;
-      effort?: string;
-      accessSourceId?: string;
+      interactionMode?: string;
+      permissionMode?: string;
+      modelOptions?: Array<{ id: string; value: string | boolean }>;
     },
   ) => void;
+  providerSelection?: CanonicalChatModelSelection;
+  onSubmitApproval?: (
+    runId: string,
+    approvalId: string,
+    decision: CanonicalChatApprovalDecision,
+  ) => Promise<boolean>;
   composerDraftRequest?: { id: number; text: string } | null;
   onComposerDraftConsumed?: (id: number) => void;
+  onProviderSetupAction?: (
+    instance: CanonicalProviderInstanceDescriptor,
+    action: CanonicalProviderSetupAction,
+  ) => void;
   mobile?: boolean;
 }
 
@@ -143,14 +171,19 @@ export function ChatApp({
   onNewChat,
   onSwitchConversation,
   onSubmit,
+  providerSelection,
+  onSubmitApproval,
   composerDraftRequest,
   onComposerDraftConsumed,
+  onProviderSetupAction,
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
+  const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
+  const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
   const getInitialHermesSetup = () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower the `??=` logical-assignment operator (BuildHIR Todo); this lazy one-time ref cache is a deliberate first-render localStorage read and rewriting it would not change behavior.
@@ -159,7 +192,7 @@ export function ChatApp({
   };
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
-  const providerState = useChatProviderState();
+  const providerState = useChatProviderState(providerSelection);
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
@@ -173,12 +206,16 @@ export function ChatApp({
     files?: Array<{ name: string; type: string; data: string }>,
   ) => {
     if (!providerState.selected) return;
-    const promptText = createChannelConfiguredPrompt(text, selectedChannels);
+    const usesChannels = providerState.selected.driverKind === "hermes";
+    const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
     onSubmit(text, files, {
       displayText: text,
       ...(promptText === text ? {} : { promptText }),
+      instanceId: providerState.selected.instanceId,
       model: providerState.selected.modelId,
-      accessSourceId: providerState.selected.accessSourceId,
+      interactionMode: providerState.selected.interactionMode,
+      permissionMode: providerState.selected.permissionMode,
+      modelOptions: providerState.selected.selectedOptions,
     });
   };
 
@@ -195,8 +232,36 @@ export function ChatApp({
 
   const isEmpty = messages.length === 0 && !busy;
 
+  const runProviderSetupAction = async (
+    instance: CanonicalProviderInstanceDescriptor,
+    action: CanonicalProviderSetupAction,
+  ) => {
+    setProviderSetupError(null);
+    if (onProviderSetupAction) {
+      onProviderSetupAction(instance, action);
+      return;
+    }
+    try {
+      const completed = await executeCanonicalProviderSetupAction({ instance, action });
+      if (!completed) setProviderSetupError(CANONICAL_PROVIDER_SETUP_ERROR);
+    } catch (error: unknown) {
+      console.warn("[chat] Provider setup dispatch failed:", error instanceof Error ? error.name : typeof error);
+      setProviderSetupError(CANONICAL_PROVIDER_SETUP_ERROR);
+    }
+  };
+
   return (
     <div className="relative flex h-full bg-background">
+      {providerSetupError && (
+        <ShellNotificationPortal>
+          <ShellNotificationCard
+            className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive shadow-[0_18px_60px_-24px_rgba(239,68,68,0.58),0_24px_60px_-30px_rgba(0,0,0,0.38)] backdrop-blur-md"
+            role="alert"
+          >
+            {providerSetupError}
+          </ShellNotificationCard>
+        </ShellNotificationPortal>
+      )}
       {/* Sidebar */}
       <aside
         className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
@@ -312,10 +377,10 @@ export function ChatApp({
               </span>
               <div className="min-w-0 text-center">
                 <p className="truncate text-sm font-semibold leading-4 text-foreground">
-                  {providerState.activeDriver?.displayName ?? "Matrix Agent"}
+                  {providerState.activeInstance?.displayName ?? "Matrix Agent"}
                 </p>
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
-                  {providerState.selected?.accessSourceLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
+                  {providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>
               </div>
             </div>
@@ -335,10 +400,18 @@ export function ChatApp({
         </header>
         {setupOpen && (
           <ChatProviderSetupPanel
-            snapshot={providerState.snapshot}
+            catalog={providerState.catalog}
             choices={providerState.choices}
             selected={providerState.selected}
             onSelect={providerState.select}
+            onInteractionModeChange={providerState.selectInteractionMode}
+            onPermissionModeChange={providerState.selectPermissionMode}
+            onOptionChange={providerState.selectOption}
+            onSetupAction={(instance, action) => {
+              void runProviderSetupAction(instance, action);
+            }}
+            lockedInstanceId={providerSelection?.instanceId}
+            showChannels={providerState.selected?.driverKind === "hermes"}
             channels={channels}
             onToggleChannel={(channel) => {
               setChannels((prev) => {
@@ -362,6 +435,7 @@ export function ChatApp({
             onComposerDraftConsumed={onComposerDraftConsumed}
             modelLabel={providerState.selected?.modelLabel ?? null}
             providerReady={providerState.selected !== null}
+            attachmentsEnabled={providerState.selected?.supportsFileAttachments ?? false}
           />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -381,9 +455,20 @@ export function ChatApp({
                           </MessageContent>
                         </Message>
                       ) : msg.role === "system" ? (
-                        <div className="text-xs px-3 py-1.5 rounded-md bg-muted/50 text-muted-foreground">
-                          {msg.content}
-                        </div>
+                        <CanonicalApprovalMessage
+                          message={msg}
+                          submitting={(() => {
+                            const approval = canonicalApproval(msg);
+                            return approval !== null
+                              && submittingApprovalId === `${approval.runId}\0${approval.approvalId}`;
+                          })()}
+                          onSubmit={onSubmitApproval ? async (runId, approvalId, decision) => {
+                            const submissionId = `${runId}\0${approvalId}`;
+                            setSubmittingApprovalId(submissionId);
+                            try { await onSubmitApproval(runId, approvalId, decision); }
+                            finally { setSubmittingApprovalId(null); }
+                          } : undefined}
+                        />
                       ) : (
                     <AssistantBubble content={msg.content} onAction={submitWithHermesSetup} />
                       )}
@@ -421,8 +506,9 @@ export function ChatApp({
                 draftRequest={composerDraftRequest}
                 onDraftConsumed={onComposerDraftConsumed}
                 unavailablePlaceholder={!providerState.loading && providerState.selected === null
-                  ? "AI provider unavailable"
+                  ? "AI harness unavailable"
                   : undefined}
+                attachmentsEnabled={providerState.selected?.supportsFileAttachments ?? false}
               />
             </div>
           </div>
@@ -441,8 +527,9 @@ function EmptyState({
   onComposerDraftConsumed,
   modelLabel,
   providerReady,
+  attachmentsEnabled,
 }: {
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
   connected: boolean;
   suggestions: string[];
   mobile: boolean;
@@ -450,6 +537,7 @@ function EmptyState({
   onComposerDraftConsumed?: (id: number) => void;
   modelLabel: string | null;
   providerReady: boolean;
+  attachmentsEnabled: boolean;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4">
@@ -460,7 +548,7 @@ function EmptyState({
             What should Matrix do?
           </h1>
           <p className="text-sm text-muted-foreground">
-            {modelLabel ? `Using ${modelLabel}` : "Connect a provider in Settings to start chatting."}
+            {modelLabel ? `Using ${modelLabel}` : "Connect a harness in Settings to start chatting."}
           </p>
         </div>
 
@@ -472,7 +560,8 @@ function EmptyState({
           autoFocus={!mobile}
           draftRequest={composerDraftRequest}
           onDraftConsumed={onComposerDraftConsumed}
-          unavailablePlaceholder={!providerReady ? "AI provider unavailable" : undefined}
+          unavailablePlaceholder={!providerReady ? "AI harness unavailable" : undefined}
+          attachmentsEnabled={attachmentsEnabled}
         />
 
         {/* Suggestions */}
@@ -533,6 +622,7 @@ function ChatInput({
   draftRequest,
   onDraftConsumed,
   unavailablePlaceholder,
+  attachmentsEnabled,
 }: {
   connected: boolean;
   busy: boolean;
@@ -541,6 +631,7 @@ function ChatInput({
   draftRequest?: { id: number; text: string } | null;
   onDraftConsumed?: (id: number) => void;
   unavailablePlaceholder?: string;
+  attachmentsEnabled: boolean;
 }) {
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -595,7 +686,8 @@ function ChatInput({
       <div className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
         <AttachmentButton
           onFilesSelected={addFiles}
-          disabled={!connected}
+          disabled={!connected || !attachmentsEnabled}
+          title={attachmentsEnabled ? "Attach files" : "Attachments are unavailable for this harness"}
           className="mb-2.5 ml-3"
         />
         <Textarea

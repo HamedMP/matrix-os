@@ -34,6 +34,7 @@ function makeSnapshot(): ProviderSettingsSnapshot {
     access: { mode: "writable" },
     supportedActions: [
       "add_harness",
+      "remove_harness",
       "update_harness",
       "set_harness_enabled",
       "set_route",
@@ -421,6 +422,12 @@ describe("provider settings contracts", () => {
       accessSourceId: "source_matrix",
       accountId: null,
     },
+    {
+      type: "remove_harness",
+      ...mutationBase,
+      harnessInstanceId: "harness_hermes",
+      confirmation: "remove_harness",
+    },
     { type: "update_harness", ...mutationBase, harnessInstanceId: "harness_hermes", displayName: "Hermes Work" },
     { type: "set_harness_enabled", ...mutationBase, harnessInstanceId: "harness_hermes", enabled: false },
     {
@@ -473,6 +480,11 @@ describe("provider settings contracts", () => {
       ...mutationBase,
       accountId: "account_personal",
       dependencyGuard,
+    }).success).toBe(false);
+    expect(ProviderSettingsMutationSchema.safeParse({
+      type: "remove_harness",
+      ...mutationBase,
+      harnessInstanceId: "harness_hermes",
     }).success).toBe(false);
   });
 

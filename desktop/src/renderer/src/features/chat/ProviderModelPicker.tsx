@@ -14,6 +14,7 @@ import {
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
+import { canonicalProviderAvailabilityLabel } from "@matrix-os/ui";
 
 const DRIVER_LABEL: Record<CanonicalProviderDriverKind, string> = {
   kernel: "Matrix Agent",
@@ -33,13 +34,6 @@ const DRIVER_GROUPS: Array<{
   { capabilityClass: "system_agent", label: "General agents", shortLabel: "General" },
   { capabilityClass: "coding_agent", label: "Coding agents", shortLabel: "Coding" },
 ];
-
-function availabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
-  if (instance.availability === "setup_required") return "Setup required";
-  if (instance.availability === "auth_required") return "Authentication required";
-  if (instance.availability === "unavailable") return "Unavailable";
-  return "Available";
-}
 
 function modelProviderPresentation(
   instance: CanonicalProviderInstanceDescriptor,
@@ -177,7 +171,7 @@ export function ProviderModelPicker({
                     const disabled = !instance
                       || (locked && !setupBrowsable)
                       || (unavailable && instance.setupActions.length === 0);
-                    const availability = instance ? availabilityLabel(instance) : "Unavailable";
+                    const availability = instance ? canonicalProviderAvailabilityLabel(instance) : "Unavailable";
                     const tooltipLabel = unavailable
                       ? `${driver.displayName} — ${availability}`
                       : locked
@@ -336,7 +330,7 @@ export function ProviderModelPicker({
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{model.displayName}</span>
                           <span className="block truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                            {provider.label} · {availabilityLabel(instance)}
+                            {provider.label} · {canonicalProviderAvailabilityLabel(instance)}
                           </span>
                         </span>
                       </button>
@@ -351,7 +345,7 @@ export function ProviderModelPicker({
             {activeInstance && activeInstance.availability !== "available" ? (
               <div className="mt-1 border-t px-2 pt-2" style={{ borderColor: "var(--border-subtle)" }}>
                 <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                  {availabilityLabel(activeInstance)}
+                  {canonicalProviderAvailabilityLabel(activeInstance)}
                 </p>
                 {onSetupAction ? activeInstance.setupActions.map((action) => (
                   <button

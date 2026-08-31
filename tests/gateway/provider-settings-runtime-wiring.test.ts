@@ -24,7 +24,15 @@ describe("provider settings runtime capability wiring", () => {
     expect(source).not.toContain("codingAgentWorkspaceAgents.flatMap((agent)");
     expect(source).toContain("accountLifecycle: providerAccountLifecycle");
     expect(source).not.toContain("dependencyCoordinator: provider");
-    expect(source).not.toContain("runtimeCoordinator: provider");
+    expect(source).toContain("createProviderGenericHarnessCoordinator({");
+    expect(source).toContain("runtimeController: agentRuntimeServices.controller");
+    expect(source).toContain("runtimeSource: agentRuntimeServices.source");
+    expect(source).toContain("await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);");
+    expect(source).not.toContain("await providerGenericHarnessCoordinator.reconcilePending();");
+    expect(source).toContain("runtimeCoordinator: providerGenericHarnessCoordinator");
+    expect(source).toContain("harnessSettingsSource: providerSettingsStore");
+    expect(source).toContain('provider.providerId === "pi"');
+    expect(source).toContain('providerId: "pi"');
   });
 
   it("advertises terminal login when one projected harness is supported and rejects another harness", async () => {

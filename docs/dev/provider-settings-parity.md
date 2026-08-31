@@ -64,9 +64,11 @@ rename unrelated runtime settings to “Custom agents.”
 
 ## One state model across shells
 
-`AiProviderSnapshotV3` is the sole provider-state truth. Legacy Settings and
-Chat shapes are compatibility projections from V3; they are not independent
-stores. New fields and mutations land in V3 first.
+`AiProviderSnapshotV3` is the sole credential, funding, and model-inventory
+truth. Owner harness configuration is the bounded Provider Settings projection.
+`GET /api/chat-providers` combines those sources with live runtime adapters and
+is the sole executable Chat catalog. Legacy Settings and Chat shapes are
+compatibility projections; they are not independent stores.
 
 Canvas, Web Desktop, and Electron must expose the same:
 
@@ -96,6 +98,21 @@ Automated tests must exercise the shared derivations and actions. Each frontend
 PR must also include current screenshot or recording evidence for all affected
 surfaces.
 
+Canvas, Web Desktop, and Electron admit turns through the canonical Chat
+orchestrator (`/api/chats` and `/api/chats/:id/turns`) and resolve picker choices
+from `/api/chat-providers`. A shell must not pair the canonical picker with the
+legacy `/api/message` execution path: that would display a harness selection
+which does not bind or execute the selected instance. Availability labels and
+exact runnable instance/model derivation live in `@matrix-os/ui` so every shell
+renders the same disabled reason. The browser shell's Canvas and Desktop modes
+consume the same `ChatApp` and canonical state adapter. That shared composer
+submits the catalog's exact model options, interaction mode, and permission
+mode; it must not silently collapse them to the first advertised value.
+Canonical approvals are rendered as allowlisted actions in every browser-shell
+mode. Browser shells refresh the Chat list and active detail after focus or
+visibility returns in addition to polling an active run, and stale detail
+responses cannot retarget a newly selected Chat.
+
 ## Authentication and account lifecycle
 
 Authentication should be guided from Settings or Chat. When a provider
@@ -116,6 +133,31 @@ These actions are distinct:
 - **Disable harness** prevents new selection/execution for that harness while
   preserving its installation, instances, accounts, and configuration. Existing
   Chats stay readable and require a compatible route before another turn.
+- **Remove harness instance** is available only after that instance is disabled.
+  It removes the owner Settings instance, not the installed binary, credentials,
+  or existing Chat history. A later turn in an existing Chat still resolves its
+  durable provider selection independently and must pass normal readiness checks.
+
+Generic lifecycle mutations are admitted only for exact runtime support. Hermes
+and OpenClaw reuse the bounded messaging-runtime controller. Pi and OpenCode must
+be registered coding runtimes at gateway startup in addition to appearing in
+binary inventory; their current installation probe does not claim authenticated
+health. Codex and Claude remain specialized model-specific drivers;
+their existing login/logout commands are not routed through the generic
+coordinator. Multiple account rows are a forward-compatible data shape, not a
+claim that a CLI can run concurrent profiles today; generic runtimes do not
+advertise standalone account/source selection until they own a real profile
+switch.
+
+More than one configured instance of a harness kind is allowed. The add flow
+therefore never disables Hermes, OpenClaw, Pi, OpenCode, Codex, or Claude merely
+because one instance already exists. Each instance keeps its own display name,
+route, access source, and account binding. Until an execution adapter supports
+concurrent profiles for that harness, multiple enabled instances fail closed in
+the Chat catalog with an explanatory state rather than choosing one silently.
+Disabled instance removal and non-active disable remain local cleanup operations,
+so an unavailable or uninstalled runtime cannot strand stale owner Settings rows.
+Operations that enable, route, or switch an active runtime still fail closed.
 
 Multiple accounts are first-class. Account IDs are stable and owner-scoped;
 labels are safe display metadata, not secret suffixes. Adding an account must

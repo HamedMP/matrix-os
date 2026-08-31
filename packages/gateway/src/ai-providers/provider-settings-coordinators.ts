@@ -49,13 +49,23 @@ export interface ProviderAccountLifecycleCoordinator {
   remove(input: { account: ProviderLifecycleAccount; idempotencyKey: string }): Promise<void>;
 }
 
+export interface ProviderSettingsRuntimeMutationInput {
+  mutation: ProviderConfigurationMutation;
+  idempotencyKey: string;
+  before: import("./provider-settings-persistence.js").ProviderSettingsConfiguration;
+  after: import("./provider-settings-persistence.js").ProviderSettingsConfiguration;
+  canonical: AiProviderSnapshotV3;
+}
+
 /** Applies settings to the real runtime/control plane and durably deduplicates the key. */
 export interface ProviderSettingsRuntimeCoordinator {
   readonly supportedActions: readonly ProviderConfigurationMutation["type"][];
-  applyConfiguration(input: {
-    mutation: ProviderConfigurationMutation;
-    idempotencyKey: string;
-  }): Promise<void>;
+  readonly supportedHarnessKinds?: readonly ProviderHarnessKind[];
+  /** False gates read projections while mutations retain a chance to reconcile. */
+  isRecoveryReady(): boolean;
+  reconcilePending(): Promise<void>;
+  applyConfiguration(input: ProviderSettingsRuntimeMutationInput): Promise<void>;
+  rollbackConfiguration(input: ProviderSettingsRuntimeMutationInput): Promise<void>;
 }
 
 /** Creates/adopts the actual auth surface and durably deduplicates by mutation key. */

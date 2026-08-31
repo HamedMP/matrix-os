@@ -161,4 +161,77 @@ describe("file blob routes", () => {
     expect(multipart.status).toBe(416);
     expect(await multipart.text()).not.toContain(homePath);
   });
+
+  it("deletes only direct temporary Chat attachments without moving them to Trash", async () => {
+    const attachmentPath = join(homePath, "temporary/desktop-chat/upload-notes.txt");
+    await mkdir(join(homePath, "temporary/desktop-chat"), { recursive: true });
+    await writeFile(attachmentPath, "notes");
+
+    const deleted = await app.request(
+      "/blob?path=temporary%2Fdesktop-chat%2Fupload-notes.txt",
+      { method: "DELETE" },
+    );
+
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toEqual({
+      ok: true,
+      path: "temporary/desktop-chat/upload-notes.txt",
+      deleted: true,
+    });
+    await expect(readFile(attachmentPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(homePath, ".trash"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    const retry = await app.request(
+      "/blob?path=temporary%2Fdesktop-chat%2Fupload-notes.txt",
+      { method: "DELETE" },
+    );
+    expect(retry.status).toBe(200);
+    await expect(retry.json()).resolves.toEqual({
+      ok: true,
+      path: "temporary/desktop-chat/upload-notes.txt",
+      deleted: false,
+    });
+  });
+
+  it("rejects broad, nested, symlinked, and oversized temporary deletion requests", async () => {
+    await mkdir(join(homePath, "temporary/desktop-chat/nested"), { recursive: true });
+    await writeFile(join(homePath, "notes.txt"), "keep");
+    await writeFile(join(homePath, "temporary/desktop-chat/nested/keep.txt"), "keep");
+    await symlink(join(homePath, "notes.txt"), join(homePath, "temporary/desktop-chat/link.txt"));
+
+    for (const path of ["notes.txt", "temporary/desktop-chat/nested/keep.txt"]) {
+      const response = await app.request(`/blob?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ error: "invalid_path" });
+    }
+    const symlinked = await app.request(
+      "/blob?path=temporary%2Fdesktop-chat%2Flink.txt",
+      { method: "DELETE" },
+    );
+    expect(symlinked.status).toBe(400);
+    expect(await readFile(join(homePath, "notes.txt"), "utf8")).toBe("keep");
+
+    const oversized = await app.request(
+      "/blob?path=temporary%2Fdesktop-chat%2Fmissing.txt",
+      { method: "DELETE", body: "x".repeat(2_000) },
+    );
+    expect(oversized.status).toBe(413);
+  });
+
+  it("rejects a temporary attachment path whose directory is a symlink into owner state", async () => {
+    await mkdir(join(homePath, "temporary"), { recursive: true });
+    await mkdir(join(homePath, "system"), { recursive: true });
+    const protectedPath = join(homePath, "system/provider-settings.json");
+    await writeFile(protectedPath, "keep");
+    await symlink(join(homePath, "system"), join(homePath, "temporary/desktop-chat"));
+
+    const response = await app.request(
+      "/blob?path=temporary%2Fdesktop-chat%2Fprovider-settings.json",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_path" });
+    expect(await readFile(protectedPath, "utf8")).toBe("keep");
+  });
 });

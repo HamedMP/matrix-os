@@ -323,6 +323,23 @@ describe("pi provider adapter — spawn contract", () => {
     }
   });
 
+  it("passes the configured provider and model as separate argv values", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { model: "anthropic:claude-sonnet-5" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
+      "--provider", "anthropic", "--model", "claude-sonnet-5",
+    ]));
+  });
+
   it.each([
     ["- list three colors", " - list three colors"],
     ["@hamed thanks", " @hamed thanks"],

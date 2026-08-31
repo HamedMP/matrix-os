@@ -5,6 +5,7 @@ import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 import { useConversation } from "@/hooks/useConversation";
 import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
 import { getGatewayUrl } from "@/lib/gateway";
+import type { CanonicalChatApprovalDecision, CanonicalChatModelSelection } from "@matrix-os/contracts";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
@@ -29,6 +30,7 @@ export interface ChatState {
   currentTool: string | null;
   connected: boolean;
   queue: QueuedMessage[];
+  providerSelection?: CanonicalChatModelSelection;
   conversations: ReturnType<typeof useConversation>["conversations"];
   composerDraftRequest: { id: number; text: string } | null;
   requestComposerDraft: (text: string) => void;
@@ -36,12 +38,29 @@ export interface ChatState {
   submitMessage: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
-    options?: { displayText?: string; promptText?: string; model?: string; effort?: string; accessSourceId?: string },
+    options?: ChatSubmitOptions,
   ) => void;
   newChat: () => Promise<void>;
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
+  submitApproval?: (
+    runId: string,
+    approvalId: string,
+    decision: CanonicalChatApprovalDecision,
+  ) => Promise<boolean>;
+}
+
+export interface ChatSubmitOptions {
+  displayText?: string;
+  promptText?: string;
+  instanceId?: string;
+  model?: string;
+  interactionMode?: string;
+  permissionMode?: string;
+  modelOptions?: Array<{ id: string; value: string | boolean }>;
+  effort?: string;
+  accessSourceId?: string;
 }
 
 export function useChatState(): ChatState {

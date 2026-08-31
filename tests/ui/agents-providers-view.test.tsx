@@ -22,6 +22,7 @@ function snapshot(): ProviderSettingsSnapshot {
     revision: 12,
     refreshedAt: now,
     access: { mode: "writable" },
+    configurationHarnessKinds: ["hermes", "openclaw", "pi", "opencode"],
     modelProviders: [
       {
         id: "anthropic",
@@ -334,6 +335,34 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByLabelText("Model")).toBeDisabled();
   });
 
+  it("does not advertise generic configuration mutations for specialized harnesses", () => {
+    const { onMutate } = setup({ selectedHarnessId: "harness_claude" });
+
+    expect(screen.getByRole("switch", { name: "Enable Claude" })).toBeDisabled();
+    expect(screen.getByLabelText("Display name")).toBeDisabled();
+    fireEvent.click(within(screen.getByTestId("account-account_personal"))
+      .getByRole("button", { name: "Log out Personal" }));
+    expect(onMutate).toHaveBeenCalledWith({ type: "logout_account", accountId: "account_personal" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    expect(within(dialog).queryByRole("radio", { name: "Codex" })).toBeNull();
+    expect(within(dialog).queryByRole("radio", { name: "Claude" })).toBeNull();
+  });
+
+  it("offers only harness kinds enabled by the runtime workspace", () => {
+    const limited = snapshot();
+    limited.configurationHarnessKinds = ["hermes", "openclaw"];
+    setup({ snapshot: limited });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    expect(within(dialog).getByRole("radio", { name: "Hermes" })).toBeVisible();
+    expect(within(dialog).getByRole("radio", { name: "OpenClaw" })).toBeVisible();
+    expect(within(dialog).queryByRole("radio", { name: "Pi" })).toBeNull();
+    expect(within(dialog).queryByRole("radio", { name: "OpenCode" })).toBeNull();
+  });
+
   it("shows exact, stale, and unavailable gateway credit without inventing balances", () => {
     const current = snapshot();
     const { rerender } = setup({ snapshot: current });
@@ -562,6 +591,29 @@ describe("AgentsProvidersView", () => {
       accountId: null,
     }));
     expect(within(dialog).queryByLabelText(/API key/i)).toBeNull();
+  });
+
+  it("adds a second instance of an existing harness with its own route and account", () => {
+    const { onMutate } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Hermes" }));
+    fireEvent.change(within(dialog).getByLabelText("Display name"), {
+      target: { value: "Hermes OpenAI" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Model provider"), {
+      target: { value: "openai" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add harness" }));
+
+    expect(onMutate).toHaveBeenCalledWith({
+      type: "add_harness",
+      harness: "hermes",
+      displayName: "Hermes OpenAI",
+      route: { kind: "configurable", providerId: "openai", modelId: "openai/gpt-5.6" },
+      accessSourceId: "source_openai",
+      accountId: "account_openai",
+    });
   });
 
   it("does not offer a Matrix gateway source for a model outside its allowlist", () => {

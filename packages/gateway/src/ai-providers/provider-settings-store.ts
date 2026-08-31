@@ -36,6 +36,7 @@ import type {
   ProviderAccountDependencyCoordinator,
   ProviderAccountLifecycleCoordinator,
   ProviderLoginCoordinator,
+  ProviderSettingsRuntimeMutationInput,
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
 import {
@@ -184,6 +185,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         fundingSummary,
         fundedPolicy,
         fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
+        configurationHarnessKinds: [...(this.#runtime?.supportedHarnessKinds ?? [])],
         loginMethods: (harness) => coordinatorLoginMethods({
           login: this.#login,
           harness,
@@ -230,6 +232,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
 
   async getSnapshot(): Promise<ProviderSettingsSnapshot> {
     return await this.#serialize(async () => {
+      if (this.#runtime && !this.#runtime.isRecoveryReady()) {
+        throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      }
       const canonical = await this.#canonical();
       return await this.#project(canonical, await this.#configuration(canonical));
     });
@@ -272,6 +277,18 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (error instanceof ProviderSettingsStoreError) throw error;
       console.warn("[provider-settings] Provider coordination failed");
       throw new ProviderSettingsStoreError(code, 503);
+    }
+  }
+
+  async #rollbackRuntime(input: ProviderSettingsRuntimeMutationInput): Promise<void> {
+    try {
+      await this.#runtime!.rollbackConfiguration(input);
+    } catch (error) {
+      console.warn(
+        "[provider-settings] Provider runtime rollback failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
     }
   }
 
@@ -409,6 +426,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         });
       }
       let attempt: ProviderConnectionAttempt | undefined;
+      let runtimeMutation: ProviderSettingsRuntimeMutationInput | undefined;
+      const previousConfig = structuredClone(config);
       const handled = applyProviderConfigurationMutation({
         mutation,
         config,
@@ -417,16 +436,25 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         id: this.#id,
       });
       if (handled) {
+        runtimeMutation = {
+          mutation: mutation as ProviderConfigurationMutation,
+          idempotencyKey: mutation.idempotencyKey,
+          before: previousConfig,
+          after: structuredClone(config),
+          canonical: structuredClone(canonical),
+        };
         try {
-          await this.#runtime!.applyConfiguration({
-            mutation: mutation as ProviderConfigurationMutation,
-            idempotencyKey: mutation.idempotencyKey,
-          });
-          canonical = await this.#canonical(true);
+          await this.#runtime!.applyConfiguration(runtimeMutation);
         } catch (error) {
           if (error instanceof ProviderSettingsStoreError) throw error;
           console.warn("[provider-settings] Provider runtime configuration failed");
           throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        }
+        try {
+          canonical = await this.#canonical(true);
+        } catch (error) {
+          await this.#rollbackRuntime(runtimeMutation);
+          throw error;
         }
       }
       if (!handled) {
@@ -513,7 +541,12 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         }
       }
 
-      config = await this.#persist(config, mutation, payloadHash, attempt);
+      try {
+        config = await this.#persist(config, mutation, payloadHash, attempt);
+      } catch (error) {
+        if (runtimeMutation) await this.#rollbackRuntime(runtimeMutation);
+        throw error;
+      }
       const projected = await this.#project(canonical, config);
       return ProviderSettingsMutationResponseSchema.parse(attempt
         ? { kind: "login_attempt", snapshot: projected, attempt }

@@ -62,6 +62,11 @@ import {
 } from "@/lib/terminal-launch";
 import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
 import {
+  OPEN_PROVIDER_SETTINGS_EVENT,
+  OPEN_PROVIDER_TERMINAL_EVENT,
+  providerTerminalSessionFromEvent,
+} from "@/lib/canonical-provider-setup";
+import {
   loadShellSnapshot,
   saveShellSnapshot,
   type ShellSnapshotScope,
@@ -425,7 +430,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
   }, [apps, focusOrOpen]);
 
-  const focusTerminalForHandoff = (handoff: (targetId?: string) => void) => {
+  const focusTerminalForHandoff = useCallback((handoff: (targetId?: string) => void) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
     const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
@@ -460,17 +465,36 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       }
       handoff(win?.id);
     });
-  };
+  }, [dockXOffset, wmOpenWindow, wmRestoreAndFocusWindow]);
 
   const openSetupTerminal = (action: TerminalLaunchAction) => {
     focusTerminalForHandoff((targetId) => enqueueTerminalLaunch(action, targetId));
   };
 
-  const openExistingProviderTerminal = (sessionId: string) => {
+  const openExistingProviderTerminal = useCallback((sessionId: string) => {
     focusTerminalForHandoff((targetId) => {
       if (targetId) enqueueExistingTerminalSession(sessionId, targetId);
     });
-  };
+  }, [focusTerminalForHandoff]);
+
+  useEffect(() => {
+    const openProviderSettings = () => {
+      setSettingsDefaultSection("agents-providers");
+      setSettingsOpen(true);
+      setTaskBoardOpen(false);
+      setChatOpen(false);
+    };
+    const openProviderTerminal = (event: Event) => {
+      const sessionId = providerTerminalSessionFromEvent(event);
+      if (sessionId) openExistingProviderTerminal(sessionId);
+    };
+    window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
+    window.addEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
+    return () => {
+      window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
+      window.removeEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
+    };
+  }, [openExistingProviderTerminal]);
 
   // Vocal mode's open_app tool and auto-open-after-build both go through
   // this. Fuzzy-matches `query` against the current apps list and focuses

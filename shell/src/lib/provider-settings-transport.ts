@@ -8,6 +8,7 @@ import {
 } from "@matrix-os/contracts";
 import { ProviderSettingsTransportError } from "@matrix-os/ui";
 import { getGatewayUrl } from "./gateway";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "./canonical-provider-setup";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -128,6 +129,9 @@ export function createProviderSettingsTransport(
       });
       const parsed = ProviderSettingsMutationResponseSchema.safeParse(value);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
+      }
       return parsed.data;
     },
   };
