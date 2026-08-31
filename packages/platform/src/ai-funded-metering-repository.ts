@@ -74,10 +74,39 @@ type BalanceSnapshot = {
   month_reserved_microusd: unknown;
 };
 
+type ExpirableReservationHold = {
+  reservation_id: string;
+  machine_id: string;
+  period_start: string;
+  reserved_microusd: unknown;
+};
+
 function exactInteger(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed)) throw new Error("Funded AI monetary total exceeds safe integer range");
   return parsed;
+}
+
+async function expireReservationHold(
+  executor: PlatformDB["executor"],
+  reservation: ExpirableReservationHold,
+  checkedAt: string,
+): Promise<void> {
+  const reserved = exactInteger(reservation.reserved_microusd);
+  const releasedBalance = await executor.updateTable("ai_funded_runtime_balances").set({
+    reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
+    month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
+    updated_at: checkedAt,
+  }).where("machine_id", "=", reservation.machine_id)
+    .where(sql<boolean>`reserved_microusd >= ${reserved}`)
+    .returning("machine_id").executeTakeFirst();
+  if (!releasedBalance) throw new Error("Funded AI balance invariant violated");
+  const expiredReservation = await executor.updateTable("ai_funded_usage_reservations")
+    .set({ status: "expired" })
+    .where("reservation_id", "=", reservation.reservation_id)
+    .where("status", "=", "settling")
+    .returning("reservation_id").executeTakeFirst();
+  if (!expiredReservation) throw new Error("Funded AI reservation invariant violated");
 }
 
 function hashesEqual(left: string, right: string): boolean {
@@ -528,7 +557,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const checked = options.now();
     const checkedAt = checked.toISOString();
     await options.db.ready;
-    return options.db.transaction(async (trx) => {
+    const result = await options.db.transaction(async (trx) => {
       const locator = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .select(["machine_id"]).where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).executeTakeFirst();
@@ -587,6 +616,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         request.actualCostMicrousd,
         currentBalance,
       );
+      let promotionalBackingAvailable = true;
       if (attributed) {
         await debitAttributedPromotionalGrants(
           trx.executor,
@@ -595,7 +625,19 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           checkedAt,
         );
       } else {
-        await debitPromotionalGrants(trx.executor, reservationIdentity, promotionalDebit, checkedAt);
+        promotionalBackingAvailable = await debitPromotionalGrants(
+          trx.executor,
+          reservationIdentity,
+          promotionalDebit,
+          checkedAt,
+        );
+      }
+      if (!promotionalBackingAvailable) {
+        // The reservation predates source attribution and its inferred
+        // promotional backing is gone. Close the hold without charging a
+        // protected bucket or recording a debit for credit that does not exist.
+        await expireReservationHold(trx.executor, reservation, checkedAt);
+        return null;
       }
       if (promotionalDebit > 0) {
         await trx.executor.insertInto("ai_funded_credit_ledger").values({
@@ -671,6 +713,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("reservation_id", "=", reservation.reservation_id).execute();
       return response;
     });
+    if (result === null) throw new AiFundedPolicyError("reservation_expired");
+    return result;
   }
 
   async function releaseReservation(
@@ -796,28 +840,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
             machineId: reservation.machine_id,
             runtimeSlot: reservation.runtime_slot,
           };
-          const hasUnknownLegacySource = reservation.promotional_reserved_microusd === null
-            && reservation.addon_reserved_microusd === null;
-          if (hasUnknownLegacySource && exactInteger(currentBalance.credit_balance_microusd) < reserved) {
-            // A migrated reservation without source attribution cannot safely
-            // debit credit that has since expired. Release its aggregate hold
-            // atomically instead of inventing a source or aborting the batch.
-            const releasedBalance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-              reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
-              month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
-              updated_at: checkedAt,
-            }).where("machine_id", "=", reservation.machine_id)
-              .where(sql<boolean>`reserved_microusd >= ${reserved}`)
-              .returning("machine_id").executeTakeFirst();
-            if (!releasedBalance) throw new Error("Funded AI balance invariant violated");
-            const expiredReservation = await trx.executor.updateTable("ai_funded_usage_reservations")
-              .set({ status: "expired" })
-              .where("reservation_id", "=", reservation.reservation_id)
-              .where("status", "=", "settling")
-              .returning("reservation_id").executeTakeFirst();
-            if (!expiredReservation) throw new Error("Funded AI reservation invariant violated");
-            continue;
-          }
           const { promotionalDebit, addonDebit, attributed } = await reservationDebitSplit(
             trx.executor,
             reservationIdentity,
@@ -825,6 +847,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
             reserved,
             currentBalance,
           );
+          let promotionalBackingAvailable = true;
           if (attributed) {
             await debitAttributedPromotionalGrants(
               trx.executor,
@@ -833,7 +856,16 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
               checkedAt,
             );
           } else {
-            await debitPromotionalGrants(trx.executor, reservationIdentity, promotionalDebit, checkedAt);
+            promotionalBackingAvailable = await debitPromotionalGrants(
+              trx.executor,
+              reservationIdentity,
+              promotionalDebit,
+              checkedAt,
+            );
+          }
+          if (!promotionalBackingAvailable) {
+            await expireReservationHold(trx.executor, reservation, checkedAt);
+            continue;
           }
           const debitRows = [
             promotionalDebit > 0 ? {
