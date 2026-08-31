@@ -21,6 +21,7 @@ const PROVIDER_SETTINGS_PATH = "/api/ai/provider-settings";
 const PROVIDER_SETTINGS_ACTIONS_PATH = "/api/ai/provider-settings/actions";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MUTATION_BYTES = 64 * 1024;
+const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
 
 export function desktopProviderIdentityKey(identity: {
   status: "loading" | "signed-out" | "signed-in";
@@ -115,6 +116,40 @@ export async function openExistingProviderTerminalSession(
 }
 
 type OpenExternal = (url: string) => Promise<unknown>;
+
+function isStripeCheckoutUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "checkout.stripe.com";
+  } catch {
+    return false;
+  }
+}
+
+export async function openAiCreditCheckout(input: {
+  api: ApiClient;
+  runtimeSlot: string;
+  packageId: "usd_5" | "usd_10" | "usd_25";
+  requestId: string;
+  openExternal?: OpenExternal;
+}): Promise<boolean> {
+  try {
+    const result = await input.api.post<unknown>("/billing/ai-credit/checkout", {
+      packageId: input.packageId,
+      runtimeSlot: input.runtimeSlot,
+      requestId: input.requestId,
+    }, { maxBytes: MAX_CHECKOUT_RESPONSE_BYTES });
+    const url = result && typeof result === "object" ? (result as { url?: unknown }).url : undefined;
+    if (!isStripeCheckoutUrl(url)) return false;
+    const openExternal = input.openExternal ?? ((target) => invoke("shell:open-external", { url: target }));
+    await openExternal(url);
+    return true;
+  } catch (error) {
+    console.warn("[ai-credit] Checkout unavailable:", error instanceof Error ? error.name : typeof error);
+    return false;
+  }
+}
 
 export async function openProviderAuthorizationPath(input: {
   authorizationPath: string;

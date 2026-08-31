@@ -236,6 +236,26 @@ No Chat content is persisted at the relay in the first release.
 
 These tables are intentionally deferred until per-user allowance/add-on work. They use platform Postgres and Kysely migrations.
 
+### `ai_credit_checkout_claims`
+
+- immutable fulfillment identity: request, owner, machine, runtime, package,
+  Stripe Price, USD subtotal, microusd grant, tax mode, and idempotency key;
+- mutable bounded lifecycle: Checkout Session URL/ID, payment intent, charge,
+  status, grant/reversal/debt totals, refund timestamp, dispute state, and
+  expiry timestamps;
+- request/idempotency/session/payment-intent/charge references are unique;
+- one partial unique active claim exists per owner/machine/runtime;
+- the claim is inserted before Stripe and remains authoritative after catalog
+  rotation or feature disable.
+
+### `ai_funded_credit_restrictions`
+
+- one row per machine/runtime with non-negative reversal debt and a freeze bit;
+- refund/dispute reversal, balance mutation, debt mutation, ledger entry, claim
+  transition, and webhook receipt share one transaction;
+- authorization rejects while debt or freeze remains, including when the
+  original credit was already consumed.
+
 ### `ai_entitlements`
 
 - unique logical key: `(owner_id, entitlement_kind, status)` with an active-scope constraint;

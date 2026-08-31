@@ -176,9 +176,41 @@ Usage displays must state their authority:
 - unknown or stale values are labeled unavailable or stale, never estimated as
   exact.
 
-Add Credit remains unavailable until Stripe checkout can atomically create an
-idempotent add-on grant. The current snapshot therefore keeps
-`gatewayPolicy.topUpEnabled` false and never advertises `add_credit`.
+Add Credit is advertised only when the platform's authoritative checkout
+configuration is complete. The browser cannot choose an owner, machine, USD
+amount, Stripe Price, or ledger value: it sends one allowlisted package ID,
+runtime slot, and UUID, while Clerk authentication and the active machine row
+derive the exact owner/runtime. Web navigates to hosted Stripe Checkout and
+Electron opens that same validated `https://checkout.stripe.com` URL in the
+external browser. Both render the shared package picker and safe retry state.
+
+Creation first persists an immutable, bounded checkout claim. Active attempts
+are reused and each owner/runtime is durably limited to five new attempts per
+hour. The signed Checkout lifecycle validates payment mode, USD currency, exact
+pre-tax `amount_subtotal`, `amount_total >= amount_subtotal`, package/Price
+metadata, and the owner/machine/runtime binding against that claim rather than
+mutable environment configuration. Completed unpaid sessions wait for
+`checkout.session.async_payment_succeeded`; failed or expired sessions add no
+credit. The webhook receipt and non-expiring add-on ledger grant commit in one
+database transaction. The ledger entry uses the Checkout Session ID with
+`ON CONFLICT`, so duplicate delivery cannot add credit twice. Mismatches return
+non-2xx so Stripe retries; valid unpaid, failed, and expired lifecycle events
+are recorded as 2xx no-ops for credit.
+
+Any positive refund reverses the full associated add-on grant. Available
+unused credit is removed atomically; already consumed or reserved credit
+becomes durable debt and freezes further funded authorization. A dispute does
+the same while open or lost. A won dispute restores only the amount previously
+removed, clears that claim's debt, and unfreezes the runtime when safe.
+Cloudflare remains the upstream billing/spend fuse while Matrix Postgres remains
+the user-credit authority.
+
+`gatewayPolicy.topUpEnabled` and `add_credit` fail closed unless
+`MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=true`, Stripe signing is configured,
+and every server-owned `$5/$10/$25` Price ID is valid. Local provider JSON can
+never enable the button. Stripe Tax is off for add-on Checkout unless operators
+set `MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED=true` after confirming
+the required active tax registrations.
 
 ## Security and failure requirements
 

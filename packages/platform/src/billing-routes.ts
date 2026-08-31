@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { z } from 'zod/v4';
 import { appOrigin, resolveReturnPath } from './origins.js';
@@ -51,6 +51,18 @@ import {
 } from './billing.js';
 import { DeveloperToolsWithDefaultSchema, type DeveloperToolId } from './developer-tools.js';
 import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
+import {
+  AiCreditCheckoutRequestSchema,
+  findAiCreditPackage,
+  loadAiCreditCheckoutConfig,
+} from './ai-credit-checkout.js';
+import {
+  AiCreditCheckoutStoreError,
+  finalizeAiCreditCheckoutClaim,
+  getClaimByRequestId,
+  prepareAiCreditCheckoutClaim,
+} from './ai-credit-checkout-store.js';
+import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -65,6 +77,7 @@ const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
   code: 'billing_unavailable',
 } as const;
+
 const BILLING_CHECKOUT_STARTED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_STARTED ?? 'matrix_billing_checkout_started';
 const BILLING_CHECKOUT_CREATED_EVENT =
@@ -153,6 +166,20 @@ export interface StripeCheckoutSessionProjection {
   regionSlug: string | null;
 }
 
+export interface StripeAiCreditCheckoutSessionInput {
+  idempotencyKey: string;
+  requestId: string;
+  clerkUserId: string;
+  machineId: string;
+  runtimeSlot: string;
+  packageId: string;
+  priceId: string;
+  amountMicrousd: number;
+  automaticTax: boolean;
+  successUrl: string;
+  cancelUrl: string;
+}
+
 export interface StripeBillingClient {
   apiTimeoutMs: number;
   /**
@@ -164,6 +191,10 @@ export interface StripeBillingClient {
     url: string;
     id: string;
     expiresAt?: string;
+  }>;
+  createAiCreditCheckoutSession(input: StripeAiCreditCheckoutSessionInput): Promise<{
+    url: string;
+    id: string;
   }>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;
   createPortalSession(input: {
@@ -228,6 +259,7 @@ export function createBillingRoutes(options: {
   now?: () => Date;
   upsertEntitlement?: typeof upsertBillingEntitlement;
   prebilling?: PrebillingCheckoutCoordinator;
+  fundedAiRepository?: Pick<import('./ai-funded-policy-repository.js').AiFundedPolicyRepository, 'grantCreditInTransaction'>;
   /**
    * Optional product telemetry sink. Fire-and-forget: implementations must
    * never throw into the request path, and callers only pass low-cardinality,
@@ -245,6 +277,7 @@ export function createBillingRoutes(options: {
     && env.MATRIX_BILLING_PROVIDER === 'stripe';
   const now = options.now ?? (() => new Date());
   const persistEntitlement = options.upsertEntitlement ?? upsertBillingEntitlement;
+  const aiCreditCheckout = loadAiCreditCheckoutConfig(env);
 
   function emitTelemetry(
     event: string,
@@ -586,6 +619,75 @@ export function createBillingRoutes(options: {
     }
   });
 
+  app.post('/ai-credit/checkout', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), async (c) => {
+    const clerkUserId = await resolveRouteClerkUserId(c, 'ai-credit checkout');
+    if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
+    if (!options.fundedAiRepository) {
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) return c.json({ error: 'Invalid request' }, 400);
+      throw err;
+    }
+    const parsed = AiCreditCheckoutRequestSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+    try {
+      if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
+        throw new Error('stripe_timeout_exceeds_budget');
+      }
+      const machine = await getActiveUserMachineByClerkId(options.db, clerkUserId, parsed.data.runtimeSlot);
+      if (!machine || machine.status !== 'running' || machine.activationState !== 'authorized') {
+        return c.json({ error: 'Computer is unavailable', code: 'runtime_unavailable' }, 409);
+      }
+      const idempotencyKey = `matrix-ai-credit:${createHash('sha256')
+        .update(`${clerkUserId}\0${machine.machineId}\0${parsed.data.requestId}`)
+        .digest('hex')}`;
+      const persisted = await getClaimByRequestId(options.db, parsed.data.requestId);
+      if (persisted && (persisted.owner_id !== clerkUserId || persisted.machine_id !== machine.machineId
+        || persisted.runtime_slot !== machine.runtimeSlot || persisted.package_id !== parsed.data.packageId
+        || persisted.idempotency_key !== idempotencyKey)) {
+        throw new AiCreditCheckoutStoreError('conflict');
+      }
+      const selectedPackage = findAiCreditPackage(aiCreditCheckout, parsed.data.packageId);
+      if (!persisted && !selectedPackage) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      const claim = persisted ?? await prepareAiCreditCheckoutClaim(options.db, {
+        idempotencyKey, requestId: parsed.data.requestId, ownerId: clerkUserId,
+        machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
+        packageId: selectedPackage!.id, priceId: selectedPackage!.priceId,
+        amountMicrousd: selectedPackage!.amountMicrousd, amountCents: selectedPackage!.amountCents,
+        currency: selectedPackage!.currency, automaticTax: aiCreditCheckout.enabled && aiCreditCheckout.automaticTax,
+      }, now());
+      if (claim.checkout_url) return c.json({ url: claim.checkout_url }, 200);
+      const session = await options.stripe.createAiCreditCheckoutSession({
+        idempotencyKey: claim.idempotency_key,
+        requestId: claim.request_id,
+        clerkUserId: claim.owner_id,
+        machineId: claim.machine_id,
+        runtimeSlot: claim.runtime_slot,
+        packageId: claim.package_id,
+        priceId: claim.stripe_price_id,
+        amountMicrousd: Number(claim.amount_microusd),
+        automaticTax: claim.automatic_tax,
+        successUrl: resolveBillingReturnUrl(env, 'success'),
+        cancelUrl: resolveBillingReturnUrl(env, 'canceled'),
+      });
+      const finalized = await finalizeAiCreditCheckoutClaim(
+        options.db, claim.request_id, session, now().toISOString(),
+      );
+      return c.json({ url: finalized.checkout_url }, 200);
+    } catch (err: unknown) {
+      if (err instanceof AiCreditCheckoutStoreError) {
+        if (err.code === 'rate_limited') return c.json({ error: 'Too many requests' }, 429);
+        if (err.code === 'conflict') return c.json({ error: 'Checkout already active' }, 409);
+      }
+      console.error('[billing] AI credit checkout failed:', err instanceof Error ? err.name : typeof err);
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
+  });
+
   app.get('/checkout/status', async (c) => {
     const clerkUserId = await resolveRouteClerkUserId(c, 'checkout status');
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
@@ -731,6 +833,11 @@ export function createBillingRoutes(options: {
         if (!inserted.inserted) {
           return { received: true, duplicate: true };
         }
+
+        const aiCreditResult = await processAiCreditWebhookEvent({
+          event, trx, repository: options.fundedAiRepository, at: webhookProcessedAt.toISOString(),
+        });
+        if (aiCreditResult) return aiCreditResult;
 
         // Checkout session lifecycle drives the settling-attempt status: a
         // confirmed payment marks the attempt `paid` (sticky), an expiry marks
