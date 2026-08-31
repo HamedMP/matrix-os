@@ -18,6 +18,9 @@ import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { nativeOsViewPatch, nativeTabOsViewPath } from "./native-os-view-persistence";
 
+const OS_VIEW_SAVE_DEBOUNCE_MS = 500;
+const OS_VIEW_SAVE_RETRY_MS = 2_000;
+
 export function useNativeOsViewPersistence(input: {
   api: ApiClient | null;
   tabs: readonly Tab[];
@@ -35,11 +38,14 @@ export function useNativeOsViewPersistence(input: {
     canvas: {},
   });
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeApiRef = useRef(input.api);
   const installedAppsRef = useRef(input.installedApps);
+  activeApiRef.current = input.api;
   installedAppsRef.current = input.installedApps;
 
-  const schedulePersist = useCallback(() => {
-    if (!input.api || !loadedRef.current) return;
+  const schedulePersist = useCallback((delayMs = OS_VIEW_SAVE_DEBOUNCE_MS) => {
+    const api = input.api;
+    if (!api || activeApiRef.current !== api || !loadedRef.current) return;
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
       persistTimerRef.current = null;
@@ -53,7 +59,7 @@ export function useNativeOsViewPersistence(input: {
         if (path && surface && !canonicalGeometry[path]) canonicalGeometry[path] = { ...surface.bounds };
       }
       const transform = useNativeDesktopMode.getState();
-      void patchNativeOsViewState(input.api!, nativeOsViewPatch({
+      void patchNativeOsViewState(api, nativeOsViewPatch({
         tabs: tabsState.tabs,
         surfaces: surfaceState.surfaces,
         installedApps: installedAppsRef.current,
@@ -64,8 +70,9 @@ export function useNativeOsViewPersistence(input: {
         } : {}),
       })).catch((error: unknown) => {
         console.warn("[os-view-state] Electron Desktop persist failed:", error instanceof Error ? error.name : "UnknownError");
+        if (activeApiRef.current === api) schedulePersist(OS_VIEW_SAVE_RETRY_MS);
       });
-    }, 500);
+    }, delayMs);
   }, [input.api]);
 
   const recordCanonicalBounds = useCallback((
@@ -77,9 +84,13 @@ export function useNativeOsViewPersistence(input: {
     if (path) canonicalGeometryRef.current[mode][path] = { ...bounds };
   }, []);
 
-  useEffect(() => () => {
-    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
-  }, []);
+  useEffect(() => {
+    activeApiRef.current = input.api;
+    return () => {
+      if (activeApiRef.current === input.api) activeApiRef.current = null;
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    };
+  }, [input.api]);
 
   useEffect(() => {
     if (persistTimerRef.current) {

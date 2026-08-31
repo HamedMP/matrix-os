@@ -40,6 +40,8 @@ const MIN_HEIGHT = 200;
 const DESKTOP_WINDOW_MARGIN = 20;
 const DESKTOP_HEADER_HEIGHT = 38;
 const MAX_CLOSED_ENTRIES = 50;
+const LAYOUT_SAVE_DEBOUNCE_MS = 500;
+const LAYOUT_SAVE_RETRY_MS = 2_000;
 
 function isTerminalWindowPath(path: string): boolean {
   return path === "__terminal__" || path.startsWith("__terminal__:");
@@ -161,6 +163,7 @@ export function resetWindowManagerLayoutPersistenceForTests(): void {
 
 function debouncedSave(
   state: Pick<WindowManagerState, "windows" | "closedPaths" | "closedLayouts">,
+  delayMs = LAYOUT_SAVE_DEBOUNCE_MS,
 ) {
   if (!layoutPersistenceArmed) return;
   clearTimeout(saveTimer);
@@ -204,8 +207,9 @@ function debouncedSave(
       if (process.env.NODE_ENV !== "production") {
         console.debug("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));
       }
+      debouncedSave(useWindowManager.getState(), LAYOUT_SAVE_RETRY_MS);
     });
-  }, 500);
+  }, delayMs);
 }
 
 function computeDefaultWindowSize(path: string): { width: number; height: number } {

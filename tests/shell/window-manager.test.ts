@@ -374,6 +374,23 @@ describe("Window Manager Store", () => {
       );
       expect(putCalls).toHaveLength(1);
     });
+
+    it("retries the latest layout after a bounded persistence failure", async () => {
+      fetchSpy
+        .mockResolvedValueOnce({ ok: false, status: 503 })
+        .mockResolvedValueOnce({ ok: true, status: 200 });
+      useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
+      const initial = useWindowManager.getState().windows[0];
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const retried = JSON.parse(fetchSpy.mock.calls[1][1].body);
+      expect(retried.patch.desktop.windows[0]).toMatchObject({ x: initial.x, y: initial.y });
+    });
   });
 
   describe("loadLayout", () => {
