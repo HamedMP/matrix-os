@@ -84,6 +84,31 @@ function loginSessionName(recoveryHash: string): string {
   return `provider-login-${recoveryHash.slice(0, 24)}`;
 }
 
+function legacyLoginSessionName(harness: "codex" | "claude", legacyPayloadHash: string): string {
+  return `provider-login-${harness}-${legacyPayloadHash.slice(0, 16)}`;
+}
+
+function matchesLegacyLoginPayload(
+  input: LoginInput,
+  receipt: ReceiptDocument["receipts"][number],
+): boolean {
+  if (receipt.recoveryHash !== undefined) return false;
+  // A successful legacy start advanced settings once. Looking back any farther could
+  // adopt a terminal across intervening route or account changes.
+  const revisions = [input.mutation.expectedRevision];
+  if (input.mutation.expectedRevision > 0) {
+    revisions.push(input.mutation.expectedRevision - 1);
+  }
+  return revisions.some((expectedRevision) => payloadHash({
+    ...input,
+    mutation: {
+      ...input.mutation,
+      expectedRevision,
+      idempotencyKey: receipt.key,
+    },
+  }) === receipt.payloadHash);
+}
+
 function appendBoundedReceipt(document: ReceiptDocument, receipt: ReceiptDocument["receipts"][number]): void {
   document.receipts.push(receipt);
   if (document.receipts.length > MAX_RECEIPTS) {
@@ -180,9 +205,50 @@ export function createProviderTerminalLoginCoordinator(options: {
           return attempt;
         }
 
-        const activeRecoveryReceipts = recoveryDocument.receipts.filter((receipt) =>
+        const currentTime = now();
+        const liveLegacyReceipts = [];
+        for (const receipt of document.receipts) {
+          const attempt = currentProviderConnectionAttempt(receipt.attempt, currentTime);
+          if (!matchesLegacyLoginPayload(input, receipt)
+            || attempt.state === "expired"
+            || attempt.action.kind !== "open_terminal"
+            || attempt.action.terminalSessionId !== legacyLoginSessionName(
+              input.harness.harness,
+              receipt.payloadHash,
+            )) {
+            continue;
+          }
+          try {
+            await options.registry.get(attempt.action.terminalSessionId);
+            liveLegacyReceipts.push(receipt);
+          } catch (error) {
+            if (!isMissingSession(error)) throw error;
+          }
+        }
+        if (liveLegacyReceipts.length > 1) {
+          throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        }
+        const legacyReceipt = liveLegacyReceipts[0];
+        if (legacyReceipt) {
+          const legacyIndex = document.receipts.indexOf(legacyReceipt);
+          document.receipts[legacyIndex] = ReceiptSchema.parse({
+            ...legacyReceipt,
+            recoveryHash,
+          });
+          try {
+            await persistReceipt(receiptsPath, ReceiptDocumentSchema.parse(document));
+          } catch (error) {
+            console.warn(
+              "[provider-login] Failed to upgrade legacy login receipt:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
+        }
+
+        const activeRecoveryReceipts = [...document.receipts, ...recoveryDocument.receipts].filter((receipt) =>
           receipt.recoveryHash === recoveryHash
-          && currentProviderConnectionAttempt(receipt.attempt, now()).state !== "expired");
+          && currentProviderConnectionAttempt(receipt.attempt, currentTime).state !== "expired");
         const activeRecoveryAttempts = new Map(activeRecoveryReceipts.map((receipt) => [
           JSON.stringify(receipt.attempt),
           receipt.attempt,
