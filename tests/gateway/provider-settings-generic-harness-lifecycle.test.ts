@@ -183,6 +183,23 @@ describe("generic provider harness lifecycle coordinator", () => {
     return { coordinator: restart(), restart, update };
   }
 
+  async function persistOwnerCommitment(
+    input: ReturnType<typeof systemRouteInput>,
+  ): Promise<string> {
+    const runtimeReceiptPath = join(homePath!, "system/ai-providers/runtime-receipts.json");
+    const runtimeReceipts = JSON.parse(await readFile(runtimeReceiptPath, "utf8"));
+    await writeProviderJsonAtomic(join(homePath!, "system/ai-providers/settings.json"), {
+      ...input.after,
+      revision: 1,
+      receipts: [{
+        key: input.idempotencyKey,
+        payloadHash: runtimeReceipts.receipts[0].payloadHash,
+        appliedRevision: 1,
+      }],
+    });
+    return runtimeReceiptPath;
+  }
+
   it("configures an enabled Hermes route through the existing runtime controller", async () => {
     const { coordinator, update } = await makeCoordinator();
     expect(coordinator.supportedActions).toEqual([
@@ -383,6 +400,96 @@ describe("generic provider harness lifecycle coordinator", () => {
       "utf8",
     ));
     expect(repair).toEqual({ version: 1, repair: null });
+    expect(restarted.isRecoveryReady()).toBe(true);
+  });
+
+  it("reapplies a committed duplicate after crashing when its repair journal clears", async () => {
+    let crashAfterRepairClear = false;
+    let crashed = false;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      await writeProviderJsonAtomic(path, value);
+      if (crashAfterRepairClear && !crashed && path.endsWith("runtime-repair.json")
+        && typeof value === "object" && value !== null && "repair" in value
+        && value.repair === null) {
+        crashed = true;
+        throw new Error("gateway crashed after repair journal clear");
+      }
+    });
+    const { coordinator, restart, update } = await makeCoordinator({ receiptWriter });
+    const input = systemRouteInput("claude-opus-5", "route_duplicate_repair_clear_crash");
+
+    await coordinator.applyConfiguration(input);
+    const runtimeReceiptPath = await persistOwnerCommitment(input);
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    });
+
+    crashAfterRepairClear = true;
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow(
+      "gateway crashed after repair journal clear",
+    );
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      messagingModel: "claude-opus-5",
+    }));
+    expect(JSON.parse(await readFile(runtimeReceiptPath, "utf8")).receipts).toMatchObject([{
+      key: input.idempotencyKey,
+      state: "applied",
+    }]);
+    const restarted = restart();
+    await restarted.reconcilePending();
+
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      messagingModel: "claude-opus-5",
+    }));
+    expect(JSON.parse(await readFile(runtimeReceiptPath, "utf8")).receipts).toEqual([]);
+    expect(restarted.isRecoveryReady()).toBe(true);
+  });
+
+  it("completes an armed duplicate repair after crashing before runtime application", async () => {
+    let crashAfterPreparedReceipt = false;
+    let crashed = false;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      await writeProviderJsonAtomic(path, value);
+      if (crashAfterPreparedReceipt && !crashed && path.endsWith("runtime-receipts.json")
+        && typeof value === "object" && value !== null && "receipts" in value
+        && Array.isArray(value.receipts)
+        && value.receipts.some((receipt: unknown) => typeof receipt === "object"
+          && receipt !== null && "key" in receipt && "state" in receipt
+          && receipt.key === "route_duplicate_armed_crash" && receipt.state === "prepared")) {
+        crashed = true;
+        throw new Error("gateway crashed after prepared repair receipt");
+      }
+    });
+    const { coordinator, restart, update } = await makeCoordinator({ receiptWriter });
+    const input = systemRouteInput("claude-opus-5", "route_duplicate_armed_crash");
+
+    await coordinator.applyConfiguration(input);
+    const runtimeReceiptPath = await persistOwnerCommitment(input);
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    });
+
+    crashAfterPreparedReceipt = true;
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow(
+      "gateway crashed after prepared repair receipt",
+    );
+    expect(update).toHaveBeenCalledTimes(2);
+    const restarted = restart();
+    await restarted.reconcilePending();
+
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      messagingModel: "claude-opus-5",
+    }));
+    expect(JSON.parse(await readFile(runtimeReceiptPath, "utf8")).receipts).toEqual([]);
     expect(restarted.isRecoveryReady()).toBe(true);
   });
 
@@ -1224,17 +1331,7 @@ describe("generic provider harness lifecycle coordinator", () => {
     const { coordinator, restart, update } = await makeCoordinator();
     const input = systemRouteInput("claude-opus-5", "route_owner_committed");
     await coordinator.applyConfiguration(input);
-    const runtimeReceiptPath = join(homePath!, "system/ai-providers/runtime-receipts.json");
-    const runtimeReceipts = JSON.parse(await readFile(runtimeReceiptPath, "utf8"));
-    await writeProviderJsonAtomic(join(homePath!, "system/ai-providers/settings.json"), {
-      ...input.after,
-      revision: 1,
-      receipts: [{
-        key: input.idempotencyKey,
-        payloadHash: runtimeReceipts.receipts[0].payloadHash,
-        appliedRevision: 1,
-      }],
-    });
+    const runtimeReceiptPath = await persistOwnerCommitment(input);
 
     await restart().reconcilePending();
     expect(update).toHaveBeenCalledTimes(1);
