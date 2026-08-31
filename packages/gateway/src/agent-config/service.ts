@@ -95,7 +95,8 @@ export function buildAgentSettingsView(
   const canonicalOwnerAccount = input.providerSnapshot?.accounts.find(
     (account) => account.id === "owner_anthropic",
   );
-  const canonicalSourceId = input.providerSnapshot?.active.accessSourceId
+  const canonicalActive = input.providerSnapshot?.active;
+  const canonicalSourceId = canonicalActive?.accessSourceId
     ?? (canonicalOwnerAccount?.authMethod === "api_key"
       ? "owner_anthropic_key"
       : canonicalOwnerAccount?.authMethod === "provider_profile"
@@ -116,15 +117,19 @@ export function buildAgentSettingsView(
   const chatProviderId = input.providerSnapshot && canonicalSourceId === "matrix_included"
     ? "matrix_ai"
     : "anthropic";
-  const model = savedModel ?? KERNEL_DEFAULTS.model;
+  const model = input.providerSnapshot
+    ? canonicalActive?.modelId ?? null
+    : savedModel ?? KERNEL_DEFAULTS.model;
   const effort = savedEffort ?? KERNEL_DEFAULTS.effort;
-  const chat = {
-    provider: chatProviderId,
-    model,
-    effort,
-    source: savedModel === null ? "default" as const : "saved" as const,
-    authKind,
-  };
+  const chat = model === null
+    ? null
+    : {
+        provider: chatProviderId,
+        model,
+        effort,
+        source: savedModel === model ? "saved" as const : "default" as const,
+        authKind,
+      };
   const canonicalAuthStatus = canonicalSource?.state === "ready"
     ? { state: "ready" as const, authenticated: true, action: "none" as const }
     : canonicalSource?.state === "unavailable"
@@ -155,6 +160,12 @@ export function buildAgentSettingsView(
     && !KERNEL_MODELS.some((entry) => entry.id === savedModel)
     ? [...KERNEL_MODELS, resolveKernelModelOption(savedModel)]
     : KERNEL_MODELS;
+  const canonicalInstance = input.providerSnapshot?.instances.find(
+    (instance) => instance.accessSourceId === canonicalSourceId,
+  );
+  const providerModels = input.providerSnapshot
+    ? availableModels.filter((entry) => canonicalInstance?.modelIds.includes(entry.id) === true)
+    : availableModels;
 
   return AgentSettingsViewSchema.parse({
     identity: input.identity,
@@ -202,7 +213,7 @@ export function buildAgentSettingsView(
       scopes: ["chat"],
       authKind,
       supportedAuthKinds: ["platform", "api_key", "oauth_login"],
-      models: availableModels.map((entry) => ({
+      models: providerModels.map((entry) => ({
         id: entry.id,
         displayName: entry.label,
         description: entry.tier,

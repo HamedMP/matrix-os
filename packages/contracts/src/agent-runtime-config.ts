@@ -252,7 +252,7 @@ export const AgentMessagingSelectionSchema = z.object({
 });
 
 export const AgentCurrentSelectionSchema = z.object({
-  chat: AgentChatSelectionSchema,
+  chat: AgentChatSelectionSchema.nullable(),
   messaging: AgentMessagingSelectionSchema,
 }).strict();
 
@@ -280,9 +280,10 @@ const LegacyCompatibleAgentSettingsViewSchema = LegacyAgentSettingsViewSchema
   });
 
 function chatSelectionsMatch(
-  left: z.infer<typeof AgentChatSelectionSchema>,
-  right: z.infer<typeof AgentChatSelectionSchema>,
+  left: z.infer<typeof AgentChatSelectionSchema> | null,
+  right: z.infer<typeof AgentChatSelectionSchema> | null,
 ): boolean {
+  if (left === null || right === null) return left === right;
   return left.provider === right.provider
     && left.model === right.model
     && left.effort === right.effort
@@ -293,7 +294,7 @@ function chatSelectionsMatch(
 export const AgentSettingsViewSchema = LegacyAgentSettingsViewSchema.extend({
   contractVersion: z.literal(2),
   revision: z.number().int().min(0),
-  chat: AgentChatSelectionSchema,
+  chat: AgentChatSelectionSchema.nullable(),
   runtime: AgentRuntimeSelectionSchema,
   providers: AgentProviderCatalogSchema,
   currentSelection: AgentCurrentSelectionSchema,
@@ -308,40 +309,42 @@ export const AgentSettingsViewSchema = LegacyAgentSettingsViewSchema.extend({
       message: "Messaging runtime must be selected",
     });
   }
-  const effectiveLegacyModel = view.kernel.model ?? view.defaults.model;
-  const effectiveLegacyEffort = view.kernel.effort ?? view.defaults.effort;
-  if (effectiveLegacyModel !== view.chat.model
-    || effectiveLegacyEffort !== view.chat.effort) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["chat"],
-      message: "Chat selection must match effective legacy settings",
-    });
-  }
-  const expectedSource = view.kernel.model === null ? "default" : "saved";
-  if (view.chat.source !== expectedSource) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["chat", "source"],
-      message: "Chat source must match legacy model selection",
-    });
-  }
-  const chatProvider = view.providers.find((provider) =>
-    provider.runtime === null
-    && provider.id === view.chat.provider
-    && provider.scopes.includes("chat")
-  );
-  const chatModel = chatProvider?.models.find((model) => model.id === view.chat.model);
-  if (!chatModel) {
-    ctx.addIssue({ code: "custom", path: ["chat", "model"], message: "Chat model is not cataloged" });
-  } else if (!chatModel.efforts.includes(view.chat.effort)) {
-    ctx.addIssue({ code: "custom", path: ["chat", "effort"], message: "Chat effort is not supported" });
-  }
-  if (!view.availableModels.some((model) => model.id === view.chat.model)) {
-    ctx.addIssue({ code: "custom", path: ["availableModels"], message: "Legacy model catalog is incomplete" });
-  }
-  if (!view.availableEfforts.includes(view.chat.effort)) {
-    ctx.addIssue({ code: "custom", path: ["availableEfforts"], message: "Legacy effort catalog is incomplete" });
+  const chat = view.chat;
+  if (chat !== null) {
+    const effectiveLegacyEffort = view.kernel.effort ?? view.defaults.effort;
+    if ((view.kernel.model !== null && view.kernel.model !== chat.model)
+      || effectiveLegacyEffort !== chat.effort) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["chat"],
+        message: "Saved Chat settings must match the active selection",
+      });
+    }
+    const expectedSource = view.kernel.model === null ? "default" : "saved";
+    if (chat.source !== expectedSource) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["chat", "source"],
+        message: "Chat source must match legacy model selection",
+      });
+    }
+    const chatProvider = view.providers.find((provider) =>
+      provider.runtime === null
+      && provider.id === chat.provider
+      && provider.scopes.includes("chat")
+    );
+    const chatModel = chatProvider?.models.find((model) => model.id === chat.model);
+    if (!chatModel) {
+      ctx.addIssue({ code: "custom", path: ["chat", "model"], message: "Chat model is not cataloged" });
+    } else if (!chatModel.efforts.includes(chat.effort)) {
+      ctx.addIssue({ code: "custom", path: ["chat", "effort"], message: "Chat effort is not supported" });
+    }
+    if (!view.availableModels.some((model) => model.id === chat.model)) {
+      ctx.addIssue({ code: "custom", path: ["availableModels"], message: "Legacy model catalog is incomplete" });
+    }
+    if (!view.availableEfforts.includes(chat.effort)) {
+      ctx.addIssue({ code: "custom", path: ["availableEfforts"], message: "Legacy effort catalog is incomplete" });
+    }
   }
   const messaging = view.currentSelection.messaging;
   if (messaging.configured) {
