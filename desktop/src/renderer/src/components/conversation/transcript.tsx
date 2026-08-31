@@ -102,9 +102,9 @@ function UserMessage({
   return (
     <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
       <Message align="end">
-        <MessageContent>
-          <Bubble variant="secondary" align="end">
-            <BubbleContent className="max-w-[48rem] whitespace-pre-wrap" data-selectable>
+        <MessageContent className="gap-1">
+          <Bubble variant="plain" align="end">
+            <BubbleContent className="max-w-[48rem] whitespace-pre-wrap rounded-none p-0 text-md leading-[16px]" data-selectable>
               {renderStructuredContent ? message.content!.map((segment, index) => {
                 if (segment.kind === "text") return <span key={`text:${index}`}>{segment.text}</span>;
                 if (segment.kind === "image") {

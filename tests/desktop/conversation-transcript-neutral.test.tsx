@@ -98,6 +98,20 @@ describe("provider-neutral conversation transcript", () => {
     render(<ConversationTranscript turns={turns} callbacks={{ copyText }} />);
 
     const expand = screen.getByRole("button", { name: "Show full message" });
+    const userBubbleContent = expand.closest('[data-slot="bubble-content"]') as HTMLElement;
+    const userBubble = userBubbleContent.closest('[data-slot="bubble"]') as HTMLElement;
+    const userMessageContent = userBubbleContent.closest('[data-slot="message-content"]') as HTMLElement;
+    expect(userBubble.getAttribute("data-variant")).toBe("plain");
+    expect(userBubble.className).toContain("bg-transparent");
+    expect(userBubbleContent.className).toContain("p-0");
+    expect(userBubbleContent.className).toContain("rounded-none");
+    expect(userBubbleContent.className).not.toContain("rounded-xl");
+    expect(userBubbleContent.className).not.toContain("px-3");
+    expect(userBubbleContent.className).not.toContain("py-2");
+    expect(userBubbleContent.className).toContain("text-md");
+    expect(userBubbleContent.className).toContain("leading-[16px]");
+    expect(userBubbleContent.className).not.toContain("font-");
+    expect(userMessageContent.className).toContain("gap-1");
     expect(expand.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(longMessage)).toBeNull();
     expect(screen.getByText("run.log")).toBeTruthy();
@@ -278,7 +292,8 @@ describe("provider-neutral conversation transcript", () => {
     const transcript = screen.getByRole("log");
     expect(transcript.className).toContain("max-w-[868px]");
     expect(transcript.className).not.toContain("max-w-[72rem]");
-    expect(transcript.className).toContain("gap-3");
+    expect(transcript.className).toContain("gap-2");
+    expect(transcript.className).not.toContain("gap-3");
     const rows = transcript.querySelectorAll('[data-slot="message-scroller-item"]');
     expect(rows[1]?.textContent).toContain("I’ll inspect the project first.");
     expect(rows[2]?.textContent).toContain("Run command");
