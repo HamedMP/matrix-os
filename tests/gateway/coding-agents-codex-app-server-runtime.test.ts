@@ -765,7 +765,10 @@ describe("Codex app-server control runtime", () => {
         modelOptions: [],
         clientRequestId: "req_control_interrupt_2",
       })).resolves.toEqual({ ok: true });
-      const transcript = await waitForTranscript(eventPath, /after-interrupt/);
+      const transcript = await waitForTranscript(
+        eventPath,
+        /after-interrupt[\s\S]*"type":"turn\.completed"/,
+      );
       expect(transcript).toContain('"type":"turn.aborted"');
       expect(transcript).toContain('"type":"turn.completed"');
       expect(child.exitCode).toBeNull();
