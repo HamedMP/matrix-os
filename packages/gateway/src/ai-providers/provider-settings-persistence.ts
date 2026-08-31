@@ -111,9 +111,11 @@ export async function writeProviderJsonAtomic(path: string, value: unknown): Pro
     }
     await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx", mode: 0o600 });
     temporaryCreated = true;
+    await chmod(temporaryPath, 0o600);
+    // Keep rename as the final fallible step so a rejected write always leaves
+    // the previously durable document in place for saga compensation.
     await rename(temporaryPath, path);
     temporaryCreated = false;
-    await chmod(path, 0o600);
   } catch (error) {
     if (temporaryCreated) {
       await unlink(temporaryPath).catch((cleanupError: unknown) => {

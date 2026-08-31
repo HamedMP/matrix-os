@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { createProviderGenericHarnessCoordinator } from "../../packages/gateway/src/ai-providers/provider-generic-harness-coordinator.js";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
-import type { ProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
+import {
+  writeProviderJsonAtomic,
+  type ProviderSettingsConfiguration,
+} from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 function genericCanonical(): AiProviderSnapshotV3 {
@@ -84,48 +87,57 @@ describe("generic provider harness lifecycle coordinator", () => {
     codingHarnesses?: Array<"pi" | "opencode">;
     inactiveOpenClawHealth?: "healthy" | "stopped" | "unknown";
     inactiveOpenClawInstallState?: "installed" | "missing";
+    receiptWriter?: typeof writeProviderJsonAtomic;
   } = {}) {
     homePath = await mkdtemp(join(tmpdir(), "provider-generic-harness-"));
     await mkdir(join(homePath, "system"), { recursive: true });
     await writeFile(join(homePath, "system/config.json"), JSON.stringify({
       agent: { messagingRuntime: options.selected ?? "hermes", revision: 4 },
     }));
-    const update = vi.fn(async (input) => ({
-      revision: 5,
-      runtime: input.runtime ?? "hermes",
-      selection: {
-        runtime: input.runtime ?? "hermes",
-        provider: input.provider ?? null,
-        model: input.messagingModel ?? null,
-        configured: input.provider !== undefined,
-      },
-    }));
+    let selected = options.selected ?? "hermes";
+    let selectedProvider = "anthropic";
+    let selectedModel = "claude-sonnet-5";
+    const update = vi.fn(async (input) => {
+      selected = input.runtime ?? selected;
+      selectedProvider = input.provider ?? selectedProvider;
+      selectedModel = input.messagingModel ?? selectedModel;
+      return {
+        revision: 5,
+        runtime: selected,
+        selection: {
+          runtime: selected,
+          provider: selectedProvider,
+          model: selectedModel,
+          configured: true,
+        },
+      };
+    });
     const coordinator = createProviderGenericHarnessCoordinator({
       homePath,
       runtimeController: { update },
       runtimeSource: async () => ({
         runtime: {
-          selected: options.selected ?? "hermes",
+          selected,
           options: [
             {
               id: "hermes",
               displayName: "Hermes",
               installState: "installed",
               health: "healthy",
-              selectionState: options.selected === "openclaw" ? "available" : "active",
+              selectionState: selected === "openclaw" ? "available" : "active",
               configured: true,
               capabilities: ["provider_catalog", "model_selection"],
             },
             {
               id: "openclaw",
               displayName: "OpenClaw",
-              installState: options.selected === "openclaw"
+              installState: selected === "openclaw"
                 ? "installed"
                 : options.inactiveOpenClawInstallState ?? "installed",
-              health: options.selected === "openclaw"
+              health: selected === "openclaw"
                 ? "healthy"
                 : options.inactiveOpenClawHealth ?? "healthy",
-              selectionState: options.selected === "openclaw" ? "active" : "available",
+              selectionState: selected === "openclaw" ? "active" : "available",
               configured: true,
               capabilities: ["provider_catalog", "model_selection"],
             },
@@ -134,13 +146,14 @@ describe("generic provider harness lifecycle coordinator", () => {
         },
         providers: [],
         messaging: {
-          runtime: options.selected ?? "hermes",
-          provider: "anthropic",
-          model: "claude-sonnet-5",
+          runtime: selected,
+          provider: selectedProvider,
+          model: selectedModel,
           configured: true,
         },
       }),
       enabledCodingHarnesses: options.codingHarnesses ?? ["pi"],
+      receiptWriter: options.receiptWriter,
     });
     return { coordinator, update };
   }
@@ -466,6 +479,113 @@ describe("generic provider harness lifecycle coordinator", () => {
     } finally {
       warning.mockRestore();
     }
+  });
+
+  it("compensates a runtime update when the applied receipt cannot persist and retries once", async () => {
+    let writes = 0;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      writes += 1;
+      if (writes === 2) throw new Error("receipt disk failure at /private/runtime");
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, update } = await makeCoordinator({ receiptWriter });
+    const before = config([hermes]);
+    const after = structuredClone(before);
+    after.harnesses[0]!.route.modelId = "claude-opus-5";
+    const input = {
+      mutation: {
+        type: "set_route" as const,
+        expectedRevision: 0,
+        idempotencyKey: "route_receipt_failure_1",
+        harnessInstanceId: hermes.id,
+        route: after.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_receipt_failure_1",
+    };
+
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow("receipt disk failure");
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenNthCalledWith(1, expect.objectContaining({ messagingModel: "claude-opus-5" }));
+    expect(update).toHaveBeenNthCalledWith(2, expect.objectContaining({ messagingModel: "claude-sonnet-5" }));
+
+    await coordinator.applyConfiguration(input);
+    await coordinator.applyConfiguration(input);
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).toHaveBeenNthCalledWith(3, expect.objectContaining({ messagingModel: "claude-opus-5" }));
+  });
+
+  it("recovers a failed compensation from its prepared receipt without duplicating the runtime update", async () => {
+    let writes = 0;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      writes += 1;
+      if (writes === 2) throw new Error("receipt finalize failed");
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, update } = await makeCoordinator({ receiptWriter });
+    const updateImplementation = update.getMockImplementation()!;
+    update.mockImplementationOnce(updateImplementation);
+    update.mockImplementationOnce(async () => { throw new Error("rollback unavailable at /private/runtime"); });
+    const before = config([hermes]);
+    const after = structuredClone(before);
+    after.harnesses[0]!.route.modelId = "claude-opus-5";
+    const input = {
+      mutation: {
+        type: "set_route" as const,
+        expectedRevision: 0,
+        idempotencyKey: "route_compensation_failure_1",
+        harnessInstanceId: hermes.id,
+        route: after.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_compensation_failure_1",
+    };
+
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow("receipt finalize failed");
+    expect(update).toHaveBeenCalledTimes(2);
+
+    await coordinator.applyConfiguration(input);
+    await coordinator.applyConfiguration(input);
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers a failed store-requested rollback without replaying the applied runtime mutation", async () => {
+    const { coordinator, update } = await makeCoordinator();
+    const before = config([hermes]);
+    const after = structuredClone(before);
+    after.harnesses[0]!.route.modelId = "claude-opus-5";
+    const input = {
+      mutation: {
+        type: "set_route" as const,
+        expectedRevision: 0,
+        idempotencyKey: "route_store_rollback_failure_1",
+        harnessInstanceId: hermes.id,
+        route: after.harnesses[0]!.route,
+        accessSourceId: "matrix_included",
+        accountId: null,
+      },
+      before,
+      after,
+      canonical: genericCanonical(),
+      idempotencyKey: "route_store_rollback_failure_1",
+    };
+
+    await coordinator.applyConfiguration(input);
+    update.mockRejectedValueOnce(new Error("rollback runtime unavailable"));
+    await expect(coordinator.rollbackConfiguration(input)).rejects.toThrow("rollback runtime unavailable");
+
+    await coordinator.applyConfiguration(input);
+    await coordinator.applyConfiguration(input);
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenNthCalledWith(1, expect.objectContaining({ messagingModel: "claude-opus-5" }));
   });
 
   it("runs add, enable, disable, and remove through the real settings store without touching binaries", async () => {

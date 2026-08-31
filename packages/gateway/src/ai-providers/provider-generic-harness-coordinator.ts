@@ -24,15 +24,33 @@ const MAX_RECEIPT_FILE_BYTES = 256 * 1024;
 const RECEIPT_PATH = "system/ai-providers/runtime-receipts.json";
 const GenericHarnessSchema = z.enum(["hermes", "openclaw", "pi", "opencode"]);
 const CodingHarnessSchema = z.enum(["pi", "opencode"]);
+const SystemHarnessSchema = z.enum(["hermes", "openclaw"]);
+const RuntimeRouteSchema = z.object({
+  harness: SystemHarnessSchema,
+  providerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
+  modelId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/),
+}).strict();
 const ReceiptSchema = z.object({
   key: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
   payloadHash: z.string().length(64).regex(/^[a-f0-9]+$/),
-}).strict();
+  state: z.enum(["prepared", "applied", "compensation_pending"]).default("applied"),
+  beforeRoute: RuntimeRouteSchema.optional(),
+  afterRoute: RuntimeRouteSchema.optional(),
+}).strict().superRefine((receipt, context) => {
+  if ((receipt.beforeRoute === undefined) !== (receipt.afterRoute === undefined)) {
+    context.addIssue({ code: "custom", message: "Incomplete provider runtime receipt route" });
+  }
+  if (receipt.state !== "applied" && !receipt.beforeRoute) {
+    context.addIssue({ code: "custom", message: "Recoverable provider runtime receipt is missing routes" });
+  }
+});
 const ReceiptDocumentSchema = z.object({
   version: z.literal(1),
   receipts: z.array(ReceiptSchema).max(MAX_PROVIDER_SETTINGS_RECEIPTS),
 }).strict();
 type GenericHarness = z.infer<typeof GenericHarnessSchema>;
+type RuntimeRoute = z.infer<typeof RuntimeRouteSchema>;
+type RuntimeReceipt = z.infer<typeof ReceiptSchema>;
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error
@@ -104,6 +122,7 @@ export function createProviderGenericHarnessCoordinator(options: {
   runtimeController: Pick<AgentRuntimeController, "update">;
   runtimeSource: AgentRuntimeSource;
   enabledCodingHarnesses: readonly ("pi" | "opencode")[];
+  receiptWriter?: typeof writeProviderJsonAtomic;
 }): ProviderSettingsRuntimeCoordinator {
   if (!options.homePath) throw new Error("Provider generic harness home path is required");
   if (!options.runtimeController) throw new Error("Provider generic harness runtime controller is required");
@@ -112,6 +131,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     CodingHarnessSchema.array().max(2).parse([...options.enabledCodingHarnesses]),
   );
   const receiptPath = join(options.homePath, RECEIPT_PATH);
+  const writeReceiptDocument = options.receiptWriter ?? writeProviderJsonAtomic;
   let tail: Promise<void> = Promise.resolve();
 
   async function requireRuntimeSupport(
@@ -153,6 +173,87 @@ export function createProviderGenericHarnessCoordinator(options: {
     await options.runtimeController.update(update.data);
   }
 
+  async function currentRuntimeRoute(): Promise<RuntimeRoute> {
+    const snapshot = await readRuntimeSnapshot(options.runtimeSource);
+    return RuntimeRouteSchema.parse({
+      harness: snapshot.runtime.selected,
+      providerId: snapshot.messaging.provider,
+      modelId: snapshot.messaging.model,
+    });
+  }
+
+  function configuredRuntimeRoute(harness: HarnessConfiguration & {
+    harness: "hermes" | "openclaw";
+  }): RuntimeRoute {
+    return RuntimeRouteSchema.parse({
+      harness: harness.harness,
+      providerId: harness.route.providerId,
+      modelId: harness.route.modelId,
+    });
+  }
+
+  async function applyRuntimeRoute(route: RuntimeRoute): Promise<void> {
+    await applySystemRoute({
+      id: `recovery_${route.harness}`,
+      driverId: route.harness,
+      harness: route.harness,
+      displayName: route.harness,
+      accentColor: null,
+      enabled: true,
+      selectedAccountId: null,
+      accessSourceId: null,
+      route: { kind: "configurable", providerId: route.providerId, modelId: route.modelId },
+    });
+  }
+
+  function sameRuntimeRoute(left: RuntimeRoute, right: RuntimeRoute): boolean {
+    return left.harness === right.harness && left.providerId === right.providerId
+      && left.modelId === right.modelId;
+  }
+
+  async function writeReceipts(receipts: z.infer<typeof ReceiptDocumentSchema>): Promise<void> {
+    await writeReceiptDocument(receiptPath, ReceiptDocumentSchema.parse(receipts));
+  }
+
+  function replaceReceipt(
+    receipts: z.infer<typeof ReceiptDocumentSchema>,
+    receipt: RuntimeReceipt,
+  ): void {
+    receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
+    receipts.receipts.push(ReceiptSchema.parse(receipt));
+    if (receipts.receipts.length > MAX_PROVIDER_SETTINGS_RECEIPTS) {
+      receipts.receipts.splice(0, receipts.receipts.length - MAX_PROVIDER_SETTINGS_RECEIPTS);
+    }
+  }
+
+  async function runtimeTarget(
+    input: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0],
+    mutation: z.infer<typeof ProviderSettingsMutationSchema>,
+    target: HarnessConfiguration & { harness: GenericHarness },
+  ): Promise<RuntimeRoute | null> {
+    if (!systemHarness(target.harness)) return null;
+    const systemTarget = target as typeof target & { harness: "hermes" | "openclaw" };
+    const affected = affectedHarness(input);
+    if (mutation.type === "set_harness_enabled" && mutation.enabled === false) {
+      const runtime = await readRuntimeSnapshot(options.runtimeSource);
+      if (runtime.runtime.selected !== target.harness) return null;
+      const fallback = input.after.harnesses.find((harness) =>
+        harness.enabled && systemHarness(harness.harness) && harness.id !== target.id,
+      );
+      const supportedFallback = requireGenericHarness(fallback);
+      await requireRuntimeSupport(supportedFallback, input.canonical);
+      return configuredRuntimeRoute(supportedFallback as typeof supportedFallback & {
+        harness: "hermes" | "openclaw";
+      });
+    }
+    if (affected.after?.enabled === true
+      && mutation.type !== "update_harness"
+      && mutation.type !== "remove_harness") {
+      return configuredRuntimeRoute(systemTarget);
+    }
+    return null;
+  }
+
   async function coordinate(
     input: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0],
   ): Promise<void> {
@@ -164,7 +265,21 @@ export function createProviderGenericHarnessCoordinator(options: {
       if (duplicate.payloadHash !== payloadHash) {
         throw new ProviderSettingsStoreError("idempotency_conflict", 409);
       }
-      return;
+      if (duplicate.state === "applied") return;
+      const beforeRoute = duplicate.beforeRoute;
+      const afterRoute = duplicate.afterRoute;
+      if (!beforeRoute || !afterRoute) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      const current = await currentRuntimeRoute();
+      if (sameRuntimeRoute(current, afterRoute)) {
+        duplicate.state = "applied";
+        await writeReceipts(receipts);
+        return;
+      }
+      if (!sameRuntimeRoute(current, beforeRoute)) {
+        throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+      }
+      receipts.receipts = receipts.receipts.filter((receipt) => receipt.key !== duplicate.key);
+      await writeReceipts(receipts);
     }
 
     const affected = affectedHarness(input);
@@ -179,32 +294,74 @@ export function createProviderGenericHarnessCoordinator(options: {
       || (mutation.type === "set_harness_enabled" && mutation.enabled === false);
     if (!localOnly) await requireRuntimeSupport(target, input.canonical);
 
-    if (systemHarness(target.harness)) {
-      const systemTarget = target as typeof target & { harness: "hermes" | "openclaw" };
-      if (mutation.type === "set_harness_enabled" && mutation.enabled === false) {
-        const runtime = await readRuntimeSnapshot(options.runtimeSource);
-        if (runtime.runtime.selected === target.harness) {
-          const fallback = input.after.harnesses.find((harness) =>
-            harness.enabled && systemHarness(harness.harness) && harness.id !== target.id,
-          );
-          const supportedFallback = requireGenericHarness(fallback);
-          await requireRuntimeSupport(supportedFallback, input.canonical);
-          await applySystemRoute(supportedFallback as typeof supportedFallback & {
-            harness: "hermes" | "openclaw";
-          });
-        }
-      } else if (affected.after?.enabled === true
-        && mutation.type !== "update_harness"
-        && mutation.type !== "remove_harness") {
-        await applySystemRoute(systemTarget);
+    const afterRoute = await runtimeTarget(input, mutation, target);
+    if (!afterRoute) {
+      replaceReceipt(receipts, { key: input.idempotencyKey, payloadHash, state: "applied" });
+      await writeReceipts(receipts);
+      return;
+    }
+    const beforeRoute = await currentRuntimeRoute();
+    const receipt: RuntimeReceipt = {
+      key: input.idempotencyKey, payloadHash, state: "prepared", beforeRoute, afterRoute,
+    };
+    replaceReceipt(receipts, receipt);
+    await writeReceipts(receipts);
+    if (!sameRuntimeRoute(beforeRoute, afterRoute)) await applyRuntimeRoute(afterRoute);
+    receipt.state = "applied";
+    replaceReceipt(receipts, receipt);
+    try {
+      await writeReceipts(receipts);
+    } catch (error) {
+      try {
+        if (!sameRuntimeRoute(beforeRoute, afterRoute)) await applyRuntimeRoute(beforeRoute);
+        receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
+        await writeReceipts(receipts);
+      } catch (rollbackError) {
+        console.warn(
+          "[provider-settings] Generic harness receipt rollback failed:",
+          rollbackError instanceof Error ? rollbackError.name : "UnknownError",
+        );
       }
+      throw error;
     }
+  }
 
-    receipts.receipts.push({ key: input.idempotencyKey, payloadHash });
-    if (receipts.receipts.length > MAX_PROVIDER_SETTINGS_RECEIPTS) {
-      receipts.receipts.splice(0, receipts.receipts.length - MAX_PROVIDER_SETTINGS_RECEIPTS);
+  async function rollback(
+    input: Parameters<ProviderSettingsRuntimeCoordinator["rollbackConfiguration"]>[0],
+  ): Promise<void> {
+    const payloadHash = mutationHash(ProviderSettingsMutationSchema.parse(input.mutation));
+    const receipts = await readReceipts(receiptPath);
+    const receipt = receipts.receipts.find((candidate) => candidate.key === input.idempotencyKey);
+    if (!receipt) return;
+    if (receipt.payloadHash !== payloadHash) {
+      throw new ProviderSettingsStoreError("idempotency_conflict", 409);
     }
-    await writeProviderJsonAtomic(receiptPath, ReceiptDocumentSchema.parse(receipts));
+    if (!receipt.beforeRoute || !receipt.afterRoute) {
+      receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
+      await writeReceipts(receipts);
+      return;
+    }
+    receipt.state = "compensation_pending";
+    await writeReceipts(receipts);
+    const current = await currentRuntimeRoute();
+    if (sameRuntimeRoute(current, receipt.afterRoute)) {
+      await applyRuntimeRoute(receipt.beforeRoute);
+    } else if (!sameRuntimeRoute(current, receipt.beforeRoute)) {
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
+    receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
+    await writeReceipts(receipts);
+  }
+
+  function serialize(operation: () => Promise<void>): Promise<void> {
+    const pending = tail.then(operation);
+    tail = pending.catch((error: unknown) => {
+      console.warn(
+        "[provider-settings] Generic harness configuration failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    });
+    return pending;
   }
 
   return {
@@ -221,14 +378,10 @@ export function createProviderGenericHarnessCoordinator(options: {
       "set_route",
     ],
     applyConfiguration(input) {
-      const pending = tail.then(() => coordinate(input));
-      tail = pending.catch((error: unknown) => {
-        console.warn(
-          "[provider-settings] Generic harness configuration failed:",
-          error instanceof Error ? error.name : "UnknownError",
-        );
-      });
-      return pending;
+      return serialize(() => coordinate(input));
+    },
+    rollbackConfiguration(input) {
+      return serialize(() => rollback(input));
     },
   };
 }
