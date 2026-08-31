@@ -50,7 +50,7 @@ export function providerSettingsCanonicalFixture(): AiProviderSnapshotV3 {
     drivers: [
       {
         id: "kernel",
-        displayName: "Matrix Agent",
+        displayName: "Claude SDK",
         kind: "agent_sdk",
         installState: "installed",
         health: "ready",
