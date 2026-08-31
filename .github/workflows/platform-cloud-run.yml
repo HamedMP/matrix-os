@@ -53,7 +53,7 @@ jobs:
       MATRIX_APP_URL: ${{ vars.MATRIX_APP_URL }}
       MATRIX_APP_DOMAIN_HOSTS: ${{ vars.MATRIX_APP_DOMAIN_HOSTS }}
       MATRIX_CODE_DOMAIN_HOSTS: ${{ vars.MATRIX_CODE_DOMAIN_HOSTS }}
-      CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}
+      CUSTOMER_VPS_IMAGE_VERSION: 'stable'
       ATS_BOOKING_BASE_URL: ${{ vars.ATS_BOOKING_BASE_URL }}
       GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}
       GOLDEN_SNAPSHOTS_ENABLED: 'true'
@@ -84,8 +84,7 @@ jobs:
             MATRIX_API_ORIGIN \
             MATRIX_APP_URL \
             MATRIX_APP_DOMAIN_HOSTS \
-            MATRIX_CODE_DOMAIN_HOSTS \
-            CUSTOMER_VPS_IMAGE_VERSION; do
+            MATRIX_CODE_DOMAIN_HOSTS; do
             if [ -z "${!name:-}" ]; then
               missing+=("$name")
             fi
@@ -566,6 +565,7 @@ jobs:
             --region "$GCP_REGION" \
             --format=json)"
           required_provisioning_env=(
+            CUSTOMER_VPS_IMAGE_VERSION
             MATRIX_PREBILLING_PROVISIONING_ENABLED
             MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT
             MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE
@@ -705,7 +705,7 @@ jobs:
             echo "Candidate pre-VPS billing shell served the platform fallback auth page." >&2
             exit 1
           fi
-          manifest="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/system-bundles/channels/dev.json")"
+          manifest="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/system-bundles/channels/${CUSTOMER_VPS_IMAGE_VERSION}.json")"
           bundle_url="$(printf '%s\n' "$manifest" | jq -r '.url // empty')"
           if [ -z "$bundle_url" ]; then
             echo "Candidate host bundle channel smoke did not return a signed bundle URL." >&2
@@ -759,7 +759,7 @@ jobs:
             --no-traffic \
             --min-instances "$min_instances" \
             --no-cpu-throttling \
-            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=true,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}" \
+            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}" \
             --remove-env-vars "MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS,MATRIX_PREBILLING_PROVISIONING_COSTS" \
             --format=json)"
           production_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "production-candidate") | .revisionName // empty' | head -1)"
@@ -779,6 +779,7 @@ jobs:
             --format=json)"
           required_production_env=(
             "PLATFORM_BACKGROUND_WORKERS_ENABLED=true"
+            "CUSTOMER_VPS_IMAGE_VERSION=stable"
             "MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}"
             "MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}"
             "MATRIX_PREBILLING_PROVISIONING_ENABLED=true"

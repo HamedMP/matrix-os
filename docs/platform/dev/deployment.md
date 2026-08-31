@@ -10,7 +10,7 @@ Production Matrix OS is VPS-native:
 - one customer VPS per active user;
 - Matrix gateway, shell, code-server, sync, and app assets run on the customer VPS through host services;
 - each customer VPS has its own local Postgres endpoint at `127.0.0.1:5432`;
-- customer VPSes download the published host bundle from `system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/`;
+- production provisioning resolves the `stable` host-bundle channel once and pins that immutable version and SHA for the customer VPS;
 - Pipedream, Clerk server-side auth, provisioning, routing, and host-bundle publication stay on the platform.
 
 Legacy Docker Compose and `/containers/*` instructions are not the production customer runtime. They are only for archived shared-container deployments or local development.
@@ -55,7 +55,7 @@ ATS_ADMIN_SECRET=...
 ATS_BOOKING_BASE_URL=https://booking-provider.example/...
 
 CUSTOMER_VPS_ENABLED=true
-CUSTOMER_VPS_IMAGE_VERSION=matrix-os-host-dev
+CUSTOMER_VPS_IMAGE_VERSION=stable
 HETZNER_API_TOKEN=...
 HETZNER_CUSTOMER_PROJECT=matrix-os-customers
 HETZNER_LOCATION=nbg1
@@ -216,12 +216,20 @@ set +a
 sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-Publish:
+Publish an immutable version, then promote the reviewed release through the
+`stable` channel:
 
 ```text
-system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz
-system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production Cloud Run binds `CUSTOMER_VPS_IMAGE_VERSION=stable` directly. At
+provision time the platform resolves that channel to an immutable release and
+stores its exact version and SHA on the machine/job. Golden-snapshot selection
+and clean-image fallback therefore use identical bundle bytes. Roll back new
+provisions by promoting the reviewed prior release to `stable`; do not maintain
+a separate mutable production image-version variable.
 
 The bundle contains `/opt/matrix/app`, `/opt/matrix/runtime`, and `/opt/matrix/bin`. It includes bundled Vite/React default apps and the launchers for `matrix-gateway.service`, `matrix-shell.service`, `matrix-code.service`, `matrix-sync-agent.service`, and `matrix-update`.
 

@@ -49,9 +49,12 @@ Internet
 New VPS provisions download the host bundle from R2:
 
 ```text
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production resolves the `stable` channel to that immutable version when each
+provisioning job starts.
 
 The per-user Docker image path is legacy/local-development only. It is not used for production customer VPSes.
 
@@ -599,12 +602,18 @@ Customer VPS host services are not affected by a platform control-plane restart.
 
 ### Update Customer VPS Host Bundle
 
-Customer VPSes boot from a host bundle downloaded from R2 at:
+Customer VPSes boot from an immutable host bundle downloaded from R2 at:
 
 ```text
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production provisioning is bound to the `stable` channel. Each create or
+recovery resolves `stable` once, persists the exact version and SHA, and uses
+that same immutable target for either a golden snapshot or clean-image
+fallback. Promote a reviewed prior release back to `stable` for rollback;
+never repoint production through a separate image-version environment value.
 
 Use this path whenever shell, gateway, bundled apps, host scripts, Postgres env wiring, or agent CLI versions change for VPS-hosted users. The normal path is the GitHub Actions release workflow on `main`; local builds are for break-glass verification or emergency release preparation.
 
