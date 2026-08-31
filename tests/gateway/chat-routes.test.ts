@@ -457,6 +457,55 @@ describe("canonical Chat routes", () => {
     }
   });
 
+  it("enqueues a bounded next Turn through an explicit owner-derived route", async () => {
+    const queuedAt = "2026-08-31T09:00:00.000Z";
+    const queued = {
+      queuedTurn: {
+        id: "qturn_route",
+        chatId: "chat_route_test",
+        clientRequestId: "req_route_queue",
+        position: 1,
+        parts: [{ type: "text", text: "run this next" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        createdAt: queuedAt,
+        updatedAt: queuedAt,
+      },
+      queueDepth: 1,
+    };
+    const enqueueQueuedTurn = vi.fn(async () => queued);
+    const service = routeService() as CanonicalChatRouteService & {
+      enqueueQueuedTurn: typeof enqueueQueuedTurn;
+    };
+    service.enqueueQueuedTurn = enqueueQueuedTurn;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/queued-turns",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_queue",
+          baseRevision: 1,
+          parts: [{ type: "text", text: "run this next" }],
+          selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+          interactionMode: "default",
+          permissionMode: "supervised",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual(queued);
+    expect(enqueueQueuedTurn).toHaveBeenCalledWith(
+      { userId: "owner_1", source: "jwt" },
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      expect.objectContaining({ clientRequestId: "req_route_queue" }),
+    );
+  });
+
   it("admits and cancels a Run through strict owner-derived routes", async () => {
     const admission = CanonicalChatTurnAdmissionResponseSchema.parse({
       record: {
