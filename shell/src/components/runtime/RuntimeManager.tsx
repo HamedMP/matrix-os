@@ -778,7 +778,9 @@ async function provisionComputer(
       }),
     });
     if (response.status === 402) {
-      setStep("installs");
+      setSafeError("This computer configuration is no longer available for your account. Review your plan and region, then try again.");
+      setErrorRetryAction("billing");
+      setStep("error");
       return;
     }
     if (response.status === 409) {

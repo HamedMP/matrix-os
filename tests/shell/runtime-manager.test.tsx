@@ -83,6 +83,16 @@ function billingStatus(maxRuntimeSlots = 3, source: "stripe" | "override" = "str
       includedRuntimeSlots: maxRuntimeSlots,
       addonRuntimeSlots: 0,
       allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+      allowedSelections: [
+        { planSlug: "matrix_starter", regionSlug: "region_fsn1" },
+        { planSlug: "matrix_starter", regionSlug: "region_nbg1" },
+        { planSlug: "matrix_starter", regionSlug: "region_ash" },
+        { planSlug: "matrix_starter", regionSlug: "region_hil" },
+        { planSlug: "matrix_builder", regionSlug: "region_fsn1" },
+        { planSlug: "matrix_builder", regionSlug: "region_nbg1" },
+        { planSlug: "matrix_builder", regionSlug: "region_ash" },
+        { planSlug: "matrix_builder", regionSlug: "region_hil" },
+      ],
       portalAvailable: source === "stripe",
       billingInterval: "monthly",
       gracePeriodEndsAt: null,
@@ -522,6 +532,23 @@ describe("RuntimeManager", () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.filter(([url]) => url === "/api/auth/provision-runtime")).toHaveLength(2);
     });
+  });
+
+  it("returns rejected billing capabilities to configuration instead of silently retrying installs", async () => {
+    installFetchRouter({
+      billing: billingStatus(3, "override"),
+      provision: json({ error: "payment required" }, 402),
+    });
+    await renderOnboarding();
+    await beginNamedComputer("Research Lab");
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/configuration is no longer available/i);
+    expect(screen.queryByRole("heading", { name: "Default installs" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("group", { name: "Choose your Matrix computer" })).toBeTruthy();
   });
 
   it("retries a failed slot build through the journey contract", async () => {

@@ -1,5 +1,8 @@
 import { z } from "zod/v4";
-import { MATRIX_HOSTED_BILLING_PLAN_SLUGS } from "#billing-catalog";
+import {
+  MATRIX_HOSTED_BILLING_PLAN_SLUGS,
+  MATRIX_HOSTED_BILLING_REGION_SLUGS,
+} from "#billing-catalog";
 import { IsoTimestampSchema } from "#contract-primitives";
 
 export const MatrixBillingPublicEntitlementSchema = z.object({
@@ -24,6 +27,12 @@ export const MatrixBillingPublicEntitlementSchema = z.object({
   allowedPlanSlugs: z.array(z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS)).max(
     MATRIX_HOSTED_BILLING_PLAN_SLUGS.length,
   ),
+  allowedSelections: z.array(z.strictObject({
+    planSlug: z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS),
+    regionSlug: z.enum(MATRIX_HOSTED_BILLING_REGION_SLUGS),
+  })).max(
+    MATRIX_HOSTED_BILLING_PLAN_SLUGS.length * MATRIX_HOSTED_BILLING_REGION_SLUGS.length,
+  ).default([]),
   portalAvailable: z.boolean(),
   billingInterval: z.enum(["monthly", "annual"]).nullable(),
   gracePeriodEndsAt: IsoTimestampSchema.nullable(),

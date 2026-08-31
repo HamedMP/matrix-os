@@ -177,6 +177,49 @@ describe("BillingSection", () => {
     expect(screen.queryByText("Start your 7-day free trial")).toBeNull();
   });
 
+  it("offers internal accounts only plan and region combinations authorized by billing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: true, reason: "active" },
+        trialOffer: { eligible: false, durationDays: 3 },
+        entitlement: {
+          source: "override",
+          planSlug: "internal",
+          status: "active",
+          maxRuntimeSlots: 3,
+          includedRuntimeSlots: 3,
+          addonRuntimeSlots: 0,
+          allowedPlanSlugs: ["matrix_builder"],
+          allowedSelections: [
+            { planSlug: "matrix_builder", regionSlug: "region_fsn1" },
+            { planSlug: "matrix_builder", regionSlug: "region_nbg1" },
+          ],
+          portalAvailable: false,
+          billingInterval: null,
+          gracePeriodEndsAt: null,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialConvertedAt: null,
+          firstTrialPaymentFailedAt: null,
+          effectiveFrom: "2026-08-31T00:00:00.000Z",
+          effectiveUntil: null,
+          updatedAt: "2026-08-31T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="add-computer" checkoutRuntimeSlot="studio" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+
+    expect(screen.getByRole("button", { name: /Falkenstein, Germany/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Nuremberg, Germany/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Ashburn, Virginia/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Hillsboro, Oregon/ })).toBeNull();
+  });
+
   it("does not replace a legacy trial price with the current catalog price", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({

@@ -1,5 +1,6 @@
 import {
   MATRIX_HOSTED_BILLING_PLANS,
+  MATRIX_HOSTED_BILLING_REGIONS,
   MATRIX_HOSTED_MACHINE_PROFILES,
   type MatrixBillingPublicEntitlement,
   type MatrixHostedBillingRegionSlug,
@@ -129,14 +130,20 @@ export function projectPublicBillingEntitlement(
     ? getPlanDefinition(entitlement.planSlug)
     : undefined;
   const allowedServerTypes = new Set(entitlement.allowedServerTypes.map((serverType) => serverType.toLowerCase()));
-  const allowedPlanSlugs = entitledPlan
+  const candidatePlans = entitledPlan
     ? DEFAULT_BILLING_PLAN_DEFINITIONS
       .filter((plan) => plan.rank <= entitledPlan.rank)
-      .map((plan) => plan.slug)
     : DEFAULT_BILLING_PLAN_DEFINITIONS
-      .filter((plan) => resolveServerTypes(runtimeCatalog, plan.defaultCatalogSku)
-        .some((serverType) => allowedServerTypes.has(serverType.toLowerCase())))
-      .map((plan) => plan.slug);
+  const allowedSelections = candidatePlans.flatMap((plan) =>
+    MATRIX_HOSTED_BILLING_REGIONS.flatMap((region) => {
+      const serverType = resolveServerType(runtimeCatalog, plan.defaultCatalogSku, region.slug);
+      if (!serverType || (!entitledPlan && !allowedServerTypes.has(serverType.toLowerCase()))) return [];
+      return [{ planSlug: plan.slug, regionSlug: region.slug }];
+    }),
+  );
+  const allowedPlanSlugs = candidatePlans
+    .filter((plan) => allowedSelections.some((selection) => selection.planSlug === plan.slug))
+    .map((plan) => plan.slug);
 
   return {
     source: entitlement.source,
@@ -146,6 +153,7 @@ export function projectPublicBillingEntitlement(
     includedRuntimeSlots: entitlement.includedRuntimeSlots,
     addonRuntimeSlots: entitlement.addonRuntimeSlots,
     allowedPlanSlugs,
+    allowedSelections,
     portalAvailable: entitlement.source === 'stripe' && entitlement.stripeSubscriptionId !== null,
     billingInterval: entitlement.billingInterval ?? null,
     gracePeriodEndsAt: entitlement.gracePeriodEndsAt,

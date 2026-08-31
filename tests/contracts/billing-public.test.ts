@@ -13,6 +13,10 @@ describe("public billing status contract", () => {
         includedRuntimeSlots: 1,
         addonRuntimeSlots: 0,
         allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+        allowedSelections: [
+          { planSlug: "matrix_starter", regionSlug: "region_fsn1" },
+          { planSlug: "matrix_builder", regionSlug: "region_ash" },
+        ],
         portalAvailable: true,
         billingInterval: "monthly",
         gracePeriodEndsAt: null,
@@ -32,6 +36,10 @@ describe("public billing status contract", () => {
       "matrix_starter",
       "matrix_builder",
     ]);
+    expect(result.entitlement?.allowedSelections).toEqual([
+      { planSlug: "matrix_starter", regionSlug: "region_fsn1" },
+      { planSlug: "matrix_builder", regionSlug: "region_ash" },
+    ]);
   });
 
   it("rejects provider and payment-processor identifiers", () => {
@@ -43,6 +51,7 @@ describe("public billing status contract", () => {
       includedRuntimeSlots: 1,
       addonRuntimeSlots: 0,
       allowedPlanSlugs: ["matrix_builder"],
+      allowedSelections: [{ planSlug: "matrix_builder", regionSlug: "region_ash" }],
       portalAvailable: true,
       gracePeriodEndsAt: null,
       effectiveFrom: "2026-08-31T00:00:00.000Z",
