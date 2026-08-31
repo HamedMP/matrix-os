@@ -1,0 +1,3 @@
+interface:
+  display_name: "Improve Animations"
+  short_description: "Audit a codebase's animations and write plans other agents can execute"
