@@ -804,6 +804,45 @@ describe("TerminalView session switching", () => {
     expect(attachmentWrite).toHaveBeenCalledWith("paste survives copy");
   });
 
+  it("keeps a newer copy failure visible when an older paste completes", async () => {
+    const pendingRead = deferred<string>();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: vi.fn(() => pendingRead.promise),
+        writeText: vi.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError")),
+      },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "copy failure remains visible";
+    const shortcut = (key: "c" | "v") => terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    shortcut("v");
+    shortcut("c");
+    expect(await screen.findByText("Clipboard copy failed. Try again.")).toBeTruthy();
+
+    pendingRead.resolve("paste still completes");
+    await act(async () => pendingRead.promise);
+
+    expect(attachmentWrite).toHaveBeenCalledWith("paste still completes");
+    expect(screen.getByText("Clipboard copy failed. Try again.")).toBeTruthy();
+  });
+
   it("cancels delayed clipboard work on unmount and retries exactly once after denial", async () => {
     const unmountedRead = deferred<string>();
     const readText = vi.fn()
