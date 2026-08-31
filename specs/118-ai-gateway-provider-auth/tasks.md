@@ -67,19 +67,19 @@
 
 ### Tests for User Story 3
 
-- [ ] T022 [P] [US3] Add failing canonical Chat catalog tests for the kernel Matrix-funded and owner-funded instances in `tests/gateway/chat-provider-catalog.test.ts`
-- [ ] T023 [P] [US3] Add failing bounded client normalization and safe-error tests for `/api/ai/providers` in `tests/shell/ai-provider-client.test.ts`
-- [ ] T024 [P] [US3] Add failing Settings rendering tests for separate funding, account, harness, readiness, and model labels in `tests/shell/agent-runtime-panel.test.tsx`
-- [ ] T025 [P] [US3] Add failing Chat setup/model-picker tests proving unavailable models cannot be selected and drafts remain local in `tests/shell/chat-app-provider-state.test.tsx`
+- [X] T022 [P] [US3] Add failing canonical Chat catalog tests for the kernel Matrix-funded and owner-funded instances in `tests/gateway/chat-provider-catalog.test.ts`
+- [X] T023 [P] [US3] Add failing bounded client normalization and safe-error tests for `/api/ai/providers` in `tests/shell/ai-provider-client.test.ts`
+- [X] T024 [P] [US3] Add failing Settings rendering tests for separate funding, account, harness, readiness, and model labels in `tests/shell/agent-runtime-panel-provider-state.test.tsx`
+- [X] T025 [P] [US3] Add failing Chat setup/model-picker tests proving unavailable models cannot be selected and drafts remain local in `tests/shell/chat-app-provider-state.test.tsx`
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] Inject the canonical provider snapshot into Chat catalog generation and add the `kernel` instances in `packages/gateway/src/chat/provider-catalog.ts` and `packages/gateway/src/chat/provider-routes.ts`
-- [ ] T027 [US3] Implement the bounded shell provider client and serializable stable derivation helpers in `shell/src/lib/ai-providers.ts`
-- [ ] T028 [US3] Render truthful access-source and owner-account cards from the canonical snapshot in `shell/src/components/settings/sections/AgentRuntimePanel.tsx`
-- [ ] T029 [US3] Replace the hard-coded Chat model list with the canonical ready-instance/model projection while preserving the active draft in `shell/src/components/ChatApp.tsx` and `shell/src/components/chat-app-hermes.ts`
-- [ ] T030 [US3] Reuse the canonical provider client for desktop Chat catalog normalization in `desktop/src/renderer/src/features/chat/chat-provider-catalog.ts`
-- [ ] T031 [US3] Run Chat/Settings parity tests, React Doctor on changed shell files, and the shell production build
+- [X] T026 [US3] Inject the canonical provider snapshot into Chat catalog generation and add the `kernel` instances in `packages/gateway/src/chat/provider-catalog.ts` and `packages/gateway/src/chat/provider-routes.ts`
+- [X] T027 [US3] Implement the bounded shell provider client and serializable stable derivation helpers in `shell/src/lib/ai-providers.ts`
+- [X] T028 [US3] Render truthful access-source and owner-account cards from the canonical snapshot in `shell/src/components/settings/sections/AgentRuntimePanel.tsx`
+- [X] T029 [US3] Replace the hard-coded Chat model list with the canonical ready-instance/model projection while preserving the active draft in `shell/src/components/ChatApp.tsx` and `shell/src/components/chat-app-hermes.ts`
+- [X] T030 [US3] Verify the existing desktop canonical Chat catalog accepts and labels gateway-projected `kernel` instances in `desktop/src/renderer/src/features/chat/ProviderModelPicker.tsx` and `tests/desktop/chat-provider-catalog-client.test.ts`
+- [X] T031 [US3] Run Chat/Settings parity tests, React Doctor on changed shell files, and the shell production build
 
 **Checkpoint**: Chat and Settings display identical provider truth; existing chats remain readable and unavailable selections cannot be submitted.
 
@@ -89,10 +89,10 @@
 
 **Purpose**: Validate failure modes, keep the PR layers reviewable, and freeze the phase for review.
 
-- [ ] T032 [P] Run `bun run typecheck` and `bun run check:patterns:diff` from the repository root
-- [ ] T033 [P] Run `bun run test` and record any unrelated platform-specific baseline failures in the PR body
-- [ ] T034 Run the spec quickstart provider-snapshot fixture and verify client/log output contains no secrets, raw provider errors, or filesystem paths
-- [ ] T035 Mark every completed task `[X]` in `specs/118-ai-gateway-provider-auth/tasks.md` and update Phase 2 implementation notes in `specs/118-ai-gateway-provider-auth/quickstart.md`
+- [X] T032 [P] Run `bun run typecheck` and `bun run check:patterns:diff` from the repository root
+- [X] T033 [P] Run `bun run test` and record any unrelated platform-specific baseline failures in the PR body
+- [X] T034 Run the spec quickstart provider-snapshot fixture and verify client/log output contains no secrets, raw provider errors, or filesystem paths
+- [X] T035 Mark every completed task `[X]` in `specs/118-ai-gateway-provider-auth/tasks.md` and update Phase 2 implementation notes in `specs/118-ai-gateway-provider-auth/quickstart.md`
 - [ ] T036 Publish the Graphite stack, resolve review feedback to Greptile 5/5, add `ready-for-ci`, and monitor label-triggered CI to green
 
 ---

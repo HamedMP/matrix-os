@@ -24,7 +24,10 @@ import {
   aiCostTotal,
   aiTokensTotal,
 } from "./metrics.js";
-import { buildKernelEnv } from "./kernel-credentials.js";
+import {
+  buildKernelEnv,
+  type KernelCredentialAccessSourceId,
+} from "./kernel-credentials.js";
 import type { KernelEffort, KernelModel } from "./kernel-settings.js";
 
 export type SpawnFn = typeof spawnKernel;
@@ -51,6 +54,8 @@ export interface DispatchContext {
 export interface KernelDispatchOverrides {
   model?: KernelModel;
   effort?: KernelEffort;
+  /** Explicit credential/funding source selected from the canonical provider snapshot. */
+  accessSourceId?: KernelCredentialAccessSourceId;
   /** Internal, validated execution root. Never accepted from client frames. */
   workingDirectory?: string;
 }
@@ -191,7 +196,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         effort: entry.kernelOverrides?.effort,
         workingDirectory: entry.kernelOverrides?.workingDirectory,
         maxTurns: opts.maxTurns,
-        env: await buildKernelEnv(homePath),
+        env: await buildKernelEnv(homePath, process.env, entry.kernelOverrides?.accessSourceId),
       };
 
       for await (const event of spawnFn(message, config, entry.abortController)) {

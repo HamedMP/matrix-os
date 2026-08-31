@@ -6,6 +6,7 @@ import {
   type AgentProviderDescriptor,
   type AgentProviderSummary,
   type AgentRuntimeDescriptor,
+  type AiProviderSnapshotV3,
   type CanonicalChatAttachmentKind,
   type CanonicalChatModelSelection,
   type CanonicalChatResourceKind,
@@ -23,6 +24,7 @@ import { createHash } from "node:crypto";
 import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/service.js";
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../request-principal.js";
+import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -83,11 +85,86 @@ export class ProviderCatalogUnavailableError extends Error {
 }
 
 function driverDisplayName(kind: CanonicalProviderDriverKind): string {
+  if (kind === "kernel") return "Matrix Agent";
   if (kind === "claude_code") return "Claude Code";
   if (kind === "openclaw") return "OpenClaw";
   if (kind === "opencode") return "OpenCode";
   if (kind === "pi") return "Pi";
   return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+function kernelAvailability(
+  state: AiProviderSnapshotV3["instances"][number]["readiness"]["state"],
+): CanonicalProviderInstanceDescriptor["availability"] {
+  if (state === "ready") return "available";
+  if (state === "setup_required") return "setup_required";
+  if (state === "auth_required" || state === "invalid" || state === "expired" || state === "unknown") {
+    return "auth_required";
+  }
+  return "unavailable";
+}
+
+function kernelInstances(
+  snapshot: AiProviderSnapshotV3 | undefined,
+  skills: CanonicalChatSkillDescriptor[],
+): InstanceDraft[] {
+  if (!snapshot) return [];
+  const modelCatalog = new Map(snapshot.models.map((model) => [model.id, model]));
+  return snapshot.instances
+    .filter((instance) => instance.driverId === "kernel")
+    .map((instance) => {
+      const availability = kernelAvailability(instance.readiness.state);
+      const models = availability === "available"
+        ? instance.modelIds.flatMap((modelId) => {
+            const model = modelCatalog.get(modelId);
+            if (!model || model.status === "unavailable" || model.status === "retired") return [];
+            return [{
+              id: model.id,
+              displayName: model.displayName,
+              availability: "available" as const,
+              capabilities: model.capabilities,
+              supportsVision: model.capabilities.includes("vision"),
+              supportsToolUse: model.capabilities.includes("tools"),
+            }];
+          })
+        : [];
+      const efforts = models.flatMap((model) => modelCatalog.get(model.id)?.effortControls ?? [])
+        .filter((effort, index, values) => values.indexOf(effort) === index);
+      const options: CanonicalProviderOptionDescriptor[] = efforts.length === 0 ? [] : [{
+        id: "effort",
+        label: "Reasoning",
+        kind: "enum",
+        values: efforts.map((effort) => ({
+          value: effort,
+          label: effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1),
+        })),
+        placement: "composer",
+      }];
+      const defaultModel = instance.defaultModelId !== null
+        && models.some((model) => model.id === instance.defaultModelId)
+        ? instance.defaultModelId
+        : models[0]?.id;
+      return {
+        id: instance.id,
+        driverKind: "kernel" as const,
+        displayName: instance.label,
+        availability,
+        workspaceRequirement: "none" as const,
+        models,
+        options,
+        skills,
+        commands: [],
+        setupActions: availability === "available" ? [] : [{
+          id: `${instance.id}_settings`,
+          kind: "open_settings" as const,
+          label: `Configure ${instance.label}`,
+        }],
+        supports: systemSupports(),
+        ...(availability === "available" && defaultModel ? {
+          defaultSelection: { instanceId: instance.id, model: defaultModel },
+        } : {}),
+      };
+    });
 }
 
 function codingDriverKind(provider: AgentProviderSummary): CodingDriverKind | null {
@@ -428,6 +505,7 @@ function catalogRevision(drivers: unknown, instances: unknown): string {
 export function createChatProviderCatalogService(options: {
   codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
+  aiProviderSource?: AiProviderSnapshotReader;
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   runtimeTimeoutMs?: number;
   skillsSource?: () => Array<{ name: string; description: string }>;
@@ -440,18 +518,29 @@ export function createChatProviderCatalogService(options: {
     async refresh(principal) {
       options.codingProviders.invalidate(principal.userId);
       options.agentRuntimeSource.invalidate?.();
+      if (options.aiProviderSource) {
+        try {
+          await options.aiProviderSource.getSnapshot({ refresh: true });
+        } catch (_error) {
+          console.warn("[chat-providers] AI Provider inventory refresh unavailable");
+        }
+      }
       return service.getCatalog(principal);
     },
     async getCatalog(principal) {
-      const [codingResult, runtimeResult] = await Promise.allSettled([
+      const [codingResult, runtimeResult, aiProviderResult] = await Promise.allSettled([
         options.codingProviders.listProviders(principal),
         readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs),
+        options.aiProviderSource?.getSnapshot({ refresh: false }) ?? Promise.resolve(undefined),
       ]);
       if (codingResult.status === "rejected") {
         console.warn("[chat-providers] Coding Provider inventory unavailable");
       }
       if (runtimeResult.status === "rejected") {
         console.warn("[chat-providers] System Provider inventory unavailable");
+      }
+      if (aiProviderResult.status === "rejected") {
+        console.warn("[chat-providers] AI Provider inventory unavailable");
       }
 
       const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
@@ -500,8 +589,16 @@ export function createChatProviderCatalogService(options: {
         codingInstances.find((instance) => instance.driverKind === kind)
           ?? unavailableCodingInstance(kind, skills, codingResult.status === "fulfilled")
       );
+      const aiSnapshot = aiProviderResult.status === "fulfilled"
+        ? aiProviderResult.value
+        : undefined;
+      const projectedKernelInstances = kernelInstances(aiSnapshot, skills);
       const executableDriverKinds = options.executableDriverKinds;
-      const instances = [...systemInstances, ...completeCodingInstances].map((instance) => (
+      const instances = [
+        ...projectedKernelInstances,
+        ...systemInstances,
+        ...completeCodingInstances,
+      ].map((instance) => (
         executableDriverKinds === undefined || executableDriverKinds.includes(instance.driverKind)
           ? instance
           : {
@@ -513,7 +610,11 @@ export function createChatProviderCatalogService(options: {
               defaultSelection: undefined,
             }
       ));
-      const driverKinds = [...SYSTEM_DRIVERS, ...CODING_DRIVERS];
+      const driverKinds: CanonicalProviderDriverKind[] = [
+        ...(options.aiProviderSource ? ["kernel" as const] : []),
+        ...SYSTEM_DRIVERS,
+        ...CODING_DRIVERS,
+      ];
       const drivers = driverKinds.map((kind) => ({
         kind,
         displayName: driverDisplayName(kind),

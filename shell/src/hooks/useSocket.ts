@@ -304,6 +304,9 @@ type ClientMessage = {
   displayText?: string;
   sessionId?: string;
   requestId?: string;
+  model?: string;
+  effort?: string;
+  accessSourceId?: string;
 } | {
   type: "switch_session";
   sessionId: string;
@@ -322,6 +325,9 @@ type ClientMessage = {
   requestId?: string;
   id?: string;
   approved?: boolean;
+  model?: string;
+  effort?: string;
+  accessSourceId?: string;
 };
 
 export function sendMessage(msg: ClientMessage) {
