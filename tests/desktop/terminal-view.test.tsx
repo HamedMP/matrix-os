@@ -804,6 +804,42 @@ describe("TerminalView session switching", () => {
     expect(attachmentWrite).toHaveBeenCalledWith("paste survives copy");
   });
 
+  it("shows an older paste failure after a newer copy succeeds", async () => {
+    const pendingUpload = deferred<{ terminalPath: string }>();
+    const postBytes = vi.fn(() => pendingUpload.promise);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    useConnection.setState({ api: { postBytes } as never });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "copy while upload is pending";
+
+    fireEvent.paste(host, {
+      clipboardData: { files: [new File(["png"], "failed.png", { type: "image/png" })] },
+    });
+    await waitFor(() => expect(postBytes).toHaveBeenCalledOnce());
+
+    terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+
+    pendingUpload.resolve({ terminalPath: "invalid" });
+    expect(await screen.findByText("Image paste failed. Try again.")).toBeTruthy();
+  });
+
   it("keeps a newer copy failure visible when an older paste completes", async () => {
     const pendingRead = deferred<string>();
     Object.defineProperty(navigator, "clipboard", {
