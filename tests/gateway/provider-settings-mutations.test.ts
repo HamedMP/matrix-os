@@ -147,6 +147,61 @@ describe("provider settings configuration mutations", () => {
     },
   );
 
+  it("accepts an OpenCode-native model without pretending it is a portable API key", () => {
+    const config = {
+      schemaVersion: 1,
+      revision: 0,
+      harnesses: [{
+        id: "harness_opencode",
+        driverId: "opencode",
+        harness: "opencode" as const,
+        displayName: "OpenCode",
+        accentColor: null,
+        enabled: false,
+        selectedAccountId: null,
+        accessSourceId: "matrix_included",
+        route: { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" },
+      }],
+      accountProfiles: [],
+      gatewayPolicy: null,
+      receipts: [],
+    } satisfies ProviderSettingsConfiguration;
+    const snapshot = {
+      accessSources: [{
+        id: "harness_opencode_baseten",
+        kind: "harness_profile",
+        harness: "opencode",
+        fundingKind: "owner_account",
+        providerId: "baseten",
+        accountId: null,
+        eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+      }],
+      accounts: [],
+      gatewayPolicy: null,
+    } as unknown as ProviderSettingsSnapshot;
+
+    expect(applyProviderConfigurationMutation({
+      mutation: {
+        type: "set_route",
+        expectedRevision: 0,
+        idempotencyKey: "route_opencode_native_1",
+        harnessInstanceId: "harness_opencode",
+        route: { kind: "configurable", providerId: "baseten", modelId: "baseten:zai-org/GLM-5.3" },
+        accessSourceId: "harness_opencode_baseten",
+        accountId: null,
+      },
+      config,
+      canonical: providerSettingsCanonicalFixture(),
+      snapshot,
+      id: () => "unused",
+    })).toBe(true);
+    expect(config.harnesses[0]).toMatchObject({
+      route: { providerId: "baseten", modelId: "baseten:zai-org/GLM-5.3" },
+      accessSourceId: "harness_opencode_baseten",
+      selectedAccountId: null,
+    });
+  });
+
   it("rejects an incoherent final account/source tuple without partially changing the harness", () => {
     const originalHarness = {
       id: "harness_generic",

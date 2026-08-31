@@ -4,7 +4,7 @@ import {
   CanonicalChatSkillDescriptorSchema,
   CanonicalProviderCatalogSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
-  isPortableGenericHarnessCredentialRoute,
+  isRunnableGenericHarnessCredentialRoute,
   type AgentProviderDescriptor,
   type AgentProviderSummary,
   type AgentRuntimeDescriptor,
@@ -542,6 +542,7 @@ function configuredHarnessInstanceFromAiSnapshot(input: {
   instance: InstanceDraft;
   harness: ProviderHarnessInstance;
   aiSnapshot?: AiProviderSnapshotV3;
+  settings: ProviderSettingsSnapshot;
 }): InstanceDraft {
   if (input.instance.availability !== "available") {
     return unavailableInstance(input.instance, unavailableReasonFor(input.instance));
@@ -549,16 +550,21 @@ function configuredHarnessInstanceFromAiSnapshot(input: {
   const configured = input.aiSnapshot?.models.find((model) =>
     model.vendor === input.harness.route.providerId && model.id === input.harness.route.modelId
   );
-  if (!configured || configured.status === "unavailable" || configured.status === "retired") {
+  const projected = input.settings.modelProviders
+    .find((provider) => provider.id === input.harness.route.providerId)
+    ?.models.find((model) => model.id === input.harness.route.modelId && model.enabled);
+  if ((!configured && !projected) || configured?.status === "unavailable" || configured?.status === "retired") {
     return unavailableInstance(input.instance, "runtime_unavailable");
   }
-  const modelId = `${input.harness.route.providerId}:${input.harness.route.modelId}`;
-  const capabilities = configured.capabilities.filter((capability) =>
+  const modelId = input.harness.route.modelId.startsWith(`${input.harness.route.providerId}:`)
+    ? input.harness.route.modelId
+    : `${input.harness.route.providerId}:${input.harness.route.modelId}`;
+  const capabilities = (configured?.capabilities ?? ["tools"] as const).filter((capability) =>
     capability === "reasoning" || capability === "tools" || capability === "vision"
   );
   const model: CanonicalModelDescriptor = {
     id: modelId,
-    displayName: configured.displayName,
+    displayName: configured?.displayName ?? projected!.displayName,
     availability: "available",
     capabilities,
     supportsVision: capabilities.includes("vision"),
@@ -703,13 +709,14 @@ function applyHarnessSettings(input: {
     const harness = enabledHarness!;
     if (generic === "pi" || generic === "opencode") {
       const source = input.settings!.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-      if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
+      if (!isRunnableGenericHarnessCredentialRoute(harness, source)) {
         return unavailableInstance(configuredInstance, "runtime_not_runnable");
       }
       return configuredHarnessInstanceFromAiSnapshot({
         instance: { ...configuredInstance, availability: "available" },
         harness,
         aiSnapshot: input.aiSnapshot,
+        settings: input.settings!,
       });
     }
     if (generic === "hermes" || generic === "openclaw") {

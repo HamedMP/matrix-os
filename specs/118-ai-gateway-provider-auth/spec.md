@@ -208,6 +208,8 @@ availability, labels, guarded transitions, and resulting V3 refreshes.
 - **FR-045**: Matrix-funded readiness MUST require both explicit current owner/runtime policy eligibility for an allowed model and fresh bounded relay health; configuration or a legacy platform key alone MUST fail closed.
 - **FR-046**: Credit and usage UI MUST identify its authority and freshness; Matrix MUST NOT show an exact remaining balance before the Matrix ledger exists, infer a provider dollar balance from local usage, or convert a subscription allowance into invented currency.
 - **FR-047**: CLI-backed account setup MUST open a visible canonical Terminal surface in every supported desktop shell and MUST expose bounded pending, success, denial, expiry, failure, and retry states through one owner-bound connection attempt.
+- **FR-048**: Pi and OpenCode provider/model choices MUST be discovered from their installed authenticated runtimes with bounded output, timeouts, safe identifiers, caps, and fail-closed per-harness degradation; Settings and Chat MUST consume the same projected routes.
+- **FR-049**: Route UI MUST present the model provider separately from **Paid through** and MUST show Matrix AI only as an access/funding source, never as a model provider.
 
 ### Key Entities
 

@@ -297,6 +297,63 @@ describe("canonical Chat Provider catalog", () => {
       });
   });
 
+  it("projects an OpenCode-native model from the same live Settings catalog", async () => {
+    const configured = {
+      ...configuredHarness("opencode", true),
+      accessSourceId: "harness_opencode_baseten",
+      route: {
+        kind: "configurable" as const,
+        providerId: "baseten",
+        modelId: "baseten:zai-org/GLM-5.3",
+      },
+    };
+    const settings = await harnessSettings([configured]).getSnapshot();
+    settings.modelProviders = [{
+      id: "baseten",
+      displayName: "Baseten",
+      models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true }],
+    }];
+    settings.accessSources = [{
+      ...settings.accessSources[0]!,
+      kind: "harness_profile",
+      harness: "opencode",
+      fundingKind: "owner_account",
+      providerId: "baseten",
+      accountId: null,
+      displayName: "OpenCode account",
+      eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+      usage: {
+        kind: "unavailable",
+        authority: "unavailable",
+        state: "not_applicable",
+        scope: "access_source",
+        reason: "provider_does_not_report",
+        asOf: null,
+      },
+    }];
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "opencode",
+        displayName: "OpenCode",
+        kind: "opencode",
+        supportedModes: ["default"],
+        defaultModel: undefined,
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: { getSnapshot: async () => settings },
+      executableDriverKinds: ["opencode"],
+      credentialedDriverKinds: ["opencode"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "opencode_default"))
+      .toMatchObject({
+        availability: "available",
+        models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3" }],
+        defaultSelection: { instanceId: "opencode_default", model: "baseten:zai-org/GLM-5.3" },
+      });
+  });
+
   it.each(["pi", "opencode"] as const)(
     "projects terminal-authenticated %s without requiring a duplicate Settings row",
     async (kind) => {

@@ -1,5 +1,5 @@
 import {
-  isPortableGenericHarnessCredentialRoute,
+  isRunnableGenericHarnessCredentialRoute,
   type AiProviderSnapshotV3,
   type ProviderAccessSource,
   type ProviderHarnessInstance,
@@ -24,7 +24,16 @@ function genericHarnessRouteIsSupported(
   source: ProviderAccessSource | undefined,
 ): boolean {
   return (harness.harness !== "pi" && harness.harness !== "opencode")
-    || isPortableGenericHarnessCredentialRoute(harness, source);
+    || isRunnableGenericHarnessCredentialRoute(harness, source);
+}
+
+function accountMatchesSource(
+  source: ProviderAccessSource,
+  account: ProviderSettingsSnapshot["accounts"][number] | null,
+): boolean {
+  return source.kind === "provider_account"
+    ? account?.id === source.accountId
+    : account === null;
 }
 
 export function applyProviderConfigurationMutation(input: {
@@ -52,7 +61,7 @@ export function applyProviderConfigurationMutation(input: {
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(mutation.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
         || !source.eligibleModelIds.includes(mutation.route.modelId)
-        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)
+        || !accountMatchesSource(source, account)
         || !genericHarnessRouteIsSupported({
           harness: mutation.harness,
           accessSourceId: source.id,
@@ -114,7 +123,7 @@ export function applyProviderConfigurationMutation(input: {
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(mutation.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
         || !source.eligibleModelIds.includes(mutation.route.modelId)
-        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)
+        || !accountMatchesSource(source, account)
         || !genericHarnessRouteIsSupported({
           harness: harness.harness,
           accessSourceId: source.id,
