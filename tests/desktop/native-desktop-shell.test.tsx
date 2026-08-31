@@ -278,7 +278,7 @@ describe("native desktop shell", () => {
 
     expect(screen.getByRole("dialog", { name: "Chat window" })).toBeTruthy();
     expect(screen.getByText("Chat content")).toBeTruthy();
-    expect(document.querySelector("[data-os-window-chrome-placement]")?.textContent).toBe("Chat");
+    expect(document.querySelector("[data-os-window-chrome-placement]")?.textContent).toBe("");
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
@@ -818,7 +818,8 @@ describe("native desktop shell", () => {
     const terminalWindow = screen.getByRole("dialog", { name: "Terminal window" });
     const workChrome = workWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
     const terminalChrome = terminalWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
-    expect(workChrome).toBeNull();
+    expect(workChrome?.style.width).toBe("280px");
+    expect(workChrome?.textContent).not.toContain("Chat");
     expect(terminalChrome?.style.width).toBe("280px");
     expect(terminalChrome?.textContent).not.toContain("Terminal");
     expect((terminalWindow.querySelector("[data-os-window-gesture-layer]") as HTMLElement).className).toContain("inset-0");

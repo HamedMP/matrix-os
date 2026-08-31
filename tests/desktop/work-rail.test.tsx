@@ -121,6 +121,57 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("matches the Settings sidebar title, groups, and item styling", async () => {
+    setup();
+    const rail = screen.getByRole("navigation", { name: "Chat navigation" });
+    const newChat = screen.getByRole("button", { name: "New chat" });
+    const search = screen.getByRole("button", { name: "Search chats" });
+
+    expect(rail.className).toContain("w-[240px]");
+    expect(rail.className).toContain("gap-0.5");
+    expect(rail.className).toContain("overflow-y-auto");
+    expect(rail.className).toContain("p-2");
+    expect(rail.getAttribute("style")).toContain("background: var(--bg-surface)");
+    const title = screen.getByRole("heading", { name: "Chats" });
+    expect(title.className).toContain("px-2.5");
+    expect(title.className).toContain("py-2");
+    expect(title.className).toContain("text-lg");
+    expect(title.className).toContain("font-semibold");
+    expect(newChat.className).toContain("gap-2.5");
+    expect(newChat.className).toContain("px-2.5");
+    expect(newChat.className).toContain("py-1.5");
+    expect(newChat.className).toContain("text-sm");
+    expect(newChat.className).toContain("font-medium");
+    expect(newChat.closest('[data-slot="chat-sidebar-new-chat"]')).toBeTruthy();
+    expect(search.closest('[data-slot="chat-sidebar-section-heading"]')?.textContent).toContain("Recents");
+    expect(screen.queryByText("Search", { selector: "button" })).toBeNull();
+
+    const pinnedChat = await screen.findByRole("button", { name: "Pinned global" });
+    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    const projectChatRow = screen.getByRole("button", { name: "Alpha chat" });
+    const recentChat = screen.getByRole("button", { name: "Recent global" });
+    const pinnedHeading = screen.getByRole("button", { name: "Pinned" });
+    const projectsHeading = screen.getByRole("button", { name: "Projects" });
+    const recentsHeading = screen.getByRole("button", { name: "Recents" });
+
+    for (const item of [pinnedChat, projectChatRow, recentChat]) {
+      expect(item.className).toContain("gap-2.5");
+      expect(item.className).toContain("px-2.5");
+      expect(item.className).toContain("py-1.5");
+      expect(item.className).toContain("text-sm");
+      expect(item.className).toContain("font-medium");
+    }
+    for (const heading of [pinnedHeading, projectsHeading, recentsHeading]) {
+      expect(heading.className).toContain("px-2.5");
+      expect(heading.className).toContain("pt-2");
+      expect(heading.className).toContain("pb-1");
+      expect(heading.className).toContain("text-xs");
+      expect(heading.className).toContain("font-semibold");
+      expect(heading.className).toContain("tracking-wide");
+      expect(heading.querySelector("svg")).toBeNull();
+    }
+  });
+
   it("converges two Chat rows from the shared event source without adding WorkRail polling", async () => {
     const events = eventHarness();
     const at = "2026-08-29T01:00:00.000Z";
@@ -218,9 +269,11 @@ describe("WorkRail", () => {
     await screen.findByRole("button", { name: "Pinned global" });
 
     const newChat = screen.getByRole("button", { name: "New chat" });
-    expect(newChat.className).toContain("justify-start");
+    expect(newChat.className).toContain("text-left");
+    expect(newChat.className).toContain("gap-2.5");
     expect(newChat.className).not.toContain("w-full");
-    expect(newChat.parentElement?.className).toContain("mx-3");
+    expect(newChat.parentElement?.getAttribute("data-slot")).toBe("chat-sidebar-new-chat");
+    expect(newChat.className).toContain("px-2.5");
     expect(newChat.style.background).toBe("");
     fireEvent.click(newChat);
     expect(actions.onNewGlobalChat).toHaveBeenCalledOnce();
@@ -339,7 +392,27 @@ describe("WorkRail", () => {
 
     expect(screen.getByRole("dialog", { name: "Search chats" })).toBeTruthy();
     const search = screen.getByRole("searchbox", { name: "Search chats" });
+    const searchGroup = search.parentElement as HTMLElement;
     expect(document.activeElement).toBe(search);
+    expect(searchGroup.className).toContain("chat-search-field");
+    expect(searchGroup.className).not.toContain("focus-within:ring-2");
+    expect(searchGroup.className).not.toContain("focus-within:ring-[var(--accent)]");
+    expect(search.className).toContain("appearance-none");
+    expect(search.className).toContain("border-0");
+    expect(search.className).toContain("shadow-none");
+    expect(search.className).toContain("focus:ring-0");
+    expect((search as HTMLElement).style.borderStyle).toBe("none");
+    expect((search as HTMLElement).style.borderWidth).toBe("0px");
+    expect((search as HTMLElement).style.borderRadius).toBe("0px");
+    expect((search as HTMLElement).style.boxShadow).toBe("none");
+    expect((search as HTMLElement).style.outline).toBe("none");
+
+    fireEvent.change(search, { target: { value: "recent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear Chat search" }));
+
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(document.activeElement).toBe(search);
+    expect(screen.getByRole("dialog", { name: "Search chats" })).toBeTruthy();
   });
 
   it("navigates bounded canonical Chat search results without creating a thread", async () => {

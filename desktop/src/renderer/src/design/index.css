@@ -98,6 +98,11 @@ textarea,
   border-radius: var(--radius-sm);
 }
 
+/* Search input and clear action share the standard app focus treatment. */
+.chat-search-field:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
 /* Command rows select instantly, then linger briefly as the pointer leaves. */
 [data-instant-list-hover] {
   transition-delay: 75ms;

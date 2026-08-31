@@ -124,6 +124,7 @@ export function CanonicalChatWorkspace({
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
+  const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const submissionSequence = useRef(0);
@@ -131,6 +132,7 @@ export function CanonicalChatWorkspace({
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
   const runtimeSummary = useCodingAgentWorkspace((state) => state.summary);
   const runtimeStatus = useCodingAgentWorkspace((state) => state.status);
+  const composerFocusRequestId = useCodingAgentWorkspace((state) => state.composerFocusRequestId);
   const refreshRuntimeSummary = useCodingAgentWorkspace((state) => state.refresh);
   const handleProviderSetup = useProviderSetup(
     runtimeSummary?.providers ?? EMPTY_PROVIDER_SUMMARIES,
@@ -343,6 +345,7 @@ export function CanonicalChatWorkspace({
     onActiveChatChanged?.(null);
     setDraftProjectId(projectId);
     setGlobalView("draft");
+    setLocalComposerFocusRequestId((requestId) => requestId + 1);
   };
 
   const selectChat = (chatId: string) => {
@@ -396,6 +399,7 @@ export function CanonicalChatWorkspace({
           />
         )}
         onNewChat={startNewChat}
+        focusRequestId={active ? composerFocusRequestId + localComposerFocusRequestId : 0}
         placeholder={globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
         ariaLabel={globalView === "conversation" ? "Reply to chat" : "Start a chat"}
         leadingControls={(
@@ -523,7 +527,11 @@ export function CanonicalChatWorkspace({
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
         aria-hidden={inspectorExclusive || undefined}
         inert={inspectorExclusive || undefined}
-        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        hidden={inspectorExclusive}
+        className={cn(
+          "relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+          inspectorExclusive ? "hidden" : "flex",
+        )}
         {...attachments.paneProps}
       >
         {submissionError || controller.error ? (
