@@ -769,7 +769,13 @@ describe("canonical Chat Provider catalog", () => {
       availability: "unavailable",
       models: [],
       options: [],
-      setupActions: [],
+      unavailabilityReason: "runtime_not_runnable",
+      setupActions: [{
+        id: "openclaw_install",
+        kind: "foreground_terminal",
+        label: "Install OpenClaw",
+        command: expect.stringContaining("matrix-agent-runtime-control install openclaw"),
+      }],
     });
   });
 

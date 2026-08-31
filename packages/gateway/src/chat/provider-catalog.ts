@@ -367,20 +367,27 @@ function systemOptions(
   }];
 }
 
+function systemInstallAction(
+  kind: typeof SYSTEM_DRIVERS[number],
+): CanonicalProviderSetupAction {
+  const displayName = driverDisplayName(kind);
+  return {
+    id: `${kind}_install`,
+    kind: "foreground_terminal",
+    label: `Install ${displayName}`,
+    command: visibleSetupCommand(
+      `/opt/matrix/bin/matrix-agent-runtime-control install ${kind}`,
+    ),
+  };
+}
+
 function systemSetupActions(
   kind: typeof SYSTEM_DRIVERS[number],
   runtime: AgentRuntimeDescriptor | undefined,
 ): CanonicalProviderSetupAction[] {
   const displayName = driverDisplayName(kind);
   if (runtime?.installState === "missing" || runtime?.installState === "installing") {
-    return [{
-      id: `${kind}_install`,
-      kind: "foreground_terminal",
-      label: `Install ${displayName}`,
-      command: visibleSetupCommand(
-        `/opt/matrix/bin/matrix-agent-runtime-control install ${kind}`,
-      ),
-    }];
+    return [systemInstallAction(kind)];
   }
   return [{
     id: `${kind}_connect`,
@@ -601,7 +608,14 @@ function applyHarnessSettings(input: {
       return unavailableInstance(configuredInstance, "runtime_unavailable");
     }
     if (!executable) {
-      return unavailableInstance(configuredInstance, "runtime_not_runnable");
+      const unavailable = unavailableInstance(configuredInstance, "runtime_not_runnable");
+      if (instance.driverKind === "hermes" || instance.driverKind === "openclaw") {
+        return {
+          ...unavailable,
+          setupActions: [systemInstallAction(instance.driverKind)],
+        };
+      }
+      return unavailable;
     }
     if (instance.availability !== "available" && !settingsCanAuthorizeInstalledCodingHarness) {
       return settingsHarness !== null && input.settingsRequired
