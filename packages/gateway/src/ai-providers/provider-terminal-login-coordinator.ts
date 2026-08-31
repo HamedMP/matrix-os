@@ -85,6 +85,26 @@ function loginSessionName(recoveryHash: string): string {
   return `provider-login-${recoveryHash.slice(0, 24)}`;
 }
 
+function isExpiredCanonicalRecoveryReceipt(
+  receipt: ReceiptDocument["receipts"][number],
+  recoveryHash: string,
+  input: LoginInput,
+  currentTime: Date,
+): boolean {
+  if (receipt.recoveryHash !== recoveryHash
+    || currentProviderConnectionAttempt(receipt.attempt, currentTime).state !== "expired"
+    || receipt.attempt.harnessInstanceId !== input.mutation.harnessInstanceId
+    || receipt.attempt.accountId !== input.mutation.accountId
+    || receipt.attempt.method !== input.mutation.method
+    || receipt.attempt.action.kind !== "open_terminal") {
+    return false;
+  }
+  // The recovery hash binds provider, harness, driver, instance, account, and
+  // method. Requiring its canonical session name additionally prevents a
+  // migrated legacy or unrelated terminal from being adopted by this path.
+  return receipt.attempt.action.terminalSessionId === loginSessionName(recoveryHash);
+}
+
 function legacyLoginSessionName(harness: "codex" | "claude", legacyPayloadHash: string): string {
   return `provider-login-${harness}-${legacyPayloadHash.slice(0, 16)}`;
 }
@@ -302,6 +322,13 @@ export function createProviderTerminalLoginCoordinator(options: {
           return attempt;
         }
 
+        const canAdoptExpiredSession = [...document.receipts, ...recoveryDocument.receipts]
+          .some((receipt) => isExpiredCanonicalRecoveryReceipt(
+            receipt,
+            recoveryHash,
+            input,
+            currentTime,
+          ));
         recoveryDocument.receipts = recoveryDocument.receipts.filter((receipt) =>
           receipt.recoveryHash !== recoveryHash);
         const command = LOGIN_COMMANDS[input.harness.harness];
@@ -322,16 +349,21 @@ export function createProviderTerminalLoginCoordinator(options: {
           recoveryHash,
           attempt,
         });
+        let adoptedExpiredSession = false;
         try {
           await options.registry.get(sessionName);
-          try {
-            await options.registry.delete(sessionName, { force: true });
-          } catch (error) {
-            console.warn(
-              "[provider-login] Failed to reconcile unrecorded login session:",
-              error instanceof Error ? error.name : "UnknownError",
-            );
-            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          if (canAdoptExpiredSession) {
+            adoptedExpiredSession = true;
+          } else {
+            try {
+              await options.registry.delete(sessionName, { force: true });
+            } catch (error) {
+              console.warn(
+                "[provider-login] Failed to reconcile unrecorded login session:",
+                error instanceof Error ? error.name : "UnknownError",
+              );
+              throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+            }
           }
         } catch (error) {
           if (!isMissingSession(error)) throw error;
@@ -346,13 +378,15 @@ export function createProviderTerminalLoginCoordinator(options: {
           );
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
-        const session = await options.registry.create({
-          name: sessionName,
-          cwd: "~",
-          cmd: command.command,
-          agent: command.agent,
-          exclusive: false,
-        });
+        const session = adoptedExpiredSession
+          ? { name: sessionName }
+          : await options.registry.create({
+            name: sessionName,
+            cwd: "~",
+            cmd: command.command,
+            agent: command.agent,
+            exclusive: false,
+          });
         if (session.name !== sessionName) {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
@@ -360,13 +394,15 @@ export function createProviderTerminalLoginCoordinator(options: {
         try {
           await persistReceipt(receiptsPath, ReceiptDocumentSchema.parse(document));
         } catch (error) {
-          try {
-            await options.registry.delete(sessionName, { force: true });
-          } catch (cleanupError) {
-            console.warn(
-              "[provider-login] Failed to clean up unrecorded login session:",
-              cleanupError instanceof Error ? cleanupError.name : "UnknownError",
-            );
+          if (!adoptedExpiredSession) {
+            try {
+              await options.registry.delete(sessionName, { force: true });
+            } catch (cleanupError) {
+              console.warn(
+                "[provider-login] Failed to clean up unrecorded login session:",
+                cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+              );
+            }
           }
           console.warn(
             "[provider-login] Failed to persist login receipt:",

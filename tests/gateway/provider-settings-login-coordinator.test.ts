@@ -175,6 +175,88 @@ describe("provider terminal login coordinator", () => {
     expect(receipts).not.toMatch(/token|secret|apiKey/i);
   });
 
+  it("adopts the exact live login session on a fresh-key retry after its receipt expires", async () => {
+    let checkedAt = new Date(now);
+    const login = createProviderTerminalLoginCoordinator({
+      homePath,
+      registry,
+      enabledHarnesses: ["claude"],
+      now: () => new Date(checkedAt),
+    });
+    const input = {
+      mutation: {
+        type: "start_login" as const,
+        expectedRevision: 0,
+        idempotencyKey: "login_expiring_original",
+        harnessInstanceId: "harness_claude",
+        accountId: "owner_anthropic",
+        method: "terminal" as const,
+      },
+      harness: {
+        id: "harness_claude",
+        driverId: "claude_code",
+        harness: "claude" as const,
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
+        installState: "installed" as const,
+      },
+    };
+    const original = await login.startLogin(input);
+    expect(original.action.kind).toBe("open_terminal");
+
+    checkedAt = new Date(Date.parse(original.expiresAt) + 1);
+    let retried = await login.startLogin({
+      ...input,
+      mutation: {
+        ...input.mutation,
+        expectedRevision: 1,
+        idempotencyKey: "login_expiring_retry",
+      },
+    });
+
+    expect(retried).toMatchObject({
+      harnessInstanceId: input.mutation.harnessInstanceId,
+      accountId: input.mutation.accountId,
+      method: input.mutation.method,
+      state: "pending",
+      action: original.action,
+    });
+    expect(Date.parse(retried.expiresAt) - checkedAt.getTime()).toBe(10 * 60_000);
+    expect(registry.create).toHaveBeenCalledOnce();
+    expect(registry.delete).not.toHaveBeenCalled();
+    expect(sessions).toEqual(new Set([
+      original.action.kind === "open_terminal" ? original.action.terminalSessionId : "",
+    ]));
+
+    for (let retry = 2; retry <= 70; retry += 1) {
+      checkedAt = new Date(Date.parse(retried.expiresAt) + 1);
+      retried = await login.startLogin({
+        ...input,
+        mutation: {
+          ...input.mutation,
+          expectedRevision: retry,
+          idempotencyKey: `login_expiring_retry_${retry}`,
+        },
+      });
+      expect(retried.action).toEqual(original.action);
+    }
+
+    const receiptDocument = JSON.parse(await readFile(
+      join(homePath, "system/ai-providers/login-receipts.json"),
+      "utf8",
+    )) as { receipts: Array<{ key: string }> };
+    const recoveryDocument = JSON.parse(await readFile(
+      join(homePath, "system/ai-providers/login-recovery.json"),
+      "utf8",
+    )) as { receipts: Array<{ key: string }> };
+    expect(receiptDocument.receipts).toHaveLength(64);
+    expect(receiptDocument.receipts.at(-1)?.key).toBe("login_expiring_retry_70");
+    expect(recoveryDocument.receipts).toHaveLength(1);
+    expect(recoveryDocument.receipts[0]?.key).toBe("login_expiring_retry_70");
+    expect(registry.create).toHaveBeenCalledOnce();
+    expect(registry.delete).not.toHaveBeenCalled();
+  });
+
   it("rejects unsupported methods and idempotency-key payload conflicts before launch", async () => {
     const login = coordinator();
     const base = {
