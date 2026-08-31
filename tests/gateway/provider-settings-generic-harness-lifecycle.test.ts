@@ -325,6 +325,99 @@ describe("generic provider harness lifecycle coordinator", () => {
     expect(coordinator.isRecoveryReady()).toBe(true);
   });
 
+  it("recovers the exact displaced route after a receipt failure and restart", async () => {
+    let failDisplacedReceiptWrite = false;
+    let failed = false;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      if (failDisplacedReceiptWrite && !failed && path.endsWith("runtime-receipts.json")) {
+        failed = true;
+        throw new Error("displaced receipt write failed before restart");
+      }
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, restart, update } = await makeCoordinator({ receiptWriter });
+    const input = systemRouteInput("claude-opus-5", "route_duplicate_restart_repair");
+
+    await coordinator.applyConfiguration(input);
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    });
+    failDisplacedReceiptWrite = true;
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow(
+      "displaced receipt write failed before restart",
+    );
+
+    const restarted = restart();
+    await update({
+      revision: 6,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-opus-5",
+    });
+    await restarted.reconcilePending();
+
+    expect(update).toHaveBeenCalledTimes(4);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    }));
+    expect(update).not.toHaveBeenNthCalledWith(4, expect.objectContaining({
+      messagingModel: "claude-sonnet-5",
+    }));
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toEqual([]);
+    const repair = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-repair.json"),
+      "utf8",
+    ));
+    expect(repair).toEqual({ version: 1, repair: null });
+    expect(restarted.isRecoveryReady()).toBe(true);
+  });
+
+  it("derives the displaced route after a repair-journal failure and restart", async () => {
+    let failRepairWrite = false;
+    let failed = false;
+    const receiptWriter = vi.fn(async (path: string, value: unknown) => {
+      if (failRepairWrite && !failed && path.endsWith("runtime-repair.json")) {
+        failed = true;
+        throw new Error("repair journal unavailable before restart");
+      }
+      await writeProviderJsonAtomic(path, value);
+    });
+    const { coordinator, restart, update } = await makeCoordinator({ receiptWriter });
+    const input = systemRouteInput("claude-opus-5", "route_duplicate_restart_derive");
+
+    await coordinator.applyConfiguration(input);
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    });
+    failRepairWrite = true;
+    await expect(coordinator.applyConfiguration(input)).rejects.toThrow(
+      "repair journal unavailable before restart",
+    );
+
+    const restarted = restart();
+    await restarted.reconcilePending();
+
+    expect(update).toHaveBeenCalledTimes(2);
+    const receipts = JSON.parse(await readFile(
+      join(homePath!, "system/ai-providers/runtime-receipts.json"),
+      "utf8",
+    ));
+    expect(receipts.receipts).toEqual([]);
+    expect(restarted.isRecoveryReady()).toBe(true);
+  });
+
   it("switches to another enabled system harness before disabling the active one", async () => {
     const { coordinator, update } = await makeCoordinator();
     const openclaw = {
