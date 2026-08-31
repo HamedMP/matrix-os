@@ -18,6 +18,7 @@ import {
   type ProviderLoginCoordinator,
   type ProviderSettingsRuntimeCoordinator,
 } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
+import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
 import {
   PROVIDER_SETTINGS_NOW as NOW,
   providerReady as ready,
@@ -299,10 +300,28 @@ describe("ProviderSettingsStore", () => {
     ]);
   });
 
-  it("fails closed when an installed coding harness has unknown health", async () => {
-    canonical.drivers.push(
-      { id: "opencode", displayName: "OpenCode", kind: "cli", installState: "installed", health: "unknown", capabilities: ["tools"], setupActions: [] },
-    );
+  it("lets a registered installed direct adapter receive credentials from its selected route", async () => {
+    const readDrivers = createProviderDriverInventoryReader({
+      detectAgentInstallations: vi.fn(async () => ({
+        agents: [{
+          id: "opencode" as const,
+          command: "opencode",
+          displayName: "OpenCode",
+          installState: "installed" as const,
+          installed: true,
+          authState: "unknown" as const,
+          workspaceCompatibility: "not_applicable" as const,
+          version: "1.16.0",
+          errorCode: null,
+        }],
+      })),
+      runtimeSource: vi.fn(async () => ({
+        runtime: { selected: null, transition: null, options: [] },
+        providers: [],
+        messaging: { runtime: "hermes" as const, provider: null, model: null, configured: false },
+      })),
+    });
+    canonical.drivers.push(...await readDrivers(AbortSignal.timeout(1_000)));
     runtime = { ...runtime, supportedHarnessKinds: ["opencode"] };
 
     const projected = await createStore().getSnapshot();
@@ -312,9 +331,9 @@ describe("ProviderSettingsStore", () => {
       displayName: "OpenCode",
       installState: "installed",
       available: true,
-      runnable: false,
-      setupAction: "retry",
-      safeReason: "runtime_unavailable",
+      runnable: true,
+      setupAction: "none",
+      safeReason: null,
     });
   });
 

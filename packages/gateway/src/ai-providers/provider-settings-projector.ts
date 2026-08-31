@@ -383,7 +383,12 @@ function catalogDriverRunnable(
   driver: CanonicalDriver | undefined,
 ): boolean {
   if (!driver || driver.installState !== "installed") return false;
-  if (!catalog.system) return driver.health === "ready" || driver.health === "degraded";
+  // Pi and OpenCode receive credentials from the access source selected while
+  // adding the harness. Their installation probe intentionally cannot prove
+  // that future route credential, so a registered direct adapter reports
+  // unknown health until the first configured run. Match the runtime
+  // coordinator's admission rule here instead of creating a setup deadlock.
+  if (!catalog.system) return driver.health !== "unavailable" && driver.health !== "stopped";
   return driver.health === "ready" || driver.health === "degraded"
     || (driver.health === "stopped" && driver.setupActions.length === 0);
 }
