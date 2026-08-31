@@ -24,13 +24,13 @@ public enum VPSResolver {
         return url
     }
 
-    /// Builds a shell/board WebSocket URL `wss://<host><path>?session=&fromSeq=&runtime=`.
+    /// Builds a terminal-tab WebSocket URL with a stable workspace/tab ref.
     /// `fromSeq` is omitted when nil (initial attach / live tail).
     public static func webSocketURL(
         gatewayHost: String,
         runtimeSlot: String?,
         path: String,
-        session: String,
+        terminalRef: String,
         fromSeq: Int?
     ) throws -> URL {
         let host = gatewayHost.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,7 +40,13 @@ public enum VPSResolver {
         comps.scheme = "wss"
         comps.host = host
         comps.path = path
-        var items = [URLQueryItem(name: "session", value: session)]
+        let pieces = terminalRef.split(separator: ":", omittingEmptySubsequences: false)
+        guard pieces.count == 2 else { throw GatewayError.misconfigured }
+        var items = [
+            URLQueryItem(name: "workspaceId", value: String(pieces[0])),
+            URLQueryItem(name: "tabId", value: String(pieces[1])),
+            URLQueryItem(name: "client", value: "macos"),
+        ]
         if let fromSeq {
             items.append(URLQueryItem(name: "fromSeq", value: String(fromSeq)))
         }
@@ -48,28 +54,6 @@ public enum VPSResolver {
             items.append(URLQueryItem(name: "runtime", value: slot))
         }
         comps.queryItems = items
-        guard let url = comps.url else { throw GatewayError.misconfigured }
-        return url
-    }
-
-    /// Auto-create terminal URL: `/ws/terminal[?cwd=...]` (no session param) so the
-    /// gateway creates a new zellij session and attaches. Used when a card has no
-    /// linked session yet (matrix-shell connect-or-create semantics).
-    public static func autoCreateTerminalURL(
-        gatewayHost: String,
-        runtimeSlot: String?,
-        cwd: String?
-    ) throws -> URL {
-        let host = gatewayHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !host.isEmpty else { throw GatewayError.misconfigured }
-        var comps = URLComponents()
-        comps.scheme = "wss"
-        comps.host = host
-        comps.path = "/ws/terminal"
-        var items: [URLQueryItem] = []
-        if let cwd, !cwd.isEmpty { items.append(URLQueryItem(name: "cwd", value: cwd)) }
-        if let slot = normalizedSlot(runtimeSlot) { items.append(URLQueryItem(name: "runtime", value: slot)) }
-        comps.queryItems = items.isEmpty ? nil : items
         guard let url = comps.url else { throw GatewayError.misconfigured }
         return url
     }
@@ -101,17 +85,14 @@ public struct ConnectionProfile: Equatable, Sendable {
         try VPSResolver.gatewayBaseURL(gatewayHost: gatewayHost, runtimeSlot: runtimeSlot)
     }
 
-    public func webSocketURL(path: String, session: String, fromSeq: Int?) throws -> URL {
+    public func webSocketURL(path: String, terminalRef: String, fromSeq: Int?) throws -> URL {
         try VPSResolver.webSocketURL(
             gatewayHost: gatewayHost,
             runtimeSlot: runtimeSlot,
             path: path,
-            session: session,
+            terminalRef: terminalRef,
             fromSeq: fromSeq
         )
     }
 
-    public func autoCreateTerminalURL(cwd: String?) throws -> URL {
-        try VPSResolver.autoCreateTerminalURL(gatewayHost: gatewayHost, runtimeSlot: runtimeSlot, cwd: cwd)
-    }
 }

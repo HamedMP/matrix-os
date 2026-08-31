@@ -75,7 +75,7 @@ export default function SessionsScreen() {
 
   useEffect(() => {
     loadMobileShellState()
-      .then((state) => setActiveSessionId(state.lastActiveTerminalSessionId))
+      .then((state) => setActiveSessionId(state.lastActiveTerminalRef))
       .catch((err: unknown) => {
         console.warn("[mobile] failed to load active terminal session", err instanceof Error ? err.message : String(err));
       });
@@ -87,7 +87,7 @@ export default function SessionsScreen() {
       await saveMobileShellState({
         ...saved,
         mode: "terminal",
-        lastActiveTerminalSessionId: name,
+        lastActiveTerminalRef: name,
         updatedAt: new Date().toISOString(),
       });
       setActiveSessionId(name);

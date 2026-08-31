@@ -72,6 +72,8 @@ const HERMES_CONVERSATIONS = [
     updatedAt: HERMES_NOW - 1_800_000,
   },
 ] as const;
+const TERMINAL_TAB_ID = TERMINAL_TAB_IDS[0];
+const TERMINAL_REF = { workspaceId: TERMINAL_WORKSPACE_ID, tabId: TERMINAL_TAB_ID };
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
@@ -139,7 +141,7 @@ function codingAgentThread(prompt = "Fix the failing auth tests"): AgentThreadSn
     status: "completed",
     attention: "completed",
     projectId: "matrix-os",
-    terminalSessionId: "matrix-task-1",
+    terminalRef: TERMINAL_REF,
     createdAt: NOW,
     updatedAt: NOW,
   };
@@ -277,7 +279,7 @@ export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): Agen
           eventId: "evt_operator_terminal",
           threadId: thread.id,
           occurredAt: NOW,
-          terminalSessionId: "matrix-task-1",
+          terminalRef: TERMINAL_REF,
         },
         {
           type: "thread.completed",
@@ -517,16 +519,28 @@ export function codingAgentSummary(): RuntimeSummary {
       hasMore: false,
       limit: 50,
     },
-    terminalSessions: {
+    terminalWorkspaces: {
       items: [
         {
-          id: "matrix-task-1",
-          name: "Matrix shell",
+          id: TERMINAL_WORKSPACE_ID,
+          scope: "project",
+          projectId: "matrix-os",
+          canonicalSize: { cols: 120, rows: 40 },
           status: "running",
-          attachable: true,
-          cwdLabel: "matrix-os",
+          revision: 1,
           createdAt: NOW,
           updatedAt: NOW,
+          tabs: [{
+            id: TERMINAL_TAB_ID,
+            workspaceId: TERMINAL_WORKSPACE_ID,
+            name: "Matrix shell",
+            cwd: "projects/matrix-os",
+            status: "running",
+            revision: 1,
+            order: 0,
+            createdAt: NOW,
+            updatedAt: NOW,
+          }],
         },
       ],
       hasMore: false,
@@ -1071,34 +1085,6 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       json(res, 201, { tab });
       return;
     }
-    if (path === "/api/terminal/sessions") {
-      json(res, 200, {
-        sessions: [
-          {
-            name: "matrix-task-1",
-            status: "active",
-            visualStatus: "running",
-            createdAt: "2026-07-08T08:30:00.000Z",
-            updatedAt: NOW,
-          },
-          {
-            name: "matrix-review",
-            status: "degraded",
-            visualStatus: "waiting",
-            createdAt: "2026-07-08T08:15:00.000Z",
-            updatedAt: NOW,
-          },
-          {
-            name: "matrix-closed",
-            status: "exited",
-            visualStatus: "finished",
-            createdAt: "2026-07-08T07:45:00.000Z",
-            updatedAt: NOW,
-          },
-        ],
-      });
-      return;
-    }
     if (req.method === "GET" && path === "/api/auth/ws-token") {
       json(res, 200, {
         token: "stub-ws-token",
@@ -1252,7 +1238,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     if (path === "/api/sessions") {
       json(res, 200, {
         sessions: [
-          { id: "sess-orch-1", name: "Task 1 session", runtime: { zellijSession: "matrix-task-1" } },
+          { id: "sess-orch-1", name: "Task 1 session", runtime: { terminalRef: TERMINAL_REF } },
           { id: "sess-orch-2", name: "Orchestrator-only", runtime: {} },
         ],
         nextCursor: null,

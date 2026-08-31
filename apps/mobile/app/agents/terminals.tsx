@@ -7,9 +7,9 @@ import type { PreviewSessionSummary, RuntimeSummary } from "@matrix-os/contracts
 import { EmptyText, Section, capabilityEnabled } from "@/components/agents/agent-workspace-shared";
 import { useRuntimeSummary } from "@/lib/use-runtime-summary";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
-import { isSafeShellSessionName } from "@/lib/terminal-state";
+import { isSafeSessionId } from "@/lib/terminal-state";
 
-type SummaryTerminalSession = RuntimeSummary["terminalSessions"]["items"][number];
+type SummaryTerminalSession = RuntimeSummary["terminalWorkspaces"]["items"][number]["tabs"][number] & { refKey: string; attachable: boolean };
 type TerminalOpenError = "Terminal session unavailable. Try again.";
 
 export default function TerminalsScreen() {
@@ -20,7 +20,7 @@ export default function TerminalsScreen() {
 
   const openTerminalSession = useCallback(async (session: SummaryTerminalSession) => {
     setTerminalOpenError(null);
-    if (!isSafeShellSessionName(session.name)) {
+    if (!isSafeSessionId(session.refKey)) {
       setTerminalOpenError("Terminal session unavailable. Try again.");
       return;
     }
@@ -29,8 +29,8 @@ export default function TerminalsScreen() {
       await saveMobileShellState({
         ...savedState,
         mode: "terminal",
-        lastActiveTerminalSessionId: session.name,
-        terminalHandoffSessionId: session.name,
+        lastActiveTerminalRef: session.refKey,
+        terminalHandoffRef: session.refKey,
         updatedAt: new Date().toISOString(),
       });
     } catch {
@@ -66,6 +66,11 @@ export default function TerminalsScreen() {
   }
 
   const summary = state.summary;
+  const terminalTabs: SummaryTerminalSession[] = summary.terminalWorkspaces.items.flatMap((workspace) => workspace.tabs.map((tab) => ({
+    ...tab,
+    refKey: `${workspace.id}:${tab.id}`,
+    attachable: tab.status === "running" || tab.status === "idle" || tab.status === "starting",
+  })));
   return (
     <ScrollView
       style={styles.container}
@@ -85,9 +90,9 @@ export default function TerminalsScreen() {
         </View>
       </View>
 
-      <Section title="Terminals" count={summary.terminalSessions.items.length}>
-        {summary.terminalSessions.items.length === 0 ? <EmptyText>No terminal sessions.</EmptyText> : null}
-        {summary.terminalSessions.items.map((session) => {
+      <Section title="Terminals" count={terminalTabs.length}>
+        {terminalTabs.length === 0 ? <EmptyText>No terminal tabs.</EmptyText> : null}
+        {terminalTabs.map((session) => {
           const canOpenTerminal = session.attachable && session.status === "running";
           return (
             <Pressable
