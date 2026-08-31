@@ -13,6 +13,7 @@ import {
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalSteerChatRunRequestSchema,
+  CanonicalSteerQueuedChatTurnRequestSchema,
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
@@ -27,6 +28,7 @@ import {
   type CanonicalRetryChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalSteerChatRunRequest,
+  type CanonicalSteerQueuedChatTurnRequest,
   type CanonicalChatApprovalSubmissionResponse,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -195,6 +197,9 @@ export class CanonicalChatOrchestrator {
       | "beginSteer"
       | "acceptSteer"
       | "failSteer"
+      | "beginQueuedTurnSteer"
+      | "acceptQueuedTurnSteer"
+      | "failQueuedTurnSteer"
       | "markRunRunning"
       | "appendRunActivities"
       | "appendAssistantDelta"
@@ -1023,6 +1028,114 @@ export class CanonicalChatOrchestrator {
       message = await this.options.repository.acceptSteer(owner, {
         chatId,
         runId,
+        clientRequestId: input.clientRequestId,
+        acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+      });
+    } catch (error: unknown) {
+      return mapRepositoryError(error);
+    }
+    return CanonicalChatRunSteeringResponseSchema.parse({
+      runId,
+      turnId: input.expectedTurnId,
+      message,
+      steering: "accepted",
+    });
+  }
+
+  async steerQueuedTurn(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    queuedTurnId: string,
+    inputValue: CanonicalSteerQueuedChatTurnRequest,
+  ): Promise<CanonicalChatRunSteeringResponse> {
+    this.assertOpen();
+    const input = CanonicalSteerQueuedChatTurnRequestSchema.parse(inputValue);
+    const active = this.active.get(runId);
+    if (!active || active.chatId !== chatId || active.owner.type !== owner.type
+      || active.owner.ownerId !== owner.ownerId || !active.adapter.steer) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This Run cannot be steered."),
+        409,
+      );
+    }
+    const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+    let begun;
+    try {
+      begun = await this.options.repository.beginQueuedTurnSteer(owner, {
+        chatId,
+        runId,
+        expectedTurnId: input.expectedTurnId,
+        queuedTurnId,
+        steerId: id("steer_"),
+        messageId: id("msg_"),
+        clientRequestId: input.clientRequestId,
+        baseRevision: input.baseRevision,
+        createdAt: timestamp,
+      });
+    } catch (error: unknown) {
+      return mapRepositoryError(error);
+    }
+    if (begun.status === "accepted") {
+      return CanonicalChatRunSteeringResponseSchema.parse({
+        runId,
+        turnId: input.expectedTurnId,
+        message: begun.message,
+        steering: "already_accepted",
+      });
+    }
+    if (begun.alreadyRequested || begun.status === "failed") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The steering request is still resolving. Try again.", true, ["retry"]),
+        409,
+      );
+    }
+    const state = await this.options.repository.getAdapterState(owner, {
+      runId,
+      driverKind: active.adapter.driverKind,
+      instanceId: active.instanceId,
+    });
+    try {
+      await active.adapter.steer({
+        owner,
+        chatId,
+        runId,
+        turnId: input.expectedTurnId,
+        clientRequestId: input.clientRequestId,
+        prompt: promptFor(begun.parts),
+        parts: begun.parts,
+        ...(state ? { state: active.adapter.parseState(state.state) } : {}),
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[chat/orchestrator] Provider queued steering callback failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      try {
+        await this.options.repository.failQueuedTurnSteer(owner, {
+          chatId,
+          runId,
+          queuedTurnId,
+          clientRequestId: input.clientRequestId,
+          acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+        });
+      } catch (finishError: unknown) {
+        console.warn(
+          "[chat/orchestrator] Queued steering failure could not be persisted:",
+          finishError instanceof Error ? finishError.name : "UnknownError",
+        );
+      }
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The Run could not be steered. Try again.", true, ["retry"]),
+        503,
+      );
+    }
+    let message;
+    try {
+      message = await this.options.repository.acceptQueuedTurnSteer(owner, {
+        chatId,
+        runId,
+        queuedTurnId,
         clientRequestId: input.clientRequestId,
         acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
       });

@@ -18,6 +18,12 @@ describe("Desktop renderer URL", () => {
     );
   });
 
+  it("keeps the development renderer inside the proxy-exempt localhost namespace", () => {
+    expect(new URL(resolveDesktopRendererUrl("http://127.0.0.1:5173/")!).hostname).toBe(
+      "desktop.localhost",
+    );
+  });
+
   it("does not rewrite non-local or malformed renderer URLs", () => {
     expect(resolveDesktopRendererUrl("https://app.matrix-os.com/desktop")).toBe(
       "https://app.matrix-os.com/desktop",

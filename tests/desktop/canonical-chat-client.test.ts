@@ -311,7 +311,13 @@ describe("canonical Chat client", () => {
           steering: "accepted" as const,
         }
       : { queuedTurn, queueDepth: 1 });
-    const patch = vi.fn(async () => ({ queuedTurns: [queuedTurn] }));
+    const editedQueuedTurn = {
+      ...queuedTurn,
+      parts: [{ type: "text" as const, text: "Edited queue text" }],
+    };
+    const patch = vi.fn(async (path: string) => path.endsWith("/order")
+      ? { queuedTurns: [queuedTurn] }
+      : { queuedTurn: editedQueuedTurn });
     const remove = vi.fn(async () => ({
       queuedTurnId: queuedTurn.id,
       queueDepth: 0,
@@ -342,6 +348,16 @@ describe("canonical Chat client", () => {
       clientRequestId: "req_client_cancel_queue",
       baseRevision: 3,
     });
+    await client.updateQueuedTurn(record.chat.id, queuedTurn.id, {
+      clientRequestId: "req_client_edit_queue",
+      baseRevision: 4,
+      parts: editedQueuedTurn.parts,
+    });
+    await client.steerQueuedTurn(record.chat.id, "run_client", queuedTurn.id, {
+      clientRequestId: "req_client_steer_queue",
+      baseRevision: 5,
+      expectedTurnId: "cturn_client",
+    });
 
     expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/queued-turns", queueInput);
     expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer", {
@@ -357,6 +373,24 @@ describe("canonical Chat client", () => {
     expect(remove).toHaveBeenCalledWith(
       "/api/chats/chat_client_test/queued-turns/qturn_client",
       { clientRequestId: "req_client_cancel_queue", baseRevision: 3 },
+    );
+    expect(patch).toHaveBeenNthCalledWith(
+      2,
+      "/api/chats/chat_client_test/queued-turns/qturn_client",
+      {
+        clientRequestId: "req_client_edit_queue",
+        baseRevision: 4,
+        parts: editedQueuedTurn.parts,
+      },
+    );
+    expect(post).toHaveBeenNthCalledWith(
+      3,
+      "/api/chats/chat_client_test/runs/run_client/queued-turns/qturn_client/steer",
+      {
+        clientRequestId: "req_client_steer_queue",
+        baseRevision: 5,
+        expectedTurnId: "cturn_client",
+      },
     );
   });
 });

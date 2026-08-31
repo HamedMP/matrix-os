@@ -45,6 +45,7 @@ export type ChatOutboxEventType =
   | "chat.user_state_updated"
   | "turn.accepted"
   | "queue.enqueued"
+  | "queue.updated"
   | "queue.cancelled"
   | "queue.reordered"
   | "queue.claimed"

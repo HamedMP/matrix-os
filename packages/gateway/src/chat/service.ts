@@ -11,6 +11,7 @@ import {
   CanonicalChatQueueAdmissionResponseSchema,
   CanonicalChatQueueCancellationResponseSchema,
   CanonicalChatQueueReorderResponseSchema,
+  CanonicalChatQueueUpdateResponseSchema,
   CanonicalChatRunIdSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
@@ -18,6 +19,8 @@ import {
   CanonicalQueueChatTurnRequestSchema,
   CanonicalCancelQueuedChatTurnRequestSchema,
   CanonicalReorderQueuedChatTurnsRequestSchema,
+  CanonicalUpdateQueuedChatTurnRequestSchema,
+  CanonicalSteerQueuedChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalSteerChatRunRequestSchema,
@@ -33,6 +36,7 @@ import {
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatQueueCancellationResponse,
   type CanonicalChatQueueReorderResponse,
+  type CanonicalChatQueueUpdateResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
   type CanonicalCancelQueuedChatTurnRequest,
@@ -40,6 +44,8 @@ import {
   type CanonicalCreateChatTurnRequest,
   type CanonicalQueueChatTurnRequest,
   type CanonicalReorderQueuedChatTurnsRequest,
+  type CanonicalUpdateQueuedChatTurnRequest,
+  type CanonicalSteerQueuedChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalSteerChatRunRequest,
@@ -82,6 +88,7 @@ type ChatServiceRepository = Pick<ChatRepository,
   | "getDetailPage"
   | "cancelQueuedTurn"
   | "reorderQueuedTurns"
+  | "updateQueuedTurn"
 >;
 
 function encodeCursor(value: CursorEnvelope): string {
@@ -123,7 +130,7 @@ export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
     orchestrator?: Pick<CanonicalChatOrchestrator,
-      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "cancelRun" | "submitApproval" | "retryTurn"
+      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn"
     >;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
   } = {},
@@ -332,6 +339,23 @@ export function createCanonicalChatService(
       );
     },
 
+    async updateQueuedTurn(
+      owner: ChatOwner,
+      chatId: string,
+      queuedTurnId: string,
+      input: CanonicalUpdateQueuedChatTurnRequest,
+    ): Promise<CanonicalChatQueueUpdateResponse> {
+      const request = CanonicalUpdateQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatQueueUpdateResponseSchema.parse(await repository.updateQueuedTurn(owner, {
+        chatId: CanonicalChatIdSchema.parse(chatId),
+        queuedTurnId,
+        clientRequestId: request.clientRequestId,
+        baseRevision: request.baseRevision,
+        parts: request.parts,
+        updatedAt: new Date().toISOString(),
+      }));
+    },
+
     async cancelRun(
       owner: ChatOwner,
       chatId: string,
@@ -356,6 +380,23 @@ export function createCanonicalChatService(
         CanonicalChatIdSchema.parse(chatId),
         CanonicalChatRunIdSchema.parse(runId),
         CanonicalSteerChatRunRequestSchema.parse(input),
+      ));
+    },
+
+    async steerQueuedTurn(
+      owner: ChatOwner,
+      chatId: string,
+      runId: string,
+      queuedTurnId: string,
+      input: CanonicalSteerQueuedChatTurnRequest,
+    ): Promise<CanonicalChatRunSteeringResponse> {
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatRunSteeringResponseSchema.parse(await options.orchestrator.steerQueuedTurn(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalChatRunIdSchema.parse(runId),
+        queuedTurnId,
+        CanonicalSteerQueuedChatTurnRequestSchema.parse(input),
       ));
     },
 
@@ -414,6 +455,8 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     enqueueQueuedTurn: unavailable,
     cancelQueuedTurn: unavailable,
     reorderQueuedTurns: unavailable,
+    updateQueuedTurn: unavailable,
+    steerQueuedTurn: unavailable,
     steerRun: unavailable,
     cancelRun: unavailable,
     submitApproval: unavailable,

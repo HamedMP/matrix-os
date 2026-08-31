@@ -136,6 +136,7 @@ export interface ChatRunSteersTable {
   turn_id: string;
   client_request_id: string;
   message_id: string;
+  queued_turn_id: string | null;
   parts: JsonValue;
   status: "pending" | "accepted" | "failed";
   created_at: Timestamp;
@@ -418,12 +419,17 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
       turn_id TEXT NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
       client_request_id TEXT NOT NULL,
       message_id TEXT NOT NULL,
+      queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL,
       parts JSONB NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'failed')),
       created_at TIMESTAMPTZ NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL,
       UNIQUE (chat_id, client_request_id)
     )
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_run_steers
+    ADD COLUMN IF NOT EXISTS queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_chat_run_steers_run

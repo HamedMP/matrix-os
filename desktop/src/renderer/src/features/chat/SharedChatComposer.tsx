@@ -197,6 +197,7 @@ export function SharedChatComposer({
   onSubmit,
   onAbort,
   busy,
+  submitWhileBusy = false,
   disabled = false,
   placeholder = "How can I help you today?",
   ariaLabel = "Message chat",
@@ -228,6 +229,7 @@ export function SharedChatComposer({
   onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
+  submitWhileBusy?: boolean;
   disabled?: boolean;
   placeholder?: string;
   ariaLabel?: string;
@@ -485,6 +487,7 @@ export function SharedChatComposer({
         onSubmit={() => onSubmit(currentSubmission())}
         onAbort={onAbort}
         busy={busy}
+        submitWhileBusy={submitWhileBusy}
         disabled={disabled}
         canSubmit={canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0))}
         autoFocus={autoFocus}

@@ -1,11 +1,14 @@
 import {
   CanonicalChatIdSchema,
   CanonicalChatMessageSchema,
+  CanonicalChatQueuedTurnIdSchema,
+  CanonicalChatQueuedTurnSchema,
   CanonicalChatRequestIdSchema,
   CanonicalChatRunIdSchema,
   CanonicalChatTurnIdSchema,
   CanonicalOwnerScopeSchema,
   type CanonicalChatMessage,
+  type CanonicalChatQueuedTurn,
   type CanonicalSteerChatRunRequest,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -38,9 +41,19 @@ export interface BeginSteerInput {
   createdAt: string;
 }
 
+export interface BeginQueuedTurnSteerInput extends Omit<BeginSteerInput, "parts"> {
+  queuedTurnId: string;
+  baseRevision: number;
+}
+
 export type BegunSteer =
   | { status: "accepted"; message: CanonicalChatMessage; alreadyRequested: true }
   | { status: "pending" | "failed"; alreadyRequested: boolean };
+
+export type BegunQueuedTurnSteer =
+  | { status: "accepted"; message: CanonicalChatMessage; alreadyRequested: true }
+  | { status: "pending"; parts: CanonicalChatQueuedTurn["parts"]; alreadyRequested: boolean }
+  | { status: "failed"; alreadyRequested: boolean };
 
 function preview(message: CanonicalChatMessage): string | null {
   const text = message.parts.find((part) => part.type === "text");
@@ -110,6 +123,7 @@ export class ChatSteeringRepository {
         turn_id: turnId,
         client_request_id: clientRequestId,
         message_id: input.messageId,
+        queued_turn_id: null,
         parts: jsonb(input.parts),
         status: "pending",
         created_at: createdAt,
@@ -129,6 +143,113 @@ export class ChatSteeringRepository {
     });
   }
 
+  async beginQueuedTurn(
+    ownerInput: ChatOwner,
+    input: BeginQueuedTurnSteerInput,
+  ): Promise<BegunQueuedTurnSteer> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    const runId = CanonicalChatRunIdSchema.parse(input.runId);
+    const turnId = CanonicalChatTurnIdSchema.parse(input.expectedTurnId);
+    const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(input.queuedTurnId);
+    const clientRequestId = CanonicalChatRequestIdSchema.parse(input.clientRequestId);
+    const createdAt = new Date(input.createdAt).toISOString();
+    return this.transact(async (trx) => {
+      const chat = await trx.selectFrom("chats").selectAll()
+        .where("id", "=", chatId)
+        .where("owner_type", "=", owner.type)
+        .where("owner_id", "=", owner.ownerId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!chat) throw new ChatNotFoundError(chatId);
+      const duplicate = await trx.selectFrom("chat_run_steers").selectAll()
+        .where("chat_id", "=", chatId)
+        .where("client_request_id", "=", clientRequestId)
+        .executeTakeFirst();
+      if (duplicate) {
+        if (duplicate.queued_turn_id !== queuedTurnId) {
+          throw new ChatConflictError(chatId, Number(chat.revision));
+        }
+        if (duplicate.status === "accepted") {
+          const message = await trx.selectFrom("chat_messages").selectAll()
+            .where("id", "=", duplicate.message_id)
+            .executeTakeFirstOrThrow();
+          return { message: toMessage(message), status: "accepted", alreadyRequested: true };
+        }
+        if (duplicate.status === "failed") {
+          return { status: "failed", alreadyRequested: true };
+        }
+        return {
+          status: "pending",
+          parts: CanonicalChatQueuedTurnSchema.shape.parts.parse(
+            typeof duplicate.parts === "string" ? JSON.parse(duplicate.parts) : duplicate.parts,
+          ),
+          alreadyRequested: true,
+        };
+      }
+      if (chat.lifecycle !== "active" || Number(chat.revision) !== input.baseRevision) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
+      const queued = await trx.selectFrom("chat_queued_turns").selectAll()
+        .where("id", "=", queuedTurnId)
+        .where("chat_id", "=", chatId)
+        .where("status", "=", "queued")
+        .forUpdate()
+        .executeTakeFirst();
+      if (!queued) throw new ChatConflictError(chatId, Number(chat.revision));
+      const pending = await trx.selectFrom("chat_run_steers").select("id")
+        .where("queued_turn_id", "=", queuedTurnId)
+        .where("status", "=", "pending")
+        .executeTakeFirst();
+      if (pending) throw new ChatConflictError(chatId, Number(chat.revision));
+      const run = await trx.selectFrom("chat_runs").selectAll()
+        .where("id", "=", runId)
+        .where("chat_id", "=", chatId)
+        .where("turn_id", "=", turnId)
+        .where("status", "in", [...ACTIVE_RUNS])
+        .executeTakeFirst();
+      if (!run || run.capability_snapshot === null) {
+        throw new ChatRunNotActiveError(chatId, runId);
+      }
+      const capability = typeof run.capability_snapshot === "string"
+        ? JSON.parse(run.capability_snapshot) as { steering?: unknown }
+        : run.capability_snapshot as { steering?: unknown };
+      if (capability.steering !== "same_run") {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
+      const parts = CanonicalChatQueuedTurnSchema.shape.parts.parse(
+        typeof queued.parts === "string" ? JSON.parse(queued.parts) : queued.parts,
+      );
+      await trx.insertInto("chat_run_steers").values({
+        id: input.steerId,
+        chat_id: chatId,
+        run_id: runId,
+        turn_id: turnId,
+        client_request_id: clientRequestId,
+        message_id: input.messageId,
+        queued_turn_id: queuedTurnId,
+        parts: jsonb(parts),
+        status: "pending",
+        created_at: createdAt,
+        updated_at: createdAt,
+      }).execute();
+      const revision = input.baseRevision + 1;
+      const updated = await trx.updateTable("chats").set({ revision, updated_at: createdAt })
+        .where("id", "=", chatId)
+        .where("revision", "=", input.baseRevision)
+        .returning("id")
+        .executeTakeFirst();
+      if (!updated) throw new ChatConflictError(chatId, Number(chat.revision));
+      await this.appendOutbox(trx, owner, chatId, revision, "run.steer_requested", {
+        runId,
+        turnId,
+        messageId: input.messageId,
+        queuedTurnId,
+      });
+      return { status: "pending", parts, alreadyRequested: false };
+    });
+  }
+
   async accept(
     ownerInput: ChatOwner,
     input: { chatId: string; runId: string; clientRequestId: string; acceptedAt: string },
@@ -145,6 +266,34 @@ export class ChatSteeringRepository {
     await this.finish(ownerInput, { ...input, outcome: "failed" });
   }
 
+  async acceptQueuedTurn(
+    ownerInput: ChatOwner,
+    input: {
+      chatId: string;
+      runId: string;
+      queuedTurnId: string;
+      clientRequestId: string;
+      acceptedAt: string;
+    },
+  ): Promise<CanonicalChatMessage> {
+    const message = await this.finish(ownerInput, { ...input, outcome: "accepted" });
+    if (!message) throw new ChatRunNotActiveError(input.chatId, input.runId);
+    return message;
+  }
+
+  async failQueuedTurn(
+    ownerInput: ChatOwner,
+    input: {
+      chatId: string;
+      runId: string;
+      queuedTurnId: string;
+      clientRequestId: string;
+      acceptedAt: string;
+    },
+  ): Promise<void> {
+    await this.finish(ownerInput, { ...input, outcome: "failed" });
+  }
+
   private async finish(
     ownerInput: ChatOwner,
     input: {
@@ -152,6 +301,7 @@ export class ChatSteeringRepository {
       runId: string;
       clientRequestId: string;
       acceptedAt: string;
+      queuedTurnId?: string;
       outcome: "accepted" | "failed";
     },
   ): Promise<CanonicalChatMessage | null> {
@@ -175,6 +325,9 @@ export class ChatSteeringRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!steer) throw new ChatConflictError(chatId, Number(chat.revision));
+      if ((input.queuedTurnId ?? null) !== steer.queued_turn_id) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
       if (steer.status !== "pending") {
         if (input.outcome === "failed" && steer.status !== "failed") {
           throw new ChatConflictError(chatId, Number(chat.revision));
@@ -195,6 +348,21 @@ export class ChatSteeringRepository {
         }
       }
       let message: CanonicalChatMessage | null = null;
+      let queuedPosition: number | undefined;
+      if (outcome === "accepted") {
+        if (input.queuedTurnId) {
+          const queued = await trx.selectFrom("chat_queued_turns").select(["id", "position", "status"])
+            .where("id", "=", CanonicalChatQueuedTurnIdSchema.parse(input.queuedTurnId))
+            .where("chat_id", "=", chatId)
+            .forUpdate()
+            .executeTakeFirst();
+          if (!queued || queued.status !== "queued") {
+            outcome = "failed";
+          } else {
+            queuedPosition = Number(queued.position);
+          }
+        }
+      }
       if (outcome === "accepted") {
         const latest = await trx.selectFrom("chat_messages")
           .select(({ fn }) => fn.max("seq").as("seq"))
@@ -238,6 +406,24 @@ export class ChatSteeringRepository {
             owner_reference: part.ownerReference ?? null,
           }).execute();
         }
+        if (input.queuedTurnId && queuedPosition !== undefined) {
+          await trx.updateTable("chat_queued_turns").set({
+            status: "claimed",
+            claimed_turn_id: steer.turn_id,
+            claimed_run_id: runId,
+            updated_at: acceptedAt,
+          }).where("id", "=", input.queuedTurnId)
+            .where("chat_id", "=", chatId)
+            .where("status", "=", "queued")
+            .executeTakeFirstOrThrow();
+          await trx.updateTable("chat_queued_turns").set({
+            position: sql<number>`position - 1`,
+            updated_at: acceptedAt,
+          }).where("chat_id", "=", chatId)
+            .where("status", "=", "queued")
+            .where("position", ">", queuedPosition)
+            .execute();
+        }
       }
       await trx.updateTable("chat_run_steers").set({
         status: outcome,
@@ -261,7 +447,12 @@ export class ChatSteeringRepository {
         chatId,
         revision,
         outcome === "accepted" ? "run.steered" : "run.steer_failed",
-        { runId, turnId: steer.turn_id, messageId: steer.message_id },
+        {
+          runId,
+          turnId: steer.turn_id,
+          messageId: steer.message_id,
+          ...(steer.queued_turn_id ? { queuedTurnId: steer.queued_turn_id } : {}),
+        },
       );
       return message;
     });

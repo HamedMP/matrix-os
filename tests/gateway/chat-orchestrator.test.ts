@@ -327,6 +327,103 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
   });
 
+  it("promotes a queued Turn only after Provider steering accepts it", async () => {
+    await repository.create(owner, {
+      id: "chat_queued_steer_orchestrated",
+      clientRequestId: "req_create_queued_steer_orchestrated",
+      title: "Queued steer orchestrated",
+    });
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const steer = vi.fn()
+      .mockRejectedValueOnce(new Error("provider unavailable"))
+      .mockResolvedValue(undefined);
+    const provider: CanonicalChatProviderAdapter<{ sessionId: string }> = {
+      ...adapter(async function* () {
+        await providerGate;
+        yield { type: "run.completed", outcome: "completed" };
+      }),
+      steer,
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+    const admitted = await orchestrator.admitTurn(
+      principal,
+      owner,
+      "chat_queued_steer_orchestrated",
+      {
+        clientRequestId: "req_queued_steer_active",
+        baseRevision: 0,
+        parts: [{ type: "text", text: "keep running" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      },
+    );
+    await vi.waitFor(async () => {
+      expect((await repository.get(owner, "chat_queued_steer_orchestrated"))?.activeRun?.status)
+        .toBe("running");
+    });
+    const beforeQueue = await repository.get(owner, "chat_queued_steer_orchestrated");
+    const queued = await orchestrator.enqueueQueuedTurn(
+      principal,
+      owner,
+      "chat_queued_steer_orchestrated",
+      {
+        clientRequestId: "req_queued_steer_input",
+        baseRevision: beforeQueue!.chat.revision,
+        parts: [{ type: "text", text: "steer queued now" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      },
+    );
+    const firstRevision = (await repository.get(owner, "chat_queued_steer_orchestrated"))!.chat.revision;
+
+    await expect(orchestrator.steerQueuedTurn(
+      owner,
+      "chat_queued_steer_orchestrated",
+      admitted.run.id,
+      queued.queuedTurn.id,
+      {
+        clientRequestId: "req_queued_steer_fail",
+        baseRevision: firstRevision,
+        expectedTurnId: admitted.turn.id,
+      },
+    )).rejects.toMatchObject({ status: 503 });
+    expect(await repository.listQueuedTurns(owner, "chat_queued_steer_orchestrated"))
+      .toEqual([expect.objectContaining({ id: queued.queuedTurn.id, position: 1 })]);
+
+    const retryRevision = (await repository.get(owner, "chat_queued_steer_orchestrated"))!.chat.revision;
+    const accepted = await orchestrator.steerQueuedTurn(
+      owner,
+      "chat_queued_steer_orchestrated",
+      admitted.run.id,
+      queued.queuedTurn.id,
+      {
+        clientRequestId: "req_queued_steer_accept",
+        baseRevision: retryRevision,
+        expectedTurnId: admitted.turn.id,
+      },
+    );
+
+    expect(accepted).toMatchObject({
+      steering: "accepted",
+      message: { parts: [{ type: "text", text: "steer queued now" }] },
+    });
+    expect(steer).toHaveBeenCalledTimes(2);
+    expect(await repository.listQueuedTurns(owner, "chat_queued_steer_orchestrated")).toEqual([]);
+
+    releaseProvider();
+    await orchestrator.drain();
+  });
+
   it("keeps the timeline truthful when cancellation commits before a steer acknowledgement", async () => {
     await repository.create(owner, {
       id: "chat_steer_cancel_race",

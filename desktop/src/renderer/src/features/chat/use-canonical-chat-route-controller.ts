@@ -5,6 +5,7 @@ import type {
   CanonicalCreateChatTurnRequest,
   CanonicalQueueChatTurnRequest,
   CanonicalSteerChatRunRequest,
+  CanonicalUpdateQueuedChatTurnRequest,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
@@ -467,6 +468,64 @@ export function useCanonicalChatRouteController({
     }
   }, [client, loadDetail]);
 
+  const updateQueuedTurn = useCallback(async (
+    queuedTurnId: string,
+    parts: CanonicalUpdateQueuedChatTurnRequest["parts"],
+  ) => {
+    const current = detailRef.current;
+    if (!current) return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.updateQueuedTurn(current.record.chat.id, queuedTurnId, {
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+        parts,
+      });
+      if (!isCurrentScope()) return null;
+      await loadDetail(current.record.chat.id);
+      return response;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queue update failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      setError("The queued message could not be saved. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return null;
+    }
+  }, [client, loadDetail]);
+
+  const steerQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    const run = activeRun
+      ? current?.runs.find((candidate) => candidate.id === activeRun.runId)
+      : undefined;
+    if (!current || !activeRun || run?.capabilitySnapshot.steering !== "same_run") return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.steerQueuedTurn(
+        current.record.chat.id,
+        activeRun.runId,
+        queuedTurnId,
+        {
+          clientRequestId: canonicalChatRequestId(),
+          baseRevision: current.record.chat.revision,
+          expectedTurnId: activeRun.turnId,
+        },
+      );
+      if (!isCurrentScope()) return null;
+      await loadDetail(current.record.chat.id);
+      return response;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queued steer failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      setError("The queued message could not steer this Run. It remains in Queue.");
+      await loadDetail(current.record.chat.id);
+      return null;
+    }
+  }, [client, loadDetail]);
+
   const reorderQueuedTurns = useCallback(async (queuedTurnIds: string[]) => {
     const current = detailRef.current;
     if (!current) return false;
@@ -607,6 +666,8 @@ export function useCanonicalChatRouteController({
     cancelActiveRun,
     steerActiveRun,
     queueTurn,
+    updateQueuedTurn,
+    steerQueuedTurn,
     reorderQueuedTurns,
     cancelQueuedTurn,
     submitApproval,

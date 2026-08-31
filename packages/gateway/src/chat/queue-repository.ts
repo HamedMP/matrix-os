@@ -15,6 +15,7 @@ import {
   type CanonicalChatTurn,
   type CanonicalProviderDriverKind,
   type CanonicalQueueChatTurnRequest,
+  type CanonicalUpdateQueuedChatTurnRequest,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import type {
@@ -72,6 +73,15 @@ export interface ReorderQueuedTurnsInput {
   baseRevision: number;
   queuedTurnIds: string[];
   reorderedAt: string;
+}
+
+export interface UpdateQueuedTurnInput {
+  chatId: string;
+  queuedTurnId: string;
+  clientRequestId: string;
+  baseRevision: number;
+  parts: CanonicalUpdateQueuedChatTurnRequest["parts"];
+  updatedAt: string;
 }
 
 export interface ClaimNextQueuedTurnInput {
@@ -250,6 +260,11 @@ export class ChatQueueRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!queued) throw new ChatNotFoundError(chatId);
+      const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
+        .where("queued_turn_id", "=", queuedTurnId)
+        .where("status", "=", "pending")
+        .executeTakeFirst();
+      if (pendingSteer) throw new ChatConflictError(chatId, Number(chat.revision));
       if (queued.status === "cancelled") {
         return {
           queuedTurnId,
@@ -347,6 +362,62 @@ export class ChatQueueRepository {
       const rows = await trx.selectFrom("chat_queued_turns").selectAll()
         .where("chat_id", "=", chatId).where("status", "=", "queued").orderBy("position").execute();
       return { queuedTurns: rows.map(toQueuedTurn) };
+    });
+  }
+
+  async update(
+    ownerInput: ChatOwner,
+    input: UpdateQueuedTurnInput,
+  ): Promise<{ queuedTurn: CanonicalChatQueuedTurn }> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(input.queuedTurnId);
+    CanonicalChatRequestIdSchema.parse(input.clientRequestId);
+    const parts = CanonicalChatQueuedTurnSchema.shape.parts.parse(input.parts);
+    const updatedAt = new Date(input.updatedAt).toISOString();
+    return this.transact(async (trx) => {
+      const chat = await ownedChat(trx, owner, chatId);
+      if (!chat) throw new ChatNotFoundError(chatId);
+      const queued = await trx.selectFrom("chat_queued_turns").selectAll()
+        .where("id", "=", queuedTurnId)
+        .where("chat_id", "=", chatId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!queued) throw new ChatNotFoundError(chatId);
+      const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
+        .where("queued_turn_id", "=", queuedTurnId)
+        .where("status", "=", "pending")
+        .executeTakeFirst();
+      const existingParts = CanonicalChatQueuedTurnSchema.shape.parts.parse(parseJson(queued.parts));
+      if (!pendingSteer && queued.status === "queued"
+        && JSON.stringify(existingParts) === JSON.stringify(parts)) {
+        return { queuedTurn: toQueuedTurn(queued) };
+      }
+      if (pendingSteer || queued.status !== "queued" || chat.lifecycle !== "active"
+        || Number(chat.revision) !== input.baseRevision) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
+      const updated = await trx.updateTable("chat_queued_turns").set({
+        parts: jsonb(parts),
+        updated_at: updatedAt,
+      }).where("id", "=", queuedTurnId)
+        .where("chat_id", "=", chatId)
+        .where("status", "=", "queued")
+        .returningAll()
+        .executeTakeFirst();
+      if (!updated) throw new ChatConflictError(chatId, Number(chat.revision));
+      const revision = input.baseRevision + 1;
+      const chatUpdate = await trx.updateTable("chats").set({ revision, updated_at: updatedAt })
+        .where("id", "=", chatId)
+        .where("revision", "=", input.baseRevision)
+        .returning("id")
+        .executeTakeFirst();
+      if (!chatUpdate) throw new ChatConflictError(chatId, Number(chat.revision));
+      await this.appendOutbox(trx, owner, chatId, revision, "queue.updated", {
+        queuedTurnId,
+        position: Number(queued.position),
+      });
+      return { queuedTurn: toQueuedTurn(updated) };
     });
   }
 

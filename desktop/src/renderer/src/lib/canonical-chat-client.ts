@@ -12,6 +12,7 @@ import {
   CanonicalChatQueueAdmissionResponseSchema,
   CanonicalChatQueueCancellationResponseSchema,
   CanonicalChatQueueReorderResponseSchema,
+  CanonicalChatQueueUpdateResponseSchema,
   CanonicalChatQueuedTurnIdSchema,
   CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
@@ -23,6 +24,8 @@ import {
   CanonicalCreateChatTurnRequestSchema,
   CanonicalQueueChatTurnRequestSchema,
   CanonicalReorderQueuedChatTurnsRequestSchema,
+  CanonicalUpdateQueuedChatTurnRequestSchema,
+  CanonicalSteerQueuedChatTurnRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
@@ -36,6 +39,7 @@ import {
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatQueueCancellationResponse,
   type CanonicalChatQueueReorderResponse,
+  type CanonicalChatQueueUpdateResponse,
   type CanonicalChatRunSteeringResponse,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
@@ -45,6 +49,8 @@ import {
   type CanonicalQueueChatTurnRequest,
   type CanonicalCancelQueuedChatTurnRequest,
   type CanonicalReorderQueuedChatTurnsRequest,
+  type CanonicalUpdateQueuedChatTurnRequest,
+  type CanonicalSteerQueuedChatTurnRequest,
   type CanonicalSteerChatRunRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
@@ -359,6 +365,17 @@ export interface CanonicalChatClient {
     runId: string,
     input: CanonicalSteerChatRunRequest,
   ): Promise<CanonicalChatRunSteeringResponse>;
+  steerQueuedTurn(
+    chatId: string,
+    runId: string,
+    queuedTurnId: string,
+    input: CanonicalSteerQueuedChatTurnRequest,
+  ): Promise<CanonicalChatRunSteeringResponse>;
+  updateQueuedTurn(
+    chatId: string,
+    queuedTurnId: string,
+    input: CanonicalUpdateQueuedChatTurnRequest,
+  ): Promise<CanonicalChatQueueUpdateResponse>;
   cancelQueuedTurn(
     chatId: string,
     queuedTurnId: string,
@@ -498,6 +515,27 @@ export function createCanonicalChatClient(
       const request = CanonicalSteerChatRunRequestSchema.parse(input);
       return CanonicalChatRunSteeringResponseSchema.parse(await api.post(
         `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/steer`,
+        request,
+      ));
+    },
+
+    async steerQueuedTurn(chatId, runId, queuedTurnId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const parsedQueuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(queuedTurnId);
+      const request = CanonicalSteerQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatRunSteeringResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}/steer`,
+        request,
+      ));
+    },
+
+    async updateQueuedTurn(chatId, queuedTurnId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedQueuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(queuedTurnId);
+      const request = CanonicalUpdateQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatQueueUpdateResponseSchema.parse(await api.patch(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}`,
         request,
       ));
     },

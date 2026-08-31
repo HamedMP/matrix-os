@@ -1058,6 +1058,67 @@ describe("ChatRepository", () => {
       }));
   });
 
+  it("edits one queued Turn in place under a revision guard", async () => {
+    const admitted = await admitChat(repository, "queue_edit");
+    for (const index of [1, 2]) {
+      await repository.enqueueQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        baseRevision: index,
+        queuedTurnId: `qturn_queue_edit_${index}`,
+        clientRequestId: `req_queue_edit_${index}`,
+        parts: [{ type: "text", text: `queued ${index}` }],
+        driverKind: "codex",
+        selection: selection(),
+        interactionMode: "default",
+        permissionMode: "supervised",
+        capabilitySnapshot: admitted.run.capabilitySnapshot,
+        createdAt: `2026-08-25T00:00:1${index}.000Z`,
+      });
+    }
+
+    const result = await repository.updateQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_edit_1",
+      clientRequestId: "req_queue_edit_save",
+      baseRevision: 3,
+      parts: [{ type: "text", text: "edited first" }],
+      updatedAt: "2026-08-25T00:00:20.000Z",
+    });
+
+    expect(result.queuedTurn).toMatchObject({
+      id: "qturn_queue_edit_1",
+      position: 1,
+      parts: [{ type: "text", text: "edited first" }],
+    });
+    await expect(repository.updateQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_edit_1",
+      clientRequestId: "req_queue_edit_save",
+      baseRevision: 3,
+      parts: [{ type: "text", text: "edited first" }],
+      updatedAt: "2026-08-25T00:00:20.000Z",
+    })).resolves.toEqual(result);
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([
+      expect.objectContaining({ id: "qturn_queue_edit_1", position: 1 }),
+      expect.objectContaining({ id: "qturn_queue_edit_2", position: 2 }),
+    ]);
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(4);
+    await expect(repository.updateQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_edit_1",
+      clientRequestId: "req_queue_edit_stale",
+      baseRevision: 3,
+      parts: [{ type: "text", text: "stale overwrite" }],
+      updatedAt: "2026-08-25T00:00:21.000Z",
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({
+        eventType: "queue.updated",
+        revision: 4,
+        payload: { queuedTurnId: "qturn_queue_edit_1", position: 1 },
+      }));
+  });
+
   it("claims at most one queued Turn into canonical message, Turn, and Run records", async () => {
     const admitted = await admitChat(repository, "queue_claim");
     await repository.enqueueQueuedTurn(owner, {
@@ -1186,6 +1247,84 @@ describe("ChatRepository", () => {
         expect.objectContaining({ eventType: "run.steer_requested", revision: 2 }),
         expect.objectContaining({ eventType: "run.steered", revision: 3 }),
       ]));
+  });
+
+  it("keeps a queued Turn retryable until same-Run steering is accepted", async () => {
+    const admitted = await admitChat(repository, "queued_steer");
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queued_steer_1",
+      clientRequestId: "req_queued_steer_input",
+      parts: [{ type: "text", text: "steer this now" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+
+    const begun = await repository.beginQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      queuedTurnId: "qturn_queued_steer_1",
+      steerId: "steer_queued_steer_1",
+      messageId: "msg_queued_steer_1",
+      clientRequestId: "req_queued_steer_1",
+      baseRevision: 2,
+      createdAt: "2026-08-25T00:00:11.000Z",
+    });
+
+    expect(begun).toMatchObject({
+      status: "pending",
+      alreadyRequested: false,
+      parts: [{ type: "text", text: "steer this now" }],
+    });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId))
+      .toEqual([expect.objectContaining({ id: "qturn_queued_steer_1", position: 1 })]);
+
+    await repository.failQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      queuedTurnId: "qturn_queued_steer_1",
+      clientRequestId: "req_queued_steer_1",
+      acceptedAt: "2026-08-25T00:00:12.000Z",
+    });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId))
+      .toEqual([expect.objectContaining({ id: "qturn_queued_steer_1", position: 1 })]);
+
+    const retry = await repository.beginQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      queuedTurnId: "qturn_queued_steer_1",
+      steerId: "steer_queued_steer_retry",
+      messageId: "msg_queued_steer_retry",
+      clientRequestId: "req_queued_steer_retry",
+      baseRevision: 4,
+      createdAt: "2026-08-25T00:00:13.000Z",
+    });
+    expect(retry).toMatchObject({ status: "pending", parts: begun.parts });
+    const accepted = await repository.acceptQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      queuedTurnId: "qturn_queued_steer_1",
+      clientRequestId: "req_queued_steer_retry",
+      acceptedAt: "2026-08-25T00:00:14.000Z",
+    });
+
+    expect(accepted).toMatchObject({
+      id: "msg_queued_steer_retry",
+      runId: admitted.runId,
+      parts: [{ type: "text", text: "steer this now" }],
+    });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([]);
+    expect((await repository.get(owner, admitted.chatId))?.chat).toMatchObject({
+      revision: 6,
+      messageCount: 2,
+    });
   });
 
   it("rejects stale or terminal steering targets before adding a message", async () => {

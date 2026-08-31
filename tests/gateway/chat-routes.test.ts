@@ -69,6 +69,12 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     reorderQueuedTurns: vi.fn(async () => {
       throw new Error("not configured");
     }),
+    updateQueuedTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    steerQueuedTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
     steerRun: vi.fn(async () => {
       throw new Error("not configured");
     }),
@@ -597,6 +603,100 @@ describe("canonical Chat routes", () => {
         clientRequestId: "req_route_queue_reorder",
         queuedTurnIds: ["qturn_route_second", "qturn_route_first"],
       }),
+    );
+  });
+
+  it("edits one queued Turn through an owner-derived bounded PATCH route", async () => {
+    const updatedAt = "2026-08-31T09:11:00.000Z";
+    const queuedTurn = {
+      id: "qturn_route_edit",
+      chatId: "chat_route_test",
+      clientRequestId: "req_route_original",
+      position: 1,
+      parts: [{ type: "text" as const, text: "edited queued message" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      createdAt: updatedAt,
+      updatedAt,
+    };
+    const updateQueuedTurn = vi.fn(async () => ({ queuedTurn }));
+    const service = routeService() as CanonicalChatRouteService & {
+      updateQueuedTurn: typeof updateQueuedTurn;
+    };
+    service.updateQueuedTurn = updateQueuedTurn;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/queued-turns/qturn_route_edit",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_queue_edit",
+          baseRevision: 3,
+          parts: [{ type: "text", text: "edited queued message" }],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ queuedTurn });
+    expect(updateQueuedTurn).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "qturn_route_edit",
+      expect.objectContaining({
+        clientRequestId: "req_route_queue_edit",
+        baseRevision: 3,
+      }),
+    );
+  });
+
+  it("promotes one queued Turn to same-Run steering through a bounded route", async () => {
+    const message = {
+      id: "msg_route_queued_steer",
+      chatId: "chat_route_test",
+      seq: 2,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: "cturn_route",
+      runId: "run_route",
+      parts: [{ type: "text" as const, text: "steer queued now" }],
+      createdAt: "2026-08-31T09:12:00.000Z",
+    };
+    const steered = {
+      runId: "run_route",
+      turnId: "cturn_route",
+      message,
+      steering: "accepted" as const,
+    };
+    const steerQueuedTurn = vi.fn(async () => steered);
+    const service = routeService() as CanonicalChatRouteService & {
+      steerQueuedTurn: typeof steerQueuedTurn;
+    };
+    service.steerQueuedTurn = steerQueuedTurn;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/runs/run_route/queued-turns/qturn_route_steer/steer",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_queued_steer",
+          baseRevision: 4,
+          expectedTurnId: "cturn_route",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(steered);
+    expect(steerQueuedTurn).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route",
+      "qturn_route_steer",
+      expect.objectContaining({ clientRequestId: "req_route_queued_steer", baseRevision: 4 }),
     );
   });
 

@@ -56,6 +56,7 @@ import {
   type EnqueuedQueuedTurn,
   type CancelQueuedTurnInput,
   type ReorderQueuedTurnsInput,
+  type UpdateQueuedTurnInput,
   type ClaimNextQueuedTurnInput,
   type ClaimedQueuedTurn,
 } from "./queue-repository.js";
@@ -63,6 +64,8 @@ import {
   ChatSteeringRepository,
   type BeginSteerInput,
   type BegunSteer,
+  type BeginQueuedTurnSteerInput,
+  type BegunQueuedTurnSteer,
 } from "./steering-repository.js";
 import {
   ChatOutboxDelivery,
@@ -993,6 +996,10 @@ export class ChatRepository {
     return this.queue.reorder(owner, input);
   }
 
+  async updateQueuedTurn(owner: ChatOwner, input: UpdateQueuedTurnInput) {
+    return this.queue.update(owner, input);
+  }
+
   async claimNextQueuedTurn(
     owner: ChatOwner,
     input: ClaimNextQueuedTurnInput,
@@ -1008,6 +1015,13 @@ export class ChatRepository {
     return this.steering.begin(owner, input);
   }
 
+  async beginQueuedTurnSteer(
+    owner: ChatOwner,
+    input: BeginQueuedTurnSteerInput,
+  ): Promise<BegunQueuedTurnSteer> {
+    return this.steering.beginQueuedTurn(owner, input);
+  }
+
   async acceptSteer(
     owner: ChatOwner,
     input: { chatId: string; runId: string; clientRequestId: string; acceptedAt: string },
@@ -1020,6 +1034,32 @@ export class ChatRepository {
     input: { chatId: string; runId: string; clientRequestId: string; acceptedAt: string },
   ): Promise<void> {
     return this.steering.fail(owner, input);
+  }
+
+  async acceptQueuedTurnSteer(
+    owner: ChatOwner,
+    input: {
+      chatId: string;
+      runId: string;
+      queuedTurnId: string;
+      clientRequestId: string;
+      acceptedAt: string;
+    },
+  ): Promise<CanonicalChatMessage> {
+    return this.steering.acceptQueuedTurn(owner, input);
+  }
+
+  async failQueuedTurnSteer(
+    owner: ChatOwner,
+    input: {
+      chatId: string;
+      runId: string;
+      queuedTurnId: string;
+      clientRequestId: string;
+      acceptedAt: string;
+    },
+  ): Promise<void> {
+    return this.steering.failQueuedTurn(owner, input);
   }
 
   async admitRetry(ownerInput: ChatOwner, input: AdmitRetryInput): Promise<AdmittedRun> {
