@@ -150,6 +150,7 @@ export function CanonicalChatWorkspace({
     message: CanonicalChatMessage;
     canonicalMessageId?: string;
   } | null>(null);
+  const [optimisticQueuedTurns, setOptimisticQueuedTurns] = useState<CanonicalChatQueuedTurn[] | null>(null);
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
@@ -222,8 +223,13 @@ export function CanonicalChatWorkspace({
     setComposerAction(null);
     setQueuePendingAction(null);
     setOptimisticSteer(null);
+    setOptimisticQueuedTurns(null);
     setEditingQueuedTurn(null);
   }, [client]);
+
+  useEffect(() => {
+    setOptimisticQueuedTurns(null);
+  }, [controller.activeChatId]);
 
   useEffect(() => {
     setSelection((current) => {
@@ -281,9 +287,10 @@ export function CanonicalChatWorkspace({
     : undefined;
   const canSteerActiveRun = activeRunRecord?.capabilitySnapshot.steering === "same_run";
   const serverQueuedTurns = controller.detail?.queuedTurns ?? [];
+  const visibleQueuedTurns = optimisticQueuedTurns ?? serverQueuedTurns;
   const queuedTurns = optimisticSteer
-    ? serverQueuedTurns.filter((turn) => turn.id !== optimisticSteer.queuedTurnId)
-    : serverQueuedTurns;
+    ? visibleQueuedTurns.filter((turn) => turn.id !== optimisticSteer.queuedTurnId)
+    : visibleQueuedTurns;
   const composerHasInput = Boolean(
     draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
   );
@@ -428,6 +435,7 @@ export function CanonicalChatWorkspace({
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       (!activeRun && !editingQueuedTurn)
+      || !controller.detail
       || !selection
       || composerAction
       || uploadingAttachments
@@ -444,13 +452,41 @@ export function CanonicalChatWorkspace({
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
-      const response = editingQueuedTurn
-        ? await controller.updateQueuedTurn(editingQueuedTurn.id, [
+      const updatedParts = editingQueuedTurn
+        ? [
             ...editingQueuedTurn.parts.filter((part) => part.type !== "text"),
             ...parts,
-          ])
+          ]
+        : parts;
+      if (!editingQueuedTurn) {
+        const now = new Date().toISOString();
+        setOptimisticQueuedTurns([
+          ...queuedTurns,
+          {
+            id: `qturn_optimistic_${sequence}`,
+            chatId: controller.detail.record.chat.id,
+            clientRequestId: `req_optimistic_${sequence}`,
+            position: queuedTurns.length + 1,
+            parts: updatedParts,
+            selection: {
+              instanceId: selection.instanceId,
+              model: selection.model,
+              ...(selection.options.length > 0 ? { options: selection.options } : {}),
+            },
+            interactionMode: selection.interactionMode,
+            permissionMode: selection.permissionMode,
+            ...(serverQueuedTurns[0]?.executionRoot
+              ? { executionRoot: serverQueuedTurns[0].executionRoot }
+              : {}),
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]);
+      }
+      const response = editingQueuedTurn
+        ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts)
         : await controller.queueTurn({
-            parts,
+            parts: updatedParts,
             selection: {
               instanceId: selection.instanceId,
               model: selection.model,
@@ -466,6 +502,7 @@ export function CanonicalChatWorkspace({
       setEditingQueuedTurn(null);
     } finally {
       if (sequence === submissionSequence.current) {
+        setOptimisticQueuedTurns(null);
         setComposerAction(null);
         setUploadingAttachments(false);
       }
@@ -477,10 +514,16 @@ export function CanonicalChatWorkspace({
     const ordered = [...queuedTurns].sort((left, right) => left.position - right.position);
     if (queuedTurnIds.length !== ordered.length
       || queuedTurnIds.some((queuedTurnId) => !ordered.some((turn) => turn.id === queuedTurnId))) return;
+    const byId = new Map(ordered.map((turn) => [turn.id, turn]));
+    setOptimisticQueuedTurns(queuedTurnIds.map((queuedTurnId, index) => ({
+      ...byId.get(queuedTurnId)!,
+      position: index + 1,
+    })));
     setQueuePendingAction({ queuedTurnId: movedQueuedTurnId, action: "move" });
     try {
       await controller.reorderQueuedTurns(queuedTurnIds);
     } finally {
+      setOptimisticQueuedTurns(null);
       setQueuePendingAction(null);
     }
   };
@@ -545,6 +588,7 @@ export function CanonicalChatWorkspace({
   const startNewChat = () => {
     setEditingQueuedTurn(null);
     setOptimisticSteer(null);
+    setOptimisticQueuedTurns(null);
     controller.startNewChat();
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
@@ -555,6 +599,7 @@ export function CanonicalChatWorkspace({
   const selectChat = (chatId: string) => {
     setEditingQueuedTurn(null);
     setOptimisticSteer(null);
+    setOptimisticQueuedTurns(null);
     controller.selectChat(chatId);
     const selected = controller.items.find((item) => item.chat.id === chatId);
     reportedChatId.current = chatId;

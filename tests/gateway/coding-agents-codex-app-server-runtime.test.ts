@@ -773,6 +773,72 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
+  it("retries a busy native Turn steer at the next completed tool boundary", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-control-busy-steer-"));
+    const fakeCodexPath = join(homePath, "fake-codex-control-busy-steer.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_control_busy_steer_1");
+    const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "let steerAttempts = 0;",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-busy-steer' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-busy-steer' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn-busy-steer', item: { id: 'native-tool-busy-steer', type: 'commandExecution', status: 'inProgress', command: '/bin/sleep' } } }));",
+      "  } else if (message.method === 'turn/steer') {",
+      "    steerAttempts += 1;",
+      "    if (steerAttempts === 1) {",
+      "      console.log(JSON.stringify({ id: message.id, error: { code: -32600, message: 'no active turn to steer' } }));",
+      "      setTimeout(() => console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-busy-steer', item: { id: 'native-tool-busy-steer', type: 'commandExecution', status: 'completed', command: '/bin/sleep' } } })), 20);",
+      "    } else {",
+      "      console.log(JSON.stringify({ id: message.id, result: { turnId: 'native-turn-busy-steer' } }));",
+      "      console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-busy-steer', itemId: 'native-message-busy-steer', delta: 'busy-steer-retried' } }));",
+      "      console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-busy-steer', status: 'completed', items: [] } } }));",
+      "    }",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "First turn.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await waitForTranscript(eventPath, /"type":"matrix\.codex\.tool\.started"/);
+      await expect(sendControl(controlPath, {
+        type: "steer",
+        prompt: "Focus on the correction.",
+        clientRequestId: "req_control_busy_steer_1",
+      })).resolves.toEqual({ ok: true });
+      const transcript = await waitForTranscript(eventPath, /busy-steer-retried/);
+      expect(transcript).toContain('"type":"turn.completed"');
+      expect(child.exitCode).toBeNull();
+    } finally {
+      child.kill("SIGTERM");
+      await waitForExit(child).catch((error: unknown) => {
+        console.warn("Busy steer test runner cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+      });
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("interrupts only the active native Turn and keeps the runner available for the next Turn", async () => {
     const homePath = await mkdtemp(join("/tmp", "codex-control-interrupt-"));
     const fakeCodexPath = join(homePath, "fake-codex-control-interrupt.mjs");

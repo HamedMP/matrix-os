@@ -1119,11 +1119,19 @@ describe("CanonicalChatWorkspace", () => {
       },
       steering: "accepted" as const,
     };
-    vi.mocked(routeClient.queueTurn).mockResolvedValue({ queuedTurn: third, queueDepth: 3 });
+    let finishQueue!: (value: Awaited<ReturnType<CanonicalChatClient["queueTurn"]>>) => void;
+    const queueMutation = new Promise<Awaited<ReturnType<CanonicalChatClient["queueTurn"]>>>((resolve) => {
+      finishQueue = resolve;
+    });
+    vi.mocked(routeClient.queueTurn).mockReturnValue(queueMutation);
     vi.mocked(routeClient.updateQueuedTurn).mockResolvedValue({
       queuedTurn: { ...second, parts: [{ type: "text", text: "Edited second queued turn" }] },
     });
-    vi.mocked(routeClient.reorderQueuedTurns).mockResolvedValue({ queuedTurns: [second, first] });
+    let finishReorder!: (value: Awaited<ReturnType<CanonicalChatClient["reorderQueuedTurns"]>>) => void;
+    const reorderMutation = new Promise<Awaited<ReturnType<CanonicalChatClient["reorderQueuedTurns"]>>>((resolve) => {
+      finishReorder = resolve;
+    });
+    vi.mocked(routeClient.reorderQueuedTurns).mockReturnValue(reorderMutation);
     vi.mocked(routeClient.cancelQueuedTurn).mockResolvedValue({
       queuedTurnId: first.id,
       queueDepth: 1,
@@ -1163,6 +1171,8 @@ describe("CanonicalChatWorkspace", () => {
       running.chat.id,
       expect.objectContaining({ parts: [{ type: "text", text: "Third queued turn" }] }),
     ));
+    expect(within(queuePanel).getByText("Third queued turn")).toBeTruthy();
+    finishQueue({ queuedTurn: third, queueDepth: 3 });
     await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy());
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Second queued turn" }), { button: 0, ctrlKey: false });
@@ -1191,10 +1201,16 @@ describe("CanonicalChatWorkspace", () => {
     fireEvent.dragStart(firstDragHandle, { dataTransfer });
     fireEvent.dragOver(secondRow, { dataTransfer });
     fireEvent.drop(secondRow, { dataTransfer });
+    expect(within(queuePanel).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Second queued turn"),
+      expect.stringContaining("First queued turn"),
+    ]);
     await waitFor(() => expect(routeClient.reorderQueuedTurns).toHaveBeenCalledWith(
       running.chat.id,
       expect.objectContaining({ queuedTurnIds: [second.id, first.id] }),
     ));
+    finishReorder({ queuedTurns: [second, first] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reorder First queued turn" })).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel First queued turn" }));
     await waitFor(() => expect(routeClient.cancelQueuedTurn).toHaveBeenCalledWith(
