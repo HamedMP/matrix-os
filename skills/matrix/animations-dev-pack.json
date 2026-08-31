@@ -1,0 +1,25 @@
+{
+  "source": "animations.dev skill archive supplied by the project owner",
+  "archiveFile": "animations-dev-skills.zip",
+  "archiveModifiedAt": "2026-08-30T23:39:47+02:00",
+  "archiveSha256": "a366dd1412c8ba8a49876c10bbfbf9d1633ade2eccfcf918d1a78ba00c25fc0b",
+  "importedAt": "2026-08-31",
+  "skills": [
+    "animate",
+    "animation-accessibility",
+    "animation-performance",
+    "animation-vocabulary",
+    "css-animations",
+    "debug-animation",
+    "find-animation-opportunities",
+    "gesture-ui",
+    "improve-animations",
+    "motion-react",
+    "pick-ui-library",
+    "review-animations",
+    "scroll-animations"
+  ],
+  "adaptations": [
+    "Removed unsupported disable-model-invocation frontmatter from three explicitly routed advisor skills."
+  ]
+}
