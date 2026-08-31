@@ -63,7 +63,9 @@ const ControlResponseSchema = z.union([
   z.object({ ok: z.literal(false) }).strict(),
 ]);
 
-const DEFAULT_TIMEOUT_MS = 2_000;
+// Native turn/steer acknowledgements can take longer while the app-server is
+// processing a busy Turn. Keep this aligned with the runner control socket.
+const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 10_000;
 const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;

@@ -22,7 +22,7 @@ function queuedTurnLabel(turn: CanonicalChatQueuedTurn): string {
   return "Queued message";
 }
 
-export type QueuedTurnAction = "steer" | "move" | "cancel";
+export type QueuedTurnAction = "move" | "cancel";
 
 function QueueMenuItem({
   icon,
@@ -82,7 +82,8 @@ export function QueuedTurnsPanel({
       aria-label="Queued turns"
       data-attached-to-composer="true"
       data-queue-card-style="codex"
-      className="relative z-0 mx-4 -mb-3 overflow-hidden rounded-[22px] border pb-3"
+      data-queue-density="compact"
+      className="relative z-0 mx-3 -mb-2 overflow-hidden rounded-[18px] border pb-2"
       style={{
         borderColor: "var(--border-default)",
         background: "color-mix(in srgb, var(--bg-surface) 82%, var(--bg-sunken))",
@@ -92,41 +93,40 @@ export function QueuedTurnsPanel({
       <ol className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>
         {ordered.map((turn, index) => {
           const label = queuedTurnLabel(turn);
-          const steering = pendingAction?.queuedTurnId === turn.id && pendingAction.action === "steer";
           const rowPending = pendingAction?.queuedTurnId === turn.id;
           const editing = editingQueuedTurnId === turn.id;
           const rowDisabled = disabled || rowPending || editing;
           return (
-            <li key={turn.id} className="flex min-h-14 min-w-0 items-center gap-3 px-5 py-2.5">
+            <li key={turn.id} className="flex min-h-10 min-w-0 items-center gap-2 px-4 py-1.5">
               <CornerDownLeft
-                size={18}
+                size={16}
                 aria-hidden
                 className="shrink-0 -rotate-90"
                 style={{ color: "var(--text-tertiary)" }}
               />
-              <span className="min-w-0 flex-1 truncate text-[15px] font-medium leading-6" style={{ color: "var(--text-primary)" }}>
+              <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-5" style={{ color: "var(--text-primary)" }}>
                 {label}
               </span>
               <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
-                  aria-label={steering ? `Steering ${label}` : `Steer ${label}`}
+                  aria-label={`Steer ${label}`}
                   disabled={rowDisabled || !canSteer}
-                  className="h-8 rounded-lg px-2.5 text-[14px] font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+                  className="h-7 rounded-lg px-2 text-[13px] font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
                   style={{ color: "var(--text-secondary)" }}
                   onClick={() => onSteer(turn.id)}
                 >
-                  {steering ? "Steering…" : "Steer"}
+                  Steer
                 </button>
                 <button
                   type="button"
                   aria-label={`Cancel ${label}`}
                   disabled={rowDisabled}
-                  className="flex size-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-35"
+                  className="flex size-7 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-35"
                   style={{ color: "var(--text-tertiary)" }}
                   onClick={() => onCancel(turn.id)}
                 >
-                  <Trash2 size={16} aria-hidden />
+                  <Trash2 size={15} aria-hidden />
                 </button>
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
@@ -134,10 +134,10 @@ export function QueuedTurnsPanel({
                       type="button"
                       aria-label={`More actions for ${label}`}
                       disabled={rowDisabled}
-                      className="flex size-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-35"
+                      className="flex size-7 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-35"
                       style={{ color: "var(--text-tertiary)" }}
                     >
-                      <MoreHorizontal size={17} aria-hidden />
+                      <MoreHorizontal size={16} aria-hidden />
                     </button>
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>

@@ -61,6 +61,36 @@ describe("canonical Chat presentation adapter", () => {
     });
   });
 
+  it("projects accepted same-Run steer messages as user follow-ups", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const steerMessage = {
+      id: "msg_fixture_steer",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: snapshot.runs[0]!.id,
+      parts: [{ type: "text" as const, text: "Change the final answer." }],
+      createdAt: snapshot.runs[0]!.updatedAt,
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, steerMessage],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+
+    expect(presented?.userFollowups).toEqual([
+      expect.objectContaining({
+        id: steerMessage.id,
+        role: "user",
+        markdown: "Change the final answer.",
+      }),
+    ]);
+  });
+
   it("projects live approval decisions into actionable transcript controls", () => {
     const { snapshot } = createCanonicalChatFixture("approval_required");
 

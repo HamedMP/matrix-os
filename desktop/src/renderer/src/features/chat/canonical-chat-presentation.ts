@@ -505,6 +505,11 @@ export function canonicalChatPresentation(input: {
 }): ConversationTurnPresentation[] {
   return input.turns.map((turn) => {
     const userMessage = input.messages.find((message) => message.id === turn.inputMessageId);
+    const userFollowups = input.messages.filter((message) => (
+      message.turnId === turn.id
+      && message.role === "user"
+      && message.id !== turn.inputMessageId
+    )).sort((left, right) => left.seq - right.seq);
     const runs = input.runs.filter((run) => run.turnId === turn.id)
       .sort((left, right) => left.attempt - right.attempt);
     const run = runs.at(-1);
@@ -558,6 +563,9 @@ export function canonicalChatPresentation(input: {
       endedAt,
       active: isActiveRun(run),
       ...(userMessage ? { user: messagePresentation(userMessage, "commentary") } : {}),
+      ...(userFollowups.length > 0
+        ? { userFollowups: userFollowups.map((message) => messagePresentation(message, "commentary")) }
+        : {}),
       work,
       ...(finalMessage && messageText(finalMessage)
         ? { final: messagePresentation(finalMessage, "final") }

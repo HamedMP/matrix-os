@@ -112,6 +112,7 @@ export interface ConversationTurnPresentation {
   endedAt: number;
   active: boolean;
   user?: ConversationMessagePresentation;
+  userFollowups?: ConversationMessagePresentation[];
   work: ConversationWorkPresentation[];
   final?: ConversationMessagePresentation | ConversationNoticePresentation | ConversationRequestPresentation;
 }

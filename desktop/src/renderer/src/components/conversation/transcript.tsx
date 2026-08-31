@@ -538,6 +538,9 @@ function ConversationTurn({
       {visibleWork.map((item) => (
         <PresentationItem key={item.id} item={item} callbacks={callbacks} />
       ))}
+      {turn.userFollowups?.map((message) => (
+        <UserMessage key={message.id} message={message} callbacks={callbacks} />
+      ))}
       {turn.final ? (
         <PresentationItem
           item={turn.final}

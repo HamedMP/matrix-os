@@ -1147,6 +1147,8 @@ describe("CanonicalChatWorkspace", () => {
     const queuePanel = await screen.findByRole("region", { name: "Queued turns" });
     expect(queuePanel.getAttribute("data-attached-to-composer")).toBe("true");
     expect(queuePanel.getAttribute("data-queue-card-style")).toBe("codex");
+    expect(queuePanel.getAttribute("data-queue-density")).toBe("compact");
+    expect(within(queuePanel).getAllByRole("listitem")[0]?.className).toContain("min-h-10");
     expect(screen.queryByText("Up next")).toBeNull();
     expect(screen.queryByText("2 turns")).toBeNull();
     expect(screen.getByText("First queued turn")).toBeTruthy();
@@ -1162,17 +1164,6 @@ describe("CanonicalChatWorkspace", () => {
       expect.objectContaining({ parts: [{ type: "text", text: "Third queued turn" }] }),
     ));
     await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy());
-
-    fireEvent.click(screen.getByRole("button", { name: "Steer First queued turn" }));
-    expect(await screen.findByRole("button", { name: "Steering First queued turn" })).toBeTruthy();
-    expect(routeClient.steerQueuedTurn).toHaveBeenCalledTimes(1);
-    finishSteer(steered);
-    await waitFor(() => expect(routeClient.steerQueuedTurn).toHaveBeenCalledWith(
-      running.chat.id,
-      activeRunRecord.id,
-      first.id,
-      expect.objectContaining({ expectedTurnId: activeRunRecord.turnId }),
-    ));
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Second queued turn" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Edit Second queued turn" }));
@@ -1197,6 +1188,19 @@ describe("CanonicalChatWorkspace", () => {
       running.chat.id,
       first.id,
       expect.objectContaining({ baseRevision: running.chat.revision }),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Steer First queued turn" }));
+    expect(within(queuePanel).queryByText("First queued turn")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Steering First queued turn" })).toBeNull();
+    expect(within(screen.getByRole("log")).getByText("First queued turn")).toBeTruthy();
+    expect(routeClient.steerQueuedTurn).toHaveBeenCalledTimes(1);
+    finishSteer(steered);
+    await waitFor(() => expect(routeClient.steerQueuedTurn).toHaveBeenCalledWith(
+      running.chat.id,
+      activeRunRecord.id,
+      first.id,
+      expect.objectContaining({ expectedTurnId: activeRunRecord.turnId }),
     ));
   });
 
