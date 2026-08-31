@@ -439,26 +439,21 @@ describe("canonical Chat Provider catalog", () => {
       });
 
       const catalog = await service.getCatalog(principal);
-      const matrix = catalog.instances.find((instance) => instance.id === "kernel_matrix_included");
       const owner = catalog.instances.find((instance) => instance.id === "kernel_owner_anthropic_key");
 
       expect(catalog.drivers).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: "kernel", displayName: "Matrix Agent" }),
       ]));
-      expect(matrix).toMatchObject({
-        driverKind: "kernel",
-        displayName: "Matrix AI",
-        availability: "available",
-        models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }],
-        defaultSelection: {
-          instanceId: "kernel_matrix_included",
-          model: "claude-sonnet-5",
-        },
-      });
+      expect(catalog.instances.some((instance) => instance.id === "kernel_matrix_included"))
+        .toBe(false);
       expect(owner).toMatchObject({
         availability: "setup_required",
         models: [],
-        setupActions: [{ kind: "open_settings" }],
+        setupActions: [{
+          kind: "foreground_terminal",
+          label: expect.stringMatching(/^Connect Anthropic/),
+          command: expect.stringContaining("claude"),
+        }],
       });
       expect(JSON.stringify(catalog)).not.toContain("platform-secret");
     } finally {
@@ -537,9 +532,10 @@ describe("canonical Chat Provider catalog", () => {
         driverKind: "hermes",
         availability: "available",
         setupActions: [{
-          id: "hermes_settings",
-          kind: "open_settings",
-          label: "Configure Hermes",
+          id: "hermes_connect",
+          kind: "foreground_terminal",
+          label: "Connect Hermes",
+          command: expect.stringContaining("hermes"),
         }],
         defaultSelection: {
           instanceId: "hermes_default",
@@ -559,9 +555,10 @@ describe("canonical Chat Provider catalog", () => {
         availability: "unavailable",
         models: [],
         setupActions: [{
-          id: "openclaw_settings",
-          kind: "open_settings",
-          label: "Configure OpenClaw",
+          id: "openclaw_connect",
+          kind: "foreground_terminal",
+          label: "Connect OpenClaw",
+          command: expect.stringContaining("openclaw"),
         }],
       });
     expect(catalog.instances.filter((instance) =>
@@ -624,7 +621,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.options).toEqual([]);
   });
 
-  it("restores visible Terminal setup actions when an unavailable coding Provider omits them", async () => {
+  it("replaces Settings-only coding setup with visible Terminal actions", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({
         id: "opencode",
@@ -634,7 +631,11 @@ describe("canonical Chat Provider catalog", () => {
         installStatus: "installed",
         authStatus: "unknown",
         defaultModel: undefined,
-        setupActions: [],
+        setupActions: [{
+          id: "opencode_settings",
+          kind: "open_settings",
+          label: "Configure OpenCode",
+        }],
       })]),
       agentRuntimeSource: runtimeSource(),
     });
@@ -647,6 +648,7 @@ describe("canonical Chat Provider catalog", () => {
       expect.objectContaining({ id: "opencode_install", kind: "foreground_terminal" }),
       expect.objectContaining({ id: "opencode_connect", kind: "foreground_terminal" }),
     ]));
+    expect(opencode.setupActions.some((action) => action.kind === "open_settings")).toBe(false);
   });
 
   it("does not advertise an installed harness without a canonical execution adapter", async () => {

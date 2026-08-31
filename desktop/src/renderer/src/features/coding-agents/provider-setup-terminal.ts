@@ -119,14 +119,8 @@ export async function executeProviderSetupAction(input: {
   action: SafeSetupAction;
   api: ApiClient | null;
   openTab: ReturnType<typeof useTabs.getState>["openTab"];
-  requestSettingsSection: (section: string) => void;
 }): Promise<boolean> {
-  if (input.action.kind === "open_settings") {
-    input.requestSettingsSection("providers");
-    input.openTab({ kind: "settings", title: "Settings" });
-    return true;
-  }
-  if (!input.api) return false;
+  if (input.action.kind !== "foreground_terminal" || !input.api) return false;
   const foregroundAction = input.action;
 
   if (!providerSupportsSetupAction(input.provider, foregroundAction)) return false;

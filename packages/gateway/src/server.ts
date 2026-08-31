@@ -793,6 +793,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
+    invalidateCredentialDetection: agentCredentialLauncher.invalidateCredentialDetection,
   });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
   const codingAgentTurnLifecycle = await createCodingAgentTurnLifecycle({

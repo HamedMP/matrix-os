@@ -120,7 +120,10 @@ function kernelInstances(
   if (!snapshot) return [];
   const modelCatalog = new Map(snapshot.models.map((model) => [model.id, model]));
   return snapshot.instances
-    .filter((instance) => instance.driverId === "kernel")
+    .filter((instance) => (
+      instance.driverId === "kernel"
+      && instance.id !== "kernel_matrix_included"
+    ))
     .map((instance) => {
       const availability = kernelAvailability(instance.readiness.state);
       const models = availability === "available"
@@ -164,9 +167,10 @@ function kernelInstances(
         skills,
         commands: [],
         setupActions: availability === "available" ? [] : [{
-          id: `${instance.id}_settings`,
-          kind: "open_settings" as const,
-          label: `Configure ${instance.label}`,
+          id: `${instance.id}_connect`,
+          kind: "foreground_terminal" as const,
+          label: `Connect ${instance.label}`,
+          command: visibleSetupCommand("claude"),
         }],
         supports: systemSupports(),
         ...(availability === "available" && defaultModel ? {
@@ -293,6 +297,9 @@ function codingInstance(
     ?? codingModels(provider);
   const defaultModel = projectedCatalog?.defaultModel;
   const visibleModels = availability === "available" ? models : [];
+  const terminalSetupActions = provider.setupActions.filter((action) => (
+    action.kind === "foreground_terminal"
+  ));
   return {
     id,
     driverKind,
@@ -305,8 +312,8 @@ function codingInstance(
       : [],
     skills,
     commands: [],
-    setupActions: provider.setupActions.length > 0 || availability === "available"
-      ? provider.setupActions
+    setupActions: terminalSetupActions.length > 0 || availability === "available"
+      ? terminalSetupActions
       : missingCodingSetupActions(driverKind),
     supports: codingSupports(driverKind, provider.supportedModes),
     ...(availability === "available" && visibleModels.length > 0 ? {
@@ -438,11 +445,13 @@ function systemOptions(
   }];
 }
 
-function systemSetupActions(runtime: AgentRuntimeDescriptor | undefined): CanonicalProviderSetupAction[] {
+function systemSetupActions(kind: typeof SYSTEM_DRIVERS[number]): CanonicalProviderSetupAction[] {
+  const displayName = driverDisplayName(kind);
   return [{
-    id: `${runtime?.id ?? "runtime"}_settings`,
-    kind: "open_settings",
-    label: `Configure ${runtime?.displayName ?? "runtime"}`,
+    id: `${kind}_connect`,
+    kind: "foreground_terminal",
+    label: `Connect ${displayName}`,
+    command: visibleSetupCommand(kind),
   }];
 }
 
@@ -497,7 +506,7 @@ function systemInstance(input: {
     options: [],
     skills: input.skills,
     commands: [],
-    setupActions: systemSetupActions(input.runtime),
+    setupActions: systemSetupActions(input.kind),
     supports: systemSupports(),
     ...(availability === "available" && hasSelectedModel ? {
       defaultSelection: { instanceId: id, model: selectedModel! },
