@@ -5,7 +5,6 @@ import {
   drainTerminalLaunchQueue,
   enqueueTerminalLaunch,
   terminalLaunchConfig,
-  TERMINAL_SETUP_WINDOW_PATH,
 } from "../../shell/src/lib/terminal-launch.js";
 
 describe("terminal launch paths", () => {
@@ -55,10 +54,6 @@ describe("terminal launch paths", () => {
       label: "Restart OpenClaw",
       command: "/opt/matrix/bin/matrix-agent-runtime-control switch openclaw",
     });
-  });
-
-  it("targets setup actions at the canonical terminal surface", () => {
-    expect(TERMINAL_SETUP_WINDOW_PATH).toBe("__terminal__");
   });
 
   it("queues setup actions so an existing terminal can open them as tabs", () => {
