@@ -2,8 +2,8 @@ import { ExternalLink, Monitor, RefreshCw } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import type { PreviewSessionSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { Button, StatusDot } from "../../design/primitives";
-import { invoke } from "../../lib/operator";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { openInMatrixBrowser } from "../browser/open-in-matrix-browser";
 import { AgentWorkspaceSection } from "../coding-agents/AgentWorkspaceSection";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -15,24 +15,15 @@ const STATUS_COLOR: Record<string, string> = {
 };
 const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
 
-// Mirrors the shell:open-external contract: only HTTPS origins may leave the
-// app. Plain-http localhost previews stay inspectable but cannot be opened.
-function canOpenExternally(origin: string | undefined): origin is string {
-  return Boolean(origin && URL.canParse(origin) && new URL(origin).protocol === "https:");
-}
-
-function openExternalPreview(url: string): void {
-  void invoke("shell:open-external", { url }).catch((err: unknown) => {
-    console.warn(
-      "[coding-agents] preview open failed",
-      err instanceof Error ? err.name : "Unknown error",
-    );
-  });
+function canOpenInBrowser(origin: string | undefined): origin is string {
+  if (!origin || !URL.canParse(origin)) return false;
+  const protocol = new URL(origin).protocol;
+  return protocol === "http:" || protocol === "https:";
 }
 
 /**
  * Inspector Preview surface: the session list stays visible; inspecting one
- * adds a chrome row (URL display, refresh, HTTPS-only open-external) above
+ * adds a chrome row (URL display, refresh, Matrix Browser launch) above
  * the session's live details. Inline rendering is intentionally not attempted
  * here — the renderer CSP allows no remote frames, and port discovery/device
  * emulation belong to a later wave.
@@ -100,7 +91,7 @@ export function InspectorPreviewPanel({ summary }: { summary: RuntimeSummary }) 
 }
 
 function InspectedPreview({ preview }: { preview: PreviewSessionSummary }) {
-  const externalUrl = canOpenExternally(preview.origin) ? preview.origin : null;
+  const browserUrl = canOpenInBrowser(preview.origin) ? preview.origin : null;
   return (
     <>
       <div
@@ -127,12 +118,12 @@ function InspectedPreview({ preview }: { preview: PreviewSessionSummary }) {
         <button
           type="button"
           aria-label="Open preview in browser"
-          title={externalUrl ? "Open preview in browser" : "HTTPS preview origin required"}
-          disabled={!externalUrl}
+          title={browserUrl ? "Open preview in browser" : "HTTP or HTTPS preview origin required"}
+          disabled={!browserUrl}
           className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
           style={{ color: "var(--text-tertiary)" }}
           onClick={() => {
-            if (externalUrl) openExternalPreview(externalUrl);
+            if (browserUrl) openInMatrixBrowser(browserUrl);
           }}
         >
           <ExternalLink size={13} />
@@ -155,11 +146,11 @@ function InspectedPreview({ preview }: { preview: PreviewSessionSummary }) {
           <Button
             variant="ghost"
             onClick={() => {
-              if (externalUrl) openExternalPreview(externalUrl);
+              if (browserUrl) openInMatrixBrowser(browserUrl);
             }}
-            disabled={!externalUrl}
-            aria-label={externalUrl ? `Open preview ${preview.label} in browser` : "Open in browser"}
-            title={externalUrl ? "Open in browser" : "HTTPS preview origin required"}
+            disabled={!browserUrl}
+            aria-label={browserUrl ? `Open preview ${preview.label} in browser` : "Open in browser"}
+            title={browserUrl ? "Open in browser" : "HTTP or HTTPS preview origin required"}
           >
             <ExternalLink size={14} />
             Open in browser
