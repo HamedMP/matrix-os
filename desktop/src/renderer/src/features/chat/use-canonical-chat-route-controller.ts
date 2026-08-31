@@ -3,6 +3,8 @@ import type {
   CanonicalChatApprovalDecision,
   CanonicalChatRecord,
   CanonicalCreateChatTurnRequest,
+  CanonicalQueueChatTurnRequest,
+  CanonicalSteerChatRunRequest,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
@@ -413,6 +415,103 @@ export function useCanonicalChatRouteController({
     }
   }, [client, detail, loadDetail]);
 
+  const steerActiveRun = useCallback(async (parts: CanonicalSteerChatRunRequest["parts"]) => {
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    const run = activeRun
+      ? current?.runs.find((candidate) => candidate.id === activeRun.runId)
+      : undefined;
+    if (!current || !activeRun || run?.capabilitySnapshot.steering !== "same_run") return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.steerRun(current.record.chat.id, activeRun.runId, {
+        clientRequestId: canonicalChatRequestId(),
+        expectedTurnId: activeRun.turnId,
+        parts,
+      });
+      if (!isCurrentScope()) return null;
+      await loadDetail(current.record.chat.id);
+      return response;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] steer failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      setError("The active Run could not be steered. Try Queue next instead.");
+      await loadDetail(current.record.chat.id);
+      return null;
+    }
+  }, [client, loadDetail]);
+
+  const queueTurn = useCallback(async (
+    input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision">,
+  ) => {
+    const current = detailRef.current;
+    if (!current?.record.activeRun) return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.queueTurn(current.record.chat.id, {
+        ...input,
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+      });
+      if (!isCurrentScope()) return null;
+      await loadDetail(current.record.chat.id);
+      return response;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queue failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      setError("The message could not be queued. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return null;
+    }
+  }, [client, loadDetail]);
+
+  const reorderQueuedTurns = useCallback(async (queuedTurnIds: string[]) => {
+    const current = detailRef.current;
+    if (!current) return false;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      await client.reorderQueuedTurns(current.record.chat.id, {
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+        queuedTurnIds,
+      });
+      if (!isCurrentScope()) return false;
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queue reorder failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return false;
+      setError("The Queue order could not be saved. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return false;
+    }
+  }, [client, loadDetail]);
+
+  const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    const current = detailRef.current;
+    if (!current) return false;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      await client.cancelQueuedTurn(current.record.chat.id, queuedTurnId, {
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+      });
+      if (!isCurrentScope()) return false;
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queue cancellation failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return false;
+      setError("The queued message could not be cancelled. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return false;
+    }
+  }, [client, loadDetail]);
+
   const submitApproval = useCallback(async (
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
@@ -506,6 +605,10 @@ export function useCanonicalChatRouteController({
     moveProject,
     submitTurn,
     cancelActiveRun,
+    steerActiveRun,
+    queueTurn,
+    reorderQueuedTurns,
+    cancelQueuedTurn,
     submitApproval,
     retryTurn,
     deleteChat,

@@ -212,6 +212,7 @@ export function SharedChatComposer({
   attachments,
   leadingControls,
   footer,
+  runActions,
   canSubmit,
   autoFocus,
   focusRequestId,
@@ -245,6 +246,7 @@ export function SharedChatComposer({
   attachments?: ReactNode;
   leadingControls?: ReactNode;
   footer?: ReactNode;
+  runActions?: ReactNode;
   canSubmit?: boolean;
   autoFocus?: boolean;
   focusRequestId?: number;
@@ -546,6 +548,7 @@ export function SharedChatComposer({
         )}
         trailingControls={(
           <>
+            {runActions}
             <ProviderModelPicker
               catalog={catalog}
               selection={selection}

@@ -27,6 +27,7 @@ import { CanonicalChatIndex } from "./CanonicalChatIndex";
 import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
 import { canonicalChatInputParts, canonicalChatTitle } from "./canonical-chat-submission";
+import { buildSharedChatComposerSubmission } from "./composer-reference-tokens";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
 import {
   createCanonicalComposerSelection,
@@ -42,6 +43,7 @@ import {
   type SharedChatComposerSubmission,
 } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
+import { QueuedTurnsPanel } from "./QueuedTurnsPanel";
 import { useCanonicalChatRouteController } from "./use-canonical-chat-route-controller";
 import { useProviderSetup } from "./use-provider-setup";
 import { useCreateAppRequest } from "../../stores/create-app-request";
@@ -137,6 +139,8 @@ export function CanonicalChatWorkspace({
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const [draftProjectId, setDraftProjectId] = useState<string | null>(projectId);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [composerAction, setComposerAction] = useState<"steer" | "queue" | null>(null);
+  const [queueMutationPending, setQueueMutationPending] = useState(false);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
@@ -205,6 +209,8 @@ export function CanonicalChatWorkspace({
   useLayoutEffect(() => {
     submissionSequence.current += 1;
     setUploadingAttachments(false);
+    setComposerAction(null);
+    setQueueMutationPending(false);
   }, [client]);
 
   useEffect(() => {
@@ -258,6 +264,14 @@ export function CanonicalChatWorkspace({
     projectLabel,
   );
   const activeRun = controller.detail?.record.activeRun;
+  const activeRunRecord = activeRun
+    ? controller.detail?.runs.find((run) => run.id === activeRun.runId)
+    : undefined;
+  const canSteerActiveRun = activeRunRecord?.capabilitySnapshot.steering === "same_run";
+  const queuedTurns = controller.detail?.queuedTurns ?? [];
+  const composerHasInput = Boolean(
+    draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
+  );
   const transcript = controller.detail ? canonicalChatPresentation(controller.detail) : [];
   const copyText = useCallback(async (text: string) => {
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
@@ -306,6 +320,29 @@ export function CanonicalChatWorkspace({
     ) onProjectChanged?.(moved.chat.id, targetProjectId, moved.chat.title);
   };
 
+  const resolveSubmissionParts = async (
+    submission: SharedChatComposerSubmission,
+    isCurrentSubmission: () => boolean,
+  ): Promise<CanonicalChatMessagePart[] | null> => {
+    const uploaded = await attachments.uploadAll();
+    if (!uploaded.ok || !isCurrentSubmission()) return null;
+    const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
+      attachment.path
+        ? [{
+            type: "attachment_reference" as const,
+            attachmentId: attachment.id,
+            kind: attachment.kind === "image" ? "image" as const : "file" as const,
+            label: attachment.label,
+            ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+            ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
+            ownerReference: attachment.path,
+          }]
+        : []
+    ));
+    const parts = [...canonicalChatInputParts(submission), ...uploadedParts];
+    return parts.length > 0 ? parts : null;
+  };
+
   const submit = async (submission: SharedChatComposerSubmission) => {
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
@@ -322,23 +359,8 @@ export function CanonicalChatWorkspace({
     );
     setUploadingAttachments(true);
     try {
-      const uploaded = await attachments.uploadAll();
-      if (!uploaded.ok || !isCurrentSubmission()) return;
-      const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
-        attachment.path
-          ? [{
-              type: "attachment_reference" as const,
-              attachmentId: attachment.id,
-              kind: attachment.kind === "image" ? "image" as const : "file" as const,
-              label: attachment.label,
-              ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
-              ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
-              ownerReference: attachment.path,
-            }]
-          : []
-      ));
-      const parts = [...canonicalChatInputParts(submission), ...uploadedParts];
-      if (parts.length === 0) return;
+      const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
+      if (!parts) return;
       const admitted = await controller.submitTurn({
         parts,
         selection: {
@@ -364,6 +386,79 @@ export function CanonicalChatWorkspace({
       attachments.clear();
     } finally {
       if (sequence === submissionSequence.current) setUploadingAttachments(false);
+    }
+  };
+
+  const submitActiveRunAction = async (
+    submission: SharedChatComposerSubmission,
+    action: "steer" | "queue",
+  ) => {
+    const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
+    if (
+      !activeRun
+      || !selection
+      || composerAction
+      || uploadingAttachments
+      || (action === "steer" && !canSteerActiveRun)
+      || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
+    ) return;
+    const runtimeGeneration = captureRuntimeGeneration();
+    const sequence = ++submissionSequence.current;
+    const isCurrentSubmission = () => (
+      sequence === submissionSequence.current
+      && isCurrentRuntimeGeneration(runtimeGeneration)
+    );
+    setComposerAction(action);
+    setUploadingAttachments(true);
+    try {
+      const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
+      if (!parts) return;
+      const response = action === "steer"
+        ? await controller.steerActiveRun(parts)
+        : await controller.queueTurn({
+            parts,
+            selection: {
+              instanceId: selection.instanceId,
+              model: selection.model,
+              ...(selection.options.length > 0 ? { options: selection.options } : {}),
+            },
+            interactionMode: selection.interactionMode,
+            permissionMode: selection.permissionMode,
+          });
+      if (!response || !isCurrentSubmission()) return;
+      setDraft("");
+      setReferenceTokens([]);
+      attachments.clear();
+    } finally {
+      if (sequence === submissionSequence.current) {
+        setComposerAction(null);
+        setUploadingAttachments(false);
+      }
+    }
+  };
+
+  const moveQueuedTurn = async (queuedTurnId: string, direction: -1 | 1) => {
+    if (queueMutationPending) return;
+    const ordered = [...queuedTurns].sort((left, right) => left.position - right.position);
+    const index = ordered.findIndex((turn) => turn.id === queuedTurnId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= ordered.length) return;
+    [ordered[index], ordered[target]] = [ordered[target]!, ordered[index]!];
+    setQueueMutationPending(true);
+    try {
+      await controller.reorderQueuedTurns(ordered.map((turn) => turn.id));
+    } finally {
+      setQueueMutationPending(false);
+    }
+  };
+
+  const cancelQueuedTurn = async (queuedTurnId: string) => {
+    if (queueMutationPending) return;
+    setQueueMutationPending(true);
+    try {
+      await controller.cancelQueuedTurn(queuedTurnId);
+    } finally {
+      setQueueMutationPending(false);
     }
   };
 
@@ -396,6 +491,12 @@ export function CanonicalChatWorkspace({
           event.currentTarget.value = "";
         }}
       />
+      <QueuedTurnsPanel
+        turns={queuedTurns}
+        disabled={queueMutationPending || composerAction !== null || uploadingAttachments}
+        onMove={(queuedTurnId, direction) => void moveQueuedTurn(queuedTurnId, direction)}
+        onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
+      />
       <SharedChatComposer
         value={draft}
         onChange={setDraft}
@@ -408,6 +509,38 @@ export function CanonicalChatWorkspace({
         canSubmit={Boolean(selection && !activeRun && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
+        runActions={activeRun ? (
+          <>
+            {canSteerActiveRun ? (
+              <button
+                type="button"
+                aria-label="Steer current run"
+                disabled={!composerHasInput || composerAction !== null || uploadingAttachments}
+                className="h-8 rounded-lg px-2.5 text-[12px] font-medium hover:bg-[var(--bg-hover)] disabled:opacity-40"
+                style={{ color: "var(--text-secondary)" }}
+                onClick={() => void submitActiveRunAction(
+                  buildSharedChatComposerSubmission(draft, referenceTokens),
+                  "steer",
+                )}
+              >
+                Steer
+              </button>
+            ) : null}
+            <button
+              type="button"
+              aria-label="Queue next"
+              disabled={!composerHasInput || composerAction !== null || uploadingAttachments}
+              className="h-8 rounded-lg border px-2.5 text-[12px] font-medium hover:bg-[var(--bg-hover)] disabled:opacity-40"
+              style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+              onClick={() => void submitActiveRunAction(
+                buildSharedChatComposerSubmission(draft, referenceTokens),
+                "queue",
+              )}
+            >
+              Queue next
+            </button>
+          </>
+        ) : null}
         catalog={providerCatalog}
         selection={selection}
         onSelectionChange={setSelection}

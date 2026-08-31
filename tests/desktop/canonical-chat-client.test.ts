@@ -278,6 +278,87 @@ describe("canonical Chat client", () => {
       { clientRequestId: "req_client_approval", decision: "approve_for_session" },
     );
   });
+
+  it("sends strict Steer and durable Queue lifecycle commands", async () => {
+    const queuedTurn = {
+      id: "qturn_client",
+      chatId: record.chat.id,
+      clientRequestId: "req_client_queue",
+      position: 1,
+      parts: [{ type: "text" as const, text: "Queue this next" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      createdAt: "2026-08-26T00:00:02.000Z",
+      updatedAt: "2026-08-26T00:00:02.000Z",
+    };
+    const steeringMessage = {
+      id: "msg_client_steer",
+      chatId: record.chat.id,
+      seq: 2,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: "cturn_client",
+      runId: "run_client",
+      parts: [{ type: "text" as const, text: "Adjust the active run" }],
+      createdAt: "2026-08-26T00:00:03.000Z",
+    };
+    const post = vi.fn(async (path: string) => path.endsWith("/steer")
+      ? {
+          runId: "run_client",
+          turnId: "cturn_client",
+          message: steeringMessage,
+          steering: "accepted" as const,
+        }
+      : { queuedTurn, queueDepth: 1 });
+    const patch = vi.fn(async () => ({ queuedTurns: [queuedTurn] }));
+    const remove = vi.fn(async () => ({
+      queuedTurnId: queuedTurn.id,
+      queueDepth: 0,
+      cancellation: "cancelled" as const,
+    }));
+    const queueInput = {
+      clientRequestId: "req_client_queue",
+      baseRevision: 1,
+      parts: queuedTurn.parts,
+      selection: queuedTurn.selection,
+      interactionMode: queuedTurn.interactionMode,
+      permissionMode: queuedTurn.permissionMode,
+    };
+    const client = createCanonicalChatClient(api({ post, patch, delete: remove }));
+
+    await client.queueTurn(record.chat.id, queueInput);
+    await client.steerRun(record.chat.id, "run_client", {
+      clientRequestId: "req_client_steer",
+      expectedTurnId: "cturn_client",
+      parts: steeringMessage.parts,
+    });
+    await client.reorderQueuedTurns(record.chat.id, {
+      clientRequestId: "req_client_reorder",
+      baseRevision: 2,
+      queuedTurnIds: [queuedTurn.id],
+    });
+    await client.cancelQueuedTurn(record.chat.id, queuedTurn.id, {
+      clientRequestId: "req_client_cancel_queue",
+      baseRevision: 3,
+    });
+
+    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/queued-turns", queueInput);
+    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer", {
+      clientRequestId: "req_client_steer",
+      expectedTurnId: "cturn_client",
+      parts: steeringMessage.parts,
+    });
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/queued-turns/order", {
+      clientRequestId: "req_client_reorder",
+      baseRevision: 2,
+      queuedTurnIds: [queuedTurn.id],
+    });
+    expect(remove).toHaveBeenCalledWith(
+      "/api/chats/chat_client_test/queued-turns/qturn_client",
+      { clientRequestId: "req_client_cancel_queue", baseRevision: 3 },
+    );
+  });
 });
 
 const capabilitySnapshot = {

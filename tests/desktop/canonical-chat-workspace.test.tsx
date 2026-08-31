@@ -70,6 +70,10 @@ function client(): CanonicalChatClient {
     updateProject: vi.fn(),
     delete: vi.fn(),
     admitTurn: vi.fn(),
+    queueTurn: vi.fn(),
+    steerRun: vi.fn(),
+    cancelQueuedTurn: vi.fn(),
+    reorderQueuedTurns: vi.fn(),
     cancelRun: vi.fn(),
     submitApproval: vi.fn(),
     retryTurn: vi.fn(),
@@ -1037,5 +1041,132 @@ describe("CanonicalChatWorkspace", () => {
     expect(request.parts).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "resource_reference" }),
     ]));
+  });
+
+  it("keeps Stop, Steer, and Queue next distinct while exposing durable Queue controls", async () => {
+    const running = createCanonicalChatFixture("running").snapshot;
+    const activeRunRecord = {
+      ...running.runs[0]!,
+      capabilitySnapshot: {
+        ...running.runs[0]!.capabilitySnapshot,
+        steering: "same_run" as const,
+      },
+    };
+    const runningRecord = {
+      chat: {
+        id: running.chat.id,
+        ownerScope: running.chat.ownerScope,
+        title: running.chat.title,
+        lifecycle: running.chat.lifecycle,
+        attention: running.chat.attention,
+        revision: running.chat.revision,
+        messageCount: running.chat.messageCount,
+        lastMessagePreview: running.chat.lastMessagePreview,
+        currentSelection: running.chat.currentSelection,
+        createdAt: running.chat.createdAt,
+        updatedAt: running.chat.updatedAt,
+      },
+      projectId: "matrix-os",
+      providerBinding: running.chat.providerBinding,
+      activeRun: running.chat.activeRun,
+    };
+    const queuedTurn = (id: string, position: number, text: string) => ({
+      id,
+      chatId: running.chat.id,
+      clientRequestId: `req_${id}`,
+      position,
+      parts: [{ type: "text" as const, text }],
+      selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project" as const, projectId: "matrix-os" },
+      createdAt: "2026-08-31T02:00:00.000Z",
+      updatedAt: "2026-08-31T02:00:00.000Z",
+    });
+    const first = queuedTurn("qturn_workspace_1", 1, "First queued turn");
+    const second = queuedTurn("qturn_workspace_2", 2, "Second queued turn");
+    const third = queuedTurn("qturn_workspace_3", 3, "Third queued turn");
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [runningRecord] });
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record: runningRecord,
+      messages: running.messages,
+      turns: running.turns,
+      runs: [activeRunRecord],
+      activities: running.activities,
+      queuedTurns: [first, second],
+    });
+    vi.mocked(routeClient.steerRun).mockResolvedValue({
+      runId: activeRunRecord.id,
+      turnId: activeRunRecord.turnId,
+      message: {
+        id: "msg_workspace_steer",
+        chatId: running.chat.id,
+        seq: 2,
+        role: "user",
+        state: "committed",
+        turnId: activeRunRecord.turnId,
+        runId: activeRunRecord.id,
+        parts: [{ type: "text", text: "Adjust this run" }],
+        createdAt: "2026-08-31T02:00:01.000Z",
+      },
+      steering: "accepted",
+    });
+    vi.mocked(routeClient.queueTurn).mockResolvedValue({ queuedTurn: third, queueDepth: 3 });
+    vi.mocked(routeClient.reorderQueuedTurns).mockResolvedValue({ queuedTurns: [second, first] });
+    vi.mocked(routeClient.cancelQueuedTurn).mockResolvedValue({
+      queuedTurnId: first.id,
+      queueDepth: 1,
+      cancellation: "cancelled",
+    });
+
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={running.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Queued turns" })).toBeTruthy();
+    expect(screen.getByText("First queued turn")).toBeTruthy();
+    expect(screen.getByText("Second queued turn")).toBeTruthy();
+
+    await setSharedComposerText(editor, "Adjust this run");
+    fireEvent.click(screen.getByRole("button", { name: "Steer current run" }));
+    await waitFor(() => expect(routeClient.steerRun).toHaveBeenCalledWith(
+      running.chat.id,
+      activeRunRecord.id,
+      expect.objectContaining({
+        expectedTurnId: activeRunRecord.turnId,
+        parts: [{ type: "text", text: "Adjust this run" }],
+      }),
+    ));
+
+    await setSharedComposerText(editor, "Third queued turn");
+    fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
+    await waitFor(() => expect(routeClient.queueTurn).toHaveBeenCalledWith(
+      running.chat.id,
+      expect.objectContaining({ parts: [{ type: "text", text: "Third queued turn" }] }),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Move Second queued turn up" }));
+    await waitFor(() => expect(routeClient.reorderQueuedTurns).toHaveBeenCalledWith(
+      running.chat.id,
+      expect.objectContaining({ queuedTurnIds: [second.id, first.id] }),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel First queued turn" }));
+    await waitFor(() => expect(routeClient.cancelQueuedTurn).toHaveBeenCalledWith(
+      running.chat.id,
+      first.id,
+      expect.objectContaining({ baseRevision: running.chat.revision }),
+    ));
   });
 });
