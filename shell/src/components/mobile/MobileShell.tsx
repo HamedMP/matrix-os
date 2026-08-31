@@ -51,10 +51,6 @@ import { Settings } from "@/components/Settings";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
-import {
-  createTerminalLayoutId,
-  type TerminalPersistence,
-} from "@/lib/terminal-window-metadata";
 
 interface MobileApp {
   id: string;
@@ -67,8 +63,6 @@ interface OpenApp {
   id: string;
   app: MobileApp;
   openedAt: number;
-  terminalLayoutId?: string;
-  terminalPersistence?: TerminalPersistence;
 }
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -294,13 +288,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
           return [...prev.filter((entry) => entry.id !== latestTerminal.id), latestTerminal];
         }
         const id = `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-        return [...prev, {
-          id,
-          app,
-          openedAt: Date.now(),
-          terminalLayoutId: createTerminalLayoutId(),
-          terminalPersistence: "durable",
-        }];
+        return [...prev, { id, app, openedAt: Date.now() }];
       }
       const existing = prev.findIndex((o) => o.app.path === app.path);
       if (existing >= 0) {
@@ -319,23 +307,13 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
     if (!terminal) return;
     const terminals = stackRef.current.filter((entry) => entry.app.path === "__terminal__");
-    const reusable = terminals.find((entry) => entry.terminalPersistence === "ephemeral");
+    const reusable = terminals.length >= MAX_TERMINAL_INSTANCES
+      ? terminals[terminals.length - 1]
+      : undefined;
     const id = reusable?.id ?? `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    setOpenStack((previous) => {
-      if (reusable) {
-        return [...previous.filter((entry) => entry.id !== reusable.id), reusable];
-      }
-      const atCapacity = terminals.length >= MAX_TERMINAL_INSTANCES;
-      const withoutOldestTerminal = atCapacity
-        ? previous.filter((entry) => entry.id !== terminals[0]?.id)
-        : previous;
-      return [...withoutOldestTerminal, {
-        id,
-        app: terminal,
-        openedAt: Date.now(),
-        terminalPersistence: "ephemeral",
-      }];
-    });
+    setOpenStack((previous) => reusable
+      ? [...previous.filter((entry) => entry.id !== reusable.id), reusable]
+      : [...previous, { id, app: terminal, openedAt: Date.now() }]);
     setSettingsOpen(false);
     setView("app");
     enqueueTerminalLaunch(action, id);
@@ -468,7 +446,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} />
+              <MobileAppFrame app={o.app} openId={o.id} chat={chat} />
             </motion.div>
           );
         })}
@@ -585,23 +563,16 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
 }
 
 function MobileAppFrame({
-  openApp,
+  app,
+  openId,
   chat,
 }: {
-  openApp: OpenApp;
+  app: MobileApp;
+  openId: string;
   chat: ReturnType<typeof useChatContext>;
 }) {
-  const { app, id: openId } = openApp;
   if (app.path.startsWith("__terminal__")) {
-    return (
-      <TerminalApp
-        key={openId}
-        mobile
-        launchTargetId={openId}
-        layoutId={openApp.terminalLayoutId}
-        persistence={openApp.terminalPersistence ?? "durable"}
-      />
-    );
+    return <TerminalApp key={openId} mobile launchTargetId={openId} />;
   }
   if (app.path === "__file-browser__") {
     return <FileBrowser windowId={openId} mobile />;

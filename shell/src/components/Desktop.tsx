@@ -53,6 +53,7 @@ import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
   enqueueTerminalLaunch,
+  TERMINAL_SETUP_WINDOW_PATH,
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
 import {
@@ -399,9 +400,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     // In canvas mode, pan to center on the window after it opens/focuses
     if (useDesktopMode.getState().mode === "canvas") {
       requestAnimationFrame(() => {
-        const win = useWindowManager.getState().windows.find((w) => (
-          w.path === path && (path !== "__terminal__" || w.terminalPersistence !== "ephemeral")
-        ));
+        const win = useWindowManager.getState().windows.find((w) => w.path === path);
         if (win) {
           const cRect = useCanvasTransform.getState().containerRect;
           useCanvasTransform.getState().focusOnWindow(
@@ -432,9 +431,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the launch-path useEffect dependency array (L~930); a fresh function each render would re-fire that effect every render
   const focusOrOpen = useCallback((name: string, path: string) => {
     const existing = useWindowManager.getState().windows.find(
-      (w) => path === "__terminal__"
-        ? w.path === path && w.terminalPersistence !== "ephemeral"
-        : w.path === path || w.path.startsWith(path + ":"),
+      (w) => w.path === path || w.path.startsWith(path + ":"),
     );
 
     if (existing) {
@@ -447,20 +444,23 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   const openSetupTerminal = (action: TerminalLaunchAction) => {
     const windows = useWindowManager.getState().windows;
-    const setupTerminal = windows.find((w) => (
-      w.path === "__terminal__" && w.terminalPersistence === "ephemeral"
-    ));
-    if (setupTerminal) {
-      wmRestoreAndFocusWindow(setupTerminal.id);
+    const focusedId = useWindowManager.getState().focusedWindowId;
+    const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
+    const setupTerminal = windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH);
+    const existingTerminal = focusedTerminal ?? setupTerminal ?? windows.reduce<typeof windows[number] | undefined>(
+      (best, w) =>
+        w.path.startsWith("__terminal__") && (best === undefined || w.zIndex > best.zIndex) ? w : best,
+      undefined,
+    );
+    if (existingTerminal) {
+      wmRestoreAndFocusWindow(existingTerminal.id);
     } else {
-      wmOpenWindow("Terminal", "__terminal__", dockXOffset, { terminalPersistence: "ephemeral" });
+      wmOpenWindow("Terminal", TERMINAL_SETUP_WINDOW_PATH, dockXOffset);
     }
     const resolveTargetTerminal = () => (
-      setupTerminal
-        ? useWindowManager.getState().getWindow(setupTerminal.id)
-        : useWindowManager.getState().windows.find((w) => (
-            w.path === "__terminal__" && w.terminalPersistence === "ephemeral"
-          ))
+      existingTerminal
+        ? useWindowManager.getState().getWindow(existingTerminal.id)
+        : useWindowManager.getState().windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH)
     );
 
     requestAnimationFrame(() => {
@@ -1386,7 +1386,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                     and isn't duplicated in the apps row below. */}
                 {(() => {
                   const terminalApp = apps.find((a) => a.path === "__terminal__");
-                  const terminalActive = windows.some((w) => !w.minimized && w.path === "__terminal__");
+                  const terminalActive = windows.some((w) => !w.minimized && (w.path === "__terminal__" || w.path.startsWith("__terminal__:")));
                   return (
                     <DockIcon
                       name="Terminal"

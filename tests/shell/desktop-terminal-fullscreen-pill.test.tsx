@@ -116,7 +116,6 @@ const terminalWindow: AppWindow = {
   height: 620,
   minimized: false,
   zIndex: 10,
-  terminalLayoutId: "term-layout_fedcba9876543210fedcba9876543210",
 };
 
 const appWindow: AppWindow = {
@@ -255,8 +254,6 @@ describe("Desktop terminal fullscreen chrome", () => {
 
     await screen.findByText("Terminal content");
     const props = terminalRender.mock.lastCall?.[0] as {
-      layoutId?: string;
-      persistence?: string;
       windowControls?: {
         dragHandleProps?: {
           onDoubleClick?: () => void;
@@ -264,8 +261,6 @@ describe("Desktop terminal fullscreen chrome", () => {
       };
     };
 
-    expect(props.layoutId).toBe(terminalWindow.terminalLayoutId);
-    expect(props.persistence).toBe("durable");
     expect(props.windowControls?.dragHandleProps?.onDoubleClick).toEqual(expect.any(Function));
 
     act(() => {

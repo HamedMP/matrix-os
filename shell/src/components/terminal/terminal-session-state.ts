@@ -19,8 +19,6 @@ export interface ShellSessionSummary {
   branch?: string;
   pullRequest?: { number: number; url?: string };
   attachCommand?: string;
-  recoverable?: boolean;
-  recoveryReason?: "missing_runtime_session";
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
@@ -78,9 +76,7 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
       session.branch !== next.branch ||
       session.pullRequest?.number !== next.pullRequest?.number ||
       session.pullRequest?.url !== next.pullRequest?.url ||
-      session.attachCommand !== next.attachCommand ||
-      session.recoverable !== next.recoverable ||
-      session.recoveryReason !== next.recoveryReason
+      session.attachCommand !== next.attachCommand
     ) {
       return false;
     }
