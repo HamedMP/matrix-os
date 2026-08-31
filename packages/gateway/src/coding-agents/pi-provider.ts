@@ -14,7 +14,12 @@ import {
 import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
-import { buildPiChildEnvironment, resolvePiCommand } from "./pi-process-environment.js";
+import {
+  addPortableProviderCredentials,
+  buildPiChildEnvironment,
+  resolvePiCommand,
+} from "./pi-process-environment.js";
+import type { CodingHarnessCredentialResolver } from "./harness-credentials.js";
 import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
 
 /**
@@ -89,6 +94,7 @@ export interface PiCodingAgentProviderOptions {
   runTimeoutMs?: number;
   killGraceMs?: number;
   maxEvents?: number;
+  resolveCredentialLaunch?: CodingHarnessCredentialResolver;
 }
 
 const execFileAsync = promisify(execFile);
@@ -574,7 +580,23 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       "--session-id", input.sessionId,
       promptArg(input.prompt),
     ];
-    const env = buildPiChildEnvironment(options.env);
+    let credentialLaunch: Awaited<ReturnType<NonNullable<typeof options.resolveCredentialLaunch>>> | undefined;
+    try {
+      credentialLaunch = await options.resolveCredentialLaunch?.(input.signal);
+    } catch (err: unknown) {
+      if (input.signal?.aborted) {
+        return { events: [], outcome: "aborted", sessionId: input.sessionId };
+      }
+      logCodingAgentWarning("pi provider credential resolution failed", err);
+      return { events: [], outcome: "failed", sessionId: input.sessionId };
+    }
+    const env = addPortableProviderCredentials(
+      buildPiChildEnvironment(options.env),
+      credentialLaunch?.env,
+    );
+    const effectiveRunTimeoutMs = credentialLaunch?.maxRunMs
+      ? Math.min(runTimeoutMs, credentialLaunch.maxRunMs)
+      : runTimeoutMs;
 
     return await new Promise<PiRunResult>((resolve) => {
       let proc: PiChildProcess;
@@ -586,23 +608,18 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         return;
       }
       let settled = false;
-      let aborted = false;
-      let timedOut = false;
-      let terminationStarted = false;
+      let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
       let stdoutBuffer = "";
       let stderrText = "";
       const killTimer: { current?: ReturnType<typeof setTimeout> } = {};
 
       const timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        requestTermination();
-      }, runTimeoutMs);
+        requestTermination("timeout");
+      }, effectiveRunTimeoutMs);
       timeoutTimer.unref?.();
 
       const onAbort = () => {
-        if (aborted || settled) return;
-        aborted = true;
-        requestTermination();
+        requestTermination("user_abort");
       };
       const trackedProcess = trackProcess(input.threadId, onAbort);
       if (input.signal) {
@@ -624,19 +641,20 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         if (settled) return;
         const collected = collector.finish();
         const sessionId = collected.sessionId ?? input.sessionId;
-        if (timedOut) {
-          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${runTimeoutMs}ms`));
+        if (terminationReason === "timeout") {
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
         }
         settle({
           events: collected.events,
-          outcome: aborted ? "aborted" : "failed",
+          outcome: terminationReason === "user_abort" ? "aborted" : "failed",
           sessionId,
         });
       }
 
-      function requestTermination(): void {
-        if (terminationStarted || settled) return;
-        terminationStarted = true;
+      function requestTermination(reason: NonNullable<typeof terminationReason>): void {
+        if (terminationReason || settled) return;
+        terminationReason = reason;
+        clearTimeout(timeoutTimer);
         terminate(proc, killTimer, settleAfterForcedTermination);
       }
 
@@ -645,8 +663,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         stdoutBuffer += chunk.toString("utf-8");
         if (stdoutBuffer.length > 8 * 1024 * 1024) {
           logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout buffer overflow"));
-          timedOut = true;
-          requestTermination();
+          requestTermination("failure");
           stdoutBuffer = "";
           return;
         }
@@ -674,12 +691,16 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         if (tail.length > 0) collector.feedLine(tail);
         const collected = collector.finish();
         const sessionId = collected.sessionId ?? input.sessionId;
-        if (aborted) {
+        if (terminationReason === "user_abort") {
           settle({ events: collected.events, outcome: "aborted", sessionId });
           return;
         }
-        if (timedOut) {
-          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${runTimeoutMs}ms`));
+        if (terminationReason === "timeout") {
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
+          settle({ events: collected.events, outcome: "failed", sessionId });
+          return;
+        }
+        if (terminationReason === "failure") {
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
@@ -825,6 +846,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
   return {
     providerId,
+    initialRunExecution: "background",
 
     async getSummary({ now }) {
       const installed = await probeInstalled();
@@ -832,11 +854,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         id: providerId,
         displayName: "Pi",
         kind: "pi",
-        availability: installed ? "available" : "unavailable",
+        availability: installed ? "auth_required" : "unavailable",
         installStatus: installed ? "installed" : "missing",
         // pi has no non-interactive auth probe (`pi auth status` is a prompt,
-        // not a subcommand); binary presence is the configured signal.
-        authStatus: installed ? "authenticated" : "unknown",
+        // not a subcommand). Owner harness settings remain authoritative.
+        authStatus: "unknown",
         supportedModes: ["default"],
         defaultMode: "default",
         setupActions: [],
@@ -867,7 +889,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       ]);
     },
 
-    async startThread({ thread, request, now, nextEventId }) {
+    async startThread({ thread, request, signal, now, nextEventId }) {
       // Fail closed before resolving a workspace or spawning: Pi cannot enforce
       // workspace_write or full_access, so honouring them would mean running
       // with the gateway account's unrestricted filesystem access while the UI
@@ -915,6 +937,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         cwd,
         sessionId,
         model: request.model,
+        signal,
         now,
         nextEventId,
       });

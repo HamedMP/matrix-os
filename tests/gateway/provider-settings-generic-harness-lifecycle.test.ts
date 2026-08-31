@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
+import type { AiProviderSnapshotV3, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import {
   createProviderGenericHarnessCoordinator,
   reconcileProviderRuntimeAtStartup,
@@ -717,6 +717,42 @@ describe("generic provider harness lifecycle coordinator", () => {
       idempotencyKey: "rename_codex_1",
     })).rejects.toMatchObject({ code: "runtime_unavailable" });
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a registered coding harness at runtime when its selected source is not portable", async () => {
+    const { coordinator } = await makeCoordinator({ codingHarnesses: ["pi"] });
+    const pi = {
+      ...hermes,
+      id: "harness_pi_subscription",
+      driverId: "pi",
+      harness: "pi" as const,
+      enabled: true,
+      selectedAccountId: "owner_anthropic",
+      accessSourceId: "owner_anthropic_profile",
+    };
+
+    await expect(coordinator.applyConfiguration({
+      mutation: {
+        type: "set_harness_enabled",
+        expectedRevision: 0,
+        idempotencyKey: "enable_pi_subscription_1",
+        harnessInstanceId: pi.id,
+        enabled: true,
+      },
+      before: config([{ ...pi, enabled: false }]),
+      after: config([pi]),
+      canonical: genericCanonical(),
+      snapshot: {
+        accessSources: [{
+          id: "owner_anthropic_profile",
+          kind: "provider_account",
+          fundingKind: "owner_subscription",
+          providerId: "anthropic",
+          accountId: "owner_anthropic",
+        }],
+      } as ProviderSettingsSnapshot,
+      idempotencyKey: "enable_pi_subscription_1",
+    })).rejects.toMatchObject({ code: "invalid_route" });
   });
 
   it("removes only a disabled generic settings instance and durably deduplicates retries", async () => {

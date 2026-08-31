@@ -80,6 +80,8 @@ const MAX_PENDING_TERMINAL_STOPS = 100;
 // 96 KiB request limit, this caps worst-case turn payload storage below 10 MiB.
 const MAX_STORED_TURNS = 100;
 const MAX_TURNS_PER_THREAD = 50;
+const MAX_INITIAL_RUNS = 100;
+const DEFAULT_INITIAL_RUN_TIMEOUT_MS = 120_000;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
@@ -148,7 +150,15 @@ type TurnAcceptMutationResult = {
 type PendingTerminalStop = z.infer<typeof PendingTerminalStopSchema>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 type ThreadCreateResult = { snapshot: AgentThreadSnapshot; existing: boolean };
-type ThreadCreateMutationResult = ThreadCreateResult & { eventsToPublish: AgentThreadEvent[] };
+type ThreadCreateMutationResult = ThreadCreateResult & {
+  eventsToPublish: AgentThreadEvent[];
+  backgroundDispatch?: {
+    principal: RequestPrincipal;
+    thread: StoredThread;
+    request: CreateAgentThreadRequest;
+    provider: CodingAgentProviderAdapter;
+  };
+};
 type TerminalSessionStoppedReconciliation = z.infer<typeof TerminalSessionStoppedReconciliationSchema>;
 type ThreadEventSink = (input: {
   ownerId: string;
@@ -804,6 +814,12 @@ export function createCodingAgentThreadStore(
     providerId: ProviderIdSchema.parse(provider.providerId),
   }));
   const eventSinks: ThreadEventSink[] = [];
+  const activeInitialRuns = new Map<string, { controller: AbortController; promise: Promise<void> }>();
+  const maxInitialRuns = Math.max(1, Math.min(options.maxTurnDispatches ?? MAX_INITIAL_RUNS, MAX_INITIAL_RUNS));
+  const initialRunTimeoutMs = Math.max(1, Math.min(
+    options.turnDispatchTimeoutMs ?? DEFAULT_INITIAL_RUN_TIMEOUT_MS,
+    10 * 60_000,
+  ));
   let queue = Promise.resolve();
 
   async function mutate<T>(fn: (state: StoredThreadState) => Promise<{ state: StoredThreadState; result: T }>): Promise<T> {
@@ -1044,6 +1060,131 @@ export function createCodingAgentThreadStore(
     });
   }
 
+  async function finalizeInitialRun(input: {
+    ownerId: string;
+    threadId: string;
+    providerEvents: AgentThreadEvent[];
+    providerResumeState?: CodingAgentProviderResumeState;
+  }): Promise<void> {
+    const result = await mutate(async (state) => {
+      const thread = state.threads.find((candidate) =>
+        candidate.ownerId === input.ownerId && candidate.id === input.threadId
+      );
+      // Abort/delete/finalization may win the race. Never resurrect a terminal
+      // thread with late process output.
+      if (!thread || terminalThread(thread)) {
+        return { state, result: [] as AgentThreadEvent[] };
+      }
+      let nextThread = thread;
+      for (const event of input.providerEvents) nextThread = applyEvent(nextThread, event);
+      if (input.providerResumeState) {
+        nextThread = { ...nextThread, providerResumeState: input.providerResumeState };
+      }
+      const pending = consumePendingTerminalStop(state.pendingTerminalStops, nextThread);
+      const events = [...input.providerEvents];
+      if (pending.pendingStop && activeThread(nextThread)) {
+        const stopped = terminalStoppedEvents(
+          nextThread.id,
+          pending.pendingStop.runtimeStatus,
+          now,
+          nextEventId,
+        );
+        events.push(...stopped);
+        for (const event of stopped) nextThread = applyEvent(nextThread, event);
+      }
+      return {
+        state: {
+          ...state,
+          threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
+          events: [...state.events, ...events],
+          pendingTerminalStops: pending.pendingTerminalStops,
+        },
+        result: events,
+      };
+    });
+    publish(input.ownerId, input.threadId, result);
+  }
+
+  function startInitialRun(input: NonNullable<ThreadCreateMutationResult["backgroundDispatch"]>): void {
+    if (activeInitialRuns.size >= maxInitialRuns) {
+      void finalizeInitialRun({
+        ownerId: input.principal.userId,
+        threadId: input.thread.id,
+        providerEvents: safeProviderRunFailureEvents(input.thread.id, now, nextEventId),
+      }).catch((err: unknown) => logCodingAgentWarning("initial run capacity finalization failed", err));
+      return;
+    }
+    const controller = new AbortController();
+    const deadlineSignal = AbortSignal.timeout(initialRunTimeoutMs);
+    let terminationSource: "explicit_abort" | "deadline" | undefined;
+    const captureExplicitAbort = () => {
+      terminationSource ??= "explicit_abort";
+    };
+    const captureDeadline = () => {
+      terminationSource ??= "deadline";
+    };
+    controller.signal.addEventListener("abort", captureExplicitAbort, { once: true });
+    deadlineSignal.addEventListener("abort", captureDeadline, { once: true });
+    if (controller.signal.aborted) captureExplicitAbort();
+    else if (deadlineSignal.aborted) captureDeadline();
+    const combinedSignal = AbortSignal.any([
+      controller.signal,
+      deadlineSignal,
+    ]);
+    const providerPromise = Promise.resolve().then(() => input.provider.startThread({
+      principal: input.principal,
+      thread: stripOwner(input.thread),
+      request: input.request,
+      signal: combinedSignal,
+      now,
+      nextEventId,
+    }));
+    const promise = (async () => {
+      try {
+        const providerResult = await new Promise<Awaited<typeof providerPromise>>((resolve, reject) => {
+          const rejectAborted = () => reject(new Error("Initial provider run aborted"));
+          if (combinedSignal.aborted) {
+            rejectAborted();
+            return;
+          }
+          combinedSignal.addEventListener("abort", rejectAborted, { once: true });
+          providerPromise.then(resolve, reject).finally(() => {
+            combinedSignal.removeEventListener("abort", rejectAborted);
+          });
+        });
+        const parsed = parseCodingAgentProviderRunResult(providerResult, input.thread.id);
+        const sourceAwareEvents = terminationSource === "explicit_abort"
+          ? defaultAbortEvents(input.thread.id, now, nextEventId)
+          : terminationSource === "deadline"
+          ? safeProviderRunFailureEvents(input.thread.id, now, nextEventId)
+          : parsed.events;
+        await finalizeInitialRun({
+          ownerId: input.principal.userId,
+          threadId: input.thread.id,
+          providerEvents: sourceAwareEvents,
+          ...(terminationSource === undefined && parsed.resumeState
+            ? { providerResumeState: parsed.resumeState }
+            : {}),
+        });
+      } catch (err: unknown) {
+        if (terminationSource === undefined) logCodingAgentWarning("provider start failed", err);
+        await finalizeInitialRun({
+          ownerId: input.principal.userId,
+          threadId: input.thread.id,
+          providerEvents: terminationSource === "explicit_abort"
+            ? defaultAbortEvents(input.thread.id, now, nextEventId)
+            : safeProviderRunFailureEvents(input.thread.id, now, nextEventId),
+        });
+      }
+    })().catch((err: unknown) => logCodingAgentWarning("initial run finalization failed", err))
+      .finally(() => {
+        controller.signal.removeEventListener("abort", captureExplicitAbort);
+        deadlineSignal.removeEventListener("abort", captureDeadline);
+        activeInitialRuns.delete(input.thread.id);
+      });
+    activeInitialRuns.set(input.thread.id, { controller, promise });
+  }
+
   async function createThreadInternal(
     principal: RequestPrincipal,
     request: CreateAgentThreadRequest,
@@ -1102,19 +1243,25 @@ export function createCodingAgentThreadStore(
       });
       let providerEvents: AgentThreadEvent[];
       let providerResumeState: CodingAgentProviderResumeState | undefined;
-      try {
-        const providerResult = parseCodingAgentProviderRunResult(await provider.startThread({
-          principal,
-          thread: stripOwner(thread),
-          request,
-          now,
-          nextEventId,
-        }), thread.id);
-        providerEvents = providerResult.events;
-        providerResumeState = providerResult.resumeState;
-      } catch (err: unknown) {
-        logCodingAgentWarning("provider start failed", err);
-        providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
+      const background = provider.initialRunExecution === "background";
+      if (background) {
+        providerEvents = [];
+      } else {
+        try {
+          const providerResult = parseCodingAgentProviderRunResult(await provider.startThread({
+            principal,
+            thread: stripOwner(thread),
+            request,
+            signal: AbortSignal.timeout(initialRunTimeoutMs),
+            now,
+            nextEventId,
+          }), thread.id);
+          providerEvents = providerResult.events;
+          providerResumeState = providerResult.resumeState;
+        } catch (err: unknown) {
+          logCodingAgentWarning("provider start failed", err);
+          providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
+        }
       }
       const events = [createdEvent, userMessageEvent, ...providerEvents];
       for (const event of events.slice(1)) {
@@ -1142,11 +1289,15 @@ export function createCodingAgentThreadStore(
         snapshot: snapshotFor(thread, nextState.events),
         existing: false,
         eventsToPublish: events,
+        ...(background ? {
+          backgroundDispatch: { principal, thread, request, provider },
+        } : {}),
       };
       return { state: nextState, result };
     });
     if (!result.existing) {
       publish(principal.userId, result.snapshot.thread.id, result.eventsToPublish);
+      if (result.backgroundDispatch) startInitialRun(result.backgroundDispatch);
     }
     return { snapshot: result.snapshot, existing: result.existing };
   }
@@ -1343,6 +1494,9 @@ export function createCodingAgentThreadStore(
       await recoverActiveTurnsInternal();
     },
     async shutdownTurns() {
+      for (const entry of activeInitialRuns.values()) entry.controller.abort();
+      await Promise.allSettled([...activeInitialRuns.values()].map((entry) => entry.promise));
+      activeInitialRuns.clear();
       await turnDispatcher.shutdown();
       await queue;
       await recoverActiveTurnsInternal();
@@ -1509,6 +1663,7 @@ export function createCodingAgentThreadStore(
       const result = await mutate(async (state) => {
         const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
         if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
+        activeInitialRuns.get(threadId)?.controller.abort();
         if (thread.abortClientRequestIds.includes(clientRequestId) || (terminalThread(thread) && !thread.activeTurnId)) {
           return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] } };
         }

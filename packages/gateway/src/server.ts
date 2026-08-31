@@ -133,6 +133,7 @@ import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
+import { createCodingHarnessCredentialResolver } from "./coding-agents/harness-credentials.js";
 import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
@@ -717,6 +718,13 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
+  let providerSettingsStore: ProviderSettingsStore | undefined;
+  const harnessSettingsReader = {
+    getSnapshot: () => {
+      if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+      return providerSettingsStore.getSnapshot();
+    },
+  };
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
@@ -745,6 +753,22 @@ export async function createGateway(config: GatewayConfig) {
       homePath,
       codexEvents: codexEventBridge,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
+      pi: {
+        resolveCredentialLaunch: createCodingHarnessCredentialResolver({
+          harness: "pi",
+          homePath,
+          settings: harnessSettingsReader,
+          fundedProvider: fundedCredentialProvider,
+        }),
+      },
+      opencode: {
+        resolveCredentialLaunch: createCodingHarnessCredentialResolver({
+          harness: "opencode",
+          homePath,
+          settings: harnessSettingsReader,
+          fundedProvider: fundedCredentialProvider,
+        }),
+      },
     });
     codingAgentApprovalsEnabled = providerSet.approvalsEnabled;
     codingAgentProviders.push(...providerSet.executionProviders);
@@ -4205,7 +4229,7 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
-  const providerSettingsStore = new ProviderSettingsStore({
+  providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
@@ -4227,6 +4251,10 @@ export async function createGateway(config: GatewayConfig) {
       && codingAgentProviders.some((provider) => provider.providerId === "pi")
       ? ["pi" as const]
       : []),
+    ...(codingAgentThreadStore
+      && codingAgentProviders.some((provider) => provider.providerId === "opencode")
+      ? ["opencode" as const]
+      : []),
   ];
   const canonicalChatProviderCatalog = createChatProviderCatalogService({
     codingProviders: codingAgentProviderRegistry,
@@ -4234,6 +4262,7 @@ export async function createGateway(config: GatewayConfig) {
     aiProviderSource: aiProviderService,
     harnessSettingsSource: providerSettingsStore,
     executableDriverKinds: canonicalExecutableDriverKinds,
+    credentialedDriverKinds: ["pi", "opencode"],
     skillsSource: () => loadSkills(homePath),
     ...(codexExecutable ? {
       codingModelCatalogSource: createCodexModelCatalogSource({
@@ -4273,6 +4302,12 @@ export async function createGateway(config: GatewayConfig) {
       if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "pi",
+          threads: codingAgentThreadStore,
+        }));
+      }
+      if (codingAgentProviders.some((provider) => provider.providerId === "opencode")) {
+        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
+          providerId: "opencode",
           threads: codingAgentThreadStore,
         }));
       }

@@ -3,6 +3,7 @@ import {
   CanonicalChatSafeErrorSchema,
   CanonicalProviderCatalogSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
+  isPortableGenericHarnessCredentialRoute,
   type AgentProviderDescriptor,
   type AgentProviderSummary,
   type AgentRuntimeDescriptor,
@@ -201,7 +202,7 @@ function codingSupports(
     rootChat: true,
     resume: true,
     cancellation: true,
-    attachments: driverKind === "pi"
+    attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["structured_ref"]
       : ["file", "image", "structured_ref"],
     tools: [],
@@ -210,7 +211,7 @@ function codingSupports(
     worktrees: "optional",
     resources: ["file", "folder", "project", "task", "app", "terminal_session"],
     interactionModes: supportedModes,
-    permissionModes: driverKind === "pi"
+    permissionModes: driverKind === "pi" || driverKind === "opencode"
       ? ["supervised"]
       : ["supervised", "auto_accept_edits", "auto", "full_access"],
   };
@@ -548,7 +549,7 @@ function unavailableInstance(
   };
 }
 
-function configuredPiInstance(input: {
+function configuredCodingHarnessInstance(input: {
   instance: InstanceDraft;
   harness: ProviderHarnessInstance;
   aiSnapshot?: AiProviderSnapshotV3;
@@ -620,8 +621,11 @@ function applyHarnessSettings(input: {
     }
     // Runtime inventory is authoritative for whether a harness exists at all.
     // Do not let a disabled preference disguise a missing binary as configured.
+    const settingsCanAuthorizeInstalledCodingHarness = (generic === "pi" || generic === "opencode")
+      && instance.availability === "auth_required";
     if (settingsHarness !== null && input.settingsRequired
-      && (instance.availability === "setup_required" || instance.availability === "auth_required")) {
+      && (instance.availability === "setup_required" || instance.availability === "auth_required")
+      && !settingsCanAuthorizeInstalledCodingHarness) {
       return unavailableInstance(instance, unavailableReasonFor(instance));
     }
     const enabledHarnesses = settingsHarness !== null && input.settingsRequired
@@ -648,15 +652,13 @@ function applyHarnessSettings(input: {
     if (!executable) {
       return unavailableInstance(configuredInstance, "runtime_not_runnable");
     }
-    if (instance.availability !== "available") {
+    if (instance.availability !== "available" && !settingsCanAuthorizeInstalledCodingHarness) {
       return settingsHarness !== null && input.settingsRequired
         ? unavailableInstance(instance, unavailableReasonFor(instance))
         : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
     }
-    if (generic === "pi" && !input.credentialedDriverKinds?.includes("pi")) {
-      // Pi inherits process credentials. Until the selected settings access
-      // source is explicitly adapted into that child environment, advertising
-      // the route would make a successful catalog probe fail at execution.
+    if ((generic === "pi" || generic === "opencode")
+      && !input.credentialedDriverKinds?.includes(generic)) {
       return unavailableInstance(configuredInstance, "runtime_not_runnable");
     }
     if (settingsHarness === null || !input.settingsRequired) {
@@ -668,8 +670,16 @@ function applyHarnessSettings(input: {
       return { ...configuredInstance, unavailabilityReason: undefined };
     }
     const harness = enabledHarness!;
-    if (generic === "pi") {
-      return configuredPiInstance({ instance: configuredInstance, harness, aiSnapshot: input.aiSnapshot });
+    if (generic === "pi" || generic === "opencode") {
+      const source = input.settings!.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+      if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
+        return unavailableInstance(configuredInstance, "runtime_not_runnable");
+      }
+      return configuredCodingHarnessInstance({
+        instance: { ...configuredInstance, availability: "available" },
+        harness,
+        aiSnapshot: input.aiSnapshot,
+      });
     }
     if (generic === "hermes" || generic === "openclaw") {
       return configuredSystemInstance(configuredInstance, harness);

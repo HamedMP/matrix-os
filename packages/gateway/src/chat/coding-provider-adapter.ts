@@ -31,9 +31,10 @@ type CodingThreads = Pick<
 
 type CodingState = { conversationId: string; providerThreadId?: string };
 
-function driverKind(providerId: string): "codex" | "claude_code" | "pi" {
+function driverKind(providerId: string): "codex" | "claude_code" | "opencode" | "pi" {
   if (providerId === "codex") return "codex";
   if (providerId === "claude") return "claude_code";
+  if (providerId === "opencode") return "opencode";
   if (providerId === "pi") return "pi";
   throw new Error("Unsupported canonical coding Provider");
 }
@@ -48,10 +49,12 @@ function principal(ownerId: string) {
 
 function permissions(
   permissionMode: string,
-  providerId: "codex" | "claude" | "pi",
+  providerId: "codex" | "claude" | "opencode" | "pi",
 ): Pick<CreateAgentThreadRequest, "approvalPolicy" | "sandboxMode"> {
-  if (providerId === "pi") {
-    if (permissionMode !== "supervised") throw new Error("Unsupported Pi permission mode");
+  if (providerId === "pi" || providerId === "opencode") {
+    if (permissionMode !== "supervised") {
+      throw new Error(`Unsupported ${providerId === "pi" ? "Pi" : "OpenCode"} permission mode`);
+    }
     return { approvalPolicy: "on_request", sandboxMode: "read_only" };
   }
   if (permissionMode === "full_access") return { approvalPolicy: "never", sandboxMode: "full_access" };
@@ -320,7 +323,7 @@ function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string):
 }
 
 export function createCanonicalCodingChatProviderAdapter(options: {
-  providerId: "codex" | "claude" | "pi";
+  providerId: "codex" | "claude" | "opencode" | "pi";
   threads: CodingThreads;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);

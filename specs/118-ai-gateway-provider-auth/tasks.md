@@ -127,6 +127,9 @@ mutation or funded balances.
 - [ ] T045 Activate Matrix-funded access only when explicit owner/runtime policy and fresh relay health are both ready; add scoped runtime identity and leakage/failure tests
 - [ ] T046 Add Matrix Postgres/Kysely entitlements, atomic spend reservations, reconciliation, add-ons, and truthful credit UI; retain Cloudflare limits as a coarse fuse
 - [ ] T047 Add generic/model-specific harness routing and additional model providers through V3 conformance tests, one adapter PR at a time
+- [X] T047A Register Pi and OpenCode on customer VPS gateways and bind each read-only structured run to its exact portable access source
+- [X] T047B Add canonical OpenCode JSON execution/resume plus fail-closed credential, sandbox, timeout, and catalog conformance tests
+- [ ] T047C Add an enforceable workspace-write sandbox and approval transport before Pi or OpenCode advertises broader permission modes
 
 ### T046 add-on checkout increment
 

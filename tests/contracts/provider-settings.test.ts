@@ -8,6 +8,7 @@ import {
   ProviderSettingsSnapshotSchema,
   ProviderSettingsSupportedActionSchema,
   ProviderUsageSchema,
+  isPortableGenericHarnessCredentialRoute,
   type ProviderSettingsMutation,
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
@@ -154,6 +155,43 @@ const dependencyGuard = {
 } as const;
 
 describe("provider settings contracts", () => {
+  it("identifies only Anthropic API-key and Matrix-gateway routes as portable to generic coding harnesses", () => {
+    const snapshot = makeSnapshot();
+    const harness = { ...snapshot.harnesses[0]!, harness: "pi" as const };
+    const gateway = { ...snapshot.accessSources[0]!, id: "matrix_included" };
+    const subscription = snapshot.accessSources[1]!;
+    const apiKey = {
+      ...subscription,
+      id: "owner_anthropic_key",
+      fundingKind: "owner_api_key" as const,
+    };
+
+    expect(isPortableGenericHarnessCredentialRoute(
+      { ...harness, accessSourceId: gateway.id },
+      gateway,
+    )).toBe(true);
+    expect(isPortableGenericHarnessCredentialRoute(
+      { ...harness, harness: "opencode", accessSourceId: apiKey.id },
+      apiKey,
+    )).toBe(true);
+    expect(isPortableGenericHarnessCredentialRoute(
+      { ...harness, accessSourceId: subscription.id },
+      subscription,
+    )).toBe(false);
+    expect(isPortableGenericHarnessCredentialRoute(
+      { ...harness, route: { ...harness.route, providerId: "openai" } },
+      gateway,
+    )).toBe(false);
+    expect(isPortableGenericHarnessCredentialRoute(
+      { ...harness, harness: "claude" },
+      gateway,
+    )).toBe(false);
+    expect(isPortableGenericHarnessCredentialRoute(
+      { ...harness, accessSourceId: "source_other" },
+      gateway,
+    )).toBe(false);
+  });
+
   it("accepts a secret-free UI mutation projection derived from V3", () => {
     expect(ProviderSettingsSnapshotSchema.parse(makeSnapshot())).toEqual(makeSnapshot());
     expect(ProviderSettingsSnapshotSchema.safeParse({

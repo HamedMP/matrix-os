@@ -340,6 +340,87 @@ describe("pi provider adapter — spawn contract", () => {
     ]));
   });
 
+  it("resolves fresh selected credentials per turn without inheriting gateway secrets", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const resolveCredentialLaunch = vi.fn(async () => ({
+      env: {
+        ANTHROPIC_API_KEY: "selected-key",
+        ANTHROPIC_BASE_URL: "https://relay.example.test",
+      },
+      maxRunMs: 120_000,
+    }));
+    const provider = providerFor(fake.spawnFn, {
+      env: { PATH: "/runtime/bin", UPGRADE_TOKEN: "gateway-secret" },
+      resolveCredentialLaunch,
+    });
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(resolveCredentialLaunch).toHaveBeenCalledOnce();
+    expect(fake.calls[0]!.env).toMatchObject({
+      PATH: "/runtime/bin",
+      ANTHROPIC_API_KEY: "selected-key",
+      ANTHROPIC_BASE_URL: "https://relay.example.test",
+    });
+    expect(fake.calls[0]!.env).not.toHaveProperty("UPGRADE_TOKEN");
+  });
+
+  it("fails closed before spawn when selected credentials are unavailable", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => { throw new Error("private credential detail"); },
+    });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error", error: expect.objectContaining({ code: "provider_run_failed" }) }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("private credential detail");
+  });
+
+  it("reports credential resolution cancellation as aborted before spawn", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const controller = new AbortController();
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => {
+        controller.abort();
+        throw new Error("private cancellation detail");
+      },
+    });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      signal: controller.signal,
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+    ]));
+    expect(result.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error" }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("private cancellation detail");
+  });
+
   it.each([
     ["- list three colors", " - list three colors"],
     ["@hamed thanks", " @hamed thanks"],
@@ -978,6 +1059,66 @@ describe("pi provider adapter — abort and timeout", () => {
     expect(result.outcome).toBe("aborted");
   });
 
+  it("disarms the run timeout after explicit cancellation", async () => {
+    vi.useFakeTimers();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const controller = new AbortController();
+    const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true, ignoreKill: true });
+    const provider = providerFor(fake.spawnFn, { runTimeoutMs: 20, killGraceMs: 30 });
+
+    try {
+      const pending = provider.startThread({
+        principal: ownerPrincipal,
+        thread: threadSummary(),
+        request: createRequest("Say hi"),
+        signal: controller.signal,
+        now: () => baseNow,
+        nextEventId: nextEventIdFactory(),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(31);
+
+      const result = parseCodingAgentProviderRunResult(await pending, threadSummary().id);
+      expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "aborted" });
+      expect(fake.kills).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(warning).not.toHaveBeenCalledWith(
+        expect.stringContaining("run cut off"),
+        expect.anything(),
+      );
+    } finally {
+      warning.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a timeout failed when cancellation races after the deadline", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true, ignoreKill: true });
+    const provider = providerFor(fake.spawnFn, { runTimeoutMs: 20, killGraceMs: 30 });
+
+    try {
+      const pending = provider.startThread({
+        principal: ownerPrincipal,
+        thread: threadSummary(),
+        request: createRequest("Say hi"),
+        signal: controller.signal,
+        now: () => baseNow,
+        nextEventId: nextEventIdFactory(),
+      });
+      await vi.advanceTimersByTimeAsync(21);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(30);
+
+      const result = parseCodingAgentProviderRunResult(await pending, threadSummary().id);
+      expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
+      expect(fake.kills).toEqual(["SIGTERM", "SIGKILL"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("times out a hung startThread run and fails the thread", async () => {
     const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true });
     const provider = providerFor(fake.spawnFn, { runTimeoutMs: 20 });
@@ -1078,7 +1219,7 @@ describe("pi provider adapter — availability and summary", () => {
     }]);
   });
 
-  it("reports installed and authenticated when the binary answers --version", async () => {
+  it("reports installation without inventing authentication when the binary answers --version", async () => {
     const provider = createPiCodingAgentProvider({
       homePath,
       spawnFn: fakeSpawn({ lines: [] }).spawnFn,
@@ -1095,9 +1236,9 @@ describe("pi provider adapter — availability and summary", () => {
       id: "pi",
       displayName: "Pi",
       kind: "pi",
-      availability: "available",
+      availability: "auth_required",
       installStatus: "installed",
-      authStatus: "authenticated",
+      authStatus: "unknown",
       supportedModes: ["default"],
       defaultMode: "default",
     });
@@ -1168,8 +1309,12 @@ describe("pi provider adapter — thread store integration", () => {
     });
 
     const created = await store.createThread(ownerPrincipal, createRequest("Say hi"));
-    expect(created.snapshot.thread.status).toBe("completed");
-    const textEvents = created.snapshot.events.items.filter((event: AgentThreadEvent) =>
+    expect(created.snapshot.thread.status).toBe("queued");
+    await vi.waitFor(async () => {
+      expect((await store.getThread(ownerPrincipal, created.snapshot.thread.id)).thread.status).toBe("completed");
+    }, { timeout: 2_000, interval: 20 });
+    const initialSnapshot = await store.getThread(ownerPrincipal, created.snapshot.thread.id);
+    const textEvents = initialSnapshot.events.items.filter((event: AgentThreadEvent) =>
       event.type === "assistant.text.delta"
     );
     expect(textEvents.length).toBeGreaterThan(0);
