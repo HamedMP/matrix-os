@@ -320,16 +320,16 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     if (!terminal) return;
     const terminals = stackRef.current.filter((entry) => entry.app.path === "__terminal__");
     const reusable = terminals.find((entry) => entry.terminalPersistence === "ephemeral");
+    if (!reusable && terminals.length >= MAX_TERMINAL_INSTANCES) {
+      toast("Close a Terminal before starting setup");
+      return;
+    }
     const id = reusable?.id ?? `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     setOpenStack((previous) => {
       if (reusable) {
         return [...previous.filter((entry) => entry.id !== reusable.id), reusable];
       }
-      const atCapacity = terminals.length >= MAX_TERMINAL_INSTANCES;
-      const withoutOldestTerminal = atCapacity
-        ? previous.filter((entry) => entry.id !== terminals[0]?.id)
-        : previous;
-      return [...withoutOldestTerminal, {
+      return [...previous, {
         id,
         app: terminal,
         openedAt: Date.now(),
