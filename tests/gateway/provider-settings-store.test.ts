@@ -325,11 +325,21 @@ describe("ProviderSettingsStore", () => {
     });
     expect(snapshot.gatewayPolicy).toMatchObject({
       monthlyBudgetMicrousd: 5_000_000,
-      allowedModelIds: ["claude-sonnet-5", "claude-opus-5"],
+      allowedModelIds: ["claude-sonnet-5"],
       topUpEnabled: false,
     });
     expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
-      .toEqual(["claude-sonnet-5", "claude-opus-5"]);
+      .toEqual(["claude-sonnet-5"]);
+    await expect(store.mutate({
+      type: "add_harness",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "reject_owner_only_funded_model",
+      harness: "opencode",
+      displayName: "OpenCode owner-only route",
+      route: { kind: "configurable", providerId: "anthropic", modelId: "claude-opus-5" },
+      accessSourceId: "matrix_included",
+      accountId: null,
+    })).rejects.toMatchObject({ code: "invalid_route" });
     expect(snapshot.supportedActions).not.toContain("add_credit");
     expect(snapshot.supportedActions).not.toContain("set_gateway_budget");
     expect(snapshot.supportedActions).not.toContain("set_gateway_allowlist");
