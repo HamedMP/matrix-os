@@ -220,6 +220,28 @@ describe("generic provider harness lifecycle coordinator", () => {
     });
   });
 
+  it("reapplies an applied duplicate after the legacy agent route changes independently", async () => {
+    const { coordinator, update } = await makeCoordinator();
+    const input = systemRouteInput("claude-opus-5", "route_duplicate_after_legacy_put");
+
+    await coordinator.applyConfiguration(input);
+    await update({
+      revision: 5,
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-haiku-5",
+    });
+
+    await coordinator.applyConfiguration(input);
+
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      runtime: "hermes",
+      provider: "anthropic",
+      messagingModel: "claude-opus-5",
+    }));
+  });
+
   it("switches to another enabled system harness before disabling the active one", async () => {
     const { coordinator, update } = await makeCoordinator();
     const openclaw = {
