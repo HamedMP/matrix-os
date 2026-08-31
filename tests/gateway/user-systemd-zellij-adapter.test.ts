@@ -1,10 +1,8 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUserSystemdZellijAdapter } from "../../packages/gateway/src/shell/user-systemd-zellij-adapter.js";
-import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
 import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
 import { TerminalWindowLayoutStore } from "../../packages/gateway/src/shell/terminal-window-layout-store.js";
 import {
@@ -276,18 +274,11 @@ describe("user-systemd zellij adapter", () => {
     const registry = new ShellRegistry({ homePath, adapter });
     const sessionLifecycle = new TerminalWindowLayoutStore({ homePath });
     await sessionLifecycle.deleteSessionReferences("main");
-    const app = new Hono().route(
-      "/api/terminal",
-      createShellRoutes({ registry, sessionLifecycle }),
-    );
-
-    const response = await app.request("/api/terminal/sessions/main/recover", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "projects" }),
+    await expect(registry.recover("main", { cwd: "projects" })).resolves.toMatchObject({
+      name: "main",
+      status: "active",
     });
-
-    expect(response.status).toBe(201);
+    await sessionLifecycle.clearSessionTombstone("main");
     expect(runCommand).toHaveBeenCalledWith(
       "systemctl",
       ["--user", "start", `matrix-zellij@${RUNTIME_ID}.service`],
