@@ -157,6 +157,63 @@ describe("AiProviderService", () => {
       ]));
   });
 
+  it("makes Fable selectable through verified owner Anthropic access", async () => {
+    await writeFile(
+      join(homePath, "system/config.json"),
+      JSON.stringify({ kernel: { anthropicApiKey: "owner-secret", model: "claude-fable-5" } }),
+    );
+    const healthProbe: AiProviderHealthProbe = async (sourceId) => sourceId === "owner_anthropic_key"
+      ? {
+          state: "ready",
+          checkedAt: NOW.toISOString(),
+          staleAfter: "2026-08-29T21:05:00.000Z",
+          action: "none",
+          safeReason: null,
+        }
+      : null;
+
+    const snapshot = await createService({ healthProbe }).getSnapshot({ refresh: true });
+
+    expect(snapshot.accessSources.find((source) => source.id === "owner_anthropic_key")?.eligibleModelIds)
+      .toContain("claude-fable-5");
+    expect(snapshot.models.find((model) => model.id === "claude-fable-5")).toMatchObject({
+      eligibleAccessSourceIds: ["owner_anthropic_key", "owner_anthropic_profile"],
+      dataPolicies: [{
+        accessSourceId: "owner_anthropic_key",
+        route: "owner_direct",
+        disclosureKey: "owner-direct-anthropic",
+      }, {
+        accessSourceId: "owner_anthropic_profile",
+        route: "owner_direct",
+        disclosureKey: "owner-direct-anthropic",
+      }],
+    });
+    expect(snapshot.active).toEqual({
+      providerInstanceId: "kernel_owner_anthropic_key",
+      accessSourceId: "owner_anthropic_key",
+      modelId: "claude-fable-5",
+    });
+  });
+
+  it("does not silently replace a saved Fable route when Matrix policy excludes it", async () => {
+    await writeFile(
+      join(homePath, "system/config.json"),
+      JSON.stringify({ kernel: { model: "claude-fable-5" } }),
+    );
+
+    const snapshot = await createService({ platformKey: "platform-secret" }).getSnapshot();
+    const matrixInstance = snapshot.instances.find((instance) => instance.id === "kernel_matrix_included");
+
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
+      .not.toContain("claude-fable-5");
+    expect(matrixInstance?.defaultModelId).toBeNull();
+    expect(snapshot.active).toEqual({
+      providerInstanceId: null,
+      accessSourceId: null,
+      modelId: null,
+    });
+  });
+
   it("enforces the readiness deadline when a probe ignores its abort signal", async () => {
     await writeFile(
       join(homePath, "system/config.json"),
