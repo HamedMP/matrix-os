@@ -824,6 +824,86 @@ describe("funded AI metering", () => {
       .toEqual({ status: "expired" });
   });
 
+  it("closes legacy settlement when expired promotion leaves insufficient add-on backing", async () => {
+    const credential = await enableAndFund({ budget: 10, credit: 0 });
+    await repo.grantCredit({
+      entryId: "protected_addon_credit",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 7,
+      sourceReference: "protected-addon",
+    });
+    const attributedAddon = await repo.authorize({
+      credential: credential.token,
+      requestId: "attributed_addon_request",
+      modelId,
+      maxCostMicrousd: 5,
+    });
+    await repo.grantCredit({
+      entryId: "legacy_expiring_promotion",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 5,
+      sourceReference: "legacy-expiring-promotion",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "legacy_settlement_without_backing",
+      requestId: "legacy_settlement_without_backing_request",
+      reservedMicrousd: 5,
+      status: "in_flight",
+      expiresAt: "2026-08-30T20:10:00.000Z",
+    });
+
+    clock = new Date("2026-08-30T20:04:00.000Z");
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      creditBalanceMicrousd: 7,
+      promotionalBalanceMicrousd: 0,
+      addonBalanceMicrousd: 7,
+      reservedMicrousd: 10,
+    });
+    await expect(repo.settleReservation({
+      reservationId: "legacy_settlement_without_backing",
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 5,
+    })).rejects.toMatchObject({ code: "reservation_expired" });
+
+    const legacy = await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "actual_microusd", "promotional_reserved_microusd", "addon_reserved_microusd"])
+      .where("reservation_id", "=", "legacy_settlement_without_backing").executeTakeFirstOrThrow();
+    expect(legacy).toEqual({
+      status: "expired",
+      actual_microusd: null,
+      promotional_reserved_microusd: null,
+      addon_reserved_microusd: null,
+    });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select("kind").where("reservation_id", "=", "legacy_settlement_without_backing").execute()).toEqual([]);
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      creditBalanceMicrousd: 7,
+      promotionalBalanceMicrousd: 0,
+      addonBalanceMicrousd: 7,
+      reservedMicrousd: 5,
+    });
+
+    await repo.startReservation({
+      reservationId: attributedAddon.reservation.reservationId,
+      tokenId: credential.tokenId,
+    });
+    await expect(repo.settleReservation({
+      reservationId: attributedAddon.reservation.reservationId,
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 5,
+    })).resolves.toMatchObject({
+      funding: {
+        creditBalanceMicrousd: 2,
+        addonBalanceMicrousd: 2,
+        reservedMicrousd: 0,
+      },
+    });
+  });
+
   it("charges an in-flight reservation before retiring its expired promotional backing", async () => {
     await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
     await repo.setRuntimePolicy({
