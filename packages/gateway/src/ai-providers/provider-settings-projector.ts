@@ -142,6 +142,9 @@ function projectAccessSources(
           addonBalanceMicrousd: fundingSummary.addonBalanceMicrousd,
           creditBalanceMicrousd: fundingSummary.creditBalanceMicrousd,
           reservedMicrousd: fundingSummary.reservedMicrousd,
+          ...(fundingSummary.fundingShortfallMicrousd === undefined
+            ? {}
+            : { fundingShortfallMicrousd: fundingSummary.fundingShortfallMicrousd }),
           remainingBalanceMicrousd: fundingSummary.remainingBalanceMicrousd,
         },
         budget: {

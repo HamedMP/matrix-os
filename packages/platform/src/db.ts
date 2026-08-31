@@ -174,6 +174,7 @@ export interface AiFundedRuntimeBalancesTable {
   promotional_balance_microusd: number;
   addon_balance_microusd: number;
   reserved_microusd: number;
+  funding_shortfall_microusd: number;
   month_period_start: string;
   month_spent_microusd: number;
   month_reserved_microusd: number;
@@ -1338,11 +1339,17 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       promotional_balance_microusd BIGINT NOT NULL DEFAULT 0 CHECK (promotional_balance_microusd >= 0),
       addon_balance_microusd BIGINT NOT NULL DEFAULT 0 CHECK (addon_balance_microusd >= 0),
       reserved_microusd BIGINT NOT NULL DEFAULT 0 CHECK (reserved_microusd >= 0),
+      funding_shortfall_microusd BIGINT NOT NULL DEFAULT 0 CHECK (funding_shortfall_microusd >= 0),
       month_period_start TEXT NOT NULL,
       month_spent_microusd BIGINT NOT NULL DEFAULT 0 CHECK (month_spent_microusd >= 0),
       month_reserved_microusd BIGINT NOT NULL DEFAULT 0 CHECK (month_reserved_microusd >= 0),
       updated_at TEXT NOT NULL
     )
+  `.execute(db);
+  await sql`
+    ALTER TABLE ai_funded_runtime_balances
+    ADD COLUMN IF NOT EXISTS funding_shortfall_microusd BIGINT NOT NULL DEFAULT 0
+      CHECK (funding_shortfall_microusd >= 0)
   `.execute(db);
   const fundedAiMigrationTime = new Date();
   const fundedAiMigrationAt = fundedAiMigrationTime.toISOString();
@@ -1431,17 +1438,18 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       owner_id TEXT NOT NULL,
       machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
       runtime_slot TEXT NOT NULL,
-      kind TEXT NOT NULL CONSTRAINT ai_funded_credit_ledger_kind_v2_check
-        CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry')),
+      kind TEXT NOT NULL CONSTRAINT ai_funded_credit_ledger_kind_v3_check
+        CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry', 'usage_shortfall')),
       amount_microusd BIGINT NOT NULL,
       source_reference TEXT NOT NULL,
       reservation_id TEXT REFERENCES ai_funded_usage_reservations(reservation_id) ON UPDATE CASCADE ON DELETE CASCADE,
       period_start TEXT,
       expires_at TEXT,
       created_at TEXT NOT NULL,
-      CONSTRAINT ai_funded_credit_ledger_shape_v2_check CHECK (
+      CONSTRAINT ai_funded_credit_ledger_shape_v3_check CHECK (
         (kind IN ('promotional_grant', 'addon_grant') AND amount_microusd > 0 AND reservation_id IS NULL AND period_start IS NULL)
         OR (kind IN ('promotional_debit', 'addon_debit') AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL)
+        OR (kind = 'usage_shortfall' AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL AND expires_at IS NULL)
         OR (kind = 'promotional_expiry' AND amount_microusd < 0 AND reservation_id IS NULL AND period_start IS NULL AND expires_at IS NULL)
       )
     )
@@ -1449,20 +1457,23 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE ai_funded_credit_ledger ADD COLUMN IF NOT EXISTS expires_at TEXT`.execute(db);
   await sql`ALTER TABLE ai_funded_credit_ledger DROP CONSTRAINT IF EXISTS ai_funded_credit_ledger_kind_check`.execute(db);
   await sql`ALTER TABLE ai_funded_credit_ledger DROP CONSTRAINT IF EXISTS ai_funded_credit_ledger_check`.execute(db);
+  await sql`ALTER TABLE ai_funded_credit_ledger DROP CONSTRAINT IF EXISTS ai_funded_credit_ledger_kind_v2_check`.execute(db);
+  await sql`ALTER TABLE ai_funded_credit_ledger DROP CONSTRAINT IF EXISTS ai_funded_credit_ledger_shape_v2_check`.execute(db);
   await sql`
     DO $$
     BEGIN
       BEGIN
         ALTER TABLE ai_funded_credit_ledger
-          ADD CONSTRAINT ai_funded_credit_ledger_kind_v2_check
-          CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry'));
+          ADD CONSTRAINT ai_funded_credit_ledger_kind_v3_check
+          CHECK (kind IN ('promotional_grant', 'addon_grant', 'promotional_debit', 'addon_debit', 'promotional_expiry', 'usage_shortfall'));
       EXCEPTION WHEN duplicate_object THEN NULL;
       END;
       BEGIN
         ALTER TABLE ai_funded_credit_ledger
-          ADD CONSTRAINT ai_funded_credit_ledger_shape_v2_check CHECK (
+          ADD CONSTRAINT ai_funded_credit_ledger_shape_v3_check CHECK (
             (kind IN ('promotional_grant', 'addon_grant') AND amount_microusd > 0 AND reservation_id IS NULL AND period_start IS NULL)
             OR (kind IN ('promotional_debit', 'addon_debit') AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL)
+            OR (kind = 'usage_shortfall' AND amount_microusd < 0 AND reservation_id IS NOT NULL AND period_start IS NOT NULL AND expires_at IS NULL)
             OR (kind = 'promotional_expiry' AND amount_microusd < 0 AND reservation_id IS NULL AND period_start IS NULL AND expires_at IS NULL)
           );
       EXCEPTION WHEN duplicate_object THEN NULL;

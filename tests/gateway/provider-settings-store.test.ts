@@ -283,7 +283,8 @@ describe("ProviderSettingsStore", () => {
       promotionalBalanceMicrousd: 2_000_000,
       addonBalanceMicrousd: 1_000_000,
       creditBalanceMicrousd: 3_000_000,
-      remainingBalanceMicrousd: 2_750_000,
+      fundingShortfallMicrousd: 500_000,
+      remainingBalanceMicrousd: 2_250_000,
       remainingBudgetMicrousd: 3_750_000,
     };
     const policy: FundedAiEffectivePolicy = {
@@ -304,7 +305,7 @@ describe("ProviderSettingsStore", () => {
       scope: "owner_entitlement",
       currency: "USD",
       usedMicrousd: 1_000_000,
-      remainingMicrousd: 2_750_000,
+      remainingMicrousd: 2_250_000,
       limitMicrousd: 5_000_000,
       periodStartedAt: "2026-08-01T00:00:00.000Z",
       resetsAt: "2026-09-01T00:00:00.000Z",
@@ -314,7 +315,8 @@ describe("ProviderSettingsStore", () => {
         addonBalanceMicrousd: 1_000_000,
         creditBalanceMicrousd: 3_000_000,
         reservedMicrousd: 250_000,
-        remainingBalanceMicrousd: 2_750_000,
+        fundingShortfallMicrousd: 500_000,
+        remainingBalanceMicrousd: 2_250_000,
       },
       budget: {
         monthlyBudgetMicrousd: 5_000_000,

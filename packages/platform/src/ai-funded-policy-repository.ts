@@ -205,6 +205,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         promotional_balance_microusd: 0,
         addon_balance_microusd: 0,
         reserved_microusd: 0,
+        funding_shortfall_microusd: 0,
         month_period_start: utcMonthStart(policyTime),
         month_spent_microusd: 0,
         month_reserved_microusd: 0,

@@ -99,13 +99,17 @@ export const ProviderManagedCreditSchema = z.object({
   addonBalanceMicrousd: MicrousdSchema,
   creditBalanceMicrousd: MicrousdSchema,
   reservedMicrousd: MicrousdSchema,
+  fundingShortfallMicrousd: MicrousdSchema.optional(),
   remainingBalanceMicrousd: MicrousdSchema,
 }).strict().superRefine((credit, ctx) => {
   const total = credit.promotionalBalanceMicrousd + credit.addonBalanceMicrousd;
   if (!Number.isSafeInteger(total) || credit.creditBalanceMicrousd !== total) {
     ctx.addIssue({ code: "custom", path: ["creditBalanceMicrousd"], message: "Credit buckets must equal total credit" });
   }
-  if (credit.remainingBalanceMicrousd !== Math.max(0, credit.creditBalanceMicrousd - credit.reservedMicrousd)) {
+  if (credit.remainingBalanceMicrousd !== Math.max(
+    0,
+    credit.creditBalanceMicrousd - credit.reservedMicrousd - (credit.fundingShortfallMicrousd ?? 0),
+  )) {
     ctx.addIssue({ code: "custom", path: ["remainingBalanceMicrousd"], message: "Remaining credit is inconsistent" });
   }
 });

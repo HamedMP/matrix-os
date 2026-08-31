@@ -766,7 +766,7 @@ describe("funded AI metering", () => {
     ]);
   });
 
-  it("expires a legacy settlement whose unattributed promotion expired before debit selection", async () => {
+  it("records a durable shortfall when a legacy settlement loses all backing before debit selection", async () => {
     const credential = await enableAndFund({ budget: 5, credit: 0 });
     await repo.grantCredit({
       entryId: "legacy_direct_expiring_credit",
@@ -791,24 +791,42 @@ describe("funded AI metering", () => {
       reservationId: "legacy_direct_settlement",
       tokenId: credential.tokenId,
       actualCostMicrousd: 5,
-    })).rejects.toMatchObject({ code: "reservation_expired" });
+    })).resolves.toMatchObject({
+      status: "settled",
+      actualCostMicrousd: 5,
+      funding: {
+        fundingShortfallMicrousd: 5,
+        settledThisMonthMicrousd: 5,
+        remainingBalanceMicrousd: 0,
+      },
+    });
 
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd"])
       .where("reservation_id", "=", "legacy_direct_settlement").executeTakeFirstOrThrow())
-      .toEqual({ status: "expired", actual_microusd: null });
+      .toEqual({ status: "settled", actual_microusd: 5 });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
-      .select("kind").where("reservation_id", "=", "legacy_direct_settlement").execute())
-      .toEqual([]);
+      .select(["kind", "amount_microusd"])
+      .where("reservation_id", "=", "legacy_direct_settlement").execute())
+      .toEqual([{ kind: "usage_shortfall", amount_microusd: -5 }]);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
       creditBalanceMicrousd: 0,
       promotionalBalanceMicrousd: 0,
       reservedMicrousd: 0,
-      settledThisMonthMicrousd: 0,
+      settledThisMonthMicrousd: 5,
+      fundingShortfallMicrousd: 5,
+      remainingBalanceMicrousd: 0,
+    });
+    clock = new Date("2026-08-30T20:20:00.000Z");
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(0);
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      fundingShortfallMicrousd: 5,
+      settledThisMonthMicrousd: 5,
+      remainingBalanceMicrousd: 0,
     });
   });
 
-  it("expires an unfunded legacy in-flight reservation without poisoning cleanup", async () => {
+  it("finalizes an unfunded legacy in-flight reservation without poisoning cleanup", async () => {
     const credential = await enableAndFund({ budget: 5, credit: 0 });
     await repo.grantCredit({
       entryId: "legacy_only_expiring_credit",
@@ -848,8 +866,8 @@ describe("funded AI metering", () => {
       .select(["status", "actual_microusd", "promotional_reserved_microusd", "addon_reserved_microusd"])
       .where("reservation_id", "=", "legacy_unfunded_inflight").executeTakeFirstOrThrow();
     expect(reservation).toEqual({
-      status: "expired",
-      actual_microusd: null,
+      status: "settled",
+      actual_microusd: 4,
       promotional_reserved_microusd: null,
       addon_reserved_microusd: null,
     });
@@ -858,16 +876,21 @@ describe("funded AI metering", () => {
       promotionalBalanceMicrousd: 0,
       addonBalanceMicrousd: 0,
       reservedMicrousd: 0,
+      settledThisMonthMicrousd: 4,
+      fundingShortfallMicrousd: 4,
+      remainingBalanceMicrousd: 0,
     });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
-      .select("kind").where("reservation_id", "=", "legacy_unfunded_inflight").execute()).toEqual([]);
+      .select(["kind", "amount_microusd"])
+      .where("reservation_id", "=", "legacy_unfunded_inflight").execute())
+      .toEqual([{ kind: "usage_shortfall", amount_microusd: -4 }]);
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select("status").where("reservation_id", "=", "legacy_batch_sibling").executeTakeFirstOrThrow())
       .toEqual({ status: "expired" });
   });
 
-  it("expires partially backed legacy usage without recording or debiting an unfunded settlement", async () => {
-    const credential = await enableAndFund({ budget: 10, credit: 0 });
+  it("atomically debits partial backing and records the remaining legacy settlement shortfall", async () => {
+    const credential = await enableAndFund({ budget: 20, credit: 0 });
     await repo.grantCredit({
       entryId: "protected_addon_credit",
       identity,
@@ -905,32 +928,52 @@ describe("funded AI metering", () => {
       addonBalanceMicrousd: 7,
       reservedMicrousd: 10,
     });
+    const settlement = await repo.settleReservation({
+      reservationId: "legacy_settlement_without_backing",
+      tokenId: credential.tokenId,
+      actualCostMicrousd: 5,
+    });
+    expect(settlement).toMatchObject({
+      status: "settled",
+      actualCostMicrousd: 5,
+      funding: {
+        fundingShortfallMicrousd: 3,
+        settledThisMonthMicrousd: 5,
+        remainingBalanceMicrousd: 0,
+      },
+    });
     await expect(repo.settleReservation({
       reservationId: "legacy_settlement_without_backing",
       tokenId: credential.tokenId,
       actualCostMicrousd: 5,
-    })).rejects.toMatchObject({ code: "reservation_expired" });
+    })).resolves.toEqual(settlement);
 
     const legacy = await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd", "promotional_reserved_microusd", "addon_reserved_microusd"])
       .where("reservation_id", "=", "legacy_settlement_without_backing").executeTakeFirstOrThrow();
     expect(legacy).toEqual({
-      status: "expired",
-      actual_microusd: null,
+      status: "settled",
+      actual_microusd: 5,
       promotional_reserved_microusd: null,
       addon_reserved_microusd: null,
     });
     const legacyUsage = await db.executor.selectFrom("ai_funded_credit_ledger")
       .select(["kind", "amount_microusd"])
-      .where("reservation_id", "=", "legacy_settlement_without_backing").execute();
-    expect(legacyUsage).toEqual([]);
+      .where("reservation_id", "=", "legacy_settlement_without_backing")
+      .orderBy("kind").execute();
+    expect(legacyUsage).toEqual([
+      { kind: "addon_debit", amount_microusd: -2 },
+      { kind: "usage_shortfall", amount_microusd: -3 },
+    ]);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
-      creditBalanceMicrousd: 7,
+      creditBalanceMicrousd: 5,
       promotionalBalanceMicrousd: 0,
-      addonBalanceMicrousd: 7,
+      addonBalanceMicrousd: 5,
       reservedMicrousd: 5,
-      settledThisMonthMicrousd: 0,
-      remainingBudgetMicrousd: 5,
+      settledThisMonthMicrousd: 5,
+      fundingShortfallMicrousd: 3,
+      remainingBalanceMicrousd: 0,
+      remainingBudgetMicrousd: 10,
     });
 
     await repo.startReservation({
@@ -943,17 +986,43 @@ describe("funded AI metering", () => {
       actualCostMicrousd: 5,
     })).resolves.toMatchObject({
       funding: {
-        creditBalanceMicrousd: 2,
-        addonBalanceMicrousd: 2,
+        creditBalanceMicrousd: 0,
+        addonBalanceMicrousd: 0,
         reservedMicrousd: 0,
-        settledThisMonthMicrousd: 5,
-        remainingBudgetMicrousd: 5,
+        settledThisMonthMicrousd: 10,
+        fundingShortfallMicrousd: 3,
+        remainingBalanceMicrousd: 0,
+        remainingBudgetMicrousd: 10,
       },
     });
+    await repo.grantCredit({
+      entryId: "post_shortfall_addon_credit",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 5,
+      sourceReference: "post-shortfall-addon",
+    });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      creditBalanceMicrousd: 5,
+      fundingShortfallMicrousd: 3,
+      remainingBalanceMicrousd: 2,
+    });
+    await expect(repo.authorize({
+      credential: credential.token,
+      requestId: "shortfall_blocks_future_credit",
+      modelId,
+      maxCostMicrousd: 3,
+    })).rejects.toMatchObject({ code: "insufficient_credit" });
+    await expect(repo.authorize({
+      credential: credential.token,
+      requestId: "shortfall_allows_only_net_credit",
+      modelId,
+      maxCostMicrousd: 2,
+    })).resolves.toMatchObject({ authorized: true });
   });
 
-  it("expires partially backed legacy usage during cleanup without recording a partial charge", async () => {
-    const credential = await enableAndFund({ budget: 10, credit: 0 });
+  it("records full provider usage and durable shortfall during partial legacy cleanup", async () => {
+    const credential = await enableAndFund({ budget: 20, credit: 0 });
     await repo.grantCredit({
       entryId: "cleanup_protected_addon_credit",
       identity,
@@ -990,17 +1059,30 @@ describe("funded AI metering", () => {
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd"])
       .where("reservation_id", "=", "cleanup_legacy_partial_backing").executeTakeFirstOrThrow())
-      .toEqual({ status: "expired", actual_microusd: null });
+      .toEqual({ status: "settled", actual_microusd: 5 });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
-      .select("kind").where("reservation_id", "=", "cleanup_legacy_partial_backing").execute())
-      .toEqual([]);
+      .select(["kind", "amount_microusd"])
+      .where("reservation_id", "=", "cleanup_legacy_partial_backing")
+      .orderBy("kind").execute())
+      .toEqual([
+        { kind: "addon_debit", amount_microusd: -2 },
+        { kind: "usage_shortfall", amount_microusd: -3 },
+      ]);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
-      creditBalanceMicrousd: 7,
+      creditBalanceMicrousd: 5,
       promotionalBalanceMicrousd: 0,
-      addonBalanceMicrousd: 7,
+      addonBalanceMicrousd: 5,
       reservedMicrousd: 5,
-      settledThisMonthMicrousd: 0,
-      remainingBudgetMicrousd: 5,
+      settledThisMonthMicrousd: 5,
+      fundingShortfallMicrousd: 3,
+      remainingBalanceMicrousd: 0,
+      remainingBudgetMicrousd: 10,
+    });
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(0);
+    expect(await repo.getFundingSummary(identity)).toMatchObject({
+      fundingShortfallMicrousd: 3,
+      settledThisMonthMicrousd: 5,
+      remainingBalanceMicrousd: 0,
     });
   });
 

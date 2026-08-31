@@ -137,6 +137,7 @@ export const FundedAiFundingSummarySchema = z.object({
   promotionalBalanceMicrousd: MicrousdSchema,
   addonBalanceMicrousd: MicrousdSchema,
   creditBalanceMicrousd: MicrousdSchema,
+  fundingShortfallMicrousd: MicrousdSchema.optional(),
   remainingBalanceMicrousd: MicrousdSchema,
   remainingBudgetMicrousd: MicrousdSchema,
 }).strict().superRefine((value, ctx) => {
@@ -144,7 +145,10 @@ export const FundedAiFundingSummarySchema = z.object({
   if (!Number.isSafeInteger(creditTotal) || value.creditBalanceMicrousd !== creditTotal) {
     ctx.addIssue({ code: "custom", path: ["creditBalanceMicrousd"], message: "Credit buckets must equal total credit" });
   }
-  if (value.remainingBalanceMicrousd !== Math.max(0, value.creditBalanceMicrousd - value.reservedMicrousd)) {
+  if (value.remainingBalanceMicrousd !== Math.max(
+    0,
+    value.creditBalanceMicrousd - value.reservedMicrousd - (value.fundingShortfallMicrousd ?? 0),
+  )) {
     ctx.addIssue({ code: "custom", path: ["remainingBalanceMicrousd"], message: "Remaining credit is inconsistent" });
   }
   const expectedBudget = Math.max(
