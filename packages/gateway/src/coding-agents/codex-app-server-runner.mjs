@@ -243,8 +243,14 @@ const InterruptControlSchema = z.object({
   type: z.literal("interrupt"),
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
+const SteerControlSchema = z.object({
+  type: z.literal("steer"),
+  prompt: PendingTurnSchema.shape.prompt,
+  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
+}).strict();
 const ControlSchema = z.discriminatedUnion("type", [
   TurnControlSchema,
+  SteerControlSchema,
   InterruptControlSchema,
   ApprovalControlSchema,
   InputControlSchema,
@@ -803,6 +809,13 @@ async function applyControl(control) {
   }
   if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
+  } else if (control.type === "steer") {
+    if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
+    await request("turn/steer", {
+      threadId: nativeThreadId,
+      expectedTurnId: activeNativeTurnId,
+      input: [{ type: "text", text: control.prompt, text_elements: [] }],
+    });
   } else if (control.type === "interrupt") {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });

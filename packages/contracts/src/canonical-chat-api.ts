@@ -35,6 +35,9 @@ export const CanonicalChatOutboxEventTypeSchema = z.enum([
   "chat.user_state_updated",
   "turn.accepted",
   "queue.enqueued",
+  "run.steer_requested",
+  "run.steered",
+  "run.steer_failed",
   "run.activity",
   "run.message",
   "chat.terminal_bound",
@@ -127,6 +130,26 @@ export const CanonicalChatQueuedTurnIdSchema = canonicalReferenceId(128)
   });
 
 export const CanonicalQueueChatTurnRequestSchema = CanonicalCreateChatTurnRequestSchema;
+
+export const CanonicalSteerChatRunRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  expectedTurnId: CanonicalChatTurnSchema.shape.id,
+  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+}).strict();
+
+export const CanonicalChatRunSteeringResponseSchema = z.object({
+  runId: CanonicalChatRunIdSchema,
+  turnId: CanonicalChatTurnSchema.shape.id,
+  message: CanonicalChatMessageSchema,
+  steering: z.enum(["accepted", "already_accepted"]),
+}).strict().superRefine((response, ctx) => {
+  if (response.message.runId !== response.runId
+    || response.message.turnId !== response.turnId
+    || response.message.role !== "user"
+    || response.message.state !== "committed") {
+    ctx.addIssue({ code: "custom", message: "Steering relationship mismatch" });
+  }
+});
 
 export const CanonicalChatQueuedTurnSchema = z.object({
   id: CanonicalChatQueuedTurnIdSchema,
@@ -270,6 +293,10 @@ export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateCh
 export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdateChatUserStateRequestSchema>;
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
 export type CanonicalQueueChatTurnRequest = z.infer<typeof CanonicalQueueChatTurnRequestSchema>;
+export type CanonicalSteerChatRunRequest = z.infer<typeof CanonicalSteerChatRunRequestSchema>;
+export type CanonicalChatRunSteeringResponse = z.infer<
+  typeof CanonicalChatRunSteeringResponseSchema
+>;
 export type CanonicalChatQueuedTurn = z.infer<typeof CanonicalChatQueuedTurnSchema>;
 export type CanonicalChatQueueAdmissionResponse = z.infer<
   typeof CanonicalChatQueueAdmissionResponseSchema

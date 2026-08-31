@@ -189,6 +189,7 @@ export const CanonicalChatRunSchema = z.object({
     userInput: z.boolean(),
     resume: z.boolean(),
     cancellation: z.boolean(),
+    steering: z.enum(["none", "same_run"]).optional(),
     worktrees: z.enum(["none", "optional", "required"]),
     interactionModes: z.array(canonicalReferenceId(80)).max(16),
     permissionModes: z.array(canonicalReferenceId(80)).max(16),

@@ -9,6 +9,7 @@ import {
   CanonicalChatRecordSchema,
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
   CanonicalChatQueueAdmissionResponseSchema,
@@ -20,6 +21,7 @@ import {
   CanonicalQueueChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
@@ -27,6 +29,7 @@ import {
   type CanonicalChatRecord,
   type CanonicalChatApprovalSubmissionResponse,
   type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunSteeringResponse,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
@@ -36,6 +39,7 @@ import {
   type CanonicalQueueChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalSteerChatRunRequest,
   type CanonicalUpdateChatProjectRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
@@ -132,6 +136,12 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalQueueChatTurnRequest,
   ): Promise<CanonicalChatQueueAdmissionResponse>;
+  steerRun(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    input: CanonicalSteerChatRunRequest,
+  ): Promise<CanonicalChatRunSteeringResponse>;
   cancelRun(
     owner: ChatOwner,
     chatId: string,
@@ -445,6 +455,24 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       return context.json(CanonicalChatQueueAdmissionResponseSchema.parse(result), 201);
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/runs/:runId/steer", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+      const parsed = CanonicalSteerChatRunRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.steerRun(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        runId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatRunSteeringResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }

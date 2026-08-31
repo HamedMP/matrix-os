@@ -121,6 +121,7 @@ export const CanonicalProviderSupportSchema = z.object({
   rootChat: z.boolean(),
   resume: z.boolean(),
   cancellation: z.boolean(),
+  steering: z.enum(["none", "same_run"]).optional(),
   attachments: z.array(CanonicalChatAttachmentKindSchema).max(8),
   tools: z.array(canonicalReferenceId(80)).max(128),
   approvals: z.boolean(),

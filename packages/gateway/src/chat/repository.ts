@@ -55,6 +55,11 @@ import {
   type EnqueuedQueuedTurn,
 } from "./queue-repository.js";
 import {
+  ChatSteeringRepository,
+  type BeginSteerInput,
+  type BegunSteer,
+} from "./steering-repository.js";
+import {
   ChatOutboxDelivery,
   type ChatOutboxSink,
 } from "./outbox-delivery.js";
@@ -71,6 +76,7 @@ export {
 } from "./errors.js";
 export type { ChatDetailPage } from "./detail-repository.js";
 export type { EnqueueQueuedTurnInput, EnqueuedQueuedTurn } from "./queue-repository.js";
+export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
@@ -290,6 +296,7 @@ export class ChatRepository {
   private readonly detail: ChatDetailRepository;
   private readonly runLifecycle: ChatRunLifecycleRepository;
   private readonly queue: ChatQueueRepository;
+  private readonly steering: ChatSteeringRepository;
   private readonly outboxDelivery: ChatOutboxDelivery;
 
   constructor(
@@ -317,6 +324,17 @@ export class ChatRepository {
     );
     this.queue = new ChatQueueRepository(
       this.kysely,
+      (fn) => this.transact(fn),
+      (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
+        executor,
+        owner,
+        chatId,
+        revision,
+        eventType,
+        payload,
+      ),
+    );
+    this.steering = new ChatSteeringRepository(
       (fn) => this.transact(fn),
       (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
         executor,
@@ -949,6 +967,24 @@ export class ChatRepository {
     input: EnqueueQueuedTurnInput,
   ): Promise<EnqueuedQueuedTurn> {
     return this.queue.enqueue(owner, input);
+  }
+
+  async beginSteer(owner: ChatOwner, input: BeginSteerInput): Promise<BegunSteer> {
+    return this.steering.begin(owner, input);
+  }
+
+  async acceptSteer(
+    owner: ChatOwner,
+    input: { chatId: string; runId: string; clientRequestId: string; acceptedAt: string },
+  ): Promise<CanonicalChatMessage> {
+    return this.steering.accept(owner, input);
+  }
+
+  async failSteer(
+    owner: ChatOwner,
+    input: { chatId: string; runId: string; clientRequestId: string; acceptedAt: string },
+  ): Promise<void> {
+    return this.steering.fail(owner, input);
   }
 
   async admitRetry(ownerInput: ChatOwner, input: AdmitRetryInput): Promise<AdmittedRun> {

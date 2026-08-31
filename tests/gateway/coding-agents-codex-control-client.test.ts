@@ -47,7 +47,7 @@ async function listen(homePath: string, sessionId: string, reply?: string) {
 }
 
 describe("Codex control client", () => {
-  it("submits bounded Turn, interrupt, approval, and structured input frames", async () => {
+  it("submits bounded Turn, steer, interrupt, approval, and structured input frames", async () => {
     const homePath = await mkdtemp(join(socketTempRoot, "mx-control-"));
     const sessionId = "sess_thread_control_1";
     const frames = await listen(homePath, sessionId, '{"ok":true}\n');
@@ -63,6 +63,11 @@ describe("Codex control client", () => {
     await client.interruptTurn({
       sessionId,
       clientRequestId: "req_control_1",
+    });
+    await client.steerTurn({
+      sessionId,
+      prompt: "Use the failing route test as the next constraint.",
+      clientRequestId: "req_control_steer_1",
     });
     await client.submitApproval({
       sessionId,
@@ -90,6 +95,11 @@ describe("Codex control client", () => {
       {
         type: "interrupt",
         clientRequestId: "req_control_1",
+      },
+      {
+        type: "steer",
+        prompt: "Use the failing route test as the next constraint.",
+        clientRequestId: "req_control_steer_1",
       },
       {
         type: "approval",

@@ -116,6 +116,7 @@ function codingSupports(
     rootChat: true,
     resume: true,
     cancellation: true,
+    steering: isCodex ? "same_run" : "none",
     attachments: driverKind === "pi"
       ? ["structured_ref"]
       : ["file", "image", "structured_ref"],
@@ -286,11 +287,12 @@ function unavailableCodingInstance(
   };
 }
 
-function systemSupports(): CanonicalProviderSupport {
+function systemSupports(driverKind: CanonicalProviderDriverKind): CanonicalProviderSupport {
   return {
     rootChat: true,
     resume: true,
     cancellation: true,
+    steering: driverKind === "hermes" ? "same_run" : "none",
     attachments: ["file", "image", "structured_ref"],
     tools: [],
     approvals: false,
@@ -410,7 +412,7 @@ function systemInstance(input: {
     skills: input.skills,
     commands: [],
     setupActions: systemSetupActions(input.runtime),
-    supports: systemSupports(),
+    supports: systemSupports(input.kind),
     ...(availability === "available" && hasSelectedModel ? {
       defaultSelection: { instanceId: id, model: selectedModel! },
     } : {}),

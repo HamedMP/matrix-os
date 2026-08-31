@@ -87,6 +87,14 @@ export interface CodingAgentProviderAdapter {
     now: () => Date;
     nextEventId: () => string;
   }): Promise<CodingAgentProviderRunResult> | CodingAgentProviderRunResult;
+  steerTurn?(input: {
+    principal: RequestPrincipal;
+    thread: AgentThreadSummary;
+    turnId?: string;
+    message: string;
+    clientRequestId: string;
+    resumeState: CodingAgentProviderResumeState;
+  }): Promise<void> | void;
   abortThread?(input: {
     principal: RequestPrincipal;
     thread: AgentThreadSummary;

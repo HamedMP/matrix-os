@@ -129,6 +129,19 @@ export interface ChatQueuedTurnsTable {
   updated_at: Timestamp;
 }
 
+export interface ChatRunSteersTable {
+  id: string;
+  chat_id: string;
+  run_id: string;
+  turn_id: string;
+  client_request_id: string;
+  message_id: string;
+  parts: JsonValue;
+  status: "pending" | "accepted" | "failed";
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface ChatRunEventsTable {
   id: string;
   chat_id: string;
@@ -210,6 +223,7 @@ export interface ChatDatabase {
   chat_turns: ChatTurnsTable;
   chat_runs: ChatRunsTable;
   chat_queued_turns: ChatQueuedTurnsTable;
+  chat_run_steers: ChatRunSteersTable;
   chat_run_events: ChatRunEventsTable;
   chat_terminal_bindings: ChatTerminalBindingsTable;
   chat_run_adapter_state: ChatRunAdapterStateTable;
@@ -395,6 +409,25 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
   await sql`
     CREATE INDEX IF NOT EXISTS idx_chat_queued_turns_claim
     ON chat_queued_turns(chat_id, status, position)
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_run_steers (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+      turn_id TEXT NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+      client_request_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      parts JSONB NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'failed')),
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      UNIQUE (chat_id, client_request_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_chat_run_steers_run
+    ON chat_run_steers(run_id, status, created_at)
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_run_events (

@@ -3,6 +3,7 @@ import {
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
   CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
@@ -11,18 +12,21 @@ import {
   CanonicalQueueChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
+  CanonicalSteerChatRunRequestSchema,
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunSteeringResponse,
   type CanonicalChatSafeError,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatTurnRequest,
   type CanonicalQueueChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
+  type CanonicalSteerChatRunRequest,
   type CanonicalChatApprovalSubmissionResponse,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -78,7 +82,7 @@ interface ActiveRun {
   completion: Promise<void>;
 }
 
-function id(prefix: "cturn_" | "run_" | "msg_" | "activity_"): string {
+function id(prefix: "cturn_" | "run_" | "msg_" | "activity_" | "steer_"): string {
   return `${prefix}${randomUUID().replaceAll("-", "")}`;
 }
 
@@ -161,6 +165,12 @@ export function mapRepositoryError(error: unknown): never {
       "Only a successful completed Run can be acknowledged.",
     ), 409);
   }
+  if (error instanceof ChatRunNotActiveError) {
+    throw new CanonicalChatOrchestrationError(
+      safeError("run_unavailable", "The Run is no longer active."),
+      409,
+    );
+  }
   if (error instanceof ChatConflictError) {
     throw new CanonicalChatOrchestrationError(safeError("chat_conflict", "Chat changed. Refresh and try again.", true, ["retry"]), 409);
   }
@@ -179,6 +189,9 @@ export class CanonicalChatOrchestrator {
       | "get"
       | "admitTurn"
       | "enqueueQueuedTurn"
+      | "beginSteer"
+      | "acceptSteer"
+      | "failSteer"
       | "markRunRunning"
       | "appendRunActivities"
       | "appendAssistantDelta"
@@ -357,6 +370,7 @@ export class CanonicalChatOrchestrator {
         userInput: validated.instance.supports.userInput,
         resume: validated.instance.supports.resume,
         cancellation: validated.instance.supports.cancellation,
+        steering: validated.instance.supports.steering ?? "none",
         worktrees: validated.instance.supports.worktrees,
         interactionModes: validated.instance.supports.interactionModes,
         permissionModes: validated.instance.supports.permissionModes,
@@ -535,6 +549,7 @@ export class CanonicalChatOrchestrator {
         userInput: validated.instance.supports.userInput,
         resume: validated.instance.supports.resume,
         cancellation: validated.instance.supports.cancellation,
+        steering: validated.instance.supports.steering ?? "none",
         worktrees: validated.instance.supports.worktrees,
         interactionModes: validated.instance.supports.interactionModes,
         permissionModes: validated.instance.supports.permissionModes,
@@ -832,6 +847,110 @@ export class CanonicalChatOrchestrator {
     } catch (error: unknown) {
       return mapRepositoryError(error);
     }
+  }
+
+  async steerRun(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    inputValue: CanonicalSteerChatRunRequest,
+  ): Promise<CanonicalChatRunSteeringResponse> {
+    this.assertOpen();
+    const input = CanonicalSteerChatRunRequestSchema.parse(inputValue);
+    const active = this.active.get(runId);
+    if (!active || active.chatId !== chatId || active.owner.type !== owner.type
+      || active.owner.ownerId !== owner.ownerId || !active.adapter.steer) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This Run cannot be steered."),
+        409,
+      );
+    }
+    const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+    let begun;
+    try {
+      begun = await this.options.repository.beginSteer(owner, {
+        chatId,
+        runId,
+        expectedTurnId: input.expectedTurnId,
+        steerId: id("steer_"),
+        messageId: id("msg_"),
+        clientRequestId: input.clientRequestId,
+        parts: input.parts,
+        createdAt: timestamp,
+      });
+    } catch (error: unknown) {
+      return mapRepositoryError(error);
+    }
+    if (begun.status === "accepted") {
+      return CanonicalChatRunSteeringResponseSchema.parse({
+        runId,
+        turnId: input.expectedTurnId,
+        message: begun.message,
+        steering: "already_accepted",
+      });
+    }
+    if (begun.alreadyRequested || begun.status === "failed") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The steering request is still resolving. Try again.", true, ["retry"]),
+        409,
+      );
+    }
+    const state = await this.options.repository.getAdapterState(owner, {
+      runId,
+      driverKind: active.adapter.driverKind,
+      instanceId: active.instanceId,
+    });
+    try {
+      await active.adapter.steer({
+        owner,
+        chatId,
+        runId,
+        turnId: input.expectedTurnId,
+        clientRequestId: input.clientRequestId,
+        prompt: promptFor(input.parts),
+        parts: input.parts,
+        ...(state ? { state: active.adapter.parseState(state.state) } : {}),
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[chat/orchestrator] Provider steering callback failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      try {
+        await this.options.repository.failSteer(owner, {
+          chatId,
+          runId,
+          clientRequestId: input.clientRequestId,
+          acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+        });
+      } catch (finishError: unknown) {
+        console.warn(
+          "[chat/orchestrator] Steering failure could not be persisted:",
+          finishError instanceof Error ? finishError.name : "UnknownError",
+        );
+      }
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The Run could not be steered. Try again.", true, ["retry"]),
+        503,
+      );
+    }
+    let message;
+    try {
+      message = await this.options.repository.acceptSteer(owner, {
+        chatId,
+        runId,
+        clientRequestId: input.clientRequestId,
+        acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+      });
+    } catch (error: unknown) {
+      return mapRepositoryError(error);
+    }
+    return CanonicalChatRunSteeringResponseSchema.parse({
+      runId,
+      turnId: input.expectedTurnId,
+      message,
+      steering: "accepted",
+    });
   }
 
   async submitApproval(

@@ -46,8 +46,14 @@ const InterruptFrameSchema = z.object({
   type: z.literal("interrupt"),
   clientRequestId: RequestIdSchema,
 }).strict();
+const SteerFrameSchema = z.object({
+  type: z.literal("steer"),
+  prompt: TurnFrameSchema.shape.prompt,
+  clientRequestId: RequestIdSchema,
+}).strict();
 const ControlFrameSchema = z.discriminatedUnion("type", [
   TurnFrameSchema,
+  SteerFrameSchema,
   InterruptFrameSchema,
   ApprovalFrameSchema,
   InputFrameSchema,
@@ -72,6 +78,11 @@ export interface CodexControlClient {
   }): Promise<void>;
   interruptTurn(input: {
     sessionId: string;
+    clientRequestId: string;
+  }): Promise<void>;
+  steerTurn(input: {
+    sessionId: string;
+    prompt: string;
     clientRequestId: string;
   }): Promise<void>;
   submitApproval(input: {
@@ -170,6 +181,13 @@ export function createCodexControlClient(options: {
     interruptTurn(input) {
       return send(input.sessionId, {
         type: "interrupt",
+        clientRequestId: input.clientRequestId,
+      });
+    },
+    steerTurn(input) {
+      return send(input.sessionId, {
+        type: "steer",
+        prompt: input.prompt,
         clientRequestId: input.clientRequestId,
       });
     },

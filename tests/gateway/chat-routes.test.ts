@@ -63,6 +63,9 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     enqueueQueuedTurn: vi.fn(async () => {
       throw new Error("not configured");
     }),
+    steerRun: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
     cancelRun: vi.fn(async () => {
       throw new Error("not configured");
     }),
@@ -647,6 +650,53 @@ describe("canonical Chat routes", () => {
       "chat_route_test",
       "cturn_route",
       { clientRequestId: "req_route_retry", baseRevision: 2 },
+    );
+  });
+
+  it("steers only the exact active Run through an explicit owner-derived route", async () => {
+    const steeredAt = "2026-08-31T09:30:00.000Z";
+    const steered = {
+      runId: "run_route",
+      turnId: "cturn_route",
+      message: {
+        id: "msg_steer_route",
+        chatId: "chat_route_test",
+        seq: 2,
+        role: "user",
+        state: "committed",
+        turnId: "cturn_route",
+        runId: "run_route",
+        parts: [{ type: "text", text: "focus on the failing test" }],
+        createdAt: steeredAt,
+      },
+      steering: "accepted",
+    };
+    const steerRun = vi.fn(async () => steered);
+    const service = routeService({ steerRun });
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/runs/run_route/steer",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_steer",
+          expectedTurnId: "cturn_route",
+          parts: [{ type: "text", text: "focus on the failing test" }],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(steered);
+    expect(steerRun).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route",
+      expect.objectContaining({
+        clientRequestId: "req_route_steer",
+        expectedTurnId: "cturn_route",
+      }),
     );
   });
 

@@ -47,6 +47,7 @@ function catalog(): CanonicalProviderCatalog {
         rootChat: true,
         resume: true,
         cancellation: true,
+        steering: "same_run",
         attachments: ["file", "image", "structured_ref"],
         tools: [],
         approvals: true,
@@ -227,6 +228,145 @@ describe("CanonicalChatOrchestrator", () => {
     });
     expect((await repository.getDetailPage(owner, "chat_queue_orchestrated", { limit: 200 }))?.queuedTurns)
       .toEqual([queued.queuedTurn]);
+
+    releaseProvider();
+    await orchestrator.drain();
+  });
+
+  it("persists and dispatches an idempotent steer only to the exact active Run", async () => {
+    await repository.create(owner, {
+      id: "chat_steer_orchestrated",
+      clientRequestId: "req_create_steer_orchestrated",
+      title: "Steer orchestrated",
+    });
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const steer = vi.fn(async () => undefined);
+    const provider: CanonicalChatProviderAdapter<{ sessionId: string }> = {
+      ...adapter(async function* () {
+        await providerGate;
+        yield { type: "run.completed", outcome: "completed" };
+      }),
+      steer,
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_steer_orchestrated", {
+      clientRequestId: "req_steer_orchestrated_active",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "keep running" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      expect((await repository.get(owner, "chat_steer_orchestrated"))?.activeRun?.status)
+        .toBe("running");
+    });
+
+    const request = {
+      clientRequestId: "req_steer_orchestrated_1",
+      expectedTurnId: admitted.turn.id,
+      parts: [{ type: "text" as const, text: "focus on the failing test" }],
+    };
+    const first = await orchestrator.steerRun(
+      owner,
+      "chat_steer_orchestrated",
+      admitted.run.id,
+      request,
+    );
+    const duplicate = await orchestrator.steerRun(
+      owner,
+      "chat_steer_orchestrated",
+      admitted.run.id,
+      request,
+    );
+
+    expect(first).toMatchObject({
+      runId: admitted.run.id,
+      turnId: admitted.turn.id,
+      steering: "accepted",
+      message: { role: "user", state: "committed", parts: request.parts },
+    });
+    expect(duplicate).toMatchObject({ message: first.message, steering: "already_accepted" });
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(steer).toHaveBeenCalledWith(expect.objectContaining({
+      owner,
+      chatId: "chat_steer_orchestrated",
+      runId: admitted.run.id,
+      turnId: admitted.turn.id,
+      clientRequestId: request.clientRequestId,
+      prompt: "focus on the failing test",
+    }));
+    await expect(orchestrator.steerRun(owner, "chat_steer_orchestrated", admitted.run.id, {
+      ...request,
+      clientRequestId: "req_steer_wrong_turn",
+      expectedTurnId: "cturn_wrong_turn",
+    })).rejects.toMatchObject({ status: 409 });
+
+    releaseProvider();
+    await orchestrator.drain();
+  });
+
+  it("keeps the timeline truthful when cancellation commits before a steer acknowledgement", async () => {
+    await repository.create(owner, {
+      id: "chat_steer_cancel_race",
+      clientRequestId: "req_create_steer_cancel_race",
+      title: "Steer cancel race",
+    });
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    let releaseSteer!: () => void;
+    const steerGate = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+    const steer = vi.fn(async () => steerGate);
+    const provider: CanonicalChatProviderAdapter<{ sessionId: string }> = {
+      ...adapter(async function* () {
+        await providerGate;
+        yield { type: "run.completed", outcome: "completed" };
+      }),
+      steer,
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_steer_cancel_race", {
+      clientRequestId: "req_steer_cancel_active",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "keep running" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      expect((await repository.get(owner, "chat_steer_cancel_race"))?.activeRun?.status)
+        .toBe("running");
+    });
+    const steering = orchestrator.steerRun(owner, "chat_steer_cancel_race", admitted.run.id, {
+      clientRequestId: "req_steer_cancel_race",
+      expectedTurnId: admitted.turn.id,
+      parts: [{ type: "text", text: "race steering" }],
+    });
+    await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+
+    await orchestrator.cancelRun(owner, "chat_steer_cancel_race", admitted.run.id);
+    releaseSteer();
+    await expect(steering).rejects.toMatchObject({ status: 409 });
+    expect((await repository.get(owner, "chat_steer_cancel_race"))?.chat.messageCount).toBe(1);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({ eventType: "run.steer_failed" }));
 
     releaseProvider();
     await orchestrator.drain();

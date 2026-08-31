@@ -84,6 +84,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
   }));
   const getThread = vi.fn(async () => snapshot(initialEvents));
   const abortThread = vi.fn(async () => snapshot([]));
+  const steerTurn = vi.fn(async () => undefined);
   const submitApproval = vi.fn(async () => snapshot([]));
   const registerEventSink = vi.fn((candidate: Sink) => {
     sink = candidate;
@@ -94,6 +95,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     acceptTurn,
     getThread,
     abortThread,
+    steerTurn,
     submitApproval,
     registerEventSink,
   } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
@@ -103,6 +105,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     acceptTurn,
     getThread,
     abortThread,
+    steerTurn,
     submitApproval,
     publish(events: AgentThreadEvent[]) {
       sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events });
@@ -356,6 +359,59 @@ describe("canonical coding Chat Provider adapter", () => {
       "thread_native",
       "req_coding",
     );
+  });
+
+  it("steers only the registered active canonical Run through the legacy thread seam", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const iterator = adapter.start(input())[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "state.updated", state: { conversationId: "thread_native" } },
+    });
+    await expect(adapter.steer!({
+      owner,
+      chatId: "chat_coding",
+      runId: "run_coding",
+      turnId: "cturn_coding",
+      clientRequestId: "req_coding_steer",
+      prompt: "Focus on the failing test.",
+      parts: [{ type: "text", text: "Focus on the failing test." }],
+    })).resolves.toBeUndefined();
+    expect(fake.steerTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }),
+      "thread_native",
+      {
+        message: "Focus on the failing test.",
+        clientRequestId: "req_coding_steer",
+      },
+    );
+    await expect(adapter.steer!({
+      owner,
+      chatId: "chat_coding",
+      runId: "run_other",
+      turnId: "cturn_other",
+      clientRequestId: "req_coding_steer_other",
+      prompt: "Stale.",
+      parts: [{ type: "text", text: "Stale." }],
+    })).rejects.toThrow("steering Run unavailable");
+
+    fake.publish([event({ type: "thread.completed", eventId: "evt_steer_complete", outcome: "completed" })]);
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "run.completed", outcome: "completed" },
+    });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+    await expect(adapter.steer!({
+      owner,
+      chatId: "chat_coding",
+      runId: "run_coding",
+      turnId: "cturn_coding",
+      clientRequestId: "req_coding_steer_terminal",
+      prompt: "Too late.",
+      parts: [{ type: "text", text: "Too late." }],
+    })).rejects.toThrow("steering Run unavailable");
   });
 
   it("submits canonical approval decisions through the same persisted coding thread", async () => {

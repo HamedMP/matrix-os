@@ -6,6 +6,7 @@ import {
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
   CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatQueueAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
@@ -15,6 +16,7 @@ import {
   CanonicalQueueChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
+  CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   CanonicalCreateChatRequestSchema,
@@ -22,6 +24,7 @@ import {
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
   type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunSteeringResponse,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
@@ -31,6 +34,7 @@ import {
   type CanonicalQueueChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
+  type CanonicalSteerChatRunRequest,
   type CanonicalChatApprovalSubmissionResponse,
   type CanonicalUpdateChatProjectRequest,
   type CanonicalUpdateChatUserStateRequest,
@@ -109,7 +113,7 @@ export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
     orchestrator?: Pick<CanonicalChatOrchestrator,
-      "admitTurn" | "enqueueQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn"
+      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "cancelRun" | "submitApproval" | "retryTurn"
     >;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
   } = {},
@@ -295,6 +299,21 @@ export function createCanonicalChatService(
       );
     },
 
+    async steerRun(
+      owner: ChatOwner,
+      chatId: string,
+      runId: string,
+      input: CanonicalSteerChatRunRequest,
+    ): Promise<CanonicalChatRunSteeringResponse> {
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatRunSteeringResponseSchema.parse(await options.orchestrator.steerRun(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalChatRunIdSchema.parse(runId),
+        CanonicalSteerChatRunRequestSchema.parse(input),
+      ));
+    },
+
     async submitApproval(
       owner: ChatOwner,
       chatId: string,
@@ -348,6 +367,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     getDetail: unavailable,
     admitTurn: unavailable,
     enqueueQueuedTurn: unavailable,
+    steerRun: unavailable,
     cancelRun: unavailable,
     submitApproval: unavailable,
     retryTurn: unavailable,

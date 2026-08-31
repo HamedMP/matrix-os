@@ -624,6 +624,57 @@ exec /bin/sh "$@"
     });
   });
 
+  it("steers an exact active Codex Turn through its deterministic control session", async () => {
+    const steerTurn = vi.fn(async () => undefined);
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime: {
+        startSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+      codexControl: {
+        steerTurn,
+        submitTurn: vi.fn(),
+        interruptTurn: vi.fn(),
+        submitApproval: vi.fn(),
+        submitInput: vi.fn(),
+      },
+    });
+    const thread = AgentThreadSummarySchema.parse({
+      id: "thread_workspace_steer_1",
+      providerId: "codex",
+      title: "Coding agent run",
+      status: "running",
+      attention: "none",
+      createdAt: baseNow.toISOString(),
+      updatedAt: baseNow.toISOString(),
+    });
+
+    await expect(provider.steerTurn?.({
+      principal: ownerPrincipal,
+      thread,
+      turnId: "turn_workspace_steer_1",
+      message: "Focus on the failing test.",
+      clientRequestId: "req_workspace_steer_1",
+      resumeState: { conversationId: "sess_workspace_steer_1" },
+    })).resolves.toBeUndefined();
+    expect(steerTurn).toHaveBeenCalledWith({
+      sessionId: "sess_workspace_steer_1",
+      prompt: "Focus on the failing test.",
+      clientRequestId: "req_workspace_steer_1",
+    });
+
+    await expect(provider.steerTurn?.({
+      principal: ownerPrincipal,
+      thread,
+      turnId: "turn_workspace_steer_1",
+      message: "Stale target.",
+      clientRequestId: "req_workspace_steer_stale",
+      resumeState: { conversationId: "sess_different_thread" },
+    })).rejects.toThrow("Workspace provider steering target changed");
+  });
+
   it("rebuilds a dead Codex runner before accepting the next same-thread Turn", async () => {
     const startSession = vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() }));
     const submitTurn = vi.fn(async () => {

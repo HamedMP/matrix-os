@@ -155,6 +155,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
       userInput: validated.instance.supports.userInput,
       resume: validated.instance.supports.resume,
       cancellation: validated.instance.supports.cancellation,
+      steering: validated.instance.supports.steering ?? "none",
       worktrees: validated.instance.supports.worktrees,
       interactionModes: validated.instance.supports.interactionModes,
       permissionModes: validated.instance.supports.permissionModes,

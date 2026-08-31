@@ -110,6 +110,16 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   start(input: CanonicalProviderRunInput<State>): AsyncIterable<CanonicalProviderRunEvent>;
   resume?(input: CanonicalProviderRunInput<State> & { resumeState: State }): AsyncIterable<CanonicalProviderRunEvent>;
   cancel?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; state?: State }): Promise<void>;
+  steer?(input: {
+    owner: CanonicalOwnerScope;
+    chatId: string;
+    runId: string;
+    turnId: string;
+    clientRequestId: string;
+    prompt: string;
+    parts: CanonicalChatMessagePart[];
+    state?: State;
+  }): Promise<void>;
   submitApproval?(input: {
     owner: CanonicalOwnerScope;
     chatId: string;

@@ -37,6 +37,8 @@ function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly st
             respond(request, { status: "streaming" });
           } else if (request.method === "session.interrupt") {
             respond(request, { status: "interrupted" });
+          } else if (request.method === "session.steer") {
+            respond(request, { status: "queued", text: request.params.text });
           } else if (request.method === "config.set" && request.params.key === "yolo") {
             respond(request, { key: "yolo", value: "1", scope: "session" });
           } else if (request.method === "config.set" && request.params.key === "model") {
@@ -105,6 +107,40 @@ async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("steers only the exact active Hermes session without starting another prompt", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    await expect(adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_hermes_steer_1",
+      prompt: "Focus on the failing test.",
+      parts: [{ type: "text", text: "Focus on the failing test." }],
+    })).resolves.toBeUndefined();
+    expect(gateway.requests).toContainEqual(expect.objectContaining({
+      method: "session.steer",
+      params: { session_id: "live_session", text: "Focus on the failing test." },
+    }));
+    expect(gateway.requests.filter(({ method }) => method === "prompt.submit")).toHaveLength(1);
+
+    gateway.event("message.complete", { text: "Done", status: "complete" });
+    await eventsPromise;
+    await expect(adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_hermes_steer_terminal",
+      prompt: "Too late.",
+      parts: [{ type: "text", text: "Too late." }],
+    })).rejects.toThrow("steering Run unavailable");
+  });
+
   it("projects official Hermes tool frames without leaking provider payloads", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });

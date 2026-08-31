@@ -15,6 +15,7 @@ import {
   ChatConflictError,
   ChatNotFoundError,
   ChatRepository,
+  ChatRunNotActiveError,
 } from "../../packages/gateway/src/chat/repository.js";
 import type { ChatOutboxEvent, ChatOwner } from "../../packages/gateway/src/chat/records.js";
 
@@ -75,6 +76,7 @@ function run(chatId: string, inputTurn: CanonicalChatTurn, attempt = 1): Canonic
       userInput: true,
       resume: true,
       cancellation: true,
+      steering: "same_run",
       worktrees: "optional",
       interactionModes: ["default"],
       permissionModes: ["supervised"],
@@ -215,6 +217,7 @@ describe("ChatRepository", () => {
       "chat_queued_turns",
       "chat_run_adapter_state",
       "chat_run_events",
+      "chat_run_steers",
       "chat_runs",
       "chat_terminal_bindings",
       "chat_turns",
@@ -951,6 +954,121 @@ describe("ChatRepository", () => {
       queuedTurnId: "qturn_other_owner",
       baseRevision: 2,
     })).rejects.toBeInstanceOf(ChatNotFoundError);
+  });
+
+  it("persists one idempotent same-Run steering message and terminalizes it atomically", async () => {
+    const admitted = await admitChat(repository, "steer_persistence");
+    const input = {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      steerId: "steer_persistence_1",
+      messageId: "msg_steer_persistence_1",
+      clientRequestId: "req_steer_persistence_1",
+      parts: [{ type: "text" as const, text: "focus on the failing test" }],
+      createdAt: "2026-08-25T00:00:10.000Z",
+    };
+
+    const begun = await repository.beginSteer(owner, input);
+    const duplicate = await repository.beginSteer(owner, {
+      ...input,
+      steerId: "steer_should_not_exist",
+      messageId: "msg_should_not_exist",
+    });
+
+    expect(begun).toMatchObject({
+      alreadyRequested: false,
+      status: "pending",
+    });
+    expect(duplicate).toEqual({ ...begun, alreadyRequested: true });
+    await expect(repository.beginSteer(otherOwner, {
+      ...input,
+      steerId: "steer_other_owner",
+      messageId: "msg_other_owner",
+      clientRequestId: "req_steer_other_owner",
+    })).rejects.toBeInstanceOf(ChatNotFoundError);
+
+    const accepted = await repository.acceptSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      clientRequestId: input.clientRequestId,
+      acceptedAt: "2026-08-25T00:00:11.000Z",
+    });
+    expect(accepted).toMatchObject({ id: input.messageId, state: "committed" });
+    await expect(repository.acceptSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      clientRequestId: input.clientRequestId,
+      acceptedAt: "2026-08-25T00:00:12.000Z",
+    })).resolves.toEqual(accepted);
+    expect((await repository.get(owner, admitted.chatId))?.chat).toMatchObject({
+      revision: 3,
+      messageCount: 2,
+    });
+    expect(await repository.getMessages(owner, admitted.chatId, { afterSeq: 0, limit: 200 }))
+      .toEqual([expect.objectContaining({ role: "user", state: "committed" }), accepted]);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ eventType: "run.steer_requested", revision: 2 }),
+        expect.objectContaining({ eventType: "run.steered", revision: 3 }),
+      ]));
+  });
+
+  it("rejects stale or terminal steering targets before adding a message", async () => {
+    const admitted = await admitChat(repository, "steer_stale");
+    const input = {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: "cturn_wrong_target",
+      steerId: "steer_stale_1",
+      messageId: "msg_steer_stale_1",
+      clientRequestId: "req_steer_stale_1",
+      parts: [{ type: "text" as const, text: "stale" }],
+      createdAt: "2026-08-25T00:00:10.000Z",
+    };
+    await expect(repository.beginSteer(owner, input)).rejects.toBeInstanceOf(ChatRunNotActiveError);
+    await repository.finishRun(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      outcome: "completed",
+      completedAt: "2026-08-25T00:00:11.000Z",
+    });
+    await expect(repository.beginSteer(owner, {
+      ...input,
+      expectedTurnId: admitted.turn.id,
+      clientRequestId: "req_steer_terminal",
+    })).rejects.toBeInstanceOf(ChatRunNotActiveError);
+    expect((await repository.get(owner, admitted.chatId))?.chat.messageCount).toBe(1);
+  });
+
+  it("does not append a steering message when cancellation wins before acceptance commits", async () => {
+    const admitted = await admitChat(repository, "steer_cancel_race");
+    await repository.beginSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      steerId: "steer_cancel_race_1",
+      messageId: "msg_steer_cancel_race_1",
+      clientRequestId: "req_steer_cancel_race_1",
+      parts: [{ type: "text", text: "race" }],
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+    await repository.finishRun(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      outcome: "aborted",
+      completedAt: "2026-08-25T00:00:11.000Z",
+    });
+
+    await expect(repository.acceptSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      clientRequestId: "req_steer_cancel_race_1",
+      acceptedAt: "2026-08-25T00:00:12.000Z",
+    })).rejects.toBeInstanceOf(ChatRunNotActiveError);
+    expect((await repository.get(owner, admitted.chatId))?.chat.messageCount).toBe(1);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({ eventType: "run.steer_failed" }));
   });
 
   it("admits an idempotent retry as a new Run attempt without duplicating the Turn input", async () => {

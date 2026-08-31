@@ -83,6 +83,11 @@ const MAX_TURNS_PER_THREAD = 50;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
+const CodingAgentSteerRequestSchema = z.object({
+  expectedTurnId: AgentTurnIdSchema.optional(),
+  message: CreateAgentTurnRequestSchema.shape.message,
+  clientRequestId: RequestIdSchema,
+}).strict();
 
 const StoredThreadSchema = AgentThreadSummarySchema.extend({
   ownerId: OwnerIdSchema,
@@ -202,6 +207,11 @@ export interface CodingAgentThreadStore {
     batch: CodingAgentProviderEventBatch,
   ): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string): Promise<AgentThreadSnapshot>;
+  steerTurn(
+    principal: RequestPrincipal,
+    threadId: string,
+    request: z.infer<typeof CodingAgentSteerRequestSchema>,
+  ): Promise<void>;
   submitApproval(
     principal: RequestPrincipal,
     threadId: string,
@@ -1338,6 +1348,28 @@ export function createCodingAgentThreadStore(
         turnDispatcher.release(reservation);
         throw err;
       }
+    },
+    async steerTurn(principal, threadId, requestValue) {
+      const request = CodingAgentSteerRequestSchema.parse(requestValue);
+      await queue;
+      const state = await readState(options.homePath);
+      const thread = state.threads.find((candidate) =>
+        candidate.ownerId === principal.userId && candidate.id === threadId
+      );
+      if (!thread) throw new CodingAgentTurnError("thread_not_found");
+      if (thread.activeTurnId !== request.expectedTurnId || !activeThread(thread) || !thread.providerResumeState) {
+        throw new CodingAgentTurnError("thread_busy");
+      }
+      const provider = providerFor(thread.providerId);
+      if (!provider.steerTurn) throw new CodingAgentTurnError("turn_unavailable");
+      await provider.steerTurn({
+        principal,
+        thread: stripOwner(thread),
+        ...(request.expectedTurnId ? { turnId: request.expectedTurnId } : {}),
+        message: request.message,
+        clientRequestId: request.clientRequestId,
+        resumeState: thread.providerResumeState,
+      });
     },
     async recoverActiveTurns() {
       await recoverActiveTurnsInternal();
