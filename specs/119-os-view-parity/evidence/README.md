@@ -1,23 +1,59 @@
-# Electron OS-view evidence
+# OS-view parity evidence
 
-Captured on 2026-08-30 from the production-built Electron renderer at 1440 × 900, using the repository's local stub gateway and a fresh Electron user-data directory.
+Captured on 2026-08-30 and 2026-08-31 from production-built Web Desktop, Web Canvas, and Electron Desktop renderers at 1440 × 900. Both capture sessions used a fresh client state and a local stub gateway; the Web Desktop/Web Canvas session additionally used the repository's E2E authentication bypass.
 
-## Electron Desktop launcher
+## Surface matrix
 
-The launcher exposes Canvas as its first reciprocal OS-view destination, ahead of the shared first-class app sequence.
+| Surface | Reciprocal launcher destination | Presentation switch | Core-app fixture |
+| --- | --- | --- | --- |
+| Web Desktop | Web Canvas | pass | Chat, Settings, Terminal, Files |
+| Web Canvas | Web Desktop | pass | Chat, Settings, Terminal, Files |
+| Electron Desktop | Canvas presentation / Desktop presentation | pass | Chat, Settings, Terminal, Files |
 
-![Electron Desktop launcher with the Canvas destination](./electron-desktop-launcher.png)
+The screenshots below prove the rendered destinations and real launcher interaction. The shared automated interaction fixture proves that the same four canonical app paths open in Web Desktop, Web Canvas, and Electron Desktop and survive presentation changes; it is intentionally complementary evidence rather than a substitute for these real-renderer captures.
 
-## Electron Canvas
+## Web Desktop launcher
 
-Selecting Canvas closes the launcher and switches the retained Electron shell to its free-form Canvas presentation.
+The Web Desktop launcher exposes Web Canvas as its first reciprocal OS-view destination, ahead of the shared first-class app sequence.
 
-![Electron Canvas presentation](./electron-canvas.png)
+![Web Desktop launcher with the Web Canvas destination](./web-desktop-launcher.png)
 
-## Reciprocal Desktop destination
+## Web Canvas
 
-Reopening the launcher from Canvas exposes Desktop in the same launcher position, without replacing the shared app set.
+Selecting Web Canvas closes the launcher and switches the retained browser OS view to its free-form Canvas presentation.
 
-![Electron Canvas launcher with the Desktop destination](./electron-canvas-launcher.png)
+![Web Canvas presentation](./web-canvas.png)
 
-The capture exercised the real launcher controls in the built Electron app: `Desktop → Canvas → reopen launcher`. The automated Electron tests separately assert that shared tabs survive the switch and that Desktop and Canvas geometry restore independently.
+## Reciprocal Web Desktop destination
+
+Reopening the launcher from Web Canvas exposes Web Desktop in the same launcher position, without replacing the shared app set.
+
+![Web Canvas launcher with the Web Desktop destination](./web-canvas-launcher.png)
+
+The Web Desktop/Web Canvas capture exercised the real launcher controls in the production-built browser app: `Web Desktop → Web Canvas → reopen launcher`.
+
+## Electron Desktop launcher — Desktop presentation
+
+The Electron Desktop launcher exposes its Canvas presentation as the first reciprocal OS-view destination, ahead of the shared first-class app sequence.
+
+![Electron Desktop launcher with its Canvas presentation destination](./electron-desktop-launcher.png)
+
+## Electron Desktop — Canvas presentation
+
+Selecting the Canvas presentation closes the launcher and switches the retained Electron Desktop surface to free-form navigation.
+
+![Electron Desktop using its Canvas presentation](./electron-canvas.png)
+
+## Electron Desktop — reciprocal Desktop-presentation destination
+
+Reopening the Electron Desktop launcher from its Canvas presentation exposes the Desktop presentation in the same launcher position, without replacing the shared app set.
+
+![Electron Desktop Canvas presentation launcher with its Desktop presentation destination](./electron-canvas-launcher.png)
+
+The Electron Desktop capture exercised real launcher controls in the production-built app: `Electron Desktop (Desktop presentation) → Electron Desktop (Canvas presentation) → reopen launcher`.
+
+## Core interaction smoke
+
+The final parity gate imports one canonical fixture for Chat (`__chat__`), Settings (`__settings__`), Terminal (`__terminal__`), and Files (`__file-browser__`). It checks the Web Desktop app controls, Web Canvas ↔ Web Desktop state retention, Electron Desktop launcher ordering, Electron Desktop shared-tab retention, and the shared durable OS-view client/repository contract. Web Desktop and Electron Desktop logical geometry, plus Web Canvas and Electron Desktop Canvas-presentation geometry, are verified in independent presentation namespaces.
+
+These checks run in the dedicated `OS View Parity` CI job whenever shared Web, Electron, brand, UI, contract, or relevant gateway paths change. The path planner and its workflow wiring have their own focused test.

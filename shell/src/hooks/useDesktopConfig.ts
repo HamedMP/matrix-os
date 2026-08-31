@@ -48,6 +48,9 @@ export type DesktopConfigPatch = Omit<Partial<DesktopConfig>, "dock"> & {
 };
 
 export const BUNDLED_WALLPAPERS = new Set([
+  "matrix-dawn.webp",
+  "matrix-dusk.webp",
+  "matrix-night.webp",
   "moraine-lake.jpg",
   "xp-bliss.jpg",
   "win11-bloom.jpg",
@@ -64,7 +67,7 @@ export function wallpaperUrl(name: string, gatewayUrl: string): string {
 }
 
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
-  background: { type: "wallpaper", name: "moraine-lake.jpg" },
+  background: { type: "wallpaper", name: "matrix-dusk.webp" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: [...DEFAULT_PINNED_APPS],
 };

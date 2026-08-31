@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLauncher from "../../desktop/src/renderer/src/features/embeds/AppLauncher";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { OS_VIEW_FIXED_APP_NAMES } from "../fixtures/os-view-parity";
 import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
 
 describe("AppLauncher", () => {
@@ -89,7 +90,7 @@ describe("AppLauncher", () => {
     });
   });
 
-  it("puts Create app and the other OS view first, then every first-class Electron Desktop app", () => {
+  it("puts Create app and the other OS view first, then the Electron Desktop parity fixture", () => {
     const onCreateApp = vi.fn();
     const onSwitchOsView = vi.fn();
     render(
@@ -104,20 +105,7 @@ describe("AppLauncher", () => {
     const launcher = screen.getByTestId("desktop-launcher-grid");
     const names = Array.from(launcher.querySelectorAll("button"))
       .map((button) => button.getAttribute("aria-label"));
-    expect(names.slice(0, 12)).toEqual([
-      "Create app",
-      "Canvas",
-      "Chat",
-      "Terminal",
-      "Files",
-      "Editor",
-      "VS Code",
-      "Settings",
-      "Plugins",
-      "Browser",
-      "Notes",
-      "Whiteboard",
-    ]);
+    expect(names.slice(0, 12)).toEqual(["Create app", "Canvas", ...OS_VIEW_FIXED_APP_NAMES]);
 
     fireEvent.click(screen.getByRole("button", { name: "Create app" }));
     expect(onCreateApp).toHaveBeenCalledOnce();

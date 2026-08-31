@@ -24,6 +24,7 @@
     "#kernel-conversations": "./src/kernel-conversations.ts",
     "#os-view": "./src/os-view.ts",
     "#safe-client-error": "./src/safe-client-error.ts",
+    "#terminal-clipboard": "./src/terminal-clipboard.ts",
     "#terminal-links": "./src/terminal-links.ts"
   },
   "main": "src/index.ts",
