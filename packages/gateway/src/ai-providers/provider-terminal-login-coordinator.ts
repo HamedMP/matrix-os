@@ -68,6 +68,18 @@ function payloadHash(input: LoginInput): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
+function loginSessionName(idempotencyKey: string): string {
+  const keyHash = createHash("sha256").update(idempotencyKey).digest("hex");
+  return `provider-login-${keyHash.slice(0, 24)}`;
+}
+
+function appendBoundedReceipt(document: ReceiptDocument, receipt: ReceiptDocument["receipts"][number]): void {
+  document.receipts.push(receipt);
+  if (document.receipts.length > MAX_RECEIPTS) {
+    document.receipts.splice(0, document.receipts.length - MAX_RECEIPTS);
+  }
+}
+
 function supportsHarness(
   enabledHarnesses: ReadonlySet<"codex" | "claude">,
   harness: LoginHarness,
@@ -93,6 +105,7 @@ export function createProviderTerminalLoginCoordinator(options: {
   }
   const enabledHarnesses = new Set(EnabledHarnessSchema.array().max(2).parse(options.enabledHarnesses));
   const receiptsPath = join(options.homePath, "system/ai-providers/login-receipts.json");
+  const recoveryPath = join(options.homePath, "system/ai-providers/login-recovery.json");
   const now = options.now ?? (() => new Date());
   const persistReceipt = options.persistReceipt ?? writeProviderJsonAtomic;
   let tail: Promise<void> = Promise.resolve();
@@ -125,7 +138,13 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         const hash = payloadHash(input);
         const document = await readReceipts(receiptsPath);
-        const duplicate = document.receipts.find((receipt) => receipt.key === input.mutation.idempotencyKey);
+        const recoveryDocument = await readReceipts(recoveryPath);
+        const matchingReceipts = [...document.receipts, ...recoveryDocument.receipts]
+          .filter((receipt) => receipt.key === input.mutation.idempotencyKey);
+        if (new Set(matchingReceipts.map((receipt) => receipt.payloadHash)).size > 1) {
+          throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        }
+        const duplicate = matchingReceipts[0];
         if (duplicate) {
           if (duplicate.payloadHash !== hash) {
             throw new ProviderSettingsStoreError("idempotency_conflict", 409);
@@ -150,7 +169,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
 
         const command = LOGIN_COMMANDS[input.harness.harness];
-        const sessionName = `provider-login-${input.harness.harness}-${hash.slice(0, 16)}`;
+        const sessionName = loginSessionName(input.mutation.idempotencyKey);
         const attempt = ProviderConnectionAttemptSchema.parse({
           id: `attempt_${hash.slice(0, 24)}`,
           harnessInstanceId: input.mutation.harnessInstanceId,
@@ -161,6 +180,35 @@ export function createProviderTerminalLoginCoordinator(options: {
           expiresAt: new Date(now().getTime() + LOGIN_LIFETIME_MS).toISOString(),
           safeFailure: null,
         });
+        const receipt = ReceiptSchema.parse({
+          key: input.mutation.idempotencyKey,
+          payloadHash: hash,
+          attempt,
+        });
+        try {
+          await options.registry.get(sessionName);
+          try {
+            await options.registry.delete(sessionName, { force: true });
+          } catch (error) {
+            console.warn(
+              "[provider-login] Failed to reconcile unrecorded login session:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
+        } catch (error) {
+          if (!isMissingSession(error)) throw error;
+        }
+        appendBoundedReceipt(recoveryDocument, receipt);
+        try {
+          await writeProviderJsonAtomic(recoveryPath, ReceiptDocumentSchema.parse(recoveryDocument));
+        } catch (error) {
+          console.warn(
+            "[provider-login] Failed to persist login recovery metadata:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        }
         const session = await options.registry.create({
           name: sessionName,
           cwd: "~",
@@ -171,23 +219,18 @@ export function createProviderTerminalLoginCoordinator(options: {
         if (session.name !== sessionName) {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
-        document.receipts.push({
-          key: input.mutation.idempotencyKey,
-          payloadHash: hash,
-          attempt,
-        });
-        if (document.receipts.length > MAX_RECEIPTS) {
-          document.receipts.splice(0, document.receipts.length - MAX_RECEIPTS);
-        }
+        appendBoundedReceipt(document, receipt);
         try {
           await persistReceipt(receiptsPath, ReceiptDocumentSchema.parse(document));
         } catch (error) {
-          await options.registry.delete(sessionName, { force: true }).catch((cleanupError: unknown) => {
+          try {
+            await options.registry.delete(sessionName, { force: true });
+          } catch (cleanupError) {
             console.warn(
               "[provider-login] Failed to clean up unrecorded login session:",
               cleanupError instanceof Error ? cleanupError.name : "UnknownError",
             );
-          });
+          }
           console.warn(
             "[provider-login] Failed to persist login receipt:",
             error instanceof Error ? error.name : "UnknownError",
