@@ -6,6 +6,7 @@ import type {
   ProviderHarnessKind,
   ProviderLoginMethod,
   ProviderSettingsMutation,
+  ProviderSettingsSupportedAction,
 } from "@matrix-os/contracts";
 import type { ProviderConfigurationMutation } from "./provider-settings-mutations.js";
 import type { ProviderSettingsDependencyReader } from "./provider-settings-projector.js";
@@ -25,10 +26,27 @@ export interface ProviderAccountDependencyCoordinator extends ProviderSettingsDe
   }): Promise<void>;
 }
 
-/** Implementations must durably deduplicate by idempotencyKey. */
+export interface ProviderLifecycleAccount {
+  id: string;
+  providerId: string;
+  authMethod: ProviderLoginMethod;
+  accessSourceId: string;
+  driverId: string;
+  harness: ProviderHarnessKind;
+  installState: ProviderHarnessInstallState;
+  authenticated: boolean;
+  /** CLI drivers currently own one active account; multiple rows are ambiguous. */
+  driverAccountCount: number;
+}
+
+/** Implementations must guard the exact account/driver and durably deduplicate by key. */
 export interface ProviderAccountLifecycleCoordinator {
-  logout(input: { accountId: string; idempotencyKey: string }): Promise<void>;
-  remove(input: { accountId: string; idempotencyKey: string }): Promise<void>;
+  supportedActions(account: ProviderLifecycleAccount): readonly Extract<
+    ProviderSettingsSupportedAction,
+    "logout_account" | "remove_account"
+  >[];
+  logout(input: { account: ProviderLifecycleAccount; idempotencyKey: string }): Promise<void>;
+  remove(input: { account: ProviderLifecycleAccount; idempotencyKey: string }): Promise<void>;
 }
 
 /** Applies settings to the real runtime/control plane and durably deduplicates the key. */

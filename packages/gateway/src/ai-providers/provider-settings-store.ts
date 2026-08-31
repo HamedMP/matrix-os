@@ -37,8 +37,10 @@ import type {
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
 import {
+  assertProviderSettingsAction,
   coordinatorLoginHarness,
   coordinatorLoginMethods,
+  requireCoordinatorLifecycleAccount,
   supportedProviderSettingsActions,
 } from "./provider-settings-capability-policy.js";
 import {
@@ -193,14 +195,12 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     config: ProviderSettingsConfiguration,
     canonical: AiProviderSnapshotV3,
   ): void {
-    if (this.#supportedActions(config, canonical).includes(type)) return;
-    if (type === "remove_account" || type === "reassign_account") {
-      throw new ProviderSettingsStoreError("dependency_unavailable", 503);
-    }
-    if (type === "start_login" || type === "logout_account") {
-      throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
-    }
-    throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    assertProviderSettingsAction({
+      type,
+      supportedActions: this.#supportedActions(config, canonical),
+      hasDependencies: this.#dependencies !== undefined,
+      hasLifecycle: this.#lifecycle !== undefined,
+    });
   }
 
   async getSnapshot(): Promise<ProviderSettingsSnapshot> {
@@ -412,19 +412,22 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           attempt = await this.#connectionAttempt(mutation, harness, snapshot, canonical);
           break;
         }
-        case "logout_account":
+        case "logout_account": {
           if (!snapshot.accounts.some((account) => account.id === mutation.accountId)
             && !config.accountProfiles.some((account) => account.id === mutation.accountId)) {
             throw new ProviderSettingsStoreError("not_found", 404);
           }
-          if (!this.#lifecycle) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          const account = requireCoordinatorLifecycleAccount(
+            this.#lifecycle, mutation.accountId, config, canonical,
+          );
           await this.#coordinate(() => this.#lifecycle!.logout({
-            accountId: mutation.accountId,
+            account,
             idempotencyKey: mutation.idempotencyKey,
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
           canonical = await this.#canonical(true);
           break;
+        }
         case "remove_account": {
           if (!snapshot.accounts.some((account) => account.id === mutation.accountId)
             && !config.accountProfiles.some((account) => account.id === mutation.accountId)) {
@@ -437,9 +440,11 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           if (Object.values(counts).some((count) => count > 0)) {
             throw new ProviderSettingsStoreError("account_in_use", 409);
           }
-          if (!this.#lifecycle) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          const account = requireCoordinatorLifecycleAccount(
+            this.#lifecycle, mutation.accountId, config, canonical,
+          );
           await this.#coordinate(() => this.#lifecycle!.remove({
-            accountId: mutation.accountId,
+            account,
             idempotencyKey: mutation.idempotencyKey,
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
