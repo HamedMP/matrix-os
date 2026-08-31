@@ -1,7 +1,9 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { TerminalRefSchema, type TerminalRef, type TerminalTab, type TerminalWorkspace } from "@matrix-os/contracts";
 import { resolveWithinHome } from "../path-security.js";
 import {
+  CANVAS_MAX_NODES,
   CanvasNodeSchema,
   createBlankCanvasDocument,
   type CanvasAction,
@@ -35,7 +37,7 @@ export interface CanvasListResult {
 export interface CanvasDocumentResult {
   document: CanvasRecord;
   linkedState: {
-    terminalSessions: unknown[];
+    terminalTabs: TerminalTab[];
     pullRequests: unknown[];
     reviewLoops: unknown[];
     missingRefs: unknown[];
@@ -55,14 +57,17 @@ export class CanvasConfigurationError extends Error {
   }
 }
 
-export interface CanvasTerminalRegistry {
-  create(cwd: string, shell?: string): string;
-  getSession(sessionId: string): { sessionId: string; state: "running" | "exited"; attachedClients?: number } | null;
-  destroy(sessionId: string): void;
+export interface CanvasTerminalRuntime {
+  listWorkspaces(): Promise<TerminalWorkspace[]>;
+  ensureWorkspace(input?: { projectId?: string }): Promise<TerminalWorkspace>;
+  createTab(workspaceId: string, input: { name: string; cwd: string; command?: string[] }): Promise<TerminalTab>;
+  writeInput(ref: TerminalRef, input: string): Promise<void>;
+  terminateTab(ref: TerminalRef): Promise<void>;
 }
 
 export interface CanvasServiceOptions {
-  terminalRegistry?: CanvasTerminalRegistry;
+  terminalRuntime?: CanvasTerminalRuntime;
+  terminalOwnerIds?: readonly string[];
   homePath?: string;
   fetchImpl?: typeof fetch;
   resolvePreviewHost?: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
@@ -91,6 +96,15 @@ export function mapCanvasError(err: unknown): CanvasSafeError {
 
 function ownerFromUser(userId: string): CanvasOwner {
   return { ownerScope: "personal", ownerId: userId };
+}
+
+function terminalRefFromCanvasNode(node: unknown): TerminalRef | undefined {
+  if (typeof node !== "object" || node === null) return undefined;
+  const sourceRef = (node as { sourceRef?: unknown }).sourceRef;
+  if (typeof sourceRef !== "object" || sourceRef === null) return undefined;
+  if ((sourceRef as { kind?: unknown }).kind !== "terminal_tab") return undefined;
+  const parsed = TerminalRefSchema.safeParse((sourceRef as { terminalRef?: unknown }).terminalRef);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function nodeCounts(record: CanvasRecord) {
@@ -155,7 +169,7 @@ function documentForTemplate(input: CreateCanvasRequest): CanvasDocumentWrite {
       baseNode("node_terminal_summary", "terminal", 80, 340, {
         label: "Attach terminal",
         mode: "summary",
-      }, { kind: "terminal_session", id: "unattached", projectId }),
+      }, { kind: "project", id: projectId, projectId }),
     ],
     edges: [
       { id: "edge_pr_review", fromNodeId: "node_pr_summary", toNodeId: "node_review_status", type: "reviews" },
@@ -208,13 +222,15 @@ function isPublicIpAddress(address: string): boolean {
 }
 
 export class CanvasService {
-  private readonly terminalRegistry?: CanvasTerminalRegistry;
+  private readonly terminalRuntime?: CanvasTerminalRuntime;
+  private readonly terminalOwnerIds: readonly string[];
   private readonly homePath?: string;
   private readonly fetchImpl: typeof fetch;
   private readonly resolvePreviewHost: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
   constructor(private readonly repository: CanvasRepository, options: CanvasServiceOptions = {}) {
-    this.terminalRegistry = options.terminalRegistry;
+    this.terminalRuntime = options.terminalRuntime;
+    this.terminalOwnerIds = options.terminalOwnerIds ?? [];
     this.homePath = options.homePath;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.resolvePreviewHost = options.resolvePreviewHost ?? ((hostname) => lookup(hostname, { all: true, verbatim: true }));
@@ -224,7 +240,7 @@ export class CanvasService {
     let records = await this.repository.list(ownerFromUser(userId), query.limit ?? 50);
     if (query.scopeType) records = records.filter((record) => record.scopeType === query.scopeType);
     if (query.scopeId) records = records.filter((record) => JSON.stringify(record.scopeRef ?? {}).includes(query.scopeId ?? ""));
-    records = safeSearch(records, query.q).map((record) => this.reconcileRecord(record));
+    records = await Promise.all(safeSearch(records, query.q).map((record) => this.reconcileRecord(record)));
     return {
       canvases: records.map((record) => ({
         id: record.id,
@@ -253,10 +269,10 @@ export class CanvasService {
   async getCanvas(userId: string, canvasId: string): Promise<CanvasDocumentResult> {
     const stored = await this.repository.get(ownerFromUser(userId), canvasId);
     if (!stored) throw new CanvasNotFoundError(canvasId);
-    const record = this.reconcileRecord(stored);
+    const record = await this.reconcileRecord(stored);
     return {
       document: record,
-      linkedState: this.resolveLinkedState(record),
+      linkedState: await this.resolveLinkedState(record),
     };
   }
 
@@ -293,7 +309,7 @@ export class CanvasService {
     if (!record) throw new CanvasNotFoundError(canvasId);
     return {
       canvas: record,
-      linkedSummaries: this.resolveLinkedState(record),
+      linkedSummaries: await this.resolveLinkedState(record),
       exportedAt: nowIso(),
     };
   }
@@ -301,16 +317,17 @@ export class CanvasService {
   async executeAction(userId: string, canvasId: string, action: CanvasAction): Promise<{ ok: true; result: Record<string, unknown> }> {
     const record = await this.repository.get(ownerFromUser(userId), canvasId);
     if (!record) throw new CanvasNotFoundError(canvasId);
+    if (action.type.startsWith("terminal.")) this.assertTerminalOwner(userId);
     switch (action.type) {
       case "terminal.create":
-        return this.createTerminal(action);
+        return this.createTerminal(record, action);
       case "terminal.attach":
       case "terminal.observe":
       case "terminal.write":
       case "terminal.takeover":
-        return this.attachTerminal(action);
+        return this.attachTerminal(record, action);
       case "terminal.kill":
-        return this.killTerminal(action);
+        return this.killTerminal(record, action);
       case "preview.healthCheck":
         return this.previewHealthCheck(action);
       case "review.start":
@@ -334,59 +351,126 @@ export class CanvasService {
     return record.nodes.filter((node) => JSON.stringify(node).toLowerCase().includes(needle));
   }
 
-  private reconcileRecord(record: CanvasRecord): CanvasRecord {
-    const terminalSessionIds = new Set<string>();
-    for (const node of record.nodes) {
-      if (typeof node !== "object" || node === null) continue;
-      const sourceRef = (node as { sourceRef?: { kind?: string; id?: string } | null }).sourceRef;
-      if (sourceRef?.kind !== "terminal_session" || typeof sourceRef.id !== "string" || sourceRef.id === "unattached") continue;
-      if (this.terminalRegistry?.getSession(sourceRef.id)) {
-        terminalSessionIds.add(sourceRef.id);
+  private async reconcileRecord(record: CanvasRecord): Promise<CanvasRecord> {
+    const terminalRefs = new Set<string>();
+    const referencedKeys = record.nodes.flatMap((node) => {
+      const ref = terminalRefFromCanvasNode(node);
+      return ref ? [`${ref.workspaceId}:${ref.tabId}`] : [];
+    });
+    workspaceLoop: for (const workspace of await this.terminalRuntime?.listWorkspaces() ?? []) {
+      if (!this.workspaceInCanvasScope(record, workspace)) continue;
+      for (const tab of workspace.tabs) {
+        const key = `${workspace.id}:${tab.id}`;
+        if (referencedKeys.includes(key)) terminalRefs.add(key);
+        if (terminalRefs.size >= CANVAS_MAX_NODES) break workspaceLoop;
       }
     }
-    return reconcileCanvasRecord(record, { terminalSessionIds });
+    return reconcileCanvasRecord(record, { terminalRefs });
   }
 
-  private resolveLinkedState(record: CanvasRecord): CanvasDocumentResult["linkedState"] {
-    const terminalSessions: unknown[] = [];
+  private async resolveLinkedState(record: CanvasRecord): Promise<CanvasDocumentResult["linkedState"]> {
+    const workspaces = await this.terminalRuntime?.listWorkspaces() ?? [];
+    const terminalTabs: TerminalTab[] = [];
     const pullRequests: unknown[] = [];
     const reviewLoops: unknown[] = [];
     const missingRefs: unknown[] = [];
     for (const node of record.nodes) {
       if (typeof node !== "object" || node === null) continue;
-      const sourceRef = (node as { sourceRef?: { kind?: string; id?: string } | null }).sourceRef;
-      if (!sourceRef?.id) continue;
-      if (sourceRef.kind === "terminal_session") {
-        const session = sourceRef.id === "unattached" ? null : this.terminalRegistry?.getSession(sourceRef.id);
-        if (session) terminalSessions.push(session);
-        else missingRefs.push({ kind: sourceRef.kind, id: sourceRef.id });
+      const sourceRef = (node as { sourceRef?: { kind?: string; id?: string; terminalRef?: TerminalRef } | null }).sourceRef;
+      if (!sourceRef) continue;
+      if (sourceRef.kind === "terminal_tab") {
+        const workspace = sourceRef.terminalRef
+          ? workspaces.find((candidate) => candidate.id === sourceRef.terminalRef!.workspaceId)
+          : undefined;
+        const tab = workspace && this.workspaceInCanvasScope(record, workspace)
+          ? workspace.tabs.find((candidate) => candidate.id === sourceRef.terminalRef!.tabId)
+          : undefined;
+        if (tab) terminalTabs.push(tab);
+        else missingRefs.push({ kind: sourceRef.kind, terminalRef: sourceRef.terminalRef });
       }
       if (sourceRef.kind === "pull_request") pullRequests.push(sourceRef);
       if (sourceRef.kind === "review_loop") reviewLoops.push(sourceRef);
     }
-    return { terminalSessions, pullRequests, reviewLoops, missingRefs };
+    return { terminalTabs, pullRequests, reviewLoops, missingRefs };
   }
 
-  private createTerminal(action: Extract<CanvasAction, { type: "terminal.create" }>) {
-    if (!this.terminalRegistry) throw new CanvasNotFoundError("terminal-registry");
+  private async createTerminal(record: CanvasRecord, action: Extract<CanvasAction, { type: "terminal.create" }>) {
+    if (!this.terminalRuntime) throw new CanvasConfigurationError("terminal runtime is required");
     const cwd = action.payload.cwd ?? "projects";
     const safeCwd = this.homePath ? resolveWithinHome(this.homePath, cwd) : cwd;
     if (!safeCwd) throw new CanvasNotFoundError("cwd");
-    const sessionId = this.terminalRegistry.create(safeCwd, action.payload.shell);
-    return Promise.resolve({ ok: true as const, result: { kind: "terminal_session", sessionId } });
+    const scopedProjectId = record.scopeRef && typeof record.scopeRef.projectId === "string"
+      ? record.scopeRef.projectId
+      : undefined;
+    if (action.payload.projectId && action.payload.projectId !== scopedProjectId) {
+      throw new CanvasNotFoundError(action.payload.projectId);
+    }
+    const workspace = await this.terminalRuntime.ensureWorkspace(scopedProjectId ? { projectId: scopedProjectId } : {});
+    this.assertWorkspaceInCanvasScope(record, workspace);
+    const tab = await this.terminalRuntime.createTab(workspace.id, {
+      name: action.payload.shell ?? "terminal",
+      cwd: safeCwd,
+      ...(action.payload.shell ? { command: [action.payload.shell] } : {}),
+    });
+    return { ok: true as const, result: { kind: "terminal_tab", terminalRef: { workspaceId: workspace.id, tabId: tab.id } } };
   }
 
-  private attachTerminal(action: Extract<CanvasAction, { type: "terminal.attach" | "terminal.observe" | "terminal.write" | "terminal.takeover" }>) {
-    const sessionId = action.payload.sessionId;
-    const session = this.terminalRegistry?.getSession(sessionId);
-    if (!session) throw new CanvasNotFoundError(sessionId);
-    return Promise.resolve({ ok: true as const, result: { kind: "terminal_session", sessionId, state: session.state } });
+  private async attachTerminal(record: CanvasRecord, action: Extract<CanvasAction, { type: "terminal.attach" | "terminal.observe" | "terminal.write" | "terminal.takeover" }>) {
+    if (!this.terminalRuntime) throw new CanvasConfigurationError("terminal runtime is required");
+    const ref = action.payload.terminalRef;
+    this.assertTerminalRefBound(record, action.nodeId, ref);
+    const workspace = (await this.terminalRuntime.listWorkspaces())
+      .find((candidate) => candidate.id === ref.workspaceId);
+    if (workspace) this.assertWorkspaceInCanvasScope(record, workspace);
+    const tab = workspace?.tabs.find((candidate) => candidate.id === ref.tabId);
+    if (!tab) throw new CanvasNotFoundError(ref.tabId);
+    if (action.type === "terminal.write") await this.terminalRuntime.writeInput(ref, action.payload.input);
+    return { ok: true as const, result: { kind: "terminal_tab", terminalRef: ref, state: tab.status } };
   }
 
-  private killTerminal(action: Extract<CanvasAction, { type: "terminal.kill" }>) {
-    const sessionId = action.payload.sessionId;
-    this.terminalRegistry?.destroy(sessionId);
-    return Promise.resolve({ ok: true as const, result: { kind: "terminal_session", sessionId, state: "killed" } });
+  private async killTerminal(record: CanvasRecord, action: Extract<CanvasAction, { type: "terminal.kill" }>) {
+    if (!this.terminalRuntime) throw new CanvasConfigurationError("terminal runtime is required");
+    this.assertTerminalRefBound(record, action.nodeId, action.payload.terminalRef);
+    const workspace = (await this.terminalRuntime.listWorkspaces())
+      .find((candidate) => candidate.id === action.payload.terminalRef.workspaceId);
+    if (!workspace || !workspace.tabs.some((tab) => tab.id === action.payload.terminalRef.tabId)) {
+      throw new CanvasNotFoundError(action.payload.terminalRef.tabId);
+    }
+    this.assertWorkspaceInCanvasScope(record, workspace);
+    await this.terminalRuntime.terminateTab(action.payload.terminalRef);
+    return { ok: true as const, result: { kind: "terminal_tab", terminalRef: action.payload.terminalRef, state: "killed" } };
+  }
+
+  private assertTerminalRefBound(record: CanvasRecord, nodeId: string, ref: TerminalRef): void {
+    const node = record.nodes.find((candidate) => (
+      typeof candidate === "object" && candidate !== null && (candidate as { id?: unknown }).id === nodeId
+    ));
+    const boundRef = terminalRefFromCanvasNode(node);
+    if (
+      !boundRef
+      || boundRef.workspaceId !== ref.workspaceId
+      || boundRef.tabId !== ref.tabId
+    ) {
+      throw new CanvasNotFoundError(nodeId);
+    }
+  }
+
+  private assertTerminalOwner(userId: string): void {
+    if (!this.terminalOwnerIds.includes(userId)) throw new CanvasNotFoundError("terminal");
+  }
+
+  private assertWorkspaceInCanvasScope(record: CanvasRecord, workspace: TerminalWorkspace): void {
+    if (!this.workspaceInCanvasScope(record, workspace)) throw new CanvasNotFoundError(workspace.id);
+  }
+
+  private workspaceInCanvasScope(record: CanvasRecord, workspace: TerminalWorkspace): boolean {
+    const projectId = record.scopeRef && typeof record.scopeRef.projectId === "string"
+      ? record.scopeRef.projectId
+      : undefined;
+    if (projectId) {
+      return workspace.scope === "project" && workspace.projectId === projectId;
+    }
+    return workspace.scope === "main";
   }
 
   private async previewHealthCheck(action: Extract<CanvasAction, { type: "preview.healthCheck" }>) {

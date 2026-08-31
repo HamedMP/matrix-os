@@ -12,14 +12,13 @@ import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
+import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
+import { CanonicalChatIdSchema, TerminalRefSchema, TerminalTabClientFrameSchema } from "@matrix-os/contracts";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
-import { logTerminalDebug } from "./terminal-debug.js";
-import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import {
   createConversationLifecycle,
@@ -61,11 +60,8 @@ import {
 } from "./workspace-session-orchestrator.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
-import { createZellijRuntime } from "./zellij-runtime.js";
-import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
 import { resolveUserSystemdTerminalActivation } from "./terminal-user-systemd-activation.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
-import { reconcilePendingShellSessionDeletions } from "./shell/session-deletion-reconciler.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -260,11 +256,6 @@ import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
 import { ChatRepository } from "./chat/repository.js";
-import {
-  createGatewayChatTerminalWiring,
-  parseTerminalSizingParams,
-} from "./chat/terminal-wiring.js";
-import { authorizeStandaloneTerminalAttach } from "./chat/terminal-authorization.js";
 import { MessagingKyselyRepository } from "./messages/repository.js";
 import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
@@ -296,20 +287,15 @@ import {
 import {
   createShellRoutes,
   SHELL_SESSION_CREATE_RATE_LIMIT,
-  LayoutStore,
-  ScrollbackStore,
   ShellPreferencesStore,
   createShellCommandRunner,
   createTerminalAcceptanceRoutes,
   createTerminalWindowLayoutRoutes,
-  createShellSessionReaper,
-  createShellWsHandler,
-  createZellijAdapter,
   createUserSystemdTerminalRuntime,
-  createUserSystemdZellijAdapter,
   loadInstalledTerminalRuntimeGeneration,
-  ShellRegistry as ZellijShellRegistry,
   TerminalWindowLayoutStore,
+  createTerminalWorkspaceRoutes,
+  terminalRuntimeOwnerAccess,
   shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
@@ -399,20 +385,6 @@ export async function createGateway(config: GatewayConfig) {
   });
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
-  const terminalSessionsPersistPath = join(homePath, "system", "terminal-sessions.json");
-  // PTY session handles are process-local and cannot survive a gateway restart.
-  // Zellij shell sessions are the canonical durable terminal surface; reset this
-  // legacy compatibility list on every boot so old PTY ids cannot diverge from
-  // the zellij session list used by the shell and CLI.
-  await resetVolatilePtySessionList(terminalSessionsPersistPath).catch((err: unknown) => {
-    logBestEffortFailure("Failed to reset volatile PTY terminal sessions", err);
-  });
-  const sessionRegistry = new SessionRegistry(homePath, {
-    maxSessions: 10,
-    bufferSize: 1024 * 1024,
-    persistPath: terminalSessionsPersistPath,
-    autoRestore: false,
-  });
   const appDir = process.env.MATRIX_APP_DIR ?? process.cwd();
   const userSystemdTerminalsEnabled = await resolveUserSystemdTerminalActivation({
     appDir,
@@ -453,92 +425,17 @@ export async function createGateway(config: GatewayConfig) {
     terminalOrphanSweepTimer = setInterval(runTerminalOrphanSweep, 15 * 60 * 1_000);
     terminalOrphanSweepTimer.unref?.();
   }
-  const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
-    ? createUserSystemdZellijRuntime({
-        homePath,
-        generation: terminalRuntimeGeneration,
-        controller: userSystemdTerminalController,
-      })
-    : createZellijRuntime({ homePath });
-  const workspaceSessionRuntimeBridge = createSessionRuntimeBridge({
-    homePath,
-    registry: sessionRegistry,
-    zellijRuntime: workspaceZellijRuntime,
+  const terminalWorkspaceRuntime = new TerminalRuntimeSocketClient({
+    socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
   });
-  const shellScrollbackStore = new ScrollbackStore({ homePath });
+  const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
-  const zellijAdapter = userSystemdTerminalController && terminalRuntimeGeneration
-    ? createUserSystemdZellijAdapter({
-        homePath,
-        generation: terminalRuntimeGeneration,
-        controller: userSystemdTerminalController,
-      })
-    : createZellijAdapter({ homePath });
-  const chatZellijAdapter = userSystemdTerminalController && terminalRuntimeGeneration
-    ? createUserSystemdZellijAdapter({
-        homePath,
-        generation: terminalRuntimeGeneration,
-        controller: userSystemdTerminalController,
-        includeWorkspaceSessions: true,
-      })
-    : zellijAdapter;
-  const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
   const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
-  const zellijShellRegistry = new ZellijShellRegistry({
-    homePath,
-    adapter: zellijAdapter,
-    scrollbackStore: shellScrollbackStore,
-    preferencesStore: shellPreferencesStore,
-  });
-  const pendingShellDeletionReconciliation = await reconcilePendingShellSessionDeletions({
-    registry: zellijShellRegistry,
-    lifecycle: terminalWindowLayoutStore,
-  });
-  if (pendingShellDeletionReconciliation.completed > 0 || pendingShellDeletionReconciliation.failed > 0) {
-    console.info("[terminal-lifecycle]", {
-      event: "terminal.session.pending_deletions.reconciled",
-      ...pendingShellDeletionReconciliation,
-    });
-  }
-  const chatZellijShellRegistry = chatZellijAdapter === zellijAdapter
-    ? zellijShellRegistry
-    : new ZellijShellRegistry({
-        homePath,
-        adapter: chatZellijAdapter,
-        persistPath: join(homePath, "system", "chat-shell-sessions.json"),
-        scrollbackStore: shellScrollbackStore,
-      });
   const symphonyRunner = createSymphonyRunner({ homePath });
   const initialSymphonyPort = await resolveInitialSymphonyPort(symphonyRunner);
   if (initialSymphonyPort) {
     allowedOriginController.updateSymphonyPort(initialSymphonyPort);
   }
-  const zellijShellWs = createShellWsHandler({
-    registry: zellijShellRegistry,
-    adapter: zellijAdapter,
-    isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
-    scrollbackStore: shellScrollbackStore,
-    persistCanonicalSize: (name, size) => {
-      void zellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
-        console.warn("[shell] canonical size persist failed:", err instanceof Error ? err.message : String(err));
-      });
-    },
-  });
-  const chatZellijShellWs = chatZellijShellRegistry === zellijShellRegistry
-    ? zellijShellWs
-    : createShellWsHandler({
-        registry: chatZellijShellRegistry,
-        adapter: chatZellijAdapter,
-        isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
-        scrollbackStore: shellScrollbackStore,
-        persistCanonicalSize: (name, size) => {
-          void chatZellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
-            console.warn("[shell] Chat canonical size persist failed:", err instanceof Error ? err.message : String(err));
-          });
-        },
-      });
-  const shellSessionReaper = createShellSessionReaper({ registry: zellijShellRegistry });
-  shellSessionReaper.start();
   const forwardTunnelHub = createForwardTunnelHub();
   // One distinct id for every gateway telemetry event so all events on a
   // dev gateway without owner env vars land under the same person.
@@ -694,6 +591,9 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
     (id): id is string => Boolean(id),
   );
+  const terminalRuntimeOwnerIds = codingAgentOwnerIds.length > 0
+    ? codingAgentOwnerIds
+    : process.env.NODE_ENV === "production" ? [] : ["default"];
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentWorktreeManager = createWorktreeManager({ homePath });
@@ -728,9 +628,7 @@ export async function createGateway(config: GatewayConfig) {
       homePath,
       worktreeManager: codingAgentWorktreeManager,
       agentLauncher: agentCredentialLauncher,
-      zellijRuntime: workspaceZellijRuntime,
-      inputWriter: (sessionId, input, signal) =>
-        workspaceZellijRuntime.sendInput(sessionId, input, signal),
+      terminalRuntime: terminalWorkspaceRuntime,
     });
     codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       homePath,
@@ -807,7 +705,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
-    terminalRegistry: zellijShellRegistry,
+    terminalRegistry: { list: () => terminalWorkspaceRuntime.listWorkspaces() },
     providerRegistry: codingAgentProviderRegistry,
     threads: codingAgentThreadStore,
     projects: codingAgentProjectSummaryStore,
@@ -956,7 +854,11 @@ export async function createGateway(config: GatewayConfig) {
       await canvasRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
-      canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
+      canvasService = new CanvasService(canvasRepository, {
+        terminalRuntime: terminalWorkspaceRuntime,
+        terminalOwnerIds: terminalRuntimeOwnerIds,
+        homePath,
+      });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       await messagingRepository.bootstrap();
       canvasSubscriptionHub = new CanvasSubscriptionHub({
@@ -1873,23 +1775,51 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellCommandRunner = createShellCommandRunner({ homePath });
-  const chatTerminalWiring = createGatewayChatTerminalWiring({
-    repository: chatRepository,
-    getPrincipal: (c) => requireRequestPrincipal(c),
-    registry: chatZellijShellRegistry,
-    shellWs: chatZellijShellWs,
-    onUnexpectedSendFailure: logUnexpectedWsSendFailure,
-  });
+  const retiredShellRegistry = {
+    list: () => terminalWorkspaceRuntime.listWorkspaces(),
+    create: async () => { throw new Error("Legacy terminal sessions are retired"); },
+    delete: async () => { throw new Error("Legacy terminal sessions are retired"); },
+  };
+  const chatBoundShellRouteDeps = chatRepository
+    ? {
+        getPrincipal: (c: Context) => requireRequestPrincipal(c),
+        listChatBoundSessionIds: (principal: RequestPrincipal, sessionIds: readonly string[]) =>
+          chatRepository!.listBoundTerminalSessionIds(
+            { type: "personal", ownerId: principal.userId },
+            sessionIds,
+          ),
+      }
+    : {};
+  const chatBoundWorkspaceRouteDeps = chatRepository
+    ? {
+        listChatBoundSessionIds: (ownerScope: { type: "user" | "org"; id: string }, sessionIds: readonly string[]) =>
+          chatRepository!.listBoundTerminalSessionIds(
+            ownerScope.type === "org"
+              ? { type: "organization", ownerId: ownerScope.id }
+              : { type: "personal", ownerId: ownerScope.id },
+            sessionIds,
+          ),
+      }
+    : {};
   const shellRouteDeps = {
     homePath,
-    registry: zellijShellRegistry,
+    registry: retiredShellRegistry,
     preferences: shellPreferencesStore,
-    workspace: zellijAdapter,
-    layouts: shellLayoutStore,
-    shellBackend: zellijAdapter,
-    shellThemeConfig: zellijAdapter,
+    shellBackend: {
+      health: async () => {
+        try {
+          await terminalWorkspaceRuntime.listWorkspaces();
+          return { ok: true as const, code: "ok" as const };
+        } catch (error) {
+          console.error(
+            "[gateway] terminal runtime health check failed",
+            error instanceof Error ? error.name : "unknown_error",
+          );
+          return { ok: false as const, code: "zellij_failed" as const };
+        }
+      },
+    },
     commandRunner: shellCommandRunner,
-    terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
     sessionLifecycle: terminalWindowLayoutStore,
     chatTerminals: {
@@ -1919,7 +1849,7 @@ export async function createGateway(config: GatewayConfig) {
         }).bind(principal, input);
       },
     },
-    ...chatTerminalWiring.shellRouteDeps,
+    ...chatBoundShellRouteDeps,
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();
   const systemActivityHistory = new ActivityHistoryStore({ homePath });
@@ -1942,6 +1872,13 @@ export async function createGateway(config: GatewayConfig) {
     readPolicy: () => systemActivityPolicy.read(),
     savePolicy: (policy) => systemActivityPolicy.save(policy),
     readHistory: (query) => systemActivityHistory.list(query),
+  }));
+  app.route("/api/terminal", createTerminalWorkspaceRoutes({
+    runtime: terminalWorkspaceRuntime,
+    homePath,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    chatTerminals: shellRouteDeps.chatTerminals,
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
   app.route(
@@ -2503,7 +2440,128 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
-  chatTerminalWiring.registerSessionRoute(app, upgradeWebSocket);
+  app.get(
+    "/ws/terminal/tab",
+    upgradeWebSocket((c) => {
+      const refResult = TerminalRefSchema.safeParse({
+        workspaceId: c.req.query("workspaceId"),
+        tabId: c.req.query("tabId"),
+      });
+      const clientResult = z.enum(["browser", "canvas", "desktop", "electron", "mobile", "cli"])
+        .safeParse(c.req.query("client"));
+      const chatResult = c.req.query("chat") === undefined
+        ? { success: true as const, data: undefined }
+        : CanonicalChatIdSchema.safeParse(c.req.query("chat"));
+      const fromSeqRaw = c.req.query("fromSeq") ?? "0";
+      const colsRaw = c.req.query("cols") ?? "120";
+      const rowsRaw = c.req.query("rows") ?? "36";
+      const fromSeq = /^\d+$/.test(fromSeqRaw) ? Number(fromSeqRaw) : Number.NaN;
+      const cols = /^\d+$/.test(colsRaw) ? Number(colsRaw) : Number.NaN;
+      const rows = /^\d+$/.test(rowsRaw) ? Number(rowsRaw) : Number.NaN;
+      const validNumbers = Number.isSafeInteger(fromSeq) && fromSeq >= 0
+        && Number.isSafeInteger(cols) && cols >= 20 && cols <= 500
+        && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
+      let stream: ReturnType<TerminalRuntimeSocketClient["attach"]> | null = null;
+      let closed = false;
+      const pending: unknown[] = [];
+
+      return {
+        onOpen(_event, ws) {
+          if (!refResult.success || !clientResult.success || !chatResult.success || !validNumbers) {
+            ws.send(JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" }));
+            ws.close();
+            return;
+          }
+          void (async () => {
+            const principal = requireRequestPrincipal(c);
+            if (terminalRuntimeOwnerAccess(principal, terminalRuntimeOwnerIds) !== "allowed") {
+              throw new Error("Terminal runtime owner mismatch");
+            }
+            if (chatRepository) {
+              const owner = { type: "personal" as const, ownerId: principal.userId };
+              const refKey = `${refResult.data.workspaceId}:${refResult.data.tabId}`;
+              if (chatResult.data) {
+                const binding = await chatRepository.getTerminalBinding(owner, chatResult.data, refKey);
+                if (!binding) throw new Error("Chat terminal attachment denied");
+              } else {
+                const bound = await chatRepository.listBoundTerminalSessionIds(owner, [refKey]);
+                if (bound.includes(refKey)) throw new Error("Chat terminal attachment requires Chat context");
+              }
+            }
+            if (closed) return;
+            const mode = clientResult.data === "cli" ? "hard" as const : "soft" as const;
+            captureTerminalEvent("attach-request", { client: clientResult.data, mode });
+            stream = terminalWorkspaceRuntime.attach({
+              ref: refResult.data,
+              viewerId: `${clientResult.data}:${randomUUID()}`,
+              fromSeq,
+              mode,
+              size: { cols, rows },
+              onFrame: (frame) => {
+                if (closed) return;
+                try { ws.send(JSON.stringify(frame)); }
+                catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
+              },
+              onClose: () => { if (!closed) ws.close(); },
+              onError: (error) => {
+                captureTerminalEvent("runtime-error", { client: clientResult.data });
+                logBestEffortFailure("Terminal tab runtime stream failed", error);
+                if (!closed) {
+                  try { ws.send(JSON.stringify({ type: "error", code: "runtime_unavailable", message: "Terminal unavailable" })); }
+                  catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
+                  ws.close();
+                }
+              },
+            });
+            for (const frame of pending.splice(0)) stream.send(TerminalTabClientFrameSchema.parse(frame));
+          })().catch((error: unknown) => {
+            logBestEffortFailure("Terminal tab authorization failed", error);
+            if (!closed) {
+              try { ws.send(JSON.stringify({ type: "error", code: "attach_failed", message: "Shell attach failed" })); }
+              catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
+              ws.close();
+            }
+          });
+        },
+        onMessage(event, ws) {
+          const raw = shellWsMessageDataToString(event.data);
+          if (raw === null) return;
+          let frame: unknown;
+          try { frame = JSON.parse(raw); }
+          catch (error) {
+            logUnexpectedJsonParseFailure("Failed to parse terminal tab WebSocket message", error);
+            ws.close();
+            return;
+          }
+          const parsed = TerminalTabClientFrameSchema.safeParse(frame);
+          if (!parsed.success) {
+            ws.send(JSON.stringify({ type: "error", code: "invalid_message", message: "Invalid message" }));
+            ws.close();
+            return;
+          }
+          if (stream) stream.send(parsed.data);
+          else if (pending.length < 32) pending.push(parsed.data);
+          else ws.close();
+        },
+        onClose() {
+          if (stream) captureTerminalEvent("close", { client: clientResult.success ? clientResult.data : undefined });
+          closed = true;
+          pending.splice(0);
+          stream?.close();
+          stream = null;
+        },
+      };
+    }),
+  );
+
+  const clientUpgradeRequired = (c: Context) => c.json({
+    error: "client_upgrade_required",
+    message: "Upgrade Matrix OS to use terminal workspaces.",
+  }, 426);
+  app.get("/ws/terminal/session", clientUpgradeRequired);
+  app.get("/ws/terminal", clientUpgradeRequired);
+
+
 
   if (codingAgentThreadStream) {
     app.get(
@@ -2610,326 +2668,6 @@ export async function createGateway(config: GatewayConfig) {
       }),
     );
   }
-
-  app.get(
-    "/ws/terminal",
-    upgradeWebSocket((c) => {
-      const cwdParam = c.req.query("cwd");
-      const namedSession = c.req.query("session");
-      const fromSeqParam = c.req.query("fromSeq");
-      const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
-      const exclusiveLease = c.req.query("lease") === "exclusive";
-      let handle: SessionHandle | null = null;
-      let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
-      let namedSocketClosed = false;
-      let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
-      let autoCreatedSessionId: string | null = null;
-
-      const cleanupAutoCreatedSession = (destroyAutoCreated = true) => {
-        logTerminalDebug("ws-cleanup", {
-          destroyAutoCreated,
-          handleSessionId: handle?.sessionId ?? null,
-          autoCreatedSessionId,
-        });
-        if (handle) {
-          const shouldDestroyAutoCreated = autoCreatedSessionId === handle.sessionId;
-          handle.detach();
-          handle = null;
-          if (destroyAutoCreated && shouldDestroyAutoCreated && autoCreatedSessionId) {
-            sessionRegistry.destroy(autoCreatedSessionId);
-          }
-        } else if (destroyAutoCreated && autoCreatedSessionId) {
-          sessionRegistry.destroy(autoCreatedSessionId);
-        }
-        autoCreatedSessionId = null;
-      };
-
-      return {
-        onOpen(_evt, ws) {
-          logTerminalDebug("ws-open", {
-            cwdParam: cwdParam ?? null,
-            namedSession: namedSession ?? null,
-          });
-          captureTerminalEvent("open", {
-            hasCwdParam: Boolean(cwdParam),
-            namedSession: Boolean(namedSession),
-          });
-          const sendJson = (msg: PtyServerMessage) => {
-            try {
-              ws.send(JSON.stringify(msg));
-            } catch (err: unknown) {
-              logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
-            }
-          };
-
-          if (namedSession) {
-            const fromSeq =
-              typeof fromSeqParam === "string" && /^\d+$/.test(fromSeqParam)
-                ? Number(fromSeqParam)
-                : 0;
-            void (async () => {
-              if (!chatRepository) {
-                throw new Error("Chat terminal repository unavailable");
-              }
-              const principal = requireRequestPrincipal(c);
-              if (!await authorizeStandaloneTerminalAttach({
-                repository: chatRepository,
-                owner: { type: "personal", ownerId: principal.userId },
-                sessionId: namedSession,
-              })) {
-                throw new Error("Standalone terminal attachment denied");
-              }
-              return zellijShellWs.open({
-                ws,
-                session: namedSession,
-                fromSeq,
-                clientClass: sizingParams.clientClass,
-                declaredSize: sizingParams.declaredSize,
-                exclusiveLease,
-              });
-            })().then((session) => {
-              if (namedSocketClosed) {
-                session.onClose();
-                return;
-              }
-              namedHandle = session;
-            }).catch((err: unknown) => {
-              console.warn("[shell] zellij terminal attach failed:", err instanceof Error ? err.message : String(err));
-              captureTerminalEvent("named-attach-failed", {
-                namedSession: true,
-                socketClosed: namedSocketClosed,
-              });
-              if (namedSocketClosed) {
-                return;
-              }
-              try {
-                ws.send(JSON.stringify({
-                  type: "error",
-                  code: "attach_failed",
-                  message: "Shell attach failed",
-                }));
-              } catch (sendErr: unknown) {
-                logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
-              }
-              ws.close();
-            });
-            return;
-          }
-
-          // Backward compat: auto-create session if no attach message within 100ms
-          if (cwdParam && cwdParam.length >= 1 && cwdParam.length <= 4096) {
-            autoCreateTimer = setTimeout(() => {
-              autoCreateTimer = null;
-              if (handle) return;
-              let sessionId: string | null = null;
-              try {
-                sessionId = sessionRegistry.create(cwdParam);
-                logTerminalDebug("auto-create-session", { cwd: cwdParam, sessionId });
-                autoCreatedSessionId = sessionId;
-                handle = sessionRegistry.attach(sessionId);
-                if (handle) {
-                  handle.subscribe(sendJson);
-                  sendJson({ type: "attached", sessionId, state: "running" });
-                  handle.replay(0);
-                } else {
-                  sessionRegistry.destroy(sessionId);
-                  autoCreatedSessionId = null;
-                }
-              } catch (err: unknown) {
-                if (handle) {
-                  handle.detach();
-                  handle = null;
-                }
-                if (sessionId) {
-                  sessionRegistry.destroy(sessionId);
-                  autoCreatedSessionId = null;
-                }
-                console.error("Terminal session create error:", err);
-                captureTerminalEvent("auto-create-failed", {
-                  hasCwdParam: Boolean(cwdParam),
-                });
-                sendJson({ type: "error", message: "Failed to create session" });
-              }
-            }, 100);
-          }
-        },
-
-        onMessage(evt, ws) {
-          const raw = shellWsMessageDataToString(evt.data);
-          if (raw === null) {
-            return;
-          }
-          if (namedSession) {
-            namedHandle?.onMessage(raw);
-            return;
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(raw);
-          } catch (err: unknown) {
-            logUnexpectedJsonParseFailure("Failed to parse terminal WebSocket message", err);
-            captureTerminalEvent("invalid-json");
-            ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
-            return;
-          }
-
-          const result = ClientMessageSchema.safeParse(parsed);
-          if (!result.success) {
-            captureTerminalEvent("invalid-message");
-            ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
-            return;
-          }
-
-          const msg = result.data;
-          const sendJson = (m: PtyServerMessage) => {
-            try {
-              ws.send(JSON.stringify(m));
-            } catch (err: unknown) {
-              logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
-            }
-          };
-
-          switch (msg.type) {
-            case "ping":
-              ws.send(JSON.stringify({ type: "pong" }));
-              break;
-            case "attach": {
-              logTerminalDebug("ws-attach-request", {
-                mode: "cwd" in msg ? "create" : "reattach",
-                cwd: "cwd" in msg ? msg.cwd : null,
-                sessionId: "sessionId" in msg ? msg.sessionId : null,
-                fromSeq: "fromSeq" in msg ? (msg.fromSeq ?? 0) : null,
-              });
-              captureTerminalEvent("attach-request", {
-                mode: "cwd" in msg ? "create" : "reattach",
-                hasFromSeq: "fromSeq" in msg && msg.fromSeq !== undefined,
-              });
-              if (autoCreateTimer) {
-                clearTimeout(autoCreateTimer);
-                autoCreateTimer = null;
-              }
-              if (handle) {
-                cleanupAutoCreatedSession();
-              }
-
-              if ("cwd" in msg) {
-                let sessionId: string | null = null;
-                try {
-                  sessionId = sessionRegistry.create(msg.cwd, msg.shell);
-                  logTerminalDebug("create-session", {
-                    cwd: msg.cwd,
-                    shell: msg.shell ?? null,
-                    sessionId,
-                  });
-                  autoCreatedSessionId = null;
-                  handle = sessionRegistry.attach(sessionId);
-                  if (handle) {
-                    handle.subscribe(sendJson);
-                    sendJson({ type: "attached", sessionId, state: "running" });
-                    handle.replay(0);
-                  } else {
-                    sessionRegistry.destroy(sessionId);
-                  }
-                } catch (err: unknown) {
-                  if (handle) {
-                    handle.detach();
-                    handle = null;
-                  }
-                  if (sessionId) {
-                    sessionRegistry.destroy(sessionId);
-                  }
-                  console.error("Terminal session create error:", err);
-                  captureTerminalEvent("create-failed", {
-                    hasShell: Boolean(msg.shell),
-                  });
-                  sendJson({ type: "error", message: "Failed to create session" });
-                }
-              } else {
-                try {
-                  handle = sessionRegistry.attach(msg.sessionId);
-                  if (handle) {
-                    logTerminalDebug("attach-existing-success", { sessionId: msg.sessionId });
-                    const info = sessionRegistry.getSession(msg.sessionId);
-                    autoCreatedSessionId = null;
-                    handle.subscribe(sendJson);
-                    sendJson({
-                      type: "attached",
-                      sessionId: msg.sessionId,
-                      state: info?.state ?? "running",
-                      exitCode: info?.exitCode,
-                    });
-                    handle.replay(msg.fromSeq ?? 0);
-                  } else {
-                    logTerminalDebug("attach-existing-miss", { sessionId: msg.sessionId });
-                    captureTerminalEvent("attach-miss");
-                    sendJson({ type: "error", message: "Session not found" });
-                  }
-                } catch (err: unknown) {
-                  if (handle) {
-                    handle.detach();
-                    handle = null;
-                  }
-                  console.error("Terminal session attach error:", err);
-                  captureTerminalEvent("attach-failed");
-                  sendJson({ type: "error", message: "Failed to attach session" });
-                }
-              }
-              break;
-            }
-            case "input":
-            case "resize":
-              if (handle) {
-                handle.send(msg);
-              }
-              break;
-            case "detach":
-              if (handle) {
-                logTerminalDebug("ws-detach", { sessionId: handle.sessionId });
-                captureTerminalEvent("detach");
-                handle.detach();
-                handle = null;
-              }
-              break;
-            case "destroy":
-              if (handle) {
-                const sessionId = handle.sessionId;
-                logTerminalDebug("ws-destroy", { sessionId });
-                captureTerminalEvent("destroy");
-                handle.detach();
-                handle = null;
-                sessionRegistry.destroy(sessionId);
-                if (autoCreatedSessionId === sessionId) {
-                  autoCreatedSessionId = null;
-                }
-              }
-              break;
-          }
-        },
-
-        onClose() {
-          namedSocketClosed = true;
-          if (namedHandle) {
-            namedHandle.onClose();
-            namedHandle = null;
-          }
-          logTerminalDebug("ws-close", {
-            handleSessionId: handle?.sessionId ?? null,
-            autoCreatedSessionId,
-          });
-          captureTerminalEvent("close", {
-            hadHandle: Boolean(handle),
-            hadAutoCreatedSession: Boolean(autoCreatedSessionId),
-            namedSession: Boolean(namedSession),
-          });
-          if (autoCreateTimer) {
-            clearTimeout(autoCreateTimer);
-            autoCreateTimer = null;
-          }
-          cleanupAutoCreatedSession(false);
-        },
-      };
-    }),
-  );
 
   // --- Onboarding WebSocket ---
   const onboardingHandler = createOnboardingHandler({
@@ -3071,7 +2809,7 @@ export async function createGateway(config: GatewayConfig) {
   const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
   app.route("/", createWorkspaceRoutes({
     homePath,
-    zellijRuntime: workspaceZellijRuntime,
+    terminalRuntime: terminalWorkspaceRuntime,
     agentLauncher: agentCredentialLauncher,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     eventStore: workspaceEventStore,
@@ -3079,10 +2817,8 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     codingAgentThreadStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-    ...chatTerminalWiring.workspaceRouteDeps,
+    ...chatBoundWorkspaceRouteDeps,
   }));
-  // Workspace sessions own /api/sessions. Keep the legacy shell mount after
-  // that authoritative route so old terminal subroutes remain reachable.
   app.route("/api", createShellRoutes(shellRouteDeps));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
     upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
@@ -3091,7 +2827,6 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     eventPublisher: workspaceEventPublisher,
     codingAgentThreadStore,
-    zellijRuntime: workspaceZellijRuntime,
   }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
@@ -3133,8 +2868,6 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Failed to save layout" }, 500);
     }
   });
-
-  registerTerminalSessionRoutes(app, { homePath, sessionRegistry });
 
   app.post("/api/message", apiMessageBodyLimit, async (c) => {
     let rawBody: unknown;
@@ -4431,7 +4164,7 @@ export async function createGateway(config: GatewayConfig) {
     },
     memory: {
       rssBytes: process.memoryUsage.rss(),
-      pendingPersistBytes: zellijShellWs.pendingPersistBytes(),
+      pendingPersistBytes: 0,
     },
     browserIde: {
       status: process.env.MATRIX_CODE_SERVER_PORT ? "configured" : "disabled",
@@ -4560,10 +4293,6 @@ export async function createGateway(config: GatewayConfig) {
       await channelManager.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
-      shellSessionReaper.stop();
-      if (chatZellijShellWs !== zellijShellWs) await chatZellijShellWs.dispose();
-      await zellijShellWs.dispose();
-      await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();
       await homeMirrorStart?.catch((err: unknown) => {
