@@ -389,17 +389,7 @@ export class ShellRegistry {
         ...(cwd ? { cwd } : {}),
       };
       file.sessions[safeName] = session;
-      try {
-        await this.write(file);
-      } catch (err: unknown) {
-        await this.options.adapter.deleteSession(safeName, { force: true }).catch((rollbackErr: unknown) => {
-          console.warn(
-            "[shell] failed to rollback recovered zellij session:",
-            rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
-          );
-        });
-        throw err;
-      }
+      await this.write(file);
       return this.decorateSession(session, file);
     });
   }

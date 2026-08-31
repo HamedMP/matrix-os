@@ -575,7 +575,23 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       releaseRetainedCreatePty(name, { kill: true });
       const args = ["delete-session", name];
       if (options.force) args.push("--force");
-      await run(args);
+      try {
+        await run(args);
+      } catch (error: unknown) {
+        if (!options.force) throw error;
+        let sessions: string;
+        try {
+          sessions = await run(["list-sessions", "--no-formatting"]);
+        } catch (listError: unknown) {
+          if (isNoActiveSessionsFailure(listError)) return;
+          throw error;
+        }
+        const runtimeStillExists = sessions
+          .split(/\r?\n/)
+          .map((line) => line.trim().split(/\s+/)[0])
+          .some((sessionName) => sessionName === name);
+        if (runtimeStillExists) throw error;
+      }
     },
     async renameSession(name, nextName) {
       await run(["--session", name, "action", "rename-session", nextName]);

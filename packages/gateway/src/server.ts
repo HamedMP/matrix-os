@@ -71,6 +71,7 @@ import { createZellijRuntime } from "./zellij-runtime.js";
 import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
 import { resolveUserSystemdTerminalActivation } from "./terminal-user-systemd-activation.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
+import { reconcilePendingShellSessionDeletions } from "./shell/session-deletion-reconciler.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -531,6 +532,16 @@ export async function createGateway(config: GatewayConfig) {
     scrollbackStore: shellScrollbackStore,
     preferencesStore: shellPreferencesStore,
   });
+  const pendingShellDeletionReconciliation = await reconcilePendingShellSessionDeletions({
+    registry: zellijShellRegistry,
+    lifecycle: terminalWindowLayoutStore,
+  });
+  if (pendingShellDeletionReconciliation.completed > 0 || pendingShellDeletionReconciliation.failed > 0) {
+    console.info("[terminal-lifecycle]", {
+      event: "terminal.session.pending_deletions.reconciled",
+      ...pendingShellDeletionReconciliation,
+    });
+  }
   const chatZellijShellRegistry = chatZellijAdapter === zellijAdapter
     ? zellijShellRegistry
     : new ZellijShellRegistry({
