@@ -44,11 +44,38 @@ beforeEach(() => {
   electronMock.shell.openExternal.mockClear();
   electronMock.webContents.setWindowOpenHandler.mockClear();
   electronMock.webContents.loadURL.mockClear();
+  electronMock.webContents.isDestroyed.mockReset();
+  electronMock.webContents.isDestroyed.mockReturnValue(false);
+  electronMock.webContents.close.mockClear();
   electronMock.webContents.session.setPermissionCheckHandler.mockClear();
   electronMock.webContents.session.setPermissionRequestHandler.mockClear();
 });
 
 describe("createWebContentsView", () => {
+  it("detaches safely after the parent window has already been destroyed", () => {
+    let windowDestroyed = false;
+    const removeChildView = vi.fn(() => {
+      if (windowDestroyed) throw new TypeError("Object has been destroyed");
+    });
+    const view = createWebContentsView({
+      window: {
+        isDestroyed: () => windowDestroyed,
+        contentView: { addChildView: vi.fn(), removeChildView },
+      } as never,
+      partition: "persist:hosted-shell",
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+    });
+
+    view.attach();
+    windowDestroyed = true;
+
+    expect(() => view.detach()).not.toThrow();
+    expect(() => view.destroy()).not.toThrow();
+    expect(removeChildView).not.toHaveBeenCalled();
+    expect(electronMock.webContents.close).toHaveBeenCalledOnce();
+  });
+
   it("denies browser permissions for the trusted code editor surface", () => {
     createWebContentsView({
       window: {

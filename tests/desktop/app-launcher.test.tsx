@@ -93,15 +93,24 @@ describe("AppLauncher", () => {
     });
   });
 
-  it("puts Create app first and includes every first-class Desktop app", () => {
+  it("puts Create app and the other OS view first, then every first-class Electron Desktop app", () => {
     const onCreateApp = vi.fn();
-    render(<AppLauncher presentation="launchpad" onCreateApp={onCreateApp} />);
+    const onSwitchOsView = vi.fn();
+    render(
+      <AppLauncher
+        presentation="launchpad"
+        osViewMode="desktop"
+        onCreateApp={onCreateApp}
+        onSwitchOsView={onSwitchOsView}
+      />,
+    );
 
     const launcher = screen.getByTestId("desktop-launcher-grid");
     const names = Array.from(launcher.querySelectorAll("button"))
       .map((button) => button.getAttribute("aria-label"));
-    expect(names.slice(0, 11)).toEqual([
+    expect(names.slice(0, 12)).toEqual([
       "Create app",
+      "Canvas",
       "Chat",
       "Terminal",
       "Files",
@@ -116,6 +125,27 @@ describe("AppLauncher", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Create app" }));
     expect(onCreateApp).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Canvas" }));
+    expect(onSwitchOsView).toHaveBeenCalledWith("canvas");
+  });
+
+  it("offers Desktop from Canvas and keeps the OS-view destination launcher-only", () => {
+    const onSwitchOsView = vi.fn();
+    const onAddToDesktop = vi.fn();
+    render(
+      <AppLauncher
+        presentation="launchpad"
+        osViewMode="canvas"
+        onSwitchOsView={onSwitchOsView}
+        onAddToDesktop={onAddToDesktop}
+      />,
+    );
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Desktop" }));
+    expect(screen.queryByRole("menuitem", { name: "Add Desktop to Desktop" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Desktop" }));
+    expect(onSwitchOsView).toHaveBeenCalledWith("desktop");
+    expect(onAddToDesktop).not.toHaveBeenCalled();
   });
 
   it("adds a launcher app back to the Desktop from its context menu", () => {

@@ -1133,3 +1133,13 @@ export const ReviewSnapshotSchema = z.object({
 }).strict();
 
 export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
+
+export {
+  OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_LABELS,
+  OS_VIEW_MODES,
+  isOsViewDestinationPath,
+  normalizeOsViewMode,
+  otherOsViewMode,
+} from "./os-view.js";
+export type { OsViewMode } from "./os-view.js";

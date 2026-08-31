@@ -96,6 +96,10 @@ At runtime:
 5. mutations commit through the gateway and invalidate or notify every connected renderer;
 6. reconnect reloads the latest revision and reconciles stale local geometry without discarding uncommitted interaction state silently.
 
+## Electron Desktop composition decision
+
+Electron Desktop reuses its existing `DesktopSurfaceFrame`, `TabPane`, tabs, app stores, and native embed lifecycle for Canvas presentation. Directly mounting the Next.js Web Canvas component would replace Electron's trusted IPC/native embed host, duplicate live app instances, and break native bounds and scale synchronization. The shared boundary is therefore the OS-view destination contract, canonical app/session state, brand assets, parity fixtures, and shared Electron app content; only spatial surface framing and host adapters remain renderer-specific. This is the smallest boundary that preserves one Electron app instance while avoiding an Electron-only business-state fork.
+
 ## Mandatory PR surface matrix
 
 Every user-visible PR includes this matrix. An N/A requires an architectural rationale and reviewer approval.
