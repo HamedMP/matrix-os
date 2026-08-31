@@ -41,7 +41,10 @@ const OpenCodeResumeStateSchema = z.object({
 
 interface SpawnOptions { cwd: string; env: Record<string, string> }
 interface ChildProcess {
-  stdout: { on(event: "data", listener: (chunk: Buffer) => void): void };
+  stdout: {
+    on(event: "data", listener: (chunk: Buffer) => void): void;
+    once(event: "end" | "close", listener: () => void): void;
+  };
   stderr: { on(event: "data", listener: (chunk: Buffer) => void): void };
   once(event: "exit", listener: (code: number | null) => void): void;
   once(event: "error", listener: (error: Error) => void): void;
@@ -347,7 +350,11 @@ export function createOpenCodeCodingAgentProvider(
       let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
       let failed = false;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
+      let drainTimer: ReturnType<typeof setTimeout> | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let exitObserved = false;
+      let exitCode: number | null = null;
+      let stdoutDrained = false;
       let sessionId = input.sessionId;
       let stdout = "";
       let stdoutBytes = 0;
@@ -386,6 +393,7 @@ export function createOpenCodeCodingAgentProvider(
         settled = true;
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
+        if (drainTimer) clearTimeout(drainTimer);
         input.signal?.removeEventListener("abort", tracked.abort);
         if (active.get(input.threadId) === tracked) active.delete(input.threadId);
         const tail = stdout.trim();
@@ -428,9 +436,33 @@ export function createOpenCodeCodingAgentProvider(
           index = stdout.indexOf("\n");
         }
       });
+      const onStdoutDrained = () => {
+        if (stdoutDrained || settled) return;
+        stdoutDrained = true;
+        if (exitObserved) finish(exitCode);
+      };
+      const onExit = (code: number | null) => {
+        if (settled || exitObserved) return;
+        exitObserved = true;
+        exitCode = code;
+        if (terminationReason || failed || stdoutDrained) {
+          finish(code);
+          return;
+        }
+        if (timer) clearTimeout(timer);
+        drainTimer = setTimeout(() => {
+          if (settled) return;
+          failed = true;
+          stdout = "";
+          finish(code);
+        }, killGraceMs);
+        drainTimer.unref?.();
+      };
+      child.stdout.once("end", onStdoutDrained);
+      child.stdout.once("close", onStdoutDrained);
       child.stderr.on("data", () => { /* bounded provider diagnostics stay out of client state */ });
       child.once("error", (error) => { logCodingAgentWarning("OpenCode process failed", error); failed = true; finish(-1); });
-      child.once("exit", finish);
+      child.once("exit", onExit);
       if (input.signal?.aborted) tracked.abort();
       else input.signal?.addEventListener("abort", tracked.abort, { once: true });
     });

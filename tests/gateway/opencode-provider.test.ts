@@ -59,6 +59,7 @@ function fakeSpawn(lines: string[], exitCode = 0) {
     const error: Array<(value: Error) => void> = [];
     queueMicrotask(() => {
       for (const value of lines) stdout.emit("data", Buffer.from(`${value}\n`));
+      stdout.emit("end");
       exit.forEach((listener) => listener(exitCode));
     });
     return {
@@ -472,6 +473,81 @@ describe("OpenCode coding-agent provider", () => {
       expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
     ]));
     expect(JSON.stringify(result)).not.toContain("private overflow detail");
+  });
+
+  it("waits for stdout to drain after exit before classifying a cap-crossing tail", async () => {
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const exit: Array<(code: number | null) => void> = [];
+    const kills: NodeJS.Signals[] = [];
+    const adapter = provider(() => {
+      queueMicrotask(() => stdout.emit("data", Buffer.alloc(512 * 1024, "x")));
+      queueMicrotask(() => exit.forEach((listener) => listener(0)));
+      queueMicrotask(() => {
+        stdout.emit("data", Buffer.alloc(512 * 1024 + 1, "x"));
+        stdout.emit("end");
+      });
+      return {
+        stdout,
+        stderr,
+        once(event: "exit" | "error", listener: never) {
+          if (event === "exit") exit.push(listener);
+        },
+        kill(signal: NodeJS.Signals) { kills.push(signal); },
+      };
+    });
+
+    const result = await adapter.startThread({
+      principal,
+      thread: thread(),
+      request: request(),
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    expect(kills).toContain("SIGTERM");
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error" }),
+      expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
+    ]));
+    expect(result.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]));
+  });
+
+  it("fails closed when stdout never drains after exit", async () => {
+    vi.useFakeTimers();
+    const exit: Array<(code: number | null) => void> = [];
+    const adapter = provider(() => {
+      queueMicrotask(() => exit.forEach((listener) => listener(0)));
+      return {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        once(event: "exit" | "error", listener: never) {
+          if (event === "exit") exit.push(listener);
+        },
+        kill: vi.fn(),
+      };
+    }, { runTimeoutMs: 1_000, killGraceMs: 10 });
+
+    try {
+      const pending = adapter.startThread({
+        principal,
+        thread: thread(),
+        request: request(),
+        now: () => now,
+        nextEventId: ids(),
+      });
+      await vi.advanceTimersByTimeAsync(11);
+
+      await expect(pending).resolves.toMatchObject({
+        events: expect.arrayContaining([
+          expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
+        ]),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports binary presence independently from credentials", async () => {
