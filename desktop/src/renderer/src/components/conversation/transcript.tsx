@@ -59,8 +59,8 @@ function TurnReceipt({
   const elapsed = active ? now - startedAt : endedAt - startedAt;
   const label = `${active ? "Working" : "Worked"} for ${formatTurnDuration(elapsed)}`;
   return (
-    <ConversationItem messageId={`receipt:${startedAt}`}>
-      <Marker variant="border" className="min-h-10 pb-2">
+    <ConversationItem messageId={`receipt:${startedAt}`} className="-mb-1">
+      <Marker variant="border" className="min-h-10 pb-1">
         {canToggle ? (
           <button
             type="button"
@@ -102,9 +102,9 @@ function UserMessage({
   return (
     <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
       <Message align="end">
-        <MessageContent className="gap-1">
+        <MessageContent className="gap-0">
           <Bubble variant="plain" align="end">
-            <BubbleContent className="max-w-[48rem] whitespace-pre-wrap rounded-none p-0 text-md leading-[16px]" data-selectable>
+            <BubbleContent className="max-w-[48rem] whitespace-pre-wrap rounded-none px-0 py-px text-md leading-[16px]" data-selectable>
               {renderStructuredContent ? message.content!.map((segment, index) => {
                 if (segment.kind === "text") return <span key={`text:${index}`}>{segment.text}</span>;
                 if (segment.kind === "image") {
@@ -264,12 +264,12 @@ function ResponseMessage({
   }, [message.markdown, visibleMarkdown]);
 
   return (
-    <ConversationItem messageId={`${message.role}:${message.id}`}>
+    <ConversationItem messageId={`${message.role}:${message.id}`} className="mt-4">
       <Message>
-        <MessageContent>
+        <MessageContent className="gap-0">
           <Bubble variant="ghost">
             <BubbleContent className="max-w-[64rem] overflow-visible">
-              <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
+              <MessageResponse className="text-md leading-[16px] [&_p]:my-0" copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (
@@ -535,9 +535,13 @@ function ConversationTurn({
           onToggle={() => setExpanded((value) => !value)}
         />
       ) : null}
-      {visibleWork.map((item) => (
-        <PresentationItem key={item.id} item={item} callbacks={callbacks} />
-      ))}
+      {visibleWork.length > 0 ? (
+        <div data-work-items className="flex min-w-0 flex-col gap-0.5">
+          {visibleWork.map((item) => (
+            <PresentationItem key={item.id} item={item} callbacks={callbacks} />
+          ))}
+        </div>
+      ) : null}
       {turn.final ? (
         <PresentationItem
           item={turn.final}

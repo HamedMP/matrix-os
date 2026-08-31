@@ -28,6 +28,7 @@ import ProjectChatsView from "../project/ProjectChatsView";
 import ProjectsIndex from "../project/ProjectsIndex";
 import { WorkRail } from "./WorkRail";
 import { WorkFilesInspector } from "./WorkFilesInspector";
+import { DUMMY_CHAT_ID, DummyChatShowcase } from "./DummyChatShowcase";
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import type { WorkFilesScope } from "./work-files-scope";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
@@ -251,8 +252,9 @@ export default function WorkTab({
   }, [active, api, authGeneration, hostedRuntime, runtimeSlot]);
   const client = hostedRuntime?.client ?? localClient;
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
+  const isDummyChat = initialChatId === DUMMY_CHAT_ID;
   const routeKey = `${active}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
-  const hasInspector = Boolean(active && (route === "chat" || route === "project"));
+  const hasInspector = Boolean(active && !isDummyChat && (route === "chat" || route === "project"));
   const narrowPane = effectiveNarrowPane(responsive, routeKey, hasInspector);
   const inspectorVisible = active && hasInspector && (
     ((layout === "wide" || layout === "medium") && inspectorOpen)
@@ -580,8 +582,10 @@ export default function WorkTab({
     />
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
-  const content = route === "chat"
-    ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
+  const content = isDummyChat
+    ? <DummyChatShowcase />
+    : route === "chat"
+      ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={layout === "narrow" && narrowPane === "inspector" && inspectorVisible} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug

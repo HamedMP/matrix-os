@@ -4,6 +4,7 @@ import { useBoard, type Project } from "../../stores/board";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { WorkRail } from "./WorkRail";
+import { DUMMY_CHAT_ID, DUMMY_CHAT_TITLE } from "./DummyChatShowcase";
 import { openWorkProject } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 
@@ -35,6 +36,15 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       closable: false,
     });
   };
+  const openDummyChat = () => useTabs.getState().openTab({
+    kind: "work",
+    title: "Chat",
+    workRoute: "chat",
+    chatId: DUMMY_CHAT_ID,
+    chatTitle: DUMMY_CHAT_TITLE,
+    chatView: "conversation",
+    closable: false,
+  });
 
   return (
     <WorkRail
@@ -44,6 +54,11 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       active={active}
       activeChatId={tab.chatId}
       activeProjectSlug={route === "project" ? tab.projectSlug : undefined}
+      frontendChats={import.meta.env.DEV ? [{
+        id: DUMMY_CHAT_ID,
+        title: DUMMY_CHAT_TITLE,
+        onSelect: openDummyChat,
+      }] : []}
       className="h-full w-full border-r-0"
       onCollapse={() => undefined}
       showCollapseControl={false}

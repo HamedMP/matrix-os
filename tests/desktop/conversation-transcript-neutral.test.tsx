@@ -59,15 +59,40 @@ describe("provider-neutral conversation transcript", () => {
     render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
 
     const receipt = screen.getByRole("button", { name: "Worked for 5s" });
+    const receiptMarker = receipt.closest('[data-slot="marker"]') as HTMLElement;
+    const receiptRow = receipt.closest('[data-slot="message-scroller-item"]') as HTMLElement;
+    expect(receiptMarker.className).toContain("pb-1");
+    expect(receiptMarker.className).not.toContain("pb-2");
+    expect(receiptRow.className).toContain("-mb-1");
     expect(screen.getByText("Inspect the workspace")).toBeTruthy();
-    expect(screen.getByText("The workspace is clean.")).toBeTruthy();
+    const assistantText = screen.getByText("The workspace is clean.");
+    expect(assistantText).toBeTruthy();
+    const assistantResponse = assistantText.closest("[data-selectable]") as HTMLElement;
+    const assistantBubble = assistantText.closest('[data-slot="bubble"]') as HTMLElement;
+    const assistantMessageContent = assistantText.closest('[data-slot="message-content"]') as HTMLElement;
+    const assistantRow = assistantText.closest('[data-slot="message-scroller-item"]') as HTMLElement;
+    expect(assistantResponse.className).toContain("text-md");
+    expect(assistantResponse.className).toContain("leading-[16px]");
+    expect(assistantResponse.className).toContain("[&_p]:my-0");
+    expect(assistantResponse.className).not.toContain("[&_p]:my-2");
+    expect(assistantBubble.className).toContain("*:data-[slot=bubble-content]:px-0");
+    expect(assistantBubble.className).toContain("*:data-[slot=bubble-content]:py-px");
+    expect(assistantBubble.className).not.toContain("*:data-[slot=bubble-content]:p-0");
+    expect(assistantMessageContent.className).toContain("gap-0");
+    expect(assistantRow.className).toContain("mt-4");
+    expect(assistantRow.className).not.toContain("mt-2");
     expect(screen.queryByText("I’ll inspect the repository first.")).toBeNull();
     expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
 
     fireEvent.click(receipt);
 
     expect(screen.getByText("I’ll inspect the repository first.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
+    const activity = screen.getByRole("button", { name: "Ran command: git status --short" });
+    expect(activity.className).toContain("w-fit");
+    expect(activity.className).not.toContain("flex-1");
+    const workItems = activity.closest("[data-work-items]") as HTMLElement;
+    expect(workItems).toBeTruthy();
+    expect(workItems.className).toContain("gap-0.5");
   });
 
   it("expands a long user message accessibly and keeps structured references and metadata", async () => {
@@ -103,7 +128,9 @@ describe("provider-neutral conversation transcript", () => {
     const userMessageContent = userBubbleContent.closest('[data-slot="message-content"]') as HTMLElement;
     expect(userBubble.getAttribute("data-variant")).toBe("plain");
     expect(userBubble.className).toContain("bg-transparent");
-    expect(userBubbleContent.className).toContain("p-0");
+    expect(userBubbleContent.className).toContain("px-0");
+    expect(userBubbleContent.className).toContain("py-px");
+    expect(userBubbleContent.className).not.toContain("p-0");
     expect(userBubbleContent.className).toContain("rounded-none");
     expect(userBubbleContent.className).not.toContain("rounded-xl");
     expect(userBubbleContent.className).not.toContain("px-3");
@@ -111,7 +138,7 @@ describe("provider-neutral conversation transcript", () => {
     expect(userBubbleContent.className).toContain("text-md");
     expect(userBubbleContent.className).toContain("leading-[16px]");
     expect(userBubbleContent.className).not.toContain("font-");
-    expect(userMessageContent.className).toContain("gap-1");
+    expect(userMessageContent.className).toContain("gap-0");
     expect(expand.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(longMessage)).toBeNull();
     expect(screen.getByText("run.log")).toBeTruthy();

@@ -1,5 +1,5 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Filter, Plus } from "@renderer/lib/hugeicons";
+import { Filter, MessageSquare, Plus } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
@@ -40,6 +40,7 @@ export function WorkRail({
   active,
   activeChatId,
   activeProjectSlug,
+  frontendChats = [],
   onNewGlobalChat,
   onCreateProject,
   onNewProjectChat,
@@ -55,6 +56,7 @@ export function WorkRail({
   active: boolean;
   activeChatId?: string;
   activeProjectSlug?: string;
+  frontendChats?: Array<{ id: string; title: string; onSelect: () => void }>;
   onNewGlobalChat: () => void;
   onCreateProject: () => void;
   onNewProjectChat: (project: Project) => void;
@@ -302,6 +304,23 @@ export function WorkRail({
             </button>
           )}
         >
+          {frontendChats.map((chat) => (
+            <button
+              key={chat.id}
+              type="button"
+              aria-label={chat.title}
+              aria-current={chat.id === activeChatId ? "page" : undefined}
+              className="flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+              style={{
+                color: chat.id === activeChatId ? "var(--text-primary)" : "var(--text-secondary)",
+                background: chat.id === activeChatId ? "var(--bg-selected)" : undefined,
+              }}
+              onClick={chat.onSelect}
+            >
+              <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: chat.id === activeChatId ? "var(--accent)" : "var(--text-tertiary)" }} />
+              <span className="truncate">{chat.title}</span>
+            </button>
+          ))}
           {model.recents.map((record) => (
             <WorkRailChatRow
               key={record.chat.id}
