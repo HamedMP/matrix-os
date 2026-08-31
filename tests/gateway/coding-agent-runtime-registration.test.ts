@@ -107,6 +107,7 @@ describe("customer coding-agent runtime registration", () => {
           sessionID: "ses_runtime_123",
           part: { id: "part_runtime", type: "text", text: "Ready" },
         })}\n`));
+        stdout.emit("end");
         exit.forEach((listener) => listener(0));
       });
       return {
