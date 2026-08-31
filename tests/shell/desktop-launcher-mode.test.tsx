@@ -376,8 +376,63 @@ describe("Desktop launcher dock button by mode", () => {
 
     await waitFor(() => {
       expect(queryClient.getQueryData(appKeys.list())).toEqual(expect.arrayContaining([
-        expect.objectContaining({ path: "/files/apps/notes/index.html" }),
+        expect.objectContaining({
+          path: "/files/apps/notes/index.html",
+          iconUrl: "http://localhost:3000/icons/notes.png?v=abc",
+        }),
       ]));
+    });
+  });
+
+  it("preserves a versioned snapshot icon when the apps query refetches", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    saveShellSnapshot(scope, {
+      bootstrap: {
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "Cached Notes", path: "/files/apps/notes/index.html", icon: "notes", slug: "notes" }],
+        icons: { notes: { url: "/icons/notes.png", etag: "\"abc\"", versionedUrl: "/icons/notes.png?v=abc" } },
+      },
+    });
+    const appsResponse = deferredResponse();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return appsResponse.promise;
+      if (url.includes("/api/shell/bootstrap")) return new Promise(() => undefined);
+      return jsonResponse({});
+    }));
+    resetShellMode("dev", true);
+
+    renderDesktop({ cacheScope: scope });
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData<ApiAppEntry[]>(appKeys.list())).toEqual([
+        expect.objectContaining({
+          name: "Cached Notes",
+          iconUrl: "http://localhost:3000/icons/notes.png?v=abc",
+        }),
+      ]);
+    });
+
+    await act(async () => {
+      appsResponse.resolve(new Response(JSON.stringify([{
+        name: "Fresh Notes",
+        path: "/files/apps/notes/index.html",
+        icon: "notes",
+        slug: "notes",
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+      await appsResponse.promise;
+    });
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData<ApiAppEntry[]>(appKeys.list())).toEqual([
+        expect.objectContaining({
+          name: "Fresh Notes",
+          iconUrl: "http://localhost:3000/icons/notes.png?v=abc",
+        }),
+      ]);
     });
   });
 

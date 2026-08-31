@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { appKeys, appsQueryOptions, type ApiAppEntry } from "@/api/apps";
+import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -30,7 +30,7 @@ import { useThemeStyle } from "./window/useThemeStyle";
 import { OsSessionHost } from "./os-session/OsSessionHost";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
-import { getGatewayUrl } from "@/lib/gateway";
+import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { ChatPopover } from "./ChatPopover";
 import { SetupChecklist } from "./onboarding/SetupChecklist";
@@ -125,10 +125,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const wmToggleFullscreen = useWindowManager((s) => s.toggleFullscreen);
   const wmExitFullscreen = useWindowManager((s) => s.exitFullscreen);
   const queryClient = useQueryClient();
-  const cachedApps = useMemo(
-    () => loadShellSnapshot(cacheScope)?.bootstrap?.apps,
-    [cacheScope],
-  );
+  const cachedApps = useMemo(() => {
+    const bootstrap = loadShellSnapshot(cacheScope)?.bootstrap;
+    return hydrateAppIconUrls(bootstrap?.apps, bootstrap?.icons, gatewayAssetUrl);
+  }, [cacheScope]);
   const { data: apiApps = [], refetch: refetchApps } = useQuery({
     ...appsQueryOptions(),
     initialData: cachedApps,
