@@ -205,7 +205,7 @@ export function ProjectChatDraft({
         summary,
         restoredDraft?.providerId ?? initialDraft.providerId,
       ));
-      if (canonicalClient && lastComposerInstanceId) {
+      if (canonicalClient && lastComposerInstanceId && !restoredEntry?.pickerTouched) {
         selection = createCanonicalComposerSelection(fallbackCatalog, lastComposerInstanceId);
       }
       if (selection) {
