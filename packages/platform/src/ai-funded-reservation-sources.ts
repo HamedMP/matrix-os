@@ -261,7 +261,12 @@ export async function debitPromotionalGrants(
   });
   let totalAvailable = 0;
   for (const { available } of debitableGrants) totalAvailable = exactInteger(totalAvailable + available);
-  const debitTarget = Math.min(totalAvailable, amountMicrousd);
+  // Legacy reservations have no trustworthy per-source attribution. Never
+  // partially debit their inferred promotional share: callers must either
+  // fund the complete provider actual from live sources or close the hold
+  // without recording a settlement.
+  if (totalAvailable < amountMicrousd) return 0;
+  const debitTarget = amountMicrousd;
 
   let remainingDebit = debitTarget;
   for (const { grant, remaining, available } of debitableGrants) {
