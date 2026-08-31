@@ -388,6 +388,36 @@ describe("OpenCode coding-agent provider", () => {
     ]));
   });
 
+  it("fails and terminates when supported records exceed the event cap", async () => {
+    const fake = fakeSpawn(Array.from({ length: 481 }, (_, index) =>
+      line("text", {
+        part: {
+          id: `supported_${index}`,
+          type: "text",
+          text: index === 480 ? "private overflow detail" : `chunk ${index}`,
+          time: { end: index + 1 },
+        },
+      })
+    ));
+
+    const result = await provider(fake.spawnFn).startThread({
+      principal, thread: thread(), request: request(), now: () => now, nextEventId: ids(),
+    });
+
+    expect(fake.kills).toContain("SIGTERM");
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "thread.error",
+        error: expect.objectContaining({ code: "provider_run_failed", safeMessage: expect.any(String) }),
+      }),
+      expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
+    ]));
+    expect(result.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("private overflow detail");
+  });
+
   it("reports binary presence independently from credentials", async () => {
     const runCommand = vi.fn(async () => ({ stdout: "1.16.0\n", stderr: "" }));
     const adapter = provider(fakeSpawn([]).spawnFn, { runCommand });

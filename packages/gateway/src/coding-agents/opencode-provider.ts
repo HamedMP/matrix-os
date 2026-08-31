@@ -193,7 +193,6 @@ function collectLine(input: {
   const sessionId = typeof record.sessionID === "string" && OpenCodeResumeStateSchema.shape.s.safeParse(record.sessionID).success
     ? record.sessionID
     : undefined;
-  if (input.events.length >= MAX_EVENTS) return { sessionId };
   if (record.type === "error") return { sessionId, failed: true };
   const part = record.part;
   if (!part || typeof part !== "object") return { sessionId };
@@ -204,10 +203,14 @@ function collectLine(input: {
   const partId = safeId(value.id, `part_${input.scope}_${input.seenParts.size + 1}`);
   if (input.seenParts.has(partId)) return { sessionId };
   if (input.seenParts.size >= MAX_SEEN_PARTS) return { sessionId, limitExceeded: true };
+  const text = supportedText && typeof value.text === "string" && value.text.trim()
+    ? value.text.slice(0, MAX_TEXT_CHARS)
+    : null;
+  const eventCount = supportedTool ? 3 : text === null ? 0 : 2;
+  if (input.events.length + eventCount > MAX_EVENTS) return { sessionId, limitExceeded: true };
   input.seenParts.add(partId);
-  if (supportedText && typeof value.text === "string" && value.text.trim()) {
+  if (text !== null) {
     const messageId = `msg_${partId}`;
-    const text = value.text.slice(0, MAX_TEXT_CHARS);
     input.events.push(
       AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "assistant.text.delta", messageId, delta: text }),
       AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "assistant.text.completed", messageId }),
