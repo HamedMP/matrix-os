@@ -344,7 +344,11 @@ function runPresentation(
     });
   const uniqueRunActivities = new Map<string, CanonicalChatRunActivity>();
   for (const { activity } of ordered) {
-    setBounded(uniqueRunActivities, activity.id, activity, MAX_RUN_ACTIVITY_PROJECTIONS);
+    if (!uniqueRunActivities.has(activity.id) && uniqueRunActivities.size >= MAX_RUN_ACTIVITY_PROJECTIONS) {
+      const oldest = uniqueRunActivities.keys().next();
+      if (!oldest.done) uniqueRunActivities.delete(oldest.value);
+    }
+    uniqueRunActivities.set(activity.id, activity);
   }
   const runActivities = [...uniqueRunActivities.values()];
   const toolProgress = new Map<string, Extract<CanonicalChatRunActivity, { type: "tool.progress" }>>();
@@ -487,7 +491,7 @@ function runPresentation(
   }
   const active = isActiveRun(run);
   const projectedActivityGroups = active
-    ? activityGroups.slice(0, MAX_RUN_ACTIVITY_PROJECTIONS - 1)
+    ? activityGroups.slice(-(MAX_RUN_ACTIVITY_PROJECTIONS - 1))
     : activityGroups;
   const work: ConversationWorkPresentation[] = [
     ...projectedActivityGroups,
