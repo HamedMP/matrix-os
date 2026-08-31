@@ -27,6 +27,7 @@ describe("provider settings runtime capability wiring", () => {
     expect(source).toContain("createProviderGenericHarnessCoordinator({");
     expect(source).toContain("runtimeController: agentRuntimeServices.controller");
     expect(source).toContain("runtimeSource: agentRuntimeServices.source");
+    expect(source).toContain("await providerGenericHarnessCoordinator.reconcilePending();");
     expect(source).toContain("runtimeCoordinator: providerGenericHarnessCoordinator");
     expect(source).toContain("harnessSettingsSource: providerSettingsStore");
     expect(source).toContain('provider.providerId === "pi"');

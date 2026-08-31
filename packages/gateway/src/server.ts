@@ -4201,6 +4201,7 @@ export async function createGateway(config: GatewayConfig) {
       (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
     ),
   });
+  await providerGenericHarnessCoordinator.reconcilePending();
   const providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
