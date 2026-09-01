@@ -14,7 +14,7 @@ export function safeDisplayPath(
 ): string | undefined {
   if (typeof value !== "string") return undefined;
   const path = value.trim();
-  if (!path || path.includes("\0")) return undefined;
+  if (!path || path.includes("\0") || SECRET_TEXT.test(path)) return undefined;
   const homePath = normalizedRoot(options.homePath);
   const executionRoot = options.executionRoot ? normalizedRoot(options.executionRoot) : undefined;
   if (path === homePath) return "~";

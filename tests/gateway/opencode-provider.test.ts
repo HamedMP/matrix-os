@@ -423,6 +423,50 @@ describe("OpenCode coding-agent provider", () => {
     expect(JSON.stringify(result)).not.toContain("/tmp/opencode.log");
   });
 
+  it("drops a path preview that matches the legacy secret detector instead of failing the Run", async () => {
+    const fake = fakeSpawn([
+      line("tool_use", {
+        part: {
+          id: "part_task_report",
+          type: "tool",
+          callID: "call_task_report",
+          tool: "read",
+          state: {
+            status: "completed",
+            input: { filePath: "/work/repo/src/task-report.ts" },
+            output: "ok",
+            time: { start: 1, end: 2 },
+          },
+        },
+      }),
+      line("text", {
+        part: { id: "part_done", type: "text", text: "Done", time: { end: 3 } },
+      }),
+    ]);
+
+    const result = await provider(fake.spawnFn).startThread({
+      principal,
+      thread: thread(),
+      request: request(),
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "tool.started",
+        toolCallId: "call_task_report",
+        displayName: "Read file",
+        kind: "dynamic_tool",
+      }),
+      expect.objectContaining({ type: "tool.completed", toolCallId: "call_task_report", outcome: "success" }),
+      expect.objectContaining({ type: "assistant.text.delta", delta: "Done" }),
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]));
+    const started = result.events.find((event) => event.type === "tool.started" && event.toolCallId === "call_task_report");
+    expect(started).not.toHaveProperty("preview");
+  });
+
   it("includes owner-safe file and structured references in the OpenCode prompt", async () => {
     const fake = fakeSpawn([
       line("text", { part: { id: "part_text", type: "text", text: "Done", time: { end: 1 } } }),
