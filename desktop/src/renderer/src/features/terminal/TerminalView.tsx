@@ -34,6 +34,7 @@ import {
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
+import { decodeOsc52Clipboard } from "./terminal-osc52";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -138,6 +139,12 @@ export default function TerminalView({
     terminal.loadAddon(fit);
     terminal.loadAddon(serialize);
     terminal.open(host);
+    const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
+      const decoded = decodeOsc52Clipboard(data);
+      if (!decoded.handled) return false;
+      if (decoded.text !== null) void copyDesktopTerminalText(decoded.text);
+      return true;
+    });
     terminal.attachCustomKeyEventHandler((event) => {
       const action = classifyTerminalClipboardShortcut({
         type: event.type as "keydown" | "keyup" | "keypress",
@@ -244,6 +251,7 @@ export default function TerminalView({
       host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onTerminalContextMenu, true);
       linkProviderDisposable.dispose();
+      osc52Disposable.dispose();
       observer.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);

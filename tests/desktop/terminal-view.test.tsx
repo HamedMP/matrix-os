@@ -30,6 +30,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     };
     options: { theme?: unknown };
     registeredProviders: unknown[];
+    oscHandlers: Map<number, (data: string) => boolean>;
     dataCallback?: (data: string) => void;
     element: HTMLElement | null;
     focus: ReturnType<typeof vi.fn>;
@@ -69,6 +70,13 @@ vi.mock("@xterm/xterm", () => ({
       };
     };
     registeredProviders: unknown[] = [];
+    oscHandlers = new Map<number, (data: string) => boolean>();
+    parser = {
+      registerOscHandler: (identifier: number, handler: (data: string) => boolean) => {
+        this.oscHandlers.set(identifier, handler);
+        return { dispose: () => this.oscHandlers.delete(identifier) };
+      },
+    };
     selection = "";
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     paste = vi.fn((text: string) => this.dataCallback?.(text));
@@ -497,6 +505,25 @@ describe("TerminalView session switching", () => {
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(writeText).toHaveBeenCalledOnce();
     expect(writeText).toHaveBeenCalledWith("HTTP/1.1 401 Unauthorized\nλ-value: 👩🏽‍💻");
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
+  it("copies the exact Claude authentication URL emitted after the user presses c", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const authUrl = "https://claude.ai/oauth/authorize?code=true&client_id=matrix-os-desktop";
+    const encodedUrl = btoa(authUrl);
+
+    const handled = terminal.oscHandlers.get(52)?.(`c;${encodedUrl}`);
+
+    expect(handled).toBe(true);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(authUrl));
+    expect(writeText).toHaveBeenCalledOnce();
     expect(attachmentWrite).not.toHaveBeenCalled();
   });
 
