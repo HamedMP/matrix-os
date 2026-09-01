@@ -3473,7 +3473,7 @@ describe("TerminalApp", () => {
     expect(props.paneTree.sessionId).toBe("main");
   });
 
-  it("recreates saved canonical shell sessions before restoring a layout", async () => {
+  it("does not relaunch a stale saved shell session while restoring a layout", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
@@ -3508,20 +3508,14 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions"),
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ name: "bench", cwd: "projects" }),
-      }),
-    );
+    expect(terminalSessionPostBodies()).toHaveLength(0);
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string };
     };
-    expect(props.paneTree.sessionId).toBe("bench");
+    expect(props.paneTree.sessionId).toBe("main");
   });
 
-  it("does not replace a legacy layout after unmount while ensuring the canonical session", async () => {
+  it("does not replace a legacy layout after unmount while validating the canonical session", async () => {
     let resolveSessions: ((value: { ok: boolean; json: () => Promise<{ sessions: Array<{ name: string }> }> }) => void) | null = null;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

@@ -67,7 +67,7 @@ describe("PostHog error tracking", () => {
     // The shell ships a same-origin /relay rewrite, so it opts into relative
     // API hosts to keep capture calls first-party on user subdomains.
     expect(shellClient).toContain("allowRelativeApiHost: true");
-    expect(shellClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(shellClient).not.toContain("buildPostHogCookieConsentInitOptions");
     expect(shellLayout).not.toContain("PostHogCookieBanner");
   });
 
@@ -596,7 +596,7 @@ describe("PostHog error tracking", () => {
     const shellPostHogClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
     expect(shellPostHogClient).toContain("same-origin PostHog proxy at /relay");
     expect(shellPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay"');
-    expect(shellPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(shellPostHogClient).not.toContain("buildPostHogCookieConsentInitOptions");
     expect(shellPostHogClient).not.toContain("__loaded");
 
   });

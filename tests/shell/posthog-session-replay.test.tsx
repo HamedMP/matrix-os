@@ -43,7 +43,7 @@ describe("shell session replay init", () => {
   it("enables masked session recording without console log capture", async () => {
     const { initializeShellPostHog } = await importShellPostHog();
 
-    initializeShellPostHog("US", TEST_CONFIG);
+    initializeShellPostHog(TEST_CONFIG);
 
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
@@ -82,7 +82,7 @@ describe("shell session replay init", () => {
     vi.stubEnv("NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY", "1");
     const { initializeShellPostHog } = await importShellPostHog();
 
-    initializeShellPostHog("US", TEST_CONFIG);
+    initializeShellPostHog(TEST_CONFIG);
 
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
@@ -94,7 +94,7 @@ describe("shell session replay init", () => {
     try {
       const { initializeShellPostHog } = await importShellPostHog();
 
-      initializeShellPostHog("US", TEST_CONFIG);
+      initializeShellPostHog(TEST_CONFIG);
 
       expect(posthogMock.init).toHaveBeenCalledTimes(1);
       const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];

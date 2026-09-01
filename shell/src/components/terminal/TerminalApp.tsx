@@ -114,7 +114,7 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
   });
 }
 
-async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
+async function savedShellSessionsAreActive(sessionNames: string[]): Promise<boolean> {
   const requestedNames = Array.from(new Set(
     sessionNames.filter((name) => isCanonicalShellSessionId(name)),
   ));
@@ -133,25 +133,13 @@ async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
       }
     }
 
-    for (const name of requestedNames) {
-      if (existingNames.has(name)) {
-        continue;
-      }
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- ordered repair: each missing saved zellij session is recreated once before layout restore; these are user-visible session names, not a fan-out workload.
-      const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cwd: DEFAULT_CWD }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!createRes.ok && createRes.status !== 409) {
-        return false;
-      }
-    }
-
-    return true;
+    // A saved layout is only a UI reference. Missing runtimes can be stopped or
+    // intentionally interrupted, so mounting Terminal must never relaunch them.
+    // Falling back to the first active session also prevents a stale layout from
+    // producing one expected 409 response per missing pane on every app mount.
+    return requestedNames.every((name) => existingNames.has(name));
   } catch (err: unknown) {
-    console.warn("Failed to ensure terminal sessions:", err instanceof Error ? err.message : err);
+    console.warn("Failed to validate saved terminal sessions:", err instanceof Error ? err.message : err);
     return false;
   }
 }
@@ -577,7 +565,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessionReady = await ensureShellSessions(getCanonicalShellSessionIds(data));
+              const sessionReady = await savedShellSessionsAreActive(getCanonicalShellSessionIds(data));
               if (!cancelled && sessionReady) {
                 const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
                 const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];

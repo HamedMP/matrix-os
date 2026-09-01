@@ -3,7 +3,6 @@
 import "posthog-js/dist/conversations";
 import posthog from "posthog-js";
 import {
-  buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
 } from "@matrix-os/observability/client";
@@ -203,11 +202,10 @@ export function resetPostHogIdentity(currentConfig: typeof config = config) {
 }
 
 function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
-  initializeShellPostHog(getPostHogVisitorCountry(), currentConfig);
+  initializeShellPostHog(currentConfig);
 }
 
 export function initializeShellPostHog(
-  visitorCountry?: string | null,
   currentConfig: typeof config = config,
 ) {
   if (!currentConfig || initialized) return;
@@ -244,14 +242,8 @@ export function initializeShellPostHog(
       environment: process.env.NODE_ENV,
       serviceVersion: process.env.NEXT_PUBLIC_MATRIX_BUILD_SHA,
     },
-    ...buildPostHogCookieConsentInitOptions(visitorCountry),
   } as PostHogInitOptions);
   initialized = true;
-}
-
-function getPostHogVisitorCountry(): string | null {
-  if (typeof document === "undefined") return null;
-  return document.documentElement.dataset.posthogVisitorCountry ?? null;
 }
 
 function sanitizeProperties(properties: ClientProperties): Record<string, string | number | boolean> {
