@@ -50,19 +50,19 @@
 
 ### Tests for User Story 1 — write and observe RED first
 
-- [ ] T008 [P] [US1] Add failing native shortcut, exact-selection, exactly-once paste, repeat, no-selection, and focused-pane tests in `tests/desktop/terminal-view.test.tsx`
-- [ ] T009 [P] [US1] Add failing typed Copy success/unavailable/fallback tests in `tests/desktop/terminal-link-actions.test.ts`
-- [ ] T010 [P] [US1] Add failing web Command/Ctrl shortcut, selection-preservation, exactly-once paste, shell-precedence, and focused-pane tests in `tests/shell/terminal-pane-clipboard.test.tsx`
-- [ ] T011 [P] [US1] Extend text/image/empty/unavailable result and send-once tests in `tests/shell/terminal-rich-paste.test.ts`
-- [ ] T012 [P] [US1] Preserve standard non-terminal native Edit behavior with regression assertions in `tests/desktop/menu-template.test.ts`
+- [x] T008 [P] [US1] Add failing native shortcut, exact-selection, exactly-once paste, repeat, no-selection, and focused-pane tests in `tests/desktop/terminal-view.test.tsx`
+- [x] T009 [P] [US1] Add failing typed Copy success/unavailable/fallback tests in `tests/desktop/terminal-link-actions.test.ts`
+- [x] T010 [P] [US1] Add failing web Command/Ctrl shortcut, selection-preservation, exactly-once paste, shell-precedence, and focused-pane tests in the existing full renderer harness `tests/shell/terminal-pane-scrolling.test.tsx`
+- [x] T011 [P] [US1] Extend text/image/empty/unavailable result and send-once tests in `tests/shell/terminal-rich-paste.test.ts`
+- [x] T012 [P] [US1] Preserve standard non-terminal native Edit behavior with regression assertions in `tests/desktop/menu-template.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Return bounded typed Copy outcomes while preserving the existing fallback path in `desktop/src/renderer/src/features/terminal/terminal-link-actions.ts`
-- [ ] T014 [US1] Classify and execute Command+C, Command+Shift+C, Command+V, and existing Ctrl+Shift shortcuts against the initiating xterm/session exactly once, without clearing selection or auto-submitting, in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/terminal-rich-paste.ts`
-- [ ] T015 [US1] Return accurate text/image/empty/unavailable/failed send outcomes from `shell/src/components/terminal/terminal-rich-paste.ts`
-- [ ] T016 [US1] Classify and execute macOS and existing Ctrl+Shift terminal clipboard shortcuts against the focused pane, consume only handled events, and keep selection after Copy in `shell/src/components/terminal/TerminalPane.tsx`
-- [ ] T017 [US1] Run all User Story 1 tests in `tests/contracts/terminal-clipboard.test.ts`, `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-actions.test.ts`, `tests/desktop/menu-template.test.ts`, `tests/shell/terminal-pane-clipboard.test.tsx`, and `tests/shell/terminal-rich-paste.test.ts`
+- [x] T013 [US1] Return bounded typed Copy outcomes while preserving the existing fallback path in `desktop/src/renderer/src/features/terminal/terminal-link-actions.ts`
+- [x] T014 [US1] Classify and execute Command+C, Command+Shift+C, Command+V, and existing Ctrl+Shift shortcuts against the initiating xterm/session exactly once, without clearing selection or auto-submitting, in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/terminal-rich-paste.ts`
+- [x] T015 [US1] Return accurate text/image/empty/unavailable/failed send outcomes from `shell/src/components/terminal/terminal-rich-paste.ts`
+- [x] T016 [US1] Classify and execute macOS and existing Ctrl+Shift terminal clipboard shortcuts against the focused pane, consume only handled events, and keep selection after Copy in `shell/src/components/terminal/TerminalPane.tsx`
+- [x] T017 [US1] Run all User Story 1 tests in `tests/contracts/terminal-clipboard.test.ts`, `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-actions.test.ts`, `tests/desktop/menu-template.test.ts`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-rich-paste.test.ts`
 
 **Checkpoint**: Shortcut-only MVP is independently usable in native and web terminals. Preserve this phase as Graphite layer 2.
 
@@ -76,16 +76,16 @@
 
 ### Tests for User Story 2 — write and observe RED first
 
-- [ ] T018 [P] [US2] Upgrade the fake native xterm to install an inner child contextmenu mutation listener and add failing capture-order, `rightClickSelectsWord`, immutable-selection, and Copy-enablement tests in `tests/desktop/terminal-view.test.tsx`
-- [ ] T019 [P] [US2] Add failing immutable snapshot, Copy enablement, Escape/light-dismiss, and origin-focus restoration tests in `tests/desktop/terminal-link-context-menu.test.tsx`
-- [ ] T020 [P] [US2] Add failing general terminal Copy/Select All menu, optional-link action, immutable snapshot, and focus-restoration tests in `tests/shell/terminal-link-context-menu.test.tsx`
-- [ ] T021 [P] [US2] Add failing web inner-xterm context capture and exact multiline/right-click Copy tests in `tests/shell/terminal-pane-clipboard.test.tsx`
+- [x] T018 [P] [US2] Upgrade the fake native xterm to install an inner child contextmenu mutation listener and add failing capture-order, `rightClickSelectsWord`, immutable-selection, and Copy-enablement tests in `tests/desktop/terminal-view.test.tsx`
+- [x] T019 [P] [US2] Add failing immutable snapshot, Copy enablement, Escape/light-dismiss, and origin-focus restoration tests in `tests/desktop/terminal-link-context-menu.test.tsx`
+- [x] T020 [P] [US2] Add failing general terminal Copy/Select All menu, optional-link action, immutable snapshot, and focus-restoration tests in `tests/shell/terminal-link-context-menu.test.tsx`
+- [x] T021 [P] [US2] Add failing web inner-xterm context capture and exact multiline/right-click Copy tests in `tests/shell/terminal-pane-scrolling.test.tsx`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [P] [US2] Set `rightClickSelectsWord: false`, capture secondary/contextmenu before xterm, snapshot full xterm selection, and restore still-valid origin focus in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T023 [P] [US2] Generalize the web link-only menu to terminal Copy/Select All plus optional link actions, set `rightClickSelectsWord: false`, and capture the immutable selection before xterm in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T024 [US2] Run all User Story 2 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-clipboard.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
+- [x] T022 [P] [US2] Set `rightClickSelectsWord: false`, capture secondary/contextmenu before xterm, snapshot full xterm selection, and restore still-valid origin focus in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
+- [x] T023 [P] [US2] Generalize the web link-only menu to terminal Copy/Select All plus optional link actions, set `rightClickSelectsWord: false`, and capture the immutable selection before xterm in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
+- [x] T024 [US2] Run all User Story 2 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
 
 **Checkpoint**: Context-menu Copy is trustworthy and independently testable across both xterm implementations.
 
@@ -99,15 +99,15 @@
 
 ### Tests for User Story 3 — write and observe RED first
 
-- [ ] T025 [P] [US3] Extend the native xterm fake with SGR passive-movement user-input clearing and add failing no-button movement, secondary-button, deliberate-left-action, and resume-after-clear tests in `tests/desktop/terminal-view.test.tsx`
-- [ ] T026 [P] [US3] Add failing web selection-shield and no-selection TUI-report tests using the real pointer-listener path in `tests/shell/terminal-pane-scrolling.test.tsx`
-- [ ] T027 [P] [US3] Extend pure edge cases for button bitmasks, movement, secondary down/up, and deliberate left actions in `tests/contracts/terminal-clipboard.test.ts`
+- [x] T025 [P] [US3] Extend the native xterm fake with SGR passive-movement user-input clearing and add failing no-button movement, secondary-button, deliberate-left-action, and resume-after-clear tests in `tests/desktop/terminal-view.test.tsx`
+- [x] T026 [P] [US3] Add failing web selection-shield and no-selection TUI-report tests using the real pointer-listener path in `tests/shell/terminal-pane-scrolling.test.tsx`
+- [x] T027 [P] [US3] Extend pure edge cases for button bitmasks, movement, secondary down/up, and deliberate left actions in `tests/contracts/terminal-clipboard.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T028 [P] [US3] Install and clean up a capture-phase selection shield that blocks only passive movement and secondary reports while selection exists in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`
-- [ ] T029 [P] [US3] Integrate the same selection-aware shield ahead of existing Canvas pointer correction without per-move React state in `shell/src/components/terminal/TerminalPane.tsx`
-- [ ] T030 [US3] Run all User Story 3 tests in `tests/contracts/terminal-clipboard.test.ts`, `tests/desktop/terminal-view.test.tsx`, and `tests/shell/terminal-pane-scrolling.test.tsx`
+- [x] T028 [P] [US3] Install and clean up a capture-phase selection shield that blocks only passive movement and secondary reports while selection exists in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`
+- [x] T029 [P] [US3] Integrate the same selection-aware shield ahead of existing Canvas pointer correction without per-move React state in `shell/src/components/terminal/TerminalPane.tsx`
+- [x] T030 [US3] Run all User Story 3 tests in `tests/contracts/terminal-clipboard.test.ts`, `tests/desktop/terminal-view.test.tsx`, and `tests/shell/terminal-pane-scrolling.test.tsx`
 
 **Checkpoint**: All P1 journeys (shortcuts, right-click fidelity, and Codex/mouse-aware stability) are complete. Preserve User Stories 2–3 as Graphite layer 3.
 
@@ -122,13 +122,13 @@
 ### Tests for User Story 4 — write and observe RED first
 
 - [ ] T031 [P] [US4] Add failing native Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/desktop/terminal-view.test.tsx` and `tests/desktop/terminal-link-context-menu.test.tsx`
-- [ ] T032 [P] [US4] Add failing web Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/shell/terminal-pane-clipboard.test.tsx` and `tests/shell/terminal-link-context-menu.test.tsx`
+- [ ] T032 [P] [US4] Add failing web Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/shell/terminal-pane-scrolling.test.tsx` and `tests/shell/terminal-link-context-menu.test.tsx`
 
 ### Implementation for User Story 4
 
 - [ ] T033 [P] [US4] Route native Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
 - [ ] T034 [P] [US4] Route web Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T035 [US4] Run all User Story 4 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-clipboard.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
+- [ ] T035 [US4] Run all User Story 4 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
 
 **Checkpoint**: Select All is independently usable in native and web terminals.
 
@@ -166,14 +166,14 @@
 ### Tests for User Story 6 — write and observe RED first
 
 - [ ] T043 [P] [US6] Add failing native clipboard denial, fallback failure, generic feedback, selection retention, stale-session cancellation, unmount, and exactly-once retry tests in `tests/desktop/terminal-link-actions.test.ts` and `tests/desktop/terminal-view.test.tsx`
-- [ ] T044 [P] [US6] Add failing web clipboard denial, disconnected transport, stale-pane cancellation, generic feedback, zero-write failure, and exactly-once retry tests in `tests/shell/terminal-rich-paste.test.ts` and `tests/shell/terminal-pane-clipboard.test.tsx`
+- [ ] T044 [P] [US6] Add failing web clipboard denial, disconnected transport, stale-pane cancellation, generic feedback, zero-write failure, and exactly-once retry tests in `tests/shell/terminal-rich-paste.test.ts` and `tests/shell/terminal-pane-scrolling.test.tsx`
 - [ ] T045 [US6] Add privacy assertions that UI and diagnostics never contain selected text, clipboard text, raw errors, provider details, paths, filenames, or session IDs in `tests/desktop/terminal-view.test.tsx` and `tests/shell/terminal-pane-privacy.test.tsx` after T043–T044
 
 ### Implementation for User Story 6
 
 - [ ] T046 [P] [US6] Add bounded native clipboard operation state, safe generic feedback, and session-generation/unmount cancellation in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`, `desktop/src/renderer/src/features/terminal/terminal-link-actions.ts`, and `desktop/src/renderer/src/features/terminal/terminal-rich-paste.ts`
 - [ ] T047 [P] [US6] Add bounded web clipboard outcomes, safe generic feedback, and pane/socket generation cancellation in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/terminal-rich-paste.ts`
-- [ ] T048 [US6] Run all User Story 6 tests in `tests/desktop/terminal-link-actions.test.ts`, `tests/desktop/terminal-view.test.tsx`, `tests/shell/terminal-rich-paste.test.ts`, `tests/shell/terminal-pane-clipboard.test.tsx`, and `tests/shell/terminal-pane-privacy.test.tsx`
+- [ ] T048 [US6] Run all User Story 6 tests in `tests/desktop/terminal-link-actions.test.ts`, `tests/desktop/terminal-view.test.tsx`, `tests/shell/terminal-rich-paste.test.ts`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-pane-privacy.test.tsx`
 
 **Checkpoint**: Clipboard failures are safe, private, retryable, and independently testable.
 
@@ -255,7 +255,7 @@ All stories -> E2E / CI / evidence / docs
 Task T018: Native inner-xterm context ordering tests in tests/desktop/terminal-view.test.tsx
 Task T019: Native menu snapshot/focus tests in tests/desktop/terminal-link-context-menu.test.tsx
 Task T020: Web menu snapshot/focus tests in tests/shell/terminal-link-context-menu.test.tsx
-Task T021: Web inner-xterm context ordering tests in tests/shell/terminal-pane-clipboard.test.tsx
+Task T021: Web inner-xterm context ordering tests in tests/shell/terminal-pane-scrolling.test.tsx
 ```
 
 ## Parallel Example: User Story 5

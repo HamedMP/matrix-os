@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
+import { sql } from "kysely";
+import { createDefaultOsViewDesktopIcons } from "@matrix-os/contracts";
 import {
   OsViewStateConflictError,
   OsViewStateRepository,
@@ -33,6 +35,127 @@ describe("OS-view state repository", () => {
     });
     expect(updated.document.pinnedApps).toEqual(["__chat__"]);
     expect((await repository.getOrCreate("bob")).document.pinnedApps).toEqual([]);
+  });
+
+  it("repairs a pre-marker empty icon layout exactly once", async () => {
+    const initial = await repository.getOrCreate("alice");
+    const emptied = await repository.patch("alice", {
+      baseRevision: initial.revision,
+      mutationId: `osvm_${"0".repeat(32)}`,
+      patch: { desktop: { icons: [] } },
+    });
+    await sql`ALTER TABLE os_view_states ALTER COLUMN desktop_icons_initialized_at DROP NOT NULL`.execute(repository.kysely);
+    await sql`UPDATE os_view_states
+      SET desktop_icons_initialized_at = NULL, legacy_desktop_imported_at = NULL
+      WHERE owner_id = 'alice'`.execute(repository.kysely);
+
+    await repository.bootstrap();
+
+    const repaired = await repository.getOrCreate("alice");
+    expect(repaired.revision).toBe(emptied.revision + 1);
+    expect(repaired.document.desktop.icons).toEqual(createDefaultOsViewDesktopIcons());
+
+    const intentionallyEmpty = await repository.patch("alice", {
+      baseRevision: repaired.revision,
+      mutationId: `osvm_${"9".repeat(32)}`,
+      patch: { desktop: { icons: [] } },
+    });
+    await repository.bootstrap();
+    expect((await repository.getOrCreate("alice"))).toMatchObject({
+      revision: intentionallyEmpty.revision,
+      document: { desktop: { icons: [] } },
+    });
+  });
+
+  it("marks customized pre-marker layouts without changing their order or revision", async () => {
+    const initial = await repository.getOrCreate("alice");
+    const custom = [{ path: "__terminal__", x: 333, y: 444 }];
+    const customized = await repository.patch("alice", {
+      baseRevision: initial.revision,
+      mutationId: `osvm_${"8".repeat(32)}`,
+      patch: { desktop: { icons: custom } },
+    });
+    await sql`ALTER TABLE os_view_states ALTER COLUMN desktop_icons_initialized_at DROP NOT NULL`.execute(repository.kysely);
+    await sql`UPDATE os_view_states
+      SET desktop_icons_initialized_at = NULL, legacy_desktop_imported_at = NULL
+      WHERE owner_id = 'alice'`.execute(repository.kysely);
+
+    await repository.bootstrap();
+
+    expect(await repository.getOrCreate("alice")).toMatchObject({
+      revision: customized.revision,
+      document: { desktop: { icons: custom } },
+    });
+  });
+
+  it("imports only present legacy fields once and preserves defaults when icons are absent", async () => {
+    const defaults = createDefaultOsViewDesktopIcons();
+    const imported = await repository.importLegacyDesktop("alice", {
+      pinnedApps: ["__chat__"],
+    });
+    const repeated = await repository.importLegacyDesktop("alice", {
+      pinnedApps: ["__terminal__"],
+      desktopIcons: [],
+    });
+
+    expect(imported.document.pinnedApps).toEqual(["__chat__"]);
+    expect(imported.document.desktop.icons).toEqual(defaults);
+    expect(repeated).toEqual(imported);
+  });
+
+  it("serializes concurrent legacy imports and applies exactly one payload", async () => {
+    await repository.getOrCreate("alice");
+
+    const [first, second] = await Promise.all([
+      repository.importLegacyDesktop("alice", { pinnedApps: ["__chat__"] }),
+      repository.importLegacyDesktop("alice", { pinnedApps: ["__terminal__"] }),
+    ]);
+
+    expect(second).toEqual(first);
+    expect([["__chat__"], ["__terminal__"]]).toContainEqual(first.document.pinnedApps);
+    expect((await repository.getOrCreate("alice")).revision).toBe(2);
+  });
+
+  it("preserves an explicit empty legacy icon layout", async () => {
+    const imported = await repository.importLegacyDesktop("alice", {
+      pinnedApps: [],
+      desktopIcons: [],
+    });
+
+    expect(imported.document.desktop.icons).toEqual([]);
+    expect((await repository.getOrCreate("alice")).document.desktop.icons).toEqual([]);
+  });
+
+  it("lets a current icon write preempt a later legacy import", async () => {
+    const initial = await repository.getOrCreate("alice");
+    const emptied = await repository.patch("alice", {
+      baseRevision: initial.revision,
+      mutationId: `osvm_${"6".repeat(32)}`,
+      patch: { desktop: { icons: [] } },
+    });
+
+    const afterImport = await repository.importLegacyDesktop("alice", {
+      desktopIcons: createDefaultOsViewDesktopIcons(),
+    });
+
+    expect(afterImport).toEqual(emptied);
+    expect(afterImport.document.desktop.icons).toEqual([]);
+  });
+
+  it("discards the poisoned empty migration signature from a cached old client", async () => {
+    const initial = await repository.getOrCreate("alice");
+    const migrated = await repository.patch("alice", {
+      baseRevision: initial.revision,
+      mutationId: `osvm_${"7".repeat(32)}`,
+      patch: { pinnedApps: ["__chat__"], desktop: { icons: [] } },
+    });
+
+    expect(migrated.document.pinnedApps).toEqual(["__chat__"]);
+    expect(migrated.document.desktop.icons).toEqual(createDefaultOsViewDesktopIcons());
+    await expect(repository.importLegacyDesktop("alice", {
+      pinnedApps: [],
+      desktopIcons: [],
+    })).resolves.toEqual(migrated);
   });
 
   it("enforces the revision in the update and reports the latest revision", async () => {

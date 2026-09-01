@@ -79,13 +79,14 @@ describe("shell PostHog same-origin proxy", () => {
   it("initializes posthog-js with a relative api_host", async () => {
     const { initializeShellPostHog } = await import("../../shell/src/lib/posthog-client");
 
-    initializeShellPostHog("US", { token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" });
+    initializeShellPostHog({ token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" });
 
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [token, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
     expect(token).toBe("phc_test");
     expect(options.api_host).toBe("/relay");
     expect(options.ui_host).toBe("https://eu.posthog.com");
+    expect(options).not.toHaveProperty("cookieless_mode");
   });
 
   it("only resets identity for provably identified sessions", async () => {
@@ -93,7 +94,7 @@ describe("shell PostHog same-origin proxy", () => {
       "../../shell/src/lib/posthog-client"
     );
     const config = { token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" };
-    initializeShellPostHog("US", config);
+    initializeShellPostHog(config);
     const mock = posthogMock as typeof posthogMock & { _isIdentified?: () => boolean };
 
     // Identity check unavailable: never reset (would rotate anonymous ids).

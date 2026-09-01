@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MessageCircleIcon, SearchIcon, ServerIcon } from "@/lib/hugeicons";
+import { DiscordIcon, MessageCircleIcon, SearchIcon, ServerIcon } from "@/lib/hugeicons";
 import { UserButton } from "../UserButton";
 
 export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations";
@@ -37,6 +37,16 @@ export function WebDesktopControls({ onOpenSettings, onOpenCommandPalette, onOpe
       >
         <MessageCircleIcon className="size-3.5" aria-hidden="true" />
       </button>
+      <a
+        href="https://discord.gg/WHbvTG33w"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Join Discord"
+        title="Join Discord"
+        className={actionClass}
+      >
+        <DiscordIcon className="size-3.5" aria-hidden="true" />
+      </a>
       <Link
         href="/runtime"
         aria-label="Switch computer"

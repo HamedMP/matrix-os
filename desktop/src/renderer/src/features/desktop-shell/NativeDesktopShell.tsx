@@ -21,7 +21,8 @@ import DesktopBackgroundMenu from "./DesktopBackgroundMenu";
 import DesktopAppDrawer from "./DesktopAppDrawer";
 import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import { useConnection } from "../../stores/connection";
-import { defaultDesktopIcons, useDesktopIcons } from "../../stores/desktop-icons";
+import { useDesktopIcons } from "../../stores/desktop-icons";
+import { createDefaultOsViewDesktopIcons } from "@matrix-os/contracts";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
 import { appIconUrl, useAppsQuery } from "../apps/apps.api";
 import { LayoutGrid } from "@renderer/lib/hugeicons";
@@ -94,7 +95,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const durableOpenedPathsRef = useRef<Record<string, true>>({});
   const tabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
   const defaultIconLayout = useMemo(
-    () => defaultDesktopIcons(FIXED_DESKTOP_APPS.map((app) => app.path)),
+    createDefaultOsViewDesktopIcons,
     [],
   );
 

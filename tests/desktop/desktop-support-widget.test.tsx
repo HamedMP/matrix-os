@@ -193,6 +193,7 @@ describe("Desktop support widget", () => {
       .toEqual([
         "Search",
         "Support",
+        "Join Discord",
         "Main computer",
         "Getting started — 0 of 5",
         "Open account menu",

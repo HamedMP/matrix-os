@@ -21,7 +21,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.151.0";
+export const CODEX_VERIFIED_VERSION = "0.152.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#billing-catalog";
 export * from "#agent-runtime-config";
@@ -1137,13 +1137,22 @@ export const ReviewSnapshotSchema = z.object({
 export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
 
 export {
+  DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  LegacyDesktopImportSchema,
   OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_CREATE_APP_APPEARANCE,
+  OS_VIEW_FIXED_APP_APPEARANCES,
   OS_VIEW_LABELS,
   OS_VIEW_MODES,
   isOsViewDestinationPath,
+  legacyDesktopImportFromConfig,
   normalizeOsViewMode,
+  osViewFixedAppAppearanceForPath,
+  normalizeOsViewDesktopAppPath,
+  normalizeOsViewDesktopIcons,
   otherOsViewMode,
   createDefaultOsViewDocument,
+  createDefaultOsViewDesktopIcons,
   mergeOsViewStatePatch,
   rebaseOsViewStatePatch,
   OsViewAppStateSchema,
@@ -1157,10 +1166,13 @@ export {
   PatchOsViewStateRequestSchema,
 } from "#os-view";
 export type {
+  LegacyDesktopImport,
   OsViewAppState,
   OsViewCanvasTransform,
   OsViewDesktopIcon,
   OsViewDocument,
+  OsViewFixedAppIcon,
+  OsViewFixedAppId,
   OsViewMode,
   OsViewStatePatch,
   OsViewStateResponse,

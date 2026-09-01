@@ -67,7 +67,7 @@ describe("PostHog error tracking", () => {
     // The shell ships a same-origin /relay rewrite, so it opts into relative
     // API hosts to keep capture calls first-party on user subdomains.
     expect(shellClient).toContain("allowRelativeApiHost: true");
-    expect(shellClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(shellClient).not.toContain("buildPostHogCookieConsentInitOptions");
     expect(shellLayout).not.toContain("PostHogCookieBanner");
   });
 
@@ -596,7 +596,7 @@ describe("PostHog error tracking", () => {
     const shellPostHogClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
     expect(shellPostHogClient).toContain("same-origin PostHog proxy at /relay");
     expect(shellPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay"');
-    expect(shellPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(shellPostHogClient).not.toContain("buildPostHogCookieConsentInitOptions");
     expect(shellPostHogClient).not.toContain("__loaded");
 
   });
@@ -641,15 +641,16 @@ describe("PostHog error tracking", () => {
   });
 
   it("tracks terminal websocket lifecycle without terminal output payloads", async () => {
-    const [terminalPane, gatewayServer] = await Promise.all([
+    const [terminalPane, terminalRuntime, gatewayServer] = await Promise.all([
       readFile("shell/src/components/terminal/TerminalPane.tsx", "utf8"),
+      readFile("shell/src/components/terminal/terminal-xterm-runtime.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
     ]);
 
-    expect(terminalPane).toContain('capturePostHogEvent("shell_terminal_ws"');
-    expect(terminalPane).toContain("capturePostHogLog");
+    expect(terminalRuntime).toContain('capturePostHogEvent("shell_terminal_ws"');
+    expect(terminalRuntime).toContain("capturePostHogLog");
     expect(terminalPane).toContain('track("schedule-reconnect"');
-    expect(terminalPane).not.toContain("capturePostHogEvent(\"shell_terminal_ws\", { data");
+    expect(terminalRuntime).not.toContain("capturePostHogEvent(\"shell_terminal_ws\", { data");
     expect(gatewayServer).toContain('posthogErrorTracker.captureEvent("gateway_terminal_ws"');
     expect(gatewayServer).toContain('captureTerminalEvent("attach-request"');
     expect(gatewayServer).not.toContain('captureTerminalEvent("input"');
