@@ -358,6 +358,16 @@ describe("edge selection viewport merging", () => {
     )).toEqual({ startRow: 98, lines: ["same", "same", "anchor"] });
   });
 
+  it("does not treat an empty overlap as a full-viewport shift", () => {
+    expect(mergeTerminalEdgeSelectionLines(
+      { startRow: 100, lines: ["anchor"] },
+      { startRow: 100, lines: ["new-a", "new-b", "new-c"] },
+      "up",
+      1,
+      { startRow: 100, lines: ["old-a", "old-b", "old-c"] },
+    )).toEqual({ startRow: 99, lines: ["new-a", "anchor"] });
+  });
+
   it("caps retained viewport rows while preserving the selection anchor", () => {
     const lines = Array.from({ length: 5_001 }, (_, index) => `line-${index}`);
 

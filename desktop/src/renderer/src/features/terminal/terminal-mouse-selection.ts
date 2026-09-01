@@ -76,7 +76,7 @@ function inferInPlaceViewportShift(
   const requested = Math.min(maxShift, Math.max(1, requestedRows));
   const matches = (shift: number) => {
     const overlap = Math.min(previous.lines.length, next.lines.length) - shift;
-    if (overlap <= 0) return true;
+    if (overlap <= 0) return false;
     const previousStart = direction === "up" ? 0 : shift;
     const nextStart = direction === "up" ? shift : 0;
     for (let index = 0; index < overlap; index += 1) {
