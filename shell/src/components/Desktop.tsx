@@ -475,7 +475,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       setSettingsDefaultSection("agents-providers");
       setSettingsOpen(true);
       setTaskBoardOpen(false);
-      setChatOpen(false);
     };
     const openProviderTerminal = (event: Event) => {
       const sessionId = providerTerminalSessionFromEvent(event);
