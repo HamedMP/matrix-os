@@ -40,7 +40,7 @@ const ClaudeStreamLineSchema = z.object({
     delta: z.object({
       type: z.string().optional(),
       text: z.string().optional(),
-      partial_json: z.string().max(16_000).optional(),
+      partial_json: z.string().optional(),
     }).passthrough().optional(),
     content_block: z.object({
       type: z.string(),
@@ -53,7 +53,11 @@ const ClaudeStreamLineSchema = z.object({
 
 type ClaudeChatState = z.infer<typeof ClaudeChatStateSchema>;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
-const MAX_STREAM_BYTES = 1024 * 1024;
+// Claude's stream-json protocol repeats bounded tool-result envelopes throughout
+// a Run, so healthy repository tasks routinely exceed one MiB in total. This is
+// still a hard process-output ceiling; per-event projection and the queue remain
+// independently bounded below.
+const MAX_STREAM_BYTES = 16 * 1024 * 1024;
 const MAX_STDERR_BYTES = 8_192;
 
 function definedEnvironment(

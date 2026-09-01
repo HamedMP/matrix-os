@@ -342,6 +342,72 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
   });
 
+  it("accepts a healthy long Claude stream beyond the legacy one-megabyte total cap", async () => {
+    const progressLines = Array.from({ length: 540 }, (_, index) => JSON.stringify({
+      type: "user",
+      tool_use_result: {
+        sequence: index,
+        content: "x".repeat(2_000),
+      },
+    }));
+    const spawnFn = vi.fn(() => child([
+      ...progressLines,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "completed after a long healthy stream",
+        session_id: "claude_long_stream_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
+  it("discards an oversized Claude tool-input fragment without failing the Run", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "tool_large_input", name: "Bash", input: {} },
+        },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: "x".repeat(20_000) },
+        },
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "completed after ignoring oversized tool input",
+        session_id: "claude_large_tool_input_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "agent.activity",
+      activityId: "tool_large_input",
+      status: "completed",
+    }));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("executes with the owner Claude credential environment", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "authenticated", session_id: "claude_session" }),
