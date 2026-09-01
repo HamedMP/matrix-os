@@ -42,6 +42,8 @@ export interface ChatState {
   ) => void;
   newChat: () => Promise<void>;
   switchConversation: (id: string) => void;
+  /** Permanently deletes a conversation after the server confirms success. */
+  deleteConversation?: (id: string) => Promise<boolean>;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
   submitApproval?: (

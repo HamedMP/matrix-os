@@ -34,6 +34,72 @@ beforeEach(() => {
 });
 
 describe("canonical shell Chat state", () => {
+  it("deletes the active Chat server-side before clearing or selecting local state", async () => {
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method !== "DELETE") {
+        return Response.json({ items: [record("chat_a", "A"), record("chat_b", "B")] });
+      }
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
+        return Response.json(detail("chat_a", "A"));
+      }
+      if (url.includes("/api/chats/chat_b?") && init?.method === undefined) {
+        return Response.json(detail("chat_b", "B"));
+      }
+      if (url.includes("/api/chats/chat_a?clientRequestId=") && init?.method === "DELETE") {
+        return Response.json({ chatId: "chat_a", deletedAt: "2026-09-01T10:00:00.000Z" });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    vi.stubGlobal("crypto", { randomUUID: () => "stable-delete-id" });
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
+
+    let deleted = false;
+    await act(async () => { deleted = await result.current.deleteConversation!("chat_a"); });
+
+    expect(deleted).toBe(true);
+    expect(result.current.sessionId).toBe("chat_b");
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("B"));
+  });
+
+  it("does not resurrect a deleted Chat when an older list refresh settles late", async () => {
+    let listCalls = 0;
+    let resolveStaleList: ((response: Response) => void) | undefined;
+    const staleList = new Promise<Response>((resolve) => { resolveStaleList = resolve; });
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method !== "DELETE") {
+        listCalls += 1;
+        return listCalls === 1
+          ? Response.json({ items: [record("chat_a", "A"), record("chat_b", "B")] })
+          : staleList;
+      }
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
+        return Response.json(detail("chat_a", "A"));
+      }
+      if (url.includes("/api/chats/chat_b?") && init?.method === undefined) {
+        return Response.json(detail("chat_b", "B"));
+      }
+      if (url.includes("/api/chats/chat_a?clientRequestId=") && init?.method === "DELETE") {
+        return Response.json({ chatId: "chat_a", deletedAt: "2026-09-01T10:00:00.000Z" });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    vi.stubGlobal("crypto", { randomUUID: () => "stable-delete-id" });
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.sessionId).toBe("chat_a"));
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(listCalls).toBe(2));
+    await act(async () => { await result.current.deleteConversation!("chat_a"); });
+    expect(result.current.conversations.map((conversation) => conversation.id)).toEqual(["chat_b"]);
+
+    resolveStaleList!(Response.json({ items: [record("chat_a", "A"), record("chat_b", "B")] }));
+    await act(async () => { await staleList; });
+    expect(result.current.conversations.map((conversation) => conversation.id)).toEqual(["chat_b"]);
+  });
+
   it("ignores an out-of-order detail response after switching chats", async () => {
     let resolveA: ((response: Response) => void) | undefined;
     const detailA = new Promise<Response>((resolve) => { resolveA = resolve; });

@@ -73,7 +73,7 @@ const BUILT_IN_APPS: MobileApp[] = [
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
   ...(HERMES_CHAT_HIDDEN
     ? []
-    : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
+    : [{ id: "chat", name: "Chat", path: "__chat__", iconSlug: "chat" } as MobileApp]),
 ];
 
 function mobileAppsFromBootstrap(
@@ -613,7 +613,9 @@ function MobileAppFrame({
         conversations={chat.conversations}
         onNewChat={() => void chat.newChat()}
         onSwitchConversation={chat.switchConversation}
+        onDeleteConversation={chat.deleteConversation}
         onSubmit={chat.submitMessage}
+        onAbort={chat.abortCurrent}
         onSubmitApproval={chat.submitApproval}
         providerSelection={chat.providerSelection}
         composerDraftRequest={chat.composerDraftRequest}

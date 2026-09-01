@@ -48,6 +48,18 @@ describe("built-in app helpers", () => {
     });
   });
 
+  it("names the built-in conversation surface Chat instead of a specific harness", () => {
+    expect(normalizeBuiltInLayoutWindow({
+      path: "__chat__",
+      title: "Hermes",
+      x: 10,
+      y: 20,
+      width: 900,
+      height: 700,
+      state: "open",
+    })).toMatchObject({ path: "__chat__", title: "Chat" });
+  });
+
   it("keeps saved Workspace layout entries identifiable for retirement filtering", () => {
     expect(normalizeBuiltInLayoutWindow({
       path: "apps/workspace/index.html",

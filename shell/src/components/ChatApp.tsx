@@ -29,9 +29,9 @@ import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 import { Button } from "@/components/ui/button";
+import { ChatHistoryRail, type ChatConversationMeta } from "@/components/chat/ChatHistoryRail";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useVoice } from "@/hooks/useVoice";
 import {
@@ -58,17 +58,13 @@ import {
   Loader2Icon,
   PanelLeftIcon,
   SearchIcon,
-  MessageSquareIcon,
   BotIcon,
   Settings2Icon,
+  SquareIcon,
+  Bug,
+  Hammer,
+  CircleCheck,
 } from "@/lib/hugeicons";
-
-interface ConversationMeta {
-  id: string;
-  preview: string;
-  messageCount: number;
-  updatedAt: number;
-}
 
 const HERMES_SETUP_STORAGE_KEY = "matrix:hermes-setup";
 
@@ -104,9 +100,10 @@ interface ChatAppProps {
   sessionId: string | undefined;
   busy: boolean;
   connected: boolean;
-  conversations: ConversationMeta[];
+  conversations: ChatConversationMeta[];
   onNewChat: () => void;
   onSwitchConversation: (id: string) => void;
+  onDeleteConversation?: (id: string) => Promise<boolean>;
   onSubmit: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -120,6 +117,7 @@ interface ChatAppProps {
       modelOptions?: Array<{ id: string; value: string | boolean }>;
     },
   ) => void;
+  onAbort?: () => void;
   providerSelection?: CanonicalChatModelSelection;
   onSubmitApproval?: (
     runId: string,
@@ -135,33 +133,6 @@ interface ChatAppProps {
   mobile?: boolean;
 }
 
-function groupConversationsByTime(conversations: ConversationMeta[]) {
-  const now = Date.now();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayMs = today.getTime();
-  const yesterdayMs = todayMs - 86_400_000;
-  const weekMs = todayMs - 7 * 86_400_000;
-
-  const groups: { label: string; items: ConversationMeta[] }[] = [
-    { label: "Today", items: [] },
-    { label: "Yesterday", items: [] },
-    { label: "Previous 7 days", items: [] },
-    { label: "Older", items: [] },
-  ];
-
-  const sorted = conversations.toSorted((a, b) => b.updatedAt - a.updatedAt);
-
-  for (const conv of sorted) {
-    if (conv.updatedAt >= todayMs) groups[0].items.push(conv);
-    else if (conv.updatedAt >= yesterdayMs) groups[1].items.push(conv);
-    else if (conv.updatedAt >= weekMs) groups[2].items.push(conv);
-    else groups[3].items.push(conv);
-  }
-
-  return groups.filter((g) => g.items.length > 0);
-}
-
 export function ChatApp({
   messages,
   sessionId,
@@ -170,7 +141,9 @@ export function ChatApp({
   conversations,
   onNewChat,
   onSwitchConversation,
+  onDeleteConversation,
   onSubmit,
+  onAbort,
   providerSelection,
   onSubmitApproval,
   composerDraftRequest,
@@ -180,7 +153,6 @@ export function ChatApp({
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
-  const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
   const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
@@ -219,15 +191,6 @@ export function ChatApp({
     });
   };
 
-  const trimmedSearch = searchQuery.trim();
-  const filteredConversations = !trimmedSearch
-    ? conversations
-    : conversations.filter((c) =>
-        c.preview?.toLowerCase().includes(searchQuery.toLowerCase()),
-      );
-
-  const timeGroups = groupConversationsByTime(filteredConversations);
-
   const suggestions = getMessageSuggestions(messages);
 
   const isEmpty = messages.length === 0 && !busy;
@@ -251,7 +214,11 @@ export function ChatApp({
   };
 
   return (
-    <div className="relative flex h-full bg-background">
+    <div
+      className="relative flex h-full min-h-0 min-w-0 overflow-hidden bg-background"
+      data-testid="web-chat-workspace"
+      data-desktop-parity="true"
+    >
       {providerSetupError && (
         <ShellNotificationPortal>
           <ShellNotificationCard
@@ -262,88 +229,16 @@ export function ChatApp({
           </ShellNotificationCard>
         </ShellNotificationPortal>
       )}
-      {/* Sidebar */}
-      <aside
-        className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
-          sidebarOpen
-            ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
-            : "w-0 overflow-hidden"
-        }`}
-      >
-        <div className="flex items-center justify-between p-3 pb-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`${touchIcon} text-muted-foreground hover:text-foreground`}
-            onClick={() => setSidebarOpen(false)}
-          >
-            <PanelLeftIcon className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`${touchIcon} text-muted-foreground hover:text-foreground`}
-            onClick={onNewChat}
-            title="New chat"
-          >
-            <PlusIcon className="size-4" />
-          </Button>
-        </div>
-
-        {/* Search */}
-        <div className="px-3 pb-2">
-          <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
-            <SearchIcon className="size-3.5 text-muted-foreground" />
-            <input
-              type="text"
-              aria-label="Search chats"
-              placeholder="Search chats..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 bg-transparent outline-none placeholder:text-muted-foreground/60 text-foreground"
-            />
-          </div>
-        </div>
-
-        {/* Conversation list */}
-        <ScrollArea className="flex-1">
-          <div className="px-2 pb-3">
-            {timeGroups.map((group) => (
-              <div key={group.label}>
-                <div className="px-2 pt-4 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                  {group.label}
-                </div>
-                {group.items.map((conv) => (
-                  <button
-                    key={conv.id}
-                    type="button"
-                    onClick={() => onSwitchConversation(conv.id)}
-                    className={`group flex w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors ${mobile ? "py-3" : "py-2"} ${
-                      conv.id === sessionId
-                        ? "bg-accent/50 text-foreground"
-                        : "text-foreground/70 hover:bg-accent/30 hover:text-foreground"
-                    }`}
-                  >
-                    <span className="flex-1 truncate">
-                      {conv.preview
-                        ? conv.preview.slice(0, 40) + (conv.preview.length > 40 ? "..." : "")
-                        : "New chat"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ))}
-            {conversations.length === 0 && (
-              <div className="flex flex-col items-center gap-2 px-3 py-10 text-center">
-                <span className="inline-flex size-9 items-center justify-center rounded-full bg-foreground/5 text-muted-foreground/60">
-                  <MessageSquareIcon className="size-4" aria-hidden="true" />
-                </span>
-                <p className="text-xs text-muted-foreground/60">No conversations yet</p>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
-      </aside>
+      <ChatHistoryRail
+        open={sidebarOpen}
+        mobile={mobile}
+        activeChatId={sessionId ?? null}
+        conversations={conversations}
+        onClose={() => setSidebarOpen(false)}
+        onNewChat={onNewChat}
+        onSwitchConversation={onSwitchConversation}
+        onDeleteConversation={onDeleteConversation}
+      />
 
       {/* Main content */}
       <main className="flex flex-1 flex-col min-w-0">
@@ -429,7 +324,6 @@ export function ChatApp({
           <EmptyState
             onSubmit={submitWithHermesSetup}
             connected={connected}
-            suggestions={suggestions}
             mobile={mobile}
             composerDraftRequest={composerDraftRequest}
             onComposerDraftConsumed={onComposerDraftConsumed}
@@ -440,7 +334,7 @@ export function ChatApp({
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
             <Conversation>
-              <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
+              <ConversationContent className="mx-auto w-full max-w-[868px] gap-6 px-5 py-6">
                 {grouped.map((group) => {
                   if (group.type === "tool_group") {
                     return <ToolCallGroup key={`tg-${group.messages[0].id}`} tools={group.messages} />;
@@ -490,7 +384,7 @@ export function ChatApp({
             </Conversation>
 
             {/* Suggestions + Input */}
-            <div className="mx-auto w-full max-w-[720px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
+            <div className="mx-auto w-full max-w-[868px] px-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-2">
               {!busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
@@ -503,6 +397,7 @@ export function ChatApp({
                 connected={connected && providerState.selected !== null}
                 busy={busy}
                 onSubmit={submitWithHermesSetup}
+                onAbort={onAbort}
                 draftRequest={composerDraftRequest}
                 onDraftConsumed={onComposerDraftConsumed}
                 unavailablePlaceholder={!providerState.loading && providerState.selected === null
@@ -521,7 +416,6 @@ export function ChatApp({
 function EmptyState({
   onSubmit,
   connected,
-  suggestions,
   mobile,
   composerDraftRequest,
   onComposerDraftConsumed,
@@ -531,7 +425,6 @@ function EmptyState({
 }: {
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
   connected: boolean;
-  suggestions: string[];
   mobile: boolean;
   composerDraftRequest?: { id: number; text: string } | null;
   onComposerDraftConsumed?: (id: number) => void;
@@ -539,14 +432,22 @@ function EmptyState({
   providerReady: boolean;
   attachmentsEnabled: boolean;
 }) {
+  const [starterDraft, setStarterDraft] = useState<{ id: number; text: string } | null>(null);
+  const starterSequence = useRef(0);
+  const starters = [
+    { label: "Explore and understand code", Icon: SearchIcon, tone: "text-success" },
+    { label: "Build a new feature, app, or tool", Icon: Hammer, tone: "text-primary" },
+    { label: "Review code and suggest changes", Icon: CircleCheck, tone: "text-success" },
+    { label: "Fix issues and failures", Icon: Bug, tone: "text-warning" },
+  ] as const;
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-4">
-      <div className="w-full max-w-[600px] space-y-8">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-5 py-8">
+      <div className="w-full max-w-[868px] space-y-7">
         {/* Greeting */}
         <div className="text-center space-y-2">
-          <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
-            What should Matrix do?
-          </h1>
+          <h2 className="text-2xl font-medium tracking-tight text-foreground/90">
+            What should we build today?
+          </h2>
           <p className="text-sm text-muted-foreground">
             {modelLabel ? `Using ${modelLabel}` : "Connect a harness in Settings to start chatting."}
           </p>
@@ -558,27 +459,30 @@ function EmptyState({
           busy={false}
           onSubmit={onSubmit}
           autoFocus={!mobile}
-          draftRequest={composerDraftRequest}
-          onDraftConsumed={onComposerDraftConsumed}
+          draftRequest={composerDraftRequest ?? starterDraft}
+          onDraftConsumed={(id) => {
+            if (starterDraft?.id === id) setStarterDraft(null);
+            onComposerDraftConsumed?.(id);
+          }}
           unavailablePlaceholder={!providerReady ? "AI harness unavailable" : undefined}
           attachmentsEnabled={attachmentsEnabled}
         />
 
-        {/* Suggestions */}
-        {suggestions.length > 0 && (
-          <div className="flex flex-wrap justify-center gap-2">
-            {suggestions.map((s, i) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => onSubmit(s)}
-                className={`rounded-full border border-border/60 bg-card/50 px-3.5 text-xs text-foreground/70 transition-all hover:bg-accent/40 hover:text-foreground hover:border-border ${mobile ? "py-2.5" : "py-1.5"}`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className={`grid gap-3 ${mobile ? "grid-cols-1" : "grid-cols-2"}`} data-slot="chat-starter-cards">
+          {starters.map(({ label, Icon, tone }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setStarterDraft({ id: ++starterSequence.current, text: label })}
+              className="flex min-h-28 flex-col items-start justify-between rounded-xl border border-border/60 bg-card p-4 text-left outline-none transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className={`flex size-8 items-center justify-center rounded-lg bg-muted/60 ${tone}`}>
+                <Icon className="size-4" aria-hidden="true" />
+              </span>
+              <span className="max-w-44 text-[13px] font-medium leading-[18px] text-foreground">{label}</span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -618,6 +522,7 @@ function ChatInput({
   connected,
   busy,
   onSubmit,
+  onAbort,
   autoFocus,
   draftRequest,
   onDraftConsumed,
@@ -627,6 +532,7 @@ function ChatInput({
   connected: boolean;
   busy: boolean;
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
+  onAbort?: () => void;
   autoFocus?: boolean;
   draftRequest?: { id: number; text: string } | null;
   onDraftConsumed?: (id: number) => void;
@@ -729,16 +635,28 @@ function ChatInput({
               )}
             </Button>
           )}
-          <Button
-            type="button"
-            aria-label="Send"
-            size="icon"
-            className="size-8 rounded-full"
-            disabled={!connected || (!input.trim() && attachments.length === 0) || busy}
-            onClick={() => handleSubmit()}
-          >
-            <SendIcon className="size-4" />
-          </Button>
+          {busy && onAbort ? (
+            <Button
+              type="button"
+              aria-label="Stop response"
+              size="icon"
+              className="size-8 rounded-full"
+              onClick={onAbort}
+            >
+              <SquareIcon className="size-3.5 fill-current" />
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              aria-label="Send"
+              size="icon"
+              className="size-8 rounded-full"
+              disabled={!connected || (!input.trim() && attachments.length === 0)}
+              onClick={() => handleSubmit()}
+            >
+              <SendIcon className="size-4" />
+            </Button>
+          )}
         </div>
       </div>
     </div>

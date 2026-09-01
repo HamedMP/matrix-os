@@ -89,6 +89,47 @@ function agentSettingsView() {
   };
 }
 
+function chatProviderCatalogView() {
+  return {
+    revision: "catalog_visual_chat",
+    drivers: [{ kind: "pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "coding_agent" }],
+    instances: [{
+      id: "pi_default",
+      driverKind: "pi",
+      displayName: "Pi",
+      availability: "available",
+      workspaceRequirement: "project_optional",
+      models: [{
+        id: "anthropic:claude-sonnet-5",
+        displayName: "Claude Sonnet 5",
+        availability: "available",
+        capabilities: ["reasoning", "tools"],
+        supportsVision: false,
+        supportsToolUse: true,
+      }],
+      options: [],
+      skills: [],
+      commands: [],
+      setupActions: [],
+      supports: {
+        rootChat: true,
+        resume: true,
+        cancellation: true,
+        attachments: [],
+        tools: [],
+        approvals: false,
+        userInput: false,
+        worktrees: "optional",
+        resources: ["project"],
+        interactionModes: ["default"],
+        permissionModes: ["supervised"],
+      },
+      defaultSelection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" },
+      catalogRevision: "catalog_visual_chat",
+    }],
+  };
+}
+
 test.describe("Visual regression", () => {
   test.beforeEach(async ({ page }) => {
     // Match the platform-owned app shell request boundary so the server-rendered
@@ -128,6 +169,20 @@ test.describe("Visual regression", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([]),
+      }),
+    );
+    await page.route("**/api/chats**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [] }),
+      }),
+    );
+    await page.route("**/api/chat-providers**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(chatProviderCatalogView()),
       }),
     );
     await page.route("**/api/shell/bootstrap", (route) =>
@@ -179,7 +234,7 @@ test.describe("Visual regression", () => {
     await page.keyboard.type("Chat");
     await page.waitForTimeout(200);
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(500);
+    await expect(page.getByRole("heading", { name: "What should we build today?" })).toBeVisible();
     await expect(page).toHaveScreenshot("chat-sidebar.png", {
       maxDiffPixelRatio: 0.01,
     });
