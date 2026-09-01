@@ -498,4 +498,56 @@ suite("packaged Electron production-mode terminal selection", () => {
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
       .toContain(lines[resize.rows + 1]);
   }, 60_000);
+
+  it("extends a mouse-reporting selection by auto-scrolling beyond both edges", async () => {
+    const { resize, screenBox, point } = await terminalGrid();
+    const lines = Array.from(
+      { length: resize.rows + 30 },
+      (_, index) => `MOUSE-EDGE-SCROLL-${String(index).padStart(3, "0")}`,
+    );
+    gateway.sendTerminalOutput(`\u001bc${lines.join("\r\n")}`);
+    await page.waitForTimeout(300);
+
+    const viewport = terminalSurface().locator(".xterm-viewport");
+    await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await page.mouse.click(point(2, resize.rows - 2).x, point(2, resize.rows - 2).y);
+    gateway.sendTerminalOutput("\u001b[?1003h\u001b[?1006h");
+    await page.waitForTimeout(100);
+
+    try {
+      const initiallyVisibleTop = lines.length - resize.rows;
+      const upwardStart = point(5, resize.rows - 2);
+      await page.mouse.move(upwardStart.x, upwardStart.y);
+      await page.mouse.down();
+      await page.mouse.move(upwardStart.x, screenBox.y - 32, { steps: 8 });
+      await page.waitForTimeout(1_500);
+      await page.mouse.up();
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+        .toContain(lines[initiallyVisibleTop - 1]);
+
+      await viewport.evaluate((element) => { element.scrollTop = 0; });
+      await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBe(0);
+
+      const downwardStart = point(5, 1);
+      await page.mouse.move(downwardStart.x, downwardStart.y);
+      await page.mouse.down();
+      await page.mouse.move(
+        downwardStart.x,
+        screenBox.y + screenBox.height + 32,
+        { steps: 8 },
+      );
+      await page.waitForTimeout(1_500);
+      await page.mouse.up();
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+        .toContain(lines[resize.rows + 1]);
+    } finally {
+      gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
+      await page.mouse.move(
+        screenBox.x + screenBox.width / 2,
+        screenBox.y + screenBox.height / 2,
+      );
+    }
+  }, 60_000);
 });
