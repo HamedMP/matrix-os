@@ -24,7 +24,10 @@ import type {
   CodingHarnessCredentialResolver,
 } from "./harness-credentials.js";
 import { hasNativeHarnessAuth } from "./native-harness-auth.js";
-import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
+import type {
+  CodingAgentProviderAdapter,
+  CodingAgentProviderEventPublisher,
+} from "./provider-adapter.js";
 
 /**
  * Direct-spawn provider adapter for the pi coding-agent CLI
@@ -56,6 +59,7 @@ const MAX_EVENTS_PER_RUN = 480;
 const MAX_DELTA_CHARS = 3_500;
 const MAX_TEXT_CHARS = 24_000;
 const MAX_STDERR_CHARS = 8_192;
+const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_SESSION_ID_CHARS = 64;
 const MAX_PI_PROMPT_BYTES = 128 * 1024;
 const SESSION_ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
@@ -244,6 +248,7 @@ interface PiRunCollectorOptions {
   now: () => Date;
   nextEventId: () => string;
   maxEvents: number;
+  streaming: boolean;
 }
 
 interface PiCollectedRun {
@@ -262,6 +267,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
   let assistantMessageCounter = 0;
   let assistantText = "";
   let assistantMessageId: string | null = null;
+  let assistantEmittedChars = 0;
   let fallbackToolCounter = 0;
   // Each tracked tool needs at least a started + completed event. Reserving
   // half the run budget keeps both the event stream and the in-memory tool
@@ -286,15 +292,27 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
     };
   }
 
+  function emitPendingAssistantText(): void {
+    if (!assistantMessageId || assistantEmittedChars >= assistantText.length) return;
+    const pending = assistantText.slice(assistantEmittedChars);
+    for (const chunk of chunkDisplayText(pending)) {
+      emit({ ...baseEvent(), type: "assistant.text.delta", messageId: assistantMessageId, delta: chunk });
+    }
+    assistantEmittedChars = assistantText.length;
+  }
+
   function flushAssistantText(): void {
     const text = assistantText;
     const messageId = assistantMessageId;
-    assistantText = "";
-    assistantMessageId = null;
     if (!messageId) return;
     const bounded = truncateText(text, MAX_TEXT_CHARS);
-    for (const chunk of chunkDisplayText(bounded.text)) {
-      emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: chunk });
+    assistantText = bounded.text;
+    if (options.streaming) {
+      emitPendingAssistantText();
+    } else {
+      for (const chunk of chunkDisplayText(bounded.text)) {
+        emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: chunk });
+      }
     }
     if (bounded.truncated) {
       emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: "…" });
@@ -302,6 +320,9 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
     if (bounded.text.trim().length > 0) {
       emit({ ...baseEvent(), type: "assistant.text.completed", messageId });
     }
+    assistantText = "";
+    assistantMessageId = null;
+    assistantEmittedChars = 0;
   }
 
   function flushTool(
@@ -364,6 +385,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
           assistantMessageCounter += 1;
           assistantMessageId = `msg_${options.scope}_${assistantMessageCounter}`;
           assistantText = "";
+          assistantEmittedChars = 0;
           return;
         }
         if (kind === "text_delta") {
@@ -373,7 +395,8 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
           }
           const delta = (update as Record<string, unknown>).delta;
           if (typeof delta === "string" && assistantText.length < MAX_TEXT_CHARS) {
-            assistantText += delta;
+            assistantText += delta.slice(0, MAX_TEXT_CHARS - assistantText.length);
+            if (options.streaming) emitPendingAssistantText();
           }
           return;
         }
@@ -473,6 +496,9 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
       feedEvent(parsed as Record<string, unknown>);
     },
+    drain(): AgentThreadEvent[] {
+      return events.splice(0, events.length);
+    },
     finish(): PiCollectedRun {
       flushAssistantText();
       // Any tool still open at stream end (e.g. SIGTERM mid-execution) is
@@ -523,6 +549,7 @@ interface PiRunInput {
   signal?: AbortSignal;
   now: () => Date;
   nextEventId: () => string;
+  publishEvents?: CodingAgentProviderEventPublisher;
 }
 
 function piModelArguments(reference: string | undefined): string[] {
@@ -627,6 +654,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       now: input.now,
       nextEventId: input.nextEventId,
       maxEvents,
+      streaming: input.publishEvents !== undefined,
     });
     const args = [
       "--mode", "json",
@@ -697,8 +725,35 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       let settled = false;
       let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
       let stdoutBuffer = "";
+      let stdoutBytes = 0;
       let stderrText = "";
+      let publishError: unknown;
+      let publishQueue = Promise.resolve();
       const killTimer: { current?: ReturnType<typeof setTimeout> } = {};
+
+      function queueEvents(events: AgentThreadEvent[]): void {
+        if (!input.publishEvents || events.length === 0) return;
+        publishQueue = publishQueue.then(async () => {
+          if (publishError) return;
+          try {
+            await input.publishEvents!({ events });
+          } catch (err: unknown) {
+            publishError = err;
+            logCodingAgentWarning("pi provider event publish failed", err);
+          }
+        });
+      }
+
+      function drainCollector(): void {
+        if (input.publishEvents) queueEvents(collector.drain());
+      }
+
+      function finishCollector(): PiCollectedRun {
+        const collected = collector.finish();
+        if (!input.publishEvents) return collected;
+        queueEvents(collected.events);
+        return { ...collected, events: [] };
+      }
 
       const timeoutTimer = setTimeout(() => {
         requestTermination("timeout");
@@ -721,12 +776,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         if (killTimer.current) clearTimeout(killTimer.current);
         input.signal?.removeEventListener("abort", onAbort);
         untrackProcess(input.threadId, trackedProcess);
-        resolve(result);
+        void publishQueue.then(() => {
+          resolve(publishError ? { ...result, events: [], outcome: "failed" } : result);
+        });
       }
 
       function settleAfterForcedTermination(): void {
         if (settled) return;
-        const collected = collector.finish();
+        const collected = finishCollector();
         const sessionId = collected.sessionId ?? input.sessionId;
         if (terminationReason === "timeout") {
           logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${remainingRunTimeoutMs}ms`));
@@ -747,6 +804,13 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
       proc.stdout.on("data", (chunk: Buffer) => {
         if (settled) return;
+        stdoutBytes += chunk.byteLength;
+        if (stdoutBytes > MAX_STDOUT_BYTES) {
+          logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout byte cap exceeded"));
+          requestTermination("failure");
+          stdoutBuffer = "";
+          return;
+        }
         stdoutBuffer += chunk.toString("utf-8");
         if (stdoutBuffer.length > 8 * 1024 * 1024) {
           logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout buffer overflow"));
@@ -759,6 +823,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           const line = stdoutBuffer.slice(0, newlineIndex).replace(/\r$/, "");
           stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
           collector.feedLine(line);
+          drainCollector();
           newlineIndex = stdoutBuffer.indexOf("\n");
         }
       });
@@ -775,8 +840,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       proc.once("exit", (code: number | null) => {
         if (settled) return;
         const tail = stdoutBuffer.trim();
-        if (tail.length > 0) collector.feedLine(tail);
-        const collected = collector.finish();
+        if (tail.length > 0) {
+          collector.feedLine(tail);
+          drainCollector();
+        }
+        const collected = finishCollector();
         const sessionId = collected.sessionId ?? input.sessionId;
         if (terminationReason === "user_abort") {
           settle({ events: collected.events, outcome: "aborted", sessionId });
@@ -977,7 +1045,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       ]);
     },
 
-    async startThread({ thread, request, signal, now, nextEventId }) {
+    async startThread({ thread, request, signal, now, nextEventId, publishEvents }) {
       // Fail closed before resolving a workspace or spawning: Pi cannot enforce
       // workspace_write or full_access, so honouring them would mean running
       // with the gateway account's unrestricted filesystem access while the UI
@@ -1010,6 +1078,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       }
 
       const runningEvent = statusEvent({ threadId: thread.id, status: "running", now, nextEventId });
+      if (publishEvents) await publishEvents({ events: [runningEvent] });
       const sessionId = randomUUID();
       let prompt: string;
       try {
@@ -1028,11 +1097,12 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         signal,
         now,
         nextEventId,
+        publishEvents,
       });
       const conversationId = packResumeState(run.sessionId, cwd);
       return {
         events: [
-          runningEvent,
+          ...(publishEvents ? [] : [runningEvent]),
           ...run.events,
           ...terminalEvents(thread.id, run.outcome, now, nextEventId),
         ],
@@ -1040,7 +1110,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       };
     },
 
-    async resumeTurn({ thread, turn, resumeState, signal, now, nextEventId }) {
+    async resumeTurn({ thread, turn, resumeState, signal, now, nextEventId, publishEvents }) {
       const parsed = parseResumeState(resumeState.conversationId);
       if (!parsed) {
         logCodingAgentWarning("pi provider resume state invalid", new Error("resume state mismatch"));
@@ -1075,6 +1145,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         signal,
         now,
         nextEventId,
+        publishEvents,
       });
       const conversationId = packResumeState(run.sessionId, cwd);
       return {

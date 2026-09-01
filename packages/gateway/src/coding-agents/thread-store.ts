@@ -81,7 +81,7 @@ const MAX_PENDING_TERMINAL_STOPS = 100;
 const MAX_STORED_TURNS = 100;
 const MAX_TURNS_PER_THREAD = 50;
 const MAX_INITIAL_RUNS = 100;
-const DEFAULT_INITIAL_RUN_TIMEOUT_MS = 120_000;
+const DEFAULT_INITIAL_RUN_TIMEOUT_MS = 10 * 60_000;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
@@ -868,6 +868,49 @@ export function createCodingAgentThreadStore(
     }
   }
 
+  async function publishActiveProviderEvents(input: {
+    ownerId: string;
+    threadId: string;
+    turnId?: string;
+    batch: CodingAgentProviderEventBatch;
+  }): Promise<void> {
+    const parsed = parseCodingAgentProviderEventBatch(input.batch, input.threadId);
+    if (parsed.events.some((event) =>
+      event.type === "thread.error" ||
+      event.type === "thread.completed" ||
+      (event.type === "thread.status" && event.status !== "running")
+    )) {
+      throw new Error("Provider streamed a terminal event");
+    }
+    const result = await mutate(async (state) => {
+      const thread = state.threads.find((candidate) =>
+        candidate.ownerId === input.ownerId &&
+        candidate.id === input.threadId &&
+        (input.turnId === undefined || candidate.activeTurnId === input.turnId)
+      );
+      if (!thread || terminalThread(thread)) {
+        return { state, result: [] as AgentThreadEvent[] };
+      }
+      const existingEventIds = new Set(
+        state.events
+          .filter((storedEvent) => storedEvent.threadId === input.threadId)
+          .map((storedEvent) => storedEvent.eventId),
+      );
+      const events = parsed.events.filter((event) => !existingEventIds.has(event.eventId));
+      let nextThread = thread;
+      for (const event of events) nextThread = applyEvent(nextThread, event);
+      return {
+        state: {
+          ...state,
+          threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
+          events: [...state.events, ...events],
+        },
+        result: events,
+      };
+    });
+    publish(input.ownerId, input.threadId, result);
+  }
+
   function turnStatusEvent(
     threadId: string,
     turnId: string,
@@ -1000,6 +1043,7 @@ export function createCodingAgentThreadStore(
   const turnDispatcher = createCodingAgentTurnDispatcher({
     getProvider: providerFor,
     markRunning: markTurnRunning,
+    publishEvents: publishActiveProviderEvents,
     finish: finishTurn,
     nextEventId,
     now,
@@ -1138,6 +1182,11 @@ export function createCodingAgentThreadStore(
       signal: combinedSignal,
       now,
       nextEventId,
+      publishEvents: (batch) => publishActiveProviderEvents({
+        ownerId: input.principal.userId,
+        threadId: input.thread.id,
+        batch,
+      }),
     }));
     const promise = (async () => {
       try {

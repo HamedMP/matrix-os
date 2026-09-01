@@ -21,7 +21,10 @@ import {
   addPortableProviderCredentials,
   buildPiChildEnvironment,
 } from "./pi-process-environment.js";
-import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
+import type {
+  CodingAgentProviderAdapter,
+  CodingAgentProviderEventPublisher,
+} from "./provider-adapter.js";
 import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
@@ -113,6 +116,10 @@ function modelSlug(reference: string | undefined): string | undefined {
 
 function readOnlyConfig(baseUrl: string | undefined): string {
   return JSON.stringify({
+    // Canonical Chat already limits OpenCode to non-mutating tools. Disabling
+    // snapshots avoids indexing the owner's entire Matrix HOME (which may
+    // contain nested repositories and transient lock files) before each turn.
+    snapshot: false,
     permission: {
       "*": "deny",
       read: "allow",
@@ -134,6 +141,7 @@ function childEnvironment(
   const env = addPortableProviderCredentials(ownerEnvironment, credentialEnv);
   env.OPENCODE_DISABLE_PROJECT_CONFIG = "1";
   env.OPENCODE_DISABLE_AUTOUPDATE = "1";
+  env.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER = "1";
   env.OPENCODE_CONFIG_CONTENT = readOnlyConfig(env.ANTHROPIC_BASE_URL);
   return env;
 }
@@ -326,6 +334,7 @@ export function createOpenCodeCodingAgentProvider(
     signal?: AbortSignal;
     now: () => Date;
     nextEventId: () => string;
+    publishEvents?: CodingAgentProviderEventPublisher;
   }): Promise<{ events: AgentThreadEvent[]; outcome: "completed" | "failed" | "aborted"; sessionId?: string }> {
     const runDeadline = Date.now() + runTimeoutMs;
     const credentialResolution = await resolveCredentialsWithinRun({
@@ -341,7 +350,10 @@ export function createOpenCodeCodingAgentProvider(
       return { events: [], outcome: "failed" };
     }
     const launch = credentialResolution.launch;
-    const args = ["run", "--format", "json", "--pure"];
+    // Supplying a title prevents OpenCode from dispatching a separate title
+    // model before the selected run. That auxiliary request can hang or reject
+    // Codex subscription models even though the requested model is healthy.
+    const args = ["run", "--format", "json", "--pure", "--title", "Matrix Chat"];
     const selectedModel = modelSlug(input.model);
     if (selectedModel) args.push("--model", selectedModel);
     if (input.sessionId) args.push("--session", input.sessionId);
@@ -370,9 +382,29 @@ export function createOpenCodeCodingAgentProvider(
       let sessionId = input.sessionId;
       let stdout = "";
       let stdoutBytes = 0;
+      let stderrText = "";
       let recordCount = 0;
+      let publishError: unknown;
+      let publishQueue = Promise.resolve();
       const events: AgentThreadEvent[] = [];
       const seenParts = new Set<string>();
+
+      function queueEvents(pending: AgentThreadEvent[]): void {
+        if (!input.publishEvents || pending.length === 0) return;
+        publishQueue = publishQueue.then(async () => {
+          if (publishError) return;
+          try {
+            await input.publishEvents!({ events: pending });
+          } catch (error: unknown) {
+            publishError = error;
+            logCodingAgentWarning("OpenCode event publish failed", error);
+          }
+        });
+      }
+
+      function drainEvents(): void {
+        if (input.publishEvents) queueEvents(events.splice(0, events.length));
+      }
       const stop = (reason: NonNullable<typeof terminationReason>) => {
         if (settled || terminationReason) return;
         terminationReason = reason;
@@ -410,14 +442,23 @@ export function createOpenCodeCodingAgentProvider(
         if (active.get(input.threadId) === tracked) active.delete(input.threadId);
         const tail = stdout.trim();
         if (tail && !terminationReason && !failed) feed(tail);
-        resolve({
+        const result = {
           events,
           outcome: terminationReason === "user_abort"
             ? "aborted"
-            : failed || terminationReason === "timeout" || terminationReason === "failure" || code !== 0
+            : failed || publishError || terminationReason === "timeout" || terminationReason === "failure" || code !== 0
               ? "failed"
               : "completed",
           ...(sessionId ? { sessionId } : {}),
+        } as const;
+        if (result.outcome === "failed" && stderrText.trim()) {
+          logCodingAgentWarning(
+            "OpenCode run failed",
+            new Error(`exit=${code} stderr=${stderrText.slice(0, 512)}`),
+          );
+        }
+        void publishQueue.then(() => {
+          resolve(publishError ? { ...result, events: [], outcome: "failed" } : result);
         });
       };
       const feed = (line: string) => {
@@ -430,6 +471,7 @@ export function createOpenCodeCodingAgentProvider(
         const result = collectLine({ line, threadId: input.threadId, scope: input.scope, now: input.now, nextEventId: input.nextEventId, events, seenParts });
         sessionId = result.sessionId ?? sessionId;
         failed ||= result.failed === true;
+        drainEvents();
         if (result.limitExceeded) {
           failed = true;
           stop("failure");
@@ -472,7 +514,10 @@ export function createOpenCodeCodingAgentProvider(
       };
       child.stdout.once("end", onStdoutDrained);
       child.stdout.once("close", onStdoutDrained);
-      child.stderr.on("data", () => { /* bounded provider diagnostics stay out of client state */ });
+      child.stderr.on("data", (chunk) => {
+        if (stderrText.length >= 8_192) return;
+        stderrText += chunk.toString("utf-8").slice(0, 8_192 - stderrText.length);
+      });
       child.once("error", (error) => { logCodingAgentWarning("OpenCode process failed", error); failed = true; finish(-1); });
       child.once("exit", onExit);
       if (input.signal?.aborted) tracked.abort();
@@ -532,7 +577,7 @@ export function createOpenCodeCodingAgentProvider(
     },
     async healthCheck({ now, principal, signal }) { return { ok: (await this.getSummary!({ now, principal, signal })).installStatus === "installed" }; },
     buildSetupAction: setupActions,
-    async startThread({ thread, request, signal, now, nextEventId }) {
+    async startThread({ thread, request, signal, now, nextEventId, publishEvents }) {
       if ((request.sandboxMode ?? "workspace_write") !== "read_only") {
         return { events: [failureEvent(thread.id, "sandbox_unavailable", "This agent can only run in read-only mode on this computer.", now, nextEventId), completedEvent(thread.id, "failed", now, nextEventId)] };
       }
@@ -540,15 +585,41 @@ export function createOpenCodeCodingAgentProvider(
       try { cwd = await cwdFor(request.projectId, request.worktreeId); } catch (error: unknown) { logCodingAgentWarning("OpenCode workspace resolution failed", error); }
       if (!cwd) return { events: terminalEvents(thread.id, "failed", now, nextEventId) };
       const prompt = promptWithReferences(request.prompt, request.attachments);
-      const run = await execute({ threadId: thread.id, scope: thread.id, prompt, cwd, model: request.model, signal, now, nextEventId });
+      const running = statusEvent(thread.id, "running", now, nextEventId);
+      if (publishEvents) await publishEvents({ events: [running] });
+      const run = await execute({
+        threadId: thread.id,
+        scope: thread.id,
+        prompt,
+        cwd,
+        model: request.model,
+        signal,
+        now,
+        nextEventId,
+        publishEvents,
+      });
       const resume = run.sessionId ? JSON.stringify(OpenCodeResumeStateSchema.parse({ s: run.sessionId, c: cwd })) : undefined;
-      return { events: [statusEvent(thread.id, "running", now, nextEventId), ...run.events, ...terminalEvents(thread.id, run.outcome, now, nextEventId)], ...(resume ? { resumeState: { conversationId: resume } } : {}) };
+      return {
+        events: [...(publishEvents ? [] : [running]), ...run.events, ...terminalEvents(thread.id, run.outcome, now, nextEventId)],
+        ...(resume ? { resumeState: { conversationId: resume } } : {}),
+      };
     },
-    async resumeTurn({ thread, turn, resumeState, signal, now, nextEventId }) {
+    async resumeTurn({ thread, turn, resumeState, signal, now, nextEventId, publishEvents }) {
       if ((turn.sandboxMode ?? "workspace_write") !== "read_only") return { events: [], outcome: "failed", resumeState };
       const resume = parseResume(resumeState.conversationId);
       if (!resume) return { events: [], outcome: "failed", resumeState };
-      const run = await execute({ threadId: thread.id, scope: turn.turnId, prompt: promptWithReferences(turn.message, turn.attachments), cwd: resume.c, model: turn.model, sessionId: resume.s, signal, now, nextEventId });
+      const run = await execute({
+        threadId: thread.id,
+        scope: turn.turnId,
+        prompt: promptWithReferences(turn.message, turn.attachments),
+        cwd: resume.c,
+        model: turn.model,
+        sessionId: resume.s,
+        signal,
+        now,
+        nextEventId,
+        publishEvents,
+      });
       return { events: run.events, outcome: run.outcome, resumeState };
     },
     abortThread({ thread, now, nextEventId }) {

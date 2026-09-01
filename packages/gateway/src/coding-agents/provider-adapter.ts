@@ -45,6 +45,9 @@ const CodingAgentProviderRunResultSchema = z.object({
 export type CodingAgentProviderResumeState = z.infer<typeof CodingAgentProviderResumeStateSchema>;
 export type CodingAgentProviderRunResult = z.infer<typeof CodingAgentProviderRunResultSchema>;
 export type CodingAgentProviderEventBatch = z.infer<typeof CodingAgentProviderEventBatchSchema>;
+export type CodingAgentProviderEventPublisher = (
+  batch: CodingAgentProviderEventBatch,
+) => Promise<void>;
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
@@ -72,6 +75,7 @@ export interface CodingAgentProviderAdapter {
     signal?: AbortSignal;
     now: () => Date;
     nextEventId: () => string;
+    publishEvents?: CodingAgentProviderEventPublisher;
   }): Promise<AgentThreadEvent[] | CodingAgentProviderRunResult> | AgentThreadEvent[] | CodingAgentProviderRunResult;
   resumeTurn?(input: {
     principal: RequestPrincipal;
@@ -89,6 +93,7 @@ export interface CodingAgentProviderAdapter {
     signal: AbortSignal;
     now: () => Date;
     nextEventId: () => string;
+    publishEvents?: CodingAgentProviderEventPublisher;
   }): Promise<CodingAgentProviderRunResult> | CodingAgentProviderRunResult;
   abortThread?(input: {
     principal: RequestPrincipal;

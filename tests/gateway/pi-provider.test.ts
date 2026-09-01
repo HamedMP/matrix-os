@@ -243,6 +243,33 @@ function nextEventIdFactory() {
 }
 
 describe("pi provider adapter — spawn contract", () => {
+  it("publishes normalized output before returning the terminal result", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+    const published: AgentThreadEvent[] = [];
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      publishEvents: async (batch) => {
+        published.push(...batch.events);
+      },
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(published).toEqual([
+      expect.objectContaining({ type: "thread.status", status: "running" }),
+      expect.objectContaining({ type: "assistant.text.delta", delta: "hello" }),
+      expect.objectContaining({ type: "assistant.text.completed" }),
+    ]);
+    expect(result.events).toEqual([
+      expect.objectContaining({ type: "thread.status", status: "completed" }),
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]);
+  });
+
   it("spawns pi in json print mode with an exact session id and the prompt as trailing argv", async () => {
     const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
     const provider = providerFor(fake.spawnFn);

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -81,6 +81,72 @@ function workspaceSessionIdForThread(threadId: string): string {
 }
 
 describe("coding agent thread lifecycle", () => {
+  it("persists and publishes background provider events before the run finishes", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-streaming-initial-run-"));
+    let finishRun!: () => void;
+    const runGate = new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "pi",
+      initialRunExecution: "background",
+      async startThread({ thread, publishEvents, now: providerNow, nextEventId }) {
+        await publishEvents?.({
+          events: [AgentThreadEventSchema.parse({
+            type: "assistant.text.delta",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            messageId: "msg_streaming_initial",
+            delta: "Still working...",
+          })],
+        });
+        await runGate;
+        return {
+          events: [AgentThreadEventSchema.parse({
+            type: "thread.completed",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            outcome: "completed",
+          })],
+        };
+      },
+    };
+    const threads = createCodingAgentThreadStore({ homePath, providers: [provider] });
+    const published: AgentThreadEvent[] = [];
+    const subscription = threads.registerEventSink(({ events }) => published.push(...events));
+
+    try {
+      const created = await threads.createThread(ownerPrincipal, {
+        ...createBody,
+        providerId: "pi",
+        clientRequestId: "req_streaming_initial_1",
+      });
+      await vi.waitFor(() => {
+        expect(published).toEqual(expect.arrayContaining([
+          expect.objectContaining({ type: "assistant.text.delta", delta: "Still working..." }),
+        ]));
+      });
+      const active = await threads.getThread(ownerPrincipal, created.snapshot.thread.id);
+      expect(active.events.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "assistant.text.delta", delta: "Still working..." }),
+      ]));
+      expect(active.thread.status).not.toBe("completed");
+
+      finishRun();
+      await vi.waitFor(async () => {
+        await expect(threads.getThread(ownerPrincipal, created.snapshot.thread.id))
+          .resolves.toMatchObject({ thread: { status: "completed" } });
+      });
+    } finally {
+      finishRun();
+      subscription.dispose();
+      await threads.shutdownTurns();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a pending background initial run out of the global state queue and aborts it per thread", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-background-initial-run-"));
     let started = false;

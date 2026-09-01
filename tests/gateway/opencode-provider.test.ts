@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type {
+  AgentThreadEvent,
   AgentThreadSummary,
   CreateAgentThreadRequest,
 } from "@matrix-os/contracts";
@@ -112,17 +113,20 @@ describe("OpenCode coding-agent provider", () => {
 
     expect(fake.calls).toHaveLength(1);
     expect(fake.calls[0]!.args).toEqual([
-      "run", "--format", "json", "--pure", "--model", "anthropic/claude-sonnet-5", "--", "Inspect the project",
+      "run", "--format", "json", "--pure", "--title", "Matrix Chat",
+      "--model", "anthropic/claude-sonnet-5", "--", "Inspect the project",
     ]);
     expect(fake.calls[0]!.env).toMatchObject({
       PATH: "/runtime/bin",
       ANTHROPIC_API_KEY: "selected-key",
       OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
       OPENCODE_CONFIG_CONTENT: expect.any(String),
     });
     expect(fake.calls[0]!.env).not.toHaveProperty("UPGRADE_TOKEN");
     const config = JSON.parse(fake.calls[0]!.env.OPENCODE_CONFIG_CONTENT!);
     expect(config).toMatchObject({
+      snapshot: false,
       permission: { "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow" },
       provider: { anthropic: { options: { baseURL: "https://relay.example.test" } } },
     });
@@ -135,6 +139,34 @@ describe("OpenCode coding-agent provider", () => {
         expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
       ]),
     });
+  });
+
+  it("publishes normalized output before returning the terminal result", async () => {
+    const fake = fakeSpawn([
+      line("text", { part: { id: "part_stream", type: "text", text: "Streaming", time: { end: 1 } } }),
+    ]);
+    const published: AgentThreadEvent[] = [];
+
+    const result = await provider(fake.spawnFn).startThread({
+      principal,
+      thread: thread(),
+      request: request(),
+      publishEvents: async (batch) => {
+        published.push(...batch.events);
+      },
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    expect(published).toEqual([
+      expect.objectContaining({ type: "thread.status", status: "running" }),
+      expect.objectContaining({ type: "assistant.text.delta", delta: "Streaming" }),
+      expect.objectContaining({ type: "assistant.text.completed" }),
+    ]);
+    expect(result.events).toEqual([
+      expect.objectContaining({ type: "thread.status", status: "completed" }),
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]);
   });
 
   it("lets OpenCode use its configured default model for the native Terminal profile", async () => {
