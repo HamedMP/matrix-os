@@ -332,6 +332,7 @@ describe("CanonicalChatWorkspace", () => {
     const index = screen.getByRole("complementary", { name: "Global chats" }).parentElement;
     const starters = document.querySelector<HTMLElement>('[data-slot="chat-starter-cards"]');
     const starterScroll = document.querySelector<HTMLElement>('[data-slot="chat-starter-scroll"]');
+    const starterStack = document.querySelector<HTMLElement>('[data-slot="chat-starter-stack"]');
     const composer = document.querySelector<HTMLElement>('[data-slot="shared-chat-composer"] .prompt-card');
     const newChatContent = document.querySelector<HTMLElement>('[data-slot="chat-new-chat-content"]');
     expect(workspace?.getAttribute("data-layout")).toBe("narrow");
@@ -341,6 +342,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toContain("min-h-20");
     expect(starterScroll?.className).toContain("overflow-y-auto");
     expect(starterScroll?.className).toContain("items-start");
+    expect(starterStack?.className).toContain("my-auto");
     expect(starterScroll?.style.scrollbarGutter).toBe("stable");
     expect(newChatContent?.className).toContain("overflow-hidden");
     expect(composer?.getAttribute("data-layout")).toBe("narrow");
