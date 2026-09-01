@@ -21,7 +21,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.151.0";
+export const CODEX_VERIFIED_VERSION = "0.152.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#ai-provider";
 export * from "#billing-catalog";
