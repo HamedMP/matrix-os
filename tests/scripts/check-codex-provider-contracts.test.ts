@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import appServerContract from "../../packages/gateway/src/coding-agents/codex-app-server-contract.json" with { type: "json" };
 import contract from "../../packages/gateway/src/coding-agents/codex-exec-contract.json" with { type: "json" };
 import { verifyCodexProviderContracts } from "../../scripts/lib/codex-provider-contract-check.mjs";
 
@@ -11,6 +12,17 @@ const scriptPath = fileURLToPath(
 );
 
 describe("Codex provider contract checker", () => {
+  it("trusts the reviewed Codex 0.152.0 provider schemas", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.152.0");
+    expect(contract.verifiedVersions["0.152.0"]).toEqual({
+      schemaSha256: "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32",
+    });
+    expect(appServerContract.latestVerifiedVersion).toBe("0.152.0");
+    expect(appServerContract.verifiedVersions["0.152.0"]).toEqual({
+      schemaSha256: "65ce2db95109ebedc995d0ff74cc8bcefaa69fc3270f65b4fc69c1877c651f4e",
+    });
+  });
+
   it("requires exact-version digests and protocol semantics to evolve together", () => {
     const version = "1.2.3";
     const execSchema = Buffer.from("thread.started\nturn.completed\nitem.started", "utf8");
