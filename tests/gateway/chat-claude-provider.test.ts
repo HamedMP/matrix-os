@@ -158,6 +158,41 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|Authorization|\/home\/matrix\/home|Inspecting the manifest/);
   });
 
+  it("uses unique activity ids when Claude restarts content block indexes", async () => {
+    const thinkingBlock = [
+      JSON.stringify({
+        type: "stream_event",
+        event: { type: "content_block_start", index: 0, content_block: { type: "thinking" } },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: { type: "content_block_stop", index: 0 },
+      }),
+    ];
+    const spawnFn = vi.fn(() => child([
+      ...thinkingBlock,
+      ...thinkingBlock,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "done",
+        session_id: "claude_restarted_indexes",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events.filter((event) => event.type === "agent.activity")).toEqual([
+      expect.objectContaining({ activityId: "reasoning_0", status: "running" }),
+      expect.objectContaining({ activityId: "reasoning_0", status: "completed" }),
+      expect.objectContaining({ activityId: "reasoning_1", status: "running" }),
+      expect.objectContaining({ activityId: "reasoning_1", status: "completed" }),
+    ]);
+  });
+
   it("keeps official Claude text blocks and completed command detail in provider order", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({

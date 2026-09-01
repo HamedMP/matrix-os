@@ -240,6 +240,7 @@ export function createClaudeChatProviderAdapter(options: {
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
     let nextTextBlockId = 0;
+    let nextReasoningBlockId = 0;
     const textMessageByIndex = new Map<number, string>();
     const toolInputByIndex = new Map<number, string>();
     const toolNameByIndex = new Map<number, string>();
@@ -324,10 +325,11 @@ export function createClaudeChatProviderAdapter(options: {
           nextTextBlockId += 1;
         } else if (block.type === "thinking") {
           const activity = {
-            activityId: `reasoning_${line.event.index}`,
+            activityId: `reasoning_${nextReasoningBlockId}`,
             kind: "reasoning" as const,
             label: "Thinking",
           };
+          nextReasoningBlockId += 1;
           activityByIndex.set(line.event.index, activity);
           queue.push(CanonicalProviderRunEventSchema.parse({
             type: "agent.activity",

@@ -143,6 +143,7 @@ import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/proje
 import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
+import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
 import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
 import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
 import { createNativeCodingModelCatalogSource } from "./chat/native-coding-model-catalog.js";
@@ -4203,6 +4204,7 @@ export async function createGateway(config: GatewayConfig) {
     authFilePath: join(homePath, "system/agent-runtime/hermes-dashboard.env"),
   });
   const openClawRpc = createLazyOpenClawRpc(homePath);
+  await cleanupStaleIsolatedProviderProcesses();
   const agentRuntimeServices = createAgentRuntimeServices({
     homePath,
     client: hermesClient,

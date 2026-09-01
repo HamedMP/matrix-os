@@ -40,6 +40,7 @@ const MAX_EVENTS = 480;
 const MAX_SEEN_PARTS = 512;
 const MAX_RECORDS = 4_096;
 const MAX_TEXT_CHARS = 24_000;
+const MAX_EVENT_TEXT_CHARS = 3_500;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDOUT_BUFFER_BYTES = 1024 * 1024;
 const MAX_PROMPT_BYTES = 128 * 1024;
@@ -105,6 +106,16 @@ function safeToolName(value: unknown): string {
   if (typeof value !== "string") return "tool";
   const cleaned = value.replace(/[^A-Za-z0-9 _-]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
   return cleaned || "tool";
+}
+
+function chunkDisplayText(text: string): string[] {
+  const bounded = text.slice(0, MAX_TEXT_CHARS);
+  const chunks: string[] = [];
+  for (let index = 0; index < bounded.length; index += MAX_EVENT_TEXT_CHARS) {
+    const chunk = bounded.slice(index, index + MAX_EVENT_TEXT_CHARS);
+    if (chunk.length > 0) chunks.push(chunk);
+  }
+  return chunks;
 }
 
 function promptWithReferences(
@@ -299,16 +310,21 @@ function collectLine(input: {
   const partId = safeId(value.id, `part_${input.scope}_${input.seenParts.size + 1}`);
   if (input.seenParts.has(partId)) return { sessionId };
   if (input.seenParts.size >= MAX_SEEN_PARTS) return { sessionId, limitExceeded: true };
-  const text = supportedText && typeof value.text === "string" && value.text.trim()
-    ? value.text.slice(0, MAX_TEXT_CHARS)
-    : null;
-  const eventCount = supportedTool ? 3 : text === null ? 0 : 2;
+  const textChunks = supportedText && typeof value.text === "string" && value.text.trim()
+    ? chunkDisplayText(value.text)
+    : [];
+  const eventCount = supportedTool ? 3 : textChunks.length > 0 ? textChunks.length + 1 : 0;
   if (input.events.length + eventCount > MAX_EVENTS) return { sessionId, limitExceeded: true };
   input.seenParts.add(partId);
-  if (text !== null) {
+  if (textChunks.length > 0) {
     const messageId = `msg_${partId}`;
     input.events.push(
-      AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "assistant.text.delta", messageId, delta: text }),
+      ...textChunks.map((delta) => AgentThreadEventSchema.parse({
+        ...eventBase(input.threadId, input.now, input.nextEventId),
+        type: "assistant.text.delta",
+        messageId,
+        delta,
+      })),
       AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "assistant.text.completed", messageId }),
     );
   }
@@ -321,11 +337,12 @@ function collectLine(input: {
       homePath: input.homePath,
       executionRoot: input.executionRoot,
     });
-    const output = state.status === "completed" && typeof state.output === "string"
-      ? state.output.slice(0, MAX_TEXT_CHARS)
+    const rawOutput = state.status === "completed" && typeof state.output === "string"
+      ? state.output
       : state.status === "error" && typeof state.error === "string"
         ? "The tool could not complete."
         : "Tool finished.";
+    const output = rawOutput.slice(0, MAX_EVENT_TEXT_CHARS);
     input.events.push(
       AgentThreadEventSchema.parse({
         ...eventBase(input.threadId, input.now, input.nextEventId),
@@ -333,7 +350,13 @@ function collectLine(input: {
         toolCallId,
         ...activity,
       }),
-      AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "tool.output", toolCallId, text: output, ...(output.length === MAX_TEXT_CHARS ? { truncated: true } : {}) }),
+      AgentThreadEventSchema.parse({
+        ...eventBase(input.threadId, input.now, input.nextEventId),
+        type: "tool.output",
+        toolCallId,
+        text: output,
+        ...(rawOutput.length > output.length ? { truncated: true } : {}),
+      }),
       AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "tool.completed", toolCallId, outcome: state.status === "error" ? "failed" : "success" }),
     );
   }
@@ -522,15 +545,22 @@ export function createOpenCodeCodingAgentProvider(
       };
       child.stdout.on("data", (chunk) => {
         if (settled || terminationReason) return;
-        stdoutBytes += chunk.byteLength;
-        if (stdoutBytes > MAX_STDOUT_BYTES) { failed = true; stop("failure"); stdout = ""; return; }
-        stdout += chunk.toString("utf-8");
-        if (Buffer.byteLength(stdout, "utf-8") > MAX_STDOUT_BUFFER_BYTES) { failed = true; stop("failure"); stdout = ""; return; }
-        let index = stdout.indexOf("\n");
-        while (index >= 0 && !terminationReason && !settled) {
-          feed(stdout.slice(0, index).replace(/\r$/, ""));
-          stdout = stdout.slice(index + 1);
-          index = stdout.indexOf("\n");
+        try {
+          stdoutBytes += chunk.byteLength;
+          if (stdoutBytes > MAX_STDOUT_BYTES) { failed = true; stop("failure"); stdout = ""; return; }
+          stdout += chunk.toString("utf-8");
+          if (Buffer.byteLength(stdout, "utf-8") > MAX_STDOUT_BUFFER_BYTES) { failed = true; stop("failure"); stdout = ""; return; }
+          let index = stdout.indexOf("\n");
+          while (index >= 0 && !terminationReason && !settled) {
+            feed(stdout.slice(0, index).replace(/\r$/, ""));
+            stdout = stdout.slice(index + 1);
+            index = stdout.indexOf("\n");
+          }
+        } catch (error: unknown) {
+          failed = true;
+          stdout = "";
+          logCodingAgentWarning("OpenCode output normalization failed", error);
+          stop("failure");
         }
       });
       const onStdoutDrained = () => {

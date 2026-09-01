@@ -64,9 +64,16 @@ function fakeSpawn(lines: string[], exitCode = 0) {
     const exit: Array<(code: number | null) => void> = [];
     const error: Array<(value: Error) => void> = [];
     queueMicrotask(() => {
-      for (const value of lines) stdout.emit("data", Buffer.from(`${value}\n`));
-      stdout.emit("end");
-      exit.forEach((listener) => listener(exitCode));
+      let thrown: unknown;
+      try {
+        for (const value of lines) stdout.emit("data", Buffer.from(`${value}\n`));
+      } catch (error: unknown) {
+        thrown = error;
+      } finally {
+        stdout.emit("end");
+        exit.forEach((listener) => listener(exitCode));
+      }
+      if (thrown) throw thrown;
     });
     return {
       stdout,
@@ -272,6 +279,65 @@ describe("OpenCode coding-agent provider", () => {
       expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
     ]));
     expect(JSON.stringify(result)).not.toContain("secret upstream detail");
+  });
+
+  it("bounds oversized tool output before canonical contract parsing", async () => {
+    const rawOutput = "x".repeat(4_001);
+    const fake = fakeSpawn([
+      line("tool_use", {
+        part: {
+          id: "part_large_tool",
+          type: "tool",
+          callID: "call_large_tool",
+          tool: "read",
+          state: { status: "completed", output: rawOutput, time: { start: 1, end: 2 } },
+        },
+      }),
+    ]);
+
+    const result = await provider(fake.spawnFn).startThread({
+      principal,
+      thread: thread(),
+      request: request(),
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    const output = result.events.find((event) => event.type === "tool.output");
+    expect(output).toMatchObject({
+      type: "tool.output",
+      toolCallId: "call_large_tool",
+      truncated: true,
+    });
+    expect(output?.type === "tool.output" ? output.text : "").toHaveLength(3_500);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]));
+  });
+
+  it("chunks oversized assistant text into canonical deltas", async () => {
+    const rawText = `${" ".repeat(3_500)}${"architecture ".repeat(500)}`;
+    const fake = fakeSpawn([
+      line("text", {
+        part: { id: "part_large_text", type: "text", text: rawText, time: { end: 1 } },
+      }),
+    ]);
+
+    const result = await provider(fake.spawnFn).startThread({
+      principal,
+      thread: thread(),
+      request: request(),
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    const deltas = result.events.filter((event) => event.type === "assistant.text.delta");
+    expect(deltas.length).toBeGreaterThan(1);
+    expect(deltas.every((event) => event.delta.length <= 4_000)).toBe(true);
+    expect(deltas.map((event) => event.delta).join("")).toBe(rawText);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]));
   });
 
   it("projects raw file, search, and command tools with safe canonical activity details", async () => {
