@@ -656,6 +656,81 @@ describe("pi provider adapter — spawn contract", () => {
 });
 
 describe("pi provider adapter — event normalization", () => {
+  it("emits final assistant text delivered only by message_end exactly once", async () => {
+    const finalText = "Final answer from Pi.";
+    const fake = fakeSpawn({
+      lines: [
+        sessionLine(SESSION_ID),
+        JSON.stringify({ type: "message_start", message: { role: "assistant", content: [] } }),
+        JSON.stringify({
+          type: "message_end",
+          message: { role: "assistant", content: [{ type: "text", text: finalText }] },
+        }),
+      ],
+    });
+    const provider = providerFor(fake.spawnFn);
+    const published: AgentThreadEvent[] = [];
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      publishEvents: async (batch) => published.push(...batch.events),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    const deltas = published.filter((event) => event.type === "assistant.text.delta");
+    const completed = published.filter((event) => event.type === "assistant.text.completed");
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({ type: "assistant.text.delta", delta: finalText });
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
+      type: "assistant.text.completed",
+      messageId: deltas[0]?.type === "assistant.text.delta" ? deltas[0].messageId : undefined,
+    });
+    expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "completed" });
+  });
+
+  it("reconciles message_end by emitting only the missing streamed suffix", async () => {
+    const fake = fakeSpawn({
+      lines: [
+        sessionLine(SESSION_ID),
+        JSON.stringify({ type: "message_start", message: { role: "assistant", content: [] } }),
+        JSON.stringify({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+        }),
+        JSON.stringify({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Final ans" },
+        }),
+        JSON.stringify({
+          type: "message_end",
+          message: { role: "assistant", content: [{ type: "text", text: "Final answer." }] },
+        }),
+      ],
+    });
+    const provider = providerFor(fake.spawnFn);
+    const published: AgentThreadEvent[] = [];
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      publishEvents: async (batch) => published.push(...batch.events),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    const deltas = published.filter((event) => event.type === "assistant.text.delta");
+    expect(deltas.map((event) => event.type === "assistant.text.delta" ? event.delta : ""))
+      .toEqual(["Final ans", "wer."]);
+    expect(new Set(deltas.map((event) => event.type === "assistant.text.delta" ? event.messageId : "")).size).toBe(1);
+    expect(published.filter((event) => event.type === "assistant.text.completed")).toHaveLength(1);
+    expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "completed" });
+  });
+
   it("maps a text-only run into the normalized lifecycle", async () => {
     const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
     const provider = providerFor(fake.spawnFn);
@@ -1076,6 +1151,33 @@ describe("pi provider adapter — resume", () => {
 });
 
 describe("pi provider adapter — failures", () => {
+  it("fails safely when Pi exits successfully without meaningful output", async () => {
+    const fake = fakeSpawn({
+      lines: [
+        sessionLine(SESSION_ID),
+        JSON.stringify({ type: "agent_start" }),
+        JSON.stringify({ type: "turn_start" }),
+        JSON.stringify({ type: "turn_end", message: { role: "assistant", content: [] }, toolResults: [] }),
+        JSON.stringify({ type: "agent_end", messages: [], willRetry: false }),
+        JSON.stringify({ type: "agent_settled" }),
+      ],
+      exitCode: 0,
+    });
+    const provider = providerFor(fake.spawnFn);
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+    const parsed = parseCodingAgentProviderRunResult(result, threadSummary().id);
+
+    expect(parsed.events.some((event) => event.type === "thread.error")).toBe(true);
+    expect(parsed.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
+  });
+
   it("does not reject a completed run when Pi returns an invalid session id", async () => {
     const fake = fakeSpawn({ lines: textRunLines("not-a-valid-session", "Say hi", "hello") });
     const provider = providerFor(fake.spawnFn);

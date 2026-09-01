@@ -269,6 +269,7 @@ interface PiRunCollectorOptions {
 interface PiCollectedRun {
   events: AgentThreadEvent[];
   sessionId: string | null;
+  hasMeaningfulOutput: boolean;
 }
 
 // Aggregating reducer: pi streams fine-grained deltas, but the provider
@@ -283,6 +284,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
   let assistantText = "";
   let assistantMessageId: string | null = null;
   let assistantEmittedChars = 0;
+  let hasMeaningfulOutput = false;
   let fallbackToolCounter = 0;
   // Each tracked tool needs at least a started + completed event. Reserving
   // half the run budget keeps both the event stream and the in-memory tool
@@ -296,7 +298,16 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
       dropped += 1;
       return;
     }
-    events.push(AgentThreadEventSchema.parse(event));
+    const parsed = AgentThreadEventSchema.parse(event);
+    events.push(parsed);
+    if (
+      parsed.type === "assistant.text.delta"
+      || parsed.type === "tool.started"
+      || parsed.type === "tool.output"
+      || parsed.type === "tool.completed"
+    ) {
+      hasMeaningfulOutput = true;
+    }
   }
 
   function baseEvent() {
@@ -314,6 +325,35 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
       emit({ ...baseEvent(), type: "assistant.text.delta", messageId: assistantMessageId, delta: chunk });
     }
     assistantEmittedChars = assistantText.length;
+  }
+
+  function ensureAssistantMessage(): void {
+    if (assistantMessageId) return;
+    assistantMessageCounter += 1;
+    assistantMessageId = `msg_${options.scope}_${assistantMessageCounter}`;
+  }
+
+  function reconcileAssistantText(authoritativeText: string): void {
+    if (authoritativeText.length === 0) return;
+    ensureAssistantMessage();
+    // Keep one character beyond the output cap so flushAssistantText can
+    // preserve the existing explicit truncation marker without retaining an
+    // arbitrarily large final payload.
+    const bounded = authoritativeText.slice(0, MAX_TEXT_CHARS + 1);
+    if (!options.streaming || assistantEmittedChars === 0) {
+      assistantText = bounded;
+      return;
+    }
+    if (bounded.startsWith(assistantText)) {
+      assistantText = bounded;
+      return;
+    }
+    // Already-published streaming text cannot be retracted safely. Keep it
+    // visible and record only bounded lengths when Pi's final snapshot differs.
+    logCodingAgentWarning(
+      "pi provider final assistant text diverged from streamed output",
+      new Error(`streamedChars=${assistantText.length} finalChars=${bounded.length}`),
+    );
   }
 
   function flushAssistantText(): void {
@@ -404,10 +444,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
           return;
         }
         if (kind === "text_delta") {
-          if (!assistantMessageId) {
-            assistantMessageCounter += 1;
-            assistantMessageId = `msg_${options.scope}_${assistantMessageCounter}`;
-          }
+          ensureAssistantMessage();
           const delta = (update as Record<string, unknown>).delta;
           if (typeof delta === "string" && assistantText.length < MAX_TEXT_CHARS) {
             assistantText += delta.slice(0, MAX_TEXT_CHARS - assistantText.length);
@@ -418,9 +455,8 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
         if (kind === "text_end") {
           const content = (update as Record<string, unknown>).content;
           if (typeof content === "string" && content.length > 0) {
-            assistantText = content;
+            reconcileAssistantText(content);
           }
-          flushAssistantText();
           return;
         }
         // toolcall_start/delta/end and thinking_* carry no execution signal
@@ -433,11 +469,9 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
           ? (message as Record<string, unknown>).role
           : undefined;
         if (role === "assistant") {
-          if (assistantText.trim().length === 0 && message && typeof message === "object") {
+          if (message && typeof message === "object") {
             const text = contentText((message as Record<string, unknown>).content);
-            if (text.length > 0 && assistantMessageId) {
-              assistantText = text;
-            }
+            reconcileAssistantText(text);
           }
           flushAssistantText();
         }
@@ -535,7 +569,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
       if (dropped > 0) {
         logCodingAgentWarning("pi provider dropped events beyond the run cap", new Error(`dropped=${dropped}`));
       }
-      return { events, sessionId };
+      return { events, sessionId, hasMeaningfulOutput };
     },
   };
 }
@@ -889,6 +923,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         }
         if (code !== 0) {
           logCodingAgentWarning("pi provider run failed", new Error(`exit=${code} stderr=${stderrText.slice(0, 512)}`));
+          settle({ events: collected.events, outcome: "failed", sessionId });
+          return;
+        }
+        if (!collected.hasMeaningfulOutput) {
+          logCodingAgentWarning(
+            "pi provider completed without meaningful output",
+            new Error("exit=0 assistantEvents=0 toolEvents=0"),
+          );
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
