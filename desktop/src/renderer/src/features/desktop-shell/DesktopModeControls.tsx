@@ -3,6 +3,7 @@ import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
 import DesktopDiscordButton from "../support/DesktopDiscordButton";
 import DesktopSupportButton from "../support/DesktopSupportButton";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
+import GettingStartedPopover from "../onboarding/GettingStartedPopover";
 import { Search } from "../../lib/hugeicons";
 import { useUi } from "../../stores/ui";
 
@@ -25,6 +26,7 @@ export default function DesktopModeControls() {
       <div className="relative w-[156px]">
         <RuntimeComputerMenu collapsed={false} />
       </div>
+      <GettingStartedPopover />
       <DesktopUpdateButton />
       <AccountMenu collapsed compact />
     </div>

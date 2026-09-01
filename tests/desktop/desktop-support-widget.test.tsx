@@ -190,7 +190,14 @@ describe("Desktop support widget", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
-      .toEqual(["Search", "Support", "Join Discord", "Main computer", "Open account menu"]);
+      .toEqual([
+        "Search",
+        "Support",
+        "Join Discord",
+        "Main computer",
+        "Getting started — 0 of 5",
+        "Open account menu",
+      ]);
 
     const unrelatedClose = document.createElement("button");
     unrelatedClose.id = "unrelated-close";
