@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GettingStartedPopover, {
@@ -39,7 +41,7 @@ function successfulResponse(path: string): unknown {
 }
 
 function makeApi(overrides: Partial<Record<string, unknown | Error>> = {}) {
-  return {
+  const api = {
     baseUrl: "https://app.matrix-os.com",
     get: vi.fn(async (path: string) => {
       const override = overrides[path];
@@ -57,6 +59,8 @@ function makeApi(overrides: Partial<Record<string, unknown | Error>> = {}) {
     putText: vi.fn(),
     forRuntime: vi.fn(),
   };
+  api.forRuntime.mockImplementation(() => api);
+  return api;
 }
 
 describe("getting started status", () => {
@@ -114,6 +118,18 @@ describe("getting started status", () => {
     }) as never);
 
     expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("complete");
+  });
+
+  it("loads platform-owned billing status through the primary route", async () => {
+    const api = makeApi();
+    const platformGet = vi.fn(async (path: string) => successfulResponse(path));
+    api.forRuntime.mockReturnValue({ ...api, get: platformGet });
+
+    await loadGettingStartedSnapshot(api as never);
+
+    expect(api.forRuntime).toHaveBeenCalledWith("primary");
+    expect(platformGet).toHaveBeenCalledWith("/billing/status", undefined);
+    expect(api.get).not.toHaveBeenCalledWith("/billing/status", undefined);
   });
 });
 
@@ -211,6 +227,16 @@ describe("GettingStartedPopover", () => {
       .querySelector("img")?.getAttribute("width")).toBe("12");
     expect(screen.getByRole("button", { name: "Log in to Codex / Claude" })).not.toBeNull();
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(12));
+  });
+
+  it("consumes the shared onboarding brand palette", () => {
+    const source = readFileSync(resolve(
+      process.cwd(),
+      "desktop/src/renderer/src/features/onboarding/GettingStartedPopover.tsx",
+    ), "utf8");
+
+    expect(source).toContain('from "@matrix-os/brand"');
+    expect(source).not.toMatch(/#[0-9a-f]{6}/i);
   });
 
   it("opens the relevant setup surface without closing the popover", async () => {

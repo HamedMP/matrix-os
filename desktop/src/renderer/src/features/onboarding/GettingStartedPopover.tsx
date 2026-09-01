@@ -1,4 +1,5 @@
 import * as Popover from "@radix-ui/react-popover";
+import { onboardingChecklist } from "@matrix-os/brand";
 import { Github } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import gettingStartedCheckUrl from "../../assets/getting-started-check.svg";
@@ -16,16 +17,7 @@ import {
 } from "./getting-started";
 
 const TOTAL_STEPS = GETTING_STARTED_STEP_IDS.length;
-const FIGMA_COLORS = {
-  surface: "#ffffff",
-  border: "#ebeae6",
-  text: "#141413",
-  subtleText: "#96968f",
-  progressTrack: "#e1e1d8",
-  progressFill: "#2e3a2a",
-  completed: "#434e3f",
-} as const;
-const FIGMA_FONT_FAMILY = '"Inter", sans-serif';
+const BRAND_COLORS = onboardingChecklist.colors;
 
 export function gettingStartedAutoOpenKey(handle: string, runtimeSlot: string): string {
   return `matrix:getting-started:auto-opened:${encodeURIComponent(handle)}:${encodeURIComponent(runtimeSlot)}`;
@@ -55,8 +47,8 @@ function StepIndicator({ step }: { step: GettingStartedStep }) {
       aria-hidden="true"
       className="flex size-4 shrink-0 items-center justify-center rounded-full"
       style={{
-        background: complete ? FIGMA_COLORS.completed : FIGMA_COLORS.surface,
-        border: complete ? "none" : `1px solid ${FIGMA_COLORS.border}`,
+        background: complete ? BRAND_COLORS.completed : BRAND_COLORS.surface,
+        border: complete ? "none" : `1px solid ${BRAND_COLORS.border}`,
         opacity: step.status === "unavailable" ? 0.55 : 1,
       }}
     >
@@ -177,19 +169,19 @@ export default function GettingStartedPopover() {
           className="w-[252px] overflow-hidden rounded-[12px] border outline-none"
           style={{
             zIndex: DESKTOP_Z_INDEX.popover,
-            background: FIGMA_COLORS.surface,
-            borderColor: FIGMA_COLORS.border,
-            boxShadow: "0 10px 24px -4px rgba(0, 0, 0, 0.04)",
-            fontFamily: FIGMA_FONT_FAMILY,
+            background: BRAND_COLORS.surface,
+            borderColor: BRAND_COLORS.border,
+            boxShadow: onboardingChecklist.shadow,
+            fontFamily: onboardingChecklist.fontFamily,
           }}
         >
           <div className="flex items-center justify-between whitespace-nowrap px-3 pb-3 pt-4">
-            <h2 style={{ color: FIGMA_COLORS.text, fontSize: 16, fontWeight: 400, lineHeight: "normal" }}>
+            <h2 style={{ color: BRAND_COLORS.text, fontSize: 16, fontWeight: 400, lineHeight: "normal" }}>
               Getting started
             </h2>
             <span
               data-testid="getting-started-counter"
-              style={{ color: FIGMA_COLORS.subtleText, fontSize: 11, fontWeight: 500, lineHeight: "normal" }}
+              style={{ color: BRAND_COLORS.subtleText, fontSize: 11, fontWeight: 500, lineHeight: "normal" }}
             >
               {snapshot.completedCount} of {TOTAL_STEPS}
             </span>
@@ -198,12 +190,12 @@ export default function GettingStartedPopover() {
             <div
               data-testid="getting-started-progress-track"
               className="h-1 w-full overflow-hidden rounded-[2px]"
-              style={{ background: FIGMA_COLORS.progressTrack }}
+              style={{ background: BRAND_COLORS.progressTrack }}
             >
               <div
                 data-testid="getting-started-progress-fill"
                 className="h-full transition-[width] duration-200"
-                style={{ width: progress, background: FIGMA_COLORS.progressFill }}
+                style={{ width: progress, background: BRAND_COLORS.progressFill }}
               />
             </div>
           </div>
@@ -222,7 +214,7 @@ export default function GettingStartedPopover() {
                   <span
                     className="min-w-0 flex-1 truncate"
                     style={{
-                      color: complete ? FIGMA_COLORS.subtleText : FIGMA_COLORS.text,
+                      color: complete ? BRAND_COLORS.subtleText : BRAND_COLORS.text,
                       fontSize: 11,
                       fontWeight: 400,
                       lineHeight: "normal",
@@ -232,7 +224,7 @@ export default function GettingStartedPopover() {
                     {step.label}
                   </span>
                   {step.id === "github" ? (
-                    <Github aria-hidden="true" size={16} style={{ color: FIGMA_COLORS.subtleText }} />
+                    <Github aria-hidden="true" size={16} style={{ color: BRAND_COLORS.subtleText }} />
                   ) : null}
                 </button>
               );

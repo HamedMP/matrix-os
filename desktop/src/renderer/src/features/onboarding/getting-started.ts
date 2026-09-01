@@ -84,17 +84,18 @@ export function emptyGettingStartedSnapshot(): GettingStartedSnapshot {
 }
 
 export async function loadGettingStartedSnapshot(
-  api: Pick<ApiClient, "get">,
+  api: Pick<ApiClient, "get" | "forRuntime">,
   signal?: AbortSignal,
 ): Promise<GettingStartedSnapshot> {
   const options = signal ? { signal } : undefined;
+  const platformApi = api.forRuntime("primary");
   const [github, integrations, agents, projects, chats, billing] = await Promise.allSettled([
     api.get("/api/github/status", options),
     api.get("/api/integrations", options),
     api.get("/api/agents/credentials/status", options),
     api.get("/api/workspace/projects", options),
     api.get("/api/chats?limit=1", options),
-    api.get("/billing/status", options),
+    platformApi.get("/billing/status", options),
   ]);
 
   const githubCliStatus = statusFrom(github, (value) => GithubStatusSchema.parse(value).authenticated);
