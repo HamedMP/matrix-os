@@ -56,6 +56,22 @@ function applyTerminalSurfaceTheme(element: HTMLElement | undefined, background:
   }
 }
 
+function readOwnedDomSelection(host: HTMLElement): string {
+  const selection = host.ownerDocument.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return "";
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+    if (
+      !host.contains(range.startContainer)
+      || !host.contains(range.endContainer)
+      || !host.contains(range.commonAncestorContainer)
+    ) {
+      return "";
+    }
+  }
+  return selection.toString().replaceAll("\u00a0", " ");
+}
+
 interface TerminalViewProps {
   sessionName: string;
   chatId?: string;
@@ -113,6 +129,7 @@ export default function TerminalView({
   const pasteOperationGenerationRef = useRef(0);
   const clipboardOperationSequenceRef = useRef(0);
   const confirmedSelectionRef = useRef("");
+  const confirmedDomSelectionRef = useRef("");
   const visualScaleRef = useRef(visualScale);
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
@@ -155,6 +172,7 @@ export default function TerminalView({
   if (stateSessionName !== sessionName) {
     setStateSessionName(sessionName);
     confirmedSelectionRef.current = "";
+    confirmedDomSelectionRef.current = "";
     endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
@@ -194,11 +212,31 @@ export default function TerminalView({
     terminal.loadAddon(serialize);
     terminal.open(host);
     confirmedSelectionRef.current = "";
-    const readTerminalSelection = () => terminal.getSelection() || confirmedSelectionRef.current;
+    confirmedDomSelectionRef.current = "";
+    const readTerminalSelection = () => (
+      readOwnedDomSelection(host)
+      || terminal.getSelection()
+      || confirmedSelectionRef.current
+      || confirmedDomSelectionRef.current
+    );
     const selectionDisposable = terminal.onSelectionChange(() => {
       const selection = terminal.getSelection();
       if (selection) confirmedSelectionRef.current = selection;
     });
+    const onDocumentSelectionChange = () => {
+      const selection = readOwnedDomSelection(host);
+      if (selection) {
+        confirmedDomSelectionRef.current = selection;
+        return;
+      }
+      const documentSelection = host.ownerDocument.getSelection();
+      if (documentSelection && !documentSelection.isCollapsed) {
+        confirmedDomSelectionRef.current = "";
+        confirmedSelectionRef.current = "";
+        terminal.clearSelection();
+      }
+    };
+    host.ownerDocument.addEventListener("selectionchange", onDocumentSelectionChange);
     terminal.attachCustomKeyEventHandler((event) => {
       const selection = readTerminalSelection();
       const action = classifyTerminalClipboardShortcut({
@@ -250,6 +288,7 @@ export default function TerminalView({
       if ((event as MouseEvent & { _xtermScaleCorrected?: boolean })._xtermScaleCorrected) return;
       if (event.type === "mousedown" && event.button === 0) {
         confirmedSelectionRef.current = "";
+        confirmedDomSelectionRef.current = "";
       }
       const decision = classifyTerminalPointerEvent({
         type: event.type as "mousedown" | "mousemove" | "mouseup",
@@ -339,9 +378,11 @@ export default function TerminalView({
       host.removeEventListener("mouseup", onTerminalPointer, true);
       host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onTerminalContextMenu, true);
+      host.ownerDocument.removeEventListener("selectionchange", onDocumentSelectionChange);
       linkProviderDisposable.dispose();
       selectionDisposable.dispose();
       confirmedSelectionRef.current = "";
+      confirmedDomSelectionRef.current = "";
       observer.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);

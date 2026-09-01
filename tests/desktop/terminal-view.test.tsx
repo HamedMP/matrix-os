@@ -47,6 +47,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     paste: ReturnType<typeof vi.fn>;
     selectAll: ReturnType<typeof vi.fn>;
+    clearSelection: ReturnType<typeof vi.fn>;
     reset: ReturnType<typeof vi.fn>;
   }>,
   resizeObserverCallbacks: [] as ResizeObserverCallback[],
@@ -82,6 +83,9 @@ vi.mock("@xterm/xterm", () => ({
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     paste = vi.fn((text: string) => this.dataCallback?.(text));
     selectAll = vi.fn();
+    clearSelection = vi.fn(() => {
+      this.selection = "";
+    });
     reset = vi.fn();
 
     constructor(options: FakeTerminal["initialOptions"]) {
@@ -211,6 +215,7 @@ describe("TerminalView session switching", () => {
   });
 
   afterEach(() => {
+    window.getSelection()?.removeAllRanges();
     cleanup();
     vi.unstubAllGlobals();
     if (originalClipboardDescriptor) {
@@ -1108,6 +1113,81 @@ describe("TerminalView session switching", () => {
       preventDefault: vi.fn(),
     } as unknown as KeyboardEvent);
     expect(afterDeliberateClear).toBe(true);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("copies a visible DOM selection owned by this terminal when xterm is empty or stale", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const { container } = render(<TerminalView sessionName="alpha" visualScale={0.75} />);
+    const terminal = createdTerminals.at(-1)!;
+    const root = terminal.element!;
+    const visibleText = document.createElement("span");
+    visibleText.textContent = "PASTE-TARGET-ONLY";
+    root.append(visibleText);
+    const range = document.createRange();
+    range.selectNodeContents(visibleText);
+    const domSelection = window.getSelection()!;
+    domSelection.removeAllRanges();
+    domSelection.addRange(range);
+    terminal.selection = "";
+
+    const preventDefault = vi.fn();
+    let handled: boolean | undefined;
+    await act(async () => {
+      handled = terminal.customKeyEventHandler?.({
+        type: "keydown",
+        key: "c",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        repeat: false,
+        isComposing: false,
+        preventDefault,
+      } as unknown as KeyboardEvent);
+      await Promise.resolve();
+    });
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenLastCalledWith("PASTE-TARGET-ONLY");
+
+    writeText.mockClear();
+    terminal.selection = "stale xterm selection";
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    fireEvent.contextMenu(host, { clientX: 120, clientY: 80 });
+    const copy = screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(copy);
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith("PASTE-TARGET-ONLY");
+
+    writeText.mockClear();
+    const foreignText = document.createElement("span");
+    foreignText.textContent = "OTHER-PANE";
+    document.body.append(foreignText);
+    const foreignRange = document.createRange();
+    foreignRange.selectNodeContents(foreignText);
+    domSelection.removeAllRanges();
+    domSelection.addRange(foreignRange);
+    document.dispatchEvent(new Event("selectionchange"));
+    const foreignSelectionHandled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    expect(foreignSelectionHandled).toBe(true);
     expect(writeText).not.toHaveBeenCalled();
   });
 
