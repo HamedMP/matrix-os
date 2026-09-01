@@ -109,6 +109,10 @@ describe("web getting started status", () => {
     expect(download.getAttribute("href")).toBe(DESKTOP_APP_DOWNLOAD_URL);
     expect(download.getAttribute("target")).toBe("_blank");
     expect(download.getAttribute("rel")).toBe("noopener noreferrer");
+    const dialogActions = screen
+      .getByRole("dialog", { name: "Getting started" })
+      .querySelectorAll("a, button");
+    expect(dialogActions[0]).toBe(download);
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();

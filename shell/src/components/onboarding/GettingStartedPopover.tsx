@@ -252,6 +252,17 @@ export function GettingStartedPopover({
             </div>
           </div>
           <div className="pb-1">
+            <a
+              href={DESKTOP_APP_DOWNLOAD_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Download desktop app"
+              className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70"
+              style={{ color: BRAND_COLORS.text, fontSize: 11 }}
+            >
+              <DownloadIcon className="size-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1">Download desktop app</span>
+            </a>
             {snapshot.steps.map((step) => {
               const complete = step.status === "complete";
               return (
@@ -282,17 +293,6 @@ export function GettingStartedPopover({
               );
             })}
           </div>
-          <a
-            href={DESKTOP_APP_DOWNLOAD_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Download desktop app"
-            className="flex w-full items-center gap-3 border-t px-3 py-2.5 outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70"
-            style={{ borderColor: BRAND_COLORS.border, color: BRAND_COLORS.text, fontSize: 11 }}
-          >
-            <DownloadIcon className="size-4 shrink-0" aria-hidden="true" />
-            <span className="min-w-0 flex-1">Download desktop app</span>
-          </a>
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>
     </PopoverPrimitive.Root>
