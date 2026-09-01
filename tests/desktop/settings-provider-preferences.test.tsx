@@ -5,15 +5,11 @@ import {
   PROVIDER_PREFERENCES_STATE_KEY,
   useProviderPreferences,
 } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 
 describe("provider preferences store", () => {
   beforeEach(() => {
-    useProviderPreferences.setState({
-      defaultProviderId: null,
-      lastComposerInstanceId: null,
-      composerSelections: {},
-      hydrated: false,
-    });
+    resetProviderPreferences();
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "state:get") return Promise.resolve({ value: null });
@@ -136,6 +132,48 @@ describe("provider preferences store", () => {
       codex_default: {
         options: [{ id: "effort", value: "high" }],
         permissionMode: "full_access",
+      },
+    });
+  });
+
+  it("hydrates the last Provider Instance and model while rejecting unsafe model references", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "state:get") {
+        return Promise.resolve({
+          value: {
+            defaultProviderId: "codex",
+            lastComposerInstanceId: "codex:work",
+            composerSelections: {
+              "codex:work": {
+                model: "openai-codex/gpt-5.6-terra",
+                options: [],
+                permissionMode: "supervised",
+              },
+              codex_unsafe: {
+                model: "../../private-model",
+                options: [],
+                permissionMode: "supervised",
+              },
+              codex_windows: {
+                model: "C:/private-model",
+                options: [],
+                permissionMode: "supervised",
+              },
+            },
+          },
+        });
+      }
+      return Promise.resolve({ ok: true });
+    });
+
+    await useProviderPreferences.getState().hydrate();
+
+    expect(useProviderPreferences.getState().lastComposerInstanceId).toBe("codex:work");
+    expect(useProviderPreferences.getState().composerSelections).toEqual({
+      "codex:work": {
+        model: "openai-codex/gpt-5.6-terra",
+        options: [],
+        permissionMode: "supervised",
       },
     });
   });

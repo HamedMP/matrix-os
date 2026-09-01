@@ -204,14 +204,13 @@ production routes are intact.
 Before promoting Stripe billing to production, configure the production Stripe
 account and production platform env:
 
-1. Create production Products and recurring Prices (Starter, Builder, Max —
-   monthly and annual; extra-runtime add-on if launching multiple machines).
-2. Copy the production Price IDs into the production platform env
-   (`STRIPE_PRICE_MATRIX_*`). Each billable computer uses its own full plan subscription.
-3. Enable automatic tax for subscription Checkout and Portal; add required tax
-   registrations. Funded AI add-on Checkout remains tax-disabled until those
-   registrations are verified and
-   `MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED=true` is set.
+1. Create production monthly recurring Prices: Starter `$20`, Builder `$100`,
+   and Max `$200`. New annual Checkout is not offered.
+2. Copy the new production Price IDs into `STRIPE_PRICE_MATRIX_*_MONTHLY`.
+   Preserve existing monthly and annual Price IDs in
+   `STRIPE_LEGACY_PRICE_CATALOG_JSON` before replacing any current ID. Each
+   billable computer uses its own full plan subscription.
+3. Enable automatic tax for Checkout and Portal; add required tax registrations.
 4. Enable promotion codes in Checkout and Customer Portal (Stripe Coupons /
    Promotion Codes, not hardcoded discounts).
 5. Configure the production webhook endpoint
@@ -247,6 +246,13 @@ account and production platform env:
     a Stripe-side IP allowlist for the platform egress addresses where the
     deployment topology supports stable egress. Never expose this key to a VPS
     or renderer.
+15. Verify all four purchasable locations and their exact machine mappings:
+    Germany uses CPX22/CPX42/CPX52; US uses CPX21/CPX31/CPX41. Confirm the
+    browser prefills the closest location and keeps the location control
+    collapsed below computer power and agent selection.
+16. Deploy the platform/app-shell Cloud Run service and verify the no-VPS flow
+    directly on `app.matrix-os.com`; publishing a host bundle alone does not
+    update this billing screen.
 
 After production env is set, merge the stack, build a host bundle from `main`,
 publish it, promote it to `stable`, deploy the fleet by `stable`, and verify

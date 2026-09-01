@@ -734,6 +734,62 @@ describe("canonical Chat Provider catalog", () => {
     expect(openclaw?.setupActions.some((action) => action.id === "openclaw_connect")).toBe(false);
   });
 
+  it("preserves long Skill descriptions within the canonical byte bound", async () => {
+    const description = "A".repeat(941);
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      skillsSource: () => [{ name: "animate", description }],
+    });
+
+    const catalog = await service.getCatalog(principal);
+    const codex = catalog.instances.find((instance) => instance.id === "codex_default")!;
+
+    expect(codex.skills).toEqual([{
+      id: "animate",
+      displayName: "animate",
+      description,
+      invocation: "/animate",
+    }]);
+    expect(CanonicalProviderCatalogSchema.parse(catalog)).toEqual(catalog);
+  });
+
+  it("omits invalid Skill metadata without failing the Provider catalog", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      skillsSource: () => [{
+        name: "valid-skill",
+        description: "A safe Skill description",
+      }, {
+        name: "too-large",
+        description: "A".repeat(1_601),
+      }, {
+        name: "unsafe-skill",
+        description: "Read /home/owner/.ssh/id_rsa",
+      }, {
+        name: "VALID-SKILL",
+        description: "Duplicate normalized identifier",
+      }],
+    });
+
+    const catalog = await service.getCatalog(principal);
+    const codex = catalog.instances.find((instance) => instance.id === "codex_default")!;
+
+    expect(codex.skills).toEqual([{
+      id: "valid-skill",
+      displayName: "valid-skill",
+      description: "A safe Skill description",
+      invocation: "/valid-skill",
+    }]);
+    expect(CanonicalProviderCatalogSchema.parse(catalog)).toEqual(catalog);
+    expect(warning).toHaveBeenCalledWith(
+      "[chat-providers] Omitted 3 invalid or duplicate Skill catalog entries",
+    );
+    warning.mockRestore();
+  });
+
   it("fails a system harness closed until its own provider authentication is configured", async () => {
     const source: AgentRuntimeSource = async () => {
       const snapshot = await runtimeSource()();

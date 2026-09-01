@@ -119,7 +119,7 @@ describe("shell snapshot cache", () => {
 
     const loaded = loadShellSnapshot(scope, storage);
 
-    expect(loaded?.desktopConfig?.background).toEqual({ type: "wallpaper", name: "moraine-lake.jpg" });
+    expect(loaded?.desktopConfig?.background).toEqual({ type: "wallpaper", name: "matrix-dusk.webp" });
     expect(loaded?.desktopConfig?.dock).toEqual({ position: "left", size: 56, iconSize: 40, autoHide: false });
     expect(loaded?.desktopConfig?.pinnedApps).toEqual(["apps/safe/index.html"]);
     expect(loaded?.bootstrap?.layout).toEqual({});

@@ -427,11 +427,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       mkdirSync(templateWallpapers, { recursive: true });
       mkdirSync(homeWallpapers, { recursive: true });
 
-      // The template ships all four OS wallpapers plus (hypothetically) an
+      // The template ships all seven OS wallpapers plus (hypothetically) an
       // entry whose name collides with a user upload — the prefix must stay
-      // user-owned for everything except the four exact bundled filenames.
+      // user-owned for everything except the seven exact bundled filenames.
       writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
         'system/wallpapers/macos-light.svg': sha256('macos light v1'),
+        'system/wallpapers/matrix-dawn.webp': sha256('matrix dawn v1'),
+        'system/wallpapers/matrix-dusk.webp': sha256('matrix dusk v1'),
+        'system/wallpapers/matrix-night.webp': sha256('matrix night v1'),
         'system/wallpapers/moraine-lake.jpg': sha256('moraine v2'),
         'system/wallpapers/win11-bloom.jpg': sha256('win11 bloom v2'),
         'system/wallpapers/xp-bliss.jpg': sha256('xp bliss v1'),
@@ -443,6 +446,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
         'system/wallpapers/win11-bloom.jpg': sha256('win11 bloom v1'),
       }, null, 2));
       writeFileSync(join(templateWallpapers, 'macos-light.svg'), 'macos light v1');
+      writeFileSync(join(templateWallpapers, 'matrix-dawn.webp'), 'matrix dawn v1');
+      writeFileSync(join(templateWallpapers, 'matrix-dusk.webp'), 'matrix dusk v1');
+      writeFileSync(join(templateWallpapers, 'matrix-night.webp'), 'matrix night v1');
       writeFileSync(join(templateWallpapers, 'moraine-lake.jpg'), 'moraine v2');
       writeFileSync(join(templateWallpapers, 'win11-bloom.jpg'), 'win11 bloom v2');
       writeFileSync(join(templateWallpapers, 'xp-bliss.jpg'), 'xp bliss v1');
@@ -469,6 +475,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       // Missing bundled wallpapers are added; tracked-but-stale ones update.
       expect(readFileSync(join(homeWallpapers, 'xp-bliss.jpg'), 'utf8')).toBe('xp bliss v1');
       expect(readFileSync(join(homeWallpapers, 'macos-light.svg'), 'utf8')).toBe('macos light v1');
+      expect(readFileSync(join(homeWallpapers, 'matrix-dawn.webp'), 'utf8')).toBe('matrix dawn v1');
+      expect(readFileSync(join(homeWallpapers, 'matrix-dusk.webp'), 'utf8')).toBe('matrix dusk v1');
+      expect(readFileSync(join(homeWallpapers, 'matrix-night.webp'), 'utf8')).toBe('matrix night v1');
       expect(readFileSync(join(homeWallpapers, 'moraine-lake.jpg'), 'utf8')).toBe('moraine v2');
       expect(readFileSync(join(homeWallpapers, 'win11-bloom.jpg'), 'utf8')).toBe('win11 bloom v2');
       // User wallpapers are untouched — including one colliding with a
@@ -1771,7 +1780,10 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health"');
-    expect(workflow).toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
+    expect(workflow).toContain(
+      '$CANDIDATE_URL/system-bundles/channels/${CUSTOMER_VPS_IMAGE_VERSION}.json',
+    );
+    expect(workflow).not.toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
     expect(workflow).toContain("jq -r '.url // empty'");
     expect(workflow).toContain('sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"');
     expect(workflow).toContain('bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"');

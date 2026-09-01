@@ -33,7 +33,6 @@ describe('platform/stripe-billing', () => {
 
     expect(sessionsCreate).toHaveBeenCalledWith({
       mode: 'subscription',
-      integration_identifier: expect.stringMatching(/^matrix-subscription-[a-z]{8}$/),
       customer: 'cus_123',
       client_reference_id: 'user_123',
       line_items: [{ price: 'price_builder_monthly', quantity: 1 }],
@@ -41,6 +40,7 @@ describe('platform/stripe-billing', () => {
       cancel_url: 'https://app.matrix-os.com/?billing=canceled',
       allow_promotion_codes: true,
       automatic_tax: { enabled: true },
+      integration_identifier: expect.stringMatching(/^matrix_checkout_[a-z]{8}$/),
       metadata: {
         clerk_user_id: 'user_123',
         matrix_region_slug: 'region_nbg1',
@@ -60,7 +60,23 @@ describe('platform/stripe-billing', () => {
       },
     }, { idempotencyKey: 'attempt_123' });
     expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
-    expect(sessionsCreate.mock.calls[1]).toEqual(sessionsCreate.mock.calls[0]);
+
+    await client.createCheckoutSession({
+      clerkUserId: 'user_123',
+      idempotencyKey: 'attempt_123',
+      customerId: 'cus_123',
+      priceId: 'price_builder_monthly',
+      mode: 'subscription',
+      automaticTax: true,
+      allowPromotionCodes: true,
+      regionSlug: 'region_nbg1',
+      runtimeSlot: 'studio',
+      successUrl: 'https://app.matrix-os.com/?checkout=success',
+      cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
+    });
+    expect(sessionsCreate.mock.calls[1]?.[0].integration_identifier).toBe(
+      sessionsCreate.mock.calls[0]?.[0].integration_identifier,
+    );
   });
 
   it('creates checkout sessions without customer-write permission when no customer exists yet', async () => {

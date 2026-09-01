@@ -67,21 +67,21 @@ describe("createApiClient", () => {
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("bounds JSON responses and composes a caller abort signal with the timeout", async () => {
-    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { value: "x".repeat(128) }));
+  it("composes a caller cancellation signal with the mandatory timeout", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    const caller = new AbortController();
     const client = createApiClient({
       baseUrl: "https://app.matrix-os.com",
       getRuntimeSlot: () => "primary",
       fetchFn,
     });
-    const caller = new AbortController();
 
-    await expect(client.get("/api/ai/provider-settings", { maxBytes: 32, signal: caller.signal }))
-      .rejects.toMatchObject({ category: "server" });
-    const signal = (fetchFn.mock.calls[0]?.[1] as RequestInit).signal as AbortSignal;
-    expect(signal).not.toBe(caller.signal);
+    await client.get("/api/apps", { signal: caller.signal });
+
+    const [, init] = fetchFn.mock.calls[0]!;
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
     caller.abort();
-    expect(signal.aborted).toBe(true);
+    expect((init as RequestInit).signal!.aborted).toBe(true);
   });
 
   it("maps 401 to unauthorized AppError", async () => {

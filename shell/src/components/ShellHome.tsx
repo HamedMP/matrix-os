@@ -22,7 +22,6 @@ const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
   "__chat__",
   "__file-browser__",
-  "__workspace__",
   "__preview-window__",
   "__activity-monitor__",
 ]);

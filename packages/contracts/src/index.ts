@@ -24,6 +24,7 @@ import {
 export const CODEX_VERIFIED_VERSION = "0.151.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#ai-provider";
+export * from "#billing-catalog";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
@@ -43,6 +44,7 @@ export * from "#kernel-conversations";
 export * from "#provider-settings";
 export * from "#funded-ai";
 export * from "#safe-client-error";
+export * from "#terminal-clipboard";
 export * from "#terminal-links";
 export { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 
@@ -1136,3 +1138,35 @@ export const ReviewSnapshotSchema = z.object({
 }).strict();
 
 export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
+
+export {
+  OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_LABELS,
+  OS_VIEW_MODES,
+  isOsViewDestinationPath,
+  normalizeOsViewMode,
+  otherOsViewMode,
+  createDefaultOsViewDocument,
+  mergeOsViewStatePatch,
+  rebaseOsViewStatePatch,
+  OsViewAppStateSchema,
+  OsViewCanvasTransformSchema,
+  OsViewDesktopIconSchema,
+  OsViewDocumentSchema,
+  OsViewMutationIdSchema,
+  OsViewStatePatchSchema,
+  OsViewStateResponseSchema,
+  OsViewWindowGeometrySchema,
+  PatchOsViewStateRequestSchema,
+} from "#os-view";
+export type {
+  OsViewAppState,
+  OsViewCanvasTransform,
+  OsViewDesktopIcon,
+  OsViewDocument,
+  OsViewMode,
+  OsViewStatePatch,
+  OsViewStateResponse,
+  OsViewWindowGeometry,
+  PatchOsViewStateRequest,
+} from "#os-view";

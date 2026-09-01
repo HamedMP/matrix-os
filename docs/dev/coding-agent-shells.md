@@ -1,19 +1,19 @@
-# Coding Agent Shells
+# Coding Agents Across OS Views
 
-This guide documents the Matrix OS coding-agent shell architecture for gateway, desktop, mobile, and browser shell work. The gateway/runtime remains the source of truth; clients are resumable shells that render validated summaries and snapshots.
+This guide documents the Matrix OS coding-agent architecture across Electron Desktop, Web Desktop, Web Canvas, Native Mobile, and Web Mobile. The gateway/runtime remains the source of truth; clients are resumable OS views that render validated summaries and snapshots.
 
 ## Ownership Boundaries
 
-- Shared contracts live in `packages/contracts/src/index.ts` and are the only supported cross-shell shape for runtime summaries, providers, threads, events, approvals, terminal summaries, review snapshots, file reads, and preview summaries.
+- Shared contracts live in `packages/contracts/src/index.ts` and are the only supported cross-surface shape for runtime summaries, providers, threads, events, approvals, terminal summaries, review snapshots, file reads, and preview summaries.
 - Gateway owns coding-agent read models, provider adapters, thread state, event replay, approval decisions, input answers, terminal binding, review/file adapters, preview summaries, and safe error mapping.
 - Desktop main process owns bearer-authenticated gateway calls. Renderer code receives only Zod-validated, bounded data over typed IPC and must not receive bearer tokens or provider credentials.
 - Mobile uses the authenticated `GatewayClient` and may persist only bounded UI references such as selected IDs and timestamps. Do not persist transcripts, terminal output, file contents, diffs, raw approval payloads, credentials, or launch tokens.
-- Browser shell surfaces call authenticated gateway routes and validate shared contracts before rendering. Shell-only filtering is defensive; project and owner scoping must happen in the gateway before list bounds are applied.
+- Web OS views call authenticated gateway routes and validate shared contracts before rendering. Renderer-only filtering is defensive; project and owner scoping must happen in the gateway before list bounds are applied.
 - Canonical terminals remain the existing Matrix terminal/session primitives under `/api/terminal/sessions`, `/ws/terminal`, and related compatibility routes. Do not create a separate coding-agent terminal model.
 
-## Browser Shell
+## Web OS Views
 
-Browser Workspace remains Canvas-first and does not own coding-agent runtime state. It may render active-project thread and preview summaries from `RuntimeSummarySchema`, and it may open an existing Canvas PR workspace from bounded worktree metadata that already includes a pull request number. Browser Workspace must not create source-control commits or pull requests, store transcripts, store file contents, store diffs, or execute provider setup actions. Those write paths stay in gateway-owned routes and trusted desktop/mobile clients.
+Web Desktop is the default browser presentation and Web Canvas is a launcher-accessible free-form presentation over the same coding-agent state. Neither renderer owns coding-agent runtime state. Coding-agent entry points use the canonical Chat, Terminal, Files, and review surfaces rather than a Workspace app or Workspace Canvas. Source-control mutations, transcripts, file contents, diffs, and provider setup remain governed by gateway contracts and the applicable trusted client boundary.
 
 ## Mobile Agent Cockpit
 

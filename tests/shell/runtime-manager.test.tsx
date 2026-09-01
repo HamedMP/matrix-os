@@ -82,8 +82,8 @@ function billingStatus(maxRuntimeSlots = 3, source: "stripe" | "override" = "str
       maxRuntimeSlots,
       includedRuntimeSlots: maxRuntimeSlots,
       addonRuntimeSlots: 0,
-      defaultServerType: "cpx32",
-      allowedServerTypes: ["cpx22", "cpx32"],
+      defaultServerType: "cpx42",
+      allowedServerTypes: ["cpx22", "cpx21", "cpx42", "cpx31"],
       stripeSubscriptionId: source === "stripe" ? "sub_123" : null,
       stripePriceId: source === "stripe" ? "price_builder_monthly" : null,
       gracePeriodEndsAt: null,
@@ -320,12 +320,13 @@ describe("RuntimeManager", () => {
     fireEvent.change(input, { target: { value: "New Design Studio" } });
     expect(screen.getByText("new-design-studio")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Change computer" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Change region" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose your Matrix computer" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Choose your Matrix computer" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Advanced settings" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
   });
 
-  it("reuses first-time strength, region, interval, and Checkout for another computer", async () => {
+  it("reuses first-time strength, region, agents, and Checkout for another computer", async () => {
     const navigate = vi.fn();
     const fetchMock = installFetchRouter({ billing: billingStatus(3) });
     await renderOnboarding({ onExternalNavigate: navigate });
@@ -335,17 +336,16 @@ describe("RuntimeManager", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose your Matrix computer" })).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     expect(screen.getByText("New subscription")).toBeTruthy();
     expect(screen.queryByText("Active")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.getByRole("button", { name: /Max.*CPX52/i })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Starter.*CPX22/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
-    fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany.*nbg1/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Annual" }));
+    expect(screen.getByRole("button", { name: /^Max\b/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+    fireEvent.click(screen.getByRole("button", { name: /Ashburn, Virginia.*ash/i }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() => {
@@ -355,9 +355,9 @@ describe("RuntimeManager", () => {
           method: "POST",
           body: JSON.stringify({
             planSlug: "matrix_starter",
-            interval: "annual",
-            regionSlug: "region_nbg1",
-            serverType: "cpx22",
+            interval: "monthly",
+            regionSlug: "region_ash",
+            serverType: "cpx21",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             runtimeSlot: "research-lab",
             returnPath: "/?billing=setup&handoff=add-computer",
@@ -410,7 +410,7 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(screen.getByRole("alert").textContent).toMatch(/already uses/i);
-    expect(screen.queryByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Choose your Matrix computer" })).toBeNull();
   });
 
   it("recovers when the dedicated onboarding surface cannot load inventory", async () => {
@@ -444,8 +444,8 @@ describe("RuntimeManager", () => {
       target: { value: "Research Lab" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Change computer" }));
-    expect(screen.queryByRole("button", { name: /Max.*CPX52/i })).toBeNull();
+    await screen.findByRole("group", { name: "Choose your Matrix computer" });
+    expect(screen.queryByRole("button", { name: /^Max\b/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
 
     expect(await screen.findByRole("heading", { name: "Default installs" })).toBeTruthy();
@@ -463,7 +463,7 @@ describe("RuntimeManager", () => {
           body: JSON.stringify({
             runtime: "research-lab",
             developerTools: [],
-            serverType: "cpx32",
+            serverType: "cpx42",
             location: "fsn1",
           }),
         }),
@@ -639,7 +639,7 @@ describe("RuntimeManager", () => {
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
-      serverType: "cpx32",
+      serverType: "cpx42",
       location: "fsn1",
       createdAt: 1_000,
     }));
@@ -672,7 +672,7 @@ describe("RuntimeManager", () => {
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
-      serverType: "cpx32",
+      serverType: "cpx42",
       location: "fsn1",
       createdAt: Date.now(),
     }));
@@ -709,7 +709,7 @@ describe("RuntimeManager", () => {
         body: JSON.stringify({
           runtime: "research-lab",
           developerTools: ["codex", "claude-code", "opencode", "pi"],
-          serverType: "cpx32",
+          serverType: "cpx42",
           location: "fsn1",
         }),
       }),
@@ -721,7 +721,7 @@ describe("RuntimeManager", () => {
       name: "Research Lab",
       slot: "research-lab",
       developerTools: [],
-      serverType: "cpx32",
+      serverType: "cpx42",
       location: "fsn1",
       createdAt: Date.now(),
     }));
@@ -729,7 +729,7 @@ describe("RuntimeManager", () => {
 
     await renderOnboarding({}, "/?billing=canceled&handoff=add-computer");
 
-    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose your Matrix computer" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Activating your computer subscription" })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("runtimeSlot=research-lab"));
   });

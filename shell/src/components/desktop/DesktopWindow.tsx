@@ -16,7 +16,6 @@ import { ChatApp } from "@/components/ChatApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
-import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { TrafficLights } from "./DesktopDockControls";
 
 export function hasActiveWindowInteraction(
@@ -200,8 +199,6 @@ export function DesktopWindow({
               },
             }}
           />
-        ) : win.path === "__workspace__" ? (
-          <WorkspaceApp />
         ) : win.path === "__file-browser__" ? (
           <FileBrowser windowId={win.id} />
         ) : win.path === "__preview-window__" ? (

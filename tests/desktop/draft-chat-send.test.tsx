@@ -9,6 +9,7 @@ import {
 } from "@matrix-os/contracts";
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
@@ -156,7 +157,7 @@ function resetStores() {
   useProjectChatLauncher.setState({ composerRequest: null });
   useTabs.setState(useTabs.getInitialState(), true);
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
-  useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
+  resetProviderPreferences();
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,

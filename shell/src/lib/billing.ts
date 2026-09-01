@@ -1,25 +1,27 @@
 import type { useAuth } from "@clerk/nextjs";
+import {
+  MATRIX_HOSTED_BILLING_PLANS,
+  MATRIX_HOSTED_BILLING_REGIONS,
+  MATRIX_HOSTED_MACHINE_PROFILES,
+  closestMatrixRegionSlug,
+  resolveMatrixMachineProfile,
+  type MatrixHostedBillingPlanSlug,
+  type MatrixHostedBillingRegionSlug,
+  type MatrixHostedPlanFeatureSlug,
+} from "@matrix-os/contracts";
 
-export const MATRIX_BILLING_PLAN_SLUGS = [
-  "matrix_starter",
-  "matrix_builder",
-  "matrix_max",
-] as const;
+export const MATRIX_BILLING_PLAN_SLUGS = MATRIX_HOSTED_BILLING_PLANS.map((plan) => plan.slug);
 export const MATRIX_BILLING_RETURN_PATH = "/";
 export const MATRIX_BILLING_SUCCESS_RETURN_PATH = "/?checkout=success";
 export const MATRIX_BILLING_DEFAULT_APP_URL = "https://app.matrix-os.com";
 
 export type BillingPlanChecker = ReturnType<typeof useAuth>["has"];
-export type MatrixServerProfileSlug =
-  | "server_cpx11"
-  | "server_cpx22"
-  | "server_cpx32"
-  | "server_cpx52";
-export type MatrixRegionSlug = "region_fsn1" | "region_nbg1";
+export type MatrixServerProfileSlug = MatrixHostedPlanFeatureSlug;
+export type MatrixRegionSlug = MatrixHostedBillingRegionSlug;
 
 export type MatrixServerProfile = {
   featureSlug: MatrixServerProfileSlug;
-  planSlug: "matrix_starter" | "matrix_builder" | "matrix_max";
+  planSlug: MatrixHostedBillingPlanSlug;
   hetznerType: string;
   label: string;
   vcpus: number;
@@ -29,7 +31,7 @@ export type MatrixServerProfile = {
   monthlyCapEur: string;
   hourlyEur: string;
   monthlyPriceUsd: string | null;
-  annualPriceUsd: string | null;
+  annualPriceUsd: null;
 };
 
 export type MatrixRegion = {
@@ -37,70 +39,56 @@ export type MatrixRegion = {
   location: string;
   flag: string;
   label: string;
-  networkZone: "eu-central" | "us-east" | "us-west" | "ap-southeast";
+  networkZone: "eu-central" | "us-east" | "us-west";
 };
 
-export const MATRIX_BILLING_SERVER_PROFILES: MatrixServerProfile[] = [
-  {
-    featureSlug: "server_cpx22",
-    planSlug: "matrix_starter",
-    hetznerType: "CPX22",
-    label: "Starter",
-    vcpus: 2,
-    cpu: "AMD",
-    memoryGb: 4,
-    diskGb: 80,
-    monthlyCapEur: "8.49",
-    hourlyEur: "0.0136",
-    monthlyPriceUsd: "14",
-    annualPriceUsd: "140",
-  },
-  {
-    featureSlug: "server_cpx32",
-    planSlug: "matrix_builder",
-    hetznerType: "CPX32",
-    label: "Builder",
-    vcpus: 4,
-    cpu: "AMD",
-    memoryGb: 8,
-    diskGb: 160,
-    monthlyCapEur: "14.49",
-    hourlyEur: "0.0232",
-    monthlyPriceUsd: "19",
-    annualPriceUsd: "190",
-  },
-  {
-    featureSlug: "server_cpx52",
-    planSlug: "matrix_max",
-    hetznerType: "CPX52",
-    label: "Max",
-    vcpus: 12,
-    cpu: "AMD",
-    memoryGb: 24,
-    diskGb: 480,
-    monthlyCapEur: "36.99",
-    hourlyEur: "0.0593",
-    monthlyPriceUsd: "49",
-    annualPriceUsd: "490",
-  },
-];
+export const MATRIX_BILLING_SERVER_PROFILES: MatrixServerProfile[] = MATRIX_HOSTED_BILLING_PLANS.map((plan) => {
+  const machine = resolveMatrixMachineProfile(plan.slug, "region_fsn1");
+  if (!machine) throw new Error(`Missing default hosted machine profile for ${plan.slug}`);
+  return {
+    featureSlug: plan.featureSlug,
+    planSlug: plan.slug,
+    hetznerType: machine.serverType.toUpperCase(),
+    label: plan.label,
+    vcpus: machine.vcpus,
+    cpu: "AMD" as const,
+    memoryGb: machine.memoryGb,
+    diskGb: machine.diskGb,
+    monthlyCapEur: "",
+    hourlyEur: "",
+    monthlyPriceUsd: String(plan.monthlyUsd),
+    annualPriceUsd: null,
+  };
+});
 
-export const MATRIX_BILLING_REGIONS: MatrixRegion[] = [
-  {
-    featureSlug: "region_fsn1",
-    location: "fsn1",
-    flag: "🇩🇪",
-    label: "Falkenstein, Germany",
-    networkZone: "eu-central",
-  },
-  {
-    featureSlug: "region_nbg1",
-    location: "nbg1",
-    flag: "🇩🇪",
-    label: "Nuremberg, Germany",
-    networkZone: "eu-central",
-  },
-];
+export const MATRIX_BILLING_MACHINE_PROFILES = MATRIX_HOSTED_MACHINE_PROFILES;
+
+export const MATRIX_BILLING_REGIONS: MatrixRegion[] = MATRIX_HOSTED_BILLING_REGIONS.map((region) => ({
+  featureSlug: region.slug,
+  location: region.location,
+  flag: region.flag,
+  label: region.label,
+  networkZone: region.networkZone,
+}));
+
+export function resolveMatrixServerProfile(
+  profile: MatrixServerProfile,
+  region: MatrixRegion,
+): MatrixServerProfile {
+  const machine = resolveMatrixMachineProfile(profile.planSlug, region.featureSlug);
+  if (!machine) return profile;
+  return {
+    ...profile,
+    hetznerType: machine.serverType.toUpperCase(),
+    vcpus: machine.vcpus,
+    memoryGb: machine.memoryGb,
+    diskGb: machine.diskGb,
+  };
+}
+
+export function getClosestMatrixRegionSlug(timeZone?: string | null): MatrixRegionSlug {
+  return closestMatrixRegionSlug(timeZone);
+}
 
 export function hasMatrixBillingAccess(has: BillingPlanChecker): boolean {
   return MATRIX_BILLING_PLAN_SLUGS.some((plan) => has?.({ plan }) === true);

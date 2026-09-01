@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildWebDesktopIconApps,
   buildWebDesktopLauncherApps,
   resolveWebDesktopBuiltInLaunch,
 } from "../../shell/src/lib/web-desktop-app-launch.js";
@@ -48,6 +49,31 @@ describe("web Desktop built-in app launch routing", () => {
       kind: "app",
       name: "Files",
       path: "__file-browser__",
+    });
+  });
+
+  it("exposes the other OS view in the launcher without turning it into a desktop icon", () => {
+    expect(buildWebDesktopLauncherApps([], "desktop")[0]).toEqual({
+      name: "Web Canvas",
+      path: "__os-view-canvas__",
+      iconUrl: "/icons/canvas.svg",
+    });
+    expect(buildWebDesktopLauncherApps([], "canvas")[0]).toEqual({
+      name: "Web Desktop",
+      path: "__os-view-desktop__",
+      iconUrl: "/icons/desktop.svg",
+    });
+    expect(buildWebDesktopIconApps([]).some((app) => app.path.startsWith("__os-view-"))).toBe(false);
+  });
+
+  it("routes launcher OS-view destinations as presentation switches", () => {
+    expect(resolveWebDesktopBuiltInLaunch("__os-view-canvas__")).toEqual({
+      kind: "os-view",
+      mode: "canvas",
+    });
+    expect(resolveWebDesktopBuiltInLaunch("__os-view-desktop__")).toEqual({
+      kind: "os-view",
+      mode: "desktop",
     });
   });
 

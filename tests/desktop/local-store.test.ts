@@ -54,6 +54,16 @@ describe("local store", () => {
         },
       },
     })).rejects.toThrow();
+    await expect(store.setUnknown("providerPreferences", {
+      ...preferences,
+      composerSelections: {
+        codex_default: {
+          model: "C:/private-model",
+          options: [],
+          permissionMode: "supervised",
+        },
+      },
+    })).rejects.toThrow();
   });
 
   it("keeps older composer preferences readable before a model is chosen", async () => {

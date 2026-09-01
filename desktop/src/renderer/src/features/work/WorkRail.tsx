@@ -290,6 +290,7 @@ export function WorkRail({
           expanded={sections.recents}
           onToggle={() => toggleSection("recents")}
           divider={false}
+
         >
           {model.recents.map((record) => (
             <WorkRailChatRow

@@ -12,6 +12,7 @@ import {
   snapshot,
 } from "./canonical-chat-workspace-test-utils";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 
 describe("Canonical Chat composer preferences", () => {
   beforeAll(() => {
@@ -26,12 +27,7 @@ describe("Canonical Chat composer preferences", () => {
   beforeEach(() => {
     useBoard.setState(useBoard.getInitialState(), true);
     useConnection.setState(useConnection.getInitialState(), true);
-    useProviderPreferences.setState({
-      defaultProviderId: null,
-      lastComposerInstanceId: null,
-      composerSelections: {},
-      hydrated: true,
-    });
+    resetProviderPreferences({ hydrated: true });
     window.operator = {
       invoke: vi.fn(async () => ({ ok: true })),
       on: vi.fn(() => () => undefined),
@@ -95,116 +91,81 @@ describe("Canonical Chat composer preferences", () => {
     expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
   });
 
-  it("keeps the selected provider, model, effort, and permission when New chat remounts the composer", async () => {
-    const codexInstance = {
-      ...providerCatalog.instances[0]!,
-      models: [
-        providerCatalog.instances[0]!.models[0]!,
-        {
-          ...providerCatalog.instances[0]!.models[0]!,
-          id: "gpt-5.6-terra",
-          displayName: "GPT-5.6-Terra",
-        },
-      ],
-      options: [{
-        id: "effort",
-        label: "Reasoning",
-        kind: "enum" as const,
-        values: [
-          { value: "low", label: "Low" },
-          { value: "high", label: "High" },
-        ],
-        defaultValue: "low",
-        placement: "composer" as const,
-      }],
-      defaultSelection: {
-        instanceId: "codex_fixture",
-        model: "gpt-5.6-sol",
-        options: [{ id: "effort", value: "low" }],
-      },
-    };
+  it("uses the last provider and model choice as the default for a new Chat", async () => {
+    const codexInstance = providerCatalog.instances[0]!;
     const preferenceCatalog = {
       ...providerCatalog,
       drivers: [
-        {
-          kind: "hermes" as const,
-          displayName: "Hermes",
-          adapterVersion: "1.0.0",
-          capabilityClass: "system_agent" as const,
-        },
         ...providerCatalog.drivers,
+        {
+          kind: "claude_code" as const,
+          displayName: "Claude Code",
+          adapterVersion: "1.0.0",
+          capabilityClass: "coding_agent" as const,
+        },
       ],
       instances: [
+        codexInstance,
         {
           ...codexInstance,
-          id: "hermes_fixture",
-          driverKind: "hermes" as const,
-          displayName: "Hermes fixture",
-          models: [{
-            ...codexInstance.models[0]!,
-            id: "openrouter:anthropic/claude-opus-4.6",
-            displayName: "Hermes Opus 4.6",
-          }],
-          options: [],
-          supports: {
-            ...codexInstance.supports,
-            interactionModes: ["default"],
-            permissionModes: ["supervised"],
-          },
+          id: "claude_fixture",
+          driverKind: "claude_code" as const,
+          displayName: "Claude fixture",
+          models: [
+            {
+              ...codexInstance.models[0]!,
+              id: "anthropic:claude-opus-4.6",
+              displayName: "Claude Opus 4.6",
+            },
+            {
+              ...codexInstance.models[0]!,
+              id: "anthropic:claude-sonnet-4.6",
+              displayName: "Claude Sonnet 4.6",
+            },
+          ],
           defaultSelection: {
-            instanceId: "hermes_fixture",
-            model: "openrouter:anthropic/claude-opus-4.6",
+            instanceId: "claude_fixture",
+            model: "anthropic:claude-opus-4.6",
           },
         },
-        codexInstance,
       ],
     };
-    const routeClient = client();
-
-    function Harness() {
-      const [route, setRoute] = React.useState<{
-        chatId?: string;
-        view: "draft" | "conversation";
-      }>({ chatId: snapshot.chat.id, view: "conversation" });
-      return (
-        <CanonicalChatWorkspace
-          key={route.view}
-          client={routeClient}
-          projectId="matrix-os"
-          projectLabel="Matrix OS"
-          initialChatId={route.chatId}
-          initialView={route.view}
-          active
-          catalog={preferenceCatalog}
-          onActiveChatChanged={(chatId) => {
-            if (chatId === null) setRoute({ view: "draft" });
-          }}
-        />
-      );
-    }
-
-    render(<Harness />);
-
-    await screen.findByRole("textbox", { name: "Reply to chat" });
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(screen.getByRole("option", { name: /GPT-5\.6-Terra/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
-    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
-
-    const selected = screen.getByRole("button", { name: "Choose model and provider" });
-    expect(selected.getAttribute("data-provider-instance")).toBe("codex_fixture");
-    expect(selected.getAttribute("data-model")).toBe("gpt-5.6-terra");
-
-    fireEvent.click(selected);
-    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+    const first = render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialView="draft"
+        active
+        catalog={preferenceCatalog}
+      />,
+    );
 
     await screen.findByRole("textbox", { name: "Start a chat" });
-    const restored = screen.getByRole("button", { name: "Choose model and provider" });
-    expect(restored.getAttribute("data-provider-instance")).toBe("codex_fixture");
-    expect(restored.getAttribute("data-model")).toBe("gpt-5.6-terra");
-    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
-    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code harness, Available" }));
+    fireEvent.click(screen.getByRole("option", { name: /Claude Sonnet 4\.6/ }));
+    expect(screen.getByRole("button", { name: "Choose model and provider" })
+      .getAttribute("data-provider-instance")).toBe("claude_fixture");
+    expect(screen.getByRole("button", { name: "Choose model and provider" })
+      .getAttribute("data-model")).toBe("anthropic:claude-sonnet-4.6");
+
+    first.unmount();
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialView="draft"
+        active
+        catalog={preferenceCatalog}
+      />,
+    );
+
+    await screen.findByRole("textbox", { name: "Start a chat" });
+    expect(screen.getByRole("button", { name: "Choose model and provider" })
+      .getAttribute("data-provider-instance")).toBe("claude_fixture");
+    expect(screen.getByRole("button", { name: "Choose model and provider" })
+      .getAttribute("data-model")).toBe("anthropic:claude-sonnet-4.6");
   });
 });

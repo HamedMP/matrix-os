@@ -28,6 +28,8 @@ export interface BoundedReadOptions {
   // file can be stale by the time the body is fetched, so the cap must apply
   // to the transfer itself; exceeding it rejects with "file_too_large".
   maxBytes?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export interface RequestTimeoutOptions {
@@ -61,15 +63,30 @@ export interface ApiClient {
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const fetchFn: FetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
 
-  async function send(path: string, init: RequestInit, timeoutMs = API_TIMEOUT_MS): Promise<Response> {
+  function signalWithTimeout(signal: AbortSignal | null | undefined, timeoutMs: number): AbortSignal {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    return signal ? AbortSignal.any([signal, timeout]) : timeout;
+  }
+
+  async function send(
+    path: string,
+    init: RequestInit,
+    requestOptions?: RequestTimeoutOptions,
+  ): Promise<Response> {
     const url = buildGatewayUrl(options.baseUrl, path, options.getRuntimeSlot());
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
+    const callerSignals = [init.signal, requestOptions?.signal].filter(
+      (signal): signal is AbortSignal => signal !== null && signal !== undefined,
+    );
+    const callerSignal = callerSignals.length === 0
+      ? undefined
+      : callerSignals.length === 1
+        ? callerSignals[0]
+        : AbortSignal.any(callerSignals);
     let response: Response;
     try {
       response = await fetchFn(url, {
         ...init,
-        signal,
+        signal: signalWithTimeout(callerSignal, requestOptions?.timeoutMs ?? API_TIMEOUT_MS),
       });
     } catch (err: unknown) {
       throw new AppError(classifyTransportError(err), { cause: err });
@@ -92,7 +109,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   }
 
   async function request<T>(path: string, init: RequestInit, options?: JsonRequestOptions): Promise<T> {
-    const response = await send(path, { ...init, signal: options?.signal }, options?.timeoutMs);
+    const response = await send(path, init, options);
     try {
       if (options?.maxBytes !== undefined) {
         const chunks = await readBoundedBytes(response, options.maxBytes);
@@ -135,7 +152,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   }
 
   async function requestText(path: string, init: RequestInit, bounds?: BoundedReadOptions): Promise<string> {
-    const response = await send(path, init);
+    const response = await send(path, init, bounds);
     try {
       if (bounds?.maxBytes !== undefined) {
         const chunks = await readBoundedBytes(response, bounds.maxBytes);
@@ -150,7 +167,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   }
 
   async function requestBlob(path: string, init: RequestInit, bounds?: BoundedReadOptions): Promise<Blob> {
-    const response = await send(path, init);
+    const response = await send(path, init, bounds);
     try {
       if (bounds?.maxBytes !== undefined) {
         const chunks = await readBoundedBytes(response, bounds.maxBytes);

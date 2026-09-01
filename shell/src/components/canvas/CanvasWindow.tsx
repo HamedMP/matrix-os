@@ -10,7 +10,6 @@ import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
-import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { useChatContext } from "@/stores/chat-context";
@@ -56,6 +55,7 @@ function ensureCanvasWindowMotionStyles() {
 
 interface CanvasWindowProps {
   win: AppWindow;
+  iconUrl?: string;
   /** When true, the window stays mounted but is visually hidden so iframe
       state, terminal sockets, and React state survive minimize -> restore. */
   hidden?: boolean;
@@ -64,7 +64,7 @@ interface CanvasWindowProps {
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- cohesive single-window renderer: the bulk is theme-specific title-bar selection plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
-export function CanvasWindow({ win, hidden = false, deferAppContent = false }: CanvasWindowProps) {
+export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const panX = useCanvasTransform((s) => s.panX);
@@ -76,7 +76,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const resizeWindow = useWindowManager((s) => s.resizeWindow);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
-  const iconUrl = useWindowManager((s) => s.apps.find((a) => a.path === win.path)?.iconUrl);
   // react-doctor-disable-next-line react-doctor/no-event-handler -- false positive: `isFocused` is a derived store value, not a DOM event handler. It is read by the reset effect below (already justified for set-state-in-effect / no-adjust-state-on-prop-change), which must remain an effect because it fires on programmatic canvas scroll / focus loss where no event exists to move the logic into.
   const isFocused = focusedWindowId === win.id;
   const isFullscreen = fullscreenWindowId === win.id;
@@ -512,8 +511,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
             },
           }}
         />
-      ) : win.path === "__workspace__" ? (
-        <WorkspaceApp />
       ) : win.path === "__file-browser__" ? (
         <FileBrowser windowId={win.id} mobile={isMobile} />
       ) : win.path === "__preview-window__" ? (

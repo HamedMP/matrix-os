@@ -23,7 +23,7 @@ const baseEnv = {
 };
 
 describe('platform billing entitlements', () => {
-  it('uses marketing plan slugs with monthly and annual prices', () => {
+  it('uses the new monthly hosted prices while retaining annual catalog recognition', () => {
     expect(DEFAULT_BILLING_PLAN_DEFINITIONS.map((plan) => plan.slug)).toEqual([
       'matrix_starter',
       'matrix_builder',
@@ -34,10 +34,10 @@ describe('platform billing entitlements', () => {
       'Builder',
       'Max',
     ]);
-    expect(DEFAULT_BILLING_PLAN_DEFINITIONS.map((plan) => [plan.monthlyUsd, plan.annualUsd])).toEqual([
-      [14, 140],
-      [19, 190],
-      [49, 490],
+    expect(DEFAULT_BILLING_PLAN_DEFINITIONS.map((plan) => plan.monthlyUsd)).toEqual([
+      20,
+      100,
+      200,
     ]);
     expect(DEFAULT_BILLING_PLAN_DEFINITIONS.map((plan) => plan.includedRuntimeSlots)).toEqual([1, 1, 1]);
   });
@@ -54,12 +54,41 @@ describe('platform billing entitlements', () => {
     expect(catalog.priceToPlan.has('price_unknown')).toBe(false);
   });
 
+  it('recognizes grandfathered monthly and annual Stripe prices after new prices are configured', () => {
+    const catalog = loadStripePriceCatalog({
+      ...baseEnv,
+      STRIPE_LEGACY_PRICE_CATALOG_JSON: JSON.stringify([
+        { priceId: 'price_old_starter_monthly', planSlug: 'matrix_starter', interval: 'monthly' },
+        { priceId: 'price_old_builder_annual', planSlug: 'matrix_builder', interval: 'annual' },
+      ]),
+    });
+
+    expect(catalog.priceToPlan.get('price_old_starter_monthly')).toEqual({
+      kind: 'base_plan', planSlug: 'matrix_starter', interval: 'monthly',
+    });
+    expect(catalog.priceToPlan.get('price_old_builder_annual')).toEqual({
+      kind: 'base_plan', planSlug: 'matrix_builder', interval: 'annual',
+    });
+    expect(catalog.priceToPlan.get('price_builder_monthly')).toEqual({
+      kind: 'base_plan', planSlug: 'matrix_builder', interval: 'monthly',
+    });
+  });
+
   it('keeps Hetzner server types behind a runtime catalog that can be overridden', () => {
     const defaults = loadRuntimeCatalog({});
-    expect(defaults.profiles.map((profile) => [profile.sku, profile.serverType])).toEqual([
-      ['starter', 'cpx22'],
-      ['builder', 'cpx32'],
-      ['max', 'cpx52'],
+    expect(defaults.profiles.map((profile) => [profile.regionSlug, profile.sku, profile.serverType])).toEqual([
+      ['region_fsn1', 'starter', 'cpx22'],
+      ['region_fsn1', 'builder', 'cpx42'],
+      ['region_fsn1', 'max', 'cpx52'],
+      ['region_nbg1', 'starter', 'cpx22'],
+      ['region_nbg1', 'builder', 'cpx42'],
+      ['region_nbg1', 'max', 'cpx52'],
+      ['region_ash', 'starter', 'cpx21'],
+      ['region_ash', 'builder', 'cpx31'],
+      ['region_ash', 'max', 'cpx41'],
+      ['region_hil', 'starter', 'cpx21'],
+      ['region_hil', 'builder', 'cpx31'],
+      ['region_hil', 'max', 'cpx41'],
     ]);
 
     const overridden = loadRuntimeCatalog({
@@ -108,8 +137,8 @@ describe('platform billing entitlements', () => {
       includedRuntimeSlots: 1,
       addonRuntimeSlots: 0,
       maxRuntimeSlots: 1,
-      defaultServerType: 'cpx32',
-      allowedServerTypes: ['cpx22', 'cpx32'],
+      defaultServerType: 'cpx42',
+      allowedServerTypes: ['cpx22', 'cpx21', 'cpx42', 'cpx31'],
       stripeSubscriptionId: 'sub_123',
       stripePriceId: 'price_builder_monthly',
     });

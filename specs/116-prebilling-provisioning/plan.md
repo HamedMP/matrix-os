@@ -187,6 +187,7 @@ Write failing journey/UI/telemetry tests, then:
 - Move developer-tool selection before checkout for the eligible new-primary cohort. The explicit button opens checkout and preparation in one mutation; no separate browser provisioning request exists.
 - Render preparing, ready-waiting-for-billing, payment-settling, authorized-provisioning, safe failure, and ready states using `@matrix-os/brand` primitives. Keep all provider/internal details out of UI state.
 - Guard active-document/account changes and multi-tab retries by always refreshing authoritative journey state after ambiguous client outcomes.
+- Route CLI/device checkout returns through the same passive journey poller, preserve the validated return/runtime selection, and exchange the app session only as the runtime becomes authorized. Accepted provisioning and temporary `no_runtime` responses remain progress states, never another build decision.
 - Add the event/metric contract, dashboards, baseline cohort comparison, and active-count/cleanup alerts. Keep disabled-state continuation behavior covered for a future reviewed operational transition, without exposing a production workflow-dispatch kill switch.
 - Validate Canvas first, then Desktop; ensure mobile or older clients using the stable checkout response continue to function.
 

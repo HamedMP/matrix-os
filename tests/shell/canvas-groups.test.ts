@@ -13,7 +13,6 @@ function resetStores() {
     nextZ: 1,
     closedPaths: new Set(),
     closedLayouts: new Map(),
-    apps: [],
     focusedWindowId: null,
   });
 }

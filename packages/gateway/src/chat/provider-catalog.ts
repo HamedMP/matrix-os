@@ -1,6 +1,7 @@
 import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
+  CanonicalChatSkillDescriptorSchema,
   CanonicalProviderCatalogSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
   isPortableGenericHarnessCredentialRoute,
@@ -676,6 +677,40 @@ function applyHarnessSettings(input: {
   });
 }
 
+function projectSkills(
+  source: Array<{ name: string; description: string }>,
+): CanonicalChatSkillDescriptor[] {
+  const projected: CanonicalChatSkillDescriptor[] = [];
+  const seenIds = new Set<string>();
+  let omitted = 0;
+
+  for (const skill of source) {
+    if (projected.length >= MAX_SKILLS) break;
+    const id = skill.name.trim().toLocaleLowerCase();
+    if (!/^[a-z][a-z0-9_-]{0,79}$/.test(id) || seenIds.has(id)) {
+      omitted += 1;
+      continue;
+    }
+    const parsed = CanonicalChatSkillDescriptorSchema.safeParse({
+      id,
+      displayName: skill.name,
+      description: skill.description,
+      invocation: `/${id}`,
+    });
+    if (!parsed.success) {
+      omitted += 1;
+      continue;
+    }
+    seenIds.add(id);
+    projected.push(parsed.data);
+  }
+
+  if (omitted > 0) {
+    console.warn(`[chat-providers] Omitted ${omitted} invalid or duplicate Skill catalog entries`);
+  }
+  return projected;
+}
+
 export function createChatProviderCatalogService(options: {
   codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
@@ -724,16 +759,7 @@ export function createChatProviderCatalogService(options: {
       }
 
       const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
-      const skills = (options.skillsSource?.() ?? []).flatMap((skill) => {
-        const id = skill.name.trim().toLocaleLowerCase();
-        if (!/^[a-z][a-z0-9_-]{0,79}$/.test(id)) return [];
-        return [{
-          id,
-          displayName: skill.name,
-          description: skill.description,
-          invocation: `/${id}`,
-        } satisfies CanonicalChatSkillDescriptor];
-      }).slice(0, MAX_SKILLS);
+      const skills = projectSkills(options.skillsSource?.() ?? []);
       const seenCodingDrivers: CanonicalProviderDriverKind[] = [];
       const codingInstances: InstanceDraft[] = [];
       for (const provider of coding) {

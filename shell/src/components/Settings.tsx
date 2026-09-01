@@ -289,7 +289,7 @@ function SettingsFrame({
     <div className="fixed inset-0" style={{ zIndex: SHELL_Z_INDEX.settings }}>
       {onboardingMode ? (
         <Image
-          src={platformShellAssetPath("/wallpapers/moraine-lake.jpg")}
+          src={platformShellAssetPath("/wallpapers/matrix-dusk.webp")}
           alt=""
           fill
           priority

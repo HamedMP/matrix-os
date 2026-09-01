@@ -14,14 +14,7 @@ const clerkState = vi.hoisted(() => ({
 const navigationState = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
-const onboardingNavigation = vi.hoisted(() => ({
-  navigate: vi.fn(),
-}));
 const addComputerRender = vi.hoisted(() => vi.fn());
-
-vi.mock("@/lib/onboarding-navigation", () => ({
-  navigateForOnboarding: onboardingNavigation.navigate,
-}));
 
 vi.mock("@/components/runtime/RuntimeManager", () => ({
   AddComputerOnboarding: () => {
@@ -84,12 +77,6 @@ async function loadBillingGate() {
   return await import("../../shell/src/components/BillingGate.js");
 }
 
-async function answerAcquisitionSource(): Promise<void> {
-  fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
-  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-  await screen.findByRole("button", { name: "Build VPS" });
-}
-
 vi.mock("next/navigation", () => ({
   usePathname: () => window.location.pathname,
   useRouter: () => ({
@@ -121,7 +108,6 @@ describe("BillingGate", () => {
     window.history.replaceState({}, "", "/");
     window.sessionStorage.clear();
     navigationState.replace.mockReset();
-    onboardingNavigation.navigate.mockReset();
     addComputerRender.mockReset();
     vi.restoreAllMocks();
   });
@@ -410,7 +396,7 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    await waitFor(() => expect(screen.getByText("Start checkout & provision")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Choose your Matrix computer")).toBeTruthy());
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
 
@@ -432,7 +418,7 @@ describe("BillingGate", () => {
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
-    expect(await screen.findByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
+    expect(await screen.findByText("Choose your Matrix computer")).toBeTruthy();
     expect(
       (screen.getByRole("button", {
         name: "Appearance Locked until billing is active",
@@ -461,8 +447,11 @@ describe("BillingGate", () => {
 
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    expect(await screen.findByText("Finish billing to approve CLI login")).toBeTruthy();
-    expect(screen.getByText("Billing settings")).toBeTruthy();
+    expect(await screen.findByText("Finish billing")).toBeTruthy();
+    expect(
+      screen.getByRole("group", { name: "Choose your Matrix computer" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Billing settings")).toBeNull();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).includes("/billing/checkout")),
@@ -478,7 +467,7 @@ describe("BillingGate", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
-            serverType: "cpx32",
+            serverType: "cpx42",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/auth/device?user_code=BCDF-GHJK",
           }),
@@ -552,10 +541,10 @@ describe("BillingGate", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
-    expect(navigationState.replace).toHaveBeenCalledWith("/");
+    expect(navigationState.replace).not.toHaveBeenCalled();
   });
 
-  it("cleans the checkout success query once the plan is active", async () => {
+  it("leaves checkout continuation routing to the journey once the plan is active", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?checkout=success");
     clerkState.isLoaded = true;
@@ -572,10 +561,10 @@ describe("BillingGate", () => {
     );
 
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
-    expect(navigationState.replace).toHaveBeenCalledWith("/");
+    expect(navigationState.replace).not.toHaveBeenCalled();
   });
 
-  it("shows default installs before provisioning with the CLI device return path once billing is active", async () => {
+  it("hands a paid CLI device return to its journey child without provisioning again", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState(
       {},
@@ -593,19 +582,9 @@ describe("BillingGate", () => {
           headers: { "content-type": "application/json" },
         });
       }
-      if (input === "/api/auth/provision-runtime") {
-        return new Response("{}", { status: 202, headers: { "content-type": "application/json" } });
-      }
-      if (input === "/api/auth/app-session") {
-        return new Response(JSON.stringify({ redirectTo: "/auth/device?user_code=BCDF-GHJK" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
       return new Response("", { status: 503 });
     });
     vi.resetModules();
-    const timeoutSpy = vi.spyOn(window, "setTimeout");
 
     const { BillingGate } = await loadBillingGate();
 
@@ -615,125 +594,11 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect((await screen.findByRole("button", { name: "Default installs" })).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByRole("heading", { name: "How did you hear about Matrix?" })).toBeTruthy();
-    await answerAcquisitionSource();
-    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
-      expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
-    }
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Default installs" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/provision-runtime")).toBe(false);
-    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
-      fireEvent.click(screen.getByRole("checkbox", { name: label }));
-    }
-    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
-    timeoutSpy.mockClear();
-    fireEvent.keyDown(window, { key: "Enter" });
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/auth/provision-runtime",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ developerTools: [] }),
-        }),
-      ),
-    );
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/auth/app-session",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({
-            redirectTo: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
-          }),
-        }),
-      ),
-    );
-    expect(onboardingNavigation.navigate).toHaveBeenCalledWith(
-      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
-    );
-    expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 8_000)).toBe(false);
-  });
-
-  it("surfaces a retry state when CLI device runtime provisioning fails", async () => {
-    vi.unstubAllEnvs();
-    window.history.replaceState(
-      {},
-      "",
-      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
-    );
-    clerkState.isLoaded = true;
-    clerkState.isSignedIn = true;
-    clerkState.activePlan = null;
-    clerkState.getToken.mockResolvedValue("clerk-token");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (input === "/billing/status") {
-        return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (input === "/api/auth/provision-runtime") {
-        return new Response("{}", { status: 500, headers: { "content-type": "application/json" } });
-      }
-      return new Response("", { status: 503 });
-    });
-    vi.resetModules();
-
-    const { BillingGate } = await loadBillingGate();
-
-    render(
-      <BillingGate>
-        <div>Matrix workspace</div>
-      </BillingGate>,
-    );
-
-    expect(await screen.findByRole("button", { name: "Default installs" })).toBeTruthy();
-    await answerAcquisitionSource();
-    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("Matrix could not start building this VPS. Try again.");
-    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.queryByText("Confirming your subscription")).toBeNull();
-  });
-
-  it("surfaces a retry state when CLI device billing has not propagated to provisioning", async () => {
-    vi.unstubAllEnvs();
-    window.history.replaceState(
-      {},
-      "",
-      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
-    );
-    clerkState.isLoaded = true;
-    clerkState.isSignedIn = true;
-    clerkState.activePlan = null;
-    clerkState.getToken.mockResolvedValue("clerk-token");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (input === "/billing/status") {
-        return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (input === "/api/auth/provision-runtime") {
-        return new Response("{}", { status: 402, headers: { "content-type": "application/json" } });
-      }
-      return new Response("", { status: 503 });
-    });
-    vi.resetModules();
-
-    const { BillingGate } = await loadBillingGate();
-
-    render(
-      <BillingGate>
-        <div>Matrix workspace</div>
-      </BillingGate>,
-    );
-
-    expect(await screen.findByRole("button", { name: "Default installs" })).toBeTruthy();
-    await answerAcquisitionSource();
-    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("Matrix could not start building this VPS. Try again.");
-    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.queryByText("Confirming your subscription")).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/app-session")).toBe(false);
   });
 
   it("keeps direct checkout success navigation on the checkout panel", async () => {

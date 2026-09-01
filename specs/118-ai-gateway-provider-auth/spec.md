@@ -1,5 +1,7 @@
 # Feature Specification: Matrix-Funded AI and Provider Accounts
 
+> **OS-view amendment:** provider readiness, login actions, selected provider/model, safe errors, and Settings/Chat presentation derivation must remain equivalent across Web Canvas, Web Desktop, and Electron Desktop. Web Mobile follows Native Mobile for capabilities available there. See `specs/119-os-view-parity/spec.md`.
+
 **Feature Branch**: `codex/ai-gateway-provider-auth`
 **Created**: 2026-08-29
 **Status**: Approved

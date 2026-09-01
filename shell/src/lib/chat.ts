@@ -147,9 +147,9 @@ export function reduceChat(
     }
     case "kernel:aborted": {
       // Mark any in-flight tool message as stopped so its spinner switches
-      // to the check icon. Without this, "Using X..." stays forever (the
-      // spinner is gated on that exact prefix in ChatPopover) because the
-      // server never emits a kernel:tool_end after an abort.
+      // to the stopped state. Without this, "Using X..." stays forever (the
+      // running state is gated on that exact prefix in ToolCallGroup) because
+      // the server never emits a kernel:tool_end after an abort.
       for (let i = next.length - 1; i >= 0; i--) {
         const m = next[i];
         if (m.tool && m.content.startsWith("Using ")) {
