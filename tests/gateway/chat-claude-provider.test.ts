@@ -158,6 +158,52 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|Authorization|\/home\/matrix\/home|Inspecting the manifest/);
   });
 
+  it("drops a completed tool preview that is unsafe for canonical Chat instead of failing the Run", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "tool_database_check", name: "Bash", input: {} },
+        },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "input_json_delta",
+            partial_json: JSON.stringify({ command: "psql postgresql://example.invalid/database" }),
+          },
+        },
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "completed after the database check",
+        session_id: "claude_unsafe_preview_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toContainEqual({
+      type: "agent.activity",
+      activityId: "tool_database_check",
+      kind: "command",
+      label: "Run command",
+      status: "completed",
+    });
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(JSON.stringify(events)).not.toContain("postgresql://");
+  });
+
   it("uses unique activity ids when Claude restarts content block indexes", async () => {
     const thinkingBlock = [
       JSON.stringify({

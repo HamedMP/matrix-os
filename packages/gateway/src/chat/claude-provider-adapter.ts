@@ -60,6 +60,15 @@ const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const MAX_STREAM_BYTES = 16 * 1024 * 1024;
 const MAX_STDERR_BYTES = 8_192;
 
+type ClaudeActivity = {
+  activityId: string;
+  kind: ReturnType<typeof claudeActivity>["kind"] | "reasoning";
+  label: string;
+  preview?: string;
+  previewKind?: "command" | "path" | "text";
+  detail?: string;
+};
+
 function definedEnvironment(
   value: Record<string, string | undefined>,
 ): Record<string, string> {
@@ -103,6 +112,26 @@ function claudeActivity(name: string) {
     return { kind: "delegation" as const, label: "Delegated task" };
   }
   return { kind: "dynamic_tool" as const, label: name };
+}
+
+function canonicalClaudeActivityEvent(
+  activity: ClaudeActivity,
+  status: "running" | "completed",
+): CanonicalProviderRunEvent {
+  const projected = CanonicalProviderRunEventSchema.safeParse({
+    type: "agent.activity",
+    ...activity,
+    status,
+  });
+  if (projected.success) return projected.data;
+
+  return CanonicalProviderRunEventSchema.parse({
+    type: "agent.activity",
+    activityId: activity.activityId,
+    kind: activity.kind,
+    label: activity.label,
+    status,
+  });
 }
 
 function classifiedClaudeFailureEvidence(text: string) {
@@ -248,14 +277,7 @@ export function createClaudeChatProviderAdapter(options: {
     const textMessageByIndex = new Map<number, string>();
     const toolInputByIndex = new Map<number, string>();
     const toolNameByIndex = new Map<number, string>();
-    const activityByIndex = new Map<number, {
-      activityId: string;
-      kind: ReturnType<typeof claudeActivity>["kind"] | "reasoning";
-      label: string;
-      preview?: string;
-      previewKind?: "command" | "path" | "text";
-      detail?: string;
-    }>();
+    const activityByIndex = new Map<number, ClaudeActivity>();
 
     const flushPendingDelta = () => {
       deltaFlushScheduled = false;
@@ -335,11 +357,7 @@ export function createClaudeChatProviderAdapter(options: {
           };
           nextReasoningBlockId += 1;
           activityByIndex.set(line.event.index, activity);
-          queue.push(CanonicalProviderRunEventSchema.parse({
-            type: "agent.activity",
-            ...activity,
-            status: "running",
-          }));
+          queue.push(canonicalClaudeActivityEvent(activity, "running"));
         } else if (block.type === "tool_use" && block.id && block.name) {
           const activity = {
             activityId: block.id,
@@ -352,11 +370,7 @@ export function createClaudeChatProviderAdapter(options: {
           activityByIndex.set(line.event.index, activity);
           toolInputByIndex.set(line.event.index, "");
           toolNameByIndex.set(line.event.index, block.name);
-          queue.push(CanonicalProviderRunEventSchema.parse({
-            type: "agent.activity",
-            ...activity,
-            status: "running",
-          }));
+          queue.push(canonicalClaudeActivityEvent(activity, "running"));
         }
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_stop"
@@ -384,11 +398,7 @@ export function createClaudeChatProviderAdapter(options: {
               console.warn("[chat-claude] Ignoring malformed bounded tool input:", error instanceof Error ? error.name : "UnknownError");
             }
           }
-          queue.push(CanonicalProviderRunEventSchema.parse({
-            type: "agent.activity",
-            ...completedActivity,
-            status: "completed",
-          }));
+          queue.push(canonicalClaudeActivityEvent(completedActivity, "completed"));
         }
         textMessageByIndex.delete(line.event.index);
       }
