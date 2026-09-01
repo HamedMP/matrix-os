@@ -114,22 +114,25 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
   });
 }
 
-async function savedShellSessionsAreActive(sessionNames: string[]): Promise<boolean> {
+type SavedShellSessionsStatus = "active" | "stale" | "unavailable";
+
+async function getSavedShellSessionsStatus(sessionNames: string[]): Promise<SavedShellSessionsStatus> {
   const requestedNames = Array.from(new Set(
     sessionNames.filter((name) => isCanonicalShellSessionId(name)),
   ));
   if (requestedNames.length === 0) {
-    return true;
+    return "active";
   }
 
   try {
     const sessions = await listShellSessions();
+    if (sessions === null) {
+      return "unavailable";
+    }
     const existingNames = new Set<string>();
-    if (sessions) {
-      for (const session of sessions) {
-        if (typeof session.name === "string") {
-          existingNames.add(session.name);
-        }
+    for (const session of sessions) {
+      if (typeof session.name === "string") {
+        existingNames.add(session.name);
       }
     }
 
@@ -137,10 +140,10 @@ async function savedShellSessionsAreActive(sessionNames: string[]): Promise<bool
     // intentionally interrupted, so mounting Terminal must never relaunch them.
     // Falling back to the first active session also prevents a stale layout from
     // producing one expected 409 response per missing pane on every app mount.
-    return requestedNames.every((name) => existingNames.has(name));
+    return requestedNames.every((name) => existingNames.has(name)) ? "active" : "stale";
   } catch (err: unknown) {
     console.warn("Failed to validate saved terminal sessions:", err instanceof Error ? err.message : err);
-    return false;
+    return "unavailable";
   }
 }
 
@@ -565,8 +568,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessionReady = await savedShellSessionsAreActive(getCanonicalShellSessionIds(data));
-              if (!cancelled && sessionReady) {
+              const sessionStatus = await getSavedShellSessionsStatus(getCanonicalShellSessionIds(data));
+              // A failed catalog request does not prove that a runtime stopped.
+              // Preserve the saved layout so a transient outage cannot overwrite
+              // the user's tabs and panes; only an authoritative stale result falls back.
+              if (!cancelled && sessionStatus !== "stale") {
                 const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
                 const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
                 setTabs(applyCompatModeToTabs(data.tabs));
