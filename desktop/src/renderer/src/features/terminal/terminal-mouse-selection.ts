@@ -67,6 +67,9 @@ function inferInPlaceViewportShift(
   const sameLines = (left: string[], right: string[]) => (
     left.length === right.length && left.every((line, index) => line === right[index])
   );
+  // Generic mouse-reporting terminals expose no semantic scroll acknowledgement,
+  // so a completely identical redraw is indistinguishable from a boundary no-op.
+  // Prefer zero duplication until #1517 supplies explicit row movement identity.
   if (sameLines(previous.lines, next.lines)) return 0;
   const maxShift = Math.min(previous.lines.length, next.lines.length);
   if (maxShift === 0) return 0;
