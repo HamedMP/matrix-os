@@ -44,6 +44,7 @@ export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#provider-settings";
 export * from "#funded-ai";
+export * from "#getting-started";
 export * from "#safe-client-error";
 export * from "#terminal-clipboard";
 export * from "#terminal-links";

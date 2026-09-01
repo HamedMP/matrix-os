@@ -32,7 +32,6 @@ import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
-import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { nameToSlug } from "@/lib/utils";
@@ -112,7 +111,7 @@ interface DesktopProps {
   cacheScope?: ShellSnapshotScope | null;
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, minimizingIds, firstRunStatus, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
   useCanvasTransformPersistence(GATEWAY_URL);
   const windows = useWindowManager((s) => s.windows);
@@ -159,7 +158,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // OS boot screens are reserved for actual OS-session transitions so this
   // account → journey → Desktop handoff cannot visually swap designs.
   const launchPathConsumedRef = useRef<string | null>(null);
-  const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? EMPTY_PINNED_APPS;
@@ -1037,10 +1035,20 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
+  const openWebSettings = useCallback((section: WebDesktopSettingsSection) => {
+    setSettingsDefaultSection(section);
+    setSettingsOpen(true);
+    setTaskBoardOpen(false);
+  }, []);
+
+  const openGettingStartedWork = useCallback(() => {
+    openAppOrFocus("__chat__", "Chat");
+  }, [openAppOrFocus]);
+
   const canvasToolbarChild = desktopMode === "canvas" ? (
     <CanvasToolbar
-      guideVisible={manualSetupVisible}
-      onOpenGuide={() => setManualSetupVisible(true)}
+      onOpenSettings={openWebSettings}
+      onOpenFirstWork={openGettingStartedWork}
     />
   ) : null;
 
@@ -1481,11 +1489,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 <WebDesktopControls
                   onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
                   onOpenSupport={() => void openShellSupport()}
-                  onOpenSettings={(section) => {
-                    setSettingsDefaultSection(section);
-                    setSettingsOpen(true);
-                    setTaskBoardOpen(false);
-                  }}
+                  onOpenSettings={openWebSettings}
+                  onOpenFirstWork={openGettingStartedWork}
                 />
               )}
               onOpenSettings={(section: WebDesktopSettingsSection) => {
@@ -1533,13 +1538,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             onAddToDesktop={addDesktopIcon}
           />
 
-          {desktopMode === "canvas" && (
-            <CanvasRenderer apps={apps}>
-              {manualSetupVisible && (
-                <SetupChecklist onOpenTerminal={openSetupTerminal} />
-              )}
-            </CanvasRenderer>
-          )}
+          {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
 
           {vocalMounted && (
             <VocalPanel

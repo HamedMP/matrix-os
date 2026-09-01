@@ -109,6 +109,10 @@ vi.mock("../../shell/src/components/onboarding/ManualSetupStickers.js", () => ({
   ManualSetupStickers: () => null,
 }));
 
+vi.mock("../../shell/src/components/onboarding/GettingStartedPopover.js", () => ({
+  GettingStartedPopover: () => null,
+}));
+
 vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => null,
 }));
