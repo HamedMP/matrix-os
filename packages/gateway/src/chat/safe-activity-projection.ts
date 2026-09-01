@@ -2,7 +2,7 @@ import { isAbsolute, relative, sep } from "node:path";
 
 const SECRET_TEXT = /(?:authorization\s*[:=]|bearer\s+|(?:api[_-]?(?:key|token)|access[_-]?token|secret|password|credential)\s*[:=]|\bprivate\s+raw\b|ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]+)/i;
 const SECRET_ASSIGNMENT = /\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
-const ABSOLUTE_PATH = /(^|[\s"'`(=:])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
+const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
 
 function normalizedRoot(value: string): string {
   return value.replace(/[\\/]+$/, "");

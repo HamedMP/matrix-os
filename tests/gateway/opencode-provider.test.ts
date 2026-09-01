@@ -378,6 +378,51 @@ describe("OpenCode coding-agent provider", () => {
     expect(JSON.stringify(started)).not.toMatch(/private raw|credential|\/work\/repo/);
   });
 
+  it("redacts a shell-redirected absolute path instead of failing a healthy OpenCode run", async () => {
+    const fake = fakeSpawn([
+      line("tool_use", {
+        part: {
+          id: "part_database_check",
+          type: "tool",
+          callID: "call_database_check",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: { command: "echo ok 2>/tmp/opencode.log" },
+            output: "ok",
+            time: { start: 1, end: 2 },
+          },
+        },
+      }),
+      line("text", {
+        part: { id: "part_done", type: "text", text: "Done", time: { end: 3 } },
+      }),
+    ]);
+
+    const result = await provider(fake.spawnFn).startThread({
+      principal,
+      thread: thread(),
+      request: request(),
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "tool.started",
+        toolCallId: "call_database_check",
+        displayName: "Run command",
+        kind: "command",
+        preview: "echo ok 2>[redacted path]",
+        previewKind: "command",
+      }),
+      expect.objectContaining({ type: "tool.completed", toolCallId: "call_database_check", outcome: "success" }),
+      expect.objectContaining({ type: "assistant.text.delta", delta: "Done" }),
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("/tmp/opencode.log");
+  });
+
   it("includes owner-safe file and structured references in the OpenCode prompt", async () => {
     const fake = fakeSpawn([
       line("text", { part: { id: "part_text", type: "text", text: "Done", time: { end: 1 } } }),
