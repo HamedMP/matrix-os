@@ -4274,6 +4274,7 @@ export async function createGateway(config: GatewayConfig) {
   const canonicalChatProviderCatalog = createChatProviderCatalogService({
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
+    systemRuntimeSources: agentRuntimeServices.systemRuntimeSources,
     aiProviderSource: aiProviderService,
     harnessSettingsSource: providerSettingsStore,
     executableDriverKinds: canonicalExecutableDriverKinds,

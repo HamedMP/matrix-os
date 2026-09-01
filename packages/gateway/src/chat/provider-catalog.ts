@@ -26,7 +26,11 @@ import {
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { createHash } from "node:crypto";
-import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/service.js";
+import {
+  readRuntimeSnapshot,
+  type AgentRuntimeSettingsSnapshot,
+  type AgentRuntimeSource,
+} from "../agent-config/service.js";
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
@@ -34,12 +38,12 @@ import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-er
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
+type SystemDriverKind = typeof SYSTEM_DRIVERS[number];
 const CODING_DRIVERS = ["codex", "claude_code", "opencode", "pi"] as const;
 const MAX_EFFORTS = 4;
 const MAX_SKILLS = 64;
 // These provider-owned IDs were verified against the live Hermes execution path.
-// Keep them in the catalog as unavailable so stale selections fail safely while
-// the model picker hides them.
+// Omit them from the selector until the provider reports a usable route again.
 const LIVE_PROBED_UNAVAILABLE_SYSTEM_MODELS = new Set([
   "opencode-free:deepseek-v4-flash-free",
   "opencode-free:nemotron-3-ultra-free",
@@ -329,18 +333,20 @@ function systemModels(
   providers: AgentProviderDescriptor[],
 ): CanonicalModelDescriptor[] {
   return providers
-    .filter((provider) => provider.runtime === runtime)
-    .flatMap((provider) => provider.models.map((model) => ({
-      id: `${provider.id}:${model.id}`,
-      displayName: model.displayName,
-      ...(model.description ? { description: model.description } : {}),
-      availability: model.available && !LIVE_PROBED_UNAVAILABLE_SYSTEM_MODELS.has(`${provider.id}:${model.id}`)
-        ? provider.authStatus.state === "ready" ? "available" as const : "auth_required" as const
-        : "unavailable" as const,
-      capabilities: model.capabilities,
-      supportsVision: model.capabilities.includes("vision"),
-      supportsToolUse: model.capabilities.includes("tools"),
-    })))
+    .filter((provider) => provider.runtime === runtime && provider.authStatus.state === "ready")
+    .flatMap((provider) => provider.models
+      .filter((model) => model.available
+        && !model.id.endsWith("-pro")
+        && !LIVE_PROBED_UNAVAILABLE_SYSTEM_MODELS.has(`${provider.id}:${model.id}`))
+      .map((model) => ({
+        id: `${provider.id}:${model.id}`,
+        displayName: model.displayName,
+        ...(model.description ? { description: model.description } : {}),
+        availability: "available" as const,
+        capabilities: model.capabilities,
+        supportsVision: model.capabilities.includes("vision"),
+        supportsToolUse: model.capabilities.includes("tools"),
+      })))
     .slice(0, 64);
 }
 
@@ -590,7 +596,6 @@ function applyHarnessSettings(input: {
   settingsAvailable: boolean;
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
-  installedSystemDriverKinds?: readonly CanonicalProviderDriverKind[];
   aiSnapshot?: AiProviderSnapshotV3;
 }): InstanceDraft[] {
   return input.instances.map((instance) => {
@@ -618,12 +623,6 @@ function applyHarnessSettings(input: {
     const nativeTerminalProfile = (generic === "pi" || generic === "opencode")
       && instance.availability === "available"
       && input.credentialedDriverKinds?.includes(generic);
-    const installedSystemProfile = systemHarness !== null
-      && input.installedSystemDriverKinds?.includes(instance.driverKind) === true
-      && executable
-      && enabledHarnesses.length === 1
-      && instance.availability !== "available"
-      && instance.availability !== "setup_required";
     if (settingsHarness !== null && input.settingsRequired && enabledHarnesses.length === 0) {
       if (nativeTerminalProfile) {
         return executable
@@ -675,8 +674,7 @@ function applyHarnessSettings(input: {
       return unavailable;
     }
     if (instance.availability !== "available"
-      && !settingsCanAuthorizeInstalledCodingHarness
-      && !installedSystemProfile) {
+      && !settingsCanAuthorizeInstalledCodingHarness) {
       return settingsHarness !== null && input.settingsRequired
         ? unavailableInstance(instance, unavailableReasonFor(instance))
         : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
@@ -704,13 +702,6 @@ function applyHarnessSettings(input: {
       if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
         return unavailableInstance(configuredInstance, "runtime_not_runnable");
       }
-      return configuredHarnessInstanceFromAiSnapshot({
-        instance: { ...configuredInstance, availability: "available" },
-        harness,
-        aiSnapshot: input.aiSnapshot,
-      });
-    }
-    if ((generic === "hermes" || generic === "openclaw") && installedSystemProfile) {
       return configuredHarnessInstanceFromAiSnapshot({
         instance: { ...configuredInstance, availability: "available" },
         harness,
@@ -761,6 +752,7 @@ function projectSkills(
 export function createChatProviderCatalogService(options: {
   codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
+  systemRuntimeSources?: Partial<Record<SystemDriverKind, AgentRuntimeSource>>;
   aiProviderSource?: AiProviderSnapshotReader;
   harnessSettingsSource?: HarnessSettingsSnapshotReader;
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
@@ -776,6 +768,9 @@ export function createChatProviderCatalogService(options: {
     async refresh(principal) {
       options.codingProviders.invalidate(principal.userId);
       options.agentRuntimeSource.invalidate?.();
+      for (const source of Object.values(options.systemRuntimeSources ?? {})) {
+        source?.invalidate?.();
+      }
       if (options.aiProviderSource) {
         try {
           await options.aiProviderSource.getSnapshot({ refresh: true });
@@ -786,11 +781,22 @@ export function createChatProviderCatalogService(options: {
       return service.getCatalog(principal);
     },
     async getCatalog(principal) {
-      const [codingResult, runtimeResult, aiProviderResult, settingsResult] = await Promise.allSettled([
+      const systemRuntimeReads = Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
+        const source = options.systemRuntimeSources?.[kind];
+        if (!source) return [kind, null] as const;
+        try {
+          return [kind, await readRuntimeSnapshot(source, options.runtimeTimeoutMs)] as const;
+        } catch (_error) {
+          console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
+          return [kind, null] as const;
+        }
+      }));
+      const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
         options.codingProviders.listProviders(principal),
         readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs),
         options.aiProviderSource?.getSnapshot({ refresh: false }) ?? Promise.resolve(undefined),
         options.harnessSettingsSource?.getSnapshot() ?? Promise.resolve(undefined),
+        systemRuntimeReads,
       ]);
       if (codingResult.status === "rejected") {
         console.warn("[chat-providers] Coding Provider inventory unavailable");
@@ -832,16 +838,29 @@ export function createChatProviderCatalogService(options: {
       }
 
       const snapshot = runtimeResult.status === "fulfilled" ? runtimeResult.value : undefined;
-      const systemInstances = SYSTEM_DRIVERS.map((kind) => systemInstance({
-        kind,
-        runtime: snapshot?.runtime.options.find((runtime) => runtime.id === kind),
-        providers: snapshot?.providers ?? [],
-        selectedProvider: snapshot?.messaging.runtime === kind ? snapshot.messaging.provider : null,
-        selectedModel: snapshot?.messaging.runtime === kind ? snapshot.messaging.model : null,
-        messagingConfigured: snapshot?.messaging.runtime === kind
-          && snapshot.messaging.configured,
-        skills,
-      }));
+      const systemRuntimeSnapshots = new Map<SystemDriverKind, AgentRuntimeSettingsSnapshot>(
+        systemRuntimeResult.status === "fulfilled"
+          ? systemRuntimeResult.value.flatMap(([kind, value]) => value === null ? [] : [[kind, value]])
+          : [],
+      );
+      const systemInstances = SYSTEM_DRIVERS.map((kind) => {
+        const nativeSnapshot = systemRuntimeSnapshots.get(kind);
+        const instanceSnapshot = nativeSnapshot ?? snapshot;
+        return systemInstance({
+          kind,
+          runtime: instanceSnapshot?.runtime.options.find((runtime) => runtime.id === kind),
+          providers: instanceSnapshot?.providers ?? [],
+          selectedProvider: instanceSnapshot?.messaging.runtime === kind
+            ? instanceSnapshot.messaging.provider
+            : null,
+          selectedModel: instanceSnapshot?.messaging.runtime === kind
+            ? instanceSnapshot.messaging.model
+            : null,
+          messagingConfigured: instanceSnapshot?.messaging.runtime === kind
+            && instanceSnapshot.messaging.configured,
+          skills,
+        });
+      });
       const completeCodingInstances = CODING_DRIVERS.map((kind) =>
         codingInstances.find((instance) => instance.driverKind === kind)
           ?? unavailableCodingInstance(kind, skills, codingResult.status === "fulfilled")
@@ -850,9 +869,6 @@ export function createChatProviderCatalogService(options: {
         ? aiProviderResult.value
         : undefined;
       const executableDriverKinds = options.executableDriverKinds;
-      const installedSystemDriverKinds = snapshot?.runtime.options
-        .filter((runtime) => runtime.installState === "installed")
-        .map((runtime) => runtime.id) ?? [];
       const instances = applyHarnessSettings({
         instances: [
         ...systemInstances,
@@ -863,7 +879,6 @@ export function createChatProviderCatalogService(options: {
         settingsAvailable: settingsResult.status === "fulfilled",
         executableDriverKinds,
         credentialedDriverKinds: options.credentialedDriverKinds,
-        installedSystemDriverKinds,
         aiSnapshot,
       });
       const driverKinds: CanonicalProviderDriverKind[] = [

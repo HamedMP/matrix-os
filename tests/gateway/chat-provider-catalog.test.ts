@@ -560,9 +560,83 @@ describe("canonical Chat Provider catalog", () => {
     const hermes = configuredHarness("hermes", true);
     hermes.authState = "unknown";
     hermes.connectivity = "unknown";
+    const hermesRuntimeSource: AgentRuntimeSource = async () => ({
+      runtime: {
+        selected: "hermes",
+        options: [{
+          id: "hermes",
+          displayName: "Hermes",
+          installState: "installed",
+          health: "degraded",
+          selectionState: "active",
+          configured: true,
+          capabilities: ["provider_catalog", "model_selection", "authentication"],
+        }],
+        transition: null,
+      },
+      providers: [{
+        id: "openai-codex",
+        displayName: "OpenAI Codex",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "gpt-5.6-sol",
+          displayName: "gpt-5.6-sol",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }, {
+          id: "gpt-5.6-sol-pro",
+          displayName: "gpt-5.6-sol-pro",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      }, {
+        id: "github-copilot",
+        displayName: "GitHub Copilot",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "gpt-4.1",
+          displayName: "gpt-4.1",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      }, {
+        id: "opencode-free",
+        displayName: "OpenCode Free",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "minimax-m2.5-free",
+          displayName: "minimax-m2.5-free",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      }],
+      messaging: {
+        runtime: "hermes",
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        configured: true,
+      },
+    });
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry(),
       agentRuntimeSource: runtimeSourceWithOpenClawSelected(),
+      systemRuntimeSources: { hermes: hermesRuntimeSource },
       aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
       harnessSettingsSource: harnessSettings([hermes]),
       executableDriverKinds: ["hermes"],
@@ -573,10 +647,14 @@ describe("canonical Chat Provider catalog", () => {
     ))).toMatchObject({
       availability: "available",
       displayName: "Hermes",
-      models: [{ id: "anthropic:claude-sonnet-5" }],
+      models: [
+        { id: "openai-codex:gpt-5.6-sol" },
+        { id: "github-copilot:gpt-4.1" },
+        { id: "opencode-free:minimax-m2.5-free" },
+      ],
       defaultSelection: {
         instanceId: "hermes_default",
-        model: "anthropic:claude-sonnet-5",
+        model: "openai-codex:gpt-5.6-sol",
       },
     });
   });
@@ -597,6 +675,50 @@ describe("canonical Chat Provider catalog", () => {
     ))).toMatchObject({
       availability: "unavailable",
       unavailabilityReason: "authentication_required",
+    });
+  });
+
+  it("does not replace an unavailable native Hermes catalog with one settings route", async () => {
+    const hermes = configuredHarness("hermes", true);
+    hermes.authState = "unknown";
+    hermes.connectivity = "unknown";
+    const unavailableHermesSource: AgentRuntimeSource = async () => ({
+      runtime: {
+        selected: "hermes",
+        options: [{
+          id: "hermes",
+          displayName: "Hermes",
+          installState: "unknown",
+          health: "unreachable",
+          selectionState: "action_required",
+          configured: false,
+          capabilities: ["provider_catalog", "model_selection", "authentication"],
+        }],
+        transition: null,
+      },
+      providers: [],
+      messaging: {
+        runtime: "hermes",
+        provider: null,
+        model: null,
+        configured: false,
+      },
+    });
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSourceWithOpenClawSelected(),
+      systemRuntimeSources: { hermes: unavailableHermesSource },
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([hermes]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "runtime_unavailable",
+      models: [],
     });
   });
 
@@ -1082,19 +1204,23 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.supports.permissionModes).toEqual(["full_access"]);
   });
 
-  it("invalidates both live inventories before an explicit refresh", async () => {
+  it("invalidates unified and native runtime inventories before an explicit refresh", async () => {
     const registry = codingRegistry();
     const source = runtimeSource();
     source.invalidate = vi.fn();
+    const hermesSource = runtimeSource();
+    hermesSource.invalidate = vi.fn();
     const service = createChatProviderCatalogService({
       codingProviders: registry,
       agentRuntimeSource: source,
+      systemRuntimeSources: { hermes: hermesSource },
     });
 
     await service.refresh(principal);
 
     expect(registry.invalidate).toHaveBeenCalledWith(principal.userId);
     expect(source.invalidate).toHaveBeenCalledOnce();
+    expect(hermesSource.invalidate).toHaveBeenCalledOnce();
   });
 
   it("fails closed per readiness source without hiding the healthy domain", async () => {
@@ -1153,7 +1279,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.defaultSelection?.model).toBe("openai:gpt-5");
   });
 
-  it("marks live-probed unavailable OpenCode Free models unavailable", async () => {
+  it("omits live-probed unavailable OpenCode Free models from the selector", async () => {
     const source: AgentRuntimeSource = async () => {
       const snapshot = await runtimeSource()(AbortSignal.timeout(1_000));
       return {
@@ -1198,19 +1324,14 @@ describe("canonical Chat Provider catalog", () => {
     const hermes = (await service.getCatalog(principal)).instances
       .find((instance) => instance.id === "hermes_default")!;
 
-    expect(hermes.models.filter((model) => model.availability === "available").map((model) => model.id))
-      .toEqual([
+    expect(hermes.models.map((model) => model.id)).toEqual([
         "opencode-free:laguna-s-2.1-free",
         "opencode-free:ling-3.0-flash-fin-free",
         "opencode-free:mimo-v2.5-free",
         "opencode-free:muse-spark-1.2-contributor-free",
         "opencode-free:nemotron-3.5-lightning-free",
       ]);
-    expect(hermes.models.filter((model) => model.availability === "unavailable").map((model) => model.id))
-      .toEqual([
-        "opencode-free:deepseek-v4-flash-free",
-        "opencode-free:nemotron-3-ultra-free",
-      ]);
+    expect(hermes.models.every((model) => model.availability === "available")).toBe(true);
   });
 
   it("preserves a bounded provider-owned model path in the canonical catalog", async () => {

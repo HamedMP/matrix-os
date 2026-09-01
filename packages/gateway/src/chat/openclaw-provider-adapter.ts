@@ -236,7 +236,7 @@ export function createOpenClawChatProviderAdapter(
     const buffered: z.infer<typeof AgentEventPayloadSchema>[] = [];
     let wake = Promise.withResolvers<void>();
     let overflowed = false;
-    let lifecycleFailed = false;
+    let protocolFailed = false;
     let settled = false;
     let terminalValue: unknown;
     let terminalError: unknown;
@@ -278,7 +278,7 @@ export function createOpenClawChatProviderAdapter(
       onAccepted(value) {
         const parsed = AcceptedSchema.safeParse(value);
         if (!parsed.success) {
-          lifecycleFailed = true;
+          protocolFailed = true;
           wake.resolve();
           return;
         }
@@ -310,8 +310,6 @@ export function createOpenClawChatProviderAdapter(
         }
         const next = buffered.shift();
         if (next) {
-          if (next.stream === "lifecycle" && next.data.phase === "error") lifecycleFailed = true;
-          if (next.stream === "error") lifecycleFailed = true;
           for (const event of normalizeEvent(next, {
             homePath: options.homePath,
             executionRoot: input.executionRoot,
@@ -327,7 +325,7 @@ export function createOpenClawChatProviderAdapter(
       const terminal = TerminalResponseSchema.safeParse(terminalValue);
       if (active.cancelled || input.signal.aborted) {
         yield completion("aborted");
-      } else if (overflowed || lifecycleFailed || terminalError !== undefined
+      } else if (overflowed || protocolFailed || terminalError !== undefined
         || !terminal.success || terminal.data.status !== "ok") {
         yield failure();
       } else {

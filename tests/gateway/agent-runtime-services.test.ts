@@ -305,6 +305,17 @@ describe("Hermes agent runtime services", () => {
         model: "claude-opus-4-6",
       },
     });
+    await expect(services.systemRuntimeSources.hermes(new AbortController().signal))
+      .resolves.toMatchObject({
+        runtime: { selected: "hermes" },
+        providers: [{ id: "nous", runtime: "hermes" }],
+        messaging: {
+          runtime: "hermes",
+          provider: "nous",
+          model: "hermes-4-405b",
+          configured: true,
+        },
+      });
 
     await expect(services.controller.update({ runtime: "hermes", revision: 0 }))
       .resolves.toMatchObject({ runtime: "hermes" });

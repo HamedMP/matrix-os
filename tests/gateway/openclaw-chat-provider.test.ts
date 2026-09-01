@@ -159,6 +159,27 @@ describe("OpenClaw canonical Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toContain("PRIVATE_RESULT");
   });
 
+  it("trusts a successful terminal response after a transient provider error", async () => {
+    const rpc = new FakeRpc();
+    const adapter = createOpenClawChatProviderAdapter({ rpc, homePath: "/home/matrix/home" });
+    const result = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(rpc.calls).toHaveLength(1));
+
+    rpc.emit(agentEvent("lifecycle", { phase: "start" }, 1));
+    rpc.emit(agentEvent("error", { message: "transient provider retry" }, 2));
+    rpc.emit(agentEvent("assistant", { delta: "Recovered answer" }, 3));
+    rpc.emit(agentEvent("lifecycle", { phase: "end", stopReason: "stop" }, 4));
+    rpc.agentRun.resolve({
+      runId: "openclaw-run-1",
+      status: "ok",
+      summary: "completed",
+    });
+
+    const events = await result;
+    expect(events).toContainEqual({ type: "assistant.delta", delta: "Recovered answer" });
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("resumes with the adapter-private OpenClaw session key", async () => {
     const rpc = new FakeRpc();
     rpc.accepted = {
