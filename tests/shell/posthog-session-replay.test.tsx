@@ -12,6 +12,8 @@ const posthogMock = vi.hoisted(() => ({
   reset: vi.fn(),
   captureException: vi.fn(),
   setPersonProperties: vi.fn(),
+  has_opted_out_capturing: vi.fn(() => false),
+  opt_in_capturing: vi.fn(),
 }));
 
 vi.mock("posthog-js", () => ({
@@ -33,6 +35,10 @@ describe("shell session replay init", () => {
   beforeEach(() => {
     posthogMock.init.mockClear();
     posthogMock.setPersonProperties.mockClear();
+    posthogMock.has_opted_out_capturing.mockReset();
+    posthogMock.has_opted_out_capturing.mockReturnValue(false);
+    posthogMock.opt_in_capturing.mockReset();
+    window.localStorage.removeItem("matrix_posthog_cookie_consent");
     vi.unstubAllEnvs();
   });
 
@@ -56,6 +62,36 @@ describe("shell session replay init", () => {
       maskTextSelector: "[data-ph-mask]",
       blockSelector: ".ph-no-capture",
     });
+  });
+
+  it("migrates profiles that declined the removed Matrix consent banner", async () => {
+    window.localStorage.setItem("matrix_posthog_cookie_consent", "declined");
+    posthogMock.has_opted_out_capturing.mockReturnValue(true);
+    const { initializeShellPostHog } = await importShellPostHog();
+
+    initializeShellPostHog(TEST_CONFIG);
+
+    expect(posthogMock.opt_in_capturing).toHaveBeenCalledWith({ captureEventName: false });
+    expect(window.localStorage.getItem("matrix_posthog_cookie_consent")).toBeNull();
+  });
+
+  it("removes an accepted legacy consent marker without changing capture state", async () => {
+    window.localStorage.setItem("matrix_posthog_cookie_consent", "accepted");
+    const { initializeShellPostHog } = await importShellPostHog();
+
+    initializeShellPostHog(TEST_CONFIG);
+
+    expect(posthogMock.opt_in_capturing).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("matrix_posthog_cookie_consent")).toBeNull();
+  });
+
+  it("preserves PostHog opt-outs that did not come from the removed Matrix banner", async () => {
+    posthogMock.has_opted_out_capturing.mockReturnValue(true);
+    const { initializeShellPostHog } = await importShellPostHog();
+
+    initializeShellPostHog(TEST_CONFIG);
+
+    expect(posthogMock.opt_in_capturing).not.toHaveBeenCalled();
   });
 
   it("sets onboarding attribution as a first-touch person property", async () => {
