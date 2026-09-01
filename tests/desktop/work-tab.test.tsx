@@ -496,6 +496,7 @@ describe("WorkTab rail integration", () => {
 
     const sideBySideInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement as HTMLElement;
     expect(screen.getByRole("main").getAttribute("aria-hidden")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     expect(sideBySideInspector.className).toContain("shrink-0");
     expect(sideBySideInspector.style.width).toBe("380px");
   });
