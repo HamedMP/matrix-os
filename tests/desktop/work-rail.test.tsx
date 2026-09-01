@@ -317,6 +317,9 @@ describe("WorkRail", () => {
     expect(within(chat).getByLabelText("Agent running for Running pinned")).toBeTruthy();
     expect(actions.className).toContain("gap-0.5");
     expect(actions.className).toContain("opacity-0");
+    expect(actions.className).toContain("pointer-events-none");
+    expect(actions.className).toContain("group-hover/chat:pointer-events-auto");
+    expect(actions.className).toContain("group-focus-within/chat:pointer-events-auto");
     expect(actions.className).toContain("group-hover/chat:opacity-100");
     expect(actions.className).toContain("group-focus-within/chat:opacity-100");
     expect(remove.className).toContain("size-6");

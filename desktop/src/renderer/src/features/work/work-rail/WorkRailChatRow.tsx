@@ -64,7 +64,7 @@ export function WorkRailChatRow({
           <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
         </button>
         <div
-          className="absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100"
+          className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:pointer-events-auto group-hover/chat:opacity-100 group-focus-within/chat:pointer-events-auto group-focus-within/chat:opacity-100"
           style={{
             background: active
               ? "linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)"
