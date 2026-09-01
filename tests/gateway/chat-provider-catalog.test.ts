@@ -232,7 +232,7 @@ describe("canonical Chat Provider catalog", () => {
 
     const catalog = await service.getCatalog(principal);
     expect(catalog.instances.find((instance) => instance.id === "hermes_default"))
-      .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings" });
     expect(catalog.instances.find((instance) => instance.id === "pi_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
     expect(catalog.instances.find((instance) => instance.id === "opencode_default"))
@@ -416,7 +416,7 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "not_installed" });
   });
 
-  it("fails only settings-routed generic coding runtimes closed when owner harness settings cannot be read", async () => {
+  it("fails settings-backed runtimes closed when owner harness settings cannot be read", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({
         id: "pi",
@@ -431,18 +431,14 @@ describe("canonical Chat Provider catalog", () => {
     });
 
     const catalog = await service.getCatalog(principal);
-    for (const kind of ["pi", "opencode"] as const) {
+    for (const kind of ["hermes", "openclaw", "pi", "opencode", "codex", "claude_code"] as const) {
       expect(catalog.instances.find((instance) => instance.driverKind === kind))
         .toMatchObject({ availability: "unavailable", unavailabilityReason: "settings_unavailable" });
     }
-    expect(catalog.instances.find((instance) => instance.driverKind === "hermes"))
-      .toMatchObject({ availability: "available" });
-    expect(catalog.instances.find((instance) => instance.driverKind === "codex"))
-      .toMatchObject({ availability: "setup_required" });
     expect(JSON.stringify(catalog)).not.toContain("private path");
   });
 
-  it("keeps terminal-authenticated Codex and Claude independent from owner harness settings", async () => {
+  it("overlays disabled owner settings onto specialized Codex and Claude instances", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([
         codingProvider(),
@@ -462,12 +458,12 @@ describe("canonical Chat Provider catalog", () => {
 
     const catalog = await service.getCatalog(principal);
     expect(catalog.instances.find((instance) => instance.id === "codex_default"))
-      .toMatchObject({ availability: "available", displayName: "Codex" });
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings" });
     expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
-      .toMatchObject({ availability: "available", displayName: "Claude" });
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings" });
   });
 
-  it("does not let the default Matrix harness shadow terminal-authenticated Claude Code", async () => {
+  it("applies the configured Claude harness authentication state", async () => {
     const matrixHarness = {
       ...configuredHarness("claude", true),
       id: "harness_kernel",
@@ -488,10 +484,13 @@ describe("canonical Chat Provider catalog", () => {
 
     expect((await service.getCatalog(principal)).instances.find((instance) => (
       instance.id === "claude_code_default"
-    ))).toMatchObject({ availability: "available", displayName: "Claude" });
+    ))).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "authentication_required",
+    });
   });
 
-  it("keeps a configured Hermes runtime available without a duplicate settings row", async () => {
+  it("requires an enabled Hermes settings row when settings are authoritative", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry(),
       agentRuntimeSource: runtimeSource(),
@@ -500,7 +499,10 @@ describe("canonical Chat Provider catalog", () => {
 
     expect((await service.getCatalog(principal)).instances.find((instance) => (
       instance.id === "hermes_default"
-    ))).toMatchObject({ availability: "available", displayName: "Hermes" });
+    ))).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "disabled_in_settings",
+    });
   });
 
   it("does not silently choose between concurrent enabled CLI profiles", async () => {
@@ -536,7 +538,7 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "authentication_required" });
   });
 
-  it("hides every Matrix Agent driver and instance while Matrix AI is not release-ready", async () => {
+  it("projects runnable Agent SDK instances from the canonical funding and account snapshot", async () => {
     const homePath = mkdtempSync(join(tmpdir(), "chat-provider-kernel-"));
     mkdirSync(join(homePath, "system"), { recursive: true });
     writeFileSync(join(homePath, "system/config.json"), "{}");
@@ -557,9 +559,27 @@ describe("canonical Chat Provider catalog", () => {
       });
 
       const catalog = await service.getCatalog(principal);
+      const matrix = catalog.instances.find((instance) => instance.id === "kernel_matrix_included");
+      const owner = catalog.instances.find((instance) => instance.id === "kernel_owner_anthropic_key");
 
-      expect(catalog.drivers.some((driver) => driver.kind === "kernel")).toBe(false);
-      expect(catalog.instances.some((instance) => instance.driverKind === "kernel")).toBe(false);
+      expect(catalog.drivers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "kernel", displayName: "Matrix Agent" }),
+      ]));
+      expect(matrix).toMatchObject({
+        driverKind: "kernel",
+        displayName: "Matrix AI",
+        availability: "available",
+        models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }],
+        defaultSelection: {
+          instanceId: "kernel_matrix_included",
+          model: "claude-sonnet-5",
+        },
+      });
+      expect(owner).toMatchObject({
+        availability: "setup_required",
+        models: [],
+        setupActions: [{ kind: "open_settings" }],
+      });
       expect(JSON.stringify(catalog)).not.toContain("platform-secret");
     } finally {
       aiProviderSource.close();
@@ -1436,28 +1456,11 @@ describe("GET /api/chat-providers", () => {
     });
   });
 
-  it("keeps the model catalog available when foreground install inventory is transiently unavailable", async () => {
+  it("propagates blocked provider-settings recovery as a retryable catalog outage", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const source: AgentRuntimeSource = async () => {
-      const snapshot = await runtimeSource()();
-      return {
-        ...snapshot,
-        runtime: {
-          ...snapshot.runtime,
-          options: snapshot.runtime.options.map((runtime) => runtime.id === "openclaw"
-            ? {
-                ...runtime,
-                installState: "installing" as const,
-                selectionState: "unavailable" as const,
-                capabilities: ["install" as const],
-              }
-            : runtime),
-        },
-      };
-    };
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry(),
-      agentRuntimeSource: source,
+      agentRuntimeSource: runtimeSource(),
       harnessSettingsSource: {
         getSnapshot: async () => {
           throw new ProviderSettingsStoreError("runtime_unavailable", 503);
@@ -1471,19 +1474,15 @@ describe("GET /api/chat-providers", () => {
 
     const response = await app.request("/api/chat-providers");
 
-    expect(response.status).toBe(200);
-    const catalog = CanonicalProviderCatalogSchema.parse(await response.json());
-    expect(catalog.instances.find((instance) => instance.id === "hermes_default"))
-      .toMatchObject({ availability: "available" });
-    expect(catalog.instances.find((instance) => instance.id === "openclaw_default"))
-      .toMatchObject({
-        availability: "setup_required",
-        setupActions: [{ id: "openclaw_install", label: "Install OpenClaw" }],
-      });
-    expect(catalog.instances.filter((instance) => instance.driverKind === "pi"
-      || instance.driverKind === "opencode")
-      .every((instance) => instance.unavailabilityReason === "settings_unavailable"))
-      .toBe(true);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "service_unavailable",
+        safeMessage: "Provider catalog is temporarily unavailable.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
     warning.mockRestore();
   });
 

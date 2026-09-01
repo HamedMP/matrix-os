@@ -9,6 +9,7 @@
   "imports": {
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",
+    "#ai-provider": "./src/ai-provider.ts",
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
@@ -26,6 +27,8 @@
     "#provider-settings": "./src/provider-settings.ts",
     "#funded-ai": "./src/funded-ai.ts",
     "#os-view": "./src/os-view.ts",
+    "#provider-settings": "./src/provider-settings.ts",
+    "#funded-ai": "./src/funded-ai.ts",
     "#safe-client-error": "./src/safe-client-error.ts",
     "#terminal-clipboard": "./src/terminal-clipboard.ts",
     "#terminal-links": "./src/terminal-links.ts"

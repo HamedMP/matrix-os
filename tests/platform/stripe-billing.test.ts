@@ -60,23 +60,7 @@ describe('platform/stripe-billing', () => {
       },
     }, { idempotencyKey: 'attempt_123' });
     expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
-
-    await client.createCheckoutSession({
-      clerkUserId: 'user_123',
-      idempotencyKey: 'attempt_123',
-      customerId: 'cus_123',
-      priceId: 'price_builder_monthly',
-      mode: 'subscription',
-      automaticTax: true,
-      allowPromotionCodes: true,
-      regionSlug: 'region_nbg1',
-      runtimeSlot: 'studio',
-      successUrl: 'https://app.matrix-os.com/?checkout=success',
-      cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
-    });
-    expect(sessionsCreate.mock.calls[1]?.[0].integration_identifier).toBe(
-      sessionsCreate.mock.calls[0]?.[0].integration_identifier,
-    );
+    expect(sessionsCreate.mock.calls[1]).toEqual(sessionsCreate.mock.calls[0]);
   });
 
   it('creates checkout sessions without customer-write permission when no customer exists yet', async () => {

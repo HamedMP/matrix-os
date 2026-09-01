@@ -30,6 +30,7 @@ import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/se
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
+import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -100,6 +101,80 @@ function driverDisplayName(kind: CanonicalProviderDriverKind): string {
   if (kind === "opencode") return "OpenCode";
   if (kind === "pi") return "Pi";
   return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+function kernelAvailability(
+  state: AiProviderSnapshotV3["instances"][number]["readiness"]["state"],
+): CanonicalProviderInstanceDescriptor["availability"] {
+  if (state === "ready") return "available";
+  if (state === "setup_required") return "setup_required";
+  if (state === "auth_required" || state === "invalid" || state === "expired" || state === "unknown") {
+    return "auth_required";
+  }
+  return "unavailable";
+}
+
+function kernelInstances(
+  snapshot: AiProviderSnapshotV3 | undefined,
+  skills: CanonicalChatSkillDescriptor[],
+): InstanceDraft[] {
+  if (!snapshot) return [];
+  const modelCatalog = new Map(snapshot.models.map((model) => [model.id, model]));
+  return snapshot.instances
+    .filter((instance) => instance.driverId === "kernel")
+    .map((instance) => {
+      const availability = kernelAvailability(instance.readiness.state);
+      const models = availability === "available"
+        ? instance.modelIds.flatMap((modelId) => {
+            const model = modelCatalog.get(modelId);
+            if (!model || model.status === "unavailable" || model.status === "retired") return [];
+            return [{
+              id: model.id,
+              displayName: model.displayName,
+              availability: "available" as const,
+              capabilities: model.capabilities,
+              supportsVision: model.capabilities.includes("vision"),
+              supportsToolUse: model.capabilities.includes("tools"),
+            }];
+          })
+        : [];
+      const efforts = models.flatMap((model) => modelCatalog.get(model.id)?.effortControls ?? [])
+        .filter((effort, index, values) => values.indexOf(effort) === index);
+      const options: CanonicalProviderOptionDescriptor[] = efforts.length === 0 ? [] : [{
+        id: "effort",
+        label: "Reasoning",
+        kind: "enum",
+        values: efforts.map((effort) => ({
+          value: effort,
+          label: effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1),
+        })),
+        placement: "composer",
+      }];
+      const defaultModel = instance.defaultModelId !== null
+        && models.some((model) => model.id === instance.defaultModelId)
+        ? instance.defaultModelId
+        : models[0]?.id;
+      return {
+        id: instance.id,
+        driverKind: "kernel" as const,
+        displayName: instance.label,
+        availability,
+        workspaceRequirement: "none" as const,
+        models,
+        options,
+        skills,
+        commands: [],
+        setupActions: availability === "available" ? [] : [{
+          id: `${instance.id}_settings`,
+          kind: "open_settings" as const,
+          label: `Configure ${instance.label}`,
+        }],
+        supports: systemSupports(),
+        ...(availability === "available" && defaultModel ? {
+          defaultSelection: { instanceId: instance.id, model: defaultModel },
+        } : {}),
+      };
+    });
 }
 
 function codingDriverKind(provider: AgentProviderSummary): CodingDriverKind | null {
@@ -493,8 +568,9 @@ function genericHarnessKind(kind: CanonicalProviderDriverKind): GenericDriverKin
 }
 
 function settingsHarnessKind(kind: CanonicalProviderDriverKind): ProviderHarnessKind | null {
-  if (kind === "pi" || kind === "opencode") return kind;
-  return null;
+  if (kind === "claude_code") return "claude";
+  if (kind === "codex") return "codex";
+  return genericHarnessKind(kind);
 }
 
 function unavailableReasonFor(
@@ -756,6 +832,10 @@ export function createChatProviderCatalogService(options: {
       }
       if (settingsResult.status === "rejected") {
         console.warn("[chat-providers] Harness settings unavailable");
+        if (settingsResult.reason instanceof ProviderSettingsStoreError
+          && settingsResult.reason.status === 503) {
+          throw new ProviderCatalogUnavailableError(true);
+        }
       }
 
       const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
@@ -798,9 +878,11 @@ export function createChatProviderCatalogService(options: {
       const aiSnapshot = aiProviderResult.status === "fulfilled"
         ? aiProviderResult.value
         : undefined;
+      const projectedKernelInstances = kernelInstances(aiSnapshot, skills);
       const executableDriverKinds = options.executableDriverKinds;
       const instances = applyHarnessSettings({
         instances: [
+        ...projectedKernelInstances,
         ...systemInstances,
         ...completeCodingInstances,
         ],
@@ -812,6 +894,7 @@ export function createChatProviderCatalogService(options: {
         aiSnapshot,
       });
       const driverKinds: CanonicalProviderDriverKind[] = [
+        ...(options.aiProviderSource ? ["kernel" as const] : []),
         ...SYSTEM_DRIVERS,
         ...CODING_DRIVERS,
       ];
