@@ -677,7 +677,7 @@ describe("TerminalsTab", () => {
 
     fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api, {
-      cmd: "codex",
+      cmd: "codex --no-alt-screen",
       agent: "codex",
     }));
   });
