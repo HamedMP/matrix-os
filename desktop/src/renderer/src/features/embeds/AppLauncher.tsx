@@ -1,4 +1,4 @@
-import { LayoutGrid, Plus, Search } from "@renderer/lib/hugeicons";
+import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
@@ -13,12 +13,9 @@ import {
   otherOsViewMode,
   type OsViewMode,
 } from "@matrix-os/contracts";
-import canvasIconUrl from "../../../../../../home/system/icons/canvas.svg";
-import desktopIconUrl from "../../../../../../home/system/icons/desktop.svg";
-
 type LauncherEntry =
   | { type: "create"; key: "__create-app__"; name: "Create app" }
-  | { type: "os-view"; key: string; name: string; mode: OsViewMode; iconUrl: string }
+  | { type: "os-view"; key: string; name: string; mode: OsViewMode }
   | { type: "fixed"; key: string; name: string; app: DesktopAppConfig }
   | { type: "installed"; key: string; name: string; app: MatrixApp };
 
@@ -47,6 +44,23 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
     >
       {name.charAt(0).toUpperCase()}
     </div>
+  );
+}
+
+function OsViewDestinationIcon({ path }: { path: string }) {
+  const appearance = osViewFixedAppAppearanceForPath(path);
+  const Icon = appearance?.icon === "monitor" ? Monitor : LayoutGrid;
+  return (
+    <span
+      data-launchpad-built-in-icon
+      className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
+      style={{
+        background: appearance?.background ?? "#0E3422",
+        color: appearance?.foreground ?? "#BED77B",
+      }}
+    >
+      <Icon size={32} aria-hidden="true" />
+    </span>
   );
 }
 
@@ -103,7 +117,6 @@ export default function AppLauncher({
         key: OS_VIEW_DESTINATION_PATHS[destinationMode],
         name: OS_VIEW_LABELS[destinationMode],
         mode: destinationMode,
-        iconUrl: destinationMode === "canvas" ? canvasIconUrl : desktopIconUrl,
       }] : []),
       ...FIXED_DESKTOP_APPS.map((app) => {
         const installed = apps.find((candidate) => candidate.name.toLowerCase() === app.name.toLowerCase());
@@ -281,7 +294,7 @@ export default function AppLauncher({
                       <Plus size={40} aria-hidden="true" />
                     </span>
                   ) : entry.type === "os-view" ? (
-                    <img src={entry.iconUrl} alt="" className="size-16 rounded-[18px] object-cover shadow-[var(--shadow-1)]" draggable={false} />
+                    <OsViewDestinationIcon path={entry.key} />
                   ) : entry.type === "fixed" ? (
                     <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
                       {entry.app.iconUrl

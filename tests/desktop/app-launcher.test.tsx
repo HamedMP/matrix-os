@@ -111,6 +111,10 @@ describe("AppLauncher", () => {
     expect(onCreateApp).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Canvas" }));
     expect(onSwitchOsView).toHaveBeenCalledWith("canvas");
+
+    const canvas = screen.getByRole("button", { name: "Canvas" });
+    expect(canvas.querySelector("img")).toBeNull();
+    expect(canvas.querySelector("svg")).toBeTruthy();
   });
 
   it("keeps core system vectors while allowing app artwork for Notes", () => {
@@ -156,7 +160,7 @@ describe("AppLauncher", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
 
-    expect(onAddToDesktop).toHaveBeenCalledWith("__notes__");
+    expect(onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html");
   });
 
   it("keeps the focused launcher search field free of a nested focus ring", () => {

@@ -8,7 +8,9 @@ import {
   FilePenLine,
   FolderTree,
   Globe2,
+  LayoutGrid,
   MessageSquare,
+  Monitor,
   Notebook,
   PlusIcon,
   SearchIcon,
@@ -45,6 +47,8 @@ const BUILT_IN_ICON_COMPONENTS: Readonly<Record<OsViewFixedAppIcon, LucideIcon>>
   globe: Globe2,
   notebook: Notebook,
   brush: BrushIcon,
+  "layout-grid": LayoutGrid,
+  monitor: Monitor,
 };
 
 /**

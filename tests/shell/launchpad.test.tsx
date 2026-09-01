@@ -278,6 +278,17 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(handlers.onAddToDesktop).not.toHaveBeenCalled();
   });
 
+  it("renders Web Canvas with a bundled vector instead of a letter fallback", async () => {
+    setDesign("macos-glass");
+    await renderLauncher({
+      apps: [{ name: "Web Canvas", path: "__os-view-canvas__", iconUrl: "/icons/canvas.svg" }],
+    });
+
+    const canvas = screen.getByRole("button", { name: "Web Canvas" });
+    expect(canvas.querySelector("img")).toBeNull();
+    expect(canvas.querySelector("[data-launchpad-built-in-icon] svg")).toBeTruthy();
+  });
+
   it("reserves the grid padding and gaps so launchpad stays centered in the viewport", () => {
     expect(computeLaunchpadColumns(560)).toBe(3);
     expect(computeLaunchpadColumns(1024)).toBe(6);

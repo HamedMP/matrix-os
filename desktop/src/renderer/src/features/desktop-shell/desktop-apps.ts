@@ -119,7 +119,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
   {
     id: "notes",
-    path: "__notes__",
+    path: "apps/notes/index.html",
     kind: "notes",
     icon: Notebook,
     name: "Notes",

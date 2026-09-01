@@ -1,20 +1,68 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  LegacyDesktopImportSchema,
   PatchOsViewStateRequestSchema,
+  createDefaultOsViewDesktopIcons,
   createDefaultOsViewDocument,
   OS_VIEW_CREATE_APP_APPEARANCE,
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_FIXED_APP_APPEARANCES,
   OS_VIEW_LABELS,
   isOsViewDestinationPath,
+  legacyDesktopImportFromConfig,
   mergeOsViewStatePatch,
   normalizeOsViewMode,
   osViewFixedAppAppearanceForPath,
+  normalizeOsViewDesktopAppPath,
+  normalizeOsViewDesktopIcons,
   otherOsViewMode,
   rebaseOsViewStatePatch,
 } from "@matrix-os/contracts";
 
 describe("shared OS-view contract", () => {
+  it("defines one canonical ten-icon Desktop layout for every renderer", () => {
+    expect(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS).toEqual([
+      "__chat__",
+      "__terminal__",
+      "__file-browser__",
+      "__editor__",
+      "__vscode__",
+      "__settings__",
+      "__plugins__",
+      "__browser__",
+      "apps/notes/index.html",
+      "apps/whiteboard/index.html",
+    ]);
+    expect(createDefaultOsViewDesktopIcons()).toEqual(
+      DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.map((path, index) => ({
+        path,
+        x: 20 + (index % 2) * 88,
+        y: 20 + Math.floor(index / 2) * 92,
+      })),
+    );
+    expect(createDefaultOsViewDocument().desktop.icons).toEqual(createDefaultOsViewDesktopIcons());
+    expect(normalizeOsViewDesktopAppPath("__notes__")).toBe("apps/notes/index.html");
+    expect(normalizeOsViewDesktopAppPath("apps/whiteboard/dist/index.html")).toBe("apps/whiteboard/index.html");
+    expect(normalizeOsViewDesktopIcons([
+      { path: "__notes__", x: 20, y: 20 },
+      { path: "apps/notes/index.html", x: 108, y: 20 },
+    ])).toEqual([{ path: "apps/notes/index.html", x: 20, y: 20 }]);
+    expect(LegacyDesktopImportSchema.parse({})).toEqual({});
+    expect(legacyDesktopImportFromConfig({ background: { type: "solid" } })).toEqual({});
+    expect(legacyDesktopImportFromConfig({ pinnedApps: ["__chat__"] })).toEqual({ pinnedApps: ["__chat__"] });
+    expect(legacyDesktopImportFromConfig({ desktopIcons: [] })).toEqual({ desktopIcons: [] });
+    expect(legacyDesktopImportFromConfig({ desktopIcons: "invalid" })).toBeNull();
+    expect(legacyDesktopImportFromConfig({
+      pinnedApps: ["__terminal__", "__file-browser__", "__chat__"],
+      legacyDesktopImport: {},
+    })).toEqual({});
+    expect(legacyDesktopImportFromConfig({
+      pinnedApps: ["__terminal__", "__file-browser__", "__chat__"],
+      legacyDesktopImport: { pinnedApps: ["__chat__"], desktopIcons: [] },
+    })).toEqual({ pinnedApps: ["__chat__"], desktopIcons: [] });
+  });
+
   it("defines the same launcher destinations for Web and Electron clients", () => {
     expect(OS_VIEW_LABELS).toEqual({ desktop: "Desktop", canvas: "Canvas" });
     expect(OS_VIEW_DESTINATION_PATHS).toEqual({
@@ -39,6 +87,10 @@ describe("shared OS-view contract", () => {
       foreground: "white",
     });
     expect(osViewFixedAppAppearanceForPath("__chat__")).toBe(OS_VIEW_FIXED_APP_APPEARANCES.chat);
+    expect(osViewFixedAppAppearanceForPath("__os-view-canvas__"))
+      .toBe(OS_VIEW_FIXED_APP_APPEARANCES.canvas);
+    expect(osViewFixedAppAppearanceForPath("__os-view-desktop__"))
+      .toBe(OS_VIEW_FIXED_APP_APPEARANCES.desktop);
     expect(osViewFixedAppAppearanceForPath("apps/browser/dist/index.html"))
       .toBe(OS_VIEW_FIXED_APP_APPEARANCES.browser);
     expect(OS_VIEW_FIXED_APP_APPEARANCES.browser.iconSource).toBe("fixed");
