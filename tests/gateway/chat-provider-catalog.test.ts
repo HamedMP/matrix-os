@@ -593,6 +593,12 @@ describe("canonical Chat Provider catalog", () => {
           capabilities: ["tools"],
           efforts: [],
           available: true,
+        }, {
+          id: "gpt-5.6-sol-disabled",
+          displayName: "gpt-5.6-sol-disabled",
+          capabilities: ["tools"],
+          efforts: [],
+          available: false,
         }],
         authStatus: { state: "ready", authenticated: true, action: "none" },
       }, {
@@ -625,6 +631,21 @@ describe("canonical Chat Provider catalog", () => {
           available: true,
         }],
         authStatus: { state: "ready", authenticated: true, action: "none" },
+      }, {
+        id: "stale-oauth",
+        displayName: "Stale OAuth",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "gpt-stale",
+          displayName: "gpt-stale",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: false, action: "login" },
       }],
       messaging: {
         runtime: "hermes",
@@ -642,21 +663,22 @@ describe("canonical Chat Provider catalog", () => {
       executableDriverKinds: ["hermes"],
     });
 
-    expect((await service.getCatalog(principal)).instances.find((instance) => (
-      instance.id === "hermes_default"
-    ))).toMatchObject({
+    const instance = (await service.getCatalog(principal)).instances.find((candidate) => (
+      candidate.id === "hermes_default"
+    ));
+    expect(instance).toMatchObject({
       availability: "available",
       displayName: "Hermes",
-      models: [
-        { id: "openai-codex:gpt-5.6-sol" },
-        { id: "github-copilot:gpt-4.1" },
-        { id: "opencode-free:minimax-m2.5-free" },
-      ],
       defaultSelection: {
         instanceId: "hermes_default",
         model: "openai-codex:gpt-5.6-sol",
       },
     });
+    expect(instance?.models.map((model) => model.id)).toEqual([
+      "openai-codex:gpt-5.6-sol",
+      "github-copilot:gpt-4.1",
+      "opencode-free:minimax-m2.5-free",
+    ]);
   });
 
   it("keeps an explicitly unauthenticated inactive Hermes runtime unavailable", async () => {

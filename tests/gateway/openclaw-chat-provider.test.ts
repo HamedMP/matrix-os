@@ -15,7 +15,13 @@ class FakeRpc implements OpenClawRpcClient {
   agentRun = Promise.withResolvers<unknown>();
   autoAccept = true;
   pendingAgentOptions?: OpenClawRpcCallOptions;
-  accepted = {
+  accepted: {
+    runId: string;
+    sessionKey?: string;
+    agentId?: string;
+    status: "accepted";
+    acceptedAt: number;
+  } = {
     runId: "openclaw-run-1",
     sessionKey: "agent:main:chat-openclaw",
     agentId: "main",
@@ -180,6 +186,44 @@ describe("OpenClaw canonical Chat Provider adapter", () => {
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
   });
 
+  it("owns a stable initial session when OpenClaw omits it from acceptance", async () => {
+    const rpc = new FakeRpc();
+    rpc.accepted = {
+      runId: "openclaw-run-1",
+      agentId: "main",
+      status: "accepted",
+      acceptedAt: 1_789_000_000_000,
+    };
+    const adapter = createOpenClawChatProviderAdapter({ rpc, homePath: "/home/matrix/home" });
+    const result = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(rpc.calls).toHaveLength(1));
+
+    expect(rpc.calls[0]?.params).toMatchObject({
+      sessionKey: "agent:main:matrix-chat-1269997620b503168ffc3da2",
+    });
+    rpc.emit(agentEvent("assistant", { delta: "Finished" }, 1, {
+      sessionKey: "agent:main:matrix-chat-1269997620b503168ffc3da2",
+    }));
+    rpc.emit(agentEvent("lifecycle", { phase: "end" }, 2, {
+      sessionKey: "agent:main:matrix-chat-1269997620b503168ffc3da2",
+    }));
+    rpc.agentRun.resolve({
+      runId: "openclaw-run-1",
+      status: "ok",
+      summary: "completed",
+    });
+
+    const events = await result;
+    expect(events).toContainEqual({
+      type: "state.updated",
+      state: {
+        sessionKey: "agent:main:matrix-chat-1269997620b503168ffc3da2",
+        agentId: "main",
+      },
+    });
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("resumes with the adapter-private OpenClaw session key", async () => {
     const rpc = new FakeRpc();
     rpc.accepted = {
@@ -240,10 +284,17 @@ describe("OpenClaw canonical Chat Provider adapter", () => {
     await vi.waitFor(() => expect(rpc.calls).toHaveLength(1));
 
     controller.abort();
-    expect(rpc.calls).toHaveLength(1);
-    rpc.accept();
     await vi.waitFor(() => expect(rpc.calls).toHaveLength(2));
     expect(rpc.calls[1]).toMatchObject({
+      method: "chat.abort",
+      params: {
+        sessionKey: "agent:main:matrix-chat-1269997620b503168ffc3da2",
+        runId: "canonical-run-1",
+      },
+    });
+    rpc.accept();
+    await vi.waitFor(() => expect(rpc.calls).toHaveLength(3));
+    expect(rpc.calls[2]).toMatchObject({
       method: "chat.abort",
       params: {
         sessionKey: "agent:main:chat-openclaw",

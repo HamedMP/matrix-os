@@ -20,7 +20,7 @@ const OpenClawChatStateSchema = z.object({
 }).strict();
 const AcceptedSchema = z.object({
   runId: SafeSessionReferenceSchema,
-  sessionKey: SafeSessionReferenceSchema,
+  sessionKey: SafeSessionReferenceSchema.optional(),
   agentId: SafeSessionReferenceSchema.optional(),
   status: z.literal("accepted"),
   acceptedAt: z.number().int().nonnegative().optional(),
@@ -69,6 +69,11 @@ function providerReference(value: unknown, prefix: string): string {
     return `${prefix}${createHash("sha256").update(candidate).digest("hex").slice(0, 24)}`;
   }
   return `${prefix}unknown`;
+}
+
+function initialSessionKey(chatId: string): string {
+  const digest = createHash("sha256").update(chatId).digest("hex").slice(0, 24);
+  return `agent:main:matrix-chat-${digest}`;
 }
 
 function toolFailed(value: unknown): boolean {
@@ -241,9 +246,10 @@ export function createOpenClawChatProviderAdapter(
     let terminalValue: unknown;
     let terminalError: unknown;
     const toolActivities = new Map<string, ToolActivity>();
+    const requestedSessionKey = input.resumeState?.sessionKey ?? initialSessionKey(input.chatId);
     const active: ActiveRun = {
       providerRunId: input.runId,
-      sessionKey: input.resumeState?.sessionKey,
+      sessionKey: requestedSessionKey,
       agentId: input.resumeState?.agentId,
       cancelled: false,
     };
@@ -268,7 +274,7 @@ export function createOpenClawChatProviderAdapter(
       message: input.prompt,
       provider: selectedModel.provider,
       model: selectedModel.model,
-      ...(input.resumeState?.sessionKey === undefined ? {} : { sessionKey: input.resumeState.sessionKey }),
+      sessionKey: requestedSessionKey,
       deliver: false,
       timeout: Math.ceil(timeoutMs / 1_000),
       idempotencyKey: input.runId,
@@ -283,7 +289,7 @@ export function createOpenClawChatProviderAdapter(
           return;
         }
         active.providerRunId = parsed.data.runId;
-        active.sessionKey = parsed.data.sessionKey;
+        if (parsed.data.sessionKey !== undefined) active.sessionKey = parsed.data.sessionKey;
         active.agentId = parsed.data.agentId;
         if (active.cancelled) void abortRun(active, input.resumeState);
         wake.resolve();

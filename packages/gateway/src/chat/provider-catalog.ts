@@ -333,7 +333,9 @@ function systemModels(
   providers: AgentProviderDescriptor[],
 ): CanonicalModelDescriptor[] {
   return providers
-    .filter((provider) => provider.runtime === runtime && provider.authStatus.state === "ready")
+    .filter((provider) => provider.runtime === runtime
+      && provider.authStatus.state === "ready"
+      && provider.authStatus.authenticated)
     .flatMap((provider) => provider.models
       .filter((model) => model.available
         && !model.id.endsWith("-pro")
