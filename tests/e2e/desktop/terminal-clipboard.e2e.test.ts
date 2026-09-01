@@ -216,6 +216,11 @@ suite("packaged Electron terminal clipboard", () => {
     } else {
       await page.mouse.click(screenBox.x + 30, screenBox.y + 30, { button: "right" });
       await page.getByRole("menuitem", { name: "Select All", exact: true }).click();
+      const terminalInput = terminalSurface().locator(".xterm-helper-textarea");
+      await expect.poll(
+        () => terminalInput.evaluate((element) => element === document.activeElement),
+        { message: "terminal focus was not restored after Select All" },
+      ).toBe(true);
     }
     await page.keyboard.press(copyShortcut);
     await expect.poll(clipboardText).toContain(firstLine);
