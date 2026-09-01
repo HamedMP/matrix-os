@@ -467,7 +467,6 @@ describe("BillingGate", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
-            serverType: "cpx42",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/auth/device?user_code=BCDF-GHJK",
           }),
