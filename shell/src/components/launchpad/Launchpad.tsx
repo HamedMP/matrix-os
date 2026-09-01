@@ -1,7 +1,28 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { PlusIcon, SearchIcon } from "@/lib/hugeicons";
+import {
+  Blocks,
+  BrushIcon,
+  Code2,
+  FilePenLine,
+  FolderTree,
+  Globe2,
+  LayoutGrid,
+  MessageSquare,
+  Monitor,
+  Notebook,
+  PlusIcon,
+  SearchIcon,
+  Settings,
+  SquareTerminal,
+  type LucideIcon,
+} from "@/lib/hugeicons";
+import {
+  OS_VIEW_CREATE_APP_APPEARANCE,
+  osViewFixedAppAppearanceForPath,
+  type OsViewFixedAppIcon,
+} from "@matrix-os/contracts";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { groupLauncherApps } from "@/lib/dock-sections";
@@ -14,6 +35,21 @@ import {
   paginateLaunchpadApps,
 } from "./launchpad-utils";
 import "./launchpad.css";
+
+const BUILT_IN_ICON_COMPONENTS: Readonly<Record<OsViewFixedAppIcon, LucideIcon>> = {
+  "message-square": MessageSquare,
+  "square-terminal": SquareTerminal,
+  "folder-tree": FolderTree,
+  "file-pen": FilePenLine,
+  code: Code2,
+  settings: Settings,
+  blocks: Blocks,
+  globe: Globe2,
+  notebook: Notebook,
+  brush: BrushIcon,
+  "layout-grid": LayoutGrid,
+  monitor: Monitor,
+};
 
 /**
  * macOS Launchpad: full-screen frosted-glass app launcher used in place of
@@ -194,14 +230,52 @@ export function Launchpad({
 
 function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu?: () => void }) {
   const { showImage, onError } = useIconWithFallback(app.iconUrl);
+  const builtInAppearance = osViewFixedAppAppearanceForPath(app.path);
+  const BuiltInIcon = builtInAppearance
+    ? BUILT_IN_ICON_COMPONENTS[builtInAppearance.icon]
+    : undefined;
+  const useFixedIcon = BuiltInIcon && builtInAppearance?.iconSource === "fixed";
   return (
     <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(); } : undefined}>
       <span className="launchpad-icon">
         {app.path === "__create-app__" ? (
-          <PlusIcon className="size-12" aria-hidden="true" />
+          <span
+            data-launchpad-create-icon
+            className="flex size-full items-center justify-center"
+            style={{
+              background: OS_VIEW_CREATE_APP_APPEARANCE.background,
+              color: OS_VIEW_CREATE_APP_APPEARANCE.foreground,
+            }}
+          >
+            <PlusIcon className="size-12" aria-hidden="true" />
+          </span>
+        ) : useFixedIcon && builtInAppearance ? (
+          <span
+            data-launchpad-built-in-icon
+            className="flex size-full items-center justify-center"
+            style={{
+              background: builtInAppearance.background,
+              color: builtInAppearance.foreground,
+            }}
+            aria-hidden="true"
+          >
+            <BuiltInIcon className="size-8" />
+          </span>
         ) : showImage && app.iconUrl ? (
           // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
           <img src={app.iconUrl} alt="" draggable={false} onError={onError} />
+        ) : BuiltInIcon && builtInAppearance ? (
+          <span
+            data-launchpad-built-in-icon
+            className="flex size-full items-center justify-center"
+            style={{
+              background: builtInAppearance.background,
+              color: builtInAppearance.foreground,
+            }}
+            aria-hidden="true"
+          >
+            <BuiltInIcon className="size-8" />
+          </span>
         ) : (
           <span className="launchpad-icon-fallback" aria-hidden>
             {app.name.charAt(0).toUpperCase()}

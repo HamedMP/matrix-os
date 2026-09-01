@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultOsViewDocument } from "@matrix-os/contracts";
 import {
+  importWebLegacyDesktopConfig,
   layoutWindowsFromOsViewState,
   patchWebOsViewState,
   resetWebOsViewStateClientForTests,
@@ -14,6 +15,24 @@ const latest = {
 
 describe("Web OS-view state client", () => {
   beforeEach(() => resetWebOsViewStateClientForTests());
+
+  it("imports only present legacy Desktop fields and caches the returned state", async () => {
+    const imported = { ...latest, revision: 2 };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => imported,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(importWebLegacyDesktopConfig("http://gateway.test", {
+      pinnedApps: ["__chat__"],
+    })).resolves.toEqual(imported);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("http://gateway.test/api/os-view-state/import-legacy-desktop");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ pinnedApps: ["__chat__"] });
+  });
 
   it("restores shared open apps from the other presentation when selected geometry is empty", () => {
     const document = createDefaultOsViewDocument();

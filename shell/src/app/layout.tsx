@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { headers } from "next/headers";
 import {
   Bricolage_Grotesque,
   Cormorant_Garamond,
@@ -12,7 +11,6 @@ import {
   Orbitron,
 } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
-import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { buildShellMetadata } from "@/lib/shell-metadata";
 import "@xterm/xterm/css/xterm.css";
@@ -30,12 +28,14 @@ import { AppProviders } from "./providers";
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
+  preload: false,
 });
 
 // Default shell sans — matches the landing site's --font-sans (Instrument Sans).
 const instrumentSans = Instrument_Sans({
   variable: "--font-instrument",
   subsets: ["latin"],
+  preload: false,
 });
 
 const instrumentSerif = Instrument_Serif({
@@ -43,33 +43,39 @@ const instrumentSerif = Instrument_Serif({
   subsets: ["latin"],
   weight: "400",
   style: ["normal", "italic"],
+  preload: false,
 });
 
 const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains",
   subsets: ["latin"],
+  preload: false,
 });
 
 const cormorant = Cormorant_Garamond({
   variable: "--font-serif",
   subsets: ["latin"],
   weight: ["300", "400", "500"],
+  preload: false,
 });
 
 const orbitron = Orbitron({
   variable: "--font-orbitron",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
+  preload: false,
 });
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  preload: false,
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  preload: false,
 });
 
 // Landing/brand display face. `block` prevents the Matrix loading wordmark from
@@ -78,6 +84,7 @@ const bricolage = Bricolage_Grotesque({
   variable: "--font-bricolage",
   subsets: ["latin"],
   display: "block",
+  preload: false,
 });
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -118,17 +125,15 @@ export const viewport: Viewport = {
   ],
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const visitorCountry = getPostHogVisitorCountry(await headers());
   const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
   const renderDocument = (includePostHogIdentify: boolean) => (
     <html
       lang="en"
-      data-posthog-visitor-country={visitorCountry ?? undefined}
       data-matrix-self-hosted={selfHostedMode ? "1" : undefined}
       // Runtime replay kill switch: read on the server per request, so
       // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops

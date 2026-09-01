@@ -600,6 +600,27 @@ describe('CI workflows', () => {
     expect(production).toContain('--to-revisions "$PRODUCTION_REVISION=100"');
   });
 
+  it('binds production customer provisioning to the stable host-bundle channel', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const candidateContract = production.slice(
+      production.indexOf('      - name: Verify deployed provisioning contract'),
+      production.indexOf('      - name: Smoke candidate revision'),
+    );
+    const productionContract = production.slice(
+      production.indexOf('      - name: Verify production provisioning contract'),
+      production.indexOf('      - name: Promote revision'),
+    );
+
+    expect(production).toContain("CUSTOMER_VPS_IMAGE_VERSION: 'stable'");
+    expect(production).not.toContain('CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}');
+    expect(production).toContain('CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}');
+    expect(candidateContract).toContain('CUSTOMER_VPS_IMAGE_VERSION');
+    expect(productionContract).toContain('"CUSTOMER_VPS_IMAGE_VERSION=stable"');
+    expect(production).toContain('channels/${CUSTOMER_VPS_IMAGE_VERSION}.json');
+    expect(production).not.toContain('channels/dev.json');
+  });
+
   it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {
     const root = process.cwd();
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

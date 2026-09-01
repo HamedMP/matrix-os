@@ -36,6 +36,7 @@ export interface MatrixMachineProfile {
   planSlug: MatrixHostedBillingPlanSlug;
   regionSlug: MatrixHostedBillingRegionSlug;
   serverType: "cpx21" | "cpx22" | "cpx31" | "cpx41" | "cpx42" | "cpx52";
+  architecture: "x86" | "arm";
   vcpus: number;
   memoryGb: number;
   diskGb: number;
@@ -83,15 +84,15 @@ export const MATRIX_HOSTED_BILLING_REGIONS: readonly MatrixHostedBillingRegion[]
 ];
 
 const EU_MACHINE_SHAPES = {
-  matrix_starter: { serverType: "cpx22", vcpus: 2, memoryGb: 4, diskGb: 80 },
-  matrix_builder: { serverType: "cpx42", vcpus: 8, memoryGb: 16, diskGb: 320 },
-  matrix_max: { serverType: "cpx52", vcpus: 12, memoryGb: 24, diskGb: 480 },
+  matrix_starter: { serverType: "cpx22", architecture: "x86", vcpus: 2, memoryGb: 4, diskGb: 80 },
+  matrix_builder: { serverType: "cpx42", architecture: "x86", vcpus: 8, memoryGb: 16, diskGb: 320 },
+  matrix_max: { serverType: "cpx52", architecture: "x86", vcpus: 12, memoryGb: 24, diskGb: 480 },
 } as const;
 
 const US_MACHINE_SHAPES = {
-  matrix_starter: { serverType: "cpx21", vcpus: 3, memoryGb: 4, diskGb: 80 },
-  matrix_builder: { serverType: "cpx31", vcpus: 4, memoryGb: 8, diskGb: 160 },
-  matrix_max: { serverType: "cpx41", vcpus: 8, memoryGb: 16, diskGb: 240 },
+  matrix_starter: { serverType: "cpx21", architecture: "x86", vcpus: 3, memoryGb: 4, diskGb: 80 },
+  matrix_builder: { serverType: "cpx31", architecture: "x86", vcpus: 4, memoryGb: 8, diskGb: 160 },
+  matrix_max: { serverType: "cpx41", architecture: "x86", vcpus: 8, memoryGb: 16, diskGb: 240 },
 } as const;
 
 export const MATRIX_HOSTED_MACHINE_PROFILES: readonly MatrixMachineProfile[] =

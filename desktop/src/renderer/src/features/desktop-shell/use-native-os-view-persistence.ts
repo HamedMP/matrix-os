@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OsViewMode, OsViewStateResponse } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
-import { loadNativeOsViewState, patchNativeOsViewState } from "../../lib/os-view-state-client";
+import { loadNativeOsViewStateWithLegacyImport, patchNativeOsViewState } from "../../lib/os-view-state-client";
 import type { MatrixApp } from "../apps/apps.api";
 import {
   desktopSurfaceBounds,
@@ -104,7 +104,7 @@ export function useNativeOsViewPersistence(input: {
     if (!input.api) return;
     let cancelled = false;
     const iconHydrationRevision = captureDesktopIconsHydrationRevision();
-    void loadNativeOsViewState(input.api).then((state) => {
+    void loadNativeOsViewStateWithLegacyImport(input.api).then((state) => {
       if (cancelled) return;
       loadedRef.current = true;
       canonicalGeometryRef.current = {
@@ -112,9 +112,7 @@ export function useNativeOsViewPersistence(input: {
         canvas: Object.fromEntries(state.document.canvas.windows.map(({ path, ...bounds }) => [path, bounds])),
       };
       useNativeDesktopMode.getState().setCanvasTransform(state.document.canvas.transform);
-      if (state.revision > 1) {
-        useDesktopIcons.getState().hydrate(state.document.desktop.icons, input.defaultIconLayout, iconHydrationRevision);
-      }
+      useDesktopIcons.getState().hydrate(state.document.desktop.icons, input.defaultIconLayout, iconHydrationRevision);
       setDurableState(state);
     }).catch((error: unknown) => {
       if (!cancelled) {

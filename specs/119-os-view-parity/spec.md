@@ -62,6 +62,8 @@ Durable writes that update multiple related records use one transaction. Revisio
 
 The OS-view document is intentionally a coarse owner aggregate with one revision. App state and presentation geometry have cross-field invariants and are read atomically, so a validated partial PATCH is merged into the latest complete document and committed as one JSONB value. Concurrent writers that started from the same revision serialize: the loser receives a conflict, reloads the latest aggregate, three-way rebases path-keyed collection and field changes over that document, and retries with the same mutation ID. This preserves independent same-collection edits as well as separate Desktop and Canvas changes without lost updates. Targeting individual JSONB paths while retaining one aggregate revision would not reduce contention; moving to path-level writes requires a separately reviewed per-entity or per-namespace revision model.
 
+Desktop icon initialization is explicit and distinct from an intentionally empty layout. New owner documents begin with the shared ten-icon canonical layout. A one-time, owner-scoped legacy import copies only fields actually present in `system/desktop.json`; absence never becomes an empty icon array. Internal initialization markers make the import and the recovery of legacy empty rows idempotent, while later user-authored empty layouts remain durable. Web and Electron use the same canonical icon paths and coordinates, and client snapshots may accelerate first paint but never outrank the PostgreSQL document.
+
 ## Workspace Canvas retirement
 
 Workspace Canvas is retired from navigation, built-in registration, product copy, and new creation flows. The retirement must not delete existing owner data. Existing records remain exportable and recoverable until a separately reviewed data-lifecycle migration defines user-visible export, deletion, and cleanup behavior.
@@ -88,6 +90,12 @@ The retirement sequence is:
 ## Security and integration wiring
 
 This contract introduces no unauthenticated route. New persistence endpoints must use the authenticated owner principal, `bodyLimit`, bounded Zod schemas, generic client errors, and owner-scoped Kysely queries. Browser WebSocket routes must use the registered query-token path because browsers cannot attach authorization headers to upgrades.
+
+| Route | Method | Authentication | Validation and limits |
+| --- | --- | --- | --- |
+| `/api/os-view-state` | GET | Authenticated owner principal | Owner-scoped read; schema-v1 response |
+| `/api/os-view-state` | PATCH | Authenticated owner principal | 256 KiB `bodyLimit`; bounded revisioned patch schema |
+| `/api/os-view-state/import-legacy-desktop` | POST | Authenticated owner principal | 256 KiB `bodyLimit`; strict bounded legacy Desktop schema; one-time marker predicate |
 
 At runtime:
 
