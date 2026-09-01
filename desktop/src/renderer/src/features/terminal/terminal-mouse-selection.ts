@@ -133,8 +133,9 @@ export function installMouseTrackingSelection({
     if (gesture.dragging) {
       dispatch(current, "mouseup", 0, 0, true);
     } else {
-      dispatch(gesture.start, "mousedown", 0, 1, false);
-      dispatch(current, "mouseup", 0, 0, false);
+      const forceSelection = gesture.start.detail >= 2;
+      dispatch(gesture.start, "mousedown", 0, 1, forceSelection);
+      dispatch(current, "mouseup", 0, 0, forceSelection);
     }
     cancelGesture();
   };

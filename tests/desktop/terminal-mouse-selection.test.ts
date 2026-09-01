@@ -4,7 +4,7 @@ import { installMouseTrackingSelection } from "@desktop/renderer/src/features/te
 
 type DeliveredMouse = Pick<
   MouseEvent,
-  "type" | "clientX" | "clientY" | "button" | "buttons" | "altKey" | "shiftKey"
+  "type" | "clientX" | "clientY" | "button" | "buttons" | "altKey" | "shiftKey" | "detail"
 > & { corrected: boolean };
 
 function mouse(type: string, init: MouseEventInit): MouseEvent {
@@ -47,6 +47,7 @@ function setup({
         buttons: event.buttons,
         altKey: event.altKey,
         shiftKey: event.shiftKey,
+        detail: event.detail,
         corrected: true,
       });
     });
@@ -94,6 +95,47 @@ describe("mouse-reporting terminal selection", () => {
     expect(delivered).toEqual([
       expect.objectContaining({ type: "mousedown", altKey: false, shiftKey: false, buttons: 1 }),
       expect.objectContaining({ type: "mouseup", altKey: false, shiftKey: false, buttons: 0 }),
+    ]);
+    remove();
+  });
+
+  it("forces a double click into xterm word selection instead of reporting its second click", () => {
+    const { root, delivered, remove } = setup();
+
+    root.dispatchEvent(mouse("mousedown", {
+      button: 0,
+      buttons: 1,
+      clientX: 120,
+      clientY: 80,
+      detail: 1,
+    }));
+    root.dispatchEvent(mouse("mouseup", {
+      button: 0,
+      buttons: 0,
+      clientX: 120,
+      clientY: 80,
+      detail: 1,
+    }));
+    root.dispatchEvent(mouse("mousedown", {
+      button: 0,
+      buttons: 1,
+      clientX: 120,
+      clientY: 80,
+      detail: 2,
+    }));
+    root.dispatchEvent(mouse("mouseup", {
+      button: 0,
+      buttons: 0,
+      clientX: 120,
+      clientY: 80,
+      detail: 2,
+    }));
+
+    expect(delivered).toEqual([
+      expect.objectContaining({ type: "mousedown", altKey: false, detail: 1 }),
+      expect.objectContaining({ type: "mouseup", altKey: false, detail: 1 }),
+      expect.objectContaining({ type: "mousedown", altKey: true, detail: 2 }),
+      expect.objectContaining({ type: "mouseup", altKey: true, detail: 2 }),
     ]);
     remove();
   });

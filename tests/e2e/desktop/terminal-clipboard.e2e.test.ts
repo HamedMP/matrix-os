@@ -407,6 +407,18 @@ suite("packaged Electron production-mode terminal selection", () => {
       await expect.poll(() => gateway.state.terminalInputs.length).toBeGreaterThan(beforeClick);
       expect(gateway.state.terminalInputs.slice(beforeClick).some((data) => data.includes("\u001b[<")))
         .toBe(true);
+
+      const prefix = "MOUSE-DOUBLECLICK prefix ";
+      const word = "targetword";
+      gateway.sendTerminalOutput(
+        `\u001bc${prefix}${word} suffix\u001b[?1003h\u001b[?1006h`,
+      );
+      await page.waitForTimeout(250);
+      const wordPoint = point(prefix.length + 3, 0);
+      await page.mouse.dblclick(wordPoint.x, wordPoint.y);
+      await app.evaluate(({ clipboard }) => clipboard.writeText("stale clipboard value"));
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(word);
     } finally {
       gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
     }
