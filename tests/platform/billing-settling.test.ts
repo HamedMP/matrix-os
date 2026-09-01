@@ -30,6 +30,7 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
       apiTimeoutMs: 10_000,
       createCheckoutSession: vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/s', id: 'cs_live_1' }),
       retrieveCheckoutSession: vi.fn().mockRejectedValue(new Error('unexpected checkout retrieval')),
+      retrieveRecurringPrice: vi.fn().mockRejectedValue(new Error('unexpected price retrieval')),
       createPortalSession: vi.fn(),
       constructWebhookEvent: vi.fn(),
     };

@@ -48,6 +48,7 @@ describe('platform billing routes', () => {
       apiTimeoutMs: 10_000,
       createCheckoutSession: vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session', id: 'cs_test_session' }),
       retrieveCheckoutSession: vi.fn().mockRejectedValue(new Error('unexpected checkout retrieval')),
+      retrieveRecurringPrice: vi.fn().mockRejectedValue(new Error('unexpected price retrieval')),
       createPortalSession: vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' }),
       constructWebhookEvent: vi.fn(),
     };
@@ -351,7 +352,7 @@ describe('platform billing routes', () => {
         billing_interval: 'monthly',
         region_slug: 'region_nbg1',
         return_path_present: true,
-        price_usd: 100,
+        selected_catalog_price_usd: 100,
       }),
     });
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_CREATED, {
@@ -360,7 +361,7 @@ describe('platform billing routes', () => {
         plan_slug: 'matrix_builder',
         billing_interval: 'monthly',
         region_slug: 'region_nbg1',
-        price_usd: 100,
+        selected_catalog_price_usd: 100,
       }),
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_test_session');
@@ -1625,7 +1626,17 @@ describe('platform billing routes', () => {
 
   it('captures subscription revenue metrics from Stripe webhook projections', async () => {
     const captureEvent = vi.fn();
-    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_revenue'));
+    await insertUserMachine(db, {
+      machineId: 'machine_revenue', clerkUserId: 'user_123', handle: 'revenue-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+      serverType: 'cpx31', location: 'ash',
+    });
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_revenue', {
+      runtimeSlot: 'primary',
+      priceId: 'price_builder_monthly',
+      unitAmountMinor: 2000,
+    }));
     const app = createApp(null, env, captureEvent);
 
     const res = await app.request('/billing/webhooks/stripe', {
@@ -1638,10 +1649,22 @@ describe('platform billing routes', () => {
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED, {
       distinctId: 'user_123',
       properties: {
-        plan_slug: 'matrix_max',
+        plan_slug: 'matrix_builder',
         subscription_status: 'active',
         billing_interval: 'monthly',
-        price_usd: 200,
+        recurring_unit_amount_minor: 2000,
+        recurring_total_amount_minor: 2000,
+        currency: 'usd',
+        price_interval_count: 1,
+        price_quantity: 1,
+        runtime_slot: 'primary',
+        region_slug: 'region_ash',
+        location_code: 'ash',
+        location_label: 'Ashburn, Virginia',
+        country: 'United States',
+        network_zone: 'us-east',
+        server_type: 'cpx31',
+        provider: 'hetzner',
         included_runtime_slots: 1,
         addon_runtime_slots: 0,
         max_runtime_slots: 1,
@@ -1649,6 +1672,105 @@ describe('platform billing routes', () => {
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('sub_123');
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cus_123');
+
+    const status = await createApp('user_123').request('/billing/status?runtimeSlot=primary');
+    await expect(status.json()).resolves.toMatchObject({
+      entitlement: {
+        planSlug: 'matrix_builder',
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: 'usd',
+          interval: 'monthly',
+          intervalCount: 1,
+          quantity: 1,
+        },
+        runtimePlacement: {
+          regionSlug: 'region_ash',
+          label: 'Ashburn, Virginia',
+          countryLabel: 'United States',
+          networkZone: 'us-east',
+        },
+      },
+    });
+  });
+
+  it('backfills a legacy subscription from its attached Stripe Price without catalog guessing', async () => {
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_legacy_price', {
+      runtimeSlot: 'primary', priceId: 'price_builder_monthly', unitAmountMinor: 2000,
+    }));
+    const webhookApp = createApp(null);
+    await webhookApp.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    await db.executor
+      .updateTable('billing_subscriptions')
+      .set({
+        price_unit_amount_minor: null,
+        price_currency: null,
+        price_interval_count: null,
+        price_quantity: null,
+      })
+      .where('stripe_subscription_id', '=', 'sub_123')
+      .execute();
+    vi.mocked(stripe.retrieveRecurringPrice).mockResolvedValue({
+      priceId: 'price_builder_monthly',
+      unitAmountMinor: 2000,
+      currency: 'usd',
+      interval: 'monthly',
+      intervalCount: 1,
+    });
+    const app = createApp('user_123');
+
+    const first = await app.request('/billing/status?runtimeSlot=primary');
+    const second = await app.request('/billing/status?runtimeSlot=primary');
+
+    await expect(first.json()).resolves.toMatchObject({
+      entitlement: {
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: 'usd',
+          interval: 'monthly',
+          intervalCount: 1,
+          quantity: 1,
+        },
+      },
+    });
+    await expect(second.json()).resolves.toMatchObject({
+      entitlement: { recurringPrice: { unitAmountMinor: 2000 } },
+    });
+    expect(stripe.retrieveRecurringPrice).toHaveBeenCalledOnce();
+  });
+
+  it('captures invoice amounts instead of treating catalog price as collected revenue', async () => {
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_invoice_subscription', {
+        runtimeSlot: 'primary', priceId: 'price_builder_monthly', unitAmountMinor: 2000,
+      }))
+      .mockReturnValueOnce(invoiceEvent(
+        'evt_invoice_paid_amount', 'invoice.paid', 'sub_123',
+        { amountDueMinor: 2380, amountPaidMinor: 2380, currency: 'usd' },
+      ));
+    const captureEvent = vi.fn();
+    const app = createApp(null, env, captureEvent);
+
+    await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    const paid = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(paid.status).toBe(200);
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_INVOICE_PAID, {
+      distinctId: 'user_123',
+      properties: {
+        amount_due_minor: 2380,
+        amount_paid_minor: 2380,
+        currency: 'usd',
+        plan_slug: 'matrix_builder',
+        runtime_slot: 'primary',
+      },
+    });
   });
 
   it('captures checkout completed and expired webhooks without Stripe session ids', async () => {
@@ -2589,6 +2711,9 @@ function subscriptionEvent(id: string, overrides: {
   trialStart?: number;
   trialEnd?: number;
   prebillingIntentId?: string;
+  unitAmountMinor?: number;
+  currency?: string;
+  intervalCount?: number;
 } = {}): StripeWebhookEvent {
   return {
     id,
@@ -2615,7 +2740,12 @@ function subscriptionEvent(id: string, overrides: {
         items: {
           data: [
             {
-              price: { id: overrides.priceId ?? 'price_max_monthly' },
+              price: {
+                id: overrides.priceId ?? 'price_max_monthly',
+                unit_amount: overrides.unitAmountMinor ?? 20000,
+                currency: overrides.currency ?? 'usd',
+                recurring: { interval: 'month', interval_count: overrides.intervalCount ?? 1 },
+              },
               quantity: 1,
               current_period_start: overrides.itemCurrentPeriodStart,
               current_period_end: overrides.itemCurrentPeriodEnd,
@@ -2632,6 +2762,7 @@ function invoiceEvent(
   id: string,
   type: 'invoice.paid' | 'invoice.payment_failed',
   subscriptionId: string,
+  amounts: { amountDueMinor?: number; amountPaidMinor?: number; currency?: string } = {},
 ): StripeWebhookEvent {
   return {
     id,
@@ -2642,6 +2773,9 @@ function invoiceEvent(
         id: `in_${id}`,
         created: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
         billing_reason: 'subscription_cycle',
+        amount_due: amounts.amountDueMinor ?? 0,
+        amount_paid: amounts.amountPaidMinor ?? 0,
+        currency: amounts.currency ?? 'usd',
         parent: { subscription_details: { subscription: subscriptionId } },
       },
     },

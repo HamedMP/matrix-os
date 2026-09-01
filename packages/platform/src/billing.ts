@@ -61,6 +61,10 @@ export interface StripePriceCatalog {
 export interface StripeSubscriptionItemProjection {
   priceId: string;
   quantity?: number | null;
+  unitAmountMinor?: number | null;
+  currency?: string | null;
+  interval?: MatrixBillingInterval | null;
+  intervalCount?: number | null;
 }
 
 export interface StripeSubscriptionProjection {
@@ -122,9 +126,15 @@ export interface RuntimeAccessDecision {
   gracePeriodEndsAt?: string | null;
 }
 
+export interface PublicBillingEntitlementDetails {
+  recurringPrice?: MatrixBillingPublicEntitlement['recurringPrice'];
+  runtimePlacement?: MatrixBillingPublicEntitlement['runtimePlacement'];
+}
+
 export function projectPublicBillingEntitlement(
   entitlement: BillingEntitlement,
   runtimeCatalog: RuntimeCatalog,
+  details: PublicBillingEntitlementDetails = {},
 ): MatrixBillingPublicEntitlement {
   const entitledPlan = entitlement.source === 'stripe' && entitlement.planSlug !== 'internal'
     ? getPlanDefinition(entitlement.planSlug)
@@ -156,6 +166,8 @@ export function projectPublicBillingEntitlement(
     allowedSelections,
     portalAvailable: entitlement.source === 'stripe' && entitlement.stripeSubscriptionId !== null,
     billingInterval: entitlement.billingInterval ?? null,
+    recurringPrice: details.recurringPrice ?? null,
+    runtimePlacement: details.runtimePlacement ?? null,
     gracePeriodEndsAt: entitlement.gracePeriodEndsAt,
     trialStartedAt: entitlement.trialStartedAt ?? null,
     trialEndsAt: entitlement.trialEndsAt ?? null,

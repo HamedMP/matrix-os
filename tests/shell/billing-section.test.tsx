@@ -10,6 +10,12 @@ const clerkState = vi.hoisted(() => ({
   userId: "user_123" as string | null,
   activePlan: null as string | null,
 }));
+const posthogClientMock = vi.hoisted(() => ({
+  capturePostHogEvent: vi.fn(),
+  capturePostHogLog: vi.fn(),
+}));
+
+vi.mock("../../shell/src/lib/posthog-client.js", () => posthogClientMock);
 
 function installClerkMock() {
   vi.doMock("@clerk/nextjs", () => ({
@@ -46,6 +52,8 @@ describe("BillingSection", () => {
     clerkState.isSignedIn = true;
     clerkState.userId = "user_123";
     clerkState.activePlan = null;
+    posthogClientMock.capturePostHogEvent.mockReset();
+    posthogClientMock.capturePostHogLog.mockReset();
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
         status: 200,
@@ -77,7 +85,8 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     expect(screen.getByRole("heading", { name: "Builder" })).toBeTruthy();
-    expect(screen.getByText("Monthly")).toBeTruthy();
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
     expect(screen.queryByText(/\$100/)).toBeNull();
     expect(screen.queryByText(/cpx\d+/i)).toBeNull();
     window.history.replaceState({}, "", "/");
@@ -754,6 +763,19 @@ describe("BillingSection", () => {
             allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
             portalAvailable: true,
             billingInterval: "monthly",
+            recurringPrice: {
+              unitAmountMinor: 2000,
+              currency: "usd",
+              interval: "monthly",
+              intervalCount: 1,
+              quantity: 1,
+            },
+            runtimePlacement: {
+              regionSlug: "region_ash",
+              label: "Ashburn, Virginia",
+              countryLabel: "United States",
+              networkZone: "us-east",
+            },
             gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
             trialStartedAt: null,
             trialEndsAt: null,
@@ -783,9 +805,28 @@ describe("BillingSection", () => {
     expect(screen.getByText("Current plan")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("2 included, 1 add-on")).toBeTruthy();
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
     expect(screen.queryByText("Machine")).toBeNull();
     expect(screen.queryByText(/cpx\d+/i)).toBeNull();
     expect(screen.queryByText(/hetzner/i)).toBeNull();
+    await waitFor(() => expect(posthogClientMock.capturePostHogEvent).toHaveBeenCalledWith(
+      "shell_billing",
+      expect.objectContaining({
+        event: "view_active_billing",
+        plan_slug: "matrix_builder",
+        recurring_unit_amount_minor: 2000,
+        recurring_total_amount_minor: 2000,
+        currency: "usd",
+        region_slug: "region_ash",
+        location_label: "Ashburn, Virginia",
+      }),
+    ));
+    const activeView = posthogClientMock.capturePostHogEvent.mock.calls.find(
+      ([event, properties]) => event === "shell_billing"
+        && (properties as { event?: string }).event === "view_active_billing",
+    )?.[1];
+    expect(activeView).not.toHaveProperty("selected_price_usd");
     expect(screen.getByText("Receipts and payment")).toBeTruthy();
     expect(screen.getByText("Canceling")).toBeTruthy();
 

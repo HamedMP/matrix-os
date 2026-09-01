@@ -15,13 +15,24 @@ export type BillingInterval = "monthly" | "annual";
 export type BillingTelemetryProperties = {
   mode: BillingPanelMode;
   billing_state: "active" | "inactive" | "checking";
-  selected_profile_slug: string;
-  selected_billing_interval: BillingInterval;
+  selected_profile_slug?: string;
+  selected_billing_interval?: BillingInterval;
   selected_monthly_price_usd?: string;
   selected_annual_price_usd?: string;
   selected_price_usd?: string;
-  selected_region_slug: string;
-  selected_region_zone: string;
+  selected_region_slug?: string;
+  selected_region_zone?: string;
+  plan_slug?: string;
+  billing_interval?: BillingInterval;
+  recurring_unit_amount_minor?: number;
+  recurring_total_amount_minor?: number;
+  currency?: string;
+  price_interval_count?: number;
+  price_quantity?: number;
+  region_slug?: string;
+  location_label?: string;
+  country?: string;
+  network_zone?: string;
 };
 
 export function captureBillingTelemetry(

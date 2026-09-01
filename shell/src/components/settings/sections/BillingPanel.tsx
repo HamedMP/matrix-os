@@ -83,6 +83,23 @@ const billingDateFormatter = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
 });
 
+function formatRecurringPrice(
+  price: NonNullable<BillingEntitlementSummary["recurringPrice"]>,
+): string {
+  const formatter = new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: price.currency.toUpperCase(),
+    minimumFractionDigits: 0,
+  });
+  const fractionDigits = formatter.resolvedOptions().maximumFractionDigits ?? 2;
+  const totalMinor = price.unitAmountMinor * price.quantity;
+  const amount = formatter.format(totalMinor / (10 ** fractionDigits));
+  const period = price.intervalCount === 1
+    ? price.interval === "monthly" ? "month" : "year"
+    : `${price.intervalCount} ${price.interval === "monthly" ? "months" : "years"}`;
+  return `${amount}/${period}`;
+}
+
 function BillingPortalButton({
   entitlement,
   label = "Open billing portal",
@@ -178,6 +195,10 @@ function ActiveBillingPanel({
   const isTrialing = entitlement?.status === "trialing" && Boolean(entitlement.trialEndsAt);
   const trialEndLabel = entitlement?.trialEndsAt ? formatDate(entitlement.trialEndsAt) : null;
   const billingInterval = entitlement?.billingInterval === "annual" ? "annual" : "monthly";
+  const recurringPriceLabel = entitlement?.recurringPrice
+    ? formatRecurringPrice(entitlement.recurringPrice)
+    : null;
+  const placement = entitlement?.runtimePlacement ?? null;
 
   return (
     <div className="space-y-3">
@@ -192,7 +213,9 @@ function ActiveBillingPanel({
             </h3>
             <p className="mt-1 text-sm leading-6 text-forest/65">
               {isTrialing && trialEndLabel
-                ? `Your first ${billingInterval} charge is on ${trialEndLabel}.`
+                ? recurringPriceLabel
+                  ? `Your ${recurringPriceLabel} subscription starts on ${trialEndLabel}.`
+                  : `Your first ${billingInterval} charge is on ${trialEndLabel}.`
                 : `${status}. Your Matrix computers stay available while billing is active${graceLabel ? ` and through the grace period ending ${graceLabel}` : ""}.`}
             </p>
             {isTrialing && trialEndLabel && (
@@ -209,10 +232,14 @@ function ActiveBillingPanel({
           <BillingMetric label="Computers" value={`${totalComputers}`} detail={`${includedComputers} included${addonComputers ? `, ${addonComputers} add-on` : ""}`} />
           <BillingMetric
             label="Billing"
-            value={billingInterval === "annual" ? "Annual" : "Monthly"}
+            value={recurringPriceLabel ?? (billingInterval === "annual" ? "Annual" : "Monthly")}
             detail="Managed subscription"
           />
-          <BillingMetric label="Add-ons" value={addonComputers ? `${addonComputers} active` : "None"} detail="Extra machines and storage appear here" />
+          <BillingMetric
+            label="Location"
+            value={placement?.label ?? "Hosted region"}
+            detail={placement?.countryLabel ?? "Managed location"}
+          />
         </div>
       </section>
 
@@ -843,18 +870,42 @@ function BillingPanelInner({
   );
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by a useEffect dependency array below (the ref-sync effect keyed on telemetryProperties); removing useMemo would re-run that effect on every render.
   const telemetryProperties = useMemo<BillingTelemetryProperties>(
-    () => ({
-      mode,
-      billing_state: active === null ? "checking" : active ? "active" : "inactive",
-      selected_profile_slug: selectedProfile.featureSlug,
-      selected_billing_interval: billingInterval,
-      selected_monthly_price_usd: selectedProfile.monthlyPriceUsd ?? undefined,
-      selected_annual_price_usd: selectedProfile.annualPriceUsd ?? undefined,
-      selected_price_usd: profilePrice(selectedProfile, billingInterval) || undefined,
-      selected_region_slug: selectedRegion.featureSlug,
-      selected_region_zone: selectedRegion.networkZone,
-    }),
-    [active, billingInterval, mode, selectedProfile, selectedRegion],
+    () => {
+      const billingState = active === null ? "checking" : active ? "active" : "inactive";
+      if (active === true && entitlement) {
+        const recurringPrice = entitlement.recurringPrice;
+        const placement = entitlement.runtimePlacement;
+        return {
+          mode,
+          billing_state: billingState,
+          plan_slug: entitlement.planSlug,
+          billing_interval: recurringPrice?.interval ?? entitlement.billingInterval ?? undefined,
+          recurring_unit_amount_minor: recurringPrice?.unitAmountMinor,
+          recurring_total_amount_minor: recurringPrice
+            ? recurringPrice.unitAmountMinor * recurringPrice.quantity
+            : undefined,
+          currency: recurringPrice?.currency,
+          price_interval_count: recurringPrice?.intervalCount,
+          price_quantity: recurringPrice?.quantity,
+          region_slug: placement?.regionSlug,
+          location_label: placement?.label,
+          country: placement?.countryLabel,
+          network_zone: placement?.networkZone,
+        };
+      }
+      return {
+        mode,
+        billing_state: billingState,
+        selected_profile_slug: selectedProfile.featureSlug,
+        selected_billing_interval: billingInterval,
+        selected_monthly_price_usd: selectedProfile.monthlyPriceUsd ?? undefined,
+        selected_annual_price_usd: selectedProfile.annualPriceUsd ?? undefined,
+        selected_price_usd: profilePrice(selectedProfile, billingInterval) || undefined,
+        selected_region_slug: selectedRegion.featureSlug,
+        selected_region_zone: selectedRegion.networkZone,
+      };
+    },
+    [active, billingInterval, entitlement, mode, selectedProfile, selectedRegion],
   );
   const initialViewTracked = useRef(false);
   const telemetryPropertiesRef = useRef(telemetryProperties);

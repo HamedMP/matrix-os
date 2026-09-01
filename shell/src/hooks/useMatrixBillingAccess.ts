@@ -68,11 +68,26 @@ export function useMatrixBillingAccess(): BillingAccessState {
         maxRuntimeSlots: 1,
         includedRuntimeSlots: 1,
         addonRuntimeSlots: 0,
-        defaultServerType: "cpx32",
-        allowedServerTypes: ["cpx22", "cpx32"],
-        stripeSubscriptionId: "sub_legacy_trial",
-        stripePriceId: "price_legacy_builder_monthly",
+        allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+        allowedSelections: [
+          { planSlug: "matrix_starter", regionSlug: "region_ash" },
+          { planSlug: "matrix_builder", regionSlug: "region_ash" },
+        ],
+        portalAvailable: true,
         billingInterval: "monthly",
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: "usd",
+          interval: "monthly",
+          intervalCount: 1,
+          quantity: 1,
+        },
+        runtimePlacement: {
+          regionSlug: "region_ash",
+          label: "Ashburn, Virginia",
+          countryLabel: "United States",
+          networkZone: "us-east",
+        },
         gracePeriodEndsAt: null,
         trialStartedAt: "2026-08-29T00:00:00.000Z",
         trialEndsAt: "2026-09-01T00:00:00.000Z",
@@ -111,6 +126,19 @@ export function useMatrixBillingAccess(): BillingAccessState {
         ],
         portalAvailable: true,
         billingInterval: "monthly",
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: "usd",
+          interval: "monthly",
+          intervalCount: 1,
+          quantity: 1,
+        },
+        runtimePlacement: {
+          regionSlug: "region_ash",
+          label: "Ashburn, Virginia",
+          countryLabel: "United States",
+          networkZone: "us-east",
+        },
         gracePeriodEndsAt: null,
         trialStartedAt: null,
         trialEndsAt: null,
@@ -148,7 +176,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
   const [remoteChecked, setRemoteChecked] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setRemoteState/setRemoteChecked pairs live in mutually-exclusive branches (auth-gate, missing-userId, cache-hit, async fetch then/catch) representing a single load's loading -> result transition; they are not a synchronous render cascade and combining them across branches would obscure the distinct cases
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- this Clerk-dependent status hook is the billing cache/retry coordinator: requests are bounded by AbortSignal.timeout, stale results are gated by `disposed`, retry timers are cleared in cleanup, and no shell-wide query dependency exists. The state pairs are mutually-exclusive loading/result transitions, not a synchronous render cascade.
   useEffect(() => {
     if (!isLoaded || legacyActive) {
       // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async billing-status load hook: it reads Clerk auth + a module-level cache and otherwise fetches /billing/status, setting remoteState/remoteChecked from the (async) result; the value cannot be derived in render
