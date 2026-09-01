@@ -339,7 +339,8 @@ describe("CanonicalChatWorkspace", () => {
     expect(starters?.className).toContain("grid-cols-1");
     expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toContain("min-h-20");
     expect(starterScroll?.className).toContain("overflow-y-auto");
-    expect(starterScroll?.className).toContain("items-start");
+    expect(starterScroll?.className).toContain("items-center");
+    expect(starterScroll?.className).not.toContain("items-start");
     expect(starterScroll?.style.scrollbarGutter).toBe("stable");
     expect(newChatContent?.className).toContain("overflow-hidden");
     expect(composer?.getAttribute("data-layout")).toBe("narrow");
