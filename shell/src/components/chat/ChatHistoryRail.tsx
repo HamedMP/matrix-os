@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   MessageSquareIcon,
   PlusIcon,
@@ -80,7 +81,8 @@ export function ChatHistoryRail({
       <aside
         aria-label="Global chats"
         data-chat-rail={mobile ? "mobile" : "desktop"}
-        className={`z-20 flex min-h-0 shrink-0 flex-col border-r border-border/60 bg-card transition-[width,transform] duration-200 ease-out ${
+        style={{ zIndex: SHELL_Z_INDEX.appSurfaceRail }}
+        className={`flex min-h-0 shrink-0 flex-col border-r border-border/60 bg-card transition-[width,transform] duration-200 ease-out ${
           open
             ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[280px] min-w-[200px] max-w-[280px]"
             : "w-0 overflow-hidden"
@@ -163,7 +165,7 @@ export function ChatHistoryRail({
                     <button
                       type="button"
                       aria-label={`Delete ${title}`}
-                      className="absolute right-3 top-1/2 z-10 flex size-7 -translate-y-1/2 items-center justify-center rounded-md bg-card text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/chat:opacity-100"
+                      className="absolute right-3 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md bg-card text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/chat:opacity-100"
                       onClick={(event) => {
                         event.stopPropagation();
                         setDeleteError(null);

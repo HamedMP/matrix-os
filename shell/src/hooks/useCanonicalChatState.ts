@@ -321,6 +321,7 @@ export function useCanonicalChatState(): ChatState {
     messages,
     sessionId: activeChatId,
     busy: submitting || detailLoading || Boolean(detail?.record.activeRun),
+    canAbort: Boolean(detail?.record.activeRun),
     currentTool: null,
     connected,
     queue: [],

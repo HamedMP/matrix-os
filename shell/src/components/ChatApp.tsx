@@ -99,6 +99,7 @@ interface ChatAppProps {
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
+  canAbort?: boolean;
   connected: boolean;
   conversations: ChatConversationMeta[];
   onNewChat: () => void;
@@ -137,6 +138,7 @@ export function ChatApp({
   messages,
   sessionId,
   busy,
+  canAbort = false,
   connected,
   conversations,
   onNewChat,
@@ -396,6 +398,7 @@ export function ChatApp({
               <ChatInput
                 connected={connected && providerState.selected !== null}
                 busy={busy}
+                canAbort={canAbort}
                 onSubmit={submitWithHermesSetup}
                 onAbort={onAbort}
                 draftRequest={composerDraftRequest}
@@ -457,6 +460,7 @@ function EmptyState({
         <ChatInput
           connected={connected && providerReady}
           busy={false}
+          canAbort={false}
           onSubmit={onSubmit}
           autoFocus={!mobile}
           draftRequest={composerDraftRequest ?? starterDraft}
@@ -521,6 +525,7 @@ function AssistantBubble({
 function ChatInput({
   connected,
   busy,
+  canAbort,
   onSubmit,
   onAbort,
   autoFocus,
@@ -531,6 +536,7 @@ function ChatInput({
 }: {
   connected: boolean;
   busy: boolean;
+  canAbort: boolean;
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
   onAbort?: () => void;
   autoFocus?: boolean;
@@ -568,6 +574,7 @@ function ChatInput({
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    if (busy) return;
     const text = input.trim();
     if (!text && attachments.length === 0) return;
 
@@ -635,7 +642,7 @@ function ChatInput({
               )}
             </Button>
           )}
-          {busy && onAbort ? (
+          {busy && canAbort && onAbort ? (
             <Button
               type="button"
               aria-label="Stop response"
@@ -651,7 +658,7 @@ function ChatInput({
               aria-label="Send"
               size="icon"
               className="size-8 rounded-full"
-              disabled={!connected || (!input.trim() && attachments.length === 0)}
+              disabled={!connected || (!input.trim() && attachments.length === 0) || busy}
               onClick={() => handleSubmit()}
             >
               <SendIcon className="size-4" />

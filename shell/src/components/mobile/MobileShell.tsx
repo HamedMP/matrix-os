@@ -609,6 +609,7 @@ function MobileAppFrame({
         messages={chat.messages}
         sessionId={chat.sessionId}
         busy={chat.busy}
+        canAbort={chat.canAbort}
         connected={chat.connected}
         conversations={chat.conversations}
         onNewChat={() => void chat.newChat()}

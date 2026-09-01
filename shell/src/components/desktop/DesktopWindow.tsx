@@ -210,6 +210,7 @@ export function DesktopWindow({
                 messages={chat.messages}
                 sessionId={chat.sessionId}
                 busy={chat.busy}
+                canAbort={chat.canAbort}
                 connected={chat.connected}
                 conversations={chat.conversations}
                 onNewChat={chat.newChat}

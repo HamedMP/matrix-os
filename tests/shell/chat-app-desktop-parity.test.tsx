@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 
 const catalog = CanonicalProviderCatalogSchema.parse({
   revision: "catalog_web_parity",
@@ -81,6 +82,7 @@ describe("Web Chat Electron Desktop parity", () => {
     expect(await screen.findByRole("heading", { name: "Chat" })).toBeVisible();
     const rail = screen.getByRole("complementary", { name: "Global chats" });
     expect(rail).toHaveAttribute("data-chat-rail", "desktop");
+    expect(rail.style.zIndex).toBe(String(SHELL_Z_INDEX.appSurfaceRail));
     expect(screen.getByRole("button", { name: "Launch plan conversation" })).toHaveTextContent("Launch plan");
     expect(screen.getByRole("button", { name: "Customer notes conversation" })).toHaveTextContent("Customer notes");
     expect(screen.getAllByText(/Just now|m ago|h ago/).length).toBeGreaterThan(0);
@@ -106,11 +108,24 @@ describe("Web Chat Electron Desktop parity", () => {
     const onAbort = vi.fn();
     renderChat({
       busy: true,
+      canAbort: true,
       onAbort,
       messages: [{ id: "msg_user", role: "user", content: "Keep working", timestamp: Date.now() }],
     });
 
     fireEvent.click(await screen.findByRole("button", { name: "Stop response" }));
     expect(onAbort).toHaveBeenCalledOnce();
+  });
+
+  it("does not expose Stop while busy work has no cancellable active run", async () => {
+    renderChat({
+      busy: true,
+      canAbort: false,
+      onAbort: vi.fn(),
+      messages: [{ id: "msg_user", role: "user", content: "Uploading", timestamp: Date.now() }],
+    });
+
+    expect(await screen.findByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Stop response" })).toBeNull();
   });
 });
