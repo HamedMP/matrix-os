@@ -169,6 +169,12 @@ describe("shell PostHog same-origin proxy", () => {
     const supportOptions = supportPosthogMock.init.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(supportOptions).not.toHaveProperty("cookieless_mode");
     expect(supportPosthogMock.identify).toHaveBeenCalledWith("user_123", { name: "Neo" });
+    identifyPostHogUser("user_123", { name: "Thomas" }, {
+      token: "phc_test",
+      apiHost: "/relay",
+      uiHost: "https://eu.posthog.com",
+    });
+    expect(supportPosthogMock.identify).toHaveBeenLastCalledWith("user_123", { name: "Thomas" });
     expect(supportPosthogMock.conversations.show).toHaveBeenCalledOnce();
     expect(launcherClick).toHaveBeenCalledOnce();
     expect(

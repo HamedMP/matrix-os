@@ -187,8 +187,12 @@ export function identifyPostHogUser(
     ensurePostHogInitialized(currentConfig);
     const sanitized = sanitizeProperties(properties);
     posthog.identify(distinctId, sanitized);
-    if (supportIdentity?.distinctId !== distinctId && supportPostHog) {
-      resetShellSupportIdentity();
+    if (supportPostHog) {
+      if (supportIdentity?.distinctId !== distinctId) {
+        resetShellSupportIdentity();
+      } else {
+        supportPostHog.identify(distinctId, sanitized);
+      }
     }
     supportIdentity = { distinctId, properties: sanitized };
   } catch (err: unknown) {
