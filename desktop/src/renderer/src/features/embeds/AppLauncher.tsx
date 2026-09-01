@@ -7,6 +7,7 @@ import { useTabs } from "../../stores/tabs";
 import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
 import {
   OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_CREATE_APP_APPEARANCE,
   OS_VIEW_LABELS,
   otherOsViewMode,
   type OsViewMode,
@@ -268,7 +269,13 @@ export default function AppLauncher({
                   onClick={() => open(entry)}
                 >
                   {entry.type === "create" ? (
-                    <span className="flex size-16 items-center justify-center rounded-[18px] bg-[var(--accent)] text-white shadow-[var(--shadow-1)]">
+                    <span
+                      className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
+                      style={{
+                        background: OS_VIEW_CREATE_APP_APPEARANCE.background,
+                        color: OS_VIEW_CREATE_APP_APPEARANCE.foreground,
+                      }}
+                    >
                       <Plus size={40} aria-hidden="true" />
                     </span>
                   ) : entry.type === "os-view" ? (

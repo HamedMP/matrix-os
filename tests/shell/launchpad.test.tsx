@@ -201,6 +201,45 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(screen.queryByRole("button", { name: /go to page/i })).toBeNull();
   });
 
+  it("matches Electron Desktop's fixed launcher icon treatment", async () => {
+    setDesign("macos-glass");
+    const apps: TestApp[] = [
+      { name: "Chat", path: "__chat__" },
+      { name: "Terminal", path: "__terminal__" },
+      { name: "Files", path: "__file-browser__" },
+      { name: "Editor", path: "__editor__" },
+      { name: "Settings", path: "__settings__" },
+      { name: "Plugins", path: "__plugins__" },
+      { name: "Browser", path: "apps/browser/dist/index.html" },
+    ];
+
+    await renderLauncher({ apps });
+
+    const expectedBackgrounds = new Map([
+      ["Chat", "var(--surface-error-emphasis, #BA5236)"],
+      ["Terminal", "var(--surface-warning-emphasis, #E0AA52)"],
+      ["Files", "var(--surface-brand-emphasis, #748E59)"],
+      ["Editor", "rgb(77, 127, 168)"],
+      ["Settings", "var(--surface-neutral-emphasis, #6B7280)"],
+      ["Plugins", "rgb(124, 109, 180)"],
+      ["Browser", "var(--surface-info-emphasis, #3B85BA)"],
+    ]);
+
+    for (const [name, background] of expectedBackgrounds) {
+      const tile = screen.getByRole("button", { name });
+      const icon = tile.querySelector<HTMLElement>("[data-launchpad-built-in-icon]");
+      expect(icon).toBeTruthy();
+      expect(icon?.style.background).toBe(background);
+      expect(icon?.querySelector("svg")).toBeTruthy();
+      expect(icon?.textContent).toBe("");
+    }
+
+    const createIcon = screen.getByRole("button", { name: "Create app" })
+      .querySelector<HTMLElement>("[data-launchpad-create-icon]");
+    expect(createIcon?.style.background).toBe("var(--accent)");
+    expect(createIcon?.style.color).toBe("white");
+  });
+
   it("launches Create app through the dedicated first tile", async () => {
     setDesign("macos-glass");
     const { handlers, container } = await renderLauncher();

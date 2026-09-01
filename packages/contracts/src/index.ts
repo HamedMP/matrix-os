@@ -1138,10 +1138,13 @@ export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
 
 export {
   OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_CREATE_APP_APPEARANCE,
+  OS_VIEW_FIXED_APP_APPEARANCES,
   OS_VIEW_LABELS,
   OS_VIEW_MODES,
   isOsViewDestinationPath,
   normalizeOsViewMode,
+  osViewFixedAppAppearanceForPath,
   otherOsViewMode,
   createDefaultOsViewDocument,
   mergeOsViewStatePatch,
@@ -1161,6 +1164,8 @@ export type {
   OsViewCanvasTransform,
   OsViewDesktopIcon,
   OsViewDocument,
+  OsViewFixedAppIcon,
+  OsViewFixedAppId,
   OsViewMode,
   OsViewStatePatch,
   OsViewStateResponse,

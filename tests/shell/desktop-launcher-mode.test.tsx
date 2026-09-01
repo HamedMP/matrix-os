@@ -73,7 +73,12 @@ vi.mock("../../shell/src/components/canvas/CanvasRenderer.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/canvas/CanvasToolbar.js", () => ({
-  CanvasToolbar: () => null,
+  CanvasToolbar: () => (
+    <>
+      <button type="button" data-testid="canvas-zoom-control">Zoom</button>
+      <input data-testid="canvas-zoom-slider" aria-label="Canvas zoom" type="range" />
+    </>
+  ),
 }));
 
 vi.mock("../../shell/src/components/VocalPanel.js", () => ({
@@ -213,6 +218,18 @@ describe("Desktop launcher dock button by mode", () => {
     renderDesktop();
 
     expect(await screen.findByTestId("dock-tasks")).toBeTruthy();
+  });
+
+  it("contains Canvas controls in one non-shrinking toolbar row", async () => {
+    resetShellMode("canvas", true);
+
+    renderDesktop();
+
+    const toolbar = await screen.findByTestId("canvas-toolbar");
+    expect(toolbar.className).toContain("shrink-0");
+    expect(toolbar.className).toContain("items-center");
+    expect(screen.getByTestId("canvas-zoom-control").parentElement).toBe(toolbar);
+    expect(screen.getByTestId("canvas-zoom-slider").parentElement).toBe(toolbar);
   });
 
   it("keeps the launcher visible in developer mode", async () => {

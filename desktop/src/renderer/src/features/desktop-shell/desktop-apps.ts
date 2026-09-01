@@ -12,7 +12,10 @@ import {
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
+import { OS_VIEW_FIXED_APP_APPEARANCES } from "@matrix-os/contracts";
 import vscodeIconUrl from "../../../../../../shell/public/vscode.png";
+
+const APPEARANCE = OS_VIEW_FIXED_APP_APPEARANCES;
 
 export type DesktopAppId =
   | "work"
@@ -46,8 +49,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "work",
     icon: MessageSquare,
     name: "Chat",
-    color: "var(--surface-error-emphasis, #BA5236)",
-    iconColor: "white",
+    color: APPEARANCE.chat.background,
+    iconColor: APPEARANCE.chat.foreground,
   },
   {
     id: "terminal",
@@ -55,8 +58,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "terminals",
     icon: SquareTerminal,
     name: "Terminal",
-    color: "var(--surface-warning-emphasis, #E0AA52)",
-    iconColor: "white",
+    color: APPEARANCE.terminal.background,
+    iconColor: APPEARANCE.terminal.foreground,
   },
   {
     id: "files",
@@ -64,8 +67,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "files",
     icon: FolderTree,
     name: "Files",
-    color: "var(--surface-brand-emphasis, #748E59)",
-    iconColor: "white",
+    color: APPEARANCE.files.background,
+    iconColor: APPEARANCE.files.foreground,
   },
   {
     id: "editor",
@@ -73,8 +76,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "editor",
     icon: FilePenLine,
     name: "Editor",
-    color: "#4D7FA8",
-    iconColor: "white",
+    color: APPEARANCE.editor.background,
+    iconColor: APPEARANCE.editor.foreground,
   },
   {
     id: "vscode",
@@ -83,8 +86,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     icon: Code2,
     iconUrl: vscodeIconUrl,
     name: "VS Code",
-    color: "#FFFEFC",
-    iconColor: "#007ACC",
+    color: APPEARANCE.vscode.background,
+    iconColor: APPEARANCE.vscode.foreground,
   },
   {
     id: "settings",
@@ -92,8 +95,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "settings",
     icon: Settings,
     name: "Settings",
-    color: "var(--surface-neutral-emphasis, #6B7280)",
-    iconColor: "white",
+    color: APPEARANCE.settings.background,
+    iconColor: APPEARANCE.settings.foreground,
   },
   {
     id: "plugins",
@@ -101,8 +104,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "settings",
     icon: Blocks,
     name: "Plugins",
-    color: "#7C6DB4",
-    iconColor: "white",
+    color: APPEARANCE.plugins.background,
+    iconColor: APPEARANCE.plugins.foreground,
     settingsSection: "services",
   },
   {
@@ -111,8 +114,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "browser",
     icon: Globe2,
     name: "Browser",
-    color: "var(--surface-info-emphasis, #3B85BA)",
-    iconColor: "white",
+    color: APPEARANCE.browser.background,
+    iconColor: APPEARANCE.browser.foreground,
   },
   {
     id: "notes",
@@ -120,8 +123,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "notes",
     icon: Notebook,
     name: "Notes",
-    color: "var(--surface-purple-emphasis)",
-    iconColor: "white",
+    color: APPEARANCE.notes.background,
+    iconColor: APPEARANCE.notes.foreground,
   },
   {
     id: "whiteboard",
@@ -129,8 +132,8 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     kind: "app",
     icon: BrushIcon,
     name: "Whiteboard",
-    color: "#D46A92",
-    iconColor: "white",
+    color: APPEARANCE.whiteboard.background,
+    iconColor: APPEARANCE.whiteboard.foreground,
     slug: "whiteboard",
   },
 ];

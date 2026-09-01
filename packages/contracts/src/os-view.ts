@@ -13,6 +13,73 @@ export const OS_VIEW_DESTINATION_PATHS: Readonly<Record<OsViewMode, string>> = {
   canvas: "__os-view-canvas__",
 };
 
+export const OS_VIEW_FIXED_APP_APPEARANCES = {
+  chat: {
+    icon: "message-square",
+    background: "var(--surface-error-emphasis, #BA5236)",
+    foreground: "white",
+  },
+  terminal: {
+    icon: "square-terminal",
+    background: "var(--surface-warning-emphasis, #E0AA52)",
+    foreground: "white",
+  },
+  files: {
+    icon: "folder-tree",
+    background: "var(--surface-brand-emphasis, #748E59)",
+    foreground: "white",
+  },
+  editor: { icon: "file-pen", background: "#4D7FA8", foreground: "white" },
+  vscode: { icon: "code", background: "#FFFEFC", foreground: "#007ACC" },
+  settings: {
+    icon: "settings",
+    background: "var(--surface-neutral-emphasis, #6B7280)",
+    foreground: "white",
+  },
+  plugins: { icon: "blocks", background: "#7C6DB4", foreground: "white" },
+  browser: {
+    icon: "globe",
+    background: "var(--surface-info-emphasis, #3B85BA)",
+    foreground: "white",
+  },
+  notes: {
+    icon: "notebook",
+    background: "var(--surface-purple-emphasis)",
+    foreground: "white",
+  },
+  whiteboard: { icon: "brush", background: "#D46A92", foreground: "white" },
+} as const;
+
+export const OS_VIEW_CREATE_APP_APPEARANCE = {
+  background: "var(--accent)",
+  foreground: "white",
+} as const;
+
+export type OsViewFixedAppId = keyof typeof OS_VIEW_FIXED_APP_APPEARANCES;
+export type OsViewFixedAppIcon = (typeof OS_VIEW_FIXED_APP_APPEARANCES)[OsViewFixedAppId]["icon"];
+
+const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> = {
+  __chat__: "chat",
+  __terminal__: "terminal",
+  "__file-browser__": "files",
+  __editor__: "editor",
+  __vscode__: "vscode",
+  __settings__: "settings",
+  __plugins__: "plugins",
+  __browser__: "browser",
+  "apps/browser/index.html": "browser",
+  "apps/browser/dist/index.html": "browser",
+  "apps/notes/index.html": "notes",
+  "apps/notes/dist/index.html": "notes",
+  "apps/whiteboard/index.html": "whiteboard",
+  "apps/whiteboard/dist/index.html": "whiteboard",
+};
+
+export function osViewFixedAppAppearanceForPath(path: string) {
+  const id = OS_VIEW_FIXED_APP_ID_BY_PATH[path];
+  return id ? OS_VIEW_FIXED_APP_APPEARANCES[id] : undefined;
+}
+
 export function normalizeOsViewMode(value: unknown): OsViewMode {
   return value === "canvas" ? "canvas" : "desktop";
 }

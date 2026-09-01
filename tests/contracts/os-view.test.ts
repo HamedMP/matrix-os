@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   PatchOsViewStateRequestSchema,
   createDefaultOsViewDocument,
+  OS_VIEW_CREATE_APP_APPEARANCE,
   OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_FIXED_APP_APPEARANCES,
   OS_VIEW_LABELS,
   isOsViewDestinationPath,
   mergeOsViewStatePatch,
   normalizeOsViewMode,
+  osViewFixedAppAppearanceForPath,
   otherOsViewMode,
   rebaseOsViewStatePatch,
 } from "@matrix-os/contracts";
@@ -28,6 +31,19 @@ describe("shared OS-view contract", () => {
     expect(normalizeOsViewMode("removed-mode")).toBe("desktop");
     expect(otherOsViewMode("desktop")).toBe("canvas");
     expect(otherOsViewMode("canvas")).toBe("desktop");
+  });
+
+  it("shares fixed launcher appearance across Web and Electron paths", () => {
+    expect(OS_VIEW_CREATE_APP_APPEARANCE).toEqual({
+      background: "var(--accent)",
+      foreground: "white",
+    });
+    expect(osViewFixedAppAppearanceForPath("__chat__")).toBe(OS_VIEW_FIXED_APP_APPEARANCES.chat);
+    expect(osViewFixedAppAppearanceForPath("apps/browser/dist/index.html"))
+      .toBe(OS_VIEW_FIXED_APP_APPEARANCES.browser);
+    expect(osViewFixedAppAppearanceForPath("apps/notes/index.html"))
+      .toBe(OS_VIEW_FIXED_APP_APPEARANCES.notes);
+    expect(osViewFixedAppAppearanceForPath("apps/custom/index.html")).toBeUndefined();
   });
 
   it("keeps Desktop and Canvas presentation geometry in separate namespaces", () => {

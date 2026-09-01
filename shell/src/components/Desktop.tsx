@@ -39,6 +39,7 @@ import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   buildWebDesktopLauncherApps,
   buildWebDesktopIconApps,
@@ -1055,9 +1056,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         >
           {canvasToolbarChild}
         </WindowsTaskbar>
-      ) : canvasToolbarChild)}
+      ) : canvasToolbarChild ? (
+        <header
+          data-testid="canvas-toolbar"
+          className="relative hidden h-[38px] shrink-0 items-center justify-center gap-0.5 border-b border-white/30 bg-card/70 px-3 text-xs leading-none text-foreground/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] backdrop-blur-xl md:flex"
+          style={{ zIndex: SHELL_Z_INDEX.menuBar }}
+        >
+          {canvasToolbarChild}
+        </header>
+      ) : null)}
       <OsSessionHost />
-      <div className="relative flex-1 flex flex-col md:flex-row">
+      <div className="relative min-h-0 flex-1 flex flex-col md:flex-row">
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
         {desktopMode !== "desktop" && !isWindowsDesign && <div
           className={[
