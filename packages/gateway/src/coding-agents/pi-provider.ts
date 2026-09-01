@@ -1105,9 +1105,15 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         };
       }
 
-      const runningEvent = statusEvent({ threadId: thread.id, status: "running", now, nextEventId });
-      if (publishEvents) await publishEvents({ events: [runningEvent] });
       const sessionId = randomUUID();
+      const conversationId = packResumeState(sessionId, cwd);
+      const runningEvent = statusEvent({ threadId: thread.id, status: "running", now, nextEventId });
+      if (publishEvents) {
+        await publishEvents({
+          events: [runningEvent],
+          ...(conversationId ? { resumeState: { conversationId } } : {}),
+        });
+      }
       let prompt: string;
       try {
         prompt = piPromptWithReferences(request.prompt, request.attachments, {
@@ -1130,14 +1136,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         nextEventId,
         publishEvents,
       });
-      const conversationId = packResumeState(run.sessionId, cwd);
+      const finalConversationId = packResumeState(run.sessionId, cwd);
       return {
         events: [
           ...(publishEvents ? [] : [runningEvent]),
           ...run.events,
           ...terminalEvents(thread.id, run.outcome, now, nextEventId),
         ],
-        ...(conversationId ? { resumeState: { conversationId } } : {}),
+        ...(finalConversationId ? { resumeState: { conversationId: finalConversationId } } : {}),
       };
     },
 

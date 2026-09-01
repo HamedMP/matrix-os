@@ -415,7 +415,9 @@ function systemSetupActions(
     id: `${kind}_connect`,
     kind: "foreground_terminal",
     label: `Connect ${displayName}`,
-    command: visibleSetupCommand(kind),
+    command: visibleSetupCommand(kind === "openclaw"
+      ? '[ ! -r "$HOME/system/agent-runtime/openclaw.env" ] || { set -a; . "$HOME/system/agent-runtime/openclaw.env"; set +a; }; openclaw'
+      : kind),
   }];
 }
 

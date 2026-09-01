@@ -34,6 +34,7 @@ export const CodingAgentProviderEventBatchSchema = z.object({
       }
     }),
   providerThreadId: CodingAgentProviderResumeStateSchema.shape.providerThreadId,
+  resumeState: CodingAgentProviderResumeStateSchema.optional(),
 }).strict();
 
 const CodingAgentProviderRunResultSchema = z.object({

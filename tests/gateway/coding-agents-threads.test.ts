@@ -81,6 +81,69 @@ function workspaceSessionIdForThread(threadId: string): string {
 }
 
 describe("coding agent thread lifecycle", () => {
+  it("keeps an early background Provider resume state after cancellation", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-background-resume-state-"));
+    const resumeTurn = vi.fn(async ({ resumeState }) => ({
+      events: [],
+      outcome: "completed" as const,
+      resumeState,
+    }));
+    const resumeStatePublished = Promise.withResolvers<void>();
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "pi",
+      initialRunExecution: "background",
+      async startThread({ signal, publishEvents }) {
+        await publishEvents?.({
+          events: [],
+          resumeState: { conversationId: "session_before_cancel" },
+        });
+        resumeStatePublished.resolve();
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) resolve();
+          else signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return { events: [], outcome: "aborted" as const };
+      },
+      resumeTurn,
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      providers: [provider],
+      relationValidator: {
+        validateCreate: async () => undefined,
+        validateThread: async () => undefined,
+      },
+      turnDispatchTimeoutMs: 1_000,
+    });
+
+    try {
+      const created = await threads.createThread(ownerPrincipal, {
+        ...createBody,
+        providerId: "pi",
+        clientRequestId: "req_background_resume_1",
+      });
+      await resumeStatePublished.promise;
+      await threads.abortThread(
+        ownerPrincipal,
+        created.snapshot.thread.id,
+        "req_abort_background_resume_1",
+      );
+
+      await expect(threads.acceptTurn(ownerPrincipal, created.snapshot.thread.id, {
+        message: "What did I ask before cancellation?",
+        clientRequestId: "req_follow_up_background_resume_1",
+      })).resolves.toMatchObject({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(resumeTurn).toHaveBeenCalledWith(expect.objectContaining({
+          resumeState: { conversationId: "session_before_cancel" },
+        }));
+      });
+    } finally {
+      await threads.shutdownTurns();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("persists and publishes background provider events before the run finishes", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-streaming-initial-run-"));
     let finishRun!: () => void;

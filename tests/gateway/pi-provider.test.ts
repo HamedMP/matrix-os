@@ -247,6 +247,7 @@ describe("pi provider adapter — spawn contract", () => {
     const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
     const provider = providerFor(fake.spawnFn);
     const published: AgentThreadEvent[] = [];
+    const resumeStates: unknown[] = [];
 
     const result = await provider.startThread({
       principal: ownerPrincipal,
@@ -254,6 +255,7 @@ describe("pi provider adapter — spawn contract", () => {
       request: createRequest("Say hi"),
       publishEvents: async (batch) => {
         published.push(...batch.events);
+        if (batch.resumeState) resumeStates.push(batch.resumeState);
       },
       now: () => baseNow,
       nextEventId: nextEventIdFactory(),
@@ -264,6 +266,13 @@ describe("pi provider adapter — spawn contract", () => {
       expect.objectContaining({ type: "assistant.text.delta", delta: "hello" }),
       expect.objectContaining({ type: "assistant.text.completed" }),
     ]);
+    const sessionFlagIndex = fake.calls[0]!.args.indexOf("--session-id");
+    expect(resumeStates).toEqual([{
+      conversationId: JSON.stringify({
+        s: fake.calls[0]!.args[sessionFlagIndex + 1],
+        c: "/work/repo",
+      }),
+    }]);
     expect(result.events).toEqual([
       expect.objectContaining({ type: "thread.status", status: "completed" }),
       expect.objectContaining({ type: "thread.completed", outcome: "completed" }),

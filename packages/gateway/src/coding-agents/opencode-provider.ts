@@ -27,6 +27,7 @@ import {
 } from "./pi-process-environment.js";
 import type {
   CodingAgentProviderAdapter,
+  CodingAgentProviderEventBatch,
   CodingAgentProviderEventPublisher,
 } from "./provider-adapter.js";
 import { hasNativeHarnessAuth } from "./native-harness-auth.js";
@@ -442,20 +443,26 @@ export function createOpenCodeCodingAgentProvider(
       let recordCount = 0;
       let publishError: unknown;
       let publishQueue = Promise.resolve();
+      let publishedSessionId = input.sessionId;
       const events: AgentThreadEvent[] = [];
       const seenParts = new Set<string>();
 
-      function queueEvents(pending: AgentThreadEvent[]): void {
-        if (!input.publishEvents || pending.length === 0) return;
+      function queueBatch(batch: CodingAgentProviderEventBatch): void {
+        if (!input.publishEvents) return;
         publishQueue = publishQueue.then(async () => {
           if (publishError) return;
           try {
-            await input.publishEvents!({ events: pending });
+            await input.publishEvents!(batch);
           } catch (error: unknown) {
             publishError = error;
             logCodingAgentWarning("OpenCode event publish failed", error);
           }
         });
+      }
+
+      function queueEvents(pending: AgentThreadEvent[]): void {
+        if (pending.length === 0) return;
+        queueBatch({ events: pending });
       }
 
       function drainEvents(): void {
@@ -536,6 +543,15 @@ export function createOpenCodeCodingAgentProvider(
           executionRoot: input.cwd,
         });
         sessionId = result.sessionId ?? sessionId;
+        if (sessionId && sessionId !== publishedSessionId) {
+          publishedSessionId = sessionId;
+          queueBatch({
+            events: [],
+            resumeState: {
+              conversationId: JSON.stringify(OpenCodeResumeStateSchema.parse({ s: sessionId, c: input.cwd })),
+            },
+          });
+        }
         failed ||= result.failed === true;
         drainEvents();
         if (result.limitExceeded) {

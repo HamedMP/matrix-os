@@ -899,6 +899,27 @@ export function createCodingAgentThreadStore(
       const events = parsed.events.filter((event) => !existingEventIds.has(event.eventId));
       let nextThread = thread;
       for (const event of events) nextThread = applyEvent(nextThread, event);
+      if (parsed.resumeState) {
+        nextThread = { ...nextThread, providerResumeState: parsed.resumeState };
+      }
+      if (parsed.providerThreadId) {
+        if (!nextThread.providerResumeState) {
+          throw new Error("Provider resume state is unavailable");
+        }
+        if (
+          nextThread.providerResumeState.providerThreadId
+          && nextThread.providerResumeState.providerThreadId !== parsed.providerThreadId
+        ) {
+          throw new Error("Provider conversation mismatch");
+        }
+        nextThread = {
+          ...nextThread,
+          providerResumeState: {
+            conversationId: nextThread.providerResumeState.conversationId,
+            providerThreadId: parsed.providerThreadId,
+          },
+        };
+      }
       return {
         state: {
           ...state,
@@ -1661,6 +1682,9 @@ export function createCodingAgentThreadStore(
     },
     async ingestProviderEvents(principal, threadId, batch) {
       const parsed = parseCodingAgentProviderEventBatch(batch, threadId);
+      if (parsed.resumeState) {
+        throw new Error("Provider resume state cannot be ingested through the public event route");
+      }
       const result = await mutate(async (state) => {
         const thread = state.threads.find((candidate) =>
           candidate.ownerId === principal.userId && candidate.id === threadId

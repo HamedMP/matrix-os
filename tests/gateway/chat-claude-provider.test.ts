@@ -792,6 +792,44 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(events).toEqual([{ type: "run.completed", outcome: "aborted" }]);
   });
 
+  it("keeps the native Claude session checkpoint when a running turn is cancelled", async () => {
+    const controller = new AbortController();
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const process = new EventEmitter() as EventEmitter & {
+      stdout: FakeStream;
+      stderr: FakeStream;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    process.stdout = stdout;
+    process.stderr = stderr;
+    process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
+    const spawnFn = vi.fn(() => process);
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const iterator = adapter.start({ ...baseInput, signal: controller.signal })[Symbol.asyncIterator]();
+    const stateEvent = iterator.next();
+    await vi.waitFor(() => expect(spawnFn).toHaveBeenCalledOnce());
+    stdout.emit("data", Buffer.from(`${JSON.stringify({
+      type: "system",
+      session_id: "claude_cancel_session",
+    })}\n`));
+
+    await expect(stateEvent).resolves.toEqual({
+      done: false,
+      value: {
+        type: "state.updated",
+        state: { sessionId: "claude_cancel_session" },
+      },
+    });
+    controller.abort();
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "run.completed", outcome: "aborted" },
+    });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+    expect(process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("trusts a successful result event even when Claude exits non-zero afterward", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({

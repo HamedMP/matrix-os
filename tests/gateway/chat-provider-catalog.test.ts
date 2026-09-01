@@ -666,6 +666,10 @@ describe("canonical Chat Provider catalog", () => {
           command: expect.stringContaining("openclaw"),
         }],
       });
+    const openClawConnect = catalog.instances.find((instance) => instance.id === "openclaw_default")
+      ?.setupActions.find((action) => action.id === "openclaw_connect");
+    expect(openClawConnect?.command).toContain("system/agent-runtime/openclaw.env");
+    expect(openClawConnect?.command).not.toMatch(/OPENCLAW_GATEWAY_TOKEN=[^;$'\" ]+/);
     expect(catalog.instances.filter((instance) =>
       ["claude_code", "opencode", "pi"].includes(instance.driverKind)
     )).toEqual(expect.arrayContaining([

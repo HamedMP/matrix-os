@@ -174,6 +174,7 @@ describe("OpenCode coding-agent provider", () => {
       line("text", { part: { id: "part_stream", type: "text", text: "Streaming", time: { end: 1 } } }),
     ]);
     const published: AgentThreadEvent[] = [];
+    const resumeStates: unknown[] = [];
 
     const result = await provider(fake.spawnFn).startThread({
       principal,
@@ -181,6 +182,7 @@ describe("OpenCode coding-agent provider", () => {
       request: request(),
       publishEvents: async (batch) => {
         published.push(...batch.events);
+        if (batch.resumeState) resumeStates.push(batch.resumeState);
       },
       now: () => now,
       nextEventId: ids(),
@@ -191,6 +193,9 @@ describe("OpenCode coding-agent provider", () => {
       expect.objectContaining({ type: "assistant.text.delta", delta: "Streaming" }),
       expect.objectContaining({ type: "assistant.text.completed" }),
     ]);
+    expect(resumeStates).toEqual([{
+      conversationId: expect.stringContaining(sessionId),
+    }]);
     expect(result.events).toEqual([
       expect.objectContaining({ type: "thread.status", status: "completed" }),
       expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
