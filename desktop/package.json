@@ -6,11 +6,11 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "pnpm --dir .. --filter '@matrix-os/brand' build && electron-vite dev",
+    "build": "pnpm --dir .. --filter '@matrix-os/brand' build && electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "package": "electron-vite build && electron-builder --mac --publish never"
+    "package": "pnpm run build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
