@@ -102,8 +102,12 @@ export function spawnIsolatedProviderProcess(
       try {
         process.kill(-child.pid, signal ?? "SIGTERM");
         return true;
-      } catch {
+      } catch (error: unknown) {
         // The wrapper may have already exited or changed process groups.
+        console.warn(
+          "[coding-agents] provider process group signal failed",
+          error instanceof Error ? error.name : "UnknownError",
+        );
       }
     }
     return directKill(signal);

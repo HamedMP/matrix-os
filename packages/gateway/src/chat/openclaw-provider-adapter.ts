@@ -215,8 +215,12 @@ export function createOpenClawChatProviderAdapter(
         runId: active.providerRunId,
         ...(agentId === undefined ? {} : { agentId }),
       }, AbortSignal.timeout(10_000), { timeoutMs: 10_000 });
-    } catch {
+    } catch (error: unknown) {
       // Cancellation is best effort. The active agent request remains bounded.
+      console.warn(
+        "[chat-openclaw] cancellation request failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
     }
   }
 
