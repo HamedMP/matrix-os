@@ -13,6 +13,7 @@ import {
 } from "@matrix-os/contracts";
 import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
+import { safeDisplayPath } from "../chat/safe-activity-projection.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import {
   addPortableProviderCredentials,
@@ -245,6 +246,8 @@ function truncateText(text: string, maxChars: number): { text: string; truncated
 interface PiRunCollectorOptions {
   threadId: string;
   scope: string;
+  homePath: string;
+  executionRoot: string;
   now: () => Date;
   nextEventId: () => string;
   maxEvents: number;
@@ -432,6 +435,16 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
         flushAssistantText();
         const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${++fallbackToolCounter}`);
         const toolName = safeToolName(event.toolName);
+        const normalizedToolName = toolName.toLowerCase();
+        const args = event.args && typeof event.args === "object" && !Array.isArray(event.args)
+          ? event.args as Record<string, unknown>
+          : {};
+        const readPath = normalizedToolName === "read"
+          ? safeDisplayPath(args.path, {
+              homePath: options.homePath,
+              executionRoot: options.executionRoot,
+            })
+          : undefined;
         if (!toolOutputs.has(toolCallId) && toolOutputs.size >= maxTrackedTools) {
           dropped += 1;
           return;
@@ -441,8 +454,9 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
           ...baseEvent(),
           type: "tool.started",
           toolCallId,
-          displayName: toolName,
-          kind: toolName,
+          displayName: normalizedToolName === "read" ? "Read file" : toolName,
+          kind: normalizedToolName === "read" ? "dynamic_tool" : toolName,
+          ...(readPath ? { preview: readPath, previewKind: "path" as const } : {}),
         });
         return;
       }
@@ -651,6 +665,8 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     const collector = createPiRunCollector({
       threadId: input.threadId,
       scope: input.scope,
+      homePath: options.homePath,
+      executionRoot: input.cwd,
       now: input.now,
       nextEventId: input.nextEventId,
       maxEvents,

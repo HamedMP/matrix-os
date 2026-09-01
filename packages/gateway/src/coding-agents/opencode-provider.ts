@@ -108,6 +108,14 @@ function promptWithReferences(message: string, attachments: AgentAttachment[] | 
   return prompt;
 }
 
+function promptArg(prompt: string): string {
+  // The installed OpenCode CLI treats `-- <message>` as an empty variadic
+  // message and crashes before a run starts. Keep the prompt as the final
+  // positional argument; a leading space prevents option/file-like text from
+  // being interpreted by the CLI while preserving its meaning for the model.
+  return prompt.startsWith("-") || prompt.startsWith("@") ? ` ${prompt}` : prompt;
+}
+
 function modelSlug(reference: string | undefined): string | undefined {
   if (!reference || reference === "provider-default") return undefined;
   const separator = reference.indexOf(":");
@@ -357,9 +365,7 @@ export function createOpenCodeCodingAgentProvider(
     const selectedModel = modelSlug(input.model);
     if (selectedModel) args.push("--model", selectedModel);
     if (input.sessionId) args.push("--session", input.sessionId);
-    // yargs treats leading-dash prompt text as options unless it follows the
-    // end-of-options marker. Keep all user text in the variadic message.
-    args.push("--", input.prompt);
+    args.push(promptArg(input.prompt));
     const env = childEnvironment(options.env, launch.env, options.homePath);
     const configuredTimeoutMs = launch.maxRunMs ? Math.min(runTimeoutMs, launch.maxRunMs) : runTimeoutMs;
     const timeoutMs = Math.max(1, Math.min(configuredTimeoutMs, runDeadline - Date.now()));

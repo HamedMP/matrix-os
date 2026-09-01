@@ -114,7 +114,7 @@ describe("OpenCode coding-agent provider", () => {
     expect(fake.calls).toHaveLength(1);
     expect(fake.calls[0]!.args).toEqual([
       "run", "--format", "json", "--pure", "--title", "Matrix Chat",
-      "--model", "anthropic/claude-sonnet-5", "--", "Inspect the project",
+      "--model", "anthropic/claude-sonnet-5", "Inspect the project",
     ]);
     expect(fake.calls[0]!.env).toMatchObject({
       PATH: "/runtime/bin",
@@ -139,6 +139,27 @@ describe("OpenCode coding-agent provider", () => {
         expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
       ]),
     });
+  });
+
+  it.each([
+    ["- list three colors", " - list three colors"],
+    ["@hamed thanks", " @hamed thanks"],
+    ["plain prompt", "plain prompt"],
+  ])("passes prompt text as OpenCode's message positional: %j", async (prompt, expected) => {
+    const fake = fakeSpawn([
+      line("text", { part: { id: "part_text", type: "text", text: "Done", time: { end: 1 } } }),
+    ]);
+
+    await provider(fake.spawnFn).startThread({
+      principal,
+      thread: thread(),
+      request: request({ prompt }),
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    expect(fake.calls[0]!.args.at(-1)).toBe(expected);
+    expect(fake.calls[0]!.args).not.toContain("--");
   });
 
   it("publishes normalized output before returning the terminal result", async () => {

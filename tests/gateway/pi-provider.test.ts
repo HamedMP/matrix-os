@@ -729,8 +729,12 @@ describe("pi provider adapter — event normalization", () => {
     }
     expect(started.toolCallId).not.toContain("|");
     expect(started.toolCallId.length).toBeLessThanOrEqual(128);
-    expect(started.displayName).toBe("read");
-    expect(started.kind).toBe("read");
+    expect(started).toMatchObject({
+      displayName: "Read file",
+      kind: "dynamic_tool",
+      preview: "sample.txt",
+      previewKind: "path",
+    });
     expect(completed.toolCallId).toBe(started.toolCallId);
     expect(completed.outcome).toBe("success");
     for (const event of parsed.events) AgentThreadEventSchema.parse(event);

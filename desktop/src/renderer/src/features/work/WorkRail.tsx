@@ -1,5 +1,5 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Filter, Plus } from "@renderer/lib/hugeicons";
+import { Plus } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
@@ -209,6 +209,7 @@ export function WorkRail({
     >
       <WorkRailHeader
         onNewChat={onNewGlobalChat}
+        onSearch={() => setSearchOpen(true)}
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
@@ -289,18 +290,6 @@ export function WorkRail({
           expanded={sections.recents}
           onToggle={() => toggleSection("recents")}
           divider={false}
-          action={(
-            <button
-              type="button"
-              aria-label="Search chats"
-              title="Search chats"
-              className="flex size-5 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              style={{ color: "var(--text-tertiary)" }}
-              onClick={() => setSearchOpen(true)}
-            >
-              <Filter size={12} strokeWidth={1.5} aria-hidden />
-            </button>
-          )}
         >
           {model.recents.map((record) => (
             <WorkRailChatRow

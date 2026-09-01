@@ -143,7 +143,8 @@ describe("WorkRail", () => {
     expect(newChat.className).toContain("text-sm");
     expect(newChat.className).toContain("font-medium");
     expect(newChat.closest('[data-slot="chat-sidebar-new-chat"]')).toBeTruthy();
-    expect(search.closest('[data-slot="chat-sidebar-section-heading"]')?.textContent).toContain("Recents");
+    expect(search.closest("[data-chat-sidebar-title]")).toBeTruthy();
+    expect(search.closest('[data-slot="chat-sidebar-section-heading"]')).toBeNull();
     expect(screen.queryByText("Search", { selector: "button" })).toBeNull();
 
     const pinnedChat = await screen.findByRole("button", { name: "Pinned global" });
