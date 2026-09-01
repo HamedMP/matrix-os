@@ -1,7 +1,7 @@
 "use client";
 
 import "posthog-js/dist/conversations";
-import posthog from "posthog-js";
+import posthog, { PostHog } from "posthog-js";
 import {
   buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
@@ -40,6 +40,8 @@ function isSessionReplayDisabled(): boolean {
   return document.documentElement.dataset.posthogDisableReplay === "1";
 }
 let initialized = false;
+let supportPostHog: PostHog | null = null;
+let supportIdentity: { distinctId: string; properties: Record<string, string | number | boolean> } | null = null;
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
   if (!config) return;
@@ -97,10 +99,11 @@ export async function openShellSupport(currentConfig: typeof config = config): P
   if (!currentConfig) return false;
   try {
     ensurePostHogInitialized(currentConfig);
+    const supportClient = ensureSupportPostHogInitialized(currentConfig);
     const deadline = Date.now() + SUPPORT_AVAILABILITY_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      if (posthog.conversations.isAvailable()) {
-        posthog.conversations.show();
+      if (supportClient.conversations.isAvailable()) {
+        supportClient.conversations.show();
         let closeButton = findPostHogButton(POSTHOG_CLOSE_SELECTOR);
         if (!closeButton) {
           const launcher = await waitForPostHogButton(POSTHOG_LAUNCHER_SELECTOR, deadline);
@@ -182,7 +185,12 @@ export function identifyPostHogUser(
   if (!currentConfig || !distinctId) return;
   try {
     ensurePostHogInitialized(currentConfig);
-    posthog.identify(distinctId, sanitizeProperties(properties));
+    const sanitized = sanitizeProperties(properties);
+    posthog.identify(distinctId, sanitized);
+    if (supportIdentity?.distinctId !== distinctId && supportPostHog) {
+      resetShellSupportIdentity();
+    }
+    supportIdentity = { distinctId, properties: sanitized };
   } catch (err: unknown) {
     console.warn("[posthog] Failed to identify user:", err instanceof Error ? err.name : typeof err);
   }
@@ -191,6 +199,7 @@ export function identifyPostHogUser(
 export function resetPostHogIdentity(currentConfig: typeof config = config) {
   if (!currentConfig || !initialized) return;
   try {
+    if (supportIdentity) resetShellSupportIdentity();
     // Only reset provably identified sessions; resetting an anonymous session
     // would rotate its distinct id on every signed-out page load. If the
     // identity check is unavailable, skip the reset rather than risk it.
@@ -199,6 +208,18 @@ export function resetPostHogIdentity(currentConfig: typeof config = config) {
     posthog.reset();
   } catch (err: unknown) {
     console.warn("[posthog] Failed to reset identity:", err instanceof Error ? err.name : typeof err);
+  }
+}
+
+function resetShellSupportIdentity(): void {
+  const client = supportPostHog;
+  supportPostHog = null;
+  supportIdentity = null;
+  if (!client) return;
+  try {
+    client.reset();
+  } catch (err: unknown) {
+    console.warn("[posthog] Failed to reset support identity:", err instanceof Error ? err.name : typeof err);
   }
 }
 
@@ -222,6 +243,10 @@ export function initializeShellPostHog(
     capture_exceptions: true,
     capture_dead_clicks: false,
     rageclick: false,
+    // Conversations is initialized on a separate support-only client. The
+    // analytics client can therefore honor cookie consent without making the
+    // support channel unavailable while consent is pending or rejected.
+    disable_conversations: true,
     // Masked session replay: all inputs masked, opt-in text masking via
     // [data-ph-mask], and sensitive surfaces (terminal, chat transcripts,
     // file listings) blocked entirely via the ph-no-capture class, which
@@ -247,6 +272,39 @@ export function initializeShellPostHog(
     ...buildPostHogCookieConsentInitOptions(visitorCountry),
   } as PostHogInitOptions);
   initialized = true;
+}
+
+function ensureSupportPostHogInitialized(currentConfig: NonNullable<typeof config>): PostHog {
+  if (supportPostHog) return supportPostHog;
+
+  const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: true });
+  const client = new PostHog();
+  client.init(currentConfig.token, {
+    ...(apiHost ? { api_host: apiHost } : {}),
+    ui_host: currentConfig.uiHost,
+    defaults: "2026-01-30",
+    autocapture: false,
+    capture_dead_clicks: false,
+    capture_exceptions: false,
+    capture_heatmaps: false,
+    capture_pageleave: false,
+    capture_pageview: false,
+    capture_performance: false,
+    disable_external_dependency_loading: true,
+    disable_session_recording: true,
+    disable_surveys: true,
+    disable_surveys_automatic_display: true,
+    disable_web_experiments: true,
+    enable_recording_console_log: false,
+    persistence: "memory",
+    person_profiles: "identified_only",
+    rageclick: false,
+  } as PostHogInitOptions);
+  if (supportIdentity) {
+    client.identify(supportIdentity.distinctId, supportIdentity.properties);
+  }
+  supportPostHog = client;
+  return client;
 }
 
 function getPostHogVisitorCountry(): string | null {

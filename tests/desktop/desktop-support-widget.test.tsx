@@ -20,11 +20,16 @@ const posthogClient = vi.hoisted(() => ({
   identify: vi.fn(),
   init: vi.fn(),
   reset: vi.fn(),
-  set_config: vi.fn(),
+}));
+const PostHogMock = vi.hoisted(() => vi.fn(function PostHogConstructor() {
+  return posthogClient;
 }));
 
 vi.mock("posthog-js/dist/conversations", () => ({}));
-vi.mock("posthog-js/dist/module.no-external", () => ({ default: posthogClient }));
+vi.mock("posthog-js/dist/module.no-external", () => ({
+  default: posthogClient,
+  PostHog: PostHogMock,
+}));
 vi.mock("@desktop/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
   default: () => <button type="button">Main computer</button>,
 }));
@@ -240,6 +245,7 @@ describe("Desktop support widget", () => {
 
   it("rebinds support to the selected runtime relay", async () => {
     render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.init).toHaveBeenCalledTimes(1));
 
     act(() => {
       useConnection.setState({
@@ -249,11 +255,14 @@ describe("Desktop support widget", () => {
     });
 
     await waitFor(() => {
-      expect(posthogClient.set_config).toHaveBeenCalledWith({
-        api_host: "https://preview.matrix-os.com/relay",
-      });
+      expect(posthogClient.init).toHaveBeenCalledTimes(2);
     });
+    expect(PostHogMock).toHaveBeenCalledTimes(2);
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
+    expect(posthogClient.init).toHaveBeenLastCalledWith(
+      "phc_desktop_test",
+      expect.objectContaining({ api_host: "https://preview.matrix-os.com/relay" }),
+    );
     expect(posthogClient.identify).toHaveBeenLastCalledWith("neo", {
       $name: "Neo",
       matrix_client: "desktop",
