@@ -1059,7 +1059,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       ) : canvasToolbarChild ? (
         <header
           data-testid="canvas-toolbar"
-          className="relative hidden h-[38px] shrink-0 items-center justify-center gap-0.5 border-b border-white/30 bg-card/70 px-3 text-xs leading-none text-foreground/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] backdrop-blur-xl md:flex"
+          className="relative flex h-[38px] shrink-0 items-center justify-center gap-0.5 border-b border-white/30 bg-card/70 px-3 text-xs leading-none text-foreground/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] backdrop-blur-xl"
           style={{ zIndex: SHELL_Z_INDEX.menuBar }}
         >
           {canvasToolbarChild}

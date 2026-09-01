@@ -9,6 +9,7 @@ import {
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_CREATE_APP_APPEARANCE,
   OS_VIEW_LABELS,
+  osViewFixedAppAppearanceForPath,
   otherOsViewMode,
   type OsViewMode,
 } from "@matrix-os/contracts";
@@ -106,11 +107,12 @@ export default function AppLauncher({
       }] : []),
       ...FIXED_DESKTOP_APPS.map((app) => {
         const installed = apps.find((candidate) => candidate.name.toLowerCase() === app.name.toLowerCase());
+        const appearance = osViewFixedAppAppearanceForPath(app.path);
         return {
           type: "fixed" as const,
           key: app.path,
           name: app.name,
-          app: installed
+          app: installed && appearance?.iconSource === "app"
             ? { ...app, iconUrl: appIconUrl(platformHost, installed.slug, runtimeSlot) ?? app.iconUrl }
             : app,
         };

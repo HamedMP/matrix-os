@@ -210,7 +210,8 @@ describe("Launchpad (macos-glass launcher)", () => {
       { name: "Editor", path: "__editor__" },
       { name: "Settings", path: "__settings__" },
       { name: "Plugins", path: "__plugins__" },
-      { name: "Browser", path: "apps/browser/dist/index.html" },
+      { name: "Browser", path: "apps/browser/dist/index.html", iconUrl: "/icons/browser.png" },
+      { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/notes.png" },
     ];
 
     await renderLauncher({ apps });
@@ -238,6 +239,9 @@ describe("Launchpad (macos-glass launcher)", () => {
       .querySelector<HTMLElement>("[data-launchpad-create-icon]");
     expect(createIcon?.style.background).toBe("var(--accent)");
     expect(createIcon?.style.color).toBe("white");
+    expect(screen.getByRole("button", { name: "Browser" }).querySelector("img")).toBeNull();
+    expect(screen.getByRole("button", { name: "Notes" }).querySelector("img")?.getAttribute("src"))
+      .toBe("/icons/notes.png");
   });
 
   it("launches Create app through the dedicated first tile", async () => {

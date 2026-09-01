@@ -16,38 +16,44 @@ export const OS_VIEW_DESTINATION_PATHS: Readonly<Record<OsViewMode, string>> = {
 export const OS_VIEW_FIXED_APP_APPEARANCES = {
   chat: {
     icon: "message-square",
+    iconSource: "fixed",
     background: "var(--surface-error-emphasis, #BA5236)",
     foreground: "white",
   },
   terminal: {
     icon: "square-terminal",
+    iconSource: "fixed",
     background: "var(--surface-warning-emphasis, #E0AA52)",
     foreground: "white",
   },
   files: {
     icon: "folder-tree",
+    iconSource: "fixed",
     background: "var(--surface-brand-emphasis, #748E59)",
     foreground: "white",
   },
-  editor: { icon: "file-pen", background: "#4D7FA8", foreground: "white" },
-  vscode: { icon: "code", background: "#FFFEFC", foreground: "#007ACC" },
+  editor: { icon: "file-pen", iconSource: "fixed", background: "#4D7FA8", foreground: "white" },
+  vscode: { icon: "code", iconSource: "app", background: "#FFFEFC", foreground: "#007ACC" },
   settings: {
     icon: "settings",
+    iconSource: "fixed",
     background: "var(--surface-neutral-emphasis, #6B7280)",
     foreground: "white",
   },
-  plugins: { icon: "blocks", background: "#7C6DB4", foreground: "white" },
+  plugins: { icon: "blocks", iconSource: "fixed", background: "#7C6DB4", foreground: "white" },
   browser: {
     icon: "globe",
+    iconSource: "fixed",
     background: "var(--surface-info-emphasis, #3B85BA)",
     foreground: "white",
   },
   notes: {
     icon: "notebook",
-    background: "var(--surface-purple-emphasis)",
+    iconSource: "app",
+    background: "var(--surface-purple-emphasis, #8B6BB1)",
     foreground: "white",
   },
-  whiteboard: { icon: "brush", background: "#D46A92", foreground: "white" },
+  whiteboard: { icon: "brush", iconSource: "app", background: "#D46A92", foreground: "white" },
 } as const;
 
 export const OS_VIEW_CREATE_APP_APPEARANCE = {
@@ -67,6 +73,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   __settings__: "settings",
   __plugins__: "plugins",
   __browser__: "browser",
+  __notes__: "notes",
   "apps/browser/index.html": "browser",
   "apps/browser/dist/index.html": "browser",
   "apps/notes/index.html": "notes",

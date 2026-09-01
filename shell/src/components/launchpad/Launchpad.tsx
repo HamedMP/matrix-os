@@ -230,6 +230,7 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
   const BuiltInIcon = builtInAppearance
     ? BUILT_IN_ICON_COMPONENTS[builtInAppearance.icon]
     : undefined;
+  const useFixedIcon = BuiltInIcon && builtInAppearance?.iconSource === "fixed";
   return (
     <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(); } : undefined}>
       <span className="launchpad-icon">
@@ -243,6 +244,18 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
             }}
           >
             <PlusIcon className="size-12" aria-hidden="true" />
+          </span>
+        ) : useFixedIcon && builtInAppearance ? (
+          <span
+            data-launchpad-built-in-icon
+            className="flex size-full items-center justify-center"
+            style={{
+              background: builtInAppearance.background,
+              color: builtInAppearance.foreground,
+            }}
+            aria-hidden="true"
+          >
+            <BuiltInIcon className="size-8" />
           </span>
         ) : showImage && app.iconUrl ? (
           // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image

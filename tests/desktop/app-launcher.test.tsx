@@ -113,6 +113,23 @@ describe("AppLauncher", () => {
     expect(onSwitchOsView).toHaveBeenCalledWith("canvas");
   });
 
+  it("keeps core system vectors while allowing app artwork for Notes", () => {
+    clearDesktopApps();
+    seedDesktopApps([
+      { slug: "chat", name: "Chat" },
+      { slug: "notes", name: "Notes" },
+    ]);
+
+    render(<AppLauncher presentation="launchpad" />);
+
+    const chat = screen.getByRole("button", { name: "Chat" });
+    expect(chat.querySelector("svg")).toBeTruthy();
+    expect(chat.querySelector("img")).toBeNull();
+
+    const notes = screen.getByRole("button", { name: "Notes" });
+    expect(notes.querySelector("img")?.getAttribute("src")).toContain("/icons/notes.png");
+  });
+
   it("offers Desktop from Canvas and keeps the OS-view destination launcher-only", () => {
     const onSwitchOsView = vi.fn();
     const onAddToDesktop = vi.fn();

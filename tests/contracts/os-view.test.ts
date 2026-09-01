@@ -41,8 +41,15 @@ describe("shared OS-view contract", () => {
     expect(osViewFixedAppAppearanceForPath("__chat__")).toBe(OS_VIEW_FIXED_APP_APPEARANCES.chat);
     expect(osViewFixedAppAppearanceForPath("apps/browser/dist/index.html"))
       .toBe(OS_VIEW_FIXED_APP_APPEARANCES.browser);
+    expect(OS_VIEW_FIXED_APP_APPEARANCES.browser.iconSource).toBe("fixed");
     expect(osViewFixedAppAppearanceForPath("apps/notes/index.html"))
       .toBe(OS_VIEW_FIXED_APP_APPEARANCES.notes);
+    expect(osViewFixedAppAppearanceForPath("__notes__"))
+      .toBe(OS_VIEW_FIXED_APP_APPEARANCES.notes);
+    expect(OS_VIEW_FIXED_APP_APPEARANCES.notes).toMatchObject({
+      iconSource: "app",
+      background: "var(--surface-purple-emphasis, #8B6BB1)",
+    });
     expect(osViewFixedAppAppearanceForPath("apps/custom/index.html")).toBeUndefined();
   });
 
