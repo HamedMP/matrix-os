@@ -162,7 +162,7 @@ describe("BillingSection", () => {
     expect(screen.queryByText("Start your 7-day free trial")).toBeNull();
   });
 
-  it("shows the authoritative end date and upcoming charge for an active trial", async () => {
+  it("does not replace a legacy trial price with the current catalog price", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         access: { runtimeProxyAllowed: true, reason: "active" },
@@ -198,7 +198,8 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     await waitFor(() => expect(screen.getByText("Free trial active")).toBeTruthy());
-    expect(screen.getByText("Your first $100 monthly charge is on Aug 26, 2026.")).toBeTruthy();
+    expect(screen.getByText("Your first monthly charge is on Aug 26, 2026.")).toBeTruthy();
+    expect(screen.queryByText("Your first $100 monthly charge is on Aug 26, 2026.")).toBeNull();
     expect(screen.getByText("Cancel before Aug 26, 2026 to avoid being charged.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Manage trial" })).toBeTruthy();
   });

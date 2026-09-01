@@ -24,6 +24,7 @@ A newly signed-in user chooses their computer power, region, and default coding 
 2. **Given** preparation is in progress or complete, **When** a signed billing event authorizes the selected primary computer, **Then** Matrix activates that same computer for the user without creating a replacement.
 3. **Given** preparation finishes before billing authorization, **When** the user remains in checkout, **Then** the computer stays inaccessible and the user sees that preparation is underway without seeing provider or infrastructure details.
 4. **Given** billing authorization arrives before preparation finishes, **When** the user returns to Matrix, **Then** Matrix shows normal build progress and opens the computer when it becomes ready.
+5. **Given** checkout was opened from a CLI or device approval flow, **When** billing completes before that runtime is authorized, **Then** Matrix preserves the device return and selected runtime, shows passive progress, and completes the app session automatically without showing another default-installs or build action.
 
 ---
 
@@ -87,6 +88,7 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - The same account opens onboarding in multiple browser tabs.
 - The global provisional-computer capacity limit is reached.
 - Preparation completes but runtime health never becomes ready.
+- App-session exchange temporarily reports that no authorized runtime is available while the selected runtime is still provisioning.
 - Billing authorization is later revoked under the existing trial, grace, or cancellation policy.
 
 ## Requirements *(mandatory)*
@@ -123,6 +125,8 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - **FR-028**: A prepared computer MUST be permanently bound to its initiating owner and MUST never be reassigned to another user, whether preparation succeeds, fails, or is abandoned.
 - **FR-029**: Abandoned owner data and credentials created during preparation MUST be deleted according to the same owner-deletion guarantees as other Matrix data, while billing and security audit records retain only the minimum required history.
 - **FR-030**: The public onboarding documentation MUST explain the new compute → agents → checkout/preparation → billing authorization → ready sequence without exposing private operator details.
+- **FR-031**: Post-checkout onboarding, including CLI and device-return flows, MUST treat accepted or resumable preparation as authoritative and MUST NOT ask the user to choose default installs or start provisioning again.
+- **FR-032**: A temporary app-session `no_runtime` result while the selected runtime is preparing or awaiting billing MUST be treated as a passive wait state; Matrix MUST preserve the validated return target and runtime slot, retry session creation, and continue automatically after authorization.
 
 ### Key Entities
 
@@ -147,6 +151,7 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - **SC-008**: Existing billing, provisioning, recovery, resize, suspension, preview, and additional-computer contract suites pass without behavior changes outside the explicitly eligible onboarding cohort.
 - **SC-009**: User-facing errors reveal no provider names, raw infrastructure errors, internal identifiers, network details, database details, or filesystem paths in all tested failure paths.
 - **SC-010**: Under concurrent mixed-size checkout admission, the platform prepares at most the configured number of unpaid computers and defers the next intent without weakening duplicate-prevention or billing-authorization guarantees.
+- **SC-011**: Shell and inline-auth contract tests prove that post-checkout device continuation makes zero repeated provisioning requests, never renders another build decision, completes one app-session handoff after the selected runtime becomes authorized, and stops safely without retrying permanent client errors.
 
 ## Assumptions
 
