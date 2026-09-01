@@ -1129,23 +1129,53 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject([{ id: "provider-default", displayName: "Codex default" }]);
   });
 
-  it("advertises only attachment kinds the Pi adapter forwards", async () => {
+  it("advertises file attachments forwarded by native Pi and OpenCode adapters", async () => {
     const service = createChatProviderCatalogService({
-      codingProviders: codingRegistry([codingProvider({
-        id: "pi",
-        displayName: "Pi",
-        kind: "pi",
-        supportedModes: ["default"],
-        defaultModel: undefined,
-        setupActions: [],
-      })]),
+      codingProviders: codingRegistry([
+        codingProvider({
+          id: "pi",
+          displayName: "Pi",
+          kind: "pi",
+          supportedModes: ["default"],
+          defaultModel: undefined,
+          setupActions: [],
+        }),
+        codingProvider({
+          id: "opencode",
+          displayName: "OpenCode",
+          kind: "opencode",
+          supportedModes: ["default"],
+          defaultModel: undefined,
+          setupActions: [],
+        }),
+      ]),
       agentRuntimeSource: runtimeSource(),
+      credentialedDriverKinds: ["pi", "opencode"],
+      codingModelCatalogSource: vi.fn(async (provider) => ({
+        models: [{
+          id: provider.id === "pi" ? "anthropic:claude-sonnet-5" : "opencode:big-pickle",
+          displayName: provider.id === "pi" ? "Claude Sonnet 5" : "Big Pickle",
+          capabilities: ["tools"],
+          supportsVision: false,
+          supportsToolUse: true,
+        }],
+        options: [],
+      })),
     });
 
     const catalog = await service.getCatalog(principal);
     const pi = catalog.instances.find((instance) => instance.id === "pi_default")!;
+    const opencode = catalog.instances.find((instance) => instance.id === "opencode_default")!;
 
-    expect(pi.supports.attachments).toEqual(["structured_ref"]);
+    expect([pi, opencode].map((instance) => instance.supports.attachments)).toEqual([
+      ["file", "structured_ref"],
+      ["file", "structured_ref"],
+    ]);
+    expect(validateChatProviderSelection({
+      catalog,
+      selection: pi.defaultSelection!,
+      requirements: { attachments: ["file"] },
+    })).toMatchObject({ ok: true });
     expect(validateChatProviderSelection({
       catalog,
       selection: pi.defaultSelection!,

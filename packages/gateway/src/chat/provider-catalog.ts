@@ -128,7 +128,7 @@ function codingSupports(
     resume: true,
     cancellation: true,
     attachments: driverKind === "pi" || driverKind === "opencode"
-      ? ["structured_ref"]
+      ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
     tools: [],
     approvals: isCodex,

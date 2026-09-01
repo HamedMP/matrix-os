@@ -12,6 +12,10 @@ import {
 } from "@matrix-os/contracts";
 import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
+import {
+  safeDisplayPath,
+  safeToolActivity,
+} from "../chat/safe-activity-projection.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import type {
   CodingHarnessCredentialLaunch,
@@ -99,10 +103,17 @@ function safeToolName(value: unknown): string {
   return cleaned || "tool";
 }
 
-function promptWithReferences(message: string, attachments: AgentAttachment[] | undefined): string {
+function promptWithReferences(
+  message: string,
+  attachments: AgentAttachment[] | undefined,
+  options: { homePath: string; executionRoot: string },
+): string {
   const references = (attachments ?? [])
-    .filter((attachment) => attachment.kind === "structured_ref")
-    .map((attachment) => `- ${attachment.label}${attachment.path ? `: ${attachment.path}` : ""}`);
+    .filter((attachment) => attachment.kind === "file" || attachment.kind === "structured_ref")
+    .map((attachment) => {
+      const path = safeDisplayPath(attachment.path, options);
+      return `- ${attachment.label}${path ? `: ${path}` : ""}`;
+    });
   const prompt = references.length > 0 ? `${message}\n\nContext references:\n${references.join("\n")}` : message;
   if (Buffer.byteLength(prompt, "utf-8") > MAX_PROMPT_BYTES) throw new Error("OpenCode prompt is too large");
   return prompt;
@@ -257,6 +268,8 @@ function collectLine(input: {
   nextEventId: () => string;
   events: AgentThreadEvent[];
   seenParts: Set<string>;
+  homePath: string;
+  executionRoot: string;
 }): { sessionId?: string; failed?: boolean; limitExceeded?: boolean } {
   let parsed: unknown;
   try {
@@ -299,13 +312,23 @@ function collectLine(input: {
     const toolCallId = safeId(value.callID, `tool_${partId}`);
     const name = safeToolName(value.tool);
     const state = value.state && typeof value.state === "object" ? value.state as Record<string, unknown> : {};
+    const args = state.input ?? value.input ?? value.args;
+    const activity = safeToolActivity(name, args, {
+      homePath: input.homePath,
+      executionRoot: input.executionRoot,
+    });
     const output = state.status === "completed" && typeof state.output === "string"
       ? state.output.slice(0, MAX_TEXT_CHARS)
       : state.status === "error" && typeof state.error === "string"
         ? "The tool could not complete."
         : "Tool finished.";
     input.events.push(
-      AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "tool.started", toolCallId, displayName: name, kind: name }),
+      AgentThreadEventSchema.parse({
+        ...eventBase(input.threadId, input.now, input.nextEventId),
+        type: "tool.started",
+        toolCallId,
+        ...activity,
+      }),
       AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "tool.output", toolCallId, text: output, ...(output.length === MAX_TEXT_CHARS ? { truncated: true } : {}) }),
       AgentThreadEventSchema.parse({ ...eventBase(input.threadId, input.now, input.nextEventId), type: "tool.completed", toolCallId, outcome: state.status === "error" ? "failed" : "success" }),
     );
@@ -474,7 +497,17 @@ export function createOpenCodeCodingAgentProvider(
           stop("failure");
           return;
         }
-        const result = collectLine({ line, threadId: input.threadId, scope: input.scope, now: input.now, nextEventId: input.nextEventId, events, seenParts });
+        const result = collectLine({
+          line,
+          threadId: input.threadId,
+          scope: input.scope,
+          now: input.now,
+          nextEventId: input.nextEventId,
+          events,
+          seenParts,
+          homePath: options.homePath,
+          executionRoot: input.cwd,
+        });
         sessionId = result.sessionId ?? sessionId;
         failed ||= result.failed === true;
         drainEvents();
@@ -590,7 +623,10 @@ export function createOpenCodeCodingAgentProvider(
       let cwd: string | null = null;
       try { cwd = await cwdFor(request.projectId, request.worktreeId); } catch (error: unknown) { logCodingAgentWarning("OpenCode workspace resolution failed", error); }
       if (!cwd) return { events: terminalEvents(thread.id, "failed", now, nextEventId) };
-      const prompt = promptWithReferences(request.prompt, request.attachments);
+      const prompt = promptWithReferences(request.prompt, request.attachments, {
+        homePath: options.homePath,
+        executionRoot: cwd,
+      });
       const running = statusEvent(thread.id, "running", now, nextEventId);
       if (publishEvents) await publishEvents({ events: [running] });
       const run = await execute({
@@ -617,7 +653,10 @@ export function createOpenCodeCodingAgentProvider(
       const run = await execute({
         threadId: thread.id,
         scope: turn.turnId,
-        prompt: promptWithReferences(turn.message, turn.attachments),
+        prompt: promptWithReferences(turn.message, turn.attachments, {
+          homePath: options.homePath,
+          executionRoot: resume.c,
+        }),
         cwd: resume.c,
         model: turn.model,
         sessionId: resume.s,

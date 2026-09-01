@@ -79,9 +79,66 @@ export function safeToolPreview(
     const command = safePublishedText(values.command ?? values.cmd, { ...options, maxChars: 1_000 });
     return command ? { preview: command, previewKind: "command", ...(detail ? { detail } : {}) } : {};
   }
-  if (/^(?:write|edit|patch|replace|apply)_?file$/.test(normalizedName) || normalizedName === "apply_patch") {
-    const path = safeDisplayPath(values.path ?? values.file_path ?? values.file, options);
+  const path = safeDisplayPath(
+    values.path ?? values.file_path ?? values.filePath ?? values.file ?? values.directory ?? values.dir,
+    options,
+  );
+  if (["read", "read_file", "list", "list_files", "ls"].includes(normalizedName)) {
+    return path ? { preview: path, previewKind: "path" } : {};
+  }
+  if (["glob", "find", "find_files", "grep", "search", "search_files"].includes(normalizedName)) {
+    const query = safePublishedText(values.pattern ?? values.query ?? values.glob, {
+      ...options,
+      maxChars: 1_000,
+    });
+    if (query) {
+      return {
+        preview: query,
+        previewKind: "text",
+        ...(path ? { detail: `In: ${path}` } : {}),
+      };
+    }
+    return path ? { preview: path, previewKind: "path" } : {};
+  }
+  if (["write", "edit", "patch", "replace"].includes(normalizedName)
+    || /^(?:write|edit|patch|replace|apply)_?file$/.test(normalizedName)
+    || normalizedName === "apply_patch") {
     return path ? { preview: path, previewKind: "path" } : {};
   }
   return {};
+}
+
+export function safeToolActivity(
+  name: string,
+  args: unknown,
+  options: { homePath: string; executionRoot?: string },
+): {
+  displayName: string;
+  kind: "command" | "file_change" | "dynamic_tool" | "web_search";
+  preview?: string;
+  previewKind?: "command" | "path" | "text";
+  detail?: string;
+} {
+  const normalizedName = name.trim().toLowerCase();
+  const activity = ["terminal", "shell", "bash", "execute", "execute_code", "run_command"]
+    .includes(normalizedName)
+    ? { displayName: "Run command", kind: "command" as const }
+    : ["write", "edit", "patch", "replace", "apply_patch"].includes(normalizedName)
+        || /^(?:write|edit|patch|replace|apply)_?file$/.test(normalizedName)
+      ? { displayName: "Update file", kind: "file_change" as const }
+      : ["read", "read_file"].includes(normalizedName)
+        ? { displayName: "Read file", kind: "dynamic_tool" as const }
+        : ["list", "list_files", "ls"].includes(normalizedName)
+          ? { displayName: "List files", kind: "dynamic_tool" as const }
+          : ["glob", "find", "find_files"].includes(normalizedName)
+            ? { displayName: "Find files", kind: "dynamic_tool" as const }
+            : ["grep", "search", "search_files"].includes(normalizedName)
+              ? { displayName: "Search files", kind: "dynamic_tool" as const }
+              : ["web_search", "websearch", "webfetch"].includes(normalizedName)
+                ? { displayName: "Search the web", kind: "web_search" as const }
+                : { displayName: "Use tool", kind: "dynamic_tool" as const };
+  return {
+    ...activity,
+    ...safeToolPreview(normalizedName, args, options),
+  };
 }

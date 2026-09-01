@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -1024,6 +1025,142 @@ describe("CanonicalChatWorkspace", () => {
     expect(request.parts).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "resource_reference" }),
     ]));
+  });
+
+  it("uses the file capability to attach, preview, retry, remove, and submit multiple files", async () => {
+    const instanceId = "openclaw_file_capable";
+    const fileCatalog: CanonicalProviderCatalog = {
+      ...providerCatalog,
+      drivers: [{
+        ...providerCatalog.drivers[0]!,
+        kind: "openclaw",
+        displayName: "OpenClaw",
+        capabilityClass: "system_agent",
+      }],
+      instances: [{
+        ...providerCatalog.instances[0]!,
+        id: instanceId,
+        driverKind: "openclaw",
+        displayName: "OpenClaw",
+        supports: { ...providerCatalog.instances[0]!.supports, attachments: ["file"] },
+        defaultSelection: { instanceId, model: providerCatalog.instances[0]!.models[0]!.id },
+      }],
+    };
+    const fileRecord = {
+      ...record,
+      chat: {
+        ...record.chat,
+        currentSelection: { instanceId, model: providerCatalog.instances[0]!.models[0]!.id },
+      },
+      providerBinding: {
+        ...record.providerBinding,
+        driverKind: "openclaw" as const,
+        instanceId,
+      },
+    };
+    let retryFailed = false;
+    const api = {
+      baseUrl: "https://matrix.test",
+      get: vi.fn(),
+      getText: vi.fn(),
+      getBlob: vi.fn(),
+      post: vi.fn(),
+      postBytes: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      putBytes: vi.fn(async (url: string, file: File) => {
+        if (file.name === "retry.txt" && !retryFailed) {
+          retryFailed = true;
+          throw new Error("temporary upload failure");
+        }
+        return {
+          ok: true,
+          path: decodeURIComponent(url.split("path=")[1] ?? ""),
+          size: file.size,
+        };
+      }),
+      delete: vi.fn(),
+      putText: vi.fn(),
+    } as never;
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [fileRecord] });
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record: fileRecord,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+      record: fileRecord,
+      message: { ...snapshot.messages[0]!, id: "msg_attachment", turnId: "turn_attachment" },
+      turn: {
+        ...snapshot.turns[0]!,
+        id: "turn_attachment",
+        inputMessageId: "msg_attachment",
+        clientRequestId: "req_attachment",
+      },
+      run: { ...snapshot.runs[0]!, id: "run_attachment", turnId: "turn_attachment" },
+      admission: "accepted",
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    render(
+      <CanonicalChatWorkspace
+        api={api}
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={fileCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    const input = screen.getByLabelText("Choose files") as HTMLInputElement;
+    const inputClick = vi.spyOn(input, "click");
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    expect(inputClick).toHaveBeenCalledOnce();
+    expect(input.multiple).toBe(true);
+    const contextButton = screen.getByRole("button", { name: "Project Matrix OS" });
+    expect(contextButton).toBeTruthy();
+    expect(contextButton.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeNull();
+
+    const keep = new File(["keep"], "keep.txt", { type: "text/plain" });
+    const remove = new File(["remove"], "remove.txt", { type: "text/plain" });
+    const retry = new File(["retry"], "retry.txt", { type: "text/plain" });
+    fireEvent.change(input, { target: { files: [keep, remove, retry] } });
+
+    expect(screen.getByRole("group", { name: "Attachments" })).toBeTruthy();
+    expect(screen.getByText("keep.txt")).toBeTruthy();
+    expect(screen.getByText("remove.txt")).toBeTruthy();
+    expect(screen.getByText("retry.txt")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove remove.txt" }));
+    expect(screen.queryByText("remove.txt")).toBeNull();
+
+    await setSharedComposerText(editor, "Inspect these files");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const retryButton = await screen.findByRole("button", { name: "Retry retry.txt" });
+    expect(routeClient.admitTurn).not.toHaveBeenCalled();
+
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry retry.txt" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledOnce());
+    const request = vi.mocked(routeClient.admitTurn).mock.calls[0]![1];
+    expect(request.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text", text: "Inspect these files" }),
+      expect.objectContaining({ type: "attachment_reference", kind: "file", label: "keep.txt" }),
+      expect.objectContaining({ type: "attachment_reference", kind: "file", label: "retry.txt" }),
+    ]));
+    expect(request.parts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "remove.txt" }),
+      expect.objectContaining({ type: "resource_reference" }),
+    ]));
+    warn.mockRestore();
   });
 
 });

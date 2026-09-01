@@ -186,10 +186,17 @@ async function resolveCredentialsWithinRun(input: {
   });
 }
 
-function piPromptWithReferences(message: string, attachments: AgentAttachment[] | undefined): string {
+function piPromptWithReferences(
+  message: string,
+  attachments: AgentAttachment[] | undefined,
+  options: { homePath: string; executionRoot: string },
+): string {
   const references = (attachments ?? [])
-    .filter((attachment) => attachment.kind === "structured_ref")
-    .map((attachment) => `- ${attachment.label}${attachment.path ? `: ${attachment.path}` : ""}`);
+    .filter((attachment) => attachment.kind === "file" || attachment.kind === "structured_ref")
+    .map((attachment) => {
+      const path = safeDisplayPath(attachment.path, options);
+      return `- ${attachment.label}${path ? `: ${path}` : ""}`;
+    });
   const prompt = references.length > 0
     ? `${message}\n\nContext references:\n${references.join("\n")}`
     : message;
@@ -1098,7 +1105,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       const sessionId = randomUUID();
       let prompt: string;
       try {
-        prompt = piPromptWithReferences(request.prompt, request.attachments);
+        prompt = piPromptWithReferences(request.prompt, request.attachments, {
+          homePath,
+          executionRoot: cwd,
+        });
       } catch (err: unknown) {
         logCodingAgentWarning("pi provider prompt construction failed", err);
         return { events: terminalEvents(thread.id, "failed", now, nextEventId) };
@@ -1146,7 +1156,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       }
       let prompt: string;
       try {
-        prompt = piPromptWithReferences(turn.message, turn.attachments);
+        prompt = piPromptWithReferences(turn.message, turn.attachments, {
+          homePath,
+          executionRoot: cwd,
+        });
       } catch (err: unknown) {
         logCodingAgentWarning("pi provider prompt construction failed", err);
         return { events: [], outcome: "failed" as const, resumeState };

@@ -274,6 +274,68 @@ describe("OpenCode coding-agent provider", () => {
     expect(JSON.stringify(result)).not.toContain("secret upstream detail");
   });
 
+  it("projects raw file, search, and command tools with safe canonical activity details", async () => {
+    const tools = [
+      ["read", { filePath: "/work/repo/src/index.ts" }],
+      ["list", { path: "/work/repo/src" }],
+      ["glob", { pattern: "**/*.ts", path: "/work/repo/src" }],
+      ["grep", { pattern: "TODO", path: "/work/repo/src" }],
+      ["bash", { command: "pnpm test", cwd: "/work/repo" }],
+      ["write", { filePath: "/work/repo/src/generated.ts", content: "private raw credential" }],
+    ] as const;
+    const fake = fakeSpawn(tools.map(([tool, input], index) => line("tool_use", {
+      part: {
+        id: `part_${tool}`,
+        type: "tool",
+        callID: `call_${index}`,
+        tool,
+        state: { status: "completed", input, output: "ok", time: { start: 1, end: 2 } },
+      },
+    })));
+
+    const result = await provider(fake.spawnFn).startThread({
+      principal, thread: thread(), request: request(), now: () => now, nextEventId: ids(),
+    });
+    const started = result.events.filter((event) => event.type === "tool.started");
+    const completed = result.events.filter((event) => event.type === "tool.completed");
+
+    expect(started).toMatchObject([
+      { displayName: "Read file", kind: "dynamic_tool", preview: "src/index.ts", previewKind: "path" },
+      { displayName: "List files", kind: "dynamic_tool", preview: "src", previewKind: "path" },
+      { displayName: "Find files", kind: "dynamic_tool", preview: "**/*.ts", previewKind: "text", detail: "In: src" },
+      { displayName: "Search files", kind: "dynamic_tool", preview: "TODO", previewKind: "text", detail: "In: src" },
+      { displayName: "Run command", kind: "command", preview: "pnpm test", previewKind: "command", detail: "Working directory: ." },
+      { displayName: "Update file", kind: "file_change", preview: "src/generated.ts", previewKind: "path" },
+    ]);
+    expect(completed).toHaveLength(tools.length);
+    expect(completed.every((event) => event.type === "tool.completed" && event.outcome === "success")).toBe(true);
+    expect(JSON.stringify(started)).not.toMatch(/private raw|credential|\/work\/repo/);
+  });
+
+  it("includes owner-safe file and structured references in the OpenCode prompt", async () => {
+    const fake = fakeSpawn([
+      line("text", { part: { id: "part_text", type: "text", text: "Done", time: { end: 1 } } }),
+    ]);
+
+    await provider(fake.spawnFn).startThread({
+      principal,
+      thread: thread(),
+      request: request({
+        prompt: "Review this",
+        attachments: [
+          { id: "file:1", kind: "file", label: "Auth source", path: "src/auth.ts" },
+          { id: "review:1", kind: "structured_ref", label: "Review hunk", path: "src/review.ts" },
+        ],
+      }),
+      now: () => now,
+      nextEventId: ids(),
+    });
+
+    expect(fake.calls[0]!.args.at(-1)).toBe(
+      "Review this\n\nContext references:\n- Auth source: src/auth.ts\n- Review hunk: src/review.ts",
+    );
+  });
+
   it("resumes the exact provider session and preserves its working directory", async () => {
     const first = fakeSpawn([line("text", { part: { id: "one", type: "text", text: "First", time: { end: 1 } } })]);
     const adapter = provider(first.spawnFn);

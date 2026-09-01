@@ -608,7 +608,7 @@ describe("pi provider adapter — spawn contract", () => {
     });
 
     expect(fake.calls[0]!.args.at(-1)).toBe(
-      "Review this\n\nContext references:\n- Review hunk 1: src/auth.ts",
+      "Review this\n\nContext references:\n- Review hunk 1: src/auth.ts\n- Ignored file: tmp/output.txt",
     );
   });
 

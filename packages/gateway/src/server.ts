@@ -156,6 +156,7 @@ import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
+import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
 import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
@@ -257,7 +258,10 @@ import {
   createHermesDashboardClient,
   validateHermesDashboardUrl,
 } from "./agent-config/hermes-client.js";
-import { createAgentRuntimeServices } from "./agent-config/runtime-services.js";
+import {
+  createAgentRuntimeServices,
+  createLazyOpenClawRpc,
+} from "./agent-config/runtime-services.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -4192,9 +4196,11 @@ export async function createGateway(config: GatewayConfig) {
     baseUrl: hermesDashboardUrl,
     authFilePath: join(homePath, "system/agent-runtime/hermes-dashboard.env"),
   });
+  const openClawRpc = createLazyOpenClawRpc(homePath);
   const agentRuntimeServices = createAgentRuntimeServices({
     homePath,
     client: hermesClient,
+    openClawRpc,
   });
   await agentRuntimeServices.controller.reconcile();
   const aiProviderService = new AiProviderService({
@@ -4236,6 +4242,7 @@ export async function createGateway(config: GatewayConfig) {
   const canonicalExecutableDriverKinds = [
     "kernel" as const,
     "hermes" as const,
+    "openclaw" as const,
     ...(codingAgentProviders.some((provider) => provider.providerId === "claude")
       ? ["claude_code" as const]
       : []),
@@ -4278,6 +4285,7 @@ export async function createGateway(config: GatewayConfig) {
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath }),
+      createOpenClawChatProviderAdapter({ rpc: openClawRpc, homePath }),
     ];
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({

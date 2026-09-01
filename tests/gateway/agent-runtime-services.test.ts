@@ -118,11 +118,45 @@ describe("Hermes agent runtime services", () => {
     expect(clients[1]?.close).toHaveBeenCalledOnce();
   });
 
+  it("forwards run-scoped OpenClaw call options through the lazy client", async () => {
+    const client = {
+      call: vi.fn(async () => ({ status: "ok" })),
+      close: vi.fn(async () => {}),
+    };
+    const rpc = createLazyOpenClawRpc("/owner/home", {
+      readToken: vi.fn(async () => "a".repeat(64)),
+      createClient: () => client,
+    });
+    const signal = new AbortController().signal;
+    const onAccepted = vi.fn();
+    const onEvent = vi.fn();
+    const callOptions = {
+      expectFinal: true,
+      timeoutMs: 120_000,
+      onAccepted,
+      onEvent,
+    };
+
+    await expect(rpc.call("agent", {
+      message: "hello",
+      idempotencyKey: "run-openclaw",
+    }, signal, callOptions)).resolves.toEqual({ status: "ok" });
+
+    expect(client.call).toHaveBeenCalledWith("agent", {
+      message: "hello",
+      idempotencyKey: "run-openclaw",
+    }, signal, callOptions);
+    await rpc.close();
+  });
+
   it("wires the unified runtime services into gateway startup and shutdown", async () => {
     const server = await readFile("packages/gateway/src/server.ts", "utf8");
 
-    expect(server).toContain('import { createAgentRuntimeServices } from "./agent-config/runtime-services.js";');
+    expect(server).toContain("createAgentRuntimeServices,");
+    expect(server).toContain("createLazyOpenClawRpc,");
+    expect(server).toContain("const openClawRpc = createLazyOpenClawRpc(homePath);");
     expect(server).toContain("const agentRuntimeServices = createAgentRuntimeServices({");
+    expect(server).toContain("openClawRpc,");
     expect(server).toContain("await agentRuntimeServices.controller.reconcile();");
     expect(server).toContain("await agentRuntimeServices.controller.close();");
     expect(server).not.toContain("createHermesAgentRuntimeServices");
