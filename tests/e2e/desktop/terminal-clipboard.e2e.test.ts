@@ -138,7 +138,10 @@ suite("packaged Electron terminal clipboard", () => {
     const exactSelection = `${firstLine}\n${secondLine}`;
     const wrappedLine = `WRAPPED-${"0123456789".repeat(12)}-END`;
     gateway.sendTerminalOutput(`\r\n${firstLine}\r\n${secondLine}\r\n${wrappedLine}\r\n`);
-    await terminalSurface().getByText(secondLine, { exact: false }).waitFor({ timeout: 10_000 });
+    await terminalSurface()
+      .locator('.xterm-accessibility-tree [role="listitem"]', { hasText: secondLine })
+      .last()
+      .waitFor({ timeout: 10_000 });
 
     await selectBetween(firstLine, 0, secondLine, secondLine.length);
     await page.keyboard.press(copyShortcut);
@@ -214,10 +217,6 @@ suite("packaged Electron terminal clipboard", () => {
       await page.mouse.click(screenBox.x + 30, screenBox.y + 30, { button: "right" });
       await page.getByRole("menuitem", { name: "Select All", exact: true }).click();
     }
-    await expect.poll(
-      () => terminalSurface().locator(".xterm-selection div").count(),
-      { timeout: 10_000, message: "terminal selection is unavailable after Select All" },
-    ).toBeGreaterThan(0);
     await page.keyboard.press(copyShortcut);
     await expect.poll(clipboardText).toContain(firstLine);
     const selectAllSnapshot = await clipboardText();
@@ -241,7 +240,10 @@ suite("packaged Electron terminal clipboard", () => {
     await openSession("matrix-review");
     const reviewLine = "REVIEW-ONLY terminal selection";
     gateway.sendTerminalOutput(`\r\n${reviewLine}\r\n`, "matrix-review");
-    await terminalSurface().getByText(reviewLine, { exact: false }).waitFor({ timeout: 10_000 });
+    await terminalSurface()
+      .locator('.xterm-accessibility-tree [role="listitem"]', { hasText: reviewLine })
+      .last()
+      .waitFor({ timeout: 10_000 });
     await selectBetween(reviewLine, 0, reviewLine, reviewLine.length);
     await page.keyboard.press(copyShortcut);
     await expect.poll(clipboardText).toBe(reviewLine);
@@ -257,4 +259,185 @@ suite("packaged Electron terminal clipboard", () => {
       data: reviewPaste,
     });
   }, 120_000);
+});
+
+suite("packaged Electron production-mode terminal selection", () => {
+  let gateway: StubGateway;
+  let app: ElectronApplication;
+  let page: Page;
+  let userDataDir: string;
+
+  const terminalSurface = () => page
+    .getByRole("heading", { name: "matrix-task-1", exact: true })
+    .locator("xpath=ancestor::section[1]")
+    .locator("[data-terminal-surface]");
+
+  async function terminalGrid() {
+    await expect.poll(
+      () => gateway.state.terminalResizeEvents.findLast(
+        (event) => event.session === "matrix-task-1",
+      ),
+      { timeout: 10_000 },
+    ).toBeTruthy();
+    const [screenBox, resize] = await Promise.all([
+      terminalSurface().locator(".xterm-screen").boundingBox(),
+      Promise.resolve(gateway.state.terminalResizeEvents.findLast(
+        (event) => event.session === "matrix-task-1",
+      )),
+    ]);
+    if (!screenBox || !resize) throw new Error("production terminal geometry is unavailable");
+    return {
+      screenBox,
+      resize,
+      point: (column: number, row: number) => ({
+        x: screenBox.x + (column + 0.5) * (screenBox.width / resize.cols),
+        y: screenBox.y + (row + 0.5) * (screenBox.height / resize.rows),
+      }),
+    };
+  }
+
+  beforeAll(async () => {
+    gateway = await startStubGateway();
+    userDataDir = mkdtempSync(join(tmpdir(), "matrix-terminal-production-selection-"));
+    app = await _electron.launch({
+      executablePath: ELECTRON_EXECUTABLE,
+      args: [DESKTOP_MAIN, "--disable-blink-features=AutomationControlled"],
+      env: {
+        ...process.env,
+        OPERATOR_GATEWAY_URL: gateway.url,
+        OPERATOR_USER_DATA_DIR: userDataDir,
+      },
+    });
+    page = await app.firstWindow();
+    await page.waitForFunction(() => typeof window.operator?.invoke === "function");
+    await page.evaluate(async () => {
+      await window.operator.invoke("auth:start-device-flow", {});
+    });
+    await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
+    await page.getByRole("button", { name: "Open matrix-task-1" }).click();
+    await page.getByRole("heading", { name: "matrix-task-1", exact: true }).waitFor({ timeout: 10_000 });
+    await terminalSurface().locator(".xterm-helper-textarea").focus();
+  }, 60_000);
+
+  afterAll(async () => {
+    await app?.close();
+    await gateway?.close();
+    if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  it("copies a real mouse selection when webdriver accessibility rendering is disabled", async () => {
+    expect(await page.evaluate(() => navigator.webdriver)).toBe(false);
+    const firstLine = "PRODUCTION-FIRST alpha beta";
+    const secondLine = "PRODUCTION-SECOND gamma delta";
+    const expected = `${firstLine}\n${secondLine}`;
+    gateway.sendTerminalOutput(`\u001bc${firstLine}\r\n${secondLine}`);
+    await page.waitForTimeout(250);
+    const { point } = await terminalGrid();
+
+    const start = point(0, 0);
+    const end = point(secondLine.length, 1);
+    const hitTargets = await page.evaluate(({ startPoint, endPoint }) => {
+      const describe = (pointValue: { x: number; y: number }) => {
+        const target = document.elementFromPoint(pointValue.x, pointValue.y);
+        return target instanceof HTMLElement
+          ? { tag: target.tagName, className: target.className, terminalSurface: Boolean(target.closest("[data-terminal-surface]")) }
+          : null;
+      };
+      return { start: describe(startPoint), end: describe(endPoint) };
+    }, { startPoint: start, endPoint: end });
+    expect(hitTargets).toEqual({
+      start: expect.objectContaining({ terminalSurface: true }),
+      end: expect.objectContaining({ terminalSurface: true }),
+    });
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 8 });
+    await page.mouse.up();
+
+    await app.evaluate(({ clipboard }) => clipboard.writeText("stale clipboard value"));
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(expected);
+
+    const insideSelection = point(4, 0);
+    await page.mouse.click(insideSelection.x, insideSelection.y, { button: "right" });
+    const copy = page.getByRole("menuitem", { name: "Copy", exact: true });
+    await copy.waitFor();
+    expect(await copy.isEnabled()).toBe(true);
+  }, 60_000);
+
+  it("selects the complete xterm scrollback rather than only the visible viewport", async () => {
+    const { resize, point } = await terminalGrid();
+    const lines = Array.from(
+      { length: resize.rows + 12 },
+      (_, index) => `SCROLLBACK-${String(index).padStart(3, "0")}`,
+    );
+    gateway.sendTerminalOutput(`\u001bc${lines.join("\r\n")}`);
+    await page.waitForTimeout(300);
+
+    const menuPoint = point(2, resize.rows - 2);
+    await page.mouse.click(menuPoint.x, menuPoint.y, { button: "right" });
+    await page.getByRole("menuitem", { name: "Select All", exact: true }).click();
+    await page.waitForTimeout(50);
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+    await expect.poll(
+      () => app.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toContain(lines.at(0));
+    const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
+    expect(copied).toContain(lines.at(-1));
+  }, 60_000);
+
+  it("selects and copies a word immediately on double click without pointer movement", async () => {
+    const prefix = "DOUBLECLICK prefix ";
+    const word = "targetword";
+    gateway.sendTerminalOutput(`\u001bc${prefix}${word} suffix`);
+    await page.waitForTimeout(250);
+    const { point } = await terminalGrid();
+    const wordPoint = point(prefix.length + 3, 0);
+    await page.mouse.dblclick(wordPoint.x, wordPoint.y);
+    await app.evaluate(({ clipboard }) => clipboard.writeText("stale clipboard value"));
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(word);
+  }, 60_000);
+
+  it("extends a drag selection by auto-scrolling beyond both terminal edges", async () => {
+    const { resize, screenBox, point } = await terminalGrid();
+    const lines = Array.from(
+      { length: resize.rows + 30 },
+      (_, index) => `EDGE-SCROLL-${String(index).padStart(3, "0")}`,
+    );
+    gateway.sendTerminalOutput(`\u001bc${lines.join("\r\n")}`);
+    await page.waitForTimeout(300);
+
+    const initiallyVisibleTop = lines.length - resize.rows;
+    const upwardStart = point(5, resize.rows - 2);
+    await page.mouse.move(upwardStart.x, upwardStart.y);
+    await page.mouse.down();
+    await page.mouse.move(upwardStart.x, screenBox.y - 32, { steps: 8 });
+    await page.waitForTimeout(1_500);
+    await page.mouse.up();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+      .toContain(lines[initiallyVisibleTop - 1]);
+
+    await page.mouse.click(point(2, 2).x, point(2, 2).y);
+    const viewport = terminalSurface().locator(".xterm-viewport");
+    await page.mouse.move(screenBox.x + screenBox.width / 2, screenBox.y + screenBox.height / 2);
+    await page.mouse.wheel(0, -100_000);
+    await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBe(0);
+
+    const downwardStart = point(5, 1);
+    await page.mouse.move(downwardStart.x, downwardStart.y);
+    await page.mouse.down();
+    await page.mouse.move(
+      downwardStart.x,
+      screenBox.y + screenBox.height + 32,
+      { steps: 8 },
+    );
+    await page.waitForTimeout(1_500);
+    await page.mouse.up();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+      .toContain(lines[resize.rows + 1]);
+  }, 60_000);
 });

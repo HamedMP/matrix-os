@@ -39,6 +39,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     options: { theme?: unknown };
     registeredProviders: unknown[];
     dataCallback?: (data: string) => void;
+    selectionChangeCallback?: () => void;
     element: HTMLElement | null;
     focus: ReturnType<typeof vi.fn>;
     blur: ReturnType<typeof vi.fn>;
@@ -108,6 +109,10 @@ vi.mock("@xterm/xterm", () => ({
     dispose(): void {}
     onData(callback: (data: string) => void): { dispose: () => void } {
       this.dataCallback = callback;
+      return { dispose: () => {} };
+    }
+    onSelectionChange(callback: () => void): { dispose: () => void } {
+      this.selectionChangeCallback = callback;
       return { dispose: () => {} };
     }
     attachCustomKeyEventHandler(callback: (event: KeyboardEvent) => boolean): void {
@@ -1043,6 +1048,67 @@ describe("TerminalView session switching", () => {
     expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
     await waitFor(() => expect(terminal.focus).toHaveBeenCalledOnce());
     expect(container.querySelector("[role=menu]")).toBeNull();
+  });
+
+  it("copies the last confirmed mouse selection across a transient empty xterm read", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const confirmedSelection = "first row\nλ second row 👩🏽‍💻";
+    terminal.selection = confirmedSelection;
+    terminal.selectionChangeCallback?.();
+    terminal.selection = "";
+
+    const preventDefault = vi.fn();
+    let handled: boolean | undefined;
+    await act(async () => {
+      handled = terminal.customKeyEventHandler?.({
+        type: "keydown",
+        key: "c",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        repeat: false,
+        isComposing: false,
+        preventDefault,
+      } as unknown as KeyboardEvent);
+      await Promise.resolve();
+    });
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenLastCalledWith(confirmedSelection);
+
+    writeText.mockClear();
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    fireEvent.contextMenu(host, { clientX: 120, clientY: 80 });
+    const copy = screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(copy);
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith(confirmedSelection);
+
+    writeText.mockClear();
+    fireEvent.mouseDown(terminal.element!, { button: 0, buttons: 1 });
+    const afterDeliberateClear = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    expect(afterDeliberateClear).toBe(true);
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it("shields a completed selection from passive and secondary TUI mouse reports", () => {

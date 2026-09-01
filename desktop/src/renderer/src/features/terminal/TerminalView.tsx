@@ -112,6 +112,7 @@ export default function TerminalView({
   const copyOperationGenerationRef = useRef(0);
   const pasteOperationGenerationRef = useRef(0);
   const clipboardOperationSequenceRef = useRef(0);
+  const confirmedSelectionRef = useRef("");
   const visualScaleRef = useRef(visualScale);
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
@@ -153,6 +154,7 @@ export default function TerminalView({
 
   if (stateSessionName !== sessionName) {
     setStateSessionName(sessionName);
+    confirmedSelectionRef.current = "";
     endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
@@ -191,7 +193,14 @@ export default function TerminalView({
     terminal.loadAddon(fit);
     terminal.loadAddon(serialize);
     terminal.open(host);
+    confirmedSelectionRef.current = "";
+    const readTerminalSelection = () => terminal.getSelection() || confirmedSelectionRef.current;
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      const selection = terminal.getSelection();
+      if (selection) confirmedSelectionRef.current = selection;
+    });
     terminal.attachCustomKeyEventHandler((event) => {
+      const selection = readTerminalSelection();
       const action = classifyTerminalClipboardShortcut({
         type: event.type as "keydown" | "keyup" | "keypress",
         key: event.key,
@@ -202,12 +211,12 @@ export default function TerminalView({
         altKey: event.altKey,
         repeat: event.repeat,
         isComposing: event.isComposing,
-        hasSelection: terminal.hasSelection(),
+        hasSelection: Boolean(selection),
       });
       if (!action) return true;
       event.preventDefault();
       if (action === "copy") {
-        void copyTerminalTextWithFeedback(terminal.getSelection());
+        void copyTerminalTextWithFeedback(selection);
       } else if (action === "paste") {
         void pasteClipboardRef.current();
       } else {
@@ -239,11 +248,14 @@ export default function TerminalView({
     };
     const onTerminalPointer = (event: MouseEvent) => {
       if ((event as MouseEvent & { _xtermScaleCorrected?: boolean })._xtermScaleCorrected) return;
+      if (event.type === "mousedown" && event.button === 0) {
+        confirmedSelectionRef.current = "";
+      }
       const decision = classifyTerminalPointerEvent({
         type: event.type as "mousedown" | "mousemove" | "mouseup",
         button: event.button,
         buttons: event.buttons,
-        hasSelection: terminal.hasSelection(),
+        hasSelection: Boolean(readTerminalSelection()),
       });
       if (decision === "shield-selection") {
         event.preventDefault();
@@ -288,7 +300,7 @@ export default function TerminalView({
         x: event.clientX,
         y: event.clientY,
         link,
-        selection: terminal.getSelection(),
+        selection: readTerminalSelection(),
       });
     };
     host.addEventListener("mousedown", onTerminalPointer, true);
@@ -328,6 +340,8 @@ export default function TerminalView({
       host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onTerminalContextMenu, true);
       linkProviderDisposable.dispose();
+      selectionDisposable.dispose();
+      confirmedSelectionRef.current = "";
       observer.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
