@@ -1141,13 +1141,22 @@ export const ReviewSnapshotSchema = z.object({
 export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
 
 export {
+  DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  LegacyDesktopImportSchema,
   OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_CREATE_APP_APPEARANCE,
+  OS_VIEW_FIXED_APP_APPEARANCES,
   OS_VIEW_LABELS,
   OS_VIEW_MODES,
   isOsViewDestinationPath,
+  legacyDesktopImportFromConfig,
   normalizeOsViewMode,
+  osViewFixedAppAppearanceForPath,
+  normalizeOsViewDesktopAppPath,
+  normalizeOsViewDesktopIcons,
   otherOsViewMode,
   createDefaultOsViewDocument,
+  createDefaultOsViewDesktopIcons,
   mergeOsViewStatePatch,
   rebaseOsViewStatePatch,
   OsViewAppStateSchema,
@@ -1161,10 +1170,13 @@ export {
   PatchOsViewStateRequestSchema,
 } from "#os-view";
 export type {
+  LegacyDesktopImport,
   OsViewAppState,
   OsViewCanvasTransform,
   OsViewDesktopIcon,
   OsViewDocument,
+  OsViewFixedAppIcon,
+  OsViewFixedAppId,
   OsViewMode,
   OsViewStatePatch,
   OsViewStateResponse,

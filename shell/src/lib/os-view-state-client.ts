@@ -1,4 +1,5 @@
 import {
+  LegacyDesktopImportSchema,
   OsViewStateResponseSchema,
   createDefaultOsViewDocument,
   mergeOsViewStatePatch,
@@ -6,6 +7,7 @@ import {
   type OsViewStatePatch,
   type OsViewStateResponse,
   type OsViewMode,
+  type LegacyDesktopImport,
 } from "@matrix-os/contracts";
 import type { LayoutWindow } from "@/hooks/useWindowManager";
 
@@ -42,6 +44,45 @@ export async function loadWebOsViewState(
 ): Promise<OsViewStateResponse> {
   const state = await requestState(gatewayUrl, signal);
   cached = { gatewayUrl, state };
+  return state;
+}
+
+export async function importWebLegacyDesktopConfig(
+  gatewayUrl: string,
+  input: LegacyDesktopImport,
+  signal?: AbortSignal,
+): Promise<OsViewStateResponse> {
+  const legacy = LegacyDesktopImportSchema.parse(input);
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const response = await fetch(`${gatewayUrl}/api/os-view-state/import-legacy-desktop`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    body: JSON.stringify(legacy),
+  });
+  if (response.ok) {
+    const state = OsViewStateResponseSchema.parse(await response.json());
+    cached = { gatewayUrl, state };
+    return state;
+  }
+  if (response.status !== 404 && response.status !== 405) {
+    throw new Error(`POST /api/os-view-state/import-legacy-desktop ${response.status}`);
+  }
+
+  // Rolling compatibility for a new shell briefly connected to an older
+  // gateway. Preserve absent legacy icons rather than reproducing the old
+  // undefined -> [] migration bug.
+  let state = await requestState(gatewayUrl, signal);
+  cached = { gatewayUrl, state };
+  if (state.revision === 1 && Object.keys(legacy).length > 0) {
+    await patchWebOsViewState(gatewayUrl, {
+      ...(legacy.pinnedApps !== undefined ? { pinnedApps: legacy.pinnedApps } : {}),
+      ...(legacy.desktopIcons !== undefined ? { desktop: { icons: legacy.desktopIcons } } : {}),
+    });
+    state = await requestState(gatewayUrl, signal);
+    cached = { gatewayUrl, state };
+  }
   return state;
 }
 

@@ -1,5 +1,6 @@
 import AccountMenu from "../mission-control/AccountMenu";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
+import DesktopDiscordButton from "../support/DesktopDiscordButton";
 import DesktopSupportButton from "../support/DesktopSupportButton";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import { Search } from "../../lib/hugeicons";
@@ -20,6 +21,7 @@ export default function DesktopModeControls() {
         <Search aria-hidden="true" size={16} />
       </button>
       <DesktopSupportButton />
+      <DesktopDiscordButton />
       <div className="relative w-[156px]">
         <RuntimeComputerMenu collapsed={false} />
       </div>

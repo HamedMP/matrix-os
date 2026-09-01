@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_OS_VIEW_DESKTOP_APP_PATHS } from "@matrix-os/contracts";
 import { FIXED_DESKTOP_APPS } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
 
 describe("native desktop default apps", () => {
@@ -15,6 +16,7 @@ describe("native desktop default apps", () => {
       "notes",
       "whiteboard",
     ]);
+    expect(FIXED_DESKTOP_APPS.map((app) => app.path)).toEqual(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS);
   });
 
   it("keeps every desktop destination identity unique even when surfaces are shared", () => {

@@ -20,6 +20,10 @@ const freshSnapshot = {
     background: { type: "wallpaper", name: "cached-wallpaper.jpg" },
     dock: { position: "bottom", size: 64, iconSize: 44, autoHide: false },
     pinnedApps: ["apps/notes/index.html"],
+    desktopIcons: [
+      { path: "__chat__", x: 20, y: 20 },
+      { path: "apps/notes/index.html", x: 108, y: 20 },
+    ],
   },
   bootstrap: {
     layout: { windows: [{ id: "w1", path: "__terminal__", title: "Terminal" }] },
@@ -61,6 +65,10 @@ describe("shell snapshot cache", () => {
     expect(primary?.storageKey).toContain(SHELL_SNAPSHOT_STORAGE_PREFIX);
     expect(primary?.storageKey).not.toBe(vm?.storageKey);
     expect(primary?.storageKey).not.toBe(otherUser?.storageKey);
+
+    saveShellSnapshot(primary, freshSnapshot, storage);
+    expect(loadShellSnapshot(vm, storage)).toBeNull();
+    expect(loadShellSnapshot(otherUser, storage)).toBeNull();
   });
 
   it("does not create a readable cache scope without a loaded user id", () => {
@@ -79,6 +87,20 @@ describe("shell snapshot cache", () => {
       desktopConfig: expect.objectContaining({ background: { type: "wallpaper", name: "cached-wallpaper.jpg" } }),
       bootstrap: expect.objectContaining({ apps: freshSnapshot.bootstrap.apps }),
     }));
+    expect(loadShellSnapshot(scope, storage)?.desktopConfig?.desktopIcons).toEqual(
+      freshSnapshot.desktopConfig.desktopIcons,
+    );
+  });
+
+  it("preserves an explicitly empty Desktop icon layout", () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+
+    saveShellSnapshot(scope, {
+      desktopConfig: { ...freshSnapshot.desktopConfig, desktopIcons: [] },
+    }, storage);
+
+    expect(loadShellSnapshot(scope, storage)?.desktopConfig?.desktopIcons).toEqual([]);
   });
 
   it("ignores corrupt, stale, and oversized entries", () => {
@@ -108,6 +130,12 @@ describe("shell snapshot cache", () => {
         background: { type: "image", url: "javascript:alert(1)" },
         dock: { position: "sideways", size: 10000, iconSize: -1, autoHide: true },
         pinnedApps: ["apps/safe/index.html", "../escape"],
+        desktopIcons: [
+          { path: "__chat__", x: 20, y: 20 },
+          { path: "../escape", x: 20, y: 20 },
+          { path: "__terminal__", x: -1, y: 0 },
+          { path: "__chat__", x: 40, y: 40 },
+        ],
       },
       bootstrap: {
         layout: { windows: "bad" },
@@ -122,6 +150,7 @@ describe("shell snapshot cache", () => {
     expect(loaded?.desktopConfig?.background).toEqual({ type: "wallpaper", name: "matrix-dusk.webp" });
     expect(loaded?.desktopConfig?.dock).toEqual({ position: "left", size: 56, iconSize: 40, autoHide: false });
     expect(loaded?.desktopConfig?.pinnedApps).toEqual(["apps/safe/index.html"]);
+    expect(loaded?.desktopConfig?.desktopIcons).toEqual([{ path: "__chat__", x: 20, y: 20 }]);
     expect(loaded?.bootstrap?.layout).toEqual({});
     expect(loaded?.bootstrap?.modules).toEqual([]);
     expect(loaded?.bootstrap?.apps).toEqual([{ name: "Safe", path: "/files/apps/safe/index.html", icon: undefined, slug: "safe" }]);
