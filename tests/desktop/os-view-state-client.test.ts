@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultOsViewDocument } from "@matrix-os/contracts";
 import { AppError } from "../../desktop/src/shared/app-error";
 import {
+  importNativeLegacyDesktopConfig,
   patchNativeOsViewState,
   resetNativeOsViewStateClientForTests,
 } from "@desktop/renderer/src/lib/os-view-state-client";
@@ -14,6 +15,22 @@ const latest = {
 
 describe("Electron Desktop OS-view state client", () => {
   beforeEach(() => resetNativeOsViewStateClientForTests());
+
+  it("imports only present legacy Desktop fields and primes the durable cache", async () => {
+    const imported = { ...latest, revision: 2 };
+    const api = {
+      post: vi.fn(async () => imported),
+    };
+
+    await expect(importNativeLegacyDesktopConfig(api as never, {
+      pinnedApps: ["__chat__"],
+    })).resolves.toEqual(imported);
+
+    expect(api.post).toHaveBeenCalledWith(
+      "/api/os-view-state/import-legacy-desktop",
+      { pinnedApps: ["__chat__"] },
+    );
+  });
 
   it("reloads and retries the same mutation after a revision conflict", async () => {
     const latestAfterConflict = {
@@ -46,12 +63,7 @@ describe("Electron Desktop OS-view state client", () => {
     expect(retried.baseRevision).toBe(6);
     expect(retried.mutationId).toBe(first.mutationId);
     expect(retried.patch).toEqual({
-      desktop: {
-        icons: [
-          { path: "__terminal__", x: 40, y: 50 },
-          { path: "__chat__", x: 20, y: 30 },
-        ],
-      },
+      desktop: { icons: [{ path: "__chat__", x: 20, y: 30 }] },
     });
     expect(api.patch.mock.calls[2][1].baseRevision).toBe(9);
   });

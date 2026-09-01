@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { appKeys, appsQueryOptions, type ApiAppEntry } from "@/api/apps";
+import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -30,7 +30,7 @@ import { useThemeStyle } from "./window/useThemeStyle";
 import { OsSessionHost } from "./os-session/OsSessionHost";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
-import { getGatewayUrl } from "@/lib/gateway";
+import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
@@ -39,6 +39,7 @@ import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   buildWebDesktopLauncherApps,
   buildWebDesktopIconApps,
@@ -124,10 +125,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const wmToggleFullscreen = useWindowManager((s) => s.toggleFullscreen);
   const wmExitFullscreen = useWindowManager((s) => s.exitFullscreen);
   const queryClient = useQueryClient();
-  const cachedApps = useMemo(
-    () => loadShellSnapshot(cacheScope)?.bootstrap?.apps,
-    [cacheScope],
-  );
+  const cachedApps = useMemo(() => {
+    const bootstrap = loadShellSnapshot(cacheScope)?.bootstrap;
+    return hydrateAppIconUrls(bootstrap?.apps, bootstrap?.icons, gatewayAssetUrl);
+  }, [cacheScope]);
   const { data: apiApps = [], refetch: refetchApps } = useQuery({
     ...appsQueryOptions(),
     initialData: cachedApps,
@@ -1055,9 +1056,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         >
           {canvasToolbarChild}
         </WindowsTaskbar>
-      ) : canvasToolbarChild)}
+      ) : canvasToolbarChild ? (
+        <header
+          data-testid="canvas-toolbar"
+          className="relative flex h-[38px] shrink-0 items-center justify-center gap-0.5 border-b border-white/30 bg-card/70 px-3 text-xs leading-none text-foreground/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] backdrop-blur-xl"
+          style={{ zIndex: SHELL_Z_INDEX.menuBar }}
+        >
+          {canvasToolbarChild}
+        </header>
+      ) : null)}
       <OsSessionHost />
-      <div className="relative flex-1 flex flex-col md:flex-row">
+      <div className="relative min-h-0 flex-1 flex flex-col md:flex-row">
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
         {desktopMode !== "desktop" && !isWindowsDesign && <div
           className={[

@@ -29,9 +29,13 @@ describe("WebDesktopControls", () => {
     expect(screen.getByRole("link", { name: "Switch computer" }).getAttribute("href")).toBe("/runtime");
     fireEvent.click(screen.getByRole("button", { name: "Support chat" }));
     expect(onOpenSupport).toHaveBeenCalledOnce();
+    const discord = screen.getByRole("link", { name: "Join Discord" });
+    expect(discord.getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
+    expect(discord.getAttribute("target")).toBe("_blank");
+    expect(discord.getAttribute("rel")).toBe("noopener noreferrer");
     expect(Array.from(screen.getByRole("navigation", { name: "Desktop controls" }).children)
       .map((control) => control.getAttribute("aria-label") ?? control.textContent))
-      .toEqual(["Search", "Support chat", "Switch computer", "Account"]);
+      .toEqual(["Search", "Support chat", "Join Discord", "Switch computer", "Account"]);
     fireEvent.click(screen.getByRole("button", { name: "Account" }));
     expect(onOpenSettings).toHaveBeenCalledWith("billing");
   });

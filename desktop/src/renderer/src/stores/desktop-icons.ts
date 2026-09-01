@@ -7,7 +7,11 @@ import {
   primeNativeOsViewState,
   resetNativeOsViewStateClientForTests,
 } from "../lib/os-view-state-client";
-import { createDefaultOsViewDocument, OsViewStateResponseSchema } from "@matrix-os/contracts";
+import {
+  createDefaultOsViewDocument,
+  normalizeOsViewDesktopAppPath,
+  OsViewStateResponseSchema,
+} from "@matrix-os/contracts";
 
 export interface DesktopIconPlacement {
   path: string;
@@ -43,9 +47,11 @@ export function parseDesktopIcons(value: unknown): DesktopIconPlacement[] | null
   const icons: DesktopIconPlacement[] = [];
   const seen = new Set<string>();
   for (const raw of value.slice(0, MAX_DESKTOP_ICONS)) {
-    if (!validPlacement(raw) || seen.has(raw.path)) continue;
-    seen.add(raw.path);
-    icons.push({ path: raw.path, x: raw.x, y: raw.y });
+    if (!validPlacement(raw)) continue;
+    const path = normalizeOsViewDesktopAppPath(raw.path);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    icons.push({ path, x: raw.x, y: raw.y });
   }
   return icons;
 }
