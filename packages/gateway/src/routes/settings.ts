@@ -215,11 +215,20 @@ function mergeDesktopDefaults(config: Record<string, unknown>): Record<string, u
   const pinnedApps = Array.isArray(config.pinnedApps)
     ? config.pinnedApps.filter((path): path is string => typeof path === "string" && !RETIRED_DESKTOP_APP_PATHS.has(path))
     : DESKTOP_DEFAULTS.pinnedApps;
+  const legacyDesktopImport = {
+    ...(Object.prototype.hasOwnProperty.call(config, "pinnedApps")
+      ? { pinnedApps: Array.isArray(config.pinnedApps) ? pinnedApps : config.pinnedApps }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(config, "desktopIcons")
+      ? { desktopIcons: config.desktopIcons }
+      : {}),
+  };
   return {
     ...DESKTOP_DEFAULTS,
     ...config,
     dock: { ...DESKTOP_DEFAULTS.dock, ...dock },
     pinnedApps,
+    legacyDesktopImport,
   };
 }
 
@@ -484,11 +493,13 @@ export function createSettingsRoutes(opts: {
     }
     await enqueueDesktopWrite(async () => {
       const current = await readJson<Record<string, unknown>>(desktopPath, {}, "desktop config");
+      const desktopBody = { ...body };
+      delete desktopBody.legacyDesktopImport;
       await writeJsonAtomic(desktopPath, {
-        ...body,
-        pinnedApps: body.pinnedApps === undefined
+        ...desktopBody,
+        pinnedApps: desktopBody.pinnedApps === undefined
           ? current.pinnedApps
-          : preserveRetiredPinnedApps(current.pinnedApps, body.pinnedApps),
+          : preserveRetiredPinnedApps(current.pinnedApps, desktopBody.pinnedApps),
       });
     });
     return c.json({ ok: true });

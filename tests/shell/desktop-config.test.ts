@@ -20,7 +20,7 @@ import {
   type DesktopConfig,
 } from "../../shell/src/hooks/useDesktopConfig";
 import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
-import { createDefaultOsViewDocument } from "@matrix-os/contracts";
+import { createDefaultOsViewDesktopIcons, createDefaultOsViewDocument } from "@matrix-os/contracts";
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -473,6 +473,58 @@ describe("Desktop config", () => {
     expect(useDesktopConfigStore.getState().dock.position).toBe("bottom");
     await waitFor(() => expect(result.current.background).toEqual({ type: "wallpaper", name: "fresh-wallpaper.jpg" }));
     expect(loadShellSnapshot(scope)?.desktopConfig?.pinnedApps).toEqual(["apps/fresh/index.html"]);
+  });
+
+  it("keeps cached Desktop icons visible while legacy settings without icons hydrate", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    const icons = createDefaultOsViewDesktopIcons();
+    saveShellSnapshot(scope, {
+      desktopConfig: {
+        background: { type: "wallpaper", name: "cached-wallpaper.jpg" },
+        dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+        pinnedApps: [],
+        desktopIcons: icons,
+      },
+    });
+    let resolveImport: ((value: unknown) => void) | undefined;
+    const importResponse = new Promise((resolve) => { resolveImport = resolve; });
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes("/api/settings/desktop")) return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          background: { type: "wallpaper", name: "fresh-wallpaper.jpg" },
+          dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+          pinnedApps: ["__terminal__", "__file-browser__", "__chat__"],
+          legacyDesktopImport: {},
+        }),
+      });
+      if (url.includes("/api/os-view-state/import-legacy-desktop")) return importResponse;
+      return Promise.resolve({ ok: false, status: 503 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderHook(() => useDesktopConfig({ cacheScope: scope }));
+
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual(icons);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes("/api/os-view-state/import-legacy-desktop")
+    ))).toBe(true));
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual(icons);
+    const importCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/os-view-state/import-legacy-desktop"));
+    expect(JSON.parse(importCall?.[1]?.body)).toEqual({});
+
+    resolveImport?.({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        revision: 2,
+        document: createDefaultOsViewDocument(),
+        updatedAt: "2026-08-30T12:00:00.000Z",
+      }),
+    });
+    await waitFor(() => expect(loadShellSnapshot(scope)?.desktopConfig?.desktopIcons).toEqual(icons));
   });
 
   it("keeps the active OS wallpaper when a second desktop-config consumer mounts", async () => {

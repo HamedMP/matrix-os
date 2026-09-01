@@ -13,6 +13,39 @@ export const OS_VIEW_DESTINATION_PATHS: Readonly<Record<OsViewMode, string>> = {
   canvas: "__os-view-canvas__",
 };
 
+export const DEFAULT_OS_VIEW_DESKTOP_APP_PATHS = Object.freeze([
+  "__chat__",
+  "__terminal__",
+  "__file-browser__",
+  "__editor__",
+  "__vscode__",
+  "__settings__",
+  "__plugins__",
+  "__browser__",
+  "apps/notes/index.html",
+  "apps/whiteboard/index.html",
+] as const);
+
+const DEFAULT_DESKTOP_GRID = Object.freeze({
+  startX: 20,
+  startY: 20,
+  columnWidth: 88,
+  rowHeight: 92,
+  columns: 2,
+});
+
+const OS_VIEW_DESKTOP_APP_PATH_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  "apps/browser/index.html": "__browser__",
+  "apps/browser/dist/index.html": "__browser__",
+  "__notes__": "apps/notes/index.html",
+  "apps/notes/dist/index.html": "apps/notes/index.html",
+  "apps/whiteboard/dist/index.html": "apps/whiteboard/index.html",
+});
+
+export function normalizeOsViewDesktopAppPath(path: string): string {
+  return OS_VIEW_DESKTOP_APP_PATH_ALIASES[path] ?? path;
+}
+
 export function normalizeOsViewMode(value: unknown): OsViewMode {
   return value === "canvas" ? "canvas" : "desktop";
 }
@@ -50,6 +83,11 @@ export const OsViewDesktopIconSchema = z.object({
   iconKey: z.string().min(1).max(256).optional(),
   x: OsViewCoordinateSchema,
   y: OsViewCoordinateSchema,
+}).strict();
+
+export const LegacyDesktopImportSchema = z.object({
+  pinnedApps: z.array(OsViewPathSchema).max(512).optional(),
+  desktopIcons: z.array(OsViewDesktopIconSchema).max(512).optional(),
 }).strict();
 
 export const OsViewCanvasTransformSchema = z.object({
@@ -102,18 +140,58 @@ export const OsViewStateResponseSchema = z.object({
 export type OsViewAppState = z.infer<typeof OsViewAppStateSchema>;
 export type OsViewWindowGeometry = z.infer<typeof OsViewWindowGeometrySchema>;
 export type OsViewDesktopIcon = z.infer<typeof OsViewDesktopIconSchema>;
+export type LegacyDesktopImport = z.infer<typeof LegacyDesktopImportSchema>;
 export type OsViewCanvasTransform = z.infer<typeof OsViewCanvasTransformSchema>;
 export type OsViewDocument = z.infer<typeof OsViewDocumentSchema>;
 export type OsViewStatePatch = z.infer<typeof OsViewStatePatchSchema>;
 export type PatchOsViewStateRequest = z.infer<typeof PatchOsViewStateRequestSchema>;
 export type OsViewStateResponse = z.infer<typeof OsViewStateResponseSchema>;
 
+export function legacyDesktopImportFromConfig(value: unknown): LegacyDesktopImport | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const config = value as Record<string, unknown>;
+  const candidate = Object.prototype.hasOwnProperty.call(config, "legacyDesktopImport")
+    ? config.legacyDesktopImport
+    : {
+        ...(Object.prototype.hasOwnProperty.call(config, "pinnedApps")
+          ? { pinnedApps: config.pinnedApps }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(config, "desktopIcons")
+          ? { desktopIcons: config.desktopIcons }
+          : {}),
+      };
+  const parsed = LegacyDesktopImportSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+
+export function normalizeOsViewDesktopIcons(
+  icons: readonly OsViewDesktopIcon[],
+): OsViewDesktopIcon[] {
+  const normalized: OsViewDesktopIcon[] = [];
+  const seen = new Set<string>();
+  for (const icon of icons) {
+    const path = normalizeOsViewDesktopAppPath(icon.path);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    normalized.push({ ...icon, path });
+  }
+  return normalized;
+}
+
+export function createDefaultOsViewDesktopIcons(): OsViewDesktopIcon[] {
+  return DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.map((path, index) => ({
+    path,
+    x: DEFAULT_DESKTOP_GRID.startX + (index % DEFAULT_DESKTOP_GRID.columns) * DEFAULT_DESKTOP_GRID.columnWidth,
+    y: DEFAULT_DESKTOP_GRID.startY + Math.floor(index / DEFAULT_DESKTOP_GRID.columns) * DEFAULT_DESKTOP_GRID.rowHeight,
+  }));
+}
+
 export function createDefaultOsViewDocument(): OsViewDocument {
   return {
     schemaVersion: 1,
     apps: [],
     pinnedApps: [],
-    desktop: { windows: [], icons: [] },
+    desktop: { windows: [], icons: createDefaultOsViewDesktopIcons() },
     canvas: {
       windows: [],
       transform: { panX: 0, panY: 0, zoom: 1 },

@@ -139,7 +139,7 @@ describe("AppLauncher", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
 
-    expect(onAddToDesktop).toHaveBeenCalledWith("__notes__");
+    expect(onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html");
   });
 
   it("keeps the focused launcher search field free of a nested focus ring", () => {
