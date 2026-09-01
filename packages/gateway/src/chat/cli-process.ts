@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnIsolatedProviderProcess } from "../coding-agents/provider-process-isolation.js";
 
 export interface CanonicalCliProcess {
   stdout: { on(event: "data", listener: (chunk: Buffer) => void): void };
@@ -14,7 +14,9 @@ export type CanonicalCliSpawn = (
   options: { cwd: string; env: Record<string, string>; stdio: ["ignore", "pipe", "pipe"] },
 ) => CanonicalCliProcess;
 
-const defaultSpawn: CanonicalCliSpawn = (command, args, options) => spawn(command, args, options);
+const defaultSpawn: CanonicalCliSpawn = (command, args, options) => (
+  spawnIsolatedProviderProcess(command, args, options)
+);
 const CLI_TERMINATION_GRACE_MS = 1_000;
 const CLI_FORCE_SETTLE_MS = 250;
 

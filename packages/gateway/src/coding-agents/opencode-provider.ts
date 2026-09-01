@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import {
@@ -30,6 +30,7 @@ import type {
   CodingAgentProviderEventPublisher,
 } from "./provider-adapter.js";
 import { hasNativeHarnessAuth } from "./native-harness-auth.js";
+import { spawnIsolatedProviderProcess } from "./provider-process-isolation.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
@@ -81,7 +82,10 @@ export interface OpenCodeCodingAgentProviderOptions {
 
 const execFileAsync = promisify(execFile);
 const defaultSpawn: OpenCodeSpawnFn = (command, args, options) =>
-  spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+  spawnIsolatedProviderProcess(command, args, {
+    ...options,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 const defaultRunCommand: RunCommand = async (command, args, options) => {
   const result = await execFileAsync(command, args, {
     ...options,

@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -15,6 +15,7 @@ import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
 import { safeDisplayPath } from "../chat/safe-activity-projection.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import { spawnIsolatedProviderProcess } from "./provider-process-isolation.js";
 import {
   addPortableProviderCredentials,
   buildPiChildEnvironment,
@@ -120,7 +121,11 @@ const defaultRunCommand: PiRunCommandFn = async (command, args, options) => {
 };
 
 const defaultSpawnFn: PiSpawnFn = (command, args, options) =>
-  spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"] });
+  spawnIsolatedProviderProcess(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
 function boundedTimeout(value: number | undefined, fallback: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
