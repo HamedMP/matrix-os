@@ -194,7 +194,7 @@ describe("customer coding-agent runtime registration", () => {
     });
 
     expect(calls[0]!.args).toEqual(expect.arrayContaining([
-      "--format", "json", "--model", "anthropic/claude-sonnet-5", "--", "Inspect the project",
+      "--format", "json", "--model", "anthropic/claude-sonnet-5", "Inspect the project",
     ]));
     expect(calls[0]!.env).toMatchObject({ ANTHROPIC_API_KEY: "selected-runtime-key" });
     expect(result.events).toEqual(expect.arrayContaining([
