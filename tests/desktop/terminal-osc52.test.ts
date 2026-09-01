@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { decodeOsc52Clipboard } from "@desktop/renderer/src/features/terminal/terminal-osc52";
 
 describe("desktop terminal OSC 52 clipboard", () => {
@@ -18,5 +18,17 @@ describe("desktop terminal OSC 52 clipboard", () => {
   it("rejects unsupported targets and malformed payloads", () => {
     expect(decodeOsc52Clipboard("x;c3RhbGU=")).toEqual({ handled: false });
     expect(decodeOsc52Clipboard("c;not base64!")).toEqual({ handled: false });
+  });
+
+  it("reports decoder failures without logging clipboard contents", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "atob").mockImplementation(() => {
+      throw new Error("sensitive decoder failure");
+    });
+
+    expect(decodeOsc52Clipboard("c;c2VjcmV0")).toEqual({ handled: false });
+    expect(warn).toHaveBeenCalledWith("[terminal] OSC 52 decode failed", {
+      category: "decode-error",
+    });
   });
 });

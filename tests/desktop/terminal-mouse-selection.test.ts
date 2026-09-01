@@ -305,18 +305,50 @@ describe("mouse-reporting terminal selection", () => {
 
 describe("edge selection viewport merging", () => {
   it("prepends and appends only newly revealed rows", () => {
-    expect(mergeTerminalEdgeSelectionLines(["c", "d", "e"], ["a", "b", "c", "d"], "up"))
-      .toEqual(["a", "b", "c", "d", "e"]);
-    expect(mergeTerminalEdgeSelectionLines(["a", "b", "c"], ["b", "c", "d", "e"], "down"))
-      .toEqual(["a", "b", "c", "d", "e"]);
+    expect(mergeTerminalEdgeSelectionLines(
+      { startRow: 2, lines: ["c", "d", "e"] },
+      { startRow: 0, lines: ["a", "b", "c", "d"] },
+      "up",
+    )).toEqual({ startRow: 0, lines: ["a", "b", "c", "d", "e"] });
+    expect(mergeTerminalEdgeSelectionLines(
+      { startRow: 0, lines: ["a", "b", "c"] },
+      { startRow: 1, lines: ["b", "c", "d", "e"] },
+      "down",
+    )).toEqual({ startRow: 0, lines: ["a", "b", "c", "d", "e"] });
+  });
+
+  it("preserves distinct rows when adjacent viewport content is identical", () => {
+    expect(mergeTerminalEdgeSelectionLines(
+      { startRow: 100, lines: ["same", "same"] },
+      { startRow: 98, lines: ["same", "same", "same"] },
+      "up",
+    )).toEqual({ startRow: 98, lines: ["same", "same", "same", "same"] });
+    expect(mergeTerminalEdgeSelectionLines(
+      { startRow: 98, lines: ["same", "same"] },
+      { startRow: 99, lines: ["same", "same", "same"] },
+      "down",
+    )).toEqual({ startRow: 98, lines: ["same", "same", "same", "same"] });
   });
 
   it("caps retained viewport rows while preserving the selection anchor", () => {
     const lines = Array.from({ length: 5_001 }, (_, index) => `line-${index}`);
 
-    expect(mergeTerminalEdgeSelectionLines(["anchor"], lines, "up")).toHaveLength(5_000);
-    expect(mergeTerminalEdgeSelectionLines(["anchor"], lines, "up").at(-1)).toBe("anchor");
-    expect(mergeTerminalEdgeSelectionLines(["anchor"], lines, "down")).toHaveLength(5_000);
-    expect(mergeTerminalEdgeSelectionLines(["anchor"], lines, "down").at(0)).toBe("anchor");
+    const upward = mergeTerminalEdgeSelectionLines(
+      { startRow: 5_001, lines: ["anchor"] },
+      { startRow: 0, lines },
+      "up",
+    );
+    expect(upward.lines).toHaveLength(5_000);
+    expect(upward.lines.at(-1)).toBe("anchor");
+    expect(upward.startRow).toBe(2);
+
+    const downward = mergeTerminalEdgeSelectionLines(
+      { startRow: 0, lines: ["anchor"] },
+      { startRow: 1, lines },
+      "down",
+    );
+    expect(downward.lines).toHaveLength(5_000);
+    expect(downward.lines.at(0)).toBe("anchor");
+    expect(downward.startRow).toBe(0);
   });
 });
