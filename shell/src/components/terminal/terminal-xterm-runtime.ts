@@ -131,6 +131,7 @@ export function applyXtermScrollOptions(term: Terminal): void {
   term.options.scrollSensitivity = TERMINAL_SCROLL_SENSITIVITY;
   term.options.fastScrollSensitivity = TERMINAL_FAST_SCROLL_SENSITIVITY;
   term.options.scrollOnUserInput = true;
+  term.options.rightClickSelectsWord = false;
 }
 
 export function refreshTerminalRenderer(term: Terminal): void {

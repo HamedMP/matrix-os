@@ -66,6 +66,8 @@ describe("terminal selection pointer contract", () => {
   it.each([
     [pointer(), "shield-selection"],
     [pointer({ buttons: 2 }), "shield-selection"],
+    [pointer({ button: 0, buttons: 3 }), "shield-selection"],
+    [pointer({ button: 2, buttons: 3 }), "shield-selection"],
     [pointer({ type: "mousedown", button: 2, buttons: 2 }), "shield-selection"],
     [pointer({ type: "mouseup", button: 2, buttons: 0 }), "shield-selection"],
     [pointer({ type: "contextmenu", button: 2, buttons: 0 }), "open-context-menu"],
@@ -78,7 +80,9 @@ describe("terminal selection pointer contract", () => {
     pointer({ hasSelection: false, type: "mousedown", button: 2, buttons: 2 }),
     pointer({ type: "mousedown", button: 0, buttons: 1 }),
     pointer({ type: "mousemove", button: 0, buttons: 1 }),
+    pointer({ type: "mousemove", button: 1, buttons: 4 }),
     pointer({ type: "mouseup", button: 0, buttons: 0 }),
+    pointer({ hasSelection: false, type: "contextmenu", button: 2, buttons: 0 }),
   ])("forwards normal TUI mouse input and deliberate left-button actions", (input) => {
     expect(classifyTerminalPointerEvent(input)).toBe("forward");
   });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -23,6 +23,7 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   customKeyEventHandler?: (event: KeyboardEvent) => boolean;
   clearSelection: ReturnType<typeof vi.fn>;
   selectAll: ReturnType<typeof vi.fn>;
+  hasSelection: ReturnType<typeof vi.fn>;
 }>);
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
@@ -192,6 +193,7 @@ vi.mock("@xterm/xterm", () => ({
     });
     clearSelection = vi.fn();
     selectAll = vi.fn();
+    hasSelection = vi.fn(() => this.selection.length > 0);
     getSelection = vi.fn(() => this.selection);
     scrollToBottom = vi.fn();
     registerLinkProvider = vi.fn();
@@ -422,6 +424,7 @@ function createCachedTerminal() {
       onResize: vi.fn(() => ({ dispose: vi.fn() })),
       attachCustomKeyEventHandler: vi.fn(),
       clearSelection: vi.fn(),
+      hasSelection: vi.fn(() => false),
       getSelection: vi.fn(() => ""),
       scrollToBottom: vi.fn(),
     },
@@ -719,6 +722,105 @@ describe("TerminalPane scrolling", () => {
     expect(handled).toBe(true);
     expect(preventDefault).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("captures right-click before inner xterm can replace the multiline selection", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-context-copy"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    const root = terminal.element!;
+    terminal.selection = "first row\nλ second row 👩🏽‍💻";
+    terminal.focus.mockClear();
+    root.addEventListener("contextmenu", () => {
+      terminal.selection = "hovered";
+    });
+
+    expect(terminal.options.rightClickSelectsWord).toBe(false);
+    expect(fireEvent.contextMenu(root, { clientX: 120, clientY: 80 })).toBe(false);
+    const copy = screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(false);
+    terminal.focus.mockClear();
+    fireEvent.click(copy);
+
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith("first row\nλ second row 👩🏽‍💻");
+    expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
+    expect(terminal.focus).toHaveBeenCalled();
+  });
+
+  it("shields a completed selection before Canvas correction and resumes TUI mouse reports after clear", async () => {
+    const view = render(
+      <TerminalPane
+        paneId="pane-selection-shield"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        canvasZoom={0.5}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    const root = terminal.element!;
+    const reports: string[] = [];
+    for (const type of ["mousemove", "mousedown", "mouseup"] as const) {
+      root.addEventListener(type, () => {
+        reports.push(type);
+        terminal.selection = "";
+      });
+    }
+    terminal.selection = "first row\nλ second row 👩🏽‍💻";
+
+    for (let index = 0; index < 20; index += 1) {
+      fireEvent.mouseMove(root, { button: 0, buttons: 0 });
+    }
+    fireEvent.mouseDown(root, { button: 2, buttons: 2 });
+    fireEvent.mouseUp(root, { button: 2, buttons: 0 });
+
+    expect(reports).toEqual([]);
+    expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
+
+    view.rerender(
+      <TerminalPane
+        paneId="pane-selection-shield"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        canvasZoom={1}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    fireEvent.mouseDown(root, { button: 0, buttons: 1 });
+    expect(reports).toEqual(["mousedown"]);
+    expect(terminal.selection).toBe("");
+
+    fireEvent.mouseMove(root, { button: 0, buttons: 0 });
+    expect(reports).toEqual(["mousedown", "mousemove"]);
   });
 
   it("attaches desktop canonical sessions as hard clients with proposed dimensions", async () => {

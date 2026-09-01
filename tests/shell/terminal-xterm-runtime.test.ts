@@ -31,6 +31,7 @@ describe("terminal xterm runtime", () => {
       scrollSensitivity: 1,
       fastScrollSensitivity: 5,
       scrollOnUserInput: true,
+      rightClickSelectsWord: false,
     });
   });
 

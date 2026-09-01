@@ -23,6 +23,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
   createdTerminals: [] as Array<{
     initialOptions: {
       theme?: unknown;
+      rightClickSelectsWord?: boolean;
       linkHandler?: {
         activate: (event: Pick<MouseEvent, "button">, text: string) => void;
       };
@@ -62,6 +63,7 @@ vi.mock("@xterm/xterm", () => ({
     };
     initialOptions: {
       theme?: unknown;
+      rightClickSelectsWord?: boolean;
       linkHandler?: {
         activate: (event: Pick<MouseEvent, "button">, text: string) => void;
       };
@@ -714,6 +716,64 @@ describe("TerminalView session switching", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
 
     expect(writeText).toHaveBeenCalledWith("content-type: application/json");
+  });
+
+  it("captures the immutable multiline selection before an inner xterm context listener", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const root = terminal.element!;
+    terminal.selection = "first row\nλ second row 👩🏽‍💻";
+    terminal.focus.mockClear();
+    root.addEventListener("contextmenu", () => {
+      terminal.selection = "hovered";
+    });
+
+    expect(terminal.initialOptions.rightClickSelectsWord).toBe(false);
+    expect(fireEvent.contextMenu(root, { clientX: 120, clientY: 80 })).toBe(false);
+    const copy = screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(false);
+    fireEvent.click(copy);
+
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith("first row\nλ second row 👩🏽‍💻");
+    expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
+    expect(terminal.focus).toHaveBeenCalledOnce();
+    expect(container.querySelector("[role=menu]")).toBeNull();
+  });
+
+  it("shields a completed selection from passive and secondary TUI mouse reports", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const root = terminal.element!;
+    const reports: string[] = [];
+    for (const type of ["mousemove", "mousedown", "mouseup"] as const) {
+      root.addEventListener(type, () => {
+        reports.push(type);
+        terminal.selection = "";
+      });
+    }
+    terminal.selection = "first row\nλ second row 👩🏽‍💻";
+
+    for (let index = 0; index < 20; index += 1) {
+      fireEvent.mouseMove(root, { button: 0, buttons: 0 });
+    }
+    fireEvent.mouseDown(root, { button: 2, buttons: 2 });
+    fireEvent.mouseUp(root, { button: 2, buttons: 0 });
+
+    expect(reports).toEqual([]);
+    expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
+
+    fireEvent.mouseDown(root, { button: 0, buttons: 1 });
+    expect(reports).toEqual(["mousedown"]);
+    expect(terminal.selection).toBe("");
+
+    fireEvent.mouseMove(root, { button: 0, buttons: 0 });
+    expect(reports).toEqual(["mousedown", "mousemove"]);
   });
 
   it("opens terminal actions without a selection and can select the buffer", () => {

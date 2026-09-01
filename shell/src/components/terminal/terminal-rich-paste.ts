@@ -77,7 +77,10 @@ function normalizeMatrixPath(path: string): string {
 }
 
 export function formatTerminalPastePrompt(paths: string[], message?: string): string {
-  const normalizedPaths = paths.map(normalizeMatrixPath).filter((path) => path.length > 0);
+  const normalizedPaths = paths.flatMap((path) => {
+    const normalized = normalizeMatrixPath(path);
+    return normalized.length > 0 ? [normalized] : [];
+  });
   if (normalizedPaths.length === 0) {
     return message?.trim() || "";
   }

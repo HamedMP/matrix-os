@@ -44,6 +44,10 @@ import {
   correctTerminalPointerCoordinates,
 } from "./terminal-soft-grid";
 import {
+  installTerminalPointerInterception,
+  markTerminalZoomCorrected,
+} from "./terminal-pointer-interception";
+import {
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
 import {
@@ -160,7 +164,7 @@ export function TerminalPane({
   const { height: viewportHeight, offsetTop: viewportOffsetTop, keyboardOpen } = useVisualViewport();
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const termRef = useRef<unknown>(null);
+  const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<unknown>(null);
   const searchAddonRef = useRef<unknown>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
@@ -211,6 +215,22 @@ export function TerminalPane({
   }, []);
   const closeLinkContextMenu = useCallback(() => {
     setLinkContextMenu(null);
+    (termRef.current as Terminal | null)?.focus();
+  }, []);
+  const copyTerminalSelection = useCallback((selection: string) => {
+    if (!navigator.clipboard?.writeText) {
+      setPasteError("Clipboard copy failed. Try again.");
+      return;
+    }
+    void navigator.clipboard.writeText(selection).catch((error: unknown) => {
+      console.warn("[terminal] clipboard copy unavailable", {
+        category: error instanceof DOMException ? error.name : "clipboard-error",
+      });
+      setPasteError("Clipboard copy failed. Try again.");
+    });
+  }, []);
+  const selectAllTerminal = useCallback(() => {
+    (termRef.current as Terminal | null)?.selectAll();
   }, []);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
@@ -265,8 +285,6 @@ export function TerminalPane({
     const container = containerRef.current;
     if (!container) return;
 
-    const MOUSE_EVENTS = ["mousedown", "mousemove", "mouseup"] as const;
-
     const correct = (e: MouseEvent) => {
       const visualScale = canvasZoomRef.current * softGridScaleRef.current;
       if (visualScale === 1) return;
@@ -317,28 +335,16 @@ export function TerminalPane({
         movementY: e.movementY,
       });
       // Mark the event so our own handler ignores it and does not re-correct.
-      Object.defineProperty(synthetic, "_xtermZoomCorrected", { value: true });
+      markTerminalZoomCorrected(synthetic);
       target.dispatchEvent(synthetic);
     };
 
-    const handler = (e: MouseEvent) => {
-      // Skip synthetic events we already corrected to avoid infinite loops.
-      if ((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected) return;
-      const visualScale = canvasZoomRef.current * softGridScaleRef.current;
-      if (visualScale === 1) return;
-      correct(e);
-    };
-
-    for (const type of MOUSE_EVENTS) {
-      // Capture phase so we intercept before xterm's own listeners.
-      container.addEventListener(type, handler, { capture: true });
-    }
-
-    return () => {
-      for (const type of MOUSE_EVENTS) {
-        container.removeEventListener(type, handler, { capture: true });
-      }
-    };
+    return installTerminalPointerInterception({
+      container,
+      getTerminal: () => termRef.current,
+      getVisualScale: () => canvasZoomRef.current * softGridScaleRef.current,
+      correctPointer: correct,
+    });
   // Effect wires once and reads zoom through the ref — no dependency on
   // canvasZoom directly, which avoids tearing down/re-registering listeners
   // on every zoom change while the user is actively zooming the canvas.
@@ -845,6 +851,7 @@ export function TerminalPane({
           scrollSensitivity: TERMINAL_SCROLL_SENSITIVITY,
           fastScrollSensitivity: TERMINAL_FAST_SCROLL_SENSITIVITY,
           scrollOnUserInput: true,
+          rightClickSelectsWord: false,
           allowProposedApi: true,
           logger: createXtermLogger(),
           fontSize: terminalFontSize,
@@ -1519,14 +1526,18 @@ export function TerminalPane({
 
       const onLinkContextMenu = (event: MouseEvent) => {
         const cell = terminalCellFromPointer(term, event.clientX, event.clientY);
-        if (!cell) return;
-        const link = findTerminalLinkAtCell(term, cell);
-        if (!link) return;
+        const link = cell ? findTerminalLinkAtCell(term, cell) : null;
         event.preventDefault();
         event.stopPropagation();
-        setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
+        event.stopImmediatePropagation();
+        setLinkContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          link,
+          selection: term.getSelection(),
+        });
       };
-      container.addEventListener("contextmenu", onLinkContextMenu);
+      container.addEventListener("contextmenu", onLinkContextMenu, true);
 
       onDataDisposableRef.current?.dispose();
       onDataDisposableRef.current = term.onData((data: string) => {
@@ -1672,7 +1683,7 @@ export function TerminalPane({
 
       return () => {
         document.removeEventListener("visibilitychange", onVisibilityChange);
-        container.removeEventListener("contextmenu", onLinkContextMenu);
+        container.removeEventListener("contextmenu", onLinkContextMenu, true);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
         if (softGridLayoutFrame !== null) {
@@ -1961,6 +1972,8 @@ export function TerminalPane({
         onClose={closeLinkContextMenu}
         onOpen={openTerminalLink}
         onCopy={copyTerminalLink}
+        onCopySelection={copyTerminalSelection}
+        onSelectAll={selectAllTerminal}
       />
       {/* Reading the imperative xterm search-addon handle during render is
           intentional: the addon is created inside the init effect and is stable

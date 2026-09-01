@@ -76,16 +76,16 @@
 
 ### Tests for User Story 2 — write and observe RED first
 
-- [ ] T018 [P] [US2] Upgrade the fake native xterm to install an inner child contextmenu mutation listener and add failing capture-order, `rightClickSelectsWord`, immutable-selection, and Copy-enablement tests in `tests/desktop/terminal-view.test.tsx`
-- [ ] T019 [P] [US2] Add failing immutable snapshot, Copy enablement, Escape/light-dismiss, and origin-focus restoration tests in `tests/desktop/terminal-link-context-menu.test.tsx`
-- [ ] T020 [P] [US2] Add failing general terminal Copy/Select All menu, optional-link action, immutable snapshot, and focus-restoration tests in `tests/shell/terminal-link-context-menu.test.tsx`
-- [ ] T021 [P] [US2] Add failing web inner-xterm context capture and exact multiline/right-click Copy tests in `tests/shell/terminal-pane-scrolling.test.tsx`
+- [x] T018 [P] [US2] Upgrade the fake native xterm to install an inner child contextmenu mutation listener and add failing capture-order, `rightClickSelectsWord`, immutable-selection, and Copy-enablement tests in `tests/desktop/terminal-view.test.tsx`
+- [x] T019 [P] [US2] Add failing immutable snapshot, Copy enablement, Escape/light-dismiss, and origin-focus restoration tests in `tests/desktop/terminal-link-context-menu.test.tsx`
+- [x] T020 [P] [US2] Add failing general terminal Copy/Select All menu, optional-link action, immutable snapshot, and focus-restoration tests in `tests/shell/terminal-link-context-menu.test.tsx`
+- [x] T021 [P] [US2] Add failing web inner-xterm context capture and exact multiline/right-click Copy tests in `tests/shell/terminal-pane-scrolling.test.tsx`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [P] [US2] Set `rightClickSelectsWord: false`, capture secondary/contextmenu before xterm, snapshot full xterm selection, and restore still-valid origin focus in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T023 [P] [US2] Generalize the web link-only menu to terminal Copy/Select All plus optional link actions, set `rightClickSelectsWord: false`, and capture the immutable selection before xterm in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T024 [US2] Run all User Story 2 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
+- [x] T022 [P] [US2] Set `rightClickSelectsWord: false`, capture secondary/contextmenu before xterm, snapshot full xterm selection, and restore still-valid origin focus in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
+- [x] T023 [P] [US2] Generalize the web link-only menu to terminal Copy/Select All plus optional link actions, set `rightClickSelectsWord: false`, and capture the immutable selection before xterm in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
+- [x] T024 [US2] Run all User Story 2 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
 
 **Checkpoint**: Context-menu Copy is trustworthy and independently testable across both xterm implementations.
 
@@ -99,15 +99,15 @@
 
 ### Tests for User Story 3 — write and observe RED first
 
-- [ ] T025 [P] [US3] Extend the native xterm fake with SGR passive-movement user-input clearing and add failing no-button movement, secondary-button, deliberate-left-action, and resume-after-clear tests in `tests/desktop/terminal-view.test.tsx`
-- [ ] T026 [P] [US3] Add failing web selection-shield and no-selection TUI-report tests using the real pointer-listener path in `tests/shell/terminal-pane-scrolling.test.tsx`
-- [ ] T027 [P] [US3] Extend pure edge cases for button bitmasks, movement, secondary down/up, and deliberate left actions in `tests/contracts/terminal-clipboard.test.ts`
+- [x] T025 [P] [US3] Extend the native xterm fake with SGR passive-movement user-input clearing and add failing no-button movement, secondary-button, deliberate-left-action, and resume-after-clear tests in `tests/desktop/terminal-view.test.tsx`
+- [x] T026 [P] [US3] Add failing web selection-shield and no-selection TUI-report tests using the real pointer-listener path in `tests/shell/terminal-pane-scrolling.test.tsx`
+- [x] T027 [P] [US3] Extend pure edge cases for button bitmasks, movement, secondary down/up, and deliberate left actions in `tests/contracts/terminal-clipboard.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T028 [P] [US3] Install and clean up a capture-phase selection shield that blocks only passive movement and secondary reports while selection exists in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`
-- [ ] T029 [P] [US3] Integrate the same selection-aware shield ahead of existing Canvas pointer correction without per-move React state in `shell/src/components/terminal/TerminalPane.tsx`
-- [ ] T030 [US3] Run all User Story 3 tests in `tests/contracts/terminal-clipboard.test.ts`, `tests/desktop/terminal-view.test.tsx`, and `tests/shell/terminal-pane-scrolling.test.tsx`
+- [x] T028 [P] [US3] Install and clean up a capture-phase selection shield that blocks only passive movement and secondary reports while selection exists in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`
+- [x] T029 [P] [US3] Integrate the same selection-aware shield ahead of existing Canvas pointer correction without per-move React state in `shell/src/components/terminal/TerminalPane.tsx`
+- [x] T030 [US3] Run all User Story 3 tests in `tests/contracts/terminal-clipboard.test.ts`, `tests/desktop/terminal-view.test.tsx`, and `tests/shell/terminal-pane-scrolling.test.tsx`
 
 **Checkpoint**: All P1 journeys (shortcuts, right-click fidelity, and Codex/mouse-aware stability) are complete. Preserve User Stories 2–3 as Graphite layer 3.
 
