@@ -31,6 +31,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
   createdTerminals: [] as Array<{
     initialOptions: {
       theme?: unknown;
+      macOptionClickForcesSelection?: boolean;
       rightClickSelectsWord?: boolean;
       linkHandler?: {
         activate: (event: Pick<MouseEvent, "button">, text: string) => void;
@@ -40,6 +41,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     registeredProviders: unknown[];
     dataCallback?: (data: string) => void;
     selectionChangeCallback?: () => void;
+    modes: { mouseTrackingMode: "none" | "any" };
     element: HTMLElement | null;
     focus: ReturnType<typeof vi.fn>;
     blur: ReturnType<typeof vi.fn>;
@@ -73,12 +75,14 @@ vi.mock("@xterm/xterm", () => ({
     };
     initialOptions: {
       theme?: unknown;
+      macOptionClickForcesSelection?: boolean;
       rightClickSelectsWord?: boolean;
       linkHandler?: {
         activate: (event: Pick<MouseEvent, "button">, text: string) => void;
       };
     };
     registeredProviders: unknown[] = [];
+    modes: { mouseTrackingMode: "none" | "any" } = { mouseTrackingMode: "none" };
     selection = "";
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     paste = vi.fn((text: string) => this.dataCallback?.(text));
@@ -1043,6 +1047,7 @@ describe("TerminalView session switching", () => {
     });
 
     expect(terminal.initialOptions.rightClickSelectsWord).toBe(false);
+    expect(terminal.initialOptions.macOptionClickForcesSelection).toBe(true);
     expect(fireEvent.contextMenu(root, { clientX: 120, clientY: 80 })).toBe(false);
     const copy = screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement;
     expect(copy.disabled).toBe(false);
@@ -1053,6 +1058,29 @@ describe("TerminalView session switching", () => {
     expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
     await waitFor(() => expect(terminal.focus).toHaveBeenCalledOnce());
     expect(container.querySelector("[role=menu]")).toBeNull();
+  });
+
+  it("converts drags into forced selections while a TUI has mouse reporting enabled", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const root = terminal.element!;
+    terminal.modes.mouseTrackingMode = "any";
+    const delivered: MouseEvent[] = [];
+    for (const type of ["mousedown", "mousemove", "mouseup"] as const) {
+      root.addEventListener(type, (event) => {
+        if ((event as MouseEvent & { _xtermScaleCorrected?: boolean })._xtermScaleCorrected) {
+          delivered.push(event);
+        }
+      });
+    }
+
+    fireEvent.mouseDown(root, { button: 0, buttons: 1, clientX: 20, clientY: 20 });
+    expect(delivered).toEqual([]);
+    fireEvent.mouseMove(root, { button: 0, buttons: 1, clientX: 40, clientY: 30 });
+    fireEvent.mouseUp(root, { button: 0, buttons: 0, clientX: 50, clientY: 30 });
+
+    expect(delivered.map((event) => event.type)).toEqual(["mousedown", "mousemove", "mouseup"]);
+    expect(delivered.every((event) => event.altKey && !event.shiftKey)).toBe(true);
   });
 
   it("copies the last confirmed mouse selection across a transient empty xterm read", async () => {

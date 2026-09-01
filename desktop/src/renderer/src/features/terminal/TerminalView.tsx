@@ -33,6 +33,7 @@ import {
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
+import { installMouseTrackingSelection } from "./terminal-mouse-selection";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -194,6 +195,7 @@ export default function TerminalView({
       fontFamily: buildTerminalFontStack("JetBrains Mono", undefined),
       lineHeight: 1.25,
       scrollback: 5000,
+      macOptionClickForcesSelection: true,
       rightClickSelectsWord: false,
       theme,
       linkHandler: {
@@ -342,6 +344,16 @@ export default function TerminalView({
         selection: readTerminalSelection(),
       });
     };
+    const removeMouseTrackingSelection = installMouseTrackingSelection({
+      host,
+      getTerminal: () => terminal,
+      getVisualScale: () => visualScaleRef.current,
+      isMac: navigator.platform.startsWith("Mac"),
+      onPrimaryGestureStart: () => {
+        confirmedSelectionRef.current = "";
+        confirmedDomSelectionRef.current = "";
+      },
+    });
     host.addEventListener("mousedown", onTerminalPointer, true);
     host.addEventListener("mousemove", onTerminalPointer, true);
     host.addEventListener("mouseup", onTerminalPointer, true);
@@ -373,6 +385,7 @@ export default function TerminalView({
     return () => {
       setTerminalContextMenu(null);
       hoveredLinkRef.current = null;
+      removeMouseTrackingSelection();
       host.removeEventListener("mousedown", onTerminalPointer, true);
       host.removeEventListener("mousemove", onTerminalPointer, true);
       host.removeEventListener("mouseup", onTerminalPointer, true);

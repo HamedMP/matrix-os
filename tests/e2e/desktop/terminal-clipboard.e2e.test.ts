@@ -366,6 +366,52 @@ suite("packaged Electron production-mode terminal selection", () => {
     expect(await copy.isEnabled()).toBe(true);
   }, 60_000);
 
+  it("creates a copyable drag selection while TUI mouse reporting remains enabled", async () => {
+    const line = "MOUSE-MODE-SELECTION alpha beta gamma";
+    gateway.sendTerminalOutput(`\u001bc${line}\u001b[?1003h\u001b[?1006h`);
+    await page.waitForTimeout(250);
+    const { point } = await terminalGrid();
+    const start = point(0, 0);
+    const end = point(line.length, 0);
+
+    try {
+      const beforeProbeClick = gateway.state.terminalInputs.length;
+      await page.mouse.click(point(2, 0).x, point(2, 0).y);
+      await expect.poll(() => gateway.state.terminalInputs.length).toBeGreaterThan(beforeProbeClick);
+      expect(gateway.state.terminalInputs.slice(beforeProbeClick).some((data) => data.includes("\u001b[<")))
+        .toBe(true);
+
+      await page.mouse.move(start.x, start.y);
+      await page.waitForTimeout(100);
+      const beforeDrag = gateway.state.terminalInputs.length;
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 8 });
+      await page.mouse.up();
+      await page.waitForTimeout(100);
+      expect(gateway.state.terminalInputs.slice(beforeDrag)).toEqual([]);
+
+      await app.evaluate(({ clipboard }) => clipboard.writeText("stale clipboard value"));
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(line);
+
+      const insideSelection = point(4, 0);
+      await page.mouse.click(insideSelection.x, insideSelection.y, { button: "right" });
+      const copy = page.getByRole("menuitem", { name: "Copy", exact: true });
+      await copy.waitFor();
+      expect(await copy.isEnabled()).toBe(true);
+      await copy.click();
+      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(line);
+
+      const beforeClick = gateway.state.terminalInputs.length;
+      await page.mouse.click(point(2, 0).x, point(2, 0).y);
+      await expect.poll(() => gateway.state.terminalInputs.length).toBeGreaterThan(beforeClick);
+      expect(gateway.state.terminalInputs.slice(beforeClick).some((data) => data.includes("\u001b[<")))
+        .toBe(true);
+    } finally {
+      gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
+    }
+  }, 60_000);
+
   it("selects the complete xterm scrollback rather than only the visible viewport", async () => {
     const { resize, point } = await terminalGrid();
     const lines = Array.from(
