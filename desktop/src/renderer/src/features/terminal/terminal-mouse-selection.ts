@@ -58,10 +58,44 @@ export interface TerminalEdgeSelectionSlice {
   lines: string[];
 }
 
+function inferInPlaceViewportShift(
+  previous: TerminalEdgeSelectionSlice,
+  next: TerminalEdgeSelectionSlice,
+  direction: "up" | "down",
+  requestedRows: number,
+): number {
+  const sameLines = (left: string[], right: string[]) => (
+    left.length === right.length && left.every((line, index) => line === right[index])
+  );
+  if (sameLines(previous.lines, next.lines)) return 0;
+  const maxShift = Math.min(previous.lines.length, next.lines.length);
+  if (maxShift === 0) return 0;
+  const requested = Math.min(maxShift, Math.max(1, requestedRows));
+  const matches = (shift: number) => {
+    const overlap = Math.min(previous.lines.length, next.lines.length) - shift;
+    if (overlap <= 0) return true;
+    const previousStart = direction === "up" ? 0 : shift;
+    const nextStart = direction === "up" ? shift : 0;
+    for (let index = 0; index < overlap; index += 1) {
+      if (previous.lines[previousStart + index] !== next.lines[nextStart + index]) return false;
+    }
+    return true;
+  };
+  for (let distance = 0; distance < maxShift; distance += 1) {
+    const lower = requested - distance;
+    if (lower > 0 && matches(lower)) return lower;
+    const upper = requested + distance;
+    if (distance > 0 && upper <= maxShift && matches(upper)) return upper;
+  }
+  return requested;
+}
+
 export function mergeTerminalEdgeSelectionLines(
   current: TerminalEdgeSelectionSlice,
   next: TerminalEdgeSelectionSlice,
   direction: "up" | "down",
+  inPlaceShiftRows = 0,
+  previousViewport?: TerminalEdgeSelectionSlice,
 ): TerminalEdgeSelectionSlice {
   const cap = (slice: TerminalEdgeSelectionSlice): TerminalEdgeSelectionSlice => {
     if (slice.lines.length <= MAX_EXTENDED_SELECTION_LINES) return slice;
@@ -76,12 +110,37 @@ export function mergeTerminalEdgeSelectionLines(
   };
   if (current.lines.length === 0) return cap(next);
   if (next.lines.length === 0) return cap(current);
+  if (previousViewport && previousViewport.startRow === next.startRow) {
+    const shiftedCount = inferInPlaceViewportShift(
+      previousViewport,
+      next,
+      direction,
+      inPlaceShiftRows,
+    );
+    if (shiftedCount === 0) return cap(current);
+    return cap(direction === "up"
+      ? {
+          startRow: current.startRow - shiftedCount,
+          lines: [...next.lines.slice(0, shiftedCount), ...current.lines],
+        }
+      : {
+          startRow: current.startRow,
+          lines: [...current.lines, ...next.lines.slice(-shiftedCount)],
+        });
+  }
   if (direction === "up") {
     const freshCount = Math.min(
       next.lines.length,
       Math.max(0, current.startRow - next.startRow),
     );
-    if (freshCount === 0) return cap(current);
+    if (freshCount === 0) {
+      const shiftedCount = Math.min(next.lines.length, Math.max(0, inPlaceShiftRows));
+      if (shiftedCount === 0) return cap(current);
+      return cap({
+        startRow: current.startRow - shiftedCount,
+        lines: [...next.lines.slice(0, shiftedCount), ...current.lines],
+      });
+    }
     return cap({
       startRow: next.startRow,
       lines: [...next.lines.slice(0, freshCount), ...current.lines],
@@ -92,7 +151,14 @@ export function mergeTerminalEdgeSelectionLines(
     next.lines.length,
     Math.max(0, currentEndRow - next.startRow),
   );
-  if (freshStart >= next.lines.length) return cap(current);
+  if (freshStart >= next.lines.length) {
+    const shiftedCount = Math.min(next.lines.length, Math.max(0, inPlaceShiftRows));
+    if (shiftedCount === 0) return cap(current);
+    return cap({
+      startRow: current.startRow,
+      lines: [...current.lines, ...next.lines.slice(-shiftedCount)],
+    });
+  }
   return cap({
     startRow: current.startRow,
     lines: [...current.lines, ...next.lines.slice(freshStart)],
@@ -133,8 +199,10 @@ export function installMouseTrackingSelection({
   let edgePointer: MouseSnapshot | null = null;
   let edgeScrollTimer: number | null = null;
   let extendedSelectionLines: TerminalEdgeSelectionSlice | null = null;
+  let previousEdgeViewport: TerminalEdgeSelectionSlice | null = null;
   let edgeDirection: "up" | "down" | null = null;
   let edgeAnchorColumn: number | null = null;
+  let pendingEdgeScrollAmount = 0;
 
   const dispatch = (
     source: MouseSnapshot,
@@ -246,7 +314,11 @@ export function installMouseTrackingSelection({
     };
   };
 
-  const captureExtendedSelection = (terminal: MouseTrackingTerminal, amount: number) => {
+  const captureExtendedSelection = (
+    terminal: MouseTrackingTerminal,
+    amount: number,
+    inPlaceShiftRows = 0,
+  ) => {
     const direction = amount < 0 ? "up" : "down";
     const lines = visibleLines(terminal);
     if (!extendedSelectionLines || edgeDirection !== direction) {
@@ -264,8 +336,11 @@ export function installMouseTrackingSelection({
         extendedSelectionLines,
         lines,
         direction,
+        inPlaceShiftRows,
+        previousEdgeViewport ?? undefined,
       );
     }
+    previousEdgeViewport = lines;
     const selectedLines = extendedSelectionLines.lines.map((line) => line.trimEnd());
     if (edgeAnchorColumn !== null && selectedLines.length > 0) {
       const anchorIndex = direction === "up" ? selectedLines.length - 1 : 0;
@@ -290,8 +365,16 @@ export function installMouseTrackingSelection({
     }
     const terminal = getTerminal();
     if (gesture.appOwnsSelection) {
-      if (terminal) captureExtendedSelection(terminal, amount);
+      const captureAmount = pendingEdgeScrollAmount || amount;
+      if (terminal) {
+        captureExtendedSelection(
+          terminal,
+          captureAmount,
+          Math.abs(pendingEdgeScrollAmount),
+        );
+      }
       dispatchEdgeWheel(edgePointer, amount);
+      pendingEdgeScrollAmount = amount;
       terminal?.scrollLines(amount);
     } else {
       terminal?.scrollLines(amount);
@@ -326,8 +409,10 @@ export function installMouseTrackingSelection({
     stopEdgeScroll();
     gesture = null;
     extendedSelectionLines = null;
+    previousEdgeViewport = null;
     edgeDirection = null;
     edgeAnchorColumn = null;
+    pendingEdgeScrollAmount = 0;
     removeDocumentListeners();
   };
 
@@ -357,10 +442,13 @@ export function installMouseTrackingSelection({
     if ((event as MatrixSyntheticMouseEvent)._xtermScaleCorrected || !gesture) return;
     if (gesture.forceSelection) stopOriginal(event);
     const current = selectionTarget(snapshot(event));
-    const amount = edgePointer ? edgeScrollAmount(edgePointer) : 0;
     const terminal = getTerminal();
-    if (amount !== 0 && terminal && gesture.appOwnsSelection) {
-      captureExtendedSelection(terminal, amount);
+    if (pendingEdgeScrollAmount !== 0 && terminal && gesture.appOwnsSelection) {
+      captureExtendedSelection(
+        terminal,
+        pendingEdgeScrollAmount,
+        Math.abs(pendingEdgeScrollAmount),
+      );
     }
     if (gesture.dragging) {
       if (gesture.forceSelection || !event.composedPath().includes(host)) {

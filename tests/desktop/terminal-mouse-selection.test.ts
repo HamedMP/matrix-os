@@ -330,6 +330,34 @@ describe("edge selection viewport merging", () => {
     )).toEqual({ startRow: 98, lines: ["same", "same", "same", "same"] });
   });
 
+  it("uses the delivered wheel step when a TUI redraws rows in place", () => {
+    expect(mergeTerminalEdgeSelectionLines(
+      { startRow: 100, lines: ["anchor"] },
+      { startRow: 100, lines: ["new", "same", "same"] },
+      "up",
+      1,
+      { startRow: 100, lines: ["same", "same", "old"] },
+    )).toEqual({ startRow: 99, lines: ["new", "anchor"] });
+    expect(mergeTerminalEdgeSelectionLines(
+      { startRow: 100, lines: ["anchor"] },
+      { startRow: 100, lines: ["same", "same", "new"] },
+      "down",
+      1,
+      { startRow: 100, lines: ["old", "same", "same"] },
+    )).toEqual({ startRow: 100, lines: ["anchor", "new"] });
+  });
+
+  it("does not duplicate a TUI viewport that has not redrawn yet", () => {
+    const viewport = { startRow: 100, lines: ["same", "same", "same"] };
+    expect(mergeTerminalEdgeSelectionLines(
+      { startRow: 98, lines: ["same", "same", "anchor"] },
+      viewport,
+      "up",
+      2,
+      viewport,
+    )).toEqual({ startRow: 98, lines: ["same", "same", "anchor"] });
+  });
+
   it("caps retained viewport rows while preserving the selection anchor", () => {
     const lines = Array.from({ length: 5_001 }, (_, index) => `line-${index}`);
 

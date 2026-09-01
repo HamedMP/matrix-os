@@ -562,9 +562,10 @@ suite("packaged Electron production-mode terminal selection", () => {
       await page.mouse.up();
       await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
       // The stub gateway does not redraw a TUI viewport in response to the wheel report,
-      // so assert the retained anchor here; the binary report below proves the app-facing path.
+      // so assert a stable full row immediately after the column-trimmed anchor here;
+      // the binary report below proves the app-facing path.
       await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-        .toContain(lines[80]);
+        .toContain(lines[82]);
       expect(gateway.state.terminalInputs.slice(downwardInputCount).some(
         (data) => data.includes("\u001b[<65;"),
       )).toBe(true);
