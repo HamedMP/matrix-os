@@ -6,19 +6,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import nextConfig from "../../shell/next.config";
 
 const posthogMock = vi.hoisted(() => ({
-  conversations: {
-    isAvailable: vi.fn(() => true),
-    show: vi.fn(),
-  },
   init: vi.fn(),
   capture: vi.fn(),
   identify: vi.fn(),
   reset: vi.fn(),
   captureException: vi.fn(),
 }));
+const supportPosthogMock = vi.hoisted(() => ({
+  conversations: {
+    isAvailable: vi.fn(() => true),
+    show: vi.fn(),
+  },
+  identify: vi.fn(),
+  init: vi.fn(),
+  reset: vi.fn(),
+}));
+const PostHogMock = vi.hoisted(() => vi.fn(function PostHogConstructor() {
+  return supportPosthogMock;
+}));
 
 vi.mock("posthog-js", () => ({
   default: posthogMock,
+  PostHog: PostHogMock,
 }));
 vi.mock("posthog-js/dist/conversations", () => ({}));
 
@@ -34,7 +43,7 @@ describe("shell PostHog same-origin proxy", () => {
   afterEach(() => {
     document.getElementById("ph-conversations-widget-container")?.remove();
     document.getElementById("unrelated-close")?.remove();
-    posthogMock.conversations.show.mockReset();
+    supportPosthogMock.conversations.show.mockReset();
   });
 
   it("rewrites the same-origin health probe to the gateway", async () => {
@@ -79,13 +88,15 @@ describe("shell PostHog same-origin proxy", () => {
   it("initializes posthog-js with a relative api_host", async () => {
     const { initializeShellPostHog } = await import("../../shell/src/lib/posthog-client");
 
-    initializeShellPostHog("US", { token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" });
+    initializeShellPostHog("SE", { token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" });
 
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [token, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
     expect(token).toBe("phc_test");
     expect(options.api_host).toBe("/relay");
     expect(options.ui_host).toBe("https://eu.posthog.com");
+    expect(options.cookieless_mode).toBe("on_reject");
+    expect(options.disable_conversations).toBe(true);
   });
 
   it("only resets identity for provably identified sessions", async () => {
@@ -122,7 +133,7 @@ describe("shell PostHog same-origin proxy", () => {
       close.setAttribute("aria-label", "Close");
       document.getElementById("ph-conversations-widget-container")?.replaceChildren(close);
     });
-    posthogMock.conversations.show.mockImplementation(() => {
+    supportPosthogMock.conversations.show.mockImplementation(() => {
       const container = document.createElement("div");
       container.id = "ph-conversations-widget-container";
       const launcher = document.createElement("button");
@@ -131,7 +142,12 @@ describe("shell PostHog same-origin proxy", () => {
       container.appendChild(launcher);
       document.body.appendChild(container);
     });
-    const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
+    const { identifyPostHogUser, openShellSupport } = await import("../../shell/src/lib/posthog-client");
+    identifyPostHogUser("user_123", { name: "Neo" }, {
+      token: "phc_test",
+      apiHost: "/relay",
+      uiHost: "https://eu.posthog.com",
+    });
     const opened = await openShellSupport({
       token: "phc_test",
       apiHost: "/relay",
@@ -139,7 +155,27 @@ describe("shell PostHog same-origin proxy", () => {
     });
 
     expect(opened).toBe(true);
-    expect(posthogMock.conversations.show).toHaveBeenCalledOnce();
+    expect(PostHogMock).toHaveBeenCalledOnce();
+    expect(supportPosthogMock.init).toHaveBeenCalledWith(
+      "phc_test",
+      expect.objectContaining({
+        api_host: "/relay",
+        autocapture: false,
+        capture_pageview: false,
+        disable_session_recording: true,
+        persistence: "memory",
+      }),
+    );
+    const supportOptions = supportPosthogMock.init.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(supportOptions).not.toHaveProperty("cookieless_mode");
+    expect(supportPosthogMock.identify).toHaveBeenCalledWith("user_123", { name: "Neo" });
+    identifyPostHogUser("user_123", { name: "Thomas" }, {
+      token: "phc_test",
+      apiHost: "/relay",
+      uiHost: "https://eu.posthog.com",
+    });
+    expect(supportPosthogMock.identify).toHaveBeenLastCalledWith("user_123", { name: "Thomas" });
+    expect(supportPosthogMock.conversations.show).toHaveBeenCalledOnce();
     expect(launcherClick).toHaveBeenCalledOnce();
     expect(
       document.querySelector('#ph-conversations-widget-container button[aria-label="Close"]'),
