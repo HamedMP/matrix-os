@@ -20,6 +20,7 @@ const STATUS_TIMEOUT_MS = 10_000;
 const BRAND_COLORS = onboardingChecklist.colors;
 
 export const DESKTOP_APP_DOWNLOAD_URL = "https://github.com/HamedMP/matrix-os/releases";
+export const GETTING_STARTED_REFRESH_MS = 15_000;
 
 export type GettingStartedSettingsSection = "integrations" | "agents-providers" | "billing";
 
@@ -41,6 +42,11 @@ export function webGettingStartedAutoOpenKey(scope: string): string {
 function currentComputerScope(): string {
   const runtimeSlot = new URLSearchParams(window.location.search).get("runtime");
   return runtimeSlot ? `${window.location.pathname}?runtime=${runtimeSlot}` : window.location.pathname;
+}
+
+function currentRuntimeSlot(): string {
+  const runtimeSlot = new URLSearchParams(window.location.search).get("runtime");
+  return runtimeSlot && /^[A-Za-z0-9_-]{1,32}$/.test(runtimeSlot) ? runtimeSlot : "primary";
 }
 
 function hasAutoOpened(key: string): boolean {
@@ -80,13 +86,14 @@ export async function loadWebGettingStartedSnapshot(
   signal?: AbortSignal,
 ): Promise<GettingStartedSnapshot> {
   const gatewayUrl = getGatewayUrl();
+  const billingUrl = `/billing/status?runtimeSlot=${encodeURIComponent(currentRuntimeSlot())}`;
   const [github, integrations, agents, projects, chats, billing] = await Promise.allSettled([
     readJson(fetcher, `${gatewayUrl}/api/github/status`, signal),
     readJson(fetcher, `${gatewayUrl}/api/integrations`, signal),
     readJson(fetcher, `${gatewayUrl}/api/agents/credentials/status`, signal),
     readJson(fetcher, `${gatewayUrl}/api/workspace/projects`, signal),
     readJson(fetcher, `${gatewayUrl}/api/chats?limit=1`, signal),
-    readJson(fetcher, "/billing/status", signal),
+    readJson(fetcher, billingUrl, signal),
   ]);
   return deriveGettingStartedSnapshot({ github, integrations, agents, projects, chats, billing });
 }
@@ -142,6 +149,24 @@ export function GettingStartedPopover({
     rememberAutoOpened(autoOpenKey);
     setOpen(true);
   }, [autoOpenKey, snapshot.completedCount, snapshot.loaded]);
+
+  useEffect(() => {
+    if (!open) return;
+    const requestRefresh = () => {
+      setRefreshRequest((request) => (request + 1) % 1_000_000);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") requestRefresh();
+    };
+    const intervalId = window.setInterval(requestRefresh, GETTING_STARTED_REFRESH_MS);
+    window.addEventListener("focus", requestRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", requestRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [open]);
 
   const handleRadixOpenChange = useCallback((nextOpen: boolean) => {
     if (!nextOpen) return;

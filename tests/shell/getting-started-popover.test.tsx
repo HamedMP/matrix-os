@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DESKTOP_APP_DOWNLOAD_URL,
+  GETTING_STARTED_REFRESH_MS,
   GettingStartedPopover,
   loadWebGettingStartedSnapshot,
   webGettingStartedAutoOpenKey,
@@ -28,7 +29,7 @@ function responseFor(url: string): unknown {
   }
   if (url.endsWith("/api/workspace/projects")) return { projects: [] };
   if (url.endsWith("/api/chats?limit=1")) return { items: [{ id: "chat_1" }] };
-  if (url.endsWith("/billing/status")) return { access: { runtimeProxyAllowed: true } };
+  if (url.includes("/billing/status")) return { access: { runtimeProxyAllowed: true } };
   throw new Error(`Unexpected URL: ${url}`);
 }
 
@@ -44,17 +45,20 @@ function installSuccessfulFetch() {
 
 describe("web getting started status", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/");
     window.localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     window.localStorage.clear();
   });
 
   it("derives the same five completion checks as Electron", async () => {
+    window.history.replaceState({}, "", "/vm/work?runtime=studio");
     const fetcher = installSuccessfulFetch();
     const controller = new AbortController();
 
@@ -71,6 +75,10 @@ describe("web getting started status", () => {
     expect(fetcher).toHaveBeenCalledTimes(6);
     expect(fetcher).toHaveBeenCalledWith(
       expect.stringMatching(/\/api\/github\/status$/),
+      expect.objectContaining({ signal: controller.signal }),
+    );
+    expect(fetcher).toHaveBeenCalledWith(
+      "/billing/status?runtimeSlot=studio",
       expect.objectContaining({ signal: controller.signal }),
     );
   });
@@ -124,7 +132,7 @@ describe("web getting started status", () => {
         : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
           : url.endsWith("/api/workspace/projects") ? { projects: [] }
             : url.endsWith("/api/chats?limit=1") ? { items: [] }
-              : url.endsWith("/billing/status") ? { access: { runtimeProxyAllowed: false } }
+              : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
                 : { authenticated: false };
       return new Response(JSON.stringify(body), { status: 200 });
     });
@@ -133,5 +141,42 @@ describe("web getting started status", () => {
 
     expect(await screen.findByRole("dialog", { name: "Getting started" })).toBeTruthy();
     expect(window.localStorage.getItem(webGettingStartedAutoOpenKey("/"))).toBe("1");
+  });
+
+  it("refreshes completion while the persistent popover remains open", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
+    let completed = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const body = url.endsWith("/api/integrations")
+        ? (completed ? [
+          { id: CONNECTION_ID, service: "github", status: "active" },
+          { id: "22222222-2222-4222-8222-222222222222", service: "gmail", status: "active" },
+          { id: "33333333-3333-4333-8333-333333333333", service: "google_calendar", status: "active" },
+        ] : [])
+        : url.endsWith("/api/agents/credentials/status") ? { agents: completed ? [{ agent: "codex", status: "available" }] : [] }
+          : url.endsWith("/api/workspace/projects") ? { projects: completed ? [{}] : [] }
+            : url.endsWith("/api/chats?limit=1") ? { items: [] }
+              : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: completed } }
+                : { authenticated: completed };
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
+    render(<GettingStartedPopover onOpenSettings={() => {}} onOpenFirstWork={() => {}} />);
+    await act(async () => Promise.resolve());
+    const trigger = screen.getByRole("button", { name: "Getting started — 0 of 5" });
+    fireEvent.click(trigger);
+    completed = true;
+
+    await act(async () => {
+      vi.advanceTimersByTime(GETTING_STARTED_REFRESH_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("getting-started-counter").textContent).toBe("5 of 5");
+    vi.useRealTimers();
   });
 });
