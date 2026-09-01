@@ -34,6 +34,7 @@ import {
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
 import { installMouseTrackingSelection } from "./terminal-mouse-selection";
+import { decodeOsc52Clipboard } from "./terminal-osc52";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -71,6 +72,24 @@ function readOwnedDomSelection(host: HTMLElement): string {
     }
   }
   return selection.toString().replaceAll("\u00a0", " ");
+}
+
+function ownedDomSelectionUsesAccessibilityTree(host: HTMLElement): boolean {
+  const selection = host.ownerDocument.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+    const start = range.startContainer instanceof Element
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const end = range.endContainer instanceof Element
+      ? range.endContainer
+      : range.endContainer.parentElement;
+    if (!start?.closest(".xterm-accessibility-tree") || !end?.closest(".xterm-accessibility-tree")) {
+      return false;
+    }
+  }
+  return true;
 }
 
 interface TerminalViewProps {
@@ -131,6 +150,7 @@ export default function TerminalView({
   const clipboardOperationSequenceRef = useRef(0);
   const confirmedSelectionRef = useRef("");
   const confirmedDomSelectionRef = useRef("");
+  const extendedSelectionRef = useRef("");
   const visualScaleRef = useRef(visualScale);
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
@@ -174,6 +194,7 @@ export default function TerminalView({
     setStateSessionName(sessionName);
     confirmedSelectionRef.current = "";
     confirmedDomSelectionRef.current = "";
+    extendedSelectionRef.current = "";
     endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
@@ -215,15 +236,36 @@ export default function TerminalView({
     terminal.open(host);
     confirmedSelectionRef.current = "";
     confirmedDomSelectionRef.current = "";
-    const readTerminalSelection = () => (
-      readOwnedDomSelection(host)
-      || terminal.getSelection()
-      || confirmedSelectionRef.current
-      || confirmedDomSelectionRef.current
-    );
+    extendedSelectionRef.current = "";
+    const readTerminalSelection = () => {
+      if (extendedSelectionRef.current) return extendedSelectionRef.current;
+      const xtermSelection = terminal.getSelection();
+      const domSelection = readOwnedDomSelection(host);
+      if (xtermSelection && domSelection) {
+        const withoutVisualWraps = (selection: string) => selection.replace(/[\r\n]/g, "");
+        return ownedDomSelectionUsesAccessibilityTree(host)
+          || withoutVisualWraps(xtermSelection) === withoutVisualWraps(domSelection)
+          ? xtermSelection
+          : domSelection;
+      }
+      return xtermSelection
+        || domSelection
+        || confirmedSelectionRef.current
+        || confirmedDomSelectionRef.current;
+    };
     const selectionDisposable = terminal.onSelectionChange(() => {
       const selection = terminal.getSelection();
       if (selection) confirmedSelectionRef.current = selection;
+    });
+    const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
+      const decoded = decodeOsc52Clipboard(data);
+      if (!decoded.handled) return false;
+      if (decoded.text !== null) {
+        extendedSelectionRef.current = decoded.text;
+        confirmedSelectionRef.current = decoded.text;
+        void copyTerminalTextWithFeedback(decoded.text);
+      }
+      return true;
     });
     const onDocumentSelectionChange = () => {
       const selection = readOwnedDomSelection(host);
@@ -235,6 +277,7 @@ export default function TerminalView({
       if (documentSelection && !documentSelection.isCollapsed) {
         confirmedDomSelectionRef.current = "";
         confirmedSelectionRef.current = "";
+        extendedSelectionRef.current = "";
         terminal.clearSelection();
       }
     };
@@ -291,6 +334,7 @@ export default function TerminalView({
       if (event.type === "mousedown" && event.button === 0) {
         confirmedSelectionRef.current = "";
         confirmedDomSelectionRef.current = "";
+        extendedSelectionRef.current = "";
       }
       const decision = classifyTerminalPointerEvent({
         type: event.type as "mousedown" | "mousemove" | "mouseup",
@@ -352,6 +396,10 @@ export default function TerminalView({
       onPrimaryGestureStart: () => {
         confirmedSelectionRef.current = "";
         confirmedDomSelectionRef.current = "";
+        extendedSelectionRef.current = "";
+      },
+      onExtendedSelection: (selection) => {
+        extendedSelectionRef.current = selection;
       },
     });
     host.addEventListener("mousedown", onTerminalPointer, true);
@@ -394,8 +442,10 @@ export default function TerminalView({
       host.ownerDocument.removeEventListener("selectionchange", onDocumentSelectionChange);
       linkProviderDisposable.dispose();
       selectionDisposable.dispose();
+      osc52Disposable.dispose();
       confirmedSelectionRef.current = "";
       confirmedDomSelectionRef.current = "";
+      extendedSelectionRef.current = "";
       observer.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
@@ -465,12 +515,16 @@ export default function TerminalView({
     const dataDisposable = terminal.onData((data) => {
       attachment.write(data);
     });
+    const binaryDisposable = terminal.onBinary((data) => {
+      attachment.write(data);
+    });
     const proposed = proposedTerminalDimensions(fit, terminal);
     attachment.resize(proposed.cols, proposed.rows);
     terminal.focus();
 
     return () => {
       dataDisposable.dispose();
+      binaryDisposable.dispose();
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };

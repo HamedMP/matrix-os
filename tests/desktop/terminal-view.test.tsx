@@ -40,6 +40,8 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     options: { theme?: unknown };
     registeredProviders: unknown[];
     dataCallback?: (data: string) => void;
+    binaryCallback?: (data: string) => void;
+    osc52Handler?: (data: string) => boolean;
     selectionChangeCallback?: () => void;
     modes: { mouseTrackingMode: "none" | "any" };
     element: HTMLElement | null;
@@ -61,6 +63,12 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     options: { theme?: unknown } = {};
     element: HTMLElement | null = null;
+    parser = {
+      registerOscHandler: vi.fn((_identifier: number, handler: (data: string) => boolean) => {
+        this.osc52Handler = handler;
+        return { dispose: () => {} };
+      }),
+    };
     buffer = {
       active: {
         viewportY: 0,
@@ -117,6 +125,10 @@ vi.mock("@xterm/xterm", () => ({
     dispose(): void {}
     onData(callback: (data: string) => void): { dispose: () => void } {
       this.dataCallback = callback;
+      return { dispose: () => {} };
+    }
+    onBinary(callback: (data: string) => void): { dispose: () => void } {
+      this.binaryCallback = callback;
       return { dispose: () => {} };
     }
     onSelectionChange(callback: () => void): { dispose: () => void } {
@@ -324,6 +336,30 @@ describe("TerminalView session switching", () => {
     expect(attachmentWrite).toHaveBeenCalledWith("ls\r");
     expect(navigationUpdates).not.toHaveBeenCalled();
     unsubscribe();
+  });
+
+  it("forwards binary mouse reports to the active terminal attachment", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const mouseReport = "\u001b[<64;15;5M";
+
+    act(() => terminal.binaryCallback?.(mouseReport));
+
+    expect(attachmentWrite).toHaveBeenCalledWith(mouseReport);
+  });
+
+  it("copies a valid OSC 52 payload without reading clipboard contents", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+
+    expect(terminal.osc52Handler?.(`c;${btoa("zellij edge selection")}`)).toBe(true);
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("zellij edge selection"));
   });
 
   it("never publishes Chat-bound input as a standalone Terminal tab", () => {
@@ -1194,6 +1230,32 @@ describe("TerminalView session switching", () => {
       await Promise.resolve();
     });
     expect(writeText).toHaveBeenCalledWith("PASTE-TARGET-ONLY");
+
+    writeText.mockClear();
+    const accessibilityTree = document.createElement("div");
+    accessibilityTree.className = "xterm-accessibility-tree";
+    const accessibilityText = document.createElement("span");
+    accessibilityText.textContent = "visual row text";
+    accessibilityTree.append(accessibilityText);
+    root.append(accessibilityTree);
+    const accessibilityRange = document.createRange();
+    accessibilityRange.selectNodeContents(accessibilityText);
+    domSelection.removeAllRanges();
+    domSelection.addRange(accessibilityRange);
+    terminal.selection = "current xterm selection";
+    act(() => terminal.selectionChangeCallback?.());
+    terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("current xterm selection"));
 
     writeText.mockClear();
     const foreignText = document.createElement("span");

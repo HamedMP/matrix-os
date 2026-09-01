@@ -1,10 +1,24 @@
 const DEFAULT_DRAG_THRESHOLD_PX = 4;
+const EDGE_SCROLL_INTERVAL_MS = 40;
+const EDGE_SCROLL_DISTANCE_PER_LINE_PX = 24;
+const MAX_EDGE_SCROLL_LINES = 6;
+const MAX_EXTENDED_SELECTION_LINES = 5_000;
 
 type MouseTrackingMode = "none" | string;
 
 interface MouseTrackingTerminal {
   readonly modes: { mouseTrackingMode: MouseTrackingMode };
   readonly element?: HTMLElement;
+  readonly cols: number;
+  readonly rows: number;
+  readonly buffer: {
+    readonly active: {
+      readonly viewportY: number;
+      getLine(index: number): { translateToString(trimRight?: boolean): string } | undefined;
+    };
+  };
+  selectLines(start: number, end: number): void;
+  scrollLines(amount: number): void;
 }
 
 interface InstallMouseTrackingSelectionOptions {
@@ -13,6 +27,7 @@ interface InstallMouseTrackingSelectionOptions {
   getVisualScale: () => number;
   isMac: boolean;
   onPrimaryGestureStart: () => void;
+  onExtendedSelection?: (selection: string) => void;
   dragThresholdPx?: number;
 }
 
@@ -32,9 +47,39 @@ interface MouseSnapshot {
 interface PendingGesture {
   start: MouseSnapshot;
   dragging: boolean;
+  forceSelection: boolean;
+  appOwnsSelection: boolean;
 }
 
 type MatrixSyntheticMouseEvent = MouseEvent & { _xtermScaleCorrected?: boolean };
+
+export function mergeTerminalEdgeSelectionLines(
+  current: string[],
+  next: string[],
+  direction: "up" | "down",
+): string[] {
+  const cap = (lines: string[]) => {
+    if (lines.length <= MAX_EXTENDED_SELECTION_LINES) return lines;
+    return direction === "up"
+      ? lines.slice(-MAX_EXTENDED_SELECTION_LINES)
+      : lines.slice(0, MAX_EXTENDED_SELECTION_LINES);
+  };
+  const maxOverlap = Math.min(current.length, next.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    const currentSlice = direction === "up"
+      ? current.slice(0, overlap)
+      : current.slice(current.length - overlap);
+    const nextSlice = direction === "up"
+      ? next.slice(next.length - overlap)
+      : next.slice(0, overlap);
+    if (currentSlice.every((line, index) => line === nextSlice[index])) {
+      return cap(direction === "up"
+        ? [...next.slice(0, next.length - overlap), ...current]
+        : [...current, ...next.slice(overlap)]);
+    }
+  }
+  return cap(direction === "up" ? [...next, ...current] : [...current, ...next]);
+}
 
 function snapshot(event: MouseEvent): MouseSnapshot {
   return {
@@ -62,10 +107,16 @@ export function installMouseTrackingSelection({
   getVisualScale,
   isMac,
   onPrimaryGestureStart,
+  onExtendedSelection,
   dragThresholdPx = DEFAULT_DRAG_THRESHOLD_PX,
 }: InstallMouseTrackingSelectionOptions): () => void {
   const document = host.ownerDocument;
   let gesture: PendingGesture | null = null;
+  let edgePointer: MouseSnapshot | null = null;
+  let edgeScrollTimer: number | null = null;
+  let extendedSelectionLines: string[] | null = null;
+  let edgeDirection: "up" | "down" | null = null;
+  let edgeAnchorColumn: number | null = null;
 
   const dispatch = (
     source: MouseSnapshot,
@@ -105,14 +156,160 @@ export function installMouseTrackingSelection({
     document.defaultView?.removeEventListener("blur", cancelGesture);
   };
 
+  const stopEdgeScroll = () => {
+    edgePointer = null;
+    if (edgeScrollTimer !== null) {
+      document.defaultView?.clearInterval(edgeScrollTimer);
+      edgeScrollTimer = null;
+    }
+  };
+
+  const selectionTarget = (source: MouseSnapshot): MouseSnapshot => (
+    gesture ? { ...source, target: gesture.start.target } : source
+  );
+
+  const edgeScrollAmount = (source: MouseSnapshot): number => {
+    const terminal = getTerminal();
+    const coordinateElement = terminal?.element ?? host;
+    const rect = coordinateElement.getBoundingClientRect();
+    const distance = source.clientY < rect.top
+      ? source.clientY - rect.top
+      : source.clientY > rect.bottom
+        ? source.clientY - rect.bottom
+        : 0;
+    if (distance === 0) return 0;
+    const magnitude = Math.min(
+      MAX_EDGE_SCROLL_LINES,
+      Math.max(1, Math.ceil(Math.abs(distance) / EDGE_SCROLL_DISTANCE_PER_LINE_PX)),
+    );
+    return distance < 0 ? -magnitude : magnitude;
+  };
+
+  const dispatchEdgeWheel = (source: MouseSnapshot, amount: number) => {
+    const terminal = getTerminal();
+    const coordinateElement = terminal?.element ?? host;
+    const rect = coordinateElement.getBoundingClientRect();
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: Math.min(rect.right - 1, Math.max(rect.left + 1, source.clientX)),
+      clientY: amount < 0 ? rect.top + 1 : rect.bottom - 1,
+      deltaY: amount * EDGE_SCROLL_DISTANCE_PER_LINE_PX,
+    });
+    source.target.dispatchEvent(event);
+  };
+
+  const visibleLines = (terminal: MouseTrackingTerminal): string[] => {
+    const { active } = terminal.buffer;
+    return Array.from({ length: terminal.rows }, (_, row) => (
+      active.getLine(active.viewportY + row)?.translateToString(true) ?? ""
+    ));
+  };
+
+  const cellAtPointer = (terminal: MouseTrackingTerminal, source: MouseSnapshot) => {
+    const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen")
+      ?? terminal.element
+      ?? host;
+    const rect = screen.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return { column: 0, row: 0 };
+    return {
+      column: Math.min(
+        terminal.cols - 1,
+        Math.max(0, Math.floor(((source.clientX - rect.left) / rect.width) * terminal.cols)),
+      ),
+      row: Math.min(
+        terminal.rows - 1,
+        Math.max(0, Math.floor(((source.clientY - rect.top) / rect.height) * terminal.rows)),
+      ),
+    };
+  };
+
+  const captureExtendedSelection = (terminal: MouseTrackingTerminal, amount: number) => {
+    const direction = amount < 0 ? "up" : "down";
+    const lines = visibleLines(terminal);
+    if (!extendedSelectionLines || edgeDirection !== direction) {
+      const anchor = gesture ? cellAtPointer(terminal, gesture.start) : { column: 0, row: 0 };
+      extendedSelectionLines = direction === "up"
+        ? lines.slice(0, anchor.row + 1)
+        : lines.slice(anchor.row);
+      edgeDirection = direction;
+      edgeAnchorColumn = anchor.column;
+    } else {
+      extendedSelectionLines = mergeTerminalEdgeSelectionLines(
+        extendedSelectionLines,
+        lines,
+        direction,
+      );
+    }
+    const selectedLines = extendedSelectionLines.map((line) => line.trimEnd());
+    if (edgeAnchorColumn !== null && selectedLines.length > 0) {
+      const anchorIndex = direction === "up" ? selectedLines.length - 1 : 0;
+      const anchorLine = selectedLines[anchorIndex] ?? "";
+      selectedLines[anchorIndex] = direction === "up"
+        ? anchorLine.slice(0, edgeAnchorColumn + 1)
+        : anchorLine.slice(edgeAnchorColumn);
+    }
+    const selection = selectedLines.join("\n").replace(/\n+$/, "");
+    if (selection) onExtendedSelection?.(selection);
+  };
+
+  const tickEdgeScroll = () => {
+    if (!gesture?.dragging || !edgePointer) {
+      stopEdgeScroll();
+      return;
+    }
+    const amount = edgeScrollAmount(edgePointer);
+    if (amount === 0) {
+      stopEdgeScroll();
+      return;
+    }
+    const terminal = getTerminal();
+    if (gesture.appOwnsSelection) {
+      if (terminal) captureExtendedSelection(terminal, amount);
+      dispatchEdgeWheel(edgePointer, amount);
+      terminal?.scrollLines(amount);
+    } else {
+      terminal?.scrollLines(amount);
+    }
+    dispatch(
+      selectionTarget(edgePointer),
+      "mousemove",
+      0,
+      1,
+      gesture.forceSelection,
+    );
+    if (terminal && gesture.appOwnsSelection) {
+      terminal.selectLines(terminal.buffer.active.viewportY, terminal.buffer.active.viewportY + terminal.rows - 1);
+    }
+  };
+
+  const updateEdgeScroll = (source: MouseSnapshot) => {
+    if (edgeScrollAmount(source) === 0) {
+      stopEdgeScroll();
+      return;
+    }
+    edgePointer = selectionTarget(source);
+    if (edgeScrollTimer === null) {
+      edgeScrollTimer = document.defaultView?.setInterval(
+        tickEdgeScroll,
+        EDGE_SCROLL_INTERVAL_MS,
+      ) ?? null;
+    }
+  };
+
   const cancelGesture = () => {
+    stopEdgeScroll();
     gesture = null;
+    extendedSelectionLines = null;
+    edgeDirection = null;
+    edgeAnchorColumn = null;
     removeDocumentListeners();
   };
 
   const onDocumentMouseMove = (event: MouseEvent) => {
     if ((event as MatrixSyntheticMouseEvent)._xtermScaleCorrected || !gesture) return;
-    stopOriginal(event);
+    if (gesture.forceSelection) stopOriginal(event);
     const current = snapshot(event);
     if (!gesture.dragging) {
       const distance = Math.hypot(
@@ -121,18 +318,31 @@ export function installMouseTrackingSelection({
       );
       if (distance < dragThresholdPx) return;
       gesture.dragging = true;
-      dispatch(gesture.start, "mousedown", 0, 1, true);
+      if (gesture.forceSelection) {
+        dispatch(gesture.start, "mousedown", 0, 1, true);
+      }
     }
-    dispatch(current, "mousemove", 0, 1, true);
+    const targetedCurrent = selectionTarget(current);
+    if (gesture.forceSelection || !event.composedPath().includes(host)) {
+      dispatch(targetedCurrent, "mousemove", 0, 1, gesture.forceSelection);
+    }
+    updateEdgeScroll(targetedCurrent);
   };
 
   const onDocumentMouseUp = (event: MouseEvent) => {
     if ((event as MatrixSyntheticMouseEvent)._xtermScaleCorrected || !gesture) return;
-    stopOriginal(event);
-    const current = snapshot(event);
+    if (gesture.forceSelection) stopOriginal(event);
+    const current = selectionTarget(snapshot(event));
+    const amount = edgePointer ? edgeScrollAmount(edgePointer) : 0;
+    const terminal = getTerminal();
+    if (amount !== 0 && terminal && gesture.appOwnsSelection) {
+      captureExtendedSelection(terminal, amount);
+    }
     if (gesture.dragging) {
-      dispatch(current, "mouseup", 0, 0, true);
-    } else {
+      if (gesture.forceSelection || !event.composedPath().includes(host)) {
+        dispatch(current, "mouseup", 0, 0, gesture.forceSelection);
+      }
+    } else if (gesture.forceSelection) {
       const forceSelection = gesture.start.detail >= 2;
       dispatch(gesture.start, "mousedown", 0, 1, forceSelection);
       dispatch(current, "mouseup", 0, 0, forceSelection);
@@ -143,11 +353,15 @@ export function installMouseTrackingSelection({
   const onMouseDown = (event: MouseEvent) => {
     if ((event as MatrixSyntheticMouseEvent)._xtermScaleCorrected || event.button !== 0) return;
     const terminal = getTerminal();
-    if (!terminal || terminal.modes.mouseTrackingMode === "none") return;
+    if (!terminal) return;
     cancelGesture();
-    onPrimaryGestureStart();
-    gesture = { start: snapshot(event), dragging: false };
-    stopOriginal(event);
+    const appOwnsSelection = terminal.modes.mouseTrackingMode !== "none";
+    const forceSelection = appOwnsSelection;
+    gesture = { start: snapshot(event), dragging: false, forceSelection, appOwnsSelection };
+    if (forceSelection) {
+      onPrimaryGestureStart();
+      stopOriginal(event);
+    }
     document.addEventListener("mousemove", onDocumentMouseMove, true);
     document.addEventListener("mouseup", onDocumentMouseUp, true);
     document.defaultView?.addEventListener("blur", cancelGesture, { once: true });

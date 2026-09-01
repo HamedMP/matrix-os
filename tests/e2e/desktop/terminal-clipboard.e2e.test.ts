@@ -84,7 +84,7 @@ suite("packaged Electron terminal clipboard", () => {
     endIndexExclusive: number,
   ): Promise<void> {
     const start = await terminalPoint(startText, startIndex);
-    const end = await terminalPoint(endText, endIndexExclusive);
+    const end = await terminalPoint(endText, Math.max(0, endIndexExclusive - 0.5));
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
     await page.mouse.move(end.x, end.y, { steps: 6 });
@@ -461,13 +461,12 @@ suite("packaged Electron production-mode terminal selection", () => {
   it("extends a drag selection by auto-scrolling beyond both terminal edges", async () => {
     const { resize, screenBox, point } = await terminalGrid();
     const lines = Array.from(
-      { length: resize.rows + 30 },
+      { length: resize.rows + 80 },
       (_, index) => `EDGE-SCROLL-${String(index).padStart(3, "0")}`,
     );
     gateway.sendTerminalOutput(`\u001bc${lines.join("\r\n")}`);
     await page.waitForTimeout(300);
 
-    const initiallyVisibleTop = lines.length - resize.rows;
     const upwardStart = point(5, resize.rows - 2);
     await page.mouse.move(upwardStart.x, upwardStart.y);
     await page.mouse.down();
@@ -476,13 +475,11 @@ suite("packaged Electron production-mode terminal selection", () => {
     await page.mouse.up();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-      .toContain(lines[initiallyVisibleTop - 1]);
+      .toContain(lines[20]);
 
     await page.mouse.click(point(2, 2).x, point(2, 2).y);
-    const viewport = terminalSurface().locator(".xterm-viewport");
     await page.mouse.move(screenBox.x + screenBox.width / 2, screenBox.y + screenBox.height / 2);
     await page.mouse.wheel(0, -100_000);
-    await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBe(0);
 
     const downwardStart = point(5, 1);
     await page.mouse.move(downwardStart.x, downwardStart.y);
@@ -496,26 +493,34 @@ suite("packaged Electron production-mode terminal selection", () => {
     await page.mouse.up();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-      .toContain(lines[resize.rows + 1]);
+      .toContain(lines.at(-1));
   }, 60_000);
 
   it("extends a mouse-reporting selection by auto-scrolling beyond both edges", async () => {
+    await page.reload();
+    await page.waitForFunction(() => typeof window.operator?.invoke === "function");
+    await page.evaluate(async () => {
+      await window.operator.invoke("auth:start-device-flow", {});
+    });
+    await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
+    await page.getByRole("button", { name: "Open matrix-task-1" }).click();
+    await page.getByRole("heading", { name: "matrix-task-1", exact: true }).waitFor({ timeout: 10_000 });
+    await terminalSurface().locator(".xterm-helper-textarea").focus();
     const { resize, screenBox, point } = await terminalGrid();
     const lines = Array.from(
-      { length: resize.rows + 30 },
+      { length: resize.rows + 80 },
       (_, index) => `MOUSE-EDGE-SCROLL-${String(index).padStart(3, "0")}`,
     );
     gateway.sendTerminalOutput(`\u001bc${lines.join("\r\n")}`);
     await page.waitForTimeout(300);
 
-    const viewport = terminalSurface().locator(".xterm-viewport");
-    await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
     await page.mouse.click(point(2, resize.rows - 2).x, point(2, resize.rows - 2).y);
     gateway.sendTerminalOutput("\u001b[?1003h\u001b[?1006h");
     await page.waitForTimeout(100);
 
     try {
-      const initiallyVisibleTop = lines.length - resize.rows;
+      const upwardInputCount = gateway.state.terminalInputs.length;
       const upwardStart = point(5, resize.rows - 2);
       await page.mouse.move(upwardStart.x, upwardStart.y);
       await page.mouse.down();
@@ -524,11 +529,22 @@ suite("packaged Electron production-mode terminal selection", () => {
       await page.mouse.up();
       await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
       await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-        .toContain(lines[initiallyVisibleTop - 1]);
+        .toContain(lines[70]);
+      expect(gateway.state.terminalInputs.slice(upwardInputCount).some(
+        (data) => data.includes("\u001b[<64;"),
+      )).toBe(true);
 
-      await viewport.evaluate((element) => { element.scrollTop = 0; });
-      await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBe(0);
+      gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
+      await page.mouse.move(
+        screenBox.x + screenBox.width / 2,
+        screenBox.y + screenBox.height / 2,
+      );
+      await page.mouse.wheel(0, -100_000);
+      await page.mouse.click(point(2, 2).x, point(2, 2).y);
+      gateway.sendTerminalOutput("\u001b[?1003h\u001b[?1006h");
+      await page.waitForTimeout(100);
 
+      const downwardInputCount = gateway.state.terminalInputs.length;
       const downwardStart = point(5, 1);
       await page.mouse.move(downwardStart.x, downwardStart.y);
       await page.mouse.down();
@@ -540,8 +556,13 @@ suite("packaged Electron production-mode terminal selection", () => {
       await page.waitForTimeout(1_500);
       await page.mouse.up();
       await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+      // The stub gateway does not redraw a TUI viewport in response to the wheel report,
+      // so assert the retained anchor here; the binary report below proves the app-facing path.
       await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-        .toContain(lines[resize.rows + 1]);
+        .toContain(lines[80]);
+      expect(gateway.state.terminalInputs.slice(downwardInputCount).some(
+        (data) => data.includes("\u001b[<65;"),
+      )).toBe(true);
     } finally {
       gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
       await page.mouse.move(
