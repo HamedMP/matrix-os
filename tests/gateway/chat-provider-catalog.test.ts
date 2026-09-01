@@ -98,6 +98,38 @@ function runtimeSource(): AgentRuntimeSource {
   });
 }
 
+function runtimeSourceWithOpenClawSelected(): AgentRuntimeSource {
+  return async () => {
+    const snapshot = await runtimeSource()(AbortSignal.timeout(1_000));
+    return {
+      ...snapshot,
+      runtime: {
+        ...snapshot.runtime,
+        selected: "openclaw" as const,
+        options: snapshot.runtime.options.map((runtime) => runtime.id === "hermes"
+          ? {
+              ...runtime,
+              health: "stopped" as const,
+              selectionState: "available" as const,
+              configured: false,
+            }
+          : {
+              ...runtime,
+              health: "healthy" as const,
+              selectionState: "active" as const,
+            }),
+      },
+      providers: [],
+      messaging: {
+        runtime: "openclaw" as const,
+        provider: null,
+        model: null,
+        configured: false,
+      },
+    };
+  };
+}
+
 function codingRegistry(
   providers: AgentProviderSummary[] = [codingProvider()],
 ): CodingAgentProviderRegistry {
@@ -503,6 +535,71 @@ describe("canonical Chat Provider catalog", () => {
     ))).toMatchObject({ availability: "available", displayName: "Hermes" });
   });
 
+  it("keeps the active Hermes inventory authoritative over a stale settings route", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([configuredHarness("hermes", true)]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({
+      availability: "available",
+      models: [{ id: "anthropic:claude-opus-4-6" }],
+      defaultSelection: {
+        instanceId: "hermes_default",
+        model: "anthropic:claude-opus-4-6",
+      },
+    });
+  });
+
+  it("keeps terminal-configured Hermes available while OpenClaw owns messaging", async () => {
+    const hermes = configuredHarness("hermes", true);
+    hermes.authState = "unknown";
+    hermes.connectivity = "unknown";
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSourceWithOpenClawSelected(),
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([hermes]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({
+      availability: "available",
+      displayName: "Hermes",
+      models: [{ id: "anthropic:claude-sonnet-5" }],
+      defaultSelection: {
+        instanceId: "hermes_default",
+        model: "anthropic:claude-sonnet-5",
+      },
+    });
+  });
+
+  it("keeps an explicitly unauthenticated inactive Hermes runtime unavailable", async () => {
+    const hermes = configuredHarness("hermes", true);
+    hermes.authState = "unauthenticated";
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSourceWithOpenClawSelected(),
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([hermes]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "authentication_required",
+    });
+  });
+
   it("does not silently choose between concurrent enabled CLI profiles", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({
@@ -668,7 +765,10 @@ describe("canonical Chat Provider catalog", () => {
       });
     const openClawConnect = catalog.instances.find((instance) => instance.id === "openclaw_default")
       ?.setupActions.find((action) => action.id === "openclaw_connect");
-    expect(openClawConnect?.command).toContain("system/agent-runtime/openclaw.env");
+    expect(openClawConnect?.command).toContain("openclaw models auth login");
+    expect(openClawConnect?.command).toContain("--provider openai");
+    expect(openClawConnect?.command).toContain("--device-code");
+    expect(openClawConnect?.command).toContain("--set-default");
     expect(openClawConnect?.command).not.toMatch(/OPENCLAW_GATEWAY_TOKEN=[^;$'\" ]+/);
     expect(catalog.instances.filter((instance) =>
       ["claude_code", "opencode", "pi"].includes(instance.driverKind)

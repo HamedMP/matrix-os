@@ -416,7 +416,7 @@ function systemSetupActions(
     kind: "foreground_terminal",
     label: `Connect ${displayName}`,
     command: visibleSetupCommand(kind === "openclaw"
-      ? '[ ! -r "$HOME/system/agent-runtime/openclaw.env" ] || { set -a; . "$HOME/system/agent-runtime/openclaw.env"; set +a; }; openclaw'
+      ? "openclaw models auth login --provider openai --device-code --set-default"
       : kind),
   }];
 }
@@ -500,6 +500,11 @@ function settingsHarnessKind(kind: CanonicalProviderDriverKind): ProviderHarness
   return null;
 }
 
+function systemHarnessKind(kind: CanonicalProviderDriverKind): ProviderHarnessKind | null {
+  if (kind === "hermes" || kind === "openclaw") return kind;
+  return null;
+}
+
 function unavailableReasonFor(
   instance: InstanceDraft,
 ): NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]> {
@@ -523,7 +528,7 @@ function unavailableInstance(
   };
 }
 
-function configuredCodingHarnessInstance(input: {
+function configuredHarnessInstanceFromAiSnapshot(input: {
   instance: InstanceDraft;
   harness: ProviderHarnessInstance;
   aiSnapshot?: AiProviderSnapshotV3;
@@ -585,11 +590,13 @@ function applyHarnessSettings(input: {
   settingsAvailable: boolean;
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
+  installedSystemDriverKinds?: readonly CanonicalProviderDriverKind[];
   aiSnapshot?: AiProviderSnapshotV3;
 }): InstanceDraft[] {
   return input.instances.map((instance) => {
     const generic = genericHarnessKind(instance.driverKind);
     const settingsHarness = settingsHarnessKind(instance.driverKind);
+    const systemHarness = systemHarnessKind(instance.driverKind);
     if (settingsHarness !== null && input.settingsRequired && (!input.settingsAvailable || input.settings === null)) {
       return unavailableInstance(instance, "settings_unavailable");
     }
@@ -602,17 +609,21 @@ function applyHarnessSettings(input: {
       && !settingsCanAuthorizeInstalledCodingHarness) {
       return unavailableInstance(instance, unavailableReasonFor(instance));
     }
-    const enabledHarnesses = settingsHarness !== null && input.settingsRequired
-      ? input.settings!.harnesses.filter((harness) => harness.harness === settingsHarness && harness.enabled)
+    const configuredHarness = settingsHarness ?? systemHarness;
+    const enabledHarnesses = configuredHarness !== null && input.settingsAvailable && input.settings !== null
+      ? input.settings.harnesses.filter((harness) => harness.harness === configuredHarness && harness.enabled)
       : [];
-    if (enabledHarnesses.length > 1) {
-      return unavailableInstance(instance, "multiple_profiles_unsupported");
-    }
     const executable = input.executableDriverKinds === undefined
       || input.executableDriverKinds.includes(instance.driverKind);
     const nativeTerminalProfile = (generic === "pi" || generic === "opencode")
       && instance.availability === "available"
       && input.credentialedDriverKinds?.includes(generic);
+    const installedSystemProfile = systemHarness !== null
+      && input.installedSystemDriverKinds?.includes(instance.driverKind) === true
+      && executable
+      && enabledHarnesses.length === 1
+      && instance.availability !== "available"
+      && instance.availability !== "setup_required";
     if (settingsHarness !== null && input.settingsRequired && enabledHarnesses.length === 0) {
       if (nativeTerminalProfile) {
         return executable
@@ -625,10 +636,29 @@ function applyHarnessSettings(input: {
     const configuredInstance = enabledHarness
       ? { ...instance, displayName: enabledHarness.displayName }
       : instance;
-    if (enabledHarness && (enabledHarness.authState !== "authenticated" || enabledHarness.accessSourceId === null)) {
+    // A selected system runtime has a live provider/model inventory. Keep that
+    // inventory authoritative instead of replacing it with a stale settings route.
+    if (systemHarness !== null && instance.availability === "available" && executable) {
+      return { ...instance, unavailabilityReason: undefined };
+    }
+    if (enabledHarnesses.length > 1) {
+      return unavailableInstance(instance, "multiple_profiles_unsupported");
+    }
+    if (enabledHarness && systemHarness === null
+      && (enabledHarness.authState !== "authenticated" || enabledHarness.accessSourceId === null)) {
       return unavailableInstance(configuredInstance, "authentication_required");
     }
-    if (enabledHarness && enabledHarness.connectivity !== "online") {
+    // System runtime credentials are owned by the native CLI and may only project
+    // `unknown` here while the installed binary and exact owner route are known.
+    // Explicit negative states remain authoritative and fail closed.
+    if (enabledHarness && systemHarness !== null
+      && (enabledHarness.authState === "unauthenticated" || enabledHarness.accessSourceId === null)) {
+      return unavailableInstance(configuredInstance, "authentication_required");
+    }
+    if (enabledHarness && systemHarness === null && enabledHarness.connectivity !== "online") {
+      return unavailableInstance(configuredInstance, "runtime_unavailable");
+    }
+    if (enabledHarness && systemHarness !== null && enabledHarness.connectivity === "offline") {
       return unavailableInstance(configuredInstance, "runtime_unavailable");
     }
     if (!executable) {
@@ -644,7 +674,9 @@ function applyHarnessSettings(input: {
       }
       return unavailable;
     }
-    if (instance.availability !== "available" && !settingsCanAuthorizeInstalledCodingHarness) {
+    if (instance.availability !== "available"
+      && !settingsCanAuthorizeInstalledCodingHarness
+      && !installedSystemProfile) {
       return settingsHarness !== null && input.settingsRequired
         ? unavailableInstance(instance, unavailableReasonFor(instance))
         : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
@@ -653,7 +685,12 @@ function applyHarnessSettings(input: {
       && !input.credentialedDriverKinds?.includes(generic)) {
       return unavailableInstance(configuredInstance, "runtime_not_runnable");
     }
-    if (settingsHarness === null || !input.settingsRequired) {
+    if ((settingsHarness === null && systemHarness === null) || !input.settingsRequired) {
+      return instance.availability === "available"
+        ? { ...instance, unavailabilityReason: undefined }
+        : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
+    }
+    if (systemHarness !== null && enabledHarness === undefined) {
       return instance.availability === "available"
         ? { ...instance, unavailabilityReason: undefined }
         : { ...instance, unavailabilityReason: unavailableReasonFor(instance) };
@@ -667,7 +704,14 @@ function applyHarnessSettings(input: {
       if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
         return unavailableInstance(configuredInstance, "runtime_not_runnable");
       }
-      return configuredCodingHarnessInstance({
+      return configuredHarnessInstanceFromAiSnapshot({
+        instance: { ...configuredInstance, availability: "available" },
+        harness,
+        aiSnapshot: input.aiSnapshot,
+      });
+    }
+    if ((generic === "hermes" || generic === "openclaw") && installedSystemProfile) {
+      return configuredHarnessInstanceFromAiSnapshot({
         instance: { ...configuredInstance, availability: "available" },
         harness,
         aiSnapshot: input.aiSnapshot,
@@ -806,6 +850,9 @@ export function createChatProviderCatalogService(options: {
         ? aiProviderResult.value
         : undefined;
       const executableDriverKinds = options.executableDriverKinds;
+      const installedSystemDriverKinds = snapshot?.runtime.options
+        .filter((runtime) => runtime.installState === "installed")
+        .map((runtime) => runtime.id) ?? [];
       const instances = applyHarnessSettings({
         instances: [
         ...systemInstances,
@@ -816,6 +863,7 @@ export function createChatProviderCatalogService(options: {
         settingsAvailable: settingsResult.status === "fulfilled",
         executableDriverKinds,
         credentialedDriverKinds: options.credentialedDriverKinds,
+        installedSystemDriverKinds,
         aiSnapshot,
       });
       const driverKinds: CanonicalProviderDriverKind[] = [
