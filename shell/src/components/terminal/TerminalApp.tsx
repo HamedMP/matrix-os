@@ -119,45 +119,36 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
   });
 }
 
-async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
+type SavedShellSessionsStatus = "active" | "stale" | "unavailable";
+
+async function getSavedShellSessionsStatus(sessionNames: string[]): Promise<SavedShellSessionsStatus> {
   const requestedNames = Array.from(new Set(
     sessionNames.filter((name) => isCanonicalShellSessionId(name)),
   ));
   if (requestedNames.length === 0) {
-    return true;
+    return "active";
   }
 
   try {
     const sessions = await listShellSessions();
+    if (sessions === null) {
+      return "unavailable";
+    }
     const existingNames = new Set<string>();
-    if (sessions) {
-      for (const session of sessions) {
-        if (typeof session.name === "string") {
-          existingNames.add(session.name);
-        }
+    for (const session of sessions) {
+      if (typeof session.name === "string") {
+        existingNames.add(session.name);
       }
     }
 
-    for (const name of requestedNames) {
-      if (existingNames.has(name)) {
-        continue;
-      }
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- ordered repair: each missing saved zellij session is recreated once before layout restore; these are user-visible session names, not a fan-out workload.
-      const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cwd: DEFAULT_CWD }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!createRes.ok && createRes.status !== 409) {
-        return false;
-      }
-    }
-
-    return true;
+    // A saved layout is only a UI reference. Missing runtimes can be stopped or
+    // intentionally interrupted, so mounting Terminal must never relaunch them.
+    // Falling back to the first active session also prevents a stale layout from
+    // producing one expected 409 response per missing pane on every app mount.
+    return requestedNames.every((name) => existingNames.has(name)) ? "active" : "stale";
   } catch (err: unknown) {
-    console.warn("Failed to ensure terminal sessions:", err instanceof Error ? err.message : err);
-    return false;
+    console.warn("Failed to validate saved terminal sessions:", err instanceof Error ? err.message : err);
+    return "unavailable";
   }
 }
 
@@ -584,8 +575,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessionReady = await ensureShellSessions(getCanonicalShellSessionIds(data));
-              if (!cancelled && sessionReady) {
+              const sessionStatus = await getSavedShellSessionsStatus(getCanonicalShellSessionIds(data));
+              // A failed catalog request does not prove that a runtime stopped.
+              // Preserve the saved layout so a transient outage cannot overwrite
+              // the user's tabs and panes; only an authoritative stale result falls back.
+              if (!cancelled && sessionStatus !== "stale") {
                 const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
                 const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
                 setTabs(applyCompatModeToTabs(data.tabs));
