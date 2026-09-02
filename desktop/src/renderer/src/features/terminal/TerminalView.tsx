@@ -64,6 +64,7 @@ interface TerminalViewProps {
   // When false, the xterm stays mounted (buffer preserved) but the live socket
   // is released so only the focused terminal holds a VPS attachment.
   active?: boolean;
+  visualScale?: number;
   onRecreate?: () => void;
 }
 
@@ -72,6 +73,7 @@ export default function TerminalView({
   sessionName,
   chatId,
   active = true,
+  visualScale = 1,
   onRecreate,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
@@ -86,6 +88,9 @@ export default function TerminalView({
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
+  const visualScaleRef = useRef(visualScale);
+  // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
+  visualScaleRef.current = visualScale;
   const endedRef = useRef(false);
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
@@ -192,15 +197,46 @@ export default function TerminalView({
       if (event.button === 0) openDesktopTerminalLink(link);
     };
     const onTerminalPointer = (event: MouseEvent) => {
+      if ((event as MouseEvent & { _xtermScaleCorrected?: boolean })._xtermScaleCorrected) return;
       const decision = classifyTerminalPointerEvent({
         type: event.type as "mousedown" | "mousemove" | "mouseup",
         button: event.button,
         buttons: event.buttons,
         hasSelection: terminal.hasSelection(),
       });
-      if (decision !== "shield-selection") return;
-      event.preventDefault();
+      if (decision === "shield-selection") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      const scale = Number.isFinite(visualScaleRef.current) && visualScaleRef.current > 0
+        ? visualScaleRef.current
+        : 1;
+      if (scale === 1) return;
+
+      const element = terminal.element ?? host;
+      const rect = element.getBoundingClientRect();
       event.stopImmediatePropagation();
+      const target = event.target instanceof Element ? event.target : element;
+      const synthetic = new MouseEvent(event.type, {
+        bubbles: event.bubbles,
+        cancelable: event.cancelable,
+        composed: event.composed,
+        detail: event.detail,
+        screenX: event.screenX,
+        screenY: event.screenY,
+        clientX: rect.left + (event.clientX - rect.left) / scale,
+        clientY: rect.top + (event.clientY - rect.top) / scale,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        metaKey: event.metaKey,
+        button: event.button,
+        buttons: event.buttons,
+        relatedTarget: event.relatedTarget,
+      });
+      Object.defineProperty(synthetic, "_xtermScaleCorrected", { value: true });
+      target.dispatchEvent(synthetic);
     };
     const onTerminalContextMenu = (event: MouseEvent) => {
       const link = linkAtPointer(event);

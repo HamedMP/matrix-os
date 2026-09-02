@@ -10,6 +10,7 @@ interface TerminalPointerInterceptionOptions {
   container: HTMLElement;
   getTerminal: () => TerminalSelectionReader | null;
   getVisualScale: () => number;
+  shouldCorrectPointer?: (event: MouseEvent) => boolean;
   correctPointer: (event: MouseEvent) => void;
 }
 
@@ -23,6 +24,7 @@ export function installTerminalPointerInterception({
   container,
   getTerminal,
   getVisualScale,
+  shouldCorrectPointer,
   correctPointer,
 }: TerminalPointerInterceptionOptions): () => void {
   const handler = (event: MouseEvent) => {
@@ -43,7 +45,7 @@ export function installTerminalPointerInterception({
       }
     }
 
-    if (getVisualScale() !== 1) {
+    if (shouldCorrectPointer?.(event) ?? getVisualScale() !== 1) {
       correctPointer(event);
     }
   };

@@ -121,14 +121,14 @@
 
 ### Tests for User Story 4 — write and observe RED first
 
-- [ ] T031 [P] [US4] Add failing native Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/desktop/terminal-view.test.tsx` and `tests/desktop/terminal-link-context-menu.test.tsx`
-- [ ] T032 [P] [US4] Add failing web Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/shell/terminal-pane-scrolling.test.tsx` and `tests/shell/terminal-link-context-menu.test.tsx`
+- [x] T031 [P] [US4] Add failing native Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/desktop/terminal-view.test.tsx` and `tests/desktop/terminal-link-context-menu.test.tsx`
+- [x] T032 [P] [US4] Add failing web Command+A/menu Select All, scrollback selection, passive-motion stability, empty-buffer, and Copy parity tests in `tests/shell/terminal-pane-scrolling.test.tsx` and `tests/shell/terminal-link-context-menu.test.tsx`
 
 ### Implementation for User Story 4
 
-- [ ] T033 [P] [US4] Route native Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T034 [P] [US4] Route web Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
-- [ ] T035 [US4] Run all User Story 4 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
+- [x] T033 [P] [US4] Route native Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `desktop/src/renderer/src/features/terminal/TerminalView.tsx` and `desktop/src/renderer/src/features/terminal/TerminalLinkContextMenu.tsx`
+- [x] T034 [P] [US4] Route web Command+A and menu Select All to the originating `terminal.selectAll()` and preserve focus/selection in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/TerminalLinkContextMenu.tsx`
+- [x] T035 [US4] Run all User Story 4 tests in `tests/desktop/terminal-view.test.tsx`, `tests/desktop/terminal-link-context-menu.test.tsx`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-link-context-menu.test.tsx`
 
 **Checkpoint**: Select All is independently usable in native and web terminals.
 
@@ -142,16 +142,16 @@
 
 ### Tests for User Story 5 — write and observe RED first
 
-- [ ] T036 [P] [US5] Add failing native Canvas scale-forwarding and terminal-no-remount assertions in `tests/desktop/native-desktop-shell.test.tsx` and `tests/desktop/terminals-tab.test.tsx`
-- [ ] T037 [P] [US5] Add failing native transformed pointer/contextmenu boundary tests at scale 0.5, 1, and 2 in `tests/desktop/terminal-view.test.tsx`
-- [ ] T038 [P] [US5] Extend web pointer math, raw contextmenu coordinate, no-double-unscale, and selection-preservation tests at zoom 0.25, 0.5, 1, 1.5, and 3 in `tests/shell/terminal-pane-zoom-correction.test.ts`
-- [ ] T039 [P] [US5] Add failing web Canvas scale forwarding, below-0.25 preview return, and terminal-no-remount assertions in `tests/shell/canvas-window-terminal-overlay.test.tsx`
+- [x] T036 [P] [US5] Add failing native Canvas scale-forwarding and terminal-no-remount assertions in `tests/desktop/native-desktop-shell.test.tsx` and `tests/desktop/terminals-tab.test.tsx`
+- [x] T037 [P] [US5] Add failing native transformed pointer/contextmenu boundary tests at scale 0.5, 1, and 2 in `tests/desktop/terminal-view.test.tsx`
+- [x] T038 [P] [US5] Extend web pointer math, raw contextmenu coordinate, no-double-unscale, and selection-preservation tests at zoom 0.25, 0.5, 1, 1.5, and 3 in `tests/shell/terminal-pane-zoom-correction.test.ts`
+- [x] T039 [P] [US5] Add failing web Canvas scale forwarding, below-0.25 preview return, and terminal-no-remount assertions in `tests/shell/canvas-window-terminal-overlay.test.tsx`
 
 ### Implementation for User Story 5
 
-- [ ] T040 [P] [US5] Forward native Canvas `visualScale` through `desktop/src/renderer/src/features/mission-control/TabContent.tsx` and `desktop/src/renderer/src/features/terminal/TerminalsTab.tsx` into `desktop/src/renderer/src/features/terminal/TerminalView.tsx` without recreating xterm
-- [ ] T041 [P] [US5] Keep xterm cell-event correction separate from raw menu placement/link hit testing and preserve instances across web zoom transitions in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/canvas/CanvasWindow.tsx`
-- [ ] T042 [US5] Run all User Story 5 tests in `tests/desktop/native-desktop-shell.test.tsx`, `tests/desktop/terminals-tab.test.tsx`, `tests/desktop/terminal-view.test.tsx`, `tests/shell/terminal-pane-zoom-correction.test.ts`, and `tests/shell/canvas-window-terminal-overlay.test.tsx`
+- [x] T040 [P] [US5] Forward native Canvas `visualScale` through `desktop/src/renderer/src/features/mission-control/TabContent.tsx` and `desktop/src/renderer/src/features/terminal/TerminalsTab.tsx` into `desktop/src/renderer/src/features/terminal/TerminalView.tsx` without recreating xterm
+- [x] T041 [P] [US5] Keep xterm cell-event correction separate from raw menu placement/link hit testing and preserve instances across web zoom transitions in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/canvas/CanvasWindow.tsx`
+- [x] T042 [US5] Run all User Story 5 tests in `tests/desktop/native-desktop-shell.test.tsx`, `tests/desktop/terminals-tab.test.tsx`, `tests/desktop/terminal-view.test.tsx`, `tests/shell/terminal-pane-zoom-correction.test.ts`, and `tests/shell/canvas-window-terminal-overlay.test.tsx`
 
 **Checkpoint**: Canvas/Desktop parity is independently verified. Preserve User Stories 4–5 as Graphite layer 4.
 

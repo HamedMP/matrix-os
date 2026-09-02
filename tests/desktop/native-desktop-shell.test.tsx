@@ -45,12 +45,20 @@ vi.mock("@desktop/renderer/src/features/mission-control/TabContent", () => ({
     tab,
     layoutRevision,
     settingsSection,
+    visualScale,
   }: {
     tab: { title: string };
     layoutRevision?: string;
     settingsSection?: string;
+    visualScale?: number;
   }) => (
-    <div data-layout-revision={layoutRevision} data-settings-section={settingsSection}>{tab.title} content</div>
+    <div
+      data-layout-revision={layoutRevision}
+      data-settings-section={settingsSection}
+      data-visual-scale={visualScale}
+    >
+      {tab.title} content
+    </div>
   ),
   TabErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));
@@ -428,6 +436,20 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("closed");
     expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull();
     expect(document.querySelector("[data-native-desktop-shell]")).toBeTruthy();
+  });
+
+  it("forwards native Canvas zoom to terminal surfaces without replacing the surface", () => {
+    useNativeDesktopMode.setState({ mode: "canvas", hydrated: true, zoom: 0.5 });
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+    const terminalContent = screen.getByText("Terminal content");
+    expect(terminalContent.getAttribute("data-visual-scale")).toBe("0.5");
+
+    act(() => useNativeDesktopMode.setState({ zoom: 2 }));
+
+    expect(screen.getByText("Terminal content")).toBe(terminalContent);
+    expect(terminalContent.getAttribute("data-visual-scale")).toBe("2");
   });
 
   it("puts minimize and close controls inside each maximized tab", () => {

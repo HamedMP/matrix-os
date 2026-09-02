@@ -425,6 +425,7 @@ function createCachedTerminal() {
       attachCustomKeyEventHandler: vi.fn(),
       clearSelection: vi.fn(),
       hasSelection: vi.fn(() => false),
+      selectAll: vi.fn(),
       getSelection: vi.fn(() => ""),
       scrollToBottom: vi.fn(),
     },
@@ -821,6 +822,69 @@ describe("TerminalPane scrolling", () => {
 
     fireEvent.mouseMove(root, { button: 0, buttons: 0 });
     expect(reports).toEqual(["mousedown", "mousemove"]);
+  });
+
+  it("selects xterm scrollback with Command+A and preserves keyboard/menu Copy parity", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <TerminalPane
+        paneId="pane-select-all"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+    const terminal = createdTerminals[0]!;
+    const selectedScrollback = "old scrollback row\nvisible λ row 👩🏽‍💻";
+    terminal.selectAll.mockImplementation(() => {
+      terminal.selection = selectedScrollback;
+    });
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "a",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(terminal.selectAll).toHaveBeenCalledOnce();
+    fireEvent.mouseMove(terminal.element!, { button: 0, buttons: 0 });
+    expect(terminal.selection).toBe(selectedScrollback);
+
+    terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    fireEvent.contextMenu(terminal.element!, { clientX: 120, clientY: 80 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
+
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText.mock.calls).toEqual([[selectedScrollback], [selectedScrollback]]);
   });
 
   it("attaches desktop canonical sessions as hard clients with proposed dimensions", async () => {

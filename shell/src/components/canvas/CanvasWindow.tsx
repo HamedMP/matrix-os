@@ -496,7 +496,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           launchTargetId={win.id}
           embeddedChrome
           canvasZoom={isFullscreen ? 1 : zoom}
-          suspended={hidden}
+          suspended={hidden || isPreview}
           windowControls={{
             close: () => closeWindow(win.id),
             minimize: animateMinimize,
@@ -598,6 +598,24 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         {isFullscreen && fullscreenTitleBar}
         {isFullscreen ? (
           <div className="relative flex-1 min-h-0 overflow-hidden">{appContent}</div>
+        ) : terminalOwnsChrome ? (
+          <>
+            <div className={isPreview ? "hidden" : "contents"} aria-hidden={isPreview || undefined}>
+              {appContent}
+            </div>
+            {isPreview ? (
+              iconUrl ? (
+                // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
+                <img src={iconUrl} alt={win.title} className="size-16 object-contain opacity-50" draggable={false} />
+              ) : (
+                <span className="text-3xl font-semibold text-muted-foreground/20">
+                  {win.title.charAt(0).toUpperCase()}
+                </span>
+              )
+            ) : (
+              interacting && <div className="absolute inset-0 z-10" />
+            )}
+          </>
         ) : isPreview ? (
           <>
             {iconUrl ? (
