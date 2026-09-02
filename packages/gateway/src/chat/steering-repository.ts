@@ -187,7 +187,7 @@ export class ChatSteeringRepository {
           alreadyRequested: true,
         };
       }
-      if (chat.lifecycle !== "active" || Number(chat.revision) !== input.baseRevision) {
+      if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       const queued = await trx.selectFrom("chat_queued_turns").selectAll()
@@ -233,10 +233,14 @@ export class ChatSteeringRepository {
         created_at: createdAt,
         updated_at: createdAt,
       }).execute();
-      const revision = input.baseRevision + 1;
+      // The exact queued row and active Run are locked below. Run activity may
+      // advance the chat-wide revision after the client snapshot without making
+      // this steering target stale, so advance from the locked current value.
+      const currentRevision = Number(chat.revision);
+      const revision = currentRevision + 1;
       const updated = await trx.updateTable("chats").set({ revision, updated_at: createdAt })
         .where("id", "=", chatId)
-        .where("revision", "=", input.baseRevision)
+        .where("revision", "=", currentRevision)
         .returning("id")
         .executeTakeFirst();
       if (!updated) throw new ChatConflictError(chatId, Number(chat.revision));

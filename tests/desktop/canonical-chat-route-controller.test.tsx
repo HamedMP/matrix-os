@@ -1146,12 +1146,7 @@ describe("canonical Chat route controller", () => {
       runs: [activeRunRecord],
       queuedTurns,
     });
-    const getDetail = vi.fn()
-      .mockResolvedValueOnce(detailAt(5, [first, second]))
-      .mockResolvedValueOnce(detailAt(6, [first, second]))
-      .mockResolvedValueOnce(detailAt(7, [first, second, third]))
-      .mockResolvedValueOnce(detailAt(8, [second, first, third]))
-      .mockResolvedValueOnce(detailAt(9, [second, third]));
+    const getDetail = vi.fn(async () => detailAt(5, [first, second]));
     const steerRun = vi.fn(async () => ({
       runId: runningRecord.activeRun.runId,
       turnId: runningRecord.activeRun.turnId,
@@ -1209,7 +1204,7 @@ describe("canonical Chat route controller", () => {
       });
     });
     expect(queueTurn).toHaveBeenCalledWith(globalRecord.chat.id, expect.objectContaining({
-      baseRevision: 6,
+      baseRevision: 7,
       parts: third.parts,
     }));
 
@@ -1218,7 +1213,7 @@ describe("canonical Chat route controller", () => {
     });
     expect(reorderQueuedTurns).toHaveBeenCalledWith(globalRecord.chat.id, {
       clientRequestId: expect.any(String),
-      baseRevision: 7,
+      baseRevision: 8,
       queuedTurnIds: [second.id, first.id, third.id],
     });
 
@@ -1227,8 +1222,10 @@ describe("canonical Chat route controller", () => {
     });
     expect(cancelQueuedTurn).toHaveBeenCalledWith(globalRecord.chat.id, first.id, {
       clientRequestId: expect.any(String),
-      baseRevision: 8,
+      baseRevision: 9,
     });
+    expect(getDetail).toHaveBeenCalledTimes(1);
+    expect(result.current.detail?.record.chat.revision).toBe(10);
     expect(result.current.detail?.queuedTurns?.map((turn) => turn.id)).toEqual([
       second.id,
       third.id,

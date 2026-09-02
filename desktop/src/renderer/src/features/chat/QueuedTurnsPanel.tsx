@@ -20,7 +20,7 @@ function queuedTurnLabel(turn: CanonicalChatQueuedTurn): string {
   return "Queued message";
 }
 
-export type QueuedTurnAction = "move" | "cancel";
+export type QueuedTurnAction = "move" | "cancel" | "steer";
 
 function QueueMenuItem({
   icon,
@@ -118,6 +118,7 @@ export function QueuedTurnsPanel({
         {ordered.map((turn, index) => {
           const label = queuedTurnLabel(turn);
           const editing = editingQueuedTurnId === turn.id;
+          const steering = pendingAction?.queuedTurnId === turn.id && pendingAction.action === "steer";
           const rowDisabled = disabled || pendingAction !== null || editing;
           return (
             <li
@@ -163,13 +164,13 @@ export function QueuedTurnsPanel({
               <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
-                  aria-label={`Steer ${label}`}
+                  aria-label={`${steering ? "Steering" : "Steer"} ${label}`}
                   disabled={rowDisabled || !canSteer}
                   className="h-7 rounded-lg px-2 text-[13px] font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
                   style={{ color: "var(--text-secondary)" }}
                   onClick={() => onSteer(turn.id)}
                 >
-                  Steer
+                  {steering ? "Steering…" : "Steer"}
                 </button>
                 <button
                   type="button"

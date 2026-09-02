@@ -624,18 +624,59 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
   });
 
-  it("surfaces event overflow even when the shared thread store isolates sink failures", async () => {
+  it("coalesces a burst of assistant deltas so a healthy steered Run reaches completion", async () => {
     let sink: Sink | undefined;
-    const overflow = Array.from({ length: 501 }, (_, index) => event({
+    const burst = Array.from({ length: 501 }, (_, index) => event({
       type: "assistant.text.delta",
       eventId: `evt_overflow_${index}`,
       messageId: "msg_native",
       delta: "x",
     }));
+    burst.push(event({
+      type: "thread.completed",
+      eventId: "evt_burst_completed",
+      outcome: "completed",
+    }));
     const store = {
       createThread: vi.fn(async () => {
         setTimeout(() => {
-          sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: overflow });
+          sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: burst });
+        }, 0);
+        return { snapshot: snapshot([]), existing: false };
+      }),
+      acceptTurn: vi.fn(),
+      getThread: vi.fn(),
+      abortThread: vi.fn(),
+      registerEventSink: vi.fn((candidate: Sink) => {
+        sink = candidate;
+        return { dispose: vi.fn() };
+      }),
+    } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store });
+
+    const events = [];
+    for await (const candidate of adapter.start(input({ signal: AbortSignal.timeout(1_000) }))) {
+      events.push(candidate);
+    }
+
+    expect(events.filter((candidate) => candidate.type === "assistant.delta")
+      .map((candidate) => candidate.type === "assistant.delta" ? candidate.delta : "")
+      .join("")).toBe("x".repeat(501));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
+  it("still fails closed when an undrained Provider event backlog exceeds the byte cap", async () => {
+    let sink: Sink | undefined;
+    const oversized = Array.from({ length: 600 }, (_, index) => event({
+      type: "assistant.text.delta",
+      eventId: `evt_oversized_${index}`,
+      messageId: "msg_native",
+      delta: "x".repeat(4_000),
+    }));
+    const store = {
+      createThread: vi.fn(async () => {
+        setTimeout(() => {
+          sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: oversized });
         }, 0);
         return { snapshot: snapshot([]), existing: false };
       }),
@@ -650,7 +691,7 @@ describe("canonical coding Chat Provider adapter", () => {
     const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store });
 
     await expect(async () => {
-      for await (const _event of adapter.start(input({ signal: AbortSignal.timeout(100) }))) {
+      for await (const _event of adapter.start(input({ signal: AbortSignal.timeout(1_000) }))) {
         // consume
       }
     }).rejects.toThrow("event buffer exceeded");

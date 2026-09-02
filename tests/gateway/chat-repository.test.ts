@@ -956,6 +956,32 @@ describe("ChatRepository", () => {
     })).rejects.toBeInstanceOf(ChatNotFoundError);
   });
 
+  it("enqueues against the current locked Chat revision when Run activity advances after the client snapshot", async () => {
+    const admitted = await admitChat(repository, "queue_activity_race");
+    const observedRevision = 1;
+    await repository.appendRunActivities(owner, admitted.chatId, admitted.runId, [
+      activity(admitted.chatId, admitted.runId, 901),
+    ]);
+
+    await expect(repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: observedRevision,
+      queuedTurnId: "qturn_queue_activity_race_1",
+      clientRequestId: "req_queue_activity_race_1",
+      parts: [{ type: "text", text: "queue despite fresh activity" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    })).resolves.toMatchObject({
+      alreadyQueued: false,
+      queuedTurn: { id: "qturn_queue_activity_race_1" },
+    });
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(3);
+  });
+
   it("cancels one queued Turn idempotently and compacts the remaining order", async () => {
     const admitted = await admitChat(repository, "queue_cancel");
     let revision = 1;
@@ -1325,6 +1351,43 @@ describe("ChatRepository", () => {
       revision: 6,
       messageCount: 2,
     });
+  });
+
+  it("begins queued steering when Run activity advances after the client snapshot", async () => {
+    const admitted = await admitChat(repository, "queued_steer_activity_race");
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queued_steer_activity_race_1",
+      clientRequestId: "req_queued_steer_activity_race_input",
+      parts: [{ type: "text", text: "steer despite fresh activity" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+    const observedRevision = 2;
+    await repository.appendRunActivities(owner, admitted.chatId, admitted.runId, [
+      activity(admitted.chatId, admitted.runId, 902),
+    ]);
+
+    await expect(repository.beginQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      queuedTurnId: "qturn_queued_steer_activity_race_1",
+      steerId: "steer_queued_steer_activity_race_1",
+      messageId: "msg_queued_steer_activity_race_1",
+      clientRequestId: "req_queued_steer_activity_race_1",
+      baseRevision: observedRevision,
+      createdAt: "2026-08-25T00:00:11.000Z",
+    })).resolves.toMatchObject({
+      status: "pending",
+      parts: [{ type: "text", text: "steer despite fresh activity" }],
+    });
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(4);
   });
 
   it("rejects stale or terminal steering targets before adding a message", async () => {

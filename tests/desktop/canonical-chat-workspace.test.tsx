@@ -1071,6 +1071,7 @@ describe("CanonicalChatWorkspace", () => {
     });
     const first = queuedTurn("qturn_workspace_1", 1, "First queued turn");
     const second = queuedTurn("qturn_workspace_2", 2, "Second queued turn");
+    const editedSecond = { ...second, parts: [{ type: "text" as const, text: "Edited second queued turn" }] };
     const third = queuedTurn("qturn_workspace_3", 3, "Third queued turn");
     const routeClient = client();
     vi.mocked(routeClient.list).mockResolvedValue({ items: [runningRecord] });
@@ -1109,7 +1110,7 @@ describe("CanonicalChatWorkspace", () => {
     });
     vi.mocked(routeClient.queueTurn).mockReturnValue(queueMutation);
     vi.mocked(routeClient.updateQueuedTurn).mockResolvedValue({
-      queuedTurn: { ...second, parts: [{ type: "text", text: "Edited second queued turn" }] },
+      queuedTurn: editedSecond,
     });
     let finishReorder!: (value: Awaited<ReturnType<CanonicalChatClient["reorderQueuedTurns"]>>) => void;
     const reorderMutation = new Promise<Awaited<ReturnType<CanonicalChatClient["reorderQueuedTurns"]>>>((resolve) => {
@@ -1117,8 +1118,8 @@ describe("CanonicalChatWorkspace", () => {
     });
     vi.mocked(routeClient.reorderQueuedTurns).mockReturnValue(reorderMutation);
     vi.mocked(routeClient.cancelQueuedTurn).mockResolvedValue({
-      queuedTurnId: first.id,
-      queueDepth: 1,
+      queuedTurnId: second.id,
+      queueDepth: 2,
       cancellation: "cancelled",
     });
 
@@ -1155,9 +1156,11 @@ describe("CanonicalChatWorkspace", () => {
       running.chat.id,
       expect.objectContaining({ parts: [{ type: "text", text: "Third queued turn" }] }),
     ));
-    expect(within(queuePanel).getByText("Third queued turn")).toBeTruthy();
+    expect(editor.textContent).toBe("");
+    expect(within(queuePanel).queryByText("Third queued turn")).toBeNull();
     finishQueue({ queuedTurn: third, queueDepth: 3 });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy());
+    await waitFor(() => expect(within(queuePanel).getByText("Third queued turn")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Second queued turn" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Edit Second queued turn" }));
@@ -1170,12 +1173,12 @@ describe("CanonicalChatWorkspace", () => {
       expect.objectContaining({ parts: [{ type: "text", text: "Edited second queued turn" }] }),
     ));
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Second queued turn" }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole("menuitem", { name: "Edit Second queued turn" })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Edited second queued turn" }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole("menuitem", { name: "Edit Edited second queued turn" })).toBeTruthy();
     expect(screen.queryByRole("menuitem", { name: /Move .* (up|down)/ })).toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
     const firstDragHandle = screen.getByRole("button", { name: "Reorder First queued turn" });
-    const secondRow = screen.getByText("Second queued turn").closest("li");
+    const secondRow = screen.getByText("Edited second queued turn").closest("li");
     if (!secondRow) throw new Error("Second queued turn row not found");
     const dataTransfer = {
       dropEffect: "none",
@@ -1186,27 +1189,28 @@ describe("CanonicalChatWorkspace", () => {
     fireEvent.dragOver(secondRow, { dataTransfer });
     fireEvent.drop(secondRow, { dataTransfer });
     expect(within(queuePanel).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
-      expect.stringContaining("Second queued turn"),
+      expect.stringContaining("Edited second queued turn"),
       expect.stringContaining("First queued turn"),
+      expect.stringContaining("Third queued turn"),
     ]);
     await waitFor(() => expect(routeClient.reorderQueuedTurns).toHaveBeenCalledWith(
       running.chat.id,
-      expect.objectContaining({ queuedTurnIds: [second.id, first.id] }),
+      expect.objectContaining({ queuedTurnIds: [second.id, first.id, third.id] }),
     ));
-    finishReorder({ queuedTurns: [second, first] });
+    finishReorder({ queuedTurns: [editedSecond, first, third] });
     await waitFor(() => expect(screen.getByRole("button", { name: "Reorder First queued turn" })).toBeTruthy());
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel First queued turn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Edited second queued turn" }));
     await waitFor(() => expect(routeClient.cancelQueuedTurn).toHaveBeenCalledWith(
       running.chat.id,
-      first.id,
-      expect.objectContaining({ baseRevision: running.chat.revision }),
+      second.id,
+      expect.objectContaining({ baseRevision: running.chat.revision + 3 }),
     ));
 
     fireEvent.click(screen.getByRole("button", { name: "Steer First queued turn" }));
-    expect(within(queuePanel).queryByText("First queued turn")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Steering First queued turn" })).toBeNull();
-    expect(within(screen.getByRole("log")).getByText("First queued turn")).toBeTruthy();
+    expect(within(queuePanel).getByText("First queued turn")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Steering First queued turn" })).toBeTruthy();
+    expect(within(screen.getByRole("log")).queryByText("First queued turn")).toBeNull();
     expect(routeClient.steerQueuedTurn).toHaveBeenCalledTimes(1);
     finishSteer(steered);
     await waitFor(() => expect(routeClient.steerQueuedTurn).toHaveBeenCalledWith(
@@ -1215,6 +1219,8 @@ describe("CanonicalChatWorkspace", () => {
       first.id,
       expect.objectContaining({ expectedTurnId: activeRunRecord.turnId }),
     ));
+    await waitFor(() => expect(within(queuePanel).queryByText("First queued turn")).toBeNull());
+    await waitFor(() => expect(within(screen.getByRole("log")).getByText("First queued turn")).toBeTruthy());
   });
 
   it("keeps Steer visible for a queued turn when no steerable Run is currently loaded", async () => {

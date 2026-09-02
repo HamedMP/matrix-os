@@ -171,7 +171,7 @@ export class ChatQueueRepository {
         const depth = await this.queueDepth(trx, chatId);
         return { queuedTurn: toQueuedTurn(duplicate), queueDepth: depth, alreadyQueued: true };
       }
-      if (chat.lifecycle !== "active" || Number(chat.revision) !== input.baseRevision) {
+      if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       const activeRun = await trx.selectFrom("chat_runs").select("id")
@@ -203,12 +203,16 @@ export class ChatQueueRepository {
         created_at: createdAt,
         updated_at: createdAt,
       }).returningAll().executeTakeFirstOrThrow();
-      const revision = input.baseRevision + 1;
+      // Run output advances the chat-wide revision while the user is composing.
+      // Appending a uniquely keyed queued turn does not overwrite concurrent state,
+      // so serialize on the locked Chat row and advance its current revision.
+      const currentRevision = Number(chat.revision);
+      const revision = currentRevision + 1;
       const updated = await trx.updateTable("chats").set({
         revision,
         updated_at: createdAt,
       }).where("id", "=", chatId)
-        .where("revision", "=", input.baseRevision)
+        .where("revision", "=", currentRevision)
         .returning("id")
         .executeTakeFirst();
       if (!updated) throw new ChatConflictError(chatId, Number(chat.revision));
