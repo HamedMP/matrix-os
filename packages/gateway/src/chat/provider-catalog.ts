@@ -133,6 +133,7 @@ function codingSupports(
     rootChat: true,
     resume: true,
     cancellation: true,
+    steering: "same_run",
     attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
@@ -312,11 +313,12 @@ function unavailableCodingInstance(
   };
 }
 
-function systemSupports(): CanonicalProviderSupport {
+function systemSupports(driverKind: CanonicalProviderDriverKind): CanonicalProviderSupport {
   return {
     rootChat: true,
     resume: true,
     cancellation: true,
+    steering: driverKind === "hermes" || driverKind === "openclaw" ? "same_run" : "none",
     attachments: ["file", "image", "structured_ref"],
     tools: [],
     approvals: false,
@@ -481,7 +483,7 @@ function systemInstance(input: {
     skills: input.skills,
     commands: [],
     setupActions: systemSetupActions(input.kind, input.runtime),
-    supports: systemSupports(),
+    supports: systemSupports(input.kind),
     ...(availability === "available" && hasSelectedModel ? {
       defaultSelection: { instanceId: id, model: selectedModel! },
     } : {}),

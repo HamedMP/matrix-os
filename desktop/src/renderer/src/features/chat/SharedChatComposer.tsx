@@ -197,6 +197,7 @@ export function SharedChatComposer({
   onSubmit,
   onAbort,
   busy,
+  submitWhileBusy = false,
   disabled = false,
   placeholder = "How can I help you today?",
   ariaLabel = "Message chat",
@@ -212,6 +213,7 @@ export function SharedChatComposer({
   attachments,
   leadingControls,
   footer,
+  runActions,
   canSubmit,
   autoFocus,
   focusRequestId,
@@ -227,6 +229,7 @@ export function SharedChatComposer({
   onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
+  submitWhileBusy?: boolean;
   disabled?: boolean;
   placeholder?: string;
   ariaLabel?: string;
@@ -245,6 +248,7 @@ export function SharedChatComposer({
   attachments?: ReactNode;
   leadingControls?: ReactNode;
   footer?: ReactNode;
+  runActions?: ReactNode;
   canSubmit?: boolean;
   autoFocus?: boolean;
   focusRequestId?: number;
@@ -461,6 +465,7 @@ export function SharedChatComposer({
         onSubmit={() => onSubmit(currentSubmission())}
         onAbort={onAbort}
         busy={busy}
+        submitWhileBusy={submitWhileBusy}
         disabled={disabled}
         canSubmit={canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0))}
         autoFocus={autoFocus}
@@ -516,6 +521,7 @@ export function SharedChatComposer({
         )}
         trailingControls={(
           <>
+            {runActions}
             <ProviderModelPicker
               catalog={catalog}
               selection={selection}

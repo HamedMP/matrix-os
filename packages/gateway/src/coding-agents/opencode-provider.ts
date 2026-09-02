@@ -373,7 +373,11 @@ export function createOpenCodeCodingAgentProvider(
   const runCommand = options.runCommand ?? defaultRunCommand;
   const runTimeoutMs = Math.max(1, Math.min(options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS));
   const killGraceMs = Math.max(1, Math.min(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, 10_000));
-  const active = new Map<string, { abort: () => void; evict: () => void }>();
+  const active = new Map<string, {
+    abort: () => void;
+    evict: () => void;
+    steer: (message: string) => void;
+  }>();
   const resolveProjectPath = options.resolveProjectPath ?? (async (slug: string) => {
     const result = await createProjectManager({ homePath: options.homePath }).getProject(slug);
     return result.ok ? result.project.localPath : null;
@@ -428,7 +432,8 @@ export function createOpenCodeCodingAgentProvider(
         return;
       }
       let settled = false;
-      let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
+      let terminationReason: "user_abort" | "timeout" | "failure" | "steer" | undefined;
+      let steerPrompt: string | undefined;
       let failed = false;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
@@ -483,6 +488,11 @@ export function createOpenCodeCodingAgentProvider(
       const tracked = {
         abort: () => stop("user_abort"),
         evict: () => stop("failure"),
+        steer: (message: string) => {
+          if (!sessionId) throw new Error("OpenCode Run state unavailable");
+          steerPrompt = message;
+          stop("steer");
+        },
       };
       while (active.size >= MAX_ACTIVE_PROCESSES) {
         const oldest = active.keys().next().value as string | undefined;
@@ -520,8 +530,21 @@ export function createOpenCodeCodingAgentProvider(
             new Error(`exit=${code} stderr=${stderrText.slice(0, 512)}`),
           );
         }
-        void publishQueue.then(() => {
-          resolve(publishError ? { ...result, events: [], outcome: "failed" } : result);
+        void publishQueue.then(async () => {
+          if (publishError) {
+            resolve({ ...result, events: [], outcome: "failed" });
+            return;
+          }
+          if (terminationReason === "steer" && steerPrompt && sessionId) {
+            const continued = await execute({
+              ...input,
+              prompt: steerPrompt,
+              sessionId,
+            });
+            resolve({ ...continued, events: [...result.events, ...continued.events] });
+            return;
+          }
+          resolve(result);
         });
       };
       const feed = (line: string) => {
@@ -720,6 +743,11 @@ export function createOpenCodeCodingAgentProvider(
     abortThread({ thread, now, nextEventId }) {
       active.get(thread.id)?.abort();
       return [statusEvent(thread.id, "aborted", now, nextEventId), completedEvent(thread.id, "aborted", now, nextEventId)];
+    },
+    async steerTurn({ thread, message }) {
+      const running = active.get(thread.id);
+      if (!running) throw new Error("OpenCode active Run unavailable");
+      running.steer(message);
     },
     submitApproval() { return []; },
     submitInput() { return []; },

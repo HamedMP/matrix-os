@@ -559,6 +559,11 @@ export function canonicalChatPresentation(input: {
 }): ConversationTurnPresentation[] {
   return input.turns.map((turn) => {
     const userMessage = input.messages.find((message) => message.id === turn.inputMessageId);
+    const userFollowups = input.messages.filter((message) => (
+      message.turnId === turn.id
+      && message.role === "user"
+      && message.id !== turn.inputMessageId
+    )).sort((left, right) => left.seq - right.seq);
     const runs = input.runs.filter((run) => run.turnId === turn.id)
       .sort((left, right) => left.attempt - right.attempt);
     const run = runs.at(-1);
@@ -606,6 +611,25 @@ export function canonicalChatPresentation(input: {
       }
     }
     const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run));
+    const timeline = [
+      ...work.map((item, index) => ({
+        kind: "work" as const,
+        item,
+        timestamp: item.timestamp ?? Number.MAX_SAFE_INTEGER,
+        index,
+      })),
+      ...userFollowups.map((message, index) => ({
+        kind: "user-followup" as const,
+        message: messagePresentation(message, "commentary"),
+        timestamp: Date.parse(message.createdAt),
+        index: work.length + index,
+      })),
+    ].sort((left, right) => (
+      left.timestamp - right.timestamp
+      || (left.kind === "user-followup" ? -1 : right.kind === "user-followup" ? 1 : left.index - right.index)
+    )).map((entry) => entry.kind === "work"
+      ? { kind: entry.kind, item: entry.item }
+      : { kind: entry.kind, message: entry.message });
     const startedAt = Date.parse(run?.startedAt ?? run?.createdAt ?? turn.createdAt);
     const endedAt = Date.parse(run?.completedAt ?? run?.updatedAt ?? turn.updatedAt);
     return {
@@ -614,7 +638,12 @@ export function canonicalChatPresentation(input: {
       endedAt,
       active: isActiveRun(run),
       ...(userMessage ? { user: messagePresentation(userMessage, "commentary") } : {}),
+      ...(userFollowups.length > 0
+        ? { userFollowups: userFollowups.map((message) => messagePresentation(message, "commentary")) }
+        : {}),
       work,
+      ...(timeline.length > 0 ? { timeline } : {}),
+      ...(userFollowups.length > 0 ? { expandedByDefault: true } : {}),
       ...(finalMessage && messageText(finalMessage)
         ? { final: messagePresentation(finalMessage, "final") }
         : live.streamingFinal

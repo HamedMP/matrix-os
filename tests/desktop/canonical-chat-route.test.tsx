@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CanonicalChatRoute } from "@desktop/renderer/src/features/chat/CanonicalChatRoute";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 function api(get: ApiClient["get"]): ApiClient {
@@ -23,7 +24,10 @@ function api(get: ApiClient["get"]): ApiClient {
 }
 
 describe("CanonicalChatRoute", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
   it("uses the canonical workspace when the selected Gateway exposes the contract", async () => {
     const routeApi = api(vi.fn(async (path: string) => {
@@ -137,5 +141,80 @@ describe("CanonicalChatRoute", () => {
     );
 
     expect(await screen.findByText("legacy chat")).toBeTruthy();
+  });
+
+  it("forwards the revisioned cancellation body through the real queued-turn route adapter", async () => {
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const running = createCanonicalChatFixture("running");
+    const { project, providerBinding, activeRun, ...chat } = running.snapshot.chat;
+    const record = {
+      chat,
+      projectId: project?.projectId,
+      providerBinding,
+      activeRun,
+    };
+    const queuedTurn = {
+      id: "qturn_route_cancel",
+      chatId: chat.id,
+      clientRequestId: "req_route_cancel",
+      position: 1,
+      parts: [{ type: "text" as const, text: "Cancel this queued turn" }],
+      selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project" as const, projectId: "matrix-os" },
+      createdAt: "2026-08-31T02:00:00.000Z",
+      updatedAt: "2026-08-31T02:00:00.000Z",
+    };
+    const detail = {
+      record,
+      messages: running.snapshot.messages,
+      turns: running.snapshot.turns,
+      runs: running.snapshot.runs,
+      activities: running.snapshot.activities,
+      queuedTurns: [queuedTurn],
+    };
+    const routeApi = api(vi.fn(async (path: string) => {
+      if (path.startsWith("/api/chat-providers")) return running.providerCatalog;
+      if (path.startsWith(`/api/chats/${chat.id}`)) return detail;
+      if (path.startsWith("/api/chats")) return { items: [record] };
+      throw new Error("route unavailable");
+    }));
+    routeApi.delete = vi.fn(async () => {
+      detail.queuedTurns = [];
+      return {
+        queuedTurnId: queuedTurn.id,
+        queueDepth: 0,
+        cancellation: "cancelled" as const,
+      };
+    });
+
+    render(
+      <CanonicalChatRoute
+        api={routeApi}
+        projectId={null}
+        initialChatId={chat.id}
+        initialView="conversation"
+        active
+        fallback={<div>legacy chat</div>}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel Cancel this queued turn" }));
+
+    await waitFor(() => {
+      expect(routeApi.delete).toHaveBeenCalledWith(
+        `/api/chats/${chat.id}/queued-turns/${queuedTurn.id}`,
+        expect.objectContaining({
+          clientRequestId: expect.any(String),
+          baseRevision: chat.revision,
+        }),
+      );
+      expect(screen.queryByText("Cancel this queued turn")).toBeNull();
+    });
   });
 });

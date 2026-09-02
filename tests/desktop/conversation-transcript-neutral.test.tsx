@@ -98,6 +98,46 @@ describe("provider-neutral conversation transcript", () => {
     expect(workItems.className).toContain("gap-0.5");
   });
 
+  it("keeps a steered Run expanded and renders post-steer work below the user steer message", () => {
+    const before = "I will inspect the first target.";
+    const steer = "Inspect the second target instead.";
+    const after = "Switching to the second target.";
+    const message = (id: string, role: "user" | "assistant", markdown: string, timestamp: number) => ({
+      kind: "message" as const,
+      id,
+      role,
+      phase: "commentary" as const,
+      markdown,
+      copyText: markdown,
+      timestamp,
+    });
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-steered",
+      startedAt: 1_000,
+      endedAt: 5_000,
+      active: false,
+      work: [message("before", "assistant", before, 2_000), message("after", "assistant", after, 4_000)],
+      userFollowups: [message("steer", "user", steer, 3_000)],
+      timeline: [
+        { kind: "work", item: message("before", "assistant", before, 2_000) },
+        { kind: "user-followup", message: message("steer", "user", steer, 3_000) },
+        { kind: "work", item: message("after", "assistant", after, 4_000) },
+      ],
+      expandedByDefault: true,
+      final: { ...message("final", "assistant", "Done.", 5_000), phase: "final" },
+    }];
+
+    render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
+
+    const receipt = screen.getByRole("button", { name: "Worked for 4s" });
+    expect(receipt.getAttribute("aria-expanded")).toBe("true");
+    const beforeNode = screen.getByText(before);
+    const steerNode = screen.getByText(steer);
+    const afterNode = screen.getByText(after);
+    expect(beforeNode.compareDocumentPosition(steerNode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(steerNode.compareDocumentPosition(afterNode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("keeps multiline assistant paragraphs and inline code chips comfortably spaced", () => {
     const markdown = "Run `pnpm test` before release.\n\nThen inspect `git status`.";
     const turns: ConversationTurnPresentation[] = [{

@@ -38,10 +38,16 @@ const TerminalResponseSchema = z.object({
   runId: SafeSessionReferenceSchema.optional(),
   status: z.string().min(1).max(64),
 }).passthrough();
+const SteerResponseSchema = z.object({
+  runId: SafeSessionReferenceSchema.optional(),
+  status: z.enum(["started", "in_flight", "ok"]),
+}).passthrough();
 
 export type OpenClawChatState = z.infer<typeof OpenClawChatStateSchema>;
 
 interface ActiveRun {
+  ownerId: string;
+  chatId: string;
   providerRunId: string;
   sessionKey?: string;
   agentId?: string;
@@ -248,6 +254,8 @@ export function createOpenClawChatProviderAdapter(
     const toolActivities = new Map<string, ToolActivity>();
     const requestedSessionKey = input.resumeState?.sessionKey ?? initialSessionKey(input.chatId);
     const active: ActiveRun = {
+      ownerId: input.owner.ownerId,
+      chatId: input.chatId,
       providerRunId: input.runId,
       sessionKey: requestedSessionKey,
       agentId: input.resumeState?.agentId,
@@ -361,12 +369,33 @@ export function createOpenClawChatProviderAdapter(
     async cancel(input) {
       const state = input.state === undefined ? undefined : OpenClawChatStateSchema.parse(input.state);
       const active = activeRuns.get(input.runId) ?? {
+        ownerId: input.owner.ownerId,
+        chatId: input.chatId,
         providerRunId: input.runId,
         sessionKey: state?.sessionKey,
         agentId: state?.agentId,
         cancelled: true,
       };
       await abortRun(active, state);
+    },
+    async steer(input) {
+      const active = activeRuns.get(input.runId);
+      if (!active
+        || active.ownerId !== input.owner.ownerId
+        || active.chatId !== input.chatId
+        || active.cancelled
+        || !active.sessionKey) {
+        throw new Error("OpenClaw steering Run unavailable");
+      }
+      const response = SteerResponseSchema.parse(await options.rpc.call("sessions.steer", {
+        key: active.sessionKey,
+        runId: active.providerRunId,
+        message: input.prompt,
+        idempotencyKey: input.clientRequestId,
+      }, AbortSignal.timeout(10_000), { timeoutMs: 10_000 }));
+      if (response.runId !== undefined && response.runId !== active.providerRunId) {
+        throw new Error("OpenClaw steering target changed");
+      }
     },
   };
 }

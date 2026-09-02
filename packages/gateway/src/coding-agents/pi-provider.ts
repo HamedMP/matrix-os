@@ -48,9 +48,9 @@ import type {
  *   prompts, so approval.* events are unsupported by design.
  * - Startup failures exit 1 with `Error: ...` on stderr; SIGTERM exits 143.
  *
- * Unsupported (deferred): mid-turn approvals/user-input requests, steering,
- * RPC mode (`--mode rpc` has abort/steer commands but does not fit the
- * request/response turn contract).
+ * Mid-turn steering interrupts the current print process and immediately
+ * continues the same Pi session with the accepted steering prompt. Interactive
+ * approvals and user-input requests remain unsupported in print mode.
  */
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
@@ -614,7 +614,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
   const runTimeoutMs = boundedTimeout(options.runTimeoutMs, DEFAULT_RUN_TIMEOUT_MS);
   const killGraceMs = Math.max(1, Math.min(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, 30_000));
   const maxEvents = Math.max(1, Math.min(options.maxEvents ?? MAX_EVENTS_PER_RUN, MAX_EVENTS_PER_RUN));
-  const activeProcesses = new Map<string, { abort: () => void }>();
+  const activeProcesses = new Map<string, { abort: () => void; steer: (message: string) => void }>();
 
   const resolveProjectPath = options.resolveProjectPath ?? (async (projectSlug: string) => {
     const projects = createProjectManager({ homePath });
@@ -628,7 +628,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     return listed.worktrees.find((candidate) => candidate.id === worktreeId)?.path ?? null;
   });
 
-  function trackProcess(threadId: string, abort: () => void): { abort: () => void } {
+  function trackProcess(
+    threadId: string,
+    abort: () => void,
+    steer: (message: string) => void,
+  ): { abort: () => void; steer: (message: string) => void } {
     if (activeProcesses.size >= MAX_ACTIVE_PROCESSES) {
       const oldest = activeProcesses.keys().next().value as string | undefined;
       if (oldest) {
@@ -641,12 +645,15 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         }
       }
     }
-    const tracked = { abort };
+    const tracked = { abort, steer };
     activeProcesses.set(threadId, tracked);
     return tracked;
   }
 
-  function untrackProcess(threadId: string, tracked: { abort: () => void }): void {
+  function untrackProcess(
+    threadId: string,
+    tracked: { abort: () => void; steer: (message: string) => void },
+  ): void {
     if (activeProcesses.get(threadId) === tracked) activeProcesses.delete(threadId);
   }
 
@@ -751,7 +758,8 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         return;
       }
       let settled = false;
-      let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
+      let terminationReason: "user_abort" | "timeout" | "failure" | "steer" | undefined;
+      let steerPrompt: string | undefined;
       let stdoutBuffer = "";
       let stdoutBytes = 0;
       let stderrText = "";
@@ -791,7 +799,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       const onAbort = () => {
         requestTermination("user_abort");
       };
-      const trackedProcess = trackProcess(input.threadId, onAbort);
+      const onSteer = (message: string) => {
+        steerPrompt = message;
+        requestTermination("steer");
+      };
+      const trackedProcess = trackProcess(input.threadId, onAbort, onSteer);
       if (input.signal) {
         if (input.signal.aborted) onAbort();
         else input.signal.addEventListener("abort", onAbort, { once: true });
@@ -804,8 +816,21 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         if (killTimer.current) clearTimeout(killTimer.current);
         input.signal?.removeEventListener("abort", onAbort);
         untrackProcess(input.threadId, trackedProcess);
-        void publishQueue.then(() => {
-          resolve(publishError ? { ...result, events: [], outcome: "failed" } : result);
+        void publishQueue.then(async () => {
+          if (publishError) {
+            resolve({ ...result, events: [], outcome: "failed" });
+            return;
+          }
+          if (terminationReason === "steer" && steerPrompt) {
+            const continued = await runPi({
+              ...input,
+              prompt: steerPrompt,
+              sessionId: result.sessionId,
+            });
+            resolve({ ...continued, events: [...result.events, ...continued.events] });
+            return;
+          }
+          resolve(result);
         });
       }
 
@@ -884,6 +909,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           return;
         }
         if (terminationReason === "failure") {
+          settle({ events: collected.events, outcome: "failed", sessionId });
+          return;
+        }
+        if (terminationReason === "steer") {
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
@@ -1208,6 +1237,12 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         statusEvent({ threadId: thread.id, status: "aborted", now, nextEventId }),
         completedEvent({ threadId: thread.id, outcome: "aborted", now, nextEventId }),
       ];
+    },
+
+    async steerTurn({ thread, message }) {
+      const active = activeProcesses.get(thread.id);
+      if (!active) throw new Error("Pi active Run unavailable");
+      active.steer(message);
     },
 
     submitApproval() {

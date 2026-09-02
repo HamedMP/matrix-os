@@ -420,7 +420,6 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     runId: string;
     messageId: string;
-    seq: number;
     delta: string;
     createdAt: string;
   }): Promise<CanonicalChatMessage> {
@@ -453,7 +452,7 @@ export class ChatRunLifecycleRepository {
           : undefined;
         if (current.chatId !== chatId || current.runId !== input.runId
           || current.turnId !== run.turn_id || current.role !== "assistant"
-          || current.state !== "pending" || current.seq !== input.seq || !textParts?.length) {
+          || current.state !== "pending" || !textParts?.length) {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const last = textParts.at(-1)!;
@@ -478,13 +477,11 @@ export class ChatRunLifecycleRepository {
           .select(({ fn }) => fn.max("seq").as("seq"))
           .where("chat_id", "=", chatId)
           .executeTakeFirst();
-        if (input.seq !== Number(latest?.seq ?? 0) + 1) {
-          throw new ChatConflictError(chatId, Number(chat.revision));
-        }
+        const seq = Number(latest?.seq ?? 0) + 1;
         next = CanonicalChatMessageSchema.parse({
           id: input.messageId,
           chatId,
-          seq: input.seq,
+          seq,
           role: "assistant",
           state: "pending",
           turnId: run.turn_id,

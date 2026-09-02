@@ -159,6 +159,111 @@ describe("canonical Chat presentation adapter", () => {
     });
   });
 
+  it("projects accepted same-Run steer messages as user follow-ups", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const steerMessage = {
+      id: "msg_fixture_steer",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: snapshot.runs[0]!.id,
+      parts: [{ type: "text" as const, text: "Change the final answer." }],
+      createdAt: snapshot.runs[0]!.updatedAt,
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, steerMessage],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+
+    expect(presented?.userFollowups).toEqual([
+      expect.objectContaining({
+        id: steerMessage.id,
+        role: "user",
+        markdown: "Change the final answer.",
+      }),
+    ]);
+  });
+
+  it("segments same-Run work around accepted steer messages in timeline order", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const run = snapshot.runs[0]!;
+    const turn = snapshot.turns[0]!;
+    const assistant = (id: string, seq: number, text: string, createdAt: string) => ({
+      id,
+      chatId: snapshot.chat.id,
+      seq,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: turn.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text }],
+      createdAt,
+    });
+    const steer = {
+      id: "msg_segment_steer",
+      chatId: snapshot.chat.id,
+      seq: 3,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: turn.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text: "Do the second task instead." }],
+      createdAt: "2026-08-26T00:00:03.000Z",
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [
+        snapshot.messages[0]!,
+        assistant("msg_before_steer", 2, "I’ll do the first task.", "2026-08-26T00:00:01.000Z"),
+        steer,
+        assistant("msg_after_steer", 4, "Switching to the second task.", "2026-08-26T00:00:04.000Z"),
+        assistant("msg_segment_final", 5, "Second task complete.", "2026-08-26T00:00:05.000Z"),
+      ],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [{
+        id: "activity_before_steer",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "agent.activity",
+        activityId: "tool_before_steer",
+        kind: "command",
+        label: "Run first command",
+        status: "completed",
+        occurredAt: "2026-08-26T00:00:02.000Z",
+      }, {
+        id: "activity_after_steer",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 2,
+        type: "agent.activity",
+        activityId: "tool_after_steer",
+        kind: "command",
+        label: "Run second command",
+        status: "completed",
+        occurredAt: "2026-08-26T00:00:04.500Z",
+      }],
+    });
+
+    expect(presented?.expandedByDefault).toBe(true);
+    expect(presented?.timeline?.map((item) => (
+      item.kind === "user-followup" ? item.message.id : item.item.id
+    ))).toEqual([
+      "msg_before_steer",
+      `${run.id}:activities:activity_before_steer`,
+      steer.id,
+      "msg_after_steer",
+      `${run.id}:activities:activity_after_steer`,
+    ]);
+    expect(presented?.final).toMatchObject({ id: "msg_segment_final" });
+  });
+
   it("projects live approval decisions into actionable transcript controls", () => {
     const { snapshot } = createCanonicalChatFixture("approval_required");
 
