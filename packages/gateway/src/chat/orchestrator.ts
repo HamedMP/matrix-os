@@ -66,6 +66,7 @@ import {
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
 const MAX_ASSISTANT_TEXT = 96 * 1024;
+const STEER_FINALIZE_ATTEMPTS = 2;
 
 export class CanonicalChatOrchestrationError extends Error {
   constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
@@ -86,6 +87,29 @@ interface ActiveRun {
 
 function id(prefix: "cturn_" | "run_" | "msg_" | "activity_" | "steer_"): string {
   return `${prefix}${randomUUID().replaceAll("-", "")}`;
+}
+
+async function finalizeAcceptedSteer<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= STEER_FINALIZE_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error: unknown) {
+      if (error instanceof ChatNotFoundError
+        || error instanceof ChatRunNotActiveError
+        || error instanceof ChatConflictError) {
+        throw error;
+      }
+      lastError = error;
+      if (attempt < STEER_FINALIZE_ATTEMPTS) {
+        console.warn(
+          "[chat/orchestrator] Steering finalization failed; retrying:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+    }
+  }
+  throw lastError;
 }
 
 function activityPersistenceId(runId: string, event: Record<string, unknown>): string {
@@ -1042,12 +1066,12 @@ export class CanonicalChatOrchestrator {
     }
     let message;
     try {
-      message = await this.options.repository.acceptSteer(owner, {
+      message = await finalizeAcceptedSteer(() => this.options.repository.acceptSteer(owner, {
         chatId,
         runId,
         clientRequestId: input.clientRequestId,
         acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
-      });
+      }));
     } catch (error: unknown) {
       return mapRepositoryError(error);
     }
@@ -1149,13 +1173,13 @@ export class CanonicalChatOrchestrator {
     }
     let message;
     try {
-      message = await this.options.repository.acceptQueuedTurnSteer(owner, {
+      message = await finalizeAcceptedSteer(() => this.options.repository.acceptQueuedTurnSteer(owner, {
         chatId,
         runId,
         queuedTurnId,
         clientRequestId: input.clientRequestId,
         acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
-      });
+      }));
     } catch (error: unknown) {
       return mapRepositoryError(error);
     }

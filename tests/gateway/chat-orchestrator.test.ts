@@ -327,6 +327,63 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
   });
 
+  it("retries durable steering finalization after the Provider has accepted", async () => {
+    await repository.create(owner, {
+      id: "chat_steer_finalize_retry",
+      clientRequestId: "req_create_steer_finalize_retry",
+      title: "Steer finalize retry",
+    });
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const steer = vi.fn(async () => undefined);
+    const provider: CanonicalChatProviderAdapter<{ sessionId: string }> = {
+      ...adapter(async function* () {
+        await providerGate;
+        yield { type: "run.completed", outcome: "completed" };
+      }),
+      steer,
+    };
+    const acceptSteer = repository.acceptSteer.bind(repository);
+    const acceptSteerSpy = vi.spyOn(repository, "acceptSteer")
+      .mockRejectedValueOnce(new Error("transient persistence failure"))
+      .mockImplementation(acceptSteer);
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_steer_finalize_retry", {
+      clientRequestId: "req_steer_finalize_retry_active",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "keep running" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      expect((await repository.get(owner, "chat_steer_finalize_retry"))?.activeRun?.status)
+        .toBe("running");
+    });
+
+    await expect(orchestrator.steerRun(owner, "chat_steer_finalize_retry", admitted.run.id, {
+      clientRequestId: "req_steer_finalize_retry",
+      expectedTurnId: admitted.turn.id,
+      parts: [{ type: "text", text: "persist this steering" }],
+    })).resolves.toMatchObject({
+      steering: "accepted",
+      message: { parts: [{ type: "text", text: "persist this steering" }] },
+    });
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(acceptSteerSpy).toHaveBeenCalledTimes(2);
+    expect((await repository.get(owner, "chat_steer_finalize_retry"))?.chat.messageCount).toBe(2);
+
+    releaseProvider();
+    await orchestrator.drain();
+  });
+
   it("keeps a post-steer assistant message after the steering input in the Chat timeline", async () => {
     await repository.create(owner, {
       id: "chat_steer_assistant_order",
@@ -466,6 +523,10 @@ describe("CanonicalChatOrchestrator", () => {
       .toEqual([expect.objectContaining({ id: queued.queuedTurn.id, position: 1 })]);
 
     const retryRevision = (await repository.get(owner, "chat_queued_steer_orchestrated"))!.chat.revision;
+    const acceptQueuedTurnSteer = repository.acceptQueuedTurnSteer.bind(repository);
+    const acceptQueuedTurnSteerSpy = vi.spyOn(repository, "acceptQueuedTurnSteer")
+      .mockRejectedValueOnce(new Error("transient persistence failure"))
+      .mockImplementation(acceptQueuedTurnSteer);
     const accepted = await orchestrator.steerQueuedTurn(
       owner,
       "chat_queued_steer_orchestrated",
@@ -483,6 +544,7 @@ describe("CanonicalChatOrchestrator", () => {
       message: { parts: [{ type: "text", text: "steer queued now" }] },
     });
     expect(steer).toHaveBeenCalledTimes(2);
+    expect(acceptQueuedTurnSteerSpy).toHaveBeenCalledTimes(2);
     expect(await repository.listQueuedTurns(owner, "chat_queued_steer_orchestrated")).toEqual([]);
 
     releaseProvider();

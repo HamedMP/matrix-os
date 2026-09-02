@@ -108,4 +108,16 @@ describe("Codex provider contract checker", () => {
     expect(workflow).toContain("matrix-install-developer-tools");
     expect(workflow).toContain("terminal-agent-options.ts");
   });
+
+  it("keeps malformed app-server spike output diagnosable without echoing its contents", () => {
+    const spike = readFileSync(new URL(
+      "../../scripts/spikes/codex-turn-steer.mjs",
+      import.meta.url,
+    ), "utf8");
+
+    expect(spike).toContain('catch (error)');
+    expect(spike).toContain('"[codex-turn-steer] Ignoring malformed output:"');
+    expect(spike).toContain('error instanceof Error ? error.name : "UnknownError"');
+    expect(spike).not.toContain("console.warn(line");
+  });
 });

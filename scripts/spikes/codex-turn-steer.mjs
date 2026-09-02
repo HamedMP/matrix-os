@@ -74,7 +74,11 @@ stdout.on("line", (line) => {
   let message;
   try {
     message = JSON.parse(line);
-  } catch {
+  } catch (error) {
+    console.warn(
+      "[codex-turn-steer] Ignoring malformed output:",
+      error instanceof Error ? error.name : "UnknownError",
+    );
     return;
   }
   if (message.id !== undefined && message.method) {
