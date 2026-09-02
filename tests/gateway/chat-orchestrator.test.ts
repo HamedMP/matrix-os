@@ -384,6 +384,61 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
   });
 
+  it("returns a safe error when accepted steering finalization is exhausted", async () => {
+    await repository.create(owner, {
+      id: "chat_steer_finalize_exhausted",
+      clientRequestId: "req_create_steer_finalize_exhausted",
+      title: "Steer finalize exhausted",
+    });
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const provider: CanonicalChatProviderAdapter<{ sessionId: string }> = {
+      ...adapter(async function* () {
+        await providerGate;
+        yield { type: "run.completed", outcome: "completed" };
+      }),
+      steer: async () => undefined,
+    };
+    vi.spyOn(repository, "acceptSteer").mockRejectedValue(new Error("database details"));
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_steer_finalize_exhausted", {
+      clientRequestId: "req_steer_finalize_exhausted_active",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "keep running" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      expect((await repository.get(owner, "chat_steer_finalize_exhausted"))?.activeRun?.status)
+        .toBe("running");
+    });
+
+    await expect(orchestrator.steerRun(owner, "chat_steer_finalize_exhausted", admitted.run.id, {
+      clientRequestId: "req_steer_finalize_exhausted",
+      expectedTurnId: admitted.turn.id,
+      parts: [{ type: "text", text: "do not leak persistence errors" }],
+    })).rejects.toMatchObject({
+      status: 503,
+      safeError: {
+        code: "run_unavailable",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    expect((await repository.get(owner, "chat_steer_finalize_exhausted"))?.chat.messageCount).toBe(1);
+
+    releaseProvider();
+    await orchestrator.drain();
+  });
+
   it("keeps a post-steer assistant message after the steering input in the Chat timeline", async () => {
     await repository.create(owner, {
       id: "chat_steer_assistant_order",

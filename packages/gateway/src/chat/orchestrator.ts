@@ -112,6 +112,22 @@ async function finalizeAcceptedSteer<T>(operation: () => Promise<T>): Promise<T>
   throw lastError;
 }
 
+function mapSteerFinalizationError(error: unknown): never {
+  if (error instanceof ChatNotFoundError
+    || error instanceof ChatRunNotActiveError
+    || error instanceof ChatConflictError) {
+    return mapRepositoryError(error);
+  }
+  console.warn(
+    "[chat/orchestrator] Accepted steering could not be finalized:",
+    error instanceof Error ? error.name : "UnknownError",
+  );
+  throw new CanonicalChatOrchestrationError(
+    safeError("run_unavailable", "The steering request is still resolving. Try again.", true, ["retry"]),
+    503,
+  );
+}
+
 function activityPersistenceId(runId: string, event: Record<string, unknown>): string {
   if (event.type !== "agent.activity" || typeof event.activityId !== "string") return id("activity_");
   const digest = createHash("sha256").update(`${runId}\0${event.activityId}`).digest("hex").slice(0, 32);
@@ -1073,7 +1089,7 @@ export class CanonicalChatOrchestrator {
         acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
       }));
     } catch (error: unknown) {
-      return mapRepositoryError(error);
+      return mapSteerFinalizationError(error);
     }
     return CanonicalChatRunSteeringResponseSchema.parse({
       runId,
@@ -1181,7 +1197,7 @@ export class CanonicalChatOrchestrator {
         acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
       }));
     } catch (error: unknown) {
-      return mapRepositoryError(error);
+      return mapSteerFinalizationError(error);
     }
     return CanonicalChatRunSteeringResponseSchema.parse({
       runId,

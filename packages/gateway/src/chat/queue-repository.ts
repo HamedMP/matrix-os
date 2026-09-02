@@ -448,6 +448,11 @@ export class ChatQueueRepository {
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
+      const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
+        .where("queued_turn_id", "=", candidate.id)
+        .where("status", "=", "pending")
+        .executeTakeFirst();
+      if (pendingSteer) return null;
       const row = await trx.updateTable("chat_queued_turns").set({
         status: "claimed",
         updated_at: claimedAt,

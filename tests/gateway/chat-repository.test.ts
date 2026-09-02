@@ -1353,6 +1353,52 @@ describe("ChatRepository", () => {
     });
   });
 
+  it("does not claim a queued Turn while its accepted Provider steer is pending finalization", async () => {
+    const admitted = await admitChat(repository, "queued_steer_pending_finalize");
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queued_steer_pending_finalize",
+      clientRequestId: "req_queued_steer_pending_finalize_input",
+      parts: [{ type: "text", text: "steer remains pending" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+    await repository.beginQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      queuedTurnId: "qturn_queued_steer_pending_finalize",
+      steerId: "steer_queued_steer_pending_finalize",
+      messageId: "msg_queued_steer_pending_finalize",
+      clientRequestId: "req_queued_steer_pending_finalize",
+      baseRevision: 2,
+      createdAt: "2026-08-25T00:00:11.000Z",
+    });
+    await repository.finishRun(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      outcome: "completed",
+      completedAt: "2026-08-25T00:00:12.000Z",
+    });
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      turnId: "cturn_pending_finalize_claim",
+      runId: "run_pending_finalize_claim",
+      messageId: "msg_pending_finalize_claim",
+      claimedAt: "2026-08-25T00:00:13.000Z",
+    })).resolves.toBeNull();
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([
+      expect.objectContaining({ id: "qturn_queued_steer_pending_finalize", position: 1 }),
+    ]);
+    expect((await repository.get(owner, admitted.chatId))?.chat.messageCount).toBe(1);
+  });
+
   it("begins queued steering when Run activity advances after the client snapshot", async () => {
     const admitted = await admitChat(repository, "queued_steer_activity_race");
     await repository.enqueueQueuedTurn(owner, {
