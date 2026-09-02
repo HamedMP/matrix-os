@@ -327,6 +327,71 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
   });
 
+  it("keeps a post-steer assistant message after the steering input in the Chat timeline", async () => {
+    await repository.create(owner, {
+      id: "chat_steer_assistant_order",
+      clientRequestId: "req_create_steer_assistant_order",
+      title: "Steer assistant order",
+    });
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const provider: CanonicalChatProviderAdapter<{ sessionId: string }> = {
+      ...adapter(async function* () {
+        yield { type: "assistant.delta", messageId: "before_steer", delta: "Waiting." };
+        await providerGate;
+        yield { type: "assistant.delta", messageId: "after_steer", delta: "222" };
+        yield { type: "run.completed", outcome: "completed" };
+      }),
+      steer: async () => undefined,
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_steer_assistant_order", {
+      clientRequestId: "req_steer_assistant_order_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "sleep, then reply 111" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      const snapshot = await repository.exportChat(owner, "chat_steer_assistant_order");
+      expect(snapshot?.messages).toHaveLength(2);
+    });
+    await orchestrator.steerRun(owner, "chat_steer_assistant_order", admitted.run.id, {
+      clientRequestId: "req_steer_assistant_order_steer",
+      expectedTurnId: admitted.turn.id,
+      parts: [{ type: "text", text: "reply 222" }],
+    });
+    releaseProvider();
+    await orchestrator.drain();
+
+    const snapshot = await repository.exportChat(owner, "chat_steer_assistant_order");
+    expect(snapshot?.messages.map((message) => [
+      message.seq,
+      message.role,
+      message.state,
+      message.parts,
+    ])).toEqual([
+      [1, "user", "committed", [{ type: "text", text: "sleep, then reply 111" }]],
+      [2, "assistant", "committed", [{ type: "text", text: "Waiting." }]],
+      [3, "user", "committed", [{ type: "text", text: "reply 222" }]],
+      [4, "assistant", "committed", [{ type: "text", text: "222" }]],
+    ]);
+    expect(snapshot?.runs).toContainEqual(expect.objectContaining({
+      id: admitted.run.id,
+      status: "completed",
+      outcome: "completed",
+    }));
+  });
+
   it("promotes a queued Turn only after Provider steering accepts it", async () => {
     await repository.create(owner, {
       id: "chat_queued_steer_orchestrated",
@@ -1238,6 +1303,80 @@ describe("CanonicalChatOrchestrator", () => {
       [1, "user", "committed"],
       [2, "assistant", "failed"],
       [3, "assistant", "committed"],
+    ]);
+  });
+
+  it("retries a failed steered Turn with the committed steering instruction", async () => {
+    await repository.create(owner, {
+      id: "chat_retried_steer",
+      clientRequestId: "req_create_retried_steer",
+      title: "Retried steer",
+    });
+    let releaseFirstAttempt!: () => void;
+    const firstAttemptGate = new Promise<void>((resolve) => {
+      releaseFirstAttempt = resolve;
+    });
+    const prompts: string[] = [];
+    let attempt = 0;
+    const provider: CanonicalChatProviderAdapter<{ sessionId: string }> = {
+      ...adapter(async function* (input) {
+        attempt += 1;
+        prompts.push(input.prompt);
+        if (attempt === 1) {
+          yield { type: "assistant.delta", messageId: "failed_partial", delta: "partial output" };
+          await firstAttemptGate;
+          yield { type: "run.completed", outcome: "failed" };
+          return;
+        }
+        yield { type: "assistant.delta", messageId: "retry_result", delta: "222" };
+        yield { type: "run.completed", outcome: "completed" };
+      }),
+      steer: async () => undefined,
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const first = await orchestrator.admitTurn(principal, owner, "chat_retried_steer", {
+      clientRequestId: "req_retried_steer_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "sleep, then reply 111" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      const snapshot = await repository.exportChat(owner, "chat_retried_steer");
+      expect(snapshot?.messages).toHaveLength(2);
+    });
+    await orchestrator.steerRun(owner, "chat_retried_steer", first.run.id, {
+      clientRequestId: "req_retried_steer_instruction",
+      expectedTurnId: first.turn.id,
+      parts: [{ type: "text", text: "reply 222" }],
+    });
+    releaseFirstAttempt();
+    await orchestrator.drain();
+
+    const failed = await repository.get(owner, "chat_retried_steer");
+    await orchestrator.retryTurn(principal, owner, "chat_retried_steer", first.turn.id, {
+      clientRequestId: "req_retried_steer_attempt_2",
+      baseRevision: failed!.chat.revision,
+    });
+    await orchestrator.drain();
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("sleep, then reply 111");
+    expect(prompts[1]).toContain("reply 222");
+    expect(prompts[1]).not.toContain("partial output");
+    expect(prompts[1]!.indexOf("sleep, then reply 111"))
+      .toBeLessThan(prompts[1]!.indexOf("reply 222"));
+    const snapshot = await repository.exportChat(owner, "chat_retried_steer");
+    expect(snapshot?.runs.map((run) => [run.attempt, run.status])).toEqual([
+      [1, "failed"],
+      [2, "completed"],
     ]);
   });
 

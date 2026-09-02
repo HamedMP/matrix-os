@@ -144,6 +144,10 @@ function promptFor(parts: CanonicalCreateChatTurnRequest["parts"]): string {
   return prompt;
 }
 
+function retryPromptFor(messages: CanonicalChatMessage[]): string {
+  return messages.map((message) => promptFor(message.parts)).join("\n\n");
+}
+
 function shellQuotedOwnerReference(ownerReference: string): string {
   return `"$MATRIX_HOME"/'${ownerReference.replaceAll("'", "'\\''")}'`;
 }
@@ -438,7 +442,6 @@ export class CanonicalChatOrchestrator {
           admitted.message,
           admitted.run,
           adapter,
-          admitted.chat.chat.messageCount + 1,
           resolvedRoot,
           resumeState,
         );
@@ -616,9 +619,9 @@ export class CanonicalChatOrchestrator {
           context.message,
           admitted.run,
           adapter,
-          admitted.chat.chat.messageCount + 1,
           resolvedRoot,
           resumeState,
+          retryPromptFor(context.userMessages),
         );
       }
       return CanonicalChatRunAdmissionResponseSchema.parse({
@@ -637,12 +640,12 @@ export class CanonicalChatOrchestrator {
     message: CanonicalChatMessage,
     run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter,
-    outputSeq: number,
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
+    promptOverride?: string,
   ): void {
     const controller = new AbortController();
-    const completion = this.dispatch(owner, message, run, adapter, outputSeq, controller, resolvedRoot, resumeState)
+    const completion = this.dispatch(owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride)
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       })
@@ -728,7 +731,6 @@ export class CanonicalChatOrchestrator {
           claimed.message,
           claimed.run,
           adapter,
-          claimed.message.seq + 1,
           resolvedRoot,
           resumeState,
         );
@@ -744,10 +746,10 @@ export class CanonicalChatOrchestrator {
     message: CanonicalChatMessage,
     run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter,
-    outputSeq: number,
     controller: AbortController,
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
+    promptOverride?: string,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     try {
@@ -770,7 +772,7 @@ export class CanonicalChatOrchestrator {
         chatId: run.chatId,
         turnId: run.turnId,
         runId: run.id,
-        prompt: promptFor(message.parts),
+        prompt: promptOverride ?? promptFor(message.parts),
         parts: message.parts,
         selection: run.selection,
         interactionMode: run.interactionMode,
@@ -782,8 +784,6 @@ export class CanonicalChatOrchestrator {
         signal: controller.signal,
       };
       let text = "";
-      const assistantMessageSequences = new Map<string, number>();
-      let nextOutputSeq = outputSeq;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
@@ -810,17 +810,10 @@ export class CanonicalChatOrchestrator {
           }
           text += event.delta;
           const messageId = assistantMessageId(run.id, event.messageId);
-          let messageSeq = assistantMessageSequences.get(messageId);
-          if (messageSeq === undefined) {
-            messageSeq = nextOutputSeq;
-            nextOutputSeq += 1;
-            assistantMessageSequences.set(messageId, messageSeq);
-          }
           await this.options.repository.appendAssistantDelta(owner, {
             chatId: run.chatId,
             runId: run.id,
             messageId,
-            seq: messageSeq,
             delta: event.delta,
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });

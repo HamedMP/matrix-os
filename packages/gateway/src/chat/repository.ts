@@ -150,6 +150,7 @@ export interface AdmittedRun {
 export interface ChatTurnRunContext {
   chat: ChatRecord;
   message: CanonicalChatMessage;
+  userMessages: CanonicalChatMessage[];
   turn: CanonicalChatTurn;
   latestRun: CanonicalChatRun;
 }
@@ -1204,9 +1205,16 @@ export class ChatRepository {
     const turnRow = await this.kysely.selectFrom("chat_turns").selectAll()
       .where("id", "=", parsedTurnId).where("chat_id", "=", parsedChatId).executeTakeFirst();
     if (!turnRow) return null;
-    const [messageRow, runRow] = await Promise.all([
+    const [messageRow, userMessageRows, runRow] = await Promise.all([
       this.kysely.selectFrom("chat_messages").selectAll()
         .where("id", "=", turnRow.input_message_id).where("chat_id", "=", parsedChatId).executeTakeFirst(),
+      this.kysely.selectFrom("chat_messages").selectAll()
+        .where("chat_id", "=", parsedChatId)
+        .where("turn_id", "=", parsedTurnId)
+        .where("role", "=", "user")
+        .where("state", "=", "committed")
+        .orderBy("seq")
+        .execute(),
       this.kysely.selectFrom("chat_runs").selectAll()
         .where("turn_id", "=", parsedTurnId).where("chat_id", "=", parsedChatId)
         .orderBy("attempt", "desc").executeTakeFirst(),
@@ -1215,6 +1223,7 @@ export class ChatRepository {
     return {
       chat,
       message: toMessage(messageRow),
+      userMessages: userMessageRows.map(toMessage),
       turn: toTurn(turnRow),
       latestRun: toRun(runRow),
     };
@@ -1306,7 +1315,6 @@ export class ChatRepository {
     chatId: string;
     runId: string;
     messageId: string;
-    seq: number;
     delta: string;
     createdAt: string;
   }): Promise<CanonicalChatMessage> {
