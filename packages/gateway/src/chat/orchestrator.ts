@@ -714,7 +714,15 @@ export class CanonicalChatOrchestrator {
       });
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
-      const outcome = controller.signal.aborted ? "aborted" as const : "failed" as const;
+      const wasAborted = controller.signal.aborted;
+      if (!wasAborted) controller.abort();
+      if (!wasAborted) {
+        console.warn(
+          "[chat/orchestrator] Provider Run failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+      const outcome = wasAborted ? "aborted" as const : "failed" as const;
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
       const canonicalError = safeError(
         outcome === "aborted" ? "run_unavailable" : "run_failed",

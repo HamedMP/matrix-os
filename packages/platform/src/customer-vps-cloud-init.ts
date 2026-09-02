@@ -13,6 +13,7 @@ export interface CustomerHostConfig {
   platformRegisterUrl: string;
   platformInternalUrl: string;
   platformVerificationToken: string;
+  fundedAiRuntimeToken: string;
   registrationToken: string;
   postgresPassword: string;
   posthogToken: string;
@@ -20,6 +21,8 @@ export interface CustomerHostConfig {
   posthogHost: string;
   posthogPublicHost: string;
   posthogApiHost: string;
+  fundedAiEnabled: string;
+  fundedAiRelayUrl: string;
   imageSource?: 'snapshot' | 'clean_image';
   targetBundleSha256?: string;
   snapshotSourceVersion?: string;
@@ -29,6 +32,7 @@ const SECRET_KEYS = [
   'registrationToken',
   'postgresPassword',
   'platformVerificationToken',
+  'fundedAiRuntimeToken',
 ] as const;
 const REQUIRED_KEYS = ['hostBundleUrl', ...SECRET_KEYS] as const;
 

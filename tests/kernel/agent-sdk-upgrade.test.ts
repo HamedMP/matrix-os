@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -16,6 +18,10 @@ import {
   normalizeKernelModel,
   resolveKernelModelOption,
 } from "../../packages/gateway/src/kernel-settings.js";
+import {
+  buildBundledModelCatalog,
+  OWNER_ANTHROPIC_MODEL_IDS,
+} from "../../packages/gateway/src/ai-providers/model-catalog.js";
 import { calculateCost } from "../../packages/proxy/src/cost.js";
 
 describe("production Agent SDK upgrade", () => {
@@ -45,6 +51,13 @@ describe("production Agent SDK upgrade", () => {
       "claude-haiku-4-5",
     ]);
     expect(KERNEL_EFFORTS).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(KERNEL_MODEL_IDS).not.toContain("claude-mythos-5");
+    expect(OWNER_ANTHROPIC_MODEL_IDS).toContain("claude-fable-5");
+    expect(buildBundledModelCatalog().find((model) => model.id === "claude-fable-5"))
+      .toMatchObject({
+        status: "current",
+        eligibleAccessSourceIds: ["owner_anthropic_key", "owner_anthropic_profile"],
+      });
     expect(normalizeKernelModel("claude-sonnet-4-5")).toBe("claude-sonnet-4-5");
     expect(resolveKernelModelOption("claude-sonnet-4-5")).toMatchObject({
       id: "claude-sonnet-4-5",
@@ -71,6 +84,10 @@ describe("production Agent SDK upgrade", () => {
   });
 
   it("only sends effort and adaptive thinking to models that support them", () => {
+    expect(resolveKernelSdkControls("claude-fable-5", "max")).toEqual({
+      effort: "max",
+      thinking: { type: "adaptive" },
+    });
     expect(resolveKernelSdkControls("claude-sonnet-5", "xhigh")).toEqual({
       effort: "xhigh",
       thinking: { type: "adaptive" },
@@ -85,6 +102,25 @@ describe("production Agent SDK upgrade", () => {
     });
     expect(resolveKernelSdkControls("claude-haiku-4-5", "max")).toEqual({});
     expect(resolveKernelSdkControls("owner-custom-model", "high")).toEqual({});
+  });
+
+  it("verifies Fable controls against the production-pinned SDK declaration", () => {
+    const require = createRequire(import.meta.url);
+    const sdkDirectory = dirname(require.resolve("@anthropic-ai/claude-agent-sdk"));
+    const sdkPackage = JSON.parse(readFileSync(join(sdkDirectory, "package.json"), "utf8")) as {
+      version: string;
+      claudeCodeVersion: string;
+    };
+    const sdkTypes = readFileSync(join(sdkDirectory, "sdk.d.ts"), "utf8");
+
+    expect(sdkPackage).toMatchObject({ version: "0.3.240", claudeCodeVersion: "2.1.240" });
+    expect(sdkTypes).toContain("Examples: 'claude-sonnet-5', 'claude-opus-4-8', 'claude-fable-5'");
+    expect(sdkTypes).toMatch(/`'max'` — Maximum effort \(Fable 5,/);
+    expect(sdkTypes).toContain("thinking?: ThinkingConfig;");
+    expect(resolveKernelSdkControls("claude-fable-5", "max")).toEqual({
+      effort: "max",
+      thinking: { type: "adaptive" },
+    });
   });
 
   it("normalizes cumulative modelUsage across main and subagent calls", () => {

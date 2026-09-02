@@ -1,13 +1,17 @@
 import {
+  LegacyDesktopImportSchema,
   OsViewStateResponseSchema,
   createDefaultOsViewDocument,
   mergeOsViewStatePatch,
+  legacyDesktopImportFromConfig,
   rebaseOsViewStatePatch,
   type OsViewStatePatch,
   type OsViewStateResponse,
+  type LegacyDesktopImport,
 } from "@matrix-os/contracts";
 import { AppError } from "../../../shared/app-error";
 import type { ApiClient } from "./api";
+import { loadNativeDesktopConfig } from "./desktop-config-client";
 
 let cached: { api: ApiClient; state: OsViewStateResponse } | null = null;
 let mutationQueue: Promise<void> = Promise.resolve();
@@ -28,6 +32,31 @@ export async function loadNativeOsViewState(api: ApiClient): Promise<OsViewState
   const state = OsViewStateResponseSchema.parse(await api.get("/api/os-view-state"));
   cached = { api, state };
   return state;
+}
+
+export async function importNativeLegacyDesktopConfig(
+  api: ApiClient,
+  input: LegacyDesktopImport,
+): Promise<OsViewStateResponse> {
+  const legacy = LegacyDesktopImportSchema.parse(input);
+  const state = OsViewStateResponseSchema.parse(
+    await api.post("/api/os-view-state/import-legacy-desktop", legacy),
+  );
+  cached = { api, state };
+  return state;
+}
+
+export async function loadNativeOsViewStateWithLegacyImport(
+  api: ApiClient,
+): Promise<OsViewStateResponse> {
+  if (typeof api.post !== "function") return loadNativeOsViewState(api);
+  try {
+    const legacy = legacyDesktopImportFromConfig(await loadNativeDesktopConfig(api));
+    if (legacy !== null) return await importNativeLegacyDesktopConfig(api, legacy);
+  } catch (error: unknown) {
+    console.warn("[os-view-state] Electron Desktop legacy import failed:", error instanceof Error ? error.name : "UnknownError");
+  }
+  return loadNativeOsViewState(api);
 }
 
 export function primeNativeOsViewState(api: ApiClient, state: OsViewStateResponse): void {

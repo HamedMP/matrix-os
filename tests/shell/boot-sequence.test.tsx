@@ -66,7 +66,7 @@ describe("BootSequence", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it("renders children immediately when a platform session is already verified", () => {
@@ -136,22 +136,128 @@ describe("BootSequence", () => {
     expect(screen.queryByText("Default installs")).toBeNull();
   });
 
-  it("shows Settings-style default installs and immediately exchanges the app session after a 202", async () => {
-    const journeyState: JourneyState = {
-      phase: "install_choices_required",
-      detail: "Choose default installs before building your Matrix computer.",
-      nextAction: { kind: "choose_default_installs" },
-    };
+  it("keeps a paid device return passive and retries app-session after no_runtime", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    let journeyAttempts = 0;
+    let appSessionAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url === "/api/journey?runtimeSlot=studio") {
+        journeyAttempts += 1;
+        const state: JourneyState = journeyAttempts === 1
+          ? {
+              phase: "install_choices_required",
+              detail: "Choose default installs before building your Matrix computer.",
+              nextAction: { kind: "choose_default_installs" },
+            }
+          : {
+              phase: "ready",
+              detail: "Your Matrix computer is ready.",
+              nextAction: { kind: "open_shell" },
+            };
+        return Response.json(state);
+      }
+      if (url === "/api/auth/app-session") {
+        appSessionAttempts += 1;
+        return appSessionAttempts === 1
+          ? Response.json({ code: "no_runtime" }, { status: 404 })
+          : Response.json({ redirectTo: "/" });
+      }
+      return Response.json({}, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
+      nativeSetTimeout(handler, delay === 4_000 ? 0 : delay, ...args)) as typeof window.setTimeout);
+
+    render(
+      <BootSequence
+        completionRedirect="/?runtime=studio&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK"
+        runtimeSlot="studio"
+        passivePostCheckout
+      >
+        <div data-testid="shell">SHELL</div>
+      </BootSequence>,
+    );
+
+    expect(await screen.findByText("Finishing your Matrix computer")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
+    expect(screen.queryByText("Default installs")).toBeNull();
+    await waitFor(() => expect(appSessionAttempts).toBe(2));
+    expect(requests.some(({ url }) => url === "/api/auth/provision-runtime")).toBe(false);
+    expect(requests.filter(({ url }) => url === "/api/auth/app-session")[0]?.init).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          redirectTo:
+            "/?runtime=studio&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+          runtime: "studio",
+        }),
+      }),
+    );
+    expect(onboardingNavigation.navigate).toHaveBeenCalledWith(
+      "/?runtime=studio&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+  });
+
+  it("stops automatic app-session retries on a permanent client error", async () => {
+    let appSessionAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        return Response.json({
+          phase: "ready",
+          detail: "Your Matrix computer is ready.",
+          nextAction: { kind: "open_shell" },
+        } satisfies JourneyState);
+      }
+      if (url === "/api/auth/app-session") {
+        appSessionAttempts += 1;
+        return Response.json({ error: "Validation error" }, { status: 400 });
+      }
+      return Response.json({}, { status: 500 });
+    }));
+
+    render(
+      <BootSequence
+        completionRedirect="/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK"
+        runtimeSlot="Bad Slot!"
+        passivePostCheckout
+      >
+        <div data-testid="shell">SHELL</div>
+      </BootSequence>,
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Matrix couldn’t finish connecting this browser session.",
+    );
+    expect(appSessionAttempts).toBe(1);
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
+  });
+
+  it("enters passive journey reconciliation after provisioning returns 202", async () => {
+    let provisioningAccepted = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/journey")) {
+        const journeyState: JourneyState = provisioningAccepted
+          ? {
+              phase: "provisioning",
+              detail: "Building your Matrix computer…",
+              nextAction: { kind: "wait" },
+              progress: { stage: "creating_server", startedAt: "2026-08-31T12:00:00.000Z" },
+            }
+          : {
+              phase: "install_choices_required",
+              detail: "Choose default installs before building your Matrix computer.",
+              nextAction: { kind: "choose_default_installs" },
+            };
         return new Response(JSON.stringify(journeyState), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url === "/api/auth/provision-runtime") {
+        provisioningAccepted = true;
         return new Response("{}", { status: 202, headers: { "content-type": "application/json" } });
-      }
-      if (url === "/api/auth/app-session") {
-        return new Response(JSON.stringify({ redirectTo: "/" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       return new Response("{}", { status: 500 });
     });
@@ -182,13 +288,65 @@ describe("BootSequence", () => {
         }),
       ),
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/auth/app-session",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ redirectTo: "/" }) }),
-    );
-    expect(onboardingNavigation.navigate).toHaveBeenCalledWith("/");
+    expect(await screen.findByText("Building your Matrix computer")).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/auth/app-session")).toBe(false);
+    expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
     expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 8_000)).toBe(false);
     expect(screen.queryByText(/Starting|Preparing|Loading your Matrix computer/i)).toBeNull();
+  });
+
+  it("creates a web app session only after an accepted build becomes ready", async () => {
+    let provisioningAccepted = false;
+    let postAcceptJourneyAttempts = 0;
+    let appSessionAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        if (!provisioningAccepted) {
+          return Response.json({
+            phase: "install_choices_required",
+            detail: "Choose default installs before building your Matrix computer.",
+            nextAction: { kind: "choose_default_installs" },
+          } satisfies JourneyState);
+        }
+        postAcceptJourneyAttempts += 1;
+        return Response.json(postAcceptJourneyAttempts === 1
+          ? {
+              phase: "provisioning",
+              detail: "Building your Matrix computer…",
+              nextAction: { kind: "wait" },
+            } satisfies JourneyState
+          : {
+              phase: "ready",
+              detail: "Your Matrix computer is ready.",
+              nextAction: { kind: "open_shell" },
+            } satisfies JourneyState);
+      }
+      if (url === "/api/auth/provision-runtime") {
+        provisioningAccepted = true;
+        return Response.json({ status: "provisioning" }, { status: 202 });
+      }
+      if (url === "/api/auth/app-session") {
+        appSessionAttempts += 1;
+        return appSessionAttempts === 1
+          ? Response.json({ code: "no_runtime" }, { status: 404 })
+          : Response.json({ redirectTo: "/" });
+      }
+      return Response.json({}, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
+      nativeSetTimeout(handler, delay === 4_000 ? 0 : delay, ...args)) as typeof window.setTimeout);
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    await answerAcquisitionSource();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+
+    await waitFor(() => expect(appSessionAttempts).toBe(2));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/auth/provision-runtime")).toHaveLength(1);
+    expect(onboardingNavigation.navigate).toHaveBeenCalledWith("/");
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
   });
 
   it("reconciles journey state instead of reporting failure after an ambiguous provisioning timeout", async () => {
@@ -243,21 +401,29 @@ describe("BootSequence", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/journey")).length).toBeGreaterThan(1);
   });
 
-  it("accepts only a recognized provisioning conflict before the immediate session handoff", async () => {
-    const journeyState: JourneyState = {
-      phase: "install_choices_required",
-      detail: "Choose default installs before building your Matrix computer.",
-      nextAction: { kind: "choose_default_installs" },
-    };
+  it("accepts only a recognized provisioning conflict before passive reconciliation", async () => {
+    let conflictAccepted = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/journey")) {
+        const journeyState: JourneyState = conflictAccepted
+          ? {
+              phase: "provisioning",
+              detail: "Building your Matrix computer…",
+              nextAction: { kind: "wait" },
+            }
+          : {
+              phase: "install_choices_required",
+              detail: "Choose default installs before building your Matrix computer.",
+              nextAction: { kind: "choose_default_installs" },
+            };
         return new Response(JSON.stringify(journeyState), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url === "/api/auth/provision-runtime") {
+        conflictAccepted = true;
         return new Response(JSON.stringify({ code: "provisioning_conflict" }), { status: 409, headers: { "content-type": "application/json" } });
       }
-      return new Response(JSON.stringify({ redirectTo: "/" }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response("{}", { status: 500 });
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -265,10 +431,12 @@ describe("BootSequence", () => {
     await answerAcquisitionSource();
     fireEvent.click(await screen.findByRole("button", { name: "Build VPS" }));
 
-    await waitFor(() => expect(onboardingNavigation.navigate).toHaveBeenCalledWith("/"));
+    expect(await screen.findByText("Building your Matrix computer")).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/auth/app-session")).toBe(false);
+    expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
   });
 
-  it("stays on the chooser with the approved retry error when session exchange fails", async () => {
+  it("stays on the chooser with the approved retry error when provisioning is rejected", async () => {
     const journeyState: JourneyState = {
       phase: "install_choices_required",
       detail: "Choose default installs before building your Matrix computer.",
@@ -280,9 +448,9 @@ describe("BootSequence", () => {
         return new Response(JSON.stringify(journeyState), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url === "/api/auth/provision-runtime") {
-        return new Response("{}", { status: 202, headers: { "content-type": "application/json" } });
+        return new Response("upstream provider secret", { status: 503 });
       }
-      return new Response("upstream provider secret", { status: 503 });
+      return new Response("{}", { status: 500 });
     }));
 
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);

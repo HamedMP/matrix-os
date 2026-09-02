@@ -269,7 +269,7 @@ function ResponseMessage({
         <MessageContent className="gap-0">
           <Bubble variant="ghost">
             <BubbleContent className="max-w-[64rem] overflow-visible">
-              <MessageResponse className="text-md leading-[16px] [&_p]:my-0" copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
+              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (

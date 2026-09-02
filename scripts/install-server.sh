@@ -410,10 +410,14 @@ read_env_value() {
 }
 
 write_env() {
-  local auth_token code_token postgres_password
+  local auth_token code_token postgres_password funded_ai_enabled funded_ai_relay_url funded_ai_runtime_token platform_internal_url
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret)"
   code_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret)"
   postgres_password="$(read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret | tr '/+' 'ab')"
+  funded_ai_enabled="$(read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_ENABLED || printf 'false')"
+  funded_ai_relay_url="$(read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RELAY_URL || true)"
+  funded_ai_runtime_token="$(read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RUNTIME_TOKEN || true)"
+  platform_internal_url="$(read_env_value /opt/matrix/env/host.env PLATFORM_INTERNAL_URL || true)"
 
   cat >/opt/matrix/env/postgres.env <<EOF
 POSTGRES_DB=matrix
@@ -435,6 +439,10 @@ MATRIX_IMAGE_VERSION=${DEFAULT_CHANNEL}
 MATRIX_UPDATE_CHANNEL=${DEFAULT_CHANNEL}
 MATRIX_AUTH_TOKEN=${auth_token}
 MATRIX_CODE_PROXY_TOKEN=${code_token}
+MATRIX_FUNDED_AI_ENABLED=${funded_ai_enabled}
+MATRIX_FUNDED_AI_RELAY_URL=${funded_ai_relay_url}
+MATRIX_FUNDED_AI_RUNTIME_TOKEN=${funded_ai_runtime_token}
+PLATFORM_INTERNAL_URL=${platform_internal_url}
 MATRIX_HOST_BUNDLE_URL=${MATRIX_HOST_BUNDLE_URL}
 MATRIX_HOME=${MATRIX_HOME_DIR}
 DATABASE_URL=postgresql://matrix:${postgres_password}@127.0.0.1:5432/matrix

@@ -34,6 +34,7 @@ import {
   type AgentConfigErrorKind,
 } from "../agent-config/errors.js";
 import type { AgentRuntimeController } from "../agent-config/runtime-controller.js";
+import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 
 const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "matrix-dusk.webp" },
@@ -215,11 +216,20 @@ function mergeDesktopDefaults(config: Record<string, unknown>): Record<string, u
   const pinnedApps = Array.isArray(config.pinnedApps)
     ? config.pinnedApps.filter((path): path is string => typeof path === "string" && !RETIRED_DESKTOP_APP_PATHS.has(path))
     : DESKTOP_DEFAULTS.pinnedApps;
+  const legacyDesktopImport = {
+    ...(Object.prototype.hasOwnProperty.call(config, "pinnedApps")
+      ? { pinnedApps: Array.isArray(config.pinnedApps) ? pinnedApps : config.pinnedApps }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(config, "desktopIcons")
+      ? { desktopIcons: config.desktopIcons }
+      : {}),
+  };
   return {
     ...DESKTOP_DEFAULTS,
     ...config,
     dock: { ...DESKTOP_DEFAULTS.dock, ...dock },
     pinnedApps,
+    legacyDesktopImport,
   };
 }
 
@@ -243,12 +253,14 @@ export function createSettingsRoutes(opts: {
   channelManager: ChannelManager;
   agentRuntimeSource?: AgentRuntimeSource;
   agentRuntimeController?: AgentRuntimeController;
+  aiProviderService?: AiProviderSnapshotReader;
 }) {
   const {
     homePath,
     channelManager,
     agentRuntimeSource,
     agentRuntimeController,
+    aiProviderService,
   } = opts;
   const app = new Hono();
   const configPath = join(homePath, "system/config.json");
@@ -266,12 +278,23 @@ export function createSettingsRoutes(opts: {
       "handle",
     );
     let runtimeSnapshot;
+    let providerSnapshot;
     if (agentRuntimeSource) {
       try {
         runtimeSnapshot = await readRuntimeSnapshot(agentRuntimeSource);
       } catch (err) {
         console.warn(
           "[settings] Failed to read agent runtime settings:",
+          err instanceof Error ? err.name : "UnknownError",
+        );
+      }
+    }
+    if (aiProviderService) {
+      try {
+        providerSnapshot = await aiProviderService.getSnapshot({ refresh: false });
+      } catch (err) {
+        console.warn(
+          "[settings] Failed to read AI provider settings:",
           err instanceof Error ? err.name : "UnknownError",
         );
       }
@@ -283,6 +306,7 @@ export function createSettingsRoutes(opts: {
       platformCredentialAvailable: typeof process.env.ANTHROPIC_API_KEY === "string"
         && process.env.ANTHROPIC_API_KEY.length > 0,
       runtimeSnapshot,
+      providerSnapshot,
     });
   }
 
@@ -484,11 +508,13 @@ export function createSettingsRoutes(opts: {
     }
     await enqueueDesktopWrite(async () => {
       const current = await readJson<Record<string, unknown>>(desktopPath, {}, "desktop config");
+      const desktopBody = { ...body };
+      delete desktopBody.legacyDesktopImport;
       await writeJsonAtomic(desktopPath, {
-        ...body,
-        pinnedApps: body.pinnedApps === undefined
+        ...desktopBody,
+        pinnedApps: desktopBody.pinnedApps === undefined
           ? current.pinnedApps
-          : preserveRetiredPinnedApps(current.pinnedApps, body.pinnedApps),
+          : preserveRetiredPinnedApps(current.pinnedApps, desktopBody.pinnedApps),
       });
     });
     return c.json({ ok: true });

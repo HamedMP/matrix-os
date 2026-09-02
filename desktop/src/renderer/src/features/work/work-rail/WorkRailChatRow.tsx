@@ -64,7 +64,7 @@ export function WorkRailChatRow({
           <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
         </button>
         <div
-          className={`absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100 ${placement === "pinned" ? "opacity-100" : "opacity-0"}`}
+          className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:pointer-events-auto group-hover/chat:opacity-100 group-focus-within/chat:pointer-events-auto group-focus-within/chat:opacity-100"
           style={{
             background: active
               ? "linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)"
@@ -79,17 +79,15 @@ export function WorkRailChatRow({
             className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             onClick={onPin}
           >
-            {placement === "pinned"
-              ? <PinIcon size={14} strokeWidth={1.5} aria-hidden />
-              : pinned
-                ? <PinOffIcon size={13} aria-hidden />
-                : <PinIcon size={13} aria-hidden />}
+            {pinned
+              ? <PinOffIcon size={13} aria-hidden />
+              : <PinIcon size={13} aria-hidden />}
           </button>
           <button
             type="button"
             aria-label={`Delete ${record.chat.title}`}
             title={`Delete ${record.chat.title}`}
-            className={`${placement === "pinned" ? "opacity-0 group-hover/chat:opacity-100 group-focus-within/chat:opacity-100" : ""} flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]`}
+            className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             onClick={onDelete}
           >
             <Trash2 size={13} aria-hidden />

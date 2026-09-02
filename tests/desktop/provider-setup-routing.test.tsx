@@ -93,13 +93,15 @@ describe("system harness setup routing", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["hermes", "openclaw"] as const)("routes %s configuration to Agent settings", (driverKind) => {
+  it.each(["hermes", "openclaw"] as const)("never routes stale %s model setup to Settings", async (driverKind) => {
     render(<Harness driverKind={driverKind} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Configure" }));
 
-    expect(useUi.getState().requestedSettingsSection).toBe("agent");
-    expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
+    await waitFor(() => {
+      expect(useUi.getState().requestedSettingsSection).toBeNull();
+      expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(false);
+    });
   });
 
   it("opens a catalog-owned missing harness action in a foreground Terminal", async () => {

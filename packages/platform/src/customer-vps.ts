@@ -42,7 +42,10 @@ import {
   registrationTokenMatches,
   type RegistrationToken,
 } from './customer-vps-auth.js';
-import { buildPlatformVerificationToken } from './platform-token.js';
+import {
+  buildPlatformRuntimeVerificationToken,
+  buildPlatformVerificationToken,
+} from './platform-token.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
 import {
   CustomerVpsError,
@@ -247,7 +250,10 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
+  '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
   '      POSTHOG_TOKEN={{posthogToken}}',
   '      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
   '      POSTHOG_HOST={{posthogHost}}',
@@ -359,6 +365,11 @@ function buildHostConfig(
     platformRegisterUrl: config.platformRegisterUrl,
     platformInternalUrl: new URL(config.platformRegisterUrl).origin,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
+    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken({
+      handle: input.handle,
+      machineId,
+      runtimeSlot: input.runtimeSlot,
+    }, config.platformSecret),
     registrationToken,
     postgresPassword,
     posthogToken: config.posthogToken,
@@ -366,6 +377,8 @@ function buildHostConfig(
     posthogHost: config.posthogHost,
     posthogPublicHost: config.posthogPublicHost,
     posthogApiHost: config.posthogApiHost,
+    fundedAiEnabled: config.fundedAiEnabled ? 'true' : 'false',
+    fundedAiRelayUrl: config.fundedAiRelayUrl,
   };
 }
 

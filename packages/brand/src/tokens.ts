@@ -47,6 +47,21 @@ export const desktopFonts = {
   mono: '"Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace',
 } as const;
 
+/** Compact onboarding checklist tokens shared by landing-adjacent shells. */
+export const onboardingChecklist = {
+  colors: {
+    surface: "#FFFFFF",
+    border: "#EBEAE6",
+    text: "#141413",
+    subtleText: "#96968F",
+    progressTrack: "#E1E1D8",
+    progressFill: "#2E3A2A",
+    completed: "#434E3F",
+  },
+  fontFamily: '"Inter", sans-serif',
+  shadow: "0 10px 24px -4px rgba(0, 0, 0, 0.04)",
+} as const;
+
 export const cardShadow = "0 0 7.5rem 0 rgba(50, 53, 46, 0.09)";
 export const cardShadowSmall = "0 0 3rem 0 rgba(50, 53, 46, 0.07)";
 

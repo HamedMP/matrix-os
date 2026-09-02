@@ -74,9 +74,10 @@ describe("provider-neutral conversation transcript", () => {
     const assistantMessageContent = assistantText.closest('[data-slot="message-content"]') as HTMLElement;
     const assistantRow = assistantText.closest('[data-slot="message-scroller-item"]') as HTMLElement;
     expect(assistantResponse.className).toContain("text-md");
-    expect(assistantResponse.className).toContain("leading-[16px]");
-    expect(assistantResponse.className).toContain("[&_p]:my-0");
-    expect(assistantResponse.className).not.toContain("[&_p]:my-2");
+    expect(assistantResponse.className).toContain("leading-relaxed");
+    expect(assistantResponse.className).toContain("[&_p]:my-2");
+    expect(assistantResponse.className).not.toContain("leading-[16px]");
+    expect(assistantResponse.className).not.toContain("[&_p]:my-0");
     expect(assistantBubble.className).toContain("*:data-[slot=bubble-content]:px-0");
     expect(assistantBubble.className).toContain("*:data-[slot=bubble-content]:py-px");
     expect(assistantBubble.className).not.toContain("*:data-[slot=bubble-content]:p-0");
@@ -95,6 +96,44 @@ describe("provider-neutral conversation transcript", () => {
     const workItems = activity.closest("[data-work-items]") as HTMLElement;
     expect(workItems).toBeTruthy();
     expect(workItems.className).toContain("gap-0.5");
+  });
+
+  it("keeps multiline assistant paragraphs and inline code chips comfortably spaced", () => {
+    const markdown = "Run `pnpm test` before release.\n\nThen inspect `git status`.";
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-inline-code-spacing",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: false,
+      work: [],
+      final: {
+        kind: "message",
+        id: "message-inline-code-spacing",
+        role: "assistant",
+        phase: "final",
+        markdown,
+        copyText: markdown,
+        timestamp: 2_000,
+      },
+    }];
+
+    const { container } = render(
+      <ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />,
+    );
+
+    const response = container.querySelector('[data-selectable]') as HTMLElement;
+    const paragraphs = response.querySelectorAll("p");
+    const inlineCode = response.querySelectorAll("p code");
+    expect(paragraphs).toHaveLength(2);
+    expect(inlineCode).toHaveLength(2);
+    expect(response.className).toContain("leading-relaxed");
+    expect(response.className).toContain("[&_p]:my-2");
+    expect(response.className).toContain("[&_code]:py-0.5");
+    expect(response.className).not.toContain("leading-[16px]");
+    expect(response.className).not.toContain("[&_p]:my-0");
+    for (const chip of inlineCode) {
+      expect(chip.className).toContain("border-[var(--border-subtle)]");
+    }
   });
 
   it("expands a long user message accessibly and keeps structured references and metadata", async () => {

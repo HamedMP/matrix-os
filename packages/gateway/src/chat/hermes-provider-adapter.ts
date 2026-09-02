@@ -649,6 +649,12 @@ export function createHermesChatProviderAdapter(options: {
         liveSessionId = session.session_id;
         durableSessionId = session.stored_session_id ?? session.session_key ?? resumeState?.sessionId;
         if (!durableSessionId) throw new Error("Hermes did not return a durable session");
+        if (durableSessionId !== resumeState?.sessionId) {
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "state.updated",
+            state: { sessionId: durableSessionId },
+          }));
+        }
         releaseApprovalRun = approvals.registerRun({
           owner: input.owner,
           chatId: input.chatId,
@@ -714,12 +720,6 @@ export function createHermesChatProviderAdapter(options: {
         if (final.status === "error") throw new HermesRunFailure("run", "Hermes Run failed");
         if (final.status === "interrupted" && !input.signal.aborted) {
           throw new HermesRunFailure("interrupted", "Hermes Run was interrupted");
-        }
-        if (durableSessionId && durableSessionId !== resumeState?.sessionId) {
-          queue.push(CanonicalProviderRunEventSchema.parse({
-            type: "state.updated",
-            state: { sessionId: durableSessionId },
-          }));
         }
         queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "completed" }));
       } catch (error: unknown) {

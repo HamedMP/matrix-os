@@ -416,11 +416,7 @@ function ActiveBillingPanel({
   const graceLabel = entitlement?.gracePeriodEndsAt ? formatDate(entitlement.gracePeriodEndsAt) : null;
   const isTrialing = entitlement?.status === "trialing" && Boolean(entitlement.trialEndsAt);
   const trialEndLabel = entitlement?.trialEndsAt ? formatDate(entitlement.trialEndsAt) : null;
-  const trialProfile = MATRIX_BILLING_SERVER_PROFILES.find(
-    (profile) => profile.planSlug === entitlement?.planSlug,
-  );
   const trialInterval = entitlement?.billingInterval === "annual" ? "annual" : "monthly";
-  const trialPrice = trialProfile ? profilePrice(trialProfile, trialInterval) : null;
 
   return (
     <div className="space-y-3">
@@ -434,8 +430,8 @@ function ActiveBillingPanel({
               {planName}
             </h3>
             <p className="mt-1 text-sm leading-6 text-forest/65">
-              {isTrialing && trialEndLabel && trialPrice
-                ? `Your first $${trialPrice} ${trialInterval} charge is on ${trialEndLabel}.`
+              {isTrialing && trialEndLabel
+                ? `Your first ${trialInterval} charge is on ${trialEndLabel}.`
                 : `${status}. Your Matrix computers stay available while billing is active${graceLabel ? ` and through the grace period ending ${graceLabel}` : ""}.`}
             </p>
             {isTrialing && trialEndLabel && (

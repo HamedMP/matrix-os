@@ -7,6 +7,7 @@ import { OsViewStateConflictError } from "../../packages/gateway/src/os-view-sta
 function appFor(repository: {
   getOrCreate: ReturnType<typeof vi.fn>;
   patch: ReturnType<typeof vi.fn>;
+  importLegacyDesktop: ReturnType<typeof vi.fn>;
 }, ownerId = "owner-1") {
   const app = new Hono();
   app.route("/api/os-view-state", createOsViewStateRoutes({ repository, getOwnerId: () => ownerId }));
@@ -21,7 +22,7 @@ const record = {
 
 describe("OS-view state routes", () => {
   it("loads the authenticated owner's document", async () => {
-    const repository = { getOrCreate: vi.fn(async () => record), patch: vi.fn() };
+    const repository = { getOrCreate: vi.fn(async () => record), patch: vi.fn(), importLegacyDesktop: vi.fn() };
     const response = await appFor(repository).request("/api/os-view-state");
 
     expect(response.status).toBe(200);
@@ -30,7 +31,7 @@ describe("OS-view state routes", () => {
   });
 
   it("validates a bounded mutation before writing", async () => {
-    const repository = { getOrCreate: vi.fn(), patch: vi.fn() };
+    const repository = { getOrCreate: vi.fn(), patch: vi.fn(), importLegacyDesktop: vi.fn() };
     const response = await appFor(repository).request("/api/os-view-state", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -46,6 +47,7 @@ describe("OS-view state routes", () => {
     const repository = {
       getOrCreate: vi.fn(),
       patch: vi.fn(async () => { throw new OsViewStateConflictError(7); }),
+      importLegacyDesktop: vi.fn(),
     };
     const response = await appFor(repository).request("/api/os-view-state", {
       method: "PATCH",
@@ -62,8 +64,71 @@ describe("OS-view state routes", () => {
   });
 
   it("requires a resolved owner", async () => {
-    const repository = { getOrCreate: vi.fn(), patch: vi.fn() };
+    const repository = { getOrCreate: vi.fn(), patch: vi.fn(), importLegacyDesktop: vi.fn() };
     const response = await appFor(repository, "").request("/api/os-view-state");
     expect(response.status).toBe(401);
+  });
+
+  it("imports bounded legacy Desktop fields for the authenticated owner", async () => {
+    const repository = {
+      getOrCreate: vi.fn(),
+      patch: vi.fn(),
+      importLegacyDesktop: vi.fn(async () => record),
+    };
+    const response = await appFor(repository).request("/api/os-view-state/import-legacy-desktop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinnedApps: ["__chat__"] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(repository.importLegacyDesktop).toHaveBeenCalledWith("owner-1", { pinnedApps: ["__chat__"] });
+    await expect(response.json()).resolves.toEqual(record);
+  });
+
+  it("marks a legacy Desktop source with no layout fields as imported", async () => {
+    const repository = {
+      getOrCreate: vi.fn(),
+      patch: vi.fn(),
+      importLegacyDesktop: vi.fn(async () => record),
+    };
+    const response = await appFor(repository).request("/api/os-view-state/import-legacy-desktop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(repository.importLegacyDesktop).toHaveBeenCalledWith("owner-1", {});
+  });
+
+  it("rejects invalid legacy imports before writing", async () => {
+    const repository = { getOrCreate: vi.fn(), patch: vi.fn(), importLegacyDesktop: vi.fn() };
+    const response = await appFor(repository).request("/api/os-view-state/import-legacy-desktop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ desktopIcons: [{ path: "", x: -1, y: 0 }] }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(repository.importLegacyDesktop).not.toHaveBeenCalled();
+  });
+
+  it("requires an owner and applies the import body limit", async () => {
+    const repository = { getOrCreate: vi.fn(), patch: vi.fn(), importLegacyDesktop: vi.fn() };
+    const unauthorized = await appFor(repository, "").request("/api/os-view-state/import-legacy-desktop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const oversized = await appFor(repository).request("/api/os-view-state/import-legacy-desktop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinnedApps: ["a".repeat(256 * 1024)] }),
+    });
+
+    expect(unauthorized.status).toBe(401);
+    expect(oversized.status).toBe(413);
+    expect(repository.importLegacyDesktop).not.toHaveBeenCalled();
   });
 });

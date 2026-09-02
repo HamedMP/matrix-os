@@ -284,7 +284,7 @@ describe('customer VPS host bundle', () => {
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
-    expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex');
+    expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode');
     expect(gatewayUnit).not.toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
@@ -1780,7 +1780,10 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health"');
-    expect(workflow).toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
+    expect(workflow).toContain(
+      '$CANDIDATE_URL/system-bundles/channels/${CUSTOMER_VPS_IMAGE_VERSION}.json',
+    );
+    expect(workflow).not.toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
     expect(workflow).toContain("jq -r '.url // empty'");
     expect(workflow).toContain('sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"');
     expect(workflow).toContain('bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"');

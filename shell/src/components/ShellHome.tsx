@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "
 import { useAuth } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
-import { useChatState } from "@/hooks/useChatState";
+import { useCanonicalChatState } from "@/hooks/useCanonicalChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
@@ -47,7 +47,7 @@ export function ShellHome() {
   useTheme({ cacheScope });
   useDesktopConfig({ cacheScope });
 
-  const chat = useChatState();
+  const chat = useCanonicalChatState();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const launchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,

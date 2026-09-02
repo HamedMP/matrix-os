@@ -110,6 +110,7 @@
   "devDependencies": {
     "@excalidraw/excalidraw": "^0.18.0",
     "@matrix-os/gateway": "workspace:*",
+    "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
@@ -117,6 +118,8 @@
     "@vitest/coverage-v8": "^4.0.18",
     "better-sqlite3": "^12.10.0",
     "drizzle-orm": "^0.45.2",
+    "hono": "^4.11.9",
+    "lexical": "0.41.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

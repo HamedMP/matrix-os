@@ -71,6 +71,9 @@ vi.mock("@desktop/renderer/src/features/mission-control/AccountMenu", () => ({
 vi.mock("@desktop/renderer/src/features/updates/DesktopUpdateButton", () => ({
   default: () => null,
 }));
+vi.mock("@desktop/renderer/src/features/onboarding/GettingStartedPopover", () => ({
+  default: () => null,
+}));
 
 beforeEach(() => {
   useTabs.setState(useTabs.getInitialState(), true);

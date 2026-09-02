@@ -21,11 +21,13 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.151.0";
+export const CODEX_VERIFIED_VERSION = "0.152.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
+export * from "#ai-provider";
 export * from "#billing-catalog";
+export * from "#ai-provider";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
@@ -42,6 +44,9 @@ export * from "#canonical-chat-surface";
 export * from "#hermes-configuration";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
+export * from "#provider-settings";
+export * from "#funded-ai";
+export * from "#getting-started";
 export * from "#safe-client-error";
 export * from "#terminal-clipboard";
 export * from "#terminal-links";
@@ -1139,13 +1144,22 @@ export const ReviewSnapshotSchema = z.object({
 export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
 
 export {
+  DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  LegacyDesktopImportSchema,
   OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_CREATE_APP_APPEARANCE,
+  OS_VIEW_FIXED_APP_APPEARANCES,
   OS_VIEW_LABELS,
   OS_VIEW_MODES,
   isOsViewDestinationPath,
+  legacyDesktopImportFromConfig,
   normalizeOsViewMode,
+  osViewFixedAppAppearanceForPath,
+  normalizeOsViewDesktopAppPath,
+  normalizeOsViewDesktopIcons,
   otherOsViewMode,
   createDefaultOsViewDocument,
+  createDefaultOsViewDesktopIcons,
   mergeOsViewStatePatch,
   rebaseOsViewStatePatch,
   OsViewAppStateSchema,
@@ -1159,10 +1173,13 @@ export {
   PatchOsViewStateRequestSchema,
 } from "#os-view";
 export type {
+  LegacyDesktopImport,
   OsViewAppState,
   OsViewCanvasTransform,
   OsViewDesktopIcon,
   OsViewDocument,
+  OsViewFixedAppIcon,
+  OsViewFixedAppId,
   OsViewMode,
   OsViewStatePatch,
   OsViewStateResponse,

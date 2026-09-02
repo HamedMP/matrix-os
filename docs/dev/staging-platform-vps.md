@@ -210,7 +210,10 @@ account and production platform env:
    Preserve existing monthly and annual Price IDs in
    `STRIPE_LEGACY_PRICE_CATALOG_JSON` before replacing any current ID. Each
    billable computer uses its own full plan subscription.
-3. Enable automatic tax for Checkout and Portal; add required tax registrations.
+3. Enable automatic tax for subscription Checkout and Portal; add required tax
+   registrations. Funded AI add-on Checkout remains tax-disabled until those
+   registrations are verified and
+   `MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED=true` is set.
 4. Enable promotion codes in Checkout and Customer Portal (Stripe Coupons /
    Promotion Codes, not hardcoded discounts).
 5. Configure the production webhook endpoint
@@ -237,13 +240,31 @@ account and production platform env:
     copy must continue to use a reserved attempt's duration after a redeploy.
 12. Rebuild the host bundle after changing any `NEXT_PUBLIC_*` value; build a
     stable release from the merge commit for traceability.
-13. Verify all four purchasable locations and their exact machine mappings:
+13. To enable funded AI add-ons, create one-time USD Prices for `$5`, `$10`, and
+    `$25`; set `STRIPE_PRICE_AI_CREDIT_USD_5`,
+    `STRIPE_PRICE_AI_CREDIT_USD_10`, and
+    `STRIPE_PRICE_AI_CREDIT_USD_25`; then set
+    `MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=true`. Partial catalogs fail closed.
+14. Restrict the Stripe API key to the resources Matrix billing needs and apply
+    a Stripe-side IP allowlist for the platform egress addresses where the
+    deployment topology supports stable egress. Never expose this key to a VPS
+    or renderer.
+15. Verify all four purchasable locations and their exact machine mappings:
     Germany uses CPX22/CPX42/CPX52; US uses CPX21/CPX31/CPX41. Confirm the
     browser prefills the closest location and keeps the location control
     collapsed below computer power and agent selection.
-14. Deploy the platform/app-shell Cloud Run service and verify the no-VPS flow
+16. Deploy the platform/app-shell Cloud Run service and verify the no-VPS flow
     directly on `app.matrix-os.com`; publishing a host bundle alone does not
     update this billing screen.
+15. To enable funded AI add-ons, create one-time USD Prices for `$5`, `$10`, and
+    `$25`; set `STRIPE_PRICE_AI_CREDIT_USD_5`,
+    `STRIPE_PRICE_AI_CREDIT_USD_10`, and
+    `STRIPE_PRICE_AI_CREDIT_USD_25`; then set
+    `MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=true`. Partial catalogs fail closed.
+16. Restrict the Stripe API key to the resources Matrix billing needs and apply
+    a Stripe-side IP allowlist for the platform egress addresses where the
+    deployment topology supports stable egress. Never expose this key to a VPS
+    or renderer.
 
 After production env is set, merge the stack, build a host bundle from `main`,
 publish it, promote it to `stable`, deploy the fleet by `stable`, and verify

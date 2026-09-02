@@ -527,6 +527,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               onNewChat={chatState.newChat}
               onSwitchConversation={chatState.switchConversation}
               onSubmit={chatState.submitMessage}
+              onSubmitApproval={chatState.submitApproval}
+              providerSelection={chatState.providerSelection}
               composerDraftRequest={chatState.composerDraftRequest}
               onComposerDraftConsumed={chatState.consumeComposerDraft}
               mobile={isMobile}

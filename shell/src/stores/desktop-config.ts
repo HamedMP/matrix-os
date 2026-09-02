@@ -6,6 +6,7 @@ import {
   resetWebOsViewStateClientForTests,
 } from "@/lib/os-view-state-client";
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
+import { normalizeOsViewDesktopIcons } from "@matrix-os/contracts";
 
 export interface DockConfig {
   position: "left" | "right" | "bottom";
@@ -84,7 +85,7 @@ export function resetWebDesktopIconsRuntime(): void {
 }
 
 function copyDesktopIcons(icons: readonly DesktopIconPlacement[] | undefined): DesktopIconPlacement[] | undefined {
-  return icons?.map((icon) => ({ ...icon }));
+  return icons ? normalizeOsViewDesktopIcons(icons) : undefined;
 }
 
 function persistDesktopPatch(patch: Record<string, unknown>): Promise<void> {

@@ -482,6 +482,61 @@ describe("CanonicalChatOrchestrator", () => {
     ]));
   });
 
+  it("aborts Provider work when canonical event persistence fails", async () => {
+    await repository.create(owner, {
+      id: "chat_provider_persistence_failure",
+      clientRequestId: "req_create_provider_persistence_failure",
+      title: "Provider persistence failure",
+    });
+    let providerAbortObserved = false;
+    const provider = adapter(async function* (input) {
+      input.signal.addEventListener("abort", () => {
+        providerAbortObserved = true;
+      }, { once: true });
+      yield {
+        type: "agent.activity",
+        activityId: "reasoning_0",
+        kind: "reasoning",
+        label: "Thinking",
+        status: "running",
+      };
+      yield {
+        type: "agent.activity",
+        activityId: "reasoning_0",
+        kind: "reasoning",
+        label: "Thinking",
+        status: "completed",
+      };
+      yield {
+        type: "agent.activity",
+        activityId: "reasoning_0",
+        kind: "reasoning",
+        label: "Thinking",
+        status: "running",
+      };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_provider_persistence_failure", {
+      clientRequestId: "req_provider_persistence_failure_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "trigger an invalid activity transition" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    expect(providerAbortObserved).toBe(true);
+    const snapshot = await repository.exportChat(owner, "chat_provider_persistence_failure");
+    expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+  });
+
   it("does not reconcile a committed Run while its dispatch registration is pending", async () => {
     await repository.create(owner, {
       id: "chat_pending_dispatch",

@@ -1,7 +1,7 @@
 import { useState, useRef, type HTMLAttributes, type ReactNode } from "react";
 import { cn } from "./cn.js";
 
-export interface TooltipProps extends HTMLAttributes<HTMLDivElement> {
+export interface TooltipProps extends Omit<HTMLAttributes<HTMLDivElement>, "content"> {
   content: ReactNode;
   children: ReactNode;
   position?: "top" | "bottom" | "left" | "right";
@@ -40,14 +40,15 @@ export function Tooltip({
   ...rest
 }: TooltipProps) {
   const [visible, setVisible] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const show = () => {
     timerRef.current = setTimeout(() => setVisible(true), delay);
   };
 
   const hide = () => {
-    clearTimeout(timerRef.current);
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = null;
     setVisible(false);
   };
 

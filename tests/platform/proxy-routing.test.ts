@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
+import { runInNewContext } from "node:vm";
 import { fonts, lightFg, palette, radii } from "@matrix-os/brand/tokens";
 import {
   type PlatformDB,
@@ -2883,6 +2884,15 @@ describe("platform proxy routing", () => {
     expect(html).toContain("method: 'DELETE'");
     expect(html).not.toContain("Loading your Matrix computer");
     expect(html).not.toContain("function pollProvisioningSession()");
+    expect(html).toContain("showLoadingState('Finishing your Matrix computer...');");
+    expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
+    expect(html).toContain("var passiveRuntimeContinuation = passiveCheckoutContinuation || Boolean(deviceReturnTarget);");
+    expect(html).toContain("function normalizeRuntimeSlot(value) {");
+    expect(html).toContain("var requestedRuntime = normalizeRuntimeSlot(");
+    expect(html).toContain("function isRetryableAppSessionStatus(status) {");
+    expect(html).toContain("passiveRuntimeContinuation && isRetryableAppSessionStatus(res.status)");
+    expect(html).toContain("waitForAppSession(provisioningAccepted);");
+    expect(html).not.toContain("if (checkoutJustCompleted) {\n              showDefaultInstallsState();");
     expect(html).toContain("continueWithClerkSession(true);");
     expect(html).toContain("if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {");
     expect(html).toContain("billingConfirmationPolls = 0;\n            continueWithClerkSession(true);\n            return;");
@@ -2909,7 +2919,8 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("if (res.status === 402) {\n            if (afterProvision) showProvisionRetryError();\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("if (res.status === 402) {\n            if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
@@ -3370,7 +3381,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var billingSetupTarget = ");
     expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
-    expect(html).toContain("window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
+    expect(html).toContain("window.location.replace(provisioningAccepted ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toBe("auth shell");
@@ -5275,11 +5286,56 @@ describe("platform proxy routing", () => {
       expect(res.headers.get("cdn-cache-control")).toBe("no-store");
       expect(res.headers.get("service-worker-allowed")).toBe("/");
       const body = await res.text();
-      expect(body).not.toContain("registration.unregister()");
-      expect(body).toContain('p.startsWith("/api/")');
-      expect(body).toContain('p.startsWith("/files/apps/")');
-      expect(body).not.toContain('p.startsWith("/_next/static/")');
-      expect(body).not.toMatch(/woff2\?\|ttf\|css\|js/);
+      type FetchHandler = (event: {
+        request: Request;
+        respondWith(response: Promise<Response>): void;
+      }) => void;
+      let fetchHandler: FetchHandler | undefined;
+      const cachedResponse = new Response("cached asset");
+      const cache = {
+        match: vi.fn(async () => cachedResponse),
+        put: vi.fn(async () => undefined),
+      };
+      const cacheStorage = {
+        delete: vi.fn(async () => true),
+        keys: vi.fn(async () => []),
+        open: vi.fn(async () => cache),
+      };
+
+      runInNewContext(body, {
+        AbortSignal,
+        Response,
+        URL,
+        caches: cacheStorage,
+        console,
+        fetch: vi.fn(),
+        self: {
+          clients: { claim: vi.fn(async () => undefined) },
+          location: new URL("https://app.matrix-os.com/"),
+          skipWaiting: vi.fn(),
+          addEventListener: (type: string, handler: FetchHandler) => {
+            if (type === "fetch") fetchHandler = handler;
+          },
+        },
+      });
+
+      expect(fetchHandler).toBeTypeOf("function");
+      const dispatchFetch = (path: string) => {
+        const respondWith = vi.fn();
+        fetchHandler!({
+          request: new Request(`https://app.matrix-os.com${path}`),
+          respondWith,
+        });
+        return respondWith;
+      };
+
+      expect(dispatchFetch("/api/session")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/files/apps/notes/index.js")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/_next/static/chunks/app.js")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/_next/static/css/app.css")).not.toHaveBeenCalled();
+      const safeImageFetch = dispatchFetch("/icons/notes.png");
+      expect(safeImageFetch).toHaveBeenCalledOnce();
+      await expect(safeImageFetch.mock.calls[0]?.[0]).resolves.toBe(cachedResponse);
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  normalizeOsViewDesktopAppPath,
+} from "@matrix-os/contracts";
+import {
   buildWebDesktopIconApps,
   buildWebDesktopLauncherApps,
   resolveWebDesktopBuiltInLaunch,
@@ -64,6 +68,18 @@ describe("web Desktop built-in app launch routing", () => {
       iconUrl: "/icons/desktop.svg",
     });
     expect(buildWebDesktopIconApps([]).some((app) => app.path.startsWith("__os-view-"))).toBe(false);
+  });
+
+  it("uses canonical durable paths for all ten default Desktop icons", () => {
+    expect(buildWebDesktopIconApps([]).slice(0, 10).map((app) => app.path)).toEqual(
+      DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+    );
+    expect(buildWebDesktopIconApps([
+      { name: "Notes", path: "apps/notes/dist/index.html" },
+      { name: "Whiteboard", path: "apps/whiteboard/dist/index.html" },
+    ]).slice(0, 10).map((app) => normalizeOsViewDesktopAppPath(app.path))).toEqual(
+      DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+    );
   });
 
   it("routes launcher OS-view destinations as presentation switches", () => {

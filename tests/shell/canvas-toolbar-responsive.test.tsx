@@ -9,6 +9,12 @@ import { useCanvasSettings } from "../../shell/src/stores/canvas-settings.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
+vi.mock("../../shell/src/components/onboarding/GettingStartedPopover.js", () => ({
+  GettingStartedPopover: () => (
+    <button type="button" aria-label="Getting started — 0 of 5">Getting started</button>
+  ),
+}));
+
 function resetStores() {
   useDotGrid.setState({ enabled: true });
   useCanvasLabels.setState({ labels: [] });
@@ -50,6 +56,7 @@ describe("responsive CanvasToolbar", () => {
       "Fit all",
       "Scroll to navigate",
       "Click and drag to navigate",
+      "Getting started — 0 of 5",
     ]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
@@ -59,13 +66,12 @@ describe("responsive CanvasToolbar", () => {
   });
 
   it("exposes and invokes every compact action with current toggle checked states", async () => {
-    const onOpenGuide = vi.fn();
     useWindowManager.getState().openWindow("A", "apps/a", 0);
     useWindowManager.getState().moveWindow(useWindowManager.getState().windows[0]!.id, 2_000, 1_500);
-    render(<CanvasToolbar guideVisible onOpenGuide={onOpenGuide} />);
+    render(<CanvasToolbar onOpenSettings={() => {}} onOpenFirstWork={() => {}} />);
 
     let menu = await openCanvasControls();
-    for (const name of ["Auto-align apps", "Add text label", "Show get started guide"]) {
+    for (const name of ["Auto-align apps", "Add text label"]) {
       expect(within(menu).getByRole("menuitem", { name })).toBeTruthy();
     }
     expect(within(menu).getByRole("menuitemcheckbox", { name: "Show dot grid" }).getAttribute("aria-checked")).toBe("true");
@@ -89,7 +95,5 @@ describe("responsive CanvasToolbar", () => {
 
     menu = await openCanvasControls();
     expect(within(menu).getByRole("menuitemcheckbox", { name: "Show app titles" }).getAttribute("aria-checked")).toBe("false");
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Show get started guide" }));
-    expect(onOpenGuide).toHaveBeenCalledOnce();
   });
 });
